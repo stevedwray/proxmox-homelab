@@ -19,6 +19,78 @@ plan does not assume or schedule.
 
 Supersedes `docs/immich-stack/` -- see that workspace's README for why.
 
+## Platform integration: Graylog, Grafana, NetBox, Portainer (2026-09-04)
+
+Operator noticed media-stack-lab was missing from Portainer, Grafana,
+and NetBox, and asked to check Graylog specifically. Findings and
+fixes, in the order found:
+
+- **Portainer: not a gap.** `portainer_agent: false` in `stack.yaml` is
+  correct and matches the majority of current real production stacks
+  (netbox-stack, harbor-stack, authentik-stack, proxy-stack,
+  monitoring-stack, opensearch-stack, wazuh-stack). `true` is now
+  mostly the older single-container stacks.
+- **Graylog: real bug, chased through 3 layers before actually fixed.**
+  1. `deploy-media-stack-lab.yml` never wrote `/etc/docker/daemon.json`
+     with the syslog log-driver every other stack's playbook has --
+     Docker used its default `json-file` driver, nothing left the
+     container. Fixed, and while fixing it, cadvisor's image pull
+     through the bare Harbor IP failed with `connection refused` on
+     443 -- confirmed live Harbor's own container IP only serves HTTP,
+     never HTTPS, so `insecure-registries` against it can get an HTTP
+     manifest response but then fails the token-auth redirect. Fixed
+     by using `LAB_FQDN_HARBOR` (via Traefik) instead, per the existing
+     documented pattern in `docs/harbor-stack/image-sourcing-enforcement.md`
+     and matching `deploy-minecraft-wildworks.yml`/`deploy-greenbone-stack.yml`.
+  2. Restarting the Docker daemon doesn't retroactively change already
+     -running containers' log driver (it's fixed at container-create
+     time) -- had to `docker compose up -d --force-recreate` to get
+     jellyfin/immich/redis/database onto the new driver too; cadvisor
+     picked it up for free since it was newly created.
+  3. **Even then, nothing arrived.** `media_seg` had no firewall rule
+     to Graylog at all (`192.168.20.14:514`) -- every other zone with
+     syslog forwarding (`game_seg`, `pentest_seg`) has one, media_seg
+     never got one when the zone was created. Added live via the
+     RouterOS API (place-before the deny rule, same pattern as the
+     earlier Authentik-callback fix), then restarted rsyslog to force
+     an immediate reconnect instead of waiting out its retry backoff.
+     Verified end-to-end via Graylog's search API: host syslog and
+     Docker container logs (jellyfin, immich-server, cadvisor) all
+     confirmed flowing.
+- **Grafana: two gaps, same investigation.** VictoriaMetrics' scrape
+  config (`deploy-monitoring-stack.yml`) is a hardcoded static target
+  list, no auto-discovery -- media-stack-lab was simply never added.
+  Added `node_exporter`/`cadvisor` target blocks matching the
+  established per-stack pattern. Redeploying surfaced a second real
+  gap: `node_exporter` came up serving plain HTTP instead of HTTPS --
+  its role silently skips step-ca TLS cert issuance (`wait_for` +
+  `ignore_errors`) when step-ca is unreachable, and `media_seg` had no
+  firewall rule to step-ca (`192.168.20.11:443`) either, same class of
+  gap as the Graylog one. Added that rule too, re-ran provision, cert
+  issued, VictoriaMetrics now shows both `node_exporter` and `cadvisor`
+  targets `health: up`.
+- **NetBox: discovery already works** (`discover.py` globs
+  `stacks/*/stack.yaml`, no hardcoding) but the containerized `apply`
+  path (`scripts/run-netbox-populate-container.sh`) had two real,
+  pre-existing bugs, unrelated to media-stack-lab specifically: its
+  env-passing regex silently dropped every *prefixed* env var
+  (`LAB_IP_NETBOX`, `NETBOX_API_TOKEN`, ...), and it never mounted the
+  network-intent YAML the container needs (`populate.py` derives that
+  path from its own script location, which only resolves inside a
+  real git checkout -- never true in this container). Both fixed.
+  media-stack-lab is now a real NetBox VM record (id 39, correct
+  `primary_ip4`). One unrelated pre-existing NetBox data conflict
+  found along the way (`gaming-stack`'s primary-IP reassignment,
+  IP id 30) -- not caused by this work, not fixed, flagged for a
+  separate pass.
+- The 2 additive MikroTik rules from this pass (Graylog, step-ca) are
+  now mirrored into `terraform/lxc/network/pve.yaml`'s `policies:`
+  section, not just applied live -- see that file for the exact rules
+  and rationale. (The Harbor/internet-egress rules from the original
+  Stage B pass remain live-only, not yet mirrored back -- a
+  pre-existing gap true of every zone's Harbor/egress rules, not
+  unique to media_seg, not addressed in this pass.)
+
 ## Deployment status (real infrastructure, beyond the 8 plan steps below)
 
 - **Stage A -- `terragrunt apply` for `media-stack-lab`: DONE 2026-09-04.**
