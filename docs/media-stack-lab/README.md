@@ -339,4 +339,33 @@ authoring or approving the next step.
   record of intent, already diverged from the real playbook since
   `media-lab-02`.
 - `media-lab-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started
-- `media-lab-07-bring-across-existing-users`: not started
+- `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
+  human login/history check still pending (operator).** Real correction
+  to the plan's literal commands: legacy (`192.168.1.6`, VMID 102) and
+  media-stack-lab (`192.168.80.10`, VMID 80010) are on **different
+  hosts/LXCs** -- the plan's original single `docker run` with two `-v`
+  mounts assumed same-host, which doesn't apply. Real sequence used: tar
+  legacy's `/config/jellyfin` (root, read-only, legacy never stopped) ->
+  `ansible fetch` to workstation -> `ansible copy` to media-stack-lab ->
+  stop `media-stack-lab-jellyfin` -> extract into the
+  `media-stack-lab_jellyfin-config` volume via a helper `alpine`
+  container -> restart. 2.4GB, checksum-verified at both hops.
+  **Version mismatch found and accepted as safe**: legacy runs Jellyfin
+  10.11.5, media-stack-lab runs 10.11.11 -- not an exact match as the
+  plan's literal gate asked for, but the safe direction (older config
+  into newer binary is Jellyfin's normal supported upgrade path;
+  operator confirmed proceeding rather than downgrading to pin an exact
+  match). Startup logs confirm: 3 DB migrations applied cleanly
+  (`AddNormalizedUsername`, `UpdateNormalizedUsername`,
+  `AddUniqueNormalizedUsernameIndex`), all 5 legacy plugins loaded
+  (TMDb, Studio Images, OMDb, MusicBrainz, AudioDB), and the real
+  library definitions carried across too (`/movies`, `/tv`, `/music`
+  all being watched -- confirms the whole config transferred, not just
+  users). `Startup complete 0:00:07`, zero errors. Legacy confirmed
+  still running normally afterward (`10.11.5` unchanged), never
+  stopped or written to. Temp tarballs cleaned up on both hosts.
+  **Still required per the plan's own mandatory gate**: log in to
+  media-stack-lab's Jellyfin as an existing user with their real
+  password and confirm watch history/continue-watching matches legacy
+  -- not done yet, this is a human check, not something to mark done
+  from the copy succeeding alone.
