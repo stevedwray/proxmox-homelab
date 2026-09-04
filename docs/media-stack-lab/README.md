@@ -1,11 +1,12 @@
 # media-stack-lab (planning workspace)
 
-Status: **deployed and live, fully hooked into Authentik + Traefik +
-DNS.** Stages A/B/C (Terraform, MikroTik, `provision.sh`) plus the
-edge/OIDC hookup are all done and verified live -- see Deployment
-status below. Only `media-lab-06` (Jellyfin's SSO plugin, a manual UI
-step) and `media-lab-07` (bring across legacy's existing users/watch
-history) remain. One combined stack --
+Status: **all 8 plan steps done.** Stages A/B/C (Terraform, MikroTik,
+`provision.sh`), the edge/OIDC hookup, the Jellyfin SSO plugin
+(automated, not manual UI after all), and legacy's config/users/watch
+history are all done -- see Deployment status below. Only a real
+browser-based SSO login test (`media-lab-06`) and the watch-history
+eyeball check (`media-lab-07`) remain, both needing the operator. One
+combined stack --
 Jellyfin + Immich together in a single new LXC --
 standing up **alongside** legacy `media-stack`, not replacing it
 destructively. Existing Jellyfin users/watch-history get brought across
