@@ -508,6 +508,20 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # /application/o/authorize/ reject every request as malformed (see
         # reconcile-authentik-edge.py's _oidc_provider_payload comment).
         return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) in (
+        ("media-stack-lab", "jellyfin"),
+        ("media-stack-lab", "immich"),
+    ):
+        # Same bug, found live again 2026-09-04: both were newly-created
+        # providers via this script (not pre-existing/patched), so both hit
+        # the identical create-time grant_types: [] default -- confirmed
+        # live via a real failed SSO login attempt (Authentik redirected to
+        # the callback with error=invalid_request, "the request is
+        # otherwise malformed"; GET on the provider showed grant_types: []).
+        # jellyfin-plugin-authentik and Immich's native OAuth both only use
+        # authorization_code (with PKCE for jellyfin), but matching the
+        # common baseline for consistency, same as opensearch/wazuh above.
+        return ("authorization_code", "client_credentials", "password")
     return ()
 
 
