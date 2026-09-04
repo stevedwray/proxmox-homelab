@@ -1,9 +1,9 @@
 {
   "oauth": {
     "enabled": true,
-    "issuerUrl": "https://{{ media_stack_lab_fqdn_authentik }}/application/o/immich/",
-    "clientId": "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_ID') }}",
-    "clientSecret": "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_SECRET') }}",
+    "issuerUrl": "{{ media_stack_lab_immich_issuer_url }}",
+    "clientId": "{{ media_stack_lab_immich_oauth_client_id }}",
+    "clientSecret": "{{ media_stack_lab_immich_oauth_client_secret }}",
     "scope": "openid email profile",
     "mobileOverrideEnabled": true,
     "mobileRedirectUri": "app.immich:///oauth-callback",

@@ -9,6 +9,11 @@
     media_stack_lab_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
     media_stack_lab_dir: "/opt/stacks/{{ stack_name }}"
     media_stack_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    media_stack_lab_immich_oauth_client_id: "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_ID') | default('immich', true) }}"
+    media_stack_lab_immich_oauth_client_secret: "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_SECRET') | mandatory('IMMICH_OAUTH_CLIENT_SECRET env var is not set') }}"
+    # Matches the reconciler's deterministic application slug: edge-<stack>-<route>
+    # (see discover-authentik-edge.py OIDC_ROUTE_CLIENT_IDS / _oidc_route_key).
+    media_stack_lab_immich_issuer_url: "https://{{ media_stack_lab_fqdn_authentik }}/application/o/edge-media-stack-lab-immich/"
 
   roles:
     - lxc_base
