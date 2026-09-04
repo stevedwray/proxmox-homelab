@@ -29,3 +29,18 @@ ansible_playbook: deploy-media-stack-lab
 deployment_tier: apps
 portainer_agent: true
 portainer_server_ip: "${lab_ip_portainer}"
+
+# Documentation/consistency only -- NOT applied by Terraform (bind-type
+# mount points are root@pam-only on Proxmox, same restriction as
+# device_passthrough/keyctl). These 3 were applied out-of-band via direct
+# root SSH `pct set` during the original Stage C deploy and the later
+# NAS-photos-library addition; confirmed live 2026-09-04 via
+# `pvesh get /nodes/pve/lxc/80010/config` (mp1/mp2/mp3). Real values, not
+# placeholders -- keep in sync if these ever change by hand again.
+host_bind_mounts:
+- host_path: /mnt/nas-media
+  lxc_path: /nas-media
+- host_path: /mnt/nas-media-ct80010/immich-photos
+  lxc_path: /nas-media/immich-photos
+- host_path: /mnt/nas-media-ct80010/pictures
+  lxc_path: /nas-media/pictures
