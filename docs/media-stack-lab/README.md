@@ -338,7 +338,50 @@ authoring or approving the next step.
   `playbook_content` intentionally left un-synced -- it's a historical
   record of intent, already diverged from the real playbook since
   `media-lab-02`.
-- `media-lab-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started
+- `media-lab-06-jellyfin-sso-plugin`: **done 2026-09-04, automated --
+  turned out NOT to be UI-only after all.** The plan's original premise
+  (confirmed by checking the plugin's own docs at the time) was that
+  this needed a manual UI click-through with no config-file or API
+  path. Re-verified against Jellyfin's real source this session and
+  found that's wrong: Jellyfin's core API has genuine, generic
+  endpoints for all of it -- `POST /Repositories` (add repo),
+  `POST /Packages/Installed/{name}?repositoryUrl=...` (install),
+  `POST /Plugins/{pluginId}/Configuration` (set config, works for any
+  plugin implementing standard config). Operator generated a Jellyfin
+  API key (Dashboard -> API Keys, the one unavoidable manual bootstrap
+  step -- same pattern as every other credential this session), added
+  to SOPS as `JELLYFIN_API_KEY`. Ran the sequence live: add repo ->
+  install plugin (`f4c1d2a3b5e647899abcdef012345678`, confirmed via
+  direct `curl` against the plugin's real manifest.json after an
+  earlier WebFetch-mediated read suspiciously returned the identical
+  value on a "verbatim" retry -- worth double-checking, turned out to
+  be correct) -> `docker restart media-stack-lab-jellyfin` (plugin
+  DLLs don't hot-load) -> confirmed `Status: Active` -> `POST
+  .../Configuration` with the real values.
+  **Two real gotchas found by reading `PluginConfiguration.cs` directly
+  instead of trusting the plan's original 3-field (URL/ID/secret)
+  instructions:**
+  - `ForceHttpsRedirect` (default `false`) must be `true` -- source
+    comment: without it "the callback URL will use http:// and cause a
+    redirect_uri mismatch in Authentik," which is exactly this
+    deployment's situation (Traefik terminates TLS, Jellyfin only sees
+    plain HTTP internally).
+  - `EnableGroupSync` (default `true`) syncs Authentik group membership
+    to Jellyfin admin rights every SSO login, gated by `AdminGroup`
+    (default `jellyfin-admins`) -- no such Authentik group exists
+    anywhere in this session's work. Left at default, the operator's
+    first SSO login as `steve` could have silently downgraded their
+    already-working local admin rights. Set `EnableGroupSync: false`
+    instead (and `AllowedGroup: ""`, since Authentik's own edge-level
+    OIDC gate on the route already restricts who reaches Jellyfin's
+    login at all) -- group-based permission sync is a future opt-in
+    once real Authentik groups exist for it, not now.
+  **Still needs a real browser-based login to fully verify** (I can
+  confirm the plugin is Active and correctly configured via API, but
+  not the actual OAuth redirect/callback round-trip) -- operator to
+  test logging in via Authentik as `steve` and confirm it lands on the
+  existing migrated account (not a fresh one), then the same for Glyn
+  once their Jellyfin/Authentik usernames match exactly.
 - `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
   human login/history check still pending (operator).** Real correction
   to the plan's literal commands: legacy (`192.168.1.6`, VMID 102) and
