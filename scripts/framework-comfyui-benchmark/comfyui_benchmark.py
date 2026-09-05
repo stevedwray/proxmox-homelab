@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import statistics
 import struct
 import subprocess  # nosec B404 -- fixed local administrative commands only

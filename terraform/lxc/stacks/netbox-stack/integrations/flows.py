@@ -18,11 +18,9 @@ Standalone usage:
 Called from populate.py to push the model to NetBox as a config context.
 """
 
-import glob
 import json
 import os
 import re
-import sys
 from pathlib import Path
 
 import yaml
