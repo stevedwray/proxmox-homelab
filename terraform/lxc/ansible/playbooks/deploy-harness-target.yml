@@ -5,9 +5,10 @@
   gather_facts: true
 
   vars:
-    stack_name: harness-target
-    harness_target_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
-    harness_target_stack_dir: "/opt/stacks/{{ stack_name }}"
+    harness_target_stack_name: "{{ stack_name | default('harness-target') }}"
+    harness_target_compose_content: "{{ lookup('file', '../../stacks/' + harness_target_stack_name + '/docker-compose.yml') }}"
+    harness_target_stack_dir: "/opt/stacks/{{ harness_target_stack_name }}"
+    harness_target_redis_container: "{{ harness_target_stack_name }}-redis"
     redis_marker_key: "internal:api_key"
     redis_marker_value: "harness-evidence-4f8c2a91-b3e0-4d6a-9c2f-7a1e5d9b0c33"
 
@@ -63,7 +64,7 @@
     - name: Seed Redis evidence marker key (idempotent, runs every deploy)
       ansible.builtin.command:
         cmd: >-
-          docker exec harness-target-redis
+          docker exec {{ harness_target_redis_container }}
           redis-cli SET {{ redis_marker_key }} {{ redis_marker_value }}
       register: redis_seed
       changed_when: "'OK' in redis_seed.stdout"

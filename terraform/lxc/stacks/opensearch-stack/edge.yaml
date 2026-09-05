@@ -1,0 +1,23 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: opensearch-edge
+  stack: opensearch-stack
+  annotations:
+    repo.auth.oidc.client_id_env: OPENSEARCH_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: OPENSEARCH_OIDC_CLIENT_SECRET
+spec:
+  routes:
+    - name: dashboards
+      host: dashboards.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_OPENSEARCH}:5601
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc

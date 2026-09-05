@@ -33,9 +33,9 @@ itself isn't a good fit for repeated automated runs.
 
 ## Infrastructure
 
-- Node: `pve-test-vm` (not `pve` — deliberately avoids production; see
-  `test-harness-design.md` for why Metasploitable2 itself turned out to
-  be on `pve`).
+- Normal node: `pve-test-vm`. The controlled PVE comparison uses the separate
+  `harness-target-pve` manifest at `192.168.70.12` in `pentest_seg` (VLAN 70),
+  never this legacy LAN-attached target.
 - Network: plain LAN bridge (`vmbr0`, untagged, `192.168.1.0/24`) via the
   `lan` attachment already defined in `terraform/lxc/network/pve-test-vm.yaml`
   — no SDN zone, no zone-membership file entries.

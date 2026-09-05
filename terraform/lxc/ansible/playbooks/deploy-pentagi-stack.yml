@@ -102,18 +102,31 @@
     pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('qwen3.6-35b-a3b-ud:q4_k_m', true) }}"
     pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text', true) }}"
 
-    # llama.cpp's own native multi-model router (llamacpp-router on
-    # framework.gibbsgreatly.xyz, port 8080) -- lets qwen3.6 (fast base
-    # agents) and gpt-oss-120b (stronger adviser model, per PentAGI's own
-    # recommended architecture) stay loaded concurrently as independent
-    # processes, unlike Ollama's OLLAMA_MAX_LOADED_MODELS which is only a
-    # soft ceiling: confirmed live 2026-07-28 that Ollama's own scheduler
-    # still evicted a model rather than risk a 3-model fit, even with the
-    # limit raised and keep-alive disabled. Model IDs are llama.cpp's own
-    # filename-derived names, not Ollama's tag format.
+    # llama.cpp's OpenAI-compatible router (llamacpp-router on
+    # framework.gibbsgreatly.xyz, port 8080). The active deployment uses
+    # Qwen3.6 for every role, including adviser; do not introduce a second
+    # adviser model merely because the router can serve one. Model IDs are
+    # llama.cpp's filename-derived names, not Ollama tag formats.
     pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
     pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
-    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('gpt-oss-120b', true) }}"
+    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
+    # The coding specialist can be evaluated independently.  Keep the
+    # default tied to the primary model so normal deployments remain a single
+    # model configuration; set this only for a controlled coder-role A/B run.
+    pentagi_llamacpp_coder_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_CODER_MODEL') | default(pentagi_llamacpp_primary_model, true) }}"
+    # Harness runs can remove the browser tool from every agent schema. This
+    # is intentionally opt-in: ordinary PentAGI operation retains scraper
+    # access, while a bounded terminal-only test cannot drift to public URLs.
+    pentagi_disable_browser: "{{ lookup('env', 'PENTAGI_DISABLE_BROWSER') | default('false', true) | bool }}"
+    # Normal flows preserve an explicit approval pause. Controlled harness
+    # flows can opt in to unattended execution after their tool surface and
+    # target have already been constrained by this deployment.
+    pentagi_ask_user: "{{ lookup('env', 'PENTAGI_ASK_USER') | default('true', true) | bool }}"
+    # Rebuilding and pushing the Kali worker changes a separate mutable
+    # Harbor artifact. Keep it out of ordinary PentAGI configuration/image
+    # rollouts; set PENTAGI_REBUILD_KALI_IMAGE=true only for an explicitly
+    # approved worker-image change.
+    pentagi_rebuild_kali_image: "{{ lookup('env', 'PENTAGI_REBUILD_KALI_IMAGE') | default('false', true) | bool }}"
 
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.
@@ -134,10 +147,12 @@
     # artifacts (e.g. "<parameter=cwd>") before they reach `sh -c`, since
     # upstream silently executes them as a shell command that then fails
     # with a syntax error invisible to the tool-call-fixer retry path.
-    # Built and pushed manually for now (docker build/push from the fork
-    # checkout, not yet wired into this playbook) -- same Harbor project
-    # as the bootsnap-safe Kali image below.
-    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed:latest"
+    # Immutable Harbor manifest captured from the live lab deployment on
+    # 2026-08-18. Do not change this to :latest: a new image must be
+    # validated, its registry manifest digest recorded, and then promoted
+    # here explicitly. It shares the Harbor project with the bootsnap-safe
+    # Kali image below.
+    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed@sha256:685f638482fa43139a08f46396e863cc3ebc585486f9184fc747d9292102c914"
 
     pentagi_runtime_images:
       - "{{ pentagi_fixed_image }}"
@@ -192,6 +207,7 @@
         status_code: 200
       register: pentagi_harbor_projects
       delegate_to: localhost
+      when: pentagi_rebuild_kali_image
 
     - name: Create 'pentagi' Harbor project (custom images, not a proxy-cache)
       ansible.builtin.uri:
@@ -205,7 +221,10 @@
           project_name: "{{ pentagi_kali_project_name }}"
           public: false
         status_code: 201
-      when: pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
+        - pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
       delegate_to: localhost
 
     - name: Write Dockerfile for bootsnap-safe Kali worker image
@@ -213,6 +232,7 @@
         path: "{{ pentagi_compose_dir }}/kali-fixed"
         state: directory
         mode: "0750"
+      when: pentagi_rebuild_kali_image
 
     - name: Write bootsnap-safe Kali worker Dockerfile
       ansible.builtin.copy:
@@ -221,6 +241,7 @@
         content: |
           FROM {{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
           RUN rm -f /usr/lib/llvm-18/build/Release /usr/lib/llvm-18/build/Debug+Asserts
+      when: pentagi_rebuild_kali_image
 
     # Dedicated, narrowly-scoped robot for this one push -- deliberately NOT
     # the shared 'robot$ci-runner' system-level robot that signature-gate.yml
@@ -265,6 +286,9 @@
       register: pentagi_kali_robot_create
       delegate_to: localhost
       no_log: true
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Display new pentagi push robot credentials -- store in SOPS for future runs
       ansible.builtin.debug:
@@ -274,7 +298,10 @@
           - "  PENTAGI_HARBOR_ROBOT_PASSWORD = {{ pentagi_kali_robot_create.json.secret }}"
           - "(username is deterministic: robot${{ pentagi_kali_project_name }}+kali-push)"
           - "This run uses the freshly-created secret directly; it will not be shown again."
-      when: pentagi_kali_robot_create.status == 201
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
+        - pentagi_kali_robot_create.status == 201
       delegate_to: localhost
 
     - name: Set effective pentagi push robot credentials
@@ -286,6 +313,9 @@
              else lookup('env', 'PENTAGI_HARBOR_ROBOT_PASSWORD') }}
       no_log: true
       delegate_to: localhost
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Log in to Harbor to push the custom Kali worker image
       community.docker.docker_login:
@@ -293,6 +323,9 @@
         username: "{{ pentagi_kali_robot_user }}"
         password: "{{ pentagi_kali_robot_password }}"
       no_log: true
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Build bootsnap-safe Kali worker image
       community.docker.docker_image_build:
@@ -300,10 +333,16 @@
         path: "{{ pentagi_compose_dir }}/kali-fixed"
         pull: true
         rebuild: always
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Push bootsnap-safe Kali worker image
       community.docker.docker_image_push:
         name: "{{ pentagi_kali_fixed_image }}"
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Verify the bootsnap symlink trap is actually gone
       ansible.builtin.command:
@@ -312,6 +351,9 @@
           "test ! -e /usr/lib/llvm-18/build/Release && test ! -e /usr/lib/llvm-18/build/Debug+Asserts && msfconsole --version"
       register: pentagi_kali_fixed_verify
       changed_when: false
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Placeholder custom provider config (unused -- bind-mount target must be a file, not auto-created dir)
       ansible.builtin.copy:
@@ -336,13 +378,10 @@
     # that was crowding out actual tool calls. generator/pentester/coder
     # keep more room and higher temperature since they need to plan and
     # construct non-trivial commands/exploits.
-    # Switched from Ollama to llama.cpp's native multi-model router
-    # (custom/OpenAI-compatible provider) 2026-07-28 -- see the
-    # pentagi_llamacpp_url comment above for why. The adviser role alone
-    # gets the stronger gpt-oss-120b model; every other role stays on the
-    # fast qwen3.6 base model, both loaded concurrently as independent
-    # llama.cpp processes with no shared-scheduler eviction risk between
-    # them.
+    # Switched from Ollama to llama.cpp's OpenAI-compatible provider on
+    # 2026-07-28. All roles use Qwen3.6 in the active deployment; the
+    # explicit adviser variable remains only to make any future, separately
+    # approved role experiment deliberate and visible in configuration.
     #
     # IMPORTANT: this file is only read at all if LLM_SERVER_CONFIG_PATH
     # is set to its in-container mount path -- confirmed live 2026-07-28
@@ -412,6 +451,9 @@
             top_p: 0.8
             n: 1
             max_tokens: 1500
+            extra_body:
+              chat_template_kwargs:
+                enable_thinking: false
 
           searcher:
             model: "{{ pentagi_llamacpp_primary_model }}"
@@ -428,7 +470,7 @@
             max_tokens: 8000
 
           coder:
-            model: "{{ pentagi_llamacpp_primary_model }}"
+            model: "{{ pentagi_llamacpp_coder_model }}"
             temperature: 0.1
             top_p: 0.8
             n: 1
@@ -519,7 +561,7 @@
                 - HTTP_CLIENT_TIMEOUT=${HTTP_CLIENT_TIMEOUT:-}
                 - TERMINAL_TOOL_TIMEOUT=${TERMINAL_TOOL_TIMEOUT:-}
                 - SCRAPER_PUBLIC_URL=${SCRAPER_PUBLIC_URL:-}
-                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL:-https://someuser:somepass@scraper/}
+                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL-https://someuser:somepass@scraper/}
                 - PUBLIC_URL=${PUBLIC_URL:-}
                 - SERVER_PORT=8443
                 - SERVER_HOST=0.0.0.0
@@ -702,7 +744,7 @@
           GVM_BRIDGE_URL=http://{{ pentagi_gvm_bridge_host }}:8010
 
           # Agent execution settings
-          ASK_USER=true
+          ASK_USER={{ pentagi_ask_user | lower }}
           ASSISTANT_USE_AGENTS=false
           EXECUTION_MONITOR_ENABLED=true
           EXECUTION_MONITOR_SAME_TOOL_LIMIT=5
@@ -711,6 +753,9 @@
           MAX_GENERAL_AGENT_TOOL_CALLS=100
           MAX_LIMITED_AGENT_TOOL_CALLS=20
           AGENT_PLANNING_STEP_ENABLED=true
+          # Empty is meaningful here: docker-compose's ${VAR-default} form
+          # preserves it and PentAGI then omits the browser tool entirely.
+          SCRAPER_PRIVATE_URL={{ '' if pentagi_disable_browser else 'https://someuser:somepass@scraper/' }}
 
           # Server -- Traefik terminates TLS externally (edge.yaml), so
           # PentAGI serves plain HTTP internally, matching every other web
@@ -772,21 +817,15 @@
       no_log: true
       register: pentagi_env_file
 
-    # force_source: true is required here -- community.docker.docker_image
-    # treats "an image already exists locally under this tag name" as
-    # satisfied and skips the actual pull, without checking whether the
-    # registry's current digest for that tag has changed. That's fine for
-    # dockerhub/quay upstream tags that rarely change, but pentagi-fixed
-    # and kali-linux-fixed are OUR OWN mutable :latest tags we repeatedly
-    # rebuild and push to the same name -- confirmed live: without this,
-    # a redeploy after pushing a new pentagi-fixed image silently kept
-    # running the stale one (local + running-container digest both still
-    # matched the previous push, despite this task reporting "ok").
+    # Force refresh only the PentAGI image. Supporting images use mutable
+    # upstream tags, so ordinary PentAGI rollouts must retain the already
+    # validated local copy (or pull it only if absent), not silently update
+    # pgvector, scraper, exporter, or cAdvisor as a side effect.
     - name: Pull PentAGI runtime images
       community.docker.docker_image:
         name: "{{ item }}"
         source: pull
-        force_source: true
+        force_source: "{{ item == pentagi_fixed_image }}"
       register: pentagi_image_pull
       retries: 5
       delay: 10

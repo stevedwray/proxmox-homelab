@@ -42,7 +42,10 @@ Important gaps:
 
 - `.github/agents/` and `.github/instructions/` are currently empty in the
   working tree even though deleted historical versions exist in git history.
-- There is no active `.github/prompts/` or `.github/skills/` structure yet.
+- ~~There is no active `.github/prompts/` or `.github/skills/` structure yet.~~
+  **Partially closed 2026-08-25**: `.github/prompts/plan-change.prompt.md`
+  and `.github/prompts/implement-step.prompt.md` now exist -- see Phase 2
+  below. `.github/skills/` is still empty.
 - There is no current MCP server configuration for Proxmox, MikroTik, Linux
   SSH, or Omada.
 - Omada support does not meaningfully exist in the repo today.
@@ -523,10 +526,31 @@ Goal: connect general project work to the existing bounded execution model.
 
 Deliverables:
 
-- `docs/agent-design/orchestration-model.md`
-- `docs/agent-design/step-packet-schema.md`
-- decision on when to use `.git/ai` state vs normal chat/prompt flow
-- refresh of old planner/executor/architect concepts in repo-neutral language
+- `docs/agent-design/orchestration-model.md` -- not yet written
+- ~~`docs/agent-design/step-packet-schema.md`~~ **done 2026-08-25** -- see
+  [step-packet-schema.md](step-packet-schema.md). Answers this phase's
+  "decision on when to use `.git/ai` state vs normal chat/prompt flow" item
+  directly: `.git/ai` stays reserved for large staged infra programs;
+  normal-sized work (a new stack, a fix, a feature) uses a plain
+  `docs/<workspace>/plan.md` with step blocks in the schema documented
+  there.
+- Two prompt files operationalize this split (the "refresh of old
+  planner/executor/architect concepts" this phase called for, done as
+  prompts rather than new personas, since the workflow they encode is a
+  repeatable task, not a role):
+  - `.github/prompts/plan-change.prompt.md` -- a strong/frontier model
+    turns a big open-ended question into a `docs/<workspace>/plan.md`
+    of bounded, gated steps.
+  - `.github/prompts/implement-step.prompt.md` -- a local model (Laguna,
+    via the `Repo Tools` agent) executes exactly one named step, runs its
+    gates, and stops. This is the concrete answer to "how do I work with
+    the local AI on a project like that" from `docs/coding-stack/`: the
+    big reasoning happens once, in `plan-change`; local execution only
+    ever sees pre-bounded, mechanical steps.
+  - First real use: `docs/immich-stack/plan.md` (see that workspace) --
+    written with `plan-change` and intended to be run step-by-step with
+    `implement-step` as the live test of whether this loop actually holds
+    together, not just a paper design.
 
 Definition of done:
 
@@ -735,8 +759,12 @@ without yet trusting agents to mutate routers or hypervisors.
 ## Decisions to Make Before Implementation
 
 1. Is VS Code/Copilot CLI the official first target surface?
-2. Do you want the old planner/executor/architect pattern revived as a general
-   repo workflow, or kept only for large staged programs?
+2. ~~Do you want the old planner/executor/architect pattern revived as a
+   general repo workflow, or kept only for large staged programs?~~
+   **Decided 2026-08-25**: kept only for large staged programs. General
+   work uses `plan-change`/`implement-step` (see Phase 2 and
+   `step-packet-schema.md`) instead of reviving those personas more
+   broadly.
 3. Should live infrastructure mutation be allowed from agents in Phase 1-4, or
    delayed until MCP and approval gates are in place?
 4. Do you want Omada in the first wave, or explicitly defer it until Proxmox and

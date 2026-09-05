@@ -20,11 +20,14 @@ memory: 4096
 swap: 2048
 rootfs_size: 20
 storage_profile: platform-default
-docker_storage_size: "20G"
+docker_storage_size: "40G"
 docker_mount:
   logical_name: docker-data
   path: /var/lib/docker
-  size: "20G"
+  # Grown 20G -> 40G 2026-08-17: filled to 95%/disk-quota-exceeded after
+  # ~2 weeks live -- real usage was legitimate GVM data (postgres findings
+  # DB + SCAP/CVE feed sync), not cruft; see docs/opensearch-stack/README.md.
+  size: "40G"
   backup_policy: include
   resize_control_plane: operational
   mutation_policy: grow-only
@@ -48,6 +51,15 @@ provides:
 ansible_playbook: "deploy-greenbone-stack"
 deployment_tier: ai
 portainer_agent: false
+
+# Findings ingestion (gvm_findings_ingest role) -- reads GVM/Greenbone
+# scan results via gvm-bridge's own already-authenticated GMP session
+# (a new /findings/all endpoint, not a second direct socket connection)
+# and bulk-indexes them into opensearch-stack. Fully independent of
+# gvm-bridge's existing PentAGI-facing endpoints, gvmd, and ospd-openvas.
+# See docs/opensearch-stack/README.md and docs/elasticsearch-stack/README.md
+# section 3.
+gvm_findings_ingest_enabled: true
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"

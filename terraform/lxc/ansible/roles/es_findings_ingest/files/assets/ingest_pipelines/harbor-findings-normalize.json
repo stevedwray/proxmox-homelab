@@ -1,0 +1,21 @@
+{
+  "description": "Normalize Harbor/Trivy finding documents at ingest time — stamps ingested_at, and defaults the human-assessment fields to explicit nulls when the sync script didn't already carry forward a prior assessment. Deliberately does NOT drop any severity level (unlike the GVM pipeline's threat=Log filter) — Harbor/Trivy findings don't have an equivalent purely-informational bucket, every row here is a real reported vulnerability.",
+  "processors": [
+    {
+      "set": {
+        "field": "ingested_at",
+        "value": "{{{_ingest.timestamp}}}"
+      }
+    },
+    {
+      "script": {
+        "description": "Default the human-assessment fields to explicit null only when absent -- equivalent to Elasticsearch's 'set value:null override:false', which OpenSearch's set processor rejects (its schema requires a non-null 'value'; confirmed live via _simulate, see project_opensearch_migration_status memory). Never overwrites a real value a downstream tool already wrote.",
+        "lang": "painless",
+        "source": "for (field in params.fields) { if (!ctx.containsKey(field)) { ctx.put(field, null); } }",
+        "params": {
+          "fields": ["severity_assessed", "assessed_reason", "assessed_by", "assessed_at"]
+        }
+      }
+    }
+  ]
+}

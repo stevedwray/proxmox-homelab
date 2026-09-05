@@ -1,0 +1,354 @@
+---
+- name: Remove scheduled ES findings ingest when not explicitly enabled
+  when: not (es_findings_ingest_enabled | bool)
+  block:
+    - name: Stop and disable es-findings-ingest timer
+      ansible.builtin.systemd:
+        name: es-findings-ingest.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop es-findings-ingest service if present
+      ansible.builtin.systemd:
+        name: es-findings-ingest.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove es-findings-ingest units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/es-findings-ingest.timer
+        - /etc/systemd/system/es-findings-ingest.service
+        - "{{ es_findings_ingest_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale es-findings-ingest service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed es-findings-ingest.service es-findings-ingest.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled ES findings ingest when explicitly enabled
+  when: es_findings_ingest_enabled | bool
+  block:
+    - name: Create es-findings-ingest directory
+      ansible.builtin.file:
+        path: "{{ es_findings_ingest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Create es-findings-ingest assets directory
+      ansible.builtin.file:
+        path: "{{ es_findings_ingest_dir }}/assets/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop:
+        - templates
+        - ingest_pipelines
+
+    - name: Copy es_setup_assets.py
+      ansible.builtin.copy:
+        src: es_setup_assets.py
+        dest: "{{ es_findings_ingest_dir }}/es_setup_assets.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy harbor_findings_sync.py
+      ansible.builtin.copy:
+        src: harbor_findings_sync.py
+        dest: "{{ es_findings_ingest_dir }}/harbor_findings_sync.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy index template assets
+      ansible.builtin.copy:
+        src: "assets/templates/{{ item }}"
+        dest: "{{ es_findings_ingest_dir }}/assets/templates/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - harbor-findings.json
+        - es-findings-sync-state.json
+
+    - name: Copy ingest pipeline assets
+      ansible.builtin.copy:
+        src: "assets/ingest_pipelines/{{ item }}"
+        dest: "{{ es_findings_ingest_dir }}/assets/ingest_pipelines/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - harbor-findings-normalize.json
+
+    # ---------------------------------------------------------------
+    # Read-only Harbor robot (system-level, repository:pull only) --
+    # fully independent of harbor_repull's own mirror-push robot and the
+    # shared CI robot. Same idempotent "unique name, credential file is
+    # the only existence check" shape harbor_repull's own robot task uses
+    # -- see that role's tasks/main.yml for the full rationale (Harbor's
+    # GET /robots doesn't reliably list project-scoped robots, so a fresh
+    # unique name each time sidesteps needing a trustworthy lookup).
+    # ---------------------------------------------------------------
+
+    - name: Check for existing Harbor robot credential
+      ansible.builtin.stat:
+        path: "{{ es_findings_ingest_dir }}/harbor-robot.env"
+      register: es_findings_ingest_harbor_credential_stat
+
+    - name: Generate a unique name for this role's Harbor robot
+      ansible.builtin.set_fact:
+        es_findings_ingest_harbor_robot_suffix: "{{ now(fmt='%s') }}-{{ 9999 | random }}"
+      when: not es_findings_ingest_harbor_credential_stat.stat.exists
+
+    - name: Check if the Harbor admin API is reachable before creating a robot
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_harbor_admin_host }}"
+        port: "{{ es_findings_ingest_harbor_admin_port }}"
+        timeout: 5
+      register: es_findings_ingest_harbor_reachable
+      ignore_errors: true
+      when: not es_findings_ingest_harbor_credential_stat.stat.exists
+
+    - name: Warn and skip Harbor robot creation when Harbor is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          Harbor admin API at {{ es_findings_ingest_harbor_admin_host }}:{{ es_findings_ingest_harbor_admin_port }}
+          is not reachable (timeout). Skipping es-findings-ingest robot creation --
+          re-run provision (or wait for the next scheduled run) once harbor-stack is reachable.
+      when:
+        - not es_findings_ingest_harbor_credential_stat.stat.exists
+        - es_findings_ingest_harbor_reachable.failed | default(true)
+
+    - name: Create system-level read-only Harbor robot for findings sync
+      ansible.builtin.uri:
+        url: "{{ es_findings_ingest_harbor_url }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ es_findings_ingest_harbor_admin_user }}"
+        url_password: "{{ es_findings_ingest_harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ es_findings_ingest_harbor_robot_name_prefix }}-{{ es_findings_ingest_harbor_robot_suffix }}"
+          description: "es_findings_ingest role (harbor-stack) -- read-only, pulls vulnerability reports into OpenSearch, never pushes/deletes"
+          duration: -1
+          level: "system"
+          permissions:
+            - kind: "project"
+              namespace: "*"
+              access:
+                - resource: "repository"
+                  action: "pull"
+        status_code: 201
+      register: es_findings_ingest_harbor_robot_create
+      when:
+        - not es_findings_ingest_harbor_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write Harbor robot credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/harbor-robot.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # es-findings-ingest Harbor robot credential - managed by Ansible, do not edit by hand
+          HARBOR_ROBOT_USER={{ es_findings_ingest_harbor_robot_create.json.name }}
+          HARBOR_ROBOT_PASSWORD={{ es_findings_ingest_harbor_robot_create.json.secret }}
+      when:
+        - not es_findings_ingest_harbor_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Scoped OpenSearch internal user -- limited to create_index/write/
+    # read on the findings indices, never the admin superuser. Bootstrapped
+    # once with the admin superuser credential, then only the scoped
+    # credential is ever used at runtime. Uses OpenSearch's security
+    # plugin REST API (_plugins/_security/api/roles, .../internalusers) --
+    # confirmed live these are normal always-on REST endpoints, unlike
+    # _plugins/_security/api/securityconfig which is disabled by default
+    # and needs securityadmin.sh instead (see
+    # project_opensearch_migration_status memory).
+    # ---------------------------------------------------------------
+
+    - name: Check for existing OpenSearch findings-writer credential
+      ansible.builtin.stat:
+        path: "{{ es_findings_ingest_dir }}/es-user.env"
+      register: es_findings_ingest_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning its scoped user
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: es_findings_ingest_es_reachable
+      ignore_errors: true
+      when: not es_findings_ingest_es_credential_stat.stat.exists
+
+    - name: Warn and skip OpenSearch user provisioning when it is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ es_findings_ingest_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping es-findings-ingest user creation --
+          re-run provision once opensearch-stack is reachable.
+      when:
+        - not es_findings_ingest_es_credential_stat.stat.exists
+        - es_findings_ingest_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the scoped OpenSearch user
+      ansible.builtin.set_fact:
+        es_findings_ingest_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not es_findings_ingest_es_credential_stat.stat.exists
+        - not (es_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure es_findings_writer role exists in OpenSearch
+      ansible.builtin.uri:
+        url: "{{ es_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ es_findings_ingest_es_role_name }}"
+        method: PUT
+        url_username: "{{ es_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ es_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not es_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            # No trailing hyphen before the wildcard -- the actual index
+            # name harbor_findings_sync.py writes to is the literal flat
+            # "harbor-findings" (see docs/opensearch-stack/README.md's
+            # storage model), which "harbor-findings-*" does NOT match
+            # (glob requires a literal "-" after "findings"). Confirmed
+            # live 2026-08-17: this exact mismatch caused every bulk
+            # upsert to 403 with "no permissions for [indices:admin/create]"
+            # even though the role listed create_index -- the pattern
+            # just never matched the index being written to. Also fixed
+            # in the harbor-findings.json index template's own
+            # index_patterns for the same reason.
+            - index_patterns:
+                - "harbor-findings*"
+                - "gvm-findings*"
+                - "es-findings-sync-state"
+              allowed_actions:
+                - "create_index"
+                - "write"
+                - "read"
+        status_code: [200, 201]
+      when:
+        - not es_findings_ingest_es_credential_stat.stat.exists
+        - not (es_findings_ingest_es_reachable.failed | default(true))
+      delegate_to: localhost
+
+    - name: Ensure scoped OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ es_findings_ingest_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ es_findings_ingest_es_user_name }}"
+        method: PUT
+        url_username: "{{ es_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ es_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not es_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ es_findings_ingest_es_password }}"
+          opendistro_security_roles:
+            - "{{ es_findings_ingest_es_role_name }}"
+          description: "es_findings_ingest service account (harbor-stack) -- never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not es_findings_ingest_es_credential_stat.stat.exists
+        - not (es_findings_ingest_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch findings-writer credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/es-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # es-findings-ingest OpenSearch user credential - managed by Ansible, do not edit by hand
+          ES_FINDINGS_USER={{ es_findings_ingest_es_user_name }}
+          ES_FINDINGS_PASSWORD={{ es_findings_ingest_es_password }}
+      when:
+        - not es_findings_ingest_es_credential_stat.stat.exists
+        - not (es_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Idempotent index template / ingest pipeline apply -- cheap
+    # GET-compare-PUT, safe (and expected) to run every deploy, same
+    # style as harbor_repull's own retention-policy task.
+    # ---------------------------------------------------------------
+
+    - name: Check if OpenSearch is reachable for asset setup
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: es_findings_ingest_es_reachable_for_assets
+      ignore_errors: true
+
+    - name: Apply OpenSearch index templates and ingest pipelines
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/python3 {{ es_findings_ingest_dir }}/es_setup_assets.py
+          --elasticsearch-url {{ es_findings_ingest_elasticsearch_url }}
+          --user {{ es_findings_ingest_elastic_admin_user }}
+          --password {{ es_findings_ingest_elastic_admin_password | quote }}
+          {{ '--no-verify-tls' if es_findings_ingest_es_no_verify_tls else '' }}
+          --apply
+      register: es_findings_ingest_setup_assets_result
+      changed_when: >-
+        'created' in es_findings_ingest_setup_assets_result.stdout
+        or 'updated' in es_findings_ingest_setup_assets_result.stdout
+      when: not (es_findings_ingest_es_reachable_for_assets.failed | default(true))
+      no_log: true
+
+    - name: Report asset setup skipped
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ es_findings_ingest_elasticsearch_host }}:9200 is not reachable --
+          skipped index template / ingest pipeline setup this run.
+      when: es_findings_ingest_es_reachable_for_assets.failed | default(true)
+
+    - name: Write es-findings-ingest systemd service
+      ansible.builtin.template:
+        src: es-findings-ingest.service.j2
+        dest: /etc/systemd/system/es-findings-ingest.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write es-findings-ingest systemd timer
+      ansible.builtin.template:
+        src: es-findings-ingest.timer.j2
+        dest: /etc/systemd/system/es-findings-ingest.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start es-findings-ingest timer
+      ansible.builtin.systemd:
+        name: es-findings-ingest.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

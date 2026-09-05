@@ -254,6 +254,12 @@ variable "lab_ip_mcp_utility" {
   default     = ""
 }
 
+variable "lab_ip_secpipe" {
+  description = "secpipe-stack (CVE correlation/enrichment) service IPv4 address (ai_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string

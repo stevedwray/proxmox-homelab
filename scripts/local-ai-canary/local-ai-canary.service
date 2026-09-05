@@ -1,0 +1,7 @@
+[Unit]
+Description=Run the local-ai-canary regression check once
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/git/proxmox-homelab/scripts/local-ai-canary/.venv/bin/python %h/git/proxmox-homelab/scripts/local-ai-canary/canary.py

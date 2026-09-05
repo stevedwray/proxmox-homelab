@@ -1,0 +1,152 @@
+---
+# Self-contained vanilla-upstream PentAGI deployment for the clean
+# `pentagi-stack` rebuild at 192.168.70.10. It uses the existing Traefik,
+# DNS, and Authentik route without changing any shared edge resource.
+#
+# The upstream Compose hardcodes its container names, so do not run this
+# alongside the patched `/opt/pentagi-stack` project on the same LXC.
+# A clean rebuilt LXC is the intended target for this playbook.
+#
+# Invoke directly against pentagi-stack's own inventory (there is no
+# separate stack.yaml/LXC for this companion):
+#   ansible-playbook \
+#     -i terraform/lxc/environments/pve/pentagi-stack/inventory.yml -u root \
+#     terraform/lxc/ansible/playbooks/deploy-pentagi-upstream-vanilla-companion.yml
+- name: Deploy vanilla-upstream PentAGI on pentagi-stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    vanilla_compose_dir: /opt/pentagi-upstream-vanilla
+    vanilla_upstream_ref: 879e87c2c2688c4a95eac9c1aaf3cd6f6123ebe3
+    # Ansible's pipe lookup removes the final newline even with rstrip=False;
+    # restore it so this file is byte-for-byte the upstream tracked object.
+    vanilla_compose_content: "{{ lookup('pipe', 'git -C /home/steve/git/pentagi show ' ~ vanilla_upstream_ref ~ ':docker-compose.yml') + '\n' }}"
+    vanilla_compose_sha256: 8dd61ae1a92096bea2477426043751f19471c844a5ed1094d957549056039063
+    vanilla_framework_host: framework.gibbsgreatly.xyz
+    vanilla_ollama_model: qwen3.6-35b-a3b-ud:q4_k_m
+    vanilla_embedding_model: nomic-embed-text
+    # Shared SOPS-backed secret. Upstream disables API-token creation when
+    # this is omitted and it falls back to the insecure literal "salt".
+    vanilla_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
+    vanilla_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+    docker_registry_host: "{{ vanilla_registry_host }}"
+    vanilla_cached_images:
+      - source: "{{ vanilla_registry_host }}/dockerhub/vxcontrol/pentagi@sha256:367439aa1fd7f6f4fe99961fe9e79c9ffd287a4380440b205552406d7f8bc89b"
+        target: vxcontrol/pentagi:latest
+      - source: "{{ vanilla_registry_host }}/dockerhub/vxcontrol/pgvector@sha256:09afd689127bdb42319a133b2ef7cd4318b7ebda58412644975d6eacd2367fb0"
+        target: vxcontrol/pgvector:latest
+      - source: "{{ vanilla_registry_host }}/dockerhub/vxcontrol/scraper@sha256:4a3b0f179ab29003313167877ee2f6ab74c89f3fcb1ce108e648ca1ffadc51b7"
+        target: vxcontrol/scraper:latest
+      - source: "{{ vanilla_registry_host }}/quay/prometheuscommunity/postgres-exporter@sha256:6999a7657e2f2fb0ca6ebf417213eebf6dc7d21b30708c622f6fcb11183a2bb0"
+        target: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {"max-size": "50m", "max-file": "7"}
+          }
+      notify: Restart Docker
+
+    - name: Flush Docker daemon configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create vanilla-upstream compose directory
+      ansible.builtin.file:
+        path: "{{ vanilla_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write verbatim upstream Docker Compose file
+      ansible.builtin.copy:
+        content: "{{ vanilla_compose_content }}"
+        dest: "{{ vanilla_compose_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write native Ollama-only vanilla configuration
+      ansible.builtin.copy:
+        dest: "{{ vanilla_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          OLLAMA_SERVER_URL=http://{{ vanilla_framework_host }}:11434
+          OLLAMA_SERVER_MODEL={{ vanilla_ollama_model }}
+          EMBEDDING_URL=http://{{ vanilla_framework_host }}:11434
+          EMBEDDING_MODEL={{ vanilla_embedding_model }}
+          EMBEDDING_PROVIDER=ollama
+          # Same IP:port pentagi-stack's own Traefik route already targets
+          # (this LXC's pentest_seg IP) so the route needs zero changes
+          # whichever compose project happens to be up.
+          PENTAGI_LISTEN_IP={{ ansible_host }}
+          PENTAGI_LISTEN_PORT=8443
+          SERVER_USE_SSL=false
+          COOKIE_SIGNING_SALT={{ vanilla_cookie_salt }}
+
+    - name: Pull upstream images through the Harbor proxy cache
+      ansible.builtin.command:
+        cmd: "docker pull {{ item.source }}"
+      register: vanilla_image_pull
+      changed_when: "'Downloaded newer image' in vanilla_image_pull.stdout or 'Pull complete' in vanilla_image_pull.stdout"
+      loop: "{{ vanilla_cached_images }}"
+
+    - name: Tag cached images with their upstream Compose names
+      ansible.builtin.command:
+        cmd: "docker tag {{ item.source }} {{ item.target }}"
+      changed_when: false
+      loop: "{{ vanilla_cached_images }}"
+
+    - name: Validate verbatim upstream Docker Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ vanilla_compose_dir }}"
+      changed_when: false
+
+    - name: Verify written Compose matches upstream reference
+      ansible.builtin.command:
+        cmd: sha256sum docker-compose.yml
+        chdir: "{{ vanilla_compose_dir }}"
+      register: vanilla_compose_sha256_check
+      changed_when: false
+      failed_when: "vanilla_compose_sha256_check.stdout.split()[0] != vanilla_compose_sha256"
+
+    - name: Verify requested Ollama model is visible from this LXC
+      ansible.builtin.uri:
+        url: "http://{{ vanilla_framework_host }}:11434/api/tags"
+        return_content: true
+      register: vanilla_ollama_tags
+      changed_when: false
+      failed_when: "vanilla_ollama_model not in vanilla_ollama_tags.content"
+
+    - name: Start vanilla-upstream PentAGI services
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ vanilla_compose_dir }}"
+      register: vanilla_compose_up
+      changed_when: >-
+        'Started' in vanilla_compose_up.stdout or 'Created' in vanilla_compose_up.stdout
+        or 'Recreated' in vanilla_compose_up.stdout
+
+    - name: Wait for vanilla-upstream PentAGI HTTP listener
+      ansible.builtin.wait_for:
+        # The upstream Compose binds the listener to the LXC address so the
+        # existing Traefik route can reach it; it is intentionally not on
+        # loopback.
+        host: "{{ ansible_host }}"
+        port: 8443
+        timeout: 180
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted

@@ -69,6 +69,10 @@
 
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS).
     greenbone_admin_password: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory('GREENBONE_ADMIN_PASSWORD env var is required') }}"
+    greenbone_steve_ssh_private_key: "{{ lookup('env', 'GREENBONE_STEVE_SSH_PRIVATE_KEY') | mandatory('GREENBONE_STEVE_SSH_PRIVATE_KEY env var is required') }}"
+    greenbone_openvas_workstation_ssh_private_key: "{{ lookup('env', 'GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY env var is required') }}"
+    greenbone_start_task_name: "{{ lookup('env', 'GREENBONE_START_TASK_NAME') | default('', true) }}"
+    greenbone_status_task_name: "{{ lookup('env', 'GREENBONE_STATUS_TASK_NAME') | default('', true) }}"
 
     # Per-user LDAP login via Authentik's existing LDAP outpost (same
     # instance graylog-stack already uses -- see
@@ -651,6 +655,15 @@
       changed_when: true
       no_log: true
       register: greenbone_ldap_enable
+      # Same gvmd-socket-not-ready race the "Set gvmd admin password" task
+      # above already guards against -- confirmed live 2026-08-17 (a full
+      # pull+build run left gvmd slower to bind /run/gvmd/gvmd.sock than
+      # usual): "ERROR:gvmtools.cli:Could not connect to socket
+      # /run/gvmd/gvmd.sock. Error was [Errno 111] Connection refused".
+      # This task never had the retry guard its sibling does; added here.
+      retries: 10
+      delay: 10
+      until: greenbone_ldap_enable is succeeded
 
     # gvmd requires a local user record to exist even for LDAP-authenticated
     # logins -- LDAP only supplies the password check, not the account
@@ -811,3 +824,97 @@
       no_log: true
       register: greenbone_schedule_setup
       tags: [schedule-program]
+
+    # First-pass credentialed scanning deliberately reuses SSH access that
+    # already exists on managed targets.  This tag only touches
+    # greenbone-stack: it does not deploy accounts, SSH keys, or sudo policy
+    # to any scanned host.  Stage the private keys as root-only files rather
+    # than command-line environment values, then remove them after GMP has
+    # created its encrypted credential objects.
+    - name: Create temporary directory for credential-program key files
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ greenbone_compose_dir }}"
+        prefix: .credential-program-
+      register: greenbone_credential_program_tempdir
+      no_log: true
+      tags: [credential-program]
+
+    - name: Run credential-program setup and remove temporary key files
+      block:
+        - name: Write credential-program setup script
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_credentials.py"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/setup_credentials.py"
+            mode: "0644"
+
+        - name: Write Steve SSH private key for credential-program
+          ansible.builtin.copy:
+            content: "{{ greenbone_steve_ssh_private_key }}"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/steve.key"
+            # gvm-tools runs as an unprivileged container UID. The parent
+            # tempfile directory is mode 0700 and root-owned on the host, so
+            # 0644 lets only the bind-mounted container process read it.
+            mode: "0644"
+          no_log: true
+
+        - name: Write workstation OpenVAS SSH private key for credential-program
+          ansible.builtin.copy:
+            content: "{{ greenbone_openvas_workstation_ssh_private_key }}"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key"
+            mode: "0644"
+          no_log: true
+
+        - name: Create credentialed targets and unscheduled tasks
+          ansible.builtin.command:
+            cmd: >-
+              docker compose run --rm --no-deps
+              -v {{ greenbone_credential_program_tempdir.path }}/setup_credentials.py:/tmp/setup_credentials.py:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
+              -e GVM_USERNAME
+              -e GVM_PASSWORD
+              -e GREENBONE_STEVE_KEY_PATH
+              -e GREENBONE_OPENVAS_WORKSTATION_KEY_PATH
+              -e GREENBONE_START_TASK_NAME
+              -e GREENBONE_STATUS_TASK_NAME
+              gvm-tools python3 /tmp/setup_credentials.py
+            chdir: "{{ greenbone_compose_dir }}"
+          environment:
+            GVM_USERNAME: admin
+            GVM_PASSWORD: "{{ greenbone_admin_password }}"
+            GREENBONE_STEVE_KEY_PATH: /tmp/steve.key
+            GREENBONE_OPENVAS_WORKSTATION_KEY_PATH: /tmp/openvas-workstation.key
+            GREENBONE_START_TASK_NAME: "{{ greenbone_start_task_name }}"
+            GREENBONE_STATUS_TASK_NAME: "{{ greenbone_status_task_name }}"
+          register: greenbone_credential_program_setup
+          changed_when: >-
+            'created credential' in greenbone_credential_program_setup.stdout
+            or 'created target' in greenbone_credential_program_setup.stdout
+            or 'created task' in greenbone_credential_program_setup.stdout
+            or 'started task' in greenbone_credential_program_setup.stdout
+          # All sensitive values are supplied in Ansible's environment, not
+          # the command string. Keep GMP stderr visible for safe diagnosis;
+          # the script itself never prints a key or password.
+      always:
+        - name: Remove temporary credential-program key files
+          ansible.builtin.file:
+            path: "{{ greenbone_credential_program_tempdir.path }}"
+            state: absent
+          no_log: true
+      tags: [credential-program]
+
+- name: Deploy findings ingestion (GVM -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new scoped OpenSearch user --
+  # does not touch gvmd, ospd-openvas, gvm-bridge's own compose service,
+  # or any credential/state those manage (gvm-bridge's own
+  # /findings/all endpoint is new code within its existing container,
+  # not a new service). Gated the same way es_findings_ingest is:
+  # explicit opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: gvm_findings_ingest
+      when: gvm_findings_ingest_enabled | default(false) | bool

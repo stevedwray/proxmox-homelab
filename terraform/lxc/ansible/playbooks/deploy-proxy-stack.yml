@@ -342,3 +342,14 @@
           }}
         remove_orphans: true
       when: not ansible_check_mode
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/proxy-stack
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent

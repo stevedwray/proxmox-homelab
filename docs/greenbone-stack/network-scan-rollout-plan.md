@@ -270,16 +270,32 @@ just because the local tool call was cancelled.
     potentially overlapping) is still unconfirmed — revisit if scheduled
     scans are still running when the next one is due to start.
 
-## Phase 3 — Credentialed scanning (decided 2026-08-16: deferred)
+## Phase 3 — Credentialed scanning (first pass: ready to apply, 2026-08-19)
 
-**Explicitly deferred, not just "not decided yet."** This rollout ships
-unauthenticated (network-visible findings only). Credentialed scanning
-(SSH creds for Linux/LXC hosts, a scoped read-only account — not root, not
-an existing admin credential) is a real follow-on phase, but only once the
-unauthenticated program is running cleanly and trusted — no target date.
-When it's picked up, it needs its own credential-provisioning design (new
-SOPS keys, per-asset-type credential scope) as its own pass, not an
-add-on to this plan.
+The first pass deliberately reuses SSH access that already exists; it does
+**not** provision users, keys, sudo policy, or SSH configuration on scan
+targets. It is intentionally a home-lab trade-off, recorded here rather than
+silently treating Greenbone as a holder of a new least-privilege identity.
+
+- `GREENBONE_STEVE_SSH_PRIVATE_KEY` (SOPS) authenticates as `root` to the
+  managed Debian services and `pve`, and as `ansible` to `argon-01` and
+  `argon-02` (which already have passwordless sudo).
+- `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY` (SOPS) authenticates as the
+  existing `openvas` user on the workstation. Its GUI-login visibility and
+  any sudo password are independent of SSH key authentication.
+- `setup_credentials.py`, invoked only with
+  `ANSIBLE_TAGS=credential-program`, creates named GVM SSH credentials plus
+  explicit, initially unscheduled `Full and fast` Targets/Tasks. Existing
+  CIDR Targets remain anonymous: a root credential must never be attached to
+  an entire subnet or to discovered unknown hosts.
+- The Asustor NAS is deliberately excluded until its ADM-managed SSH-key
+  credential has been separately imported into SOPS.
+
+`pve-test-vm` is powered down and out of scope, so this pass cannot use the
+normal test-hypervisor validation path. Do not apply it to `pve` without the
+standard production-mutation preflight and explicit operator approval. First
+run each credentialed Task manually; attach a schedule only after confirming
+that it authenticates and has acceptable impact.
 
 ## Phase 4 — Scheduling
 

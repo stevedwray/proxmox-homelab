@@ -1,0 +1,88 @@
+# LXC Provision Test Workspace
+
+Status: **kept as a durable worked example**, alongside `docs/media-stack-v2/`
+-- the second pass ran clean end to end and both real infrastructure
+mutations (`lxcprov-05-terragrunt-apply`, `lxcprov-06-provision`) were
+torn down afterward (`terragrunt destroy`, confirmed via `pct list` --
+VMID 99010 no longer exists on pve-test-vm). Nothing real is running;
+this workspace is kept for its plan shape and git history, not as a
+live stack.
+
+Tests the real target task class for this methodology: deploying a new
+LXC container and configuring a service on it via Ansible, end to end,
+one small step at a time. See
+`docs/agent-design/validation-methodology.md` for the general process
+this exercise established, and this workspace's own git history for
+the concrete blow-by-blow (a first pass that found two real gaps, a
+second pass that ran clean).
+
+**First pass found and fixed two real gaps**: a missing pair of steps
+(`lxcprov-04-create-environment-config`, `lxcprov-05-terragrunt-apply`
+-- `provision.sh` alone was never sufficient, it only runs the Ansible
+phase and needs `inventory.yml` from a real `terragrunt apply` first),
+and an imprecise gate on `lxcprov-06-provision` (`provision.sh` exits 0
+even when it silently skips a stack, so a bare exit-code gate couldn't
+catch that). Both are fixed in `plan.md`.
+
+**Second pass, run fresh from a clean slate after full teardown**, ran
+clean end to end -- every step's hand-back landed correctly on its own,
+no frontier intervention needed anywhere in execution. That's the real
+confirmation the fixes were sufficient.
+
+Everything through `lxcprov-04` is pure text authoring with zero
+infrastructure risk. `lxcprov-05-terragrunt-apply` is the first step
+that actually creates real infrastructure (a new LXC on pve-test-vm) --
+it waits for an explicit go-ahead beyond the normal hand-back flow, not
+just "the previous step's gate passed."
+
+The stack itself, `smoketest-stack`, was a single disposable nginx
+container -- no persistent data, nothing depended on it, safe to
+destroy at any point (and now fully torn down).
+
+## Step status
+
+- `lxcprov-00-preflight-check`: **done** (2026-08-26)
+  - Ran `grep -rl "vmid: 99010" terraform/lxc/stacks/*/stack.yaml` → exit code 1 (no matches, VMID free) ✅
+  - Ran `ping -c 2 -W 1 192.168.1.99` → 100% packet loss, exit code 1 (IP appears free) ✅
+  - No file changes made — this step only checks current state
+- `lxcprov-01-stack-request`: **done** (2026-08-26)
+  - Created `terraform/lxc/stacks/smoketest-stack/stack-request.yaml` with exact content from the plan: stack_yaml, compose_requirements, compose_forbidden, contract_facts, and playbook_content sections
+  - Gate `stack-request-exists`: ✅ Pass (exit code 0 — file exists)
+  - Gate `stack-request-parses`: ✅ Pass (exit code 0 — valid YAML)
+- `lxcprov-02-scaffold` (operator step, not run via `implement-step`): **done, authored directly by the frontier model, no OpenCode used** (2026-08-26) — created all 5 files (`stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`, `terraform/lxc/ansible/playbooks/deploy-smoketest-stack.yml`) from the literal values in `stack-request.yaml`, matching `terraform/lxc/stacks/harness-target/`'s real formats. Real validators both passed: `validate-compose.sh` and `ansible-playbook --syntax-check`.
+- `lxcprov-03-verify-generated-files`: **done** (2026-08-26)
+  - Compared all five scaffolded files against stack-request.yaml literal requirements:
+    - `docker-compose.yml`: image nginx:1.27-alpine ✅, port 80:80/tcp only ✅, no volumes ✅, container_name smoketest-stack-web ✅, restart unless-stopped ✅, single service ✅, no env vars ✅
+    - `stack.yaml`: vmid 99010 ✅, ip 192.168.1.99/24 ✅, all fields match stack-request.yaml ✅
+    - `STACK_CONTRACT.md`: matches contract_facts (vmbr0 zone, IP/gateway/VMID correct) ✅
+    - `terragrunt.hcl`: present and valid ✅
+    - `deploy-smoketest-stack.yml`: playbook content matches plan exactly ✅
+  - Gate `compose-parses`: ✅ Pass (exit code 0 — docker compose config succeeds; only a warning about obsolete version attribute, which is non-fatal)
+  - Gate `correct-image-pinned`: ✅ Pass (exit code 0 — nginx:1.27-alpine found)
+  - Gate `no-latest-tag`: ✅ Pass (exit code 0 — no latest tag found)
+  - Gate `no-volumes`: ✅ Pass (exit code 0 — no volumes block present)
+- `lxcprov-04-create-environment-config`: **done** (2026-08-26)
+  - Created `terraform/lxc/environments/pve-test-vm/smoketest-stack/terragrunt.hcl` with exact content copied verbatim from `harness-target/terragrunt.hcl` — fixed boilerplate: include "root", terraform source, inputs block (stack_name, stack_yaml_path, generated_dir)
+  - Fixed a missing trailing newline to make the file byte-identical to harness-target's version
+  - Gate `env-terragrunt-exists`: ✅ Pass (exit code 0 — file exists)
+  - Gate `matches-existing-pattern`: ✅ Pass (exit code 0 — diff shows identical content)
+- `lxcprov-05-terragrunt-apply`: **done** (2026-08-26)
+  - Confirmed target node: `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` → pve-test-vm ✅
+  - Ran `./with-secrets terragrunt --working-dir terraform/lxc/environments/pve-test-vm/smoketest-stack apply -auto-approve` — created real LXC container (VMID 99010, IP 192.168.1.99/24) on pve-test-vm
+  - Apply succeeded: 3 resources added (proxmox_virtual_environment_container.docker_host, terraform_data.container_epoch, local_file.ansible_inventory), exit code 0
+  - Container created in 54s with correct config: vmbr0 bridge, debian-13.1 template, 512MB RAM/256 swap, docker storage 2G
+  - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
+  - Gate `apply-exits-clean`: ✅ Pass (exit code 0 — Apply complete! Resources: 3 added)
+  - Gate `inventory-generated`: ✅ Pass (exit code 0 — inventory.yml exists)
+- `lxcprov-06-provision`: **done** (2026-08-26)
+  - Confirmed target node: `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` → pve-test-vm ✅
+  - Ran `./with-secrets scripts/provision.sh --stack smoketest-stack` — Ansible playbook executed successfully against the LXC container
+  - Playbook ran all roles (lxc_base, docker_base) and tasks: created stack dir, wrote docker-compose.yml, validated compose config, started nginx via `docker compose up -d`, waited for TCP port 80
+  - PLAY RECAP: ok=61 changed=32 unreachable=0 failed=0 skipped=8 — no failures ✅
+  - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
+  - Gate `provision-actually-ran-not-skipped`: ✅ Pass (exit code 0 — no "SKIP smoketest-stack:" found in output, provision actually ran)
+- `lxcprov-07-verify-service`: **done** (2026-08-26)
+  - Ran `curl -s http://192.168.1.99/` — nginx responded with full default welcome page HTML ✅
+  - Output confirmed: `<title>Welcome to nginx!</title>` and `<h1>Welcome to nginx!</h1>` present in response body
+  - Gate `nginx-responds`: ✅ Pass (exit code 0 — grep found 'Welcome to nginx' in curl output)
+- `lxcprov-08-teardown` (operator step, not run via `implement-step`): **done** (2026-08-26) — ran `terragrunt destroy` against `terraform/lxc/environments/pve-test-vm/smoketest-stack` (3 resources destroyed), confirmed via `pct list` that VMID 99010 no longer exists on pve-test-vm, then removed all tracked generated files (`terraform/lxc/stacks/smoketest-stack/`, `terraform/lxc/environments/pve-test-vm/smoketest-stack/`, `terraform/lxc/ansible/playbooks/deploy-smoketest-stack.yml`). `stack-request.yaml` and `docs/agent-design/lxc-provision-test/` themselves are kept, per operator's choice, as a durable worked example.

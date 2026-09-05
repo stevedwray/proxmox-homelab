@@ -45,6 +45,8 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("portainer-stack", "portainer"): ("PORTAINER_OAUTH_CLIENT_ID", "portainer"),
     ("technitium-stack", "technitium"): ("TECHNITIUM_OIDC_CLIENT_ID", "technitium"),
     ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
+    ("opensearch-stack", "dashboards"): ("OPENSEARCH_OIDC_CLIENT_ID", "opensearch-dashboards"),
+    ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -52,6 +54,8 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("portainer-stack", "portainer"): "PORTAINER_OAUTH_CLIENT_SECRET",
     ("technitium-stack", "technitium"): "TECHNITIUM_OIDC_CLIENT_SECRET",
     ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
+    ("opensearch-stack", "dashboards"): "OPENSEARCH_OIDC_CLIENT_SECRET",
+    ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
 }
 
 
@@ -461,6 +465,41 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/sso/callback",)
     if _oidc_route_key(intent) == ("ai-services-stack", "openwebui"):
         return (f"{base_url}/oauth/oidc/callback",)
+    if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
+        # OpenSearch Dashboards' security plugin builds its OIDC redirect_uri
+        # as base_redirect_url + this fixed suffix (base_redirect_url is the
+        # bare public URL, same convention as every other stack here).
+        return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Wazuh's dashboard forks OpenSearch Dashboards' same security
+        # plugin, so it builds its redirect_uri the same way. Real bug
+        # found live 2026-08-29: this entry was missing on first deploy --
+        # the created provider got redirect_uris: [] and Authentik's
+        # /application/o/authorize/ rejected the real login with a
+        # "Redirect URI Error", confirmed via the actual browser flow.
+        return (f"{base_url}/auth/openid/login",)
+    return ()
+
+
+def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
+    # Deliberately narrow: only routes listed here get grant_types set in
+    # the provider payload at all (see _oidc_provider_payload's comment in
+    # reconcile-authentik-edge.py for why leaving it unset elsewhere is
+    # required, not just simpler).
+    if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
+        # Matches the common baseline already used by 6 of the other
+        # providers in this Authentik instance. authorization_code is all
+        # this route's real login flow needs; client_credentials/password
+        # included only for parity with that existing baseline.
+        return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Same reasoning as opensearch-stack/dashboards immediately above --
+        # same underlying plugin, same requirement. Real bug found live
+        # 2026-08-29: this entry was missing, so the created provider got
+        # Authentik's create-time default grant_types: [], which makes
+        # /application/o/authorize/ reject every request as malformed (see
+        # reconcile-authentik-edge.py's _oidc_provider_payload comment).
+        return ("authorization_code", "client_credentials", "password")
     return ()
 
 

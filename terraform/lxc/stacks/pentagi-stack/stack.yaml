@@ -35,7 +35,10 @@ provides:
   - service: pentagi-http
     port: 8443
     protocol: tcp
-ansible_playbook: "deploy-pentagi-stack"
+# The current clean-room investigation deploys only the pinned, unmodified
+# upstream control. Restore deploy-pentagi-stack only after the upstream
+# worker-container lifecycle result has been captured.
+ansible_playbook: "deploy-pentagi-upstream-vanilla-companion"
 deployment_tier: ai
 portainer_agent: false
 

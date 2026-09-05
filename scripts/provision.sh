@@ -351,6 +351,18 @@ HARBOR_REPULL_KEYS = (
     "harbor_repull_enabled",
 )
 
+ES_FINDINGS_INGEST_KEYS = (
+    "es_findings_ingest_enabled",
+)
+
+GVM_FINDINGS_INGEST_KEYS = (
+    "gvm_findings_ingest_enabled",
+)
+
+CVE_ENRICHMENT_SYNC_KEYS = (
+    "cve_enrichment_sync_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -410,6 +422,18 @@ for key in PORTAINER_MIGRATION_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in HARBOR_REPULL_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in ES_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in GVM_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in CVE_ENRICHMENT_SYNC_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
@@ -582,6 +606,16 @@ provision_stack() {
 
   ensure_portainer_oauth_secret "$stack"
 
+  # dns-stack (CoreDNS) is frozen/rollback-only post-Technitium-cutover
+  # (docs/dns-refactor/plan.md Phase 6a). It stays deployed and answering
+  # queries as a manual rollback target, but is no longer part of the
+  # routine provisioning/reconciliation path -- no automatic zone
+  # regeneration, no automatic redeploy.
+  if [[ "$stack" == "dns-stack" ]]; then
+    log "SKIP ${stack}: frozen/rollback-only since the Technitium cutover (docs/dns-refactor/plan.md Phase 6a) -- no longer part of the routine provisioning path. Deploy manually via ansible-playbook if you specifically need to touch the rollback container."
+    return 0
+  fi
+
   if [[ ! -f "$inventory_file" ]]; then
     log "SKIP ${stack}: inventory file not found (${inventory_file})"
     return 0
@@ -614,24 +648,6 @@ provision_stack() {
   # is always deployed for real now, on every environment.
   if [[ "$stack" == "graylog-stack" ]]; then
     cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
-  fi
-
-  # Always regenerate zone from EdgeManifests before deploying dns-stack so the
-  # live zone is never stale with respect to declared routes.
-  if [[ "$stack" == "dns-stack" ]]; then
-    local generated_zone
-    if [[ -n "${PVE_ENV:-}" ]]; then
-      generated_zone="${ENV_ROOT}/.generated/coredns/coredns-lab.zone"
-    else
-      generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
-    fi
-    mkdir -p "$(dirname "$generated_zone")"
-    log "Regenerating CoreDNS zone from EdgeManifests"
-    python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
-      --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
-      --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
-      --output-zone "$generated_zone"
-    cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
   fi
 
   if [[ "$stack" == "technitium-stack" ]]; then

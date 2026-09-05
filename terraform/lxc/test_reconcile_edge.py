@@ -96,7 +96,8 @@ class TestReconcileEdge(unittest.TestCase):
         self.assertEqual([], result["manifests"])
         self.assertFalse(result["authentik"]["required"])
         self.assertEqual(0, result["traefik"]["stack_count"])
-        self.assertEqual(0, result["coredns"]["generated_record_count"])
+        self.assertIsNone(result["coredns"])
+        self.assertEqual(0, result["technitium"]["generated_record_count"])
 
     def test_intended_replacement_host_allows_migration_collision(self):
         with tempfile.TemporaryDirectory() as tmpdir:

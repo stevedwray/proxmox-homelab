@@ -11,6 +11,16 @@ dedicated `ai_seg` LXC. See `docs/ai-services-migration/plan.md` for the
 full migration design and why this is a rewrite of the old, stale
 `pve-framework`-era `stack.yaml`, not a reuse of it.
 
+Also runs `ollama-reliability-proxy` (added 2026-08-25, see
+`docs/coding-stack/plan.md` Phase 6) — a small stdlib-only Python proxy
+between any Ollama consumer and `framework:11434`, protecting against
+this project's own documented, repeated Ollama corruption bugs. Started
+as a per-workstation process for VS Code Copilot specifically, then
+deliberately centralized here so `OpenWebUI` (this stack's own Ollama
+consumer) benefits too, not just an external client. Source lives at
+`scripts/ollama-reliability-proxy/proxy.py` in this repo, copied in by
+this stack's own playbook — no separate build step.
+
 ## Network
 
 | Field        | Value                    |
@@ -56,6 +66,7 @@ hosts — not sufficient here):
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
+| `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
 
 SearXNG itself is intentionally unrouted — no public Traefik entry, LAN
 (in-LXC compose network) reachable only, no auth, matching the LM
@@ -100,6 +111,20 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   to it is a wider network surface, not a new auth gap — it was already
   reachable unauthenticated on the flat LAN. Don't treat `LLM_GPU_STACK_API_KEY`
   on this route as real access control.
+- **The "Verify OpenWebUI can discover models from all managed LLM
+  routes" task's hard/soft requirement is reversed from how it reads at
+  first glance.** Originally (2026-08-02) llamacpp was the one hard
+  requirement, Ollama/LM Studio were soft/warning-only, reflecting which
+  backend was actually in use then. **As of 2026-08-25 this is flipped:
+  Ollama is the actively-used backend (Laguna), llamacpp/LM Studio are
+  kept fully configured (not removed — may come back into use later) but
+  are soft/warning-only now.** This wasn't theoretical: `llamacpp-router`
+  turning out to be genuinely down on `framework` (confirmed via a direct
+  connection-refused test, not assumed) failed this exact task under the
+  old hard-requirement logic on 2026-08-25, for a reason completely
+  unrelated to whatever change actually triggered that deploy. Don't flip
+  this back to "llamacpp is hard" without first confirming it's actually
+  the backend in active use again.
 - **`OPENWEBUI_WEBUI_SECRET_KEY` must stay the value already in live use**,
   not be rotated as part of this migration — rotating it would silently
   invalidate every session in the migrated database.

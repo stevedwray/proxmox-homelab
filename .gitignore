@@ -123,3 +123,6 @@ cosign.key
 /artifacts/
 .tmp/
 certs/homelab-root.pve-test-vm.crt
+
+# local-ai-canary's own venv (workstation-local tooling, not committed)
+/scripts/local-ai-canary/.venv/

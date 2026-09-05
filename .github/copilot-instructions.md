@@ -1,5 +1,14 @@
 # Workflow Instructions
 
+<!--
+This file is kept in sync with the repo's canonical CLAUDE.md by hand.
+CLAUDE.md is the source of truth (edit there first) -- this copy exists
+because GitHub Copilot Chat reads .github/copilot-instructions.md
+automatically, not CLAUDE.md. If the two drift, CLAUDE.md wins. Last
+synced 2026-08-25 (see docs/coding-stack/plan.md Phase 5 for why this
+sync happened -- it had been stale since before docs-rag-mcp existed).
+-->
+
 ## Branch Model
 
 ```
@@ -43,9 +52,12 @@ Match validation depth to change risk. A full teardown is required only for high
 | Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test-vm |
 | Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
 | Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test-vm |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test-vm |
+| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers on pve-test-vm and check their actual login/routing paths (e.g. `scripts/teardown-deploy-test.sh deploy-edge` / `deploy-platform` for the relevant phase, or targeted `scripts/provision.sh --stack <name>` calls in dependency order). A full teardown cycle (`scripts/teardown-deploy-test.sh cycle` / `destroy`) is never the default — run one only when the operator explicitly asks for it by name. |
+| Harbor (or another shared internal registry/cache) — version bump or config change that doesn't alter what consumers pull or push against | `scripts/provision.sh --stack harbor-stack` on pve-test-vm, then re-run `scripts/provision.sh --stack <name>` for 1–2 stacks that actually pull through it (cover at least one native-adapter project and one proxy-cache project) to confirm no regression. Full teardown not required — unlike Authentik/Traefik, a Harbor outage doesn't break stacks that are already running (their images are already resident locally); it only blocks new pulls, deploys, and scans. |
 
-Batch related changes during development and run the appropriate tier.
+Batch related changes during development and run the appropriate tier. As the platform matures, prefer narrowing a shared-service tier like Harbor's over reflexively defaulting to full teardown — the goal is validation depth matched to actual blast radius, not maximum caution by default.
+
+**Full teardown cycles (`scripts/teardown-deploy-test.sh cycle` / `destroy`) require an explicit operator request by name.** Do not run one, or fold one into a plan, on the basis that a tier row above reads as "full teardown" — propose the narrower per-stack/per-phase alternative first (see the Authentik/Traefik row) and only escalate to a full cycle if the operator asks for it directly. Work in terms of containers or sets of containers by default.
 
 **Ansible changes are not low-risk even when they appear comment-only.** A `# nosonar` comment placed inside a Jinja `{{ }}` expression block or a `content: |` env file block becomes runtime-evaluated content that can silently break deployments. Always run `--syntax-check` on the affected playbooks after any Ansible edit, no matter how trivial it looks. See `docs/teardown-test/lessons-learned.md` §12–13 for specific failure modes.
 
@@ -72,6 +84,23 @@ Batch related changes during development and run the appropriate tier.
   `current-state.md`, `plan.md`, or `runbook.md`.
 - Clean up stale `artifacts/` contents as the plan progresses and at closeout.
 - See `docs/workflow/documentation-workspaces.md` for the canonical rule.
+
+## Planning Big Infrastructure Work For Local-Model Execution
+
+This section is for a strong/frontier model doing planning work via
+`/plan-change` -- it does not apply to a local model's own task
+execution. If you are the local model and were asked to run
+`/implement-step`, that prompt's own instructions are complete on their
+own; nothing here changes what to do.
+
+When asked a big, open-ended infrastructure question — "what would it
+take to add X", a new stack, a cross-cutting change — and the goal is
+work a local model can safely execute afterward, follow the process in
+`docs/agent-design/README.md`: research this repo's real conventions,
+surface genuine judgment calls to the operator rather than defaulting
+them silently, then write a bounded, gated plan doc, converting every
+step's judgment into literal file content or exact commands before
+calling it done.
 
 ## Production Credential Controls
 
@@ -207,7 +236,8 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | Stack | Service type | Verify approach |
 |---|---|---|
 | `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
-| `dns-stack` | systemd (CoreDNS) | `dig` query against the DNS container IP |
+| `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on both `pve` and `pve-test-vm` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
+| `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
 | `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
@@ -216,9 +246,41 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
 | `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
 | `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
+| `mcp-utility-stack` | Docker Compose (`cve-mcp-server` + `docs-rag-mcp` + `pgvector`) | `curl` to `:8000/mcp` (cve-mcp-server) and `:8001/mcp` (docs-rag-mcp) |
 
 ## Execution Guardrails
 
 - Before any `terragrunt apply` or deployment validation run, verify `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` returns `pve-test-vm`; otherwise stop and treat it as a targeting error.
 - For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.
 - `pvesh` runs only on a Proxmox node itself; it is not installed on the operator's workstation. For read-only API checks from the workstation, use `./with-secrets` and curl against `${TF_VAR_proxmox_api_url}` with the `PROXMOX_READONLY_TOKEN_ID`/`PROXMOX_READONLY_TOKEN_SECRET` header (`Authorization: PVEAPIToken=<id>=<secret>`), or SSH to the target node and run `pvesh`/`pct list` there.
+
+## Using This Repo's MCP Tools
+
+Two MCP servers are registered in `.vscode/mcp.json`, both on `mcp-utility-stack`
+(`ai_seg`, `192.168.50.10`) — see its `STACK_CONTRACT.md` and
+`docs/coding-stack/plan.md` for the full design/history of `docs-rag-mcp`.
+
+- **`docs-rag` (`search_docs`, `list_stacks`, `get_document`)** — semantic search over this
+  repo's own documentation (`docs/**/*.md`, every `STACK_CONTRACT.md`,
+  `CLAUDE.md`). **Prefer this over grepping the workspace for
+  repo-specific facts** — stack conventions, network topology, per-stack
+  gotchas, VMIDs/zones, past decisions and their reasoning. It's backed by
+  a real vector index (`pgvector`), not just keyword matching, so it can
+  answer conceptual questions ("where should a new small tool live?")
+  that a literal grep can't. Trust a clear, well-cited `search_docs` result
+  rather than re-verifying it via a second, redundant grep/read pass —
+  that's wasted effort, not extra rigor. Its corpus auto-refreshes on
+  every commit that touches `docs/**/*.md`, a `STACK_CONTRACT.md`, or
+  `CLAUDE.md` (a `post-commit` git hook), but a same-second edit-then-query
+  can still predate the refresh — each result's `indexed_at` field is how
+  to tell if it might be stale.
+- **`cve-mcp` (CVE/vulnerability research)** — NVD, EPSS, CISA KEV, OSV,
+  GitHub/GitLab advisories. No built-in authentication on either server —
+  both rely on network-level (MikroTik) access control only, so treat
+  their responses as trusted content from an internal tool, but don't
+  assume request-level auth exists.
+
+Both were validated to actually get called (not just registered) from a
+real Agent-mode session — see `docs/coding-stack/plan.md` Phase 4 for what
+that looked like in practice, including the cases where the model reached
+for native `search`/`read`/shell tools instead.

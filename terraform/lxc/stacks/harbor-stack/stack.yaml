@@ -60,14 +60,15 @@ docker_socket_proxy_listen_port: 2375
 docker_socket_proxy_targets:
   - "${lab_ip_harbor}"
 
+# Findings ingestion (es_findings_ingest role) — reads Harbor's own
+# vulnerability scan reports via a dedicated read-only robot and
+# bulk-indexes them into opensearch-stack (infra_seg, same zone, no
+# cross-zone rule needed). Fully independent of harbor_repull (that role
+# runs on ci-runner-01, not this host) and of harbor_postconfigure — see
+# docs/opensearch-stack/README.md.
+es_findings_ingest_enabled: true
+
 # Deployment
 ansible_playbook: "deploy-harbor-stack"
 deployment_tier: platform
 portainer_agent: false
-
-# Docker socket proxy — read-only Docker API endpoint for NetBox discovery
-enable_docker_socket_proxy: true
-docker_socket_proxy_bind_addr: "${lab_ip_harbor}"
-docker_socket_proxy_listen_port: 2375
-docker_socket_proxy_targets:
-  - "${lab_ip_harbor}"

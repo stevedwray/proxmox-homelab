@@ -63,6 +63,20 @@ These are declared in `variables.tf` and may be overridden per environment:
 `main.tf` → `templates/inventory.tpl` as generated host vars. Stacks can override
 them in `stack.yaml` if a stack needs a non-default upstream.
 
+**`registry_host` (this IP) is not what a stack's own deploy playbook
+should use for `docker login`/image pulls.** Every existing playbook that
+actually authenticates to Harbor (`deploy-graylog-stack.yml`,
+`deploy-harbor-stack.yml`, `deploy-portainer-stack.yml`,
+`deploy-netbox-stack.yml`, `deploy-greenbone-stack.yml`, and others) uses
+a separate `LAB_FQDN_HARBOR` env var (`harbor.${LAB_DOMAIN}`) instead —
+confirmed live 2026-08-17: `docker login` against the bare IP fails
+(Harbor's token service redirects to HTTPS:443, which the raw IP has no
+valid cert for and refuses), while the FQDN succeeds because it routes
+through Traefik's real TLS termination. When writing a new playbook,
+copy an existing one's `*_registry_host`/`LAB_FQDN_HARBOR` pattern
+directly rather than reusing `registry_host`/`LAB_IP_HARBOR` for this
+purpose, even though the naming makes them look interchangeable.
+
 The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 `templates/inventory.tpl` as host vars so playbooks pick them up automatically.
 

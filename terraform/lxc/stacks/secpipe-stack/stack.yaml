@@ -1,0 +1,55 @@
+# secpipe-stack — CVE correlation/enrichment pipeline. ai_seg zone, same
+# zone as mcp-utility-stack (its main dependency) so the CVE-MCP calls
+# (the hot path) need no cross-zone firewall rule. See
+# docs/threat-vuln-platform/plan.md for the full design.
+#
+# Pure Python + systemd-timer host, no Docker service to speak of (same
+# shape as harbor_findings_sync.py/gvm_findings_sync.py's own execution
+# model). The lxc-docker-host module always provisions a /var/lib/docker
+# mount regardless (20G default) -- explicitly sized down to 5G here,
+# matching mcp-utility-stack's own precedent for a lightweight utility
+# stack with no real Docker workload, rather than leaving the 20G default
+# reserved for nothing.
+hostname: secpipe-stack
+ip_address: "${lab_ip_secpipe}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+network:
+  zone: ai_seg
+vmid: 50012
+cores: 2
+memory: 1024
+swap: 512
+rootfs_size: 10
+storage_profile: platform-default
+docker_storage_size: "5G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "5G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - security
+  - cve
+  - threat-intel
+  - opensearch
+depends_on:
+  - apt-cacher-stack
+provides: []
+ansible_playbook: "deploy-secpipe-stack"
+deployment_tier: platform
+portainer_agent: false
+
+# Environment-selected service IPs
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# cve_enrichment_sync (role) -- reads harbor-findings/gvm-findings from
+# opensearch-stack, calls cve-mcp-server (mcp-utility-stack, same zone)
+# for CVSS/EPSS/KEV/PoC triage, calls an LLM (Anthropic/OpenAI for now --
+# the local LLM is occupied with benchmarking, see plan.md) for a risk
+# narrative, and writes results into unified-cve-exposure plus back onto
+# each finding's own severity_assessed/* fields.
+cve_enrichment_sync_enabled: true

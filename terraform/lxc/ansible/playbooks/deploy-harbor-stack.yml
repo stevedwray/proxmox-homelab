@@ -261,3 +261,30 @@
             if (harbor_daemon_config.changed or harbor_cadvisor_compose_definition.changed)
             else 'auto'
           }}
+
+- name: Deploy findings ingestion (Harbor -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new dedicated Harbor robot +
+  # OpenSearch user -- does not touch harbor_installer, harbor_postconfigure,
+  # cAdvisor, or any credential/state either of those manage. Fully
+  # independent of harbor_repull too (that role runs on ci-runner-01, a
+  # different host entirely -- see terraform/lxc/ansible/playbooks/deploy-ci-runner.yml).
+  # Gated the same way docker_socket_proxy/harbor_repull are: explicit opt-in
+  # via a stack.yaml flag, off by default.
+  roles:
+    - role: es_findings_ingest
+      when: es_findings_ingest_enabled | default(false) | bool
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/harbor/harbor
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
