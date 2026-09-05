@@ -1,5 +1,10 @@
 # PentAGI on Proxmox — Debian LXC Deployment Plan
 
+**DEPRECATED, 2026-09-06 — per operator decision, PentAGI is no longer in use
+and is not supported in this lab.** See [README.md](README.md) for current
+status. The plan below is preserved as a historical record, not a guide for
+new work.
+
 A phased implementation plan for running PentAGI as a semi-productionised service in a Debian LXC on `pve-test-vm`, driving local Ollama and SearXNG services on `framework.gibbsgreatly.xyz` (the Framework Desktop — bare-metal Ubuntu 26, not Proxmox; see `docs/framework-ubuntu/plan.md` §0), and exposing the PentAGI web UI to the LAN.
 
 **Target host for this build: `pve-test-vm`**, not `pve`. `pve-test-vm` is not a production node (`terraform/PRODUCTION_NODES` lists only `pve` and `pve-framework`), so this work uses the normal `./with-secrets` path — no `TASK_APPROVAL`/production-approval flow applies here. Promotion past `stable` onto a production node is a separate, later decision, gated the normal way per `CLAUDE.md`'s branch model.

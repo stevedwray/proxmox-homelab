@@ -1,0 +1,76 @@
+hostname: media-stack-lab
+ip_address: 192.168.80.10/24
+gateway: 192.168.80.1
+dns_server: 192.168.80.1
+network:
+  zone: media_seg
+vmid: 80010
+cores: 6
+memory: 6144
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 30G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+- docker
+- media
+- jellyfin
+- immich
+depends_on: []
+provides:
+- service: jellyfin
+  port: 8096
+  protocol: tcp
+- service: immich
+  port: 2283
+  protocol: tcp
+ansible_playbook: deploy-media-stack-lab
+deployment_tier: apps
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
+
+# Split 2026-09-04 into two independently-controllable Portainer stacks
+# (operator request) instead of one combined stack. compose_file paths
+# are relative to this stack's own directory (stack_dir, injected by
+# provision.sh) -- see portainer_stack role.
+# Names are prefixed media-stack-lab-* rather than the bare app name --
+# Portainer stack names are unique across the whole server (not just this
+# endpoint), and legacy media-stack (VMID 102) already registered a stack
+# literally named "jellyfin" (confirmed live via a real 409 Conflict).
+# env: Portainer's own stack-create API does NOT read the .env file
+# Ansible writes alongside each compose file -- it only ever sees the Env
+# list passed explicitly here (confirmed live: omitting it made immich's
+# ${REGISTRY_HOST} resolve empty, producing an "invalid reference format"
+# 500 on cadvisor's image). Values use the same ${VAR} placeholder
+# resolution as portainer_server_ip above -- provision.sh substitutes
+# from the real environment (SOPS-backed for the DB password), nothing
+# here is a literal secret.
+portainer_stacks:
+- name: media-stack-lab-jellyfin
+  compose_file: jellyfin-docker-compose.yml
+  env:
+  - name: LAB_DOMAIN
+    value: "${lab_domain}"
+- name: media-stack-lab-immich
+  compose_file: immich-docker-compose.yml
+  env:
+  - name: MEDIA_STACK_LAB_DB_PASSWORD
+    value: "${media_stack_lab_db_password}"
+  - name: REGISTRY_HOST
+    value: "${lab_fqdn_harbor}"
+
+# Documentation/consistency only -- NOT applied by Terraform (bind-type
+# mount points are root@pam-only on Proxmox, same restriction as
+# device_passthrough/keyctl). These 3 were applied out-of-band via direct
+# root SSH `pct set` during the original Stage C deploy and the later
+# NAS-photos-library addition; confirmed live 2026-09-04 via
+# `pvesh get /nodes/pve/lxc/80010/config` (mp1/mp2/mp3). Real values, not
+# placeholders -- keep in sync if these ever change by hand again.
+host_bind_mounts:
+- host_path: /mnt/nas-media
+  lxc_path: /nas-media
+- host_path: /mnt/nas-media-ct80010/immich-photos
+  lxc_path: /nas-media/immich-photos
+- host_path: /mnt/nas-media-ct80010/pictures
+  lxc_path: /nas-media/pictures

@@ -47,6 +47,8 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
     ("opensearch-stack", "dashboards"): ("OPENSEARCH_OIDC_CLIENT_ID", "opensearch-dashboards"),
     ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
+    ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
+    ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -56,6 +58,8 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
     ("opensearch-stack", "dashboards"): "OPENSEARCH_OIDC_CLIENT_SECRET",
     ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
+    ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
+    ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
 }
 
 
@@ -478,6 +482,10 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         # /application/o/authorize/ rejected the real login with a
         # "Redirect URI Error", confirmed via the actual browser flow.
         return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "jellyfin"):
+        return (f"{base_url}/authentik/callback",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
+        return (f"{base_url}/auth/login",)
     return ()
 
 
@@ -499,6 +507,20 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # Authentik's create-time default grant_types: [], which makes
         # /application/o/authorize/ reject every request as malformed (see
         # reconcile-authentik-edge.py's _oidc_provider_payload comment).
+        return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) in (
+        ("media-stack-lab", "jellyfin"),
+        ("media-stack-lab", "immich"),
+    ):
+        # Same bug, found live again 2026-09-04: both were newly-created
+        # providers via this script (not pre-existing/patched), so both hit
+        # the identical create-time grant_types: [] default -- confirmed
+        # live via a real failed SSO login attempt (Authentik redirected to
+        # the callback with error=invalid_request, "the request is
+        # otherwise malformed"; GET on the provider showed grant_types: []).
+        # jellyfin-plugin-authentik and Immich's native OAuth both only use
+        # authorization_code (with PKCE for jellyfin), but matching the
+        # common baseline for consistency, same as opensearch/wazuh above.
         return ("authorization_code", "client_credentials", "password")
     return ()
 

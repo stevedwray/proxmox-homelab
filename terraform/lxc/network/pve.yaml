@@ -121,6 +121,25 @@ attachments:
       gateway: "192.168.60.1"
       snat: false
 
+  # media_seg — Media services (VLAN 80, 192.168.80.0/24)
+  media_seg:
+    description: Media services — Jellyfin, Immich (media-stack-lab)
+    type: sdn_vnet
+    bridge: tvmedia
+    firewall: false
+    sdn:
+      zone: tvmedia
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvmedia
+      vlan_tag: 80
+      alias: pve media segment
+      subnet: "192.168.80.0/24"
+      gateway: "192.168.80.1"
+      snat: false
+
   # -------------------------------------------------------------------------
   # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
   #
@@ -234,6 +253,11 @@ zones:
     attachment: game_seg
     containers:
       - "gaming-stack-lab (VMID 60010) — 192.168.60.10"
+  media_seg:
+    description: Media services — Jellyfin + Immich, additive alongside legacy media-stack
+    attachment: media_seg
+    containers:
+      - "media-stack-lab (VMID 80010) — 192.168.80.10"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
@@ -465,6 +489,64 @@ policies:
     protocol: all
     ports: []
     description: Explicit deny — pentest_seg has no other reachability beyond the above plus internet egress
+  - from: edge_seg
+    to: media_seg
+    protocol: tcp
+    ports: [8096, 2283]
+    description: Traefik to Jellyfin and Immich web UIs (media-stack-lab)
+  - from: media_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9443]
+    description: media-stack-lab (Jellyfin+Immich) to Authentik for OIDC
+  - from: media_seg
+    to: 192.168.1.3
+    protocol: tcp
+    ports: [2049]
+    description: media-stack-lab (Jellyfin+Immich) to NAS NFS exports (192.168.1.3, flat LAN, not a zone)
+  - from: media_seg
+    to: 192.168.1.3
+    protocol: udp
+    ports: [2049]
+    description: media-stack-lab (Jellyfin+Immich) to NAS NFS exports, UDP (192.168.1.3, flat LAN, not a zone)
+  - from: media_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [443]
+    description: >-
+      media-stack-lab (jellyfin-plugin-authentik) to Authentik via
+      Traefik for OIDC token exchange. Real gap found live 2026-09-04:
+      the media_seg -> mgmt_seg:9443 rule above assumed a direct
+      internal call, but the plugin's AuthentikUrl is the public
+      Traefik-fronted address, so its server-to-server token exchange
+      actually goes out via edge_seg on 443 -- no rule covered that
+      path at all (confirmed via 1500 packets absorbed by the
+      default-deny). Added with place-before targeting the deny rule
+      explicitly, applying the lesson from the earlier input-chain
+      ordering bug rather than repeating it.
+  - from: media_seg
+    to: 192.168.20.14
+    protocol: tcp
+    ports: [514]
+    description: >-
+      media-stack-lab rsyslog forwarding to Graylog. Real gap found live
+      2026-09-04: every other zone with syslog forwarding (game_seg,
+      pentest_seg) had this rule, media_seg never did -- rsyslog was
+      running (via lxc_base) but every log, including plain host
+      syslog, was silently dropped at the zone boundary. Added with
+      place-before targeting the deny rule.
+  - from: media_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      media-stack-lab node_exporter TLS cert issuance from step-ca.
+      Real gap found live 2026-09-04, same class as the Graylog rule
+      above: node_exporter's role silently skips its step-ca TLS setup
+      block (wait_for on step-ca:443, ignore_errors) when unreachable,
+      leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
+      scrape config then rejected outright. Added with place-before
+      targeting the deny rule.
 
 inventory:
   proxmox_nodes:

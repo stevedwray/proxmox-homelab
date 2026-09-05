@@ -211,6 +211,8 @@
                   labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:9100"]
                   labels: {stack: gaming-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:9100"]
+                  labels: {stack: media-stack-lab}
 
             - job_name: cadvisor
               static_configs:
@@ -234,6 +236,8 @@
                   labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:8080"]
                   labels: {stack: gaming-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:8080"]
+                  labels: {stack: media-stack-lab}
 
             - job_name: minecraft-status
               scrape_interval: 15s

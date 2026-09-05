@@ -32,6 +32,7 @@ monitoring-bg   IN  A   ${LAB_IP_MONITORING}; grafana/monitoring direct (breakgl
 netbox-bg       IN  A   ${LAB_IP_NETBOX}    ; netbox direct (breakglass)
 portainer-bg    IN  A   ${LAB_IP_PORTAINER} ; portainer direct (breakglass)
 proxy-bg        IN  A   ${LAB_IP_PROXY}     ; traefik dashboard direct (breakglass)
+media-stack-lab-bg IN A ${LAB_IP_MEDIA_STACK_LAB} ; media-stack-lab (Jellyfin+Immich) direct (breakglass)
 
 ; Phase 06 application services — populated during app migration
 ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)

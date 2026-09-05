@@ -7,8 +7,8 @@
   connection: local
   gather_facts: false
   vars:
-    harbor_host: "{{ lookup('env', 'LAB_IP_HARBOR') | default(lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true), true) }}"
-    harbor_port: 80
+    harbor_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(lookup('env', 'LAB_IP_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true), true) }}"
+    harbor_port: 443
     harbor_api_admin_user: "{{ lookup('env', 'HARBOR_ADMIN_USER') | default('admin', true) }}"
     harbor_api_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | default(lookup('env', 'BREAKGLASS_PASSWORD'), true) | mandatory('HARBOR_ADMIN_PASSWORD or BREAKGLASS_PASSWORD is required') }}"
     target_username: "{{ lookup('env', 'HARBOR_STEVE_USERNAME') | default('steve', true) }}"
@@ -16,7 +16,7 @@
   tasks:
     - name: Lookup Harbor user by username
       ansible.builtin.uri:
-        url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
+        url: "https://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
         method: GET
         headers:
           Host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
@@ -53,7 +53,7 @@
 
     - name: Ensure Harbor user has sysadmin role
       ansible.builtin.uri:
-        url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
+        url: "https://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
         method: PUT
         headers:
           Host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"

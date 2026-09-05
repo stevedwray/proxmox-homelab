@@ -30,8 +30,8 @@ is a cache, not a source of truth.
 | `graylog-stack` | 20014 | `mgmt_seg` | 192.168.20.14 | Production log platform (Graylog 7.1.3) |
 | `greenbone-stack` | 70011 | `pentest_seg` | 192.168.70.11 | GVM/OpenVAS vulnerability scanner, live network scanning |
 | `harbor-stack` | 40010 | `infra_seg` | 192.168.40.10 | Private container registry + proxy-cache for all image pulls |
-| `harness-target` | 50010 | plain LAN (`vmbr0`) | 192.168.1.55 | Repeatable, deliberately vulnerable target for automated PentAGI test harness runs |
-| `harness-target-pve` | 70012 | `pentest_seg` | 192.168.70.12 | Disposable Struts2/Redis target for controlled PentAGI model comparisons |
+| `harness-target` | 50010 | plain LAN (`vmbr0`) | 192.168.1.55 | Repeatable, deliberately vulnerable target for automated PentAGI test harness runs — **PentAGI is deprecated** (see `docs/pentagi-stack/README.md`); this target has no other current consumer |
+| `harness-target-pve` | 70012 | `pentest_seg` | 192.168.70.12 | Disposable Struts2/Redis target for controlled PentAGI model comparisons — **PentAGI is deprecated** (see `docs/pentagi-stack/README.md`); this target has no other current consumer |
 | `mcp-utility-stack` | 50011 | `ai_seg` | 192.168.50.10 | `cve-mcp-server` + `docs-rag-mcp` + `pgvector` — the MCP tool servers this session built |
 | `monitoring-stack` | 20012 | `mgmt_seg` | 192.168.20.12 | Metrics (Grafana + VictoriaMetrics) |
 | `netbox-stack` | 40012 | `infra_seg` | 192.168.40.12 | IPAM/DCIM — not yet exposed as an MCP tool (see `docs/coding-stack/plan.md` open items) |

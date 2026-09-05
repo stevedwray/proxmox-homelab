@@ -103,7 +103,23 @@ resource "proxmox_virtual_environment_container" "docker_host" {
   lifecycle {
     # keyctl is enabled out-of-band via configure-keyctl.yml because the
     # automation API token cannot manage non-nesting feature flags.
-    ignore_changes = [features[0].keyctl]
+    #
+    # mount_point: any host_bind_mounts entries (see that variable's
+    # description above) are applied out-of-band via direct root SSH
+    # `pct set`, same root@pam-only restriction as keyctl. The provider's
+    # own refresh reads these back from the live container and diffs them
+    # against the (deliberately shorter) declared mount_point list here,
+    # which plans a forced replacement of the whole container to "remove"
+    # mounts Terraform never created in the first place. Confirmed live
+    # 2026-09-04 on media-stack-lab: `terragrunt plan` proposed destroying
+    # and recreating the container solely to drop its hand-added NFS
+    # mount_points. Ignoring the whole attribute means Terraform no longer
+    # actively reconciles docker_storage_size/extra_mount resizes either
+    # (those still need a manual `pct set` + `terraform apply -refresh-only`
+    # or state edit) -- an accepted tradeoff for stacks that use
+    # host_bind_mounts, matching the "grow-only" mutation policy those
+    # mounts already use in practice.
+    ignore_changes = [features[0].keyctl, mount_point]
   }
 }
 
