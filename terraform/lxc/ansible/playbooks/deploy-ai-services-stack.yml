@@ -149,25 +149,22 @@
     # invalidate the migrated OpenWebUI DB's existing sessions.
     ai_services_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
     ai_services_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
-    # OpenWebUI's own RAG web-search talks to SearXNG over the internal
-    # Docker network -- unrelated to the LAN-facing port below.
+    # SearXNG remains available as the browser-facing metasearch service.
+    # OpenWebUI's AI search uses Brave's standard API directly, avoiding
+    # SearXNG's unreliable upstream-engine mix. The account's API key was
+    # verified against this endpoint; its LLM Context endpoint returns 400,
+    # so do not select brave_llm_context until the Brave plan supports it.
     ai_services_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
-    ai_services_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
+    # SearXNG uses its base URL to generate redirects (including after saving
+    # preferences). `searxng:8080` only resolves inside Docker, so it cannot
+    # be used here now that the service has a user-facing HTTPS route.
+    ai_services_searxng_base_url: "https://searxng.{{ ai_services_lab_domain }}/"
     # Optional, unlike the mandatory secrets above -- web search works
     # without either, just with fewer/lower-quality engines. See
     # docs/design/lessons-learned.md's SearXNG entry for why the default
     # scraped engines mostly don't work from this network and these were
     # added.
     ai_services_brave_search_api_key: "{{ lookup('env', 'BRAVE_SEARCH_API_KEY') | default('', true) }}"
-    # SearXNG's built-in `google_cse` engine is hardcoded to a shared
-    # third-party CSE token and ignores any api_key/cx configured --
-    # confirmed against both this deployed image and upstream SearXNG's
-    # current master, no version implements the real Custom Search JSON
-    # API. `google_customsearch.py` (searxng-engines/) does, using these
-    # two real credentials. cx is a curated small site list, not general
-    # web search -- see the engine entry's comment below.
-    ai_services_google_cse_id: "{{ lookup('env', 'GOOGLE_CSE_ID') | default('', true) }}"
-    ai_services_google_cse_api_key: "{{ lookup('env', 'GOOGLE_CSE_API_KEY') | default('', true) }}"
 
   tasks:
     - name: Create ai-services-stack compose directory
@@ -175,12 +172,6 @@
         path: "{{ ai_services_compose_dir }}"
         state: directory
         mode: "0750"
-
-    - name: Install custom SearXNG engine modules
-      ansible.builtin.copy:
-        src: "../../stacks/ai-services-stack/searxng-engines/"
-        dest: "{{ ai_services_compose_dir }}/searxng-engines/"
-        mode: "0640"
 
     - name: Create ollama-reliability-proxy build directory
       ansible.builtin.file:
@@ -281,6 +272,10 @@
               engine: braveapi
               shortcut: bra
               api_key: "{{ ai_services_brave_search_api_key }}"
+              # API-key engines are inactive in SearXNG's defaults.  Setting
+              # disabled: false alone leaves the engine removed from both
+              # searches and the preferences page.
+              inactive: false
               disabled: false
               # Confirmed live 2026-08-02: scraped `bing` returns
               # completely unrelated content (NZ regional news) for
@@ -294,30 +289,6 @@
               # than disabling bing outright -- it's still a free/
               # unlimited fallback for when braveapi's quota is hit.
               weight: 2.0
-            {% endif %}
-            {% if ai_services_google_cse_id and ai_services_google_cse_api_key %}
-            # Real Custom Search JSON API via a custom engine module
-            # (searxng-engines/google_customsearch.py) -- SearXNG's own
-            # google_cse engine (left disabled above) is hardcoded to a
-            # shared third-party CSE token and ignores api_key/cx
-            # entirely; confirmed absent from upstream SearXNG's current
-            # master too, not a version-lag issue. This engine's cx is a
-            # small curated site list the operator configured (Google no
-            # longer allows new Programmable Search Engines to enable
-            # "search the entire web"), so it's a targeted supplement to
-            # the general engines above, not a general web search engine.
-            - name: google-curated
-              engine: google_customsearch
-              # Not "goc" -- that shortcut is already reserved by the
-              # built-in (disabled) `google cse` engine. SearXNG rejects
-              # duplicate shortcuts even when the other engine is
-              # disabled, confirmed live 2026-08-02 ("Engine config
-              # error: ambiguous shortcut: goc" crashed the worker on
-              # every restart until this was changed).
-              shortcut: gcu
-              api_key: "{{ ai_services_google_cse_api_key }}"
-              cx: "{{ ai_services_google_cse_id }}"
-              disabled: false
             {% endif %}
       register: ai_services_searxng_settings_reconciled
       no_log: true
@@ -404,7 +375,15 @@
                 OAUTH_PROVIDER_NAME: "Authentik"
                 OAUTH_SCOPES: "openid email profile"
                 ENABLE_WEB_SEARCH: "true"
-                WEB_SEARCH_ENGINE: "searxng"
+                WEB_SEARCH_ENGINE: "brave"
+                BRAVE_SEARCH_API_KEY: "{{ ai_services_brave_search_api_key }}"
+                # Brave's free tier permits one request per second. Keeping
+                # this sequential avoids a multi-query model immediately
+                # exhausting that quota; OpenWebUI retries one 429 once.
+                WEB_SEARCH_CONCURRENT_REQUESTS: "1"
+                WEB_SEARCH_RESULT_COUNT: "5"
+                # Retained only for a deliberate admin switch back to
+                # SearXNG; it is not used by Brave's direct API.
                 SEARXNG_QUERY_URL: "{{ ai_services_searxng_query_url }}"
                 # Without this, OpenWebUI defaults new chats to whichever
                 # model sorts first alphabetically among everything
@@ -474,16 +453,6 @@
                 - "{{ ai_services_searxng_port }}:8080"
               volumes:
                 - ai-services-searxng-data:/etc/searxng
-                # Real Google Custom Search API engine -- SearXNG's own
-                # google_cse module is hardcoded to a shared third-party
-                # token and ignores api_key/cx entirely. Single-file bind
-                # mount, not a directory mount over engines/ itself --
-                # that would mask every built-in engine module (bing,
-                # braveapi, mwmbl, etc.) SearXNG's loader imports
-                # searx.engines.<name> directly from this directory, so
-                # the file must land here by its own filename. See
-                # searxng-engines/google_customsearch.py.
-                - "{{ ai_services_compose_dir }}/searxng-engines/google_customsearch.py:/usr/local/searxng/searx/engines/google_customsearch.py:ro"
               environment:
                 SEARXNG_BASE_URL: "{{ ai_services_searxng_base_url }}"
               healthcheck:
@@ -580,9 +549,15 @@
                     [os.environ["OLLAMA_BASE_URL"]], separators=(",", ":")
                 ),
                 "web.search.enable": json.dumps(True),
-                "web.search.engine": json.dumps("searxng"),
-                "web.search.searxng_query_url": json.dumps(
-                    os.environ["SEARXNG_QUERY_URL"]
+                "web.search.engine": json.dumps("brave"),
+                "web.search.brave_search_api_key": json.dumps(
+                    os.environ["BRAVE_SEARCH_API_KEY"]
+                ),
+                "web.search.concurrent_requests": json.dumps(
+                    int(os.environ["WEB_SEARCH_CONCURRENT_REQUESTS"])
+                ),
+                "web.search.result_count": json.dumps(
+                    int(os.environ["WEB_SEARCH_RESULT_COUNT"])
                 ),
                 "webui.url": json.dumps(os.environ["WEBUI_URL"]),
                 "ui.default_models": json.dumps(os.environ["DEFAULT_MODELS"]),

@@ -294,15 +294,10 @@ show stale/misleading state:
   on every attempt, ruling out simple propagation delay too.
 
 Every lever available from this side (billing, IAM, org policy, API
-enablement, key scoping, forced re-enable) is exhausted and consistent;
-this now looks like a genuine state inconsistency on Google's backend,
-not a local config problem. Not re-attempted further without an actual
-fix from Google's side (check `issuetracker.google.com` for this exact
-symptom before filing new — "service shows enabled via API but calls
-still get PERMISSION_DENIED" is a commonly-reported pattern). Low
-priority: `google-curated` degrades gracefully to zero results when it
-fails, so it doesn't break search for OpenWebUI/PentAGI, it's just
-inert.
+enablement, key scoping, forced re-enable) was exhausted and consistent.
+Google Custom Search was subsequently removed from SearXNG: it cannot
+provide general-web coverage under Google's current terms, and its failed
+request logging can expose the API key in container logs.
 
 **The word "latest" (and likely similar temporal-trigger words like
 "recent", a bare year) in a query gets classified as a recency/news-intent

@@ -10,7 +10,7 @@
 # docs/ai-services-migration/plan.md and network/{pve,pve-test-vm}.yaml's
 # `policies:` block, which this playbook makes real:
 #
-#   1. edge_seg -> ai_seg:8081   (Traefik to OpenWebUI, ingress)
+#   1. edge_seg -> ai_seg:8081,8082   (Traefik to OpenWebUI/SearXNG, ingress)
 #   2. ai_seg -> framework:8080,11434  (llamacpp-router, Ollama, egress)
 #   3. ai_seg -> edge_seg:443    (LM Studio backend route -- llm.${LAB_DOMAIN}
 #      resolves to Traefik's edge_seg IP, confirmed from llm-gpu-stack's
@@ -80,6 +80,13 @@
         src-address: "{{ lab_subnet_edge_cidr }}"
         dst-address: "{{ lab_subnet_ai_cidr }}"
         dst-port: "8081"
+      - comment: "ai-services-stack: edge_seg to ai_seg searxng 8082"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_edge_cidr }}"
+        dst-address: "{{ lab_subnet_ai_cidr }}"
+        dst-port: "8082"
       - comment: "ai-services-stack: ai_seg to framework llamacpp-router/ollama"
         chain: "forward"
         action: "accept"
@@ -167,7 +174,7 @@
     # made the pve run silently skip adding its own correct rule because
     # a same-commented rule already existed for pve-test-vm's different
     # IPs -- the final assertion then failed because no single rule
-    # matched every field simultaneously. Rules 1-3 are genuinely
+    # matched every field simultaneously. Rules 1-4 are genuinely
     # zone-wide/shared and match correctly either way.
     - name: Add each missing ai-services-stack rule before the first forward drop/reject
       ansible.builtin.uri:
@@ -261,4 +268,4 @@
 
     - name: Report ai-services-stack firewall rules are present
       ansible.builtin.debug:
-        msg: "All 4 ai-services-stack MikroTik firewall rules confirmed present."
+        msg: "All 6 ai-services-stack MikroTik firewall rules confirmed present."

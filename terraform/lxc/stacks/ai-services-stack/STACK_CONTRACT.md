@@ -40,9 +40,10 @@ hosts — not sufficient here):
 
 - Egress: `ai_seg → framework:8080,11434` (`192.168.50.0/24 →
   192.168.1.8`) so OpenWebUI can reach llamacpp-router/Ollama.
-- Ingress: `edge_seg → ai_seg:8081` so Traefik can reach OpenWebUI — the
-  zone's generic `edge_seg → ai_seg:[80,443]` entry is not enough on its
-  own, same pattern `mcp-utility-stack` needed for its own `:8000`.
+- Ingress: `edge_seg → ai_seg:8081,8082` so Traefik can reach OpenWebUI and
+  the SearXNG browser UI — the zone's generic `edge_seg →
+  ai_seg:[80,443]` entry is not enough on its own, same pattern
+  `mcp-utility-stack` needed for its own `:8000`.
 - Egress: SearXNG needs broad outbound reach to arbitrary search engines,
   fundamentally incompatible with the CVE-server-era named-FQDN allowlist
   — see plan.md Step 4 for the explicit broad-vs-narrow policy decision.
@@ -59,19 +60,21 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, optional | Enables SearXNG's `braveapi` engine (official API, no bot-detection issues) for OpenWebUI's RAG web search. Web search works without it, just via `bing`/`mwmbl`/`searchmysite` only — see "What Must Not Be Edited Casually" below |
+| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. |
 
 ## Provides
 
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
+| `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. It remains available for browser search; OpenWebUI's AI search calls Brave LLM Context directly. |
 | `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
 
-SearXNG itself is intentionally unrouted — no public Traefik entry, LAN
-(in-LXC compose network) reachable only, no auth, matching the LM
-Studio/llama.cpp/Ollama endpoints' posture and today's framework
-deployment.
+SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
+raw `:8082` service remains available for existing machine-to-machine
+consumers such as PentAGI. SearXNG has no user authentication or RBAC;
+browser settings are per-browser cookies, while server policy remains in
+the infrastructure-managed `settings.yml`.
 
 ## Dependencies
 
@@ -164,24 +167,11 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   `settings.yml` — this survives a settings file migrated in from
   `framework` (which has the same underlying default-engine problem, just
   never surfaced because nobody stress-tested web search there).
-- **Google general web search is not viable** — new Programmable Search
-  Engines can't enable "search the entire web" anymore, and SearXNG's
-  built-in `google_cse` engine is hardcoded to a shared third-party token
-  that ignores any credentials you configure (confirmed against both this
-  image and upstream SearXNG's current master). A curated-site Google
-  search *is* wired up via a custom engine module
-  (`searxng-engines/google_customsearch.py`, bind-mounted into the
-  container — do not mount the whole directory over
-  `/usr/local/searxng/searx/engines/`, that masks every built-in engine
-  including bing/braveapi/mwmbl) if both `GOOGLE_CSE_ID` and
-  `GOOGLE_CSE_API_KEY` are set, but it only searches whatever site list
-  the CSE was configured with, not the general web. As of 2026-08-02 this
-  is live in code but disabled on `pve-test-vm` pending the operator
-  resolving a Google Cloud "project doesn't have access to Custom Search
-  JSON API" error (API key and enabled-API project mismatch) — re-running
-  `provision.sh --stack ai-services-stack` will re-enable it automatically
-  once that's fixed, no playbook change needed. See
-  `docs/design/lessons-learned.md`'s SearXNG section.
+- **Google Custom Search is deliberately not deployed** — Google no longer
+  permits new Programmable Search Engines to search the general web, so its
+  curated-site results do not meet this stack's general-search requirement.
+  Removing the custom engine also prevents failed requests from placing its
+  API key in SearXNG's request-error logs.
 
 ## Playbook
 
