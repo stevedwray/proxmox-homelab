@@ -14,7 +14,7 @@ name: media-stack-lab-jellyfin
 
 services:
   jellyfin:
-    image: lscr.io/linuxserver/jellyfin:10.11.11ubu2604-ls47
+    image: ${REGISTRY_HOST}/lscr/linuxserver/jellyfin:10.11.11ubu2604-ls47
     container_name: media-stack-lab-jellyfin
     environment:
       - PUID=1000
