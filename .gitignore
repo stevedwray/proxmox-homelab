@@ -14,21 +14,24 @@ storage-audit
 .env.local
 *.env
 .env.*
-!.env
-!.env.pve
-!.env.pve-test
-!.env.pve-test-vm
-!.env.template
-!.env.pve-test.template
-!.env.pve-test-vm.template
-!.env.pve.template
-# The bare !.env negation above (for this repo's own root .env) unignores
-# any file literally named .env anywhere in the tree by accident -- re-ignore
-# this one specifically, since it's the operator's own prior PentAGI install
-# with real plaintext secrets (Langfuse S3/Redis, scraper creds), not
-# repo-tracked config.
+# The bare !.env negation below (for this repo's own root .env) would
+# otherwise unignore any file literally named .env anywhere in the tree --
+# fixed two ways, belt and suspenders: (1) anchored every exception to the
+# repo root with a leading /, so only the intended top-level files are
+# re-allowed; (2) still explicitly re-ignoring docs/pentagi-stack/original/
+# specifically, since that's the operator's prior PentAGI install with real
+# plaintext secrets (Langfuse S3/Redis, scraper creds), not repo-tracked
+# config, and not meant to be tracked at all regardless of anchoring.
 docs/pentagi-stack/original/
 docs/pentagi-stack/*.tar.gz
+!/.env
+!/.env.pve
+!/.env.pve-test
+!/.env.pve-test-vm
+!/.env.template
+!/.env.pve-test.template
+!/.env.pve-test-vm.template
+!/.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml

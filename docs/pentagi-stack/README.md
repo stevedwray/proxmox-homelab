@@ -172,10 +172,16 @@ checks passed:
    private PentAGI fork, infrastructure changes, what broke and why, and
    the llama.cpp migration findings. The active deployment uses Qwen3.6 for
    every role, including `adviser`; it does not use `gpt-oss-120b`.
-3. [model-ab-test-plan.md](./model-ab-test-plan.md) — staged, controlled
+3. [model-recommendations.md](./model-recommendations.md) — role-by-role
+   model recommendations from the separate eval-battery project's full
+   BFCL/GPQA/IFEval/CyberSecEval/RepoBench/SWE-rebench results, including
+   a real open question this doc's own "adviser" evidence never
+   settled: whether `gpt-oss-120b` actually earns its cost over
+   Qwen3.6-35B alone.
+4. [model-ab-test-plan.md](./model-ab-test-plan.md) — staged, controlled
    model-comparison plan using the PVE `pentest_seg` harness. It begins with
    minimal tool calls before any vulnerability validation.
-4. [upstream-control.md](./upstream-control.md) — the isolated, true-upstream
+5. [upstream-control.md](./upstream-control.md) — the isolated, true-upstream
    PentAGI control on PVE used to distinguish upstream behaviour from the
    private patched deployment.
 
@@ -283,6 +289,12 @@ purely for quick manual browsing.
   12's tool-calling evidence is from VSCode/Copilot/Continue, though, not
   PentAGI's own provider calibration — Phase 2's tool-call preflight is
   still the first direct confirmation either way, not a formality.
+  **Superseded, same day** — see "Model correction, 2026-07-26" above:
+  `llama-3.3-70b-instruct` failed PentAGI's real Test 1 three times and
+  was replaced with `qwen3.6-35b-a3b-ud:q4_k_m`, which is what's actually
+  live now. See [model-recommendations.md](./model-recommendations.md)
+  for the independent eval-battery evidence backing that choice, plus
+  recommendations for the other roles (`adviser`, `coder`).
 - **Lab-target network scoping is by destination IP, not by port.** A real
   pentest needs open-ended port enumeration against an authorized target,
   so `pentest_seg`'s cross-zone policy for `LAB_TARGET` allows the full
