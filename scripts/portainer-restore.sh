@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2029
+# Every ssh "..." command below intentionally expands its local vars
+# (PVE_HOST, PORTAINER_VMID, CONTAINER_NAME, etc.) client-side before
+# sending the command over SSH -- that's this whole script's own
+# parameterization mechanism, not a remote-side value, so SC2029's info
+# note doesn't apply here. File-level directive since the pattern repeats
+# throughout.
 # Restore Portainer from the latest NAS backup.
 #
 # Automatically selects the correct restore path based on current Portainer state:

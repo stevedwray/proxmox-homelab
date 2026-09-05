@@ -120,7 +120,6 @@ def update_models_preset(cfg, run):
     content = content.rstrip() + "\n\n" + adviser_section
 
     tmp_remote = "/tmp/models-preset.ini.new"
-    escaped = content.replace("'", "'\\''")
     ssh_framework(cfg, f"cat > {tmp_remote} << 'PRESET_EOF'\n{content}\nPRESET_EOF")
     ssh_framework(cfg, f"cp {tmp_remote} {preset_path}", use_sudo=True)
     log(f"models-preset.ini updated: qwen ctx={run['qwen_ctx_size']} rb={run['qwen_reasoning_budget']}, "

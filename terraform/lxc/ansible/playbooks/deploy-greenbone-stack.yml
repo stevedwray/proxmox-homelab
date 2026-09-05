@@ -857,6 +857,7 @@
       tags: [credential-program]
 
     - name: Run credential-program setup and remove temporary key files
+      tags: [credential-program]
       block:
         - name: Write credential-program setup script
           ansible.builtin.copy:
@@ -918,7 +919,6 @@
             path: "{{ greenbone_credential_program_tempdir.path }}"
             state: absent
           no_log: true
-      tags: [credential-program]
 
 - name: Deploy findings ingestion (GVM -> opensearch-stack)
   hosts: all

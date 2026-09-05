@@ -188,7 +188,11 @@ class FakeClient:
     def create_application(self, payload: dict):
         self.request_methods.append("POST")
         if self.fail_create_application_duplicate:
-            body = b'{"slug":["Application with this slug already exists."],"provider":["Application with this provider already exists."]}'
+            # Real Authentik 400 body on a duplicate slug/provider, kept for
+            # readability -- the reconciler only checks exc.code == 400 at
+            # this call site, never the body, so it's not wired into the
+            # HTTPError below (see reconcile-authentik-edge.py's duplicate-
+            # create handling).
             raise urllib.error.HTTPError(
                 "https://authentik.example.test/api/v3/core/applications/",
                 400,
