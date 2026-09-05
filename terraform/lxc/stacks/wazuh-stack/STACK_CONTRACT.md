@@ -29,6 +29,7 @@ and phase scope. Not a resurrection of the separate, unrelated
 | `WAZUH_OIDC_CLIENT_SECRET` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Authentik OAuth2 client secret for the dashboard's OIDC login |
 | `LAB_IP_AUTHENTIK` | env var (mandatory) | Authentik host, for the OIDC discovery URL |
 | `LAB_IP_WAZUH` | `.env` | This stack's own IP |
+| `WAZUH_AGENT_AUTHD_PASSWORD` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Shared wazuh-authd auto-enrollment password; every `wazuh_agent`-role host registers against this manager's :1515 with it (agent pilot rollout, 2026-08-29) |
 
 ## Provides
 

@@ -69,3 +69,10 @@
       register: redis_seed
       changed_when: "'OK' in redis_seed.stdout"
       when: not ansible_check_mode
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

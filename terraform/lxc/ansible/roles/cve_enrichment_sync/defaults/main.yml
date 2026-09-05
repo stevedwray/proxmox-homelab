@@ -23,15 +23,30 @@ cve_enrichment_sync_mcp_host: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandator
 cve_enrichment_sync_mcp_url: "http://{{ cve_enrichment_sync_mcp_host }}:8000/mcp"
 cve_enrichment_sync_triage_depth: standard
 
-# --- LLM provider (temporary -- see cve_enrichment_sync.py's module
-# docstring and plan.md's "LLM narrative step" section) ------------------
-# The local Ollama runtime is occupied with benchmarking work as of
-# 2026-08-18 -- using Anthropic/OpenAI for now, operator instruction.
-# Swap back to a local-LLM provider later by changing this default, not
-# the script.
+# --- LLM provider (see cve_enrichment_sync.py's module docstring and
+# plan.md's "LLM narrative step" / Phase 6 sections) ----------------------
+# Still anthropic for the standing scheduled timer as of 2026-09-01 --
+# the operator has confirmed framework's local Ollama GPU now has
+# standing capacity (the 2026-08-18 "occupied with benchmarking" reason
+# no longer applies) and wants to migrate, but that switch happens after
+# validating output quality via small --max-cves-capped manual test runs
+# (cve_enrichment_sync_max_cves below), not by flipping this default
+# blind. Swap this default once that validation is done.
 cve_enrichment_sync_llm_provider: anthropic
 cve_enrichment_sync_anthropic_api_key: "{{ lookup('env', 'ANTHROPIC_API_KEY') | default('', true) }}"
 cve_enrichment_sync_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('', true) }}"
+# framework.gibbsgreatly.xyz's Ollama endpoint -- confirmed live and
+# reachable from secpipe-stack's network 2026-09-01. laguna-s-2.1 MUST
+# run on Ollama, not llama.cpp, for usable output quality (17-point BFCL
+# accuracy gap, confirmed -- see project_laguna_ollama_runtime memory).
+cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"
+cve_enrichment_sync_ollama_model: "laguna-s-2.1:q4_k_m-ctx131k"
+
+# Caps CVEs processed per run (0 = unlimited, the standing scheduled
+# timer's behavior). Set to a small number (e.g. 10-20) for a fast manual
+# test run -- see the "quick test run" invocation in plan.md's Phase 6
+# section -- without waiting on or paying for a full-corpus sweep.
+cve_enrichment_sync_max_cves: 0
 
 # --- OpenSearch connection -----------------------------------------------
 # Same opensearch-stack target and HTTPS/self-signed-cert reasoning as
@@ -61,3 +76,34 @@ cve_enrichment_sync_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_
 # alone -- update this comment once confirmed.
 cve_enrichment_sync_es_role_name: es_findings_writer
 cve_enrichment_sync_es_user_name: cve_enrichment_sync
+
+# --- CVE deep-dive (Phase 11) ---------------------------------------------
+# Separate, narrower, architecture-aware pass over only the worst/most-
+# exploitable CVEs -- see cve_deep_dive.py's module docstring. Explicit
+# opt-in, independent of cve_enrichment_sync_enabled's own gate (though it
+# only ever actually runs nested inside that flag's block, since it reuses
+# that role's directory/credentials). Operator-confirmed 2026-09-03: use
+# Ollama/laguna from day one for this new work -- NOT a switch of
+# cve_enrichment_sync_llm_provider's own standing default above, which
+# stays gated behind its own separate quality-validation step.
+cve_enrichment_sync_deep_dive_enabled: false
+
+# Weekly, not daily -- the shortlist (KEV-listed/PoC-available CVEs
+# already in production) doesn't meaningfully change day to day, and each
+# assessment is a heavier prompt (full architecture context) than the
+# routine narrative. Sundays, well after the daily 21:00 UTC enrichment
+# sync plus margin.
+cve_enrichment_sync_deep_dive_on_calendar: "Sun *-*-* 23:00:00"
+
+# How many of the worst CVEs (by risk_score, KEV-listed or PoC-available,
+# in_production:true) get a full architecture-aware assessment per run.
+cve_enrichment_sync_deep_dive_top_n: 15
+
+# Same Framework Ollama endpoint cve_enrichment_sync_ollama_url/_model
+# already point at (confirmed reachable from secpipe-stack's network,
+# confirmed loaded/idle 2026-09-03) -- kept as its own variable rather
+# than reusing cve_enrichment_sync_ollama_url/_model directly so this can
+# move independently once the routine narrative's own provider migration
+# happens.
+cve_enrichment_sync_deep_dive_ollama_url: "{{ cve_enrichment_sync_ollama_url }}"
+cve_enrichment_sync_deep_dive_ollama_model: "{{ cve_enrichment_sync_ollama_model }}"

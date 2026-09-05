@@ -1,15 +1,15 @@
-# Add direct-backend Technitium A records for llm-gpu-stack/comfyui-stack,
-# matching the existing <service>-bg.lab.gibbsgreatly.xyz convention used
-# by every other backend service (authentik-bg, harbor-bg, netbox-bg,
-# etc.) -- a direct pointer to the container's own IP, independent of
-# Traefik routing.
+# Add direct-backend Technitium A records (and their PTR records) for
+# llm-gpu-stack/comfyui-stack, matching the existing
+# <service>-bg.lab.gibbsgreatly.xyz convention used by every other backend
+# service (authentik-bg, harbor-bg, netbox-bg, etc.) -- a direct pointer to
+# the container's own IP, independent of Traefik routing.
 #
 # Deliberately NOT adding the plain <service>.lab.gibbsgreatly.xyz name
 # (which resolves to Traefik/edge_seg) -- neither stack has a Traefik
 # route configured yet (Phase 2, not done), so that name would be
 # misleading until it does.
 ---
-- name: Add Technitium A records for llm-gpu-stack/comfyui-stack backends
+- name: Add Technitium A/PTR records for llm-gpu-stack/comfyui-stack backends
   hosts: localhost
   connection: local
   gather_facts: false
@@ -18,11 +18,10 @@
     technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default('192.168.20.15', true) }}"
     technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
     technitium_api_base: "http://{{ technitium_ip }}:5380/api" # nosonar: ansible:S5332 -- Technitium admin API, private mgmt_seg only
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     ai_stack_dns_records:
-      - name: llm-gpu-stack-bg.lab.gibbsgreatly.xyz
-        ip: 192.168.50.10
-      - name: comfyui-stack-bg.lab.gibbsgreatly.xyz
-        ip: 192.168.50.11
+      - { name: "llm-gpu-stack-bg", zone: "{{ lab_domain }}", ip: "192.168.50.10", ptr: true }
+      - { name: "comfyui-stack-bg", zone: "{{ lab_domain }}", ip: "192.168.50.11", ptr: true }
 
   tasks:
     - name: Log in to Technitium
@@ -41,25 +40,8 @@
         technitium_token: "{{ (technitium_login.content | from_json).token }}"
       no_log: true
 
-    - name: Add/update A record for each AI stack backend
-      ansible.builtin.uri:
-        # No explicit zone= param -- Technitium auto-resolves the zone from
-        # domain and rejects an explicit zone param that doesn't exactly
-        # match its own internal resolution, failing with a misleading
-        # "No such zone was found: <domain>" error that echoes the domain,
-        # not the zone param actually passed.
-        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}&type=A&ipAddress={{ item.ip }}&ttl=300&overwrite=true&token={{ technitium_token }}"
-        method: GET
-        return_content: true
-      loop: "{{ ai_stack_dns_records }}"
-      loop_control:
-        label: "{{ item.name }} -> {{ item.ip }}"
-      register: technitium_add_result
-      failed_when: (technitium_add_result.content | from_json).status != 'ok'
-
-    - name: Report result
-      ansible.builtin.debug:
-        msg: "{{ item.item.name }} -> {{ item.item.ip }}: {{ (item.content | from_json).status }}"
-      loop: "{{ technitium_add_result.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
+    - name: Publish AI-stack backend A and PTR records via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ ai_stack_dns_records }}"

@@ -350,3 +350,10 @@
         project_src: "{{ opensearch_compose_dir }}"
         state: present
         recreate: always
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

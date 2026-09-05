@@ -1,0 +1,43 @@
+---
+# Enrolls the pve hypervisor itself as a Wazuh agent -- the highest-value
+# single host in the wazuh agent rollout (see docs/wazuh-stack/), since it's
+# the root of trust for every LXC, SDN zone, and production credential
+# control in this repo: everything else's security ultimately rests on this
+# one host not being compromised, and nothing currently watches it from the
+# inside (Greenbone scans it from the network; this is host-level FIM/SCA/
+# rootcheck/vulnerability-detector coverage that doesn't exist yet).
+#
+# Reuses terraform/lxc/ansible/roles/wazuh_agent as-is -- it's already on
+# this project's own roles_path (see ansible/ansible.cfg:
+# roles_path = ../terraform/lxc/ansible/roles), and the role has no
+# LXC-specific assumptions (it's a plain apt install + ossec.conf write +
+# wazuh-authd enrollment, works identically on bare-metal Debian).
+#
+# FIM paths are pve's own genuinely security-critical config, not app
+# config like the stack pilots got: /etc/pve (the cluster filesystem --
+# VM/LXC configs, SDN, firewall, storage definitions), /etc/network,
+# /etc/ssh/sshd_config, /root/.ssh, /etc/sudoers.d.
+#
+# Prerequisite: a new MikroTik firewall rule -- pve sits on the flat `lan`
+# segment (192.168.1.0/24), not one of the SDN zones, and has no existing
+# path to wazuh-stack's manager ports. See the wazuh-stack docs for the
+# exact rule.
+#
+# Run (from repo root, production -- needs TASK_APPROVAL):
+#   export TASK_APPROVAL="wazuh-agent-pve"
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets-prod \
+#     ansible-playbook -i ansible/inventory/ ansible/00-initial-setup/proxmox-wazuh-agent.yml
+
+- name: Enroll pve as a Wazuh agent
+  hosts: pve.gibbsgreatly.xyz
+  become: true
+  gather_facts: true
+  vars:
+    wazuh_agent_fim_paths:
+      - /etc/pve
+      - /etc/network
+      - /etc/ssh/sshd_config
+      - /root/.ssh
+      - /etc/sudoers.d
+  roles:
+    - wazuh_agent

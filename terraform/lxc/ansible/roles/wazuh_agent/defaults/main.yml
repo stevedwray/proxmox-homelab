@@ -1,0 +1,26 @@
+---
+# Extra file/directory paths for this host's FIM (syscheck) watch, on top
+# of Wazuh's own built-in OS-level defaults (/etc, /bin, /sbin, /usr/bin,
+# /usr/sbin) which this role's ossec.conf template always includes. Each
+# including playbook sets this to the paths that actually matter for its
+# own stack (compose file, app config, TLS material) -- empty by default
+# so a stack that forgets to set it still gets a working, if minimal,
+# FIM baseline rather than a task failure.
+wazuh_agent_fim_paths: []
+
+# Not assigning agents to a named Wazuh dashboard group in this first
+# pilot pass -- agent_groups requires the group to already exist on the
+# manager before enrollment, which would mean a manager-side
+# provisioning step this role doesn't otherwise depend on. With only 5
+# pilot hosts, filtering/managing them individually by name in the
+# dashboard is enough for now; revisit grouping if/when this becomes a
+# fleet-wide rollout.
+
+# Off by default -- deliberate opt-in, not "on wherever Docker happens
+# to be present". The docker-listener wodle runs as the wazuh user and
+# needs docker.sock access, which in practice means adding wazuh to the
+# docker group -- i.e. root-equivalent host access for the agent
+# process, trading away the isolation it otherwise has as an
+# unprivileged user. Only set this true for a host where that tradeoff
+# has been deliberately accepted (see docs/wazuh-stack/).
+wazuh_agent_docker_monitoring_enabled: false

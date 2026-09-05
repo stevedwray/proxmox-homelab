@@ -743,6 +743,9 @@
       when: not ansible_check_mode
 
     - name: Set lab admin user password in Authentik
+      # Only on first creation -- this must not reset the live login
+      # password (and invalidate sessions) on every redeploy just because
+      # the playbook ran for an unrelated change elsewhere in this file.
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ steve_pk }}/set_password/"
         method: POST
@@ -754,7 +757,9 @@
           password: "{{ authentik_steve_password }}"
         status_code: [204]
       no_log: true
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - (authentik_steve_check.json.pagination.count | int) == 0
 
     - name: Confirm lab admin user provisioned
       ansible.builtin.debug:
@@ -1380,3 +1385,21 @@
         port: 3389
         timeout: 60
       when: not ansible_check_mode
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/authentik-stack
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

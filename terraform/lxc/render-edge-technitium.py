@@ -8,7 +8,7 @@ import difflib
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,6 +35,8 @@ class RenderedRecord:
     ip: str
     host: str
     source: str
+    stack: str | None = None
+    ptr: bool = False
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class GeneratedRecord:
     ttl: str
     target: str
     manifest: str
+    stack: str
 
 
 @dataclass(frozen=True)
@@ -189,26 +192,29 @@ def _parse_seed_a_record(line: str, origin: str) -> tuple[str, str, str] | None:
 def _manifest_routes_for_generation(
     manifest_path: Path,
     issues: list[RenderIssue],
-) -> list[dict[str, object]]:
+) -> tuple[str, list[dict[str, object]]]:
     document = load_manifest(manifest_path)
     if not isinstance(document, dict):
         issues.append(RenderIssue(code="TDR100", message="manifest top-level must be a mapping", manifest=str(manifest_path)))
-        return []
+        return "", []
 
     spec = document.get("spec")
     if not isinstance(spec, dict):
         issues.append(RenderIssue(code="TDR101", message="manifest spec must be a mapping", manifest=str(manifest_path)))
-        return []
+        return "", []
 
     routes = spec.get("routes")
     if not isinstance(routes, list):
         issues.append(RenderIssue(code="TDR102", message="manifest spec.routes must be a list", manifest=str(manifest_path)))
-        return []
+        return "", []
 
-    return [route for route in routes if isinstance(route, dict)]
+    metadata = document.get("metadata")
+    stack = str(metadata.get("stack", "")).strip() if isinstance(metadata, dict) else ""
+
+    return stack, [route for route in routes if isinstance(route, dict)]
 
 
-def _generated_record_from_route(route: dict[str, object], manifest_path: Path) -> GeneratedRecord | None:
+def _generated_record_from_route(route: dict[str, object], manifest_path: Path, stack: str) -> GeneratedRecord | None:
     dns = route.get("dns")
     if not isinstance(dns, dict) or dns.get("enabled") is not True:
         return None
@@ -222,6 +228,7 @@ def _generated_record_from_route(route: dict[str, object], manifest_path: Path) 
         ttl=str(dns.get("ttl", "")).strip(),
         target=str(dns.get("target", "")).strip(),
         manifest=str(manifest_path),
+        stack=stack,
     )
 
 
@@ -233,8 +240,9 @@ def _collect_generated_records(
     host_index: dict[str, str] = {}
 
     for manifest_path in sorted(manifest_paths):
-        for route in _manifest_routes_for_generation(manifest_path, issues):
-            record = _generated_record_from_route(route, manifest_path)
+        stack, routes = _manifest_routes_for_generation(manifest_path, issues)
+        for route in routes:
+            record = _generated_record_from_route(route, manifest_path, stack)
             if record is None:
                 continue
 
@@ -319,17 +327,55 @@ def _render_records_from_seed(
             )
             continue
         rendered_records.append(
-            RenderedRecord(name=label, ip=generated.target, host=generated.host, source="generated")
+            RenderedRecord(
+                name=label,
+                ip=generated.target,
+                host=generated.host,
+                source="generated",
+                stack=generated.stack,
+            )
         )
 
     rendered_records.sort(key=lambda record: record.host)
-    return origin, tuple(rendered_records)
+    return origin, _assign_ptr_ownership(tuple(rendered_records))
+
+
+def _assign_ptr_ownership(records: tuple[RenderedRecord, ...]) -> tuple[RenderedRecord, ...]:
+    """Pick exactly one PTR owner per distinct IP.
+
+    A PTR record is one name per IP, so when multiple A records share an
+    IP (every browser-routed hostname behind Traefik shares LAB_IP_PROXY,
+    for instance) only one of them can own the reverse entry. Preference
+    order: the record generated from proxy-stack's own edge.yaml (that
+    IP is genuinely proxy-stack's), else the record named "dns" (covers
+    the dns/ns1 pair sharing LAB_IP_TECHNITIUM), else the
+    alphabetically-first name in the group -- deterministic, so re-runs
+    never flip which name owns an existing PTR.
+    """
+    by_ip: dict[str, list[RenderedRecord]] = {}
+    for record in records:
+        by_ip.setdefault(record.ip, []).append(record)
+
+    ptr_owners: set[RenderedRecord] = set()
+    for group in by_ip.values():
+        proxy_owned = [r for r in group if r.stack == "proxy-stack"]
+        dns_named = [r for r in group if r.name == "dns"]
+        if proxy_owned:
+            ptr_owners.add(proxy_owned[0])
+        elif dns_named:
+            ptr_owners.add(dns_named[0])
+        else:
+            ptr_owners.add(min(group, key=lambda r: r.name))
+
+    return tuple(replace(record, ptr=(record in ptr_owners)) for record in records)
 
 
 def _records_payload(zone: str, records: tuple[RenderedRecord, ...]) -> str:
     payload = {
         "zone": zone,
-        "records": [{"name": record.name, "ip": record.ip} for record in records],
+        "records": [
+            {"name": record.name, "ip": record.ip, "ptr": record.ptr} for record in records
+        ],
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 

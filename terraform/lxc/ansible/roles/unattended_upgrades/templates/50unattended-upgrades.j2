@@ -1,0 +1,15 @@
+// {{ ansible_managed }}
+// Security-only auto-updates. Regular (non-security) package updates are
+// deliberately left out of Origins-Pattern -- this repo still wants those
+// applied deliberately via provision.sh, not picked up silently overnight.
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+
+Unattended-Upgrade::Remove-Unused-Dependencies "{{ unattended_upgrades_remove_unused_dependencies | ternary('true', 'false') }}";
+Unattended-Upgrade::Automatic-Reboot "{{ unattended_upgrades_automatic_reboot | ternary('true', 'false') }}";
+
+// Leave a syslog trail (forwarded to Graylog via rsyslog_forward like
+// everything else on these hosts) instead of only /var/log/unattended-upgrades.
+Unattended-Upgrade::SyslogEnable "true";

@@ -685,3 +685,10 @@
                 raise SystemExit(f"managed LLM routes returned no models: {empty_routes}")
             print(json.dumps({"models": discovered, "warnings": warnings}))
       changed_when: false
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

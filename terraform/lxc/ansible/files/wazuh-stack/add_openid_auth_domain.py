@@ -30,12 +30,18 @@ def main() -> int:
 
     authc = config.setdefault("config", {}).setdefault("dynamic", {}).setdefault("authc", {})
 
-    if OPENID_DOMAIN_NAME in authc:
-        # Already present (idempotent re-run) -- nothing to do.
-        with open(output_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
-        return 0
-
+    # Always (re-)write the whole block to the current desired shape,
+    # rather than "add only if entirely missing" -- matches how every
+    # other config file in this playbook converges unconditionally.
+    # Real bug found live via actual use, 2026-08-29: the first version
+    # of this script used subject_key: "sub", which OpenSearch's OIDC
+    # authenticator turns into the raw hashed OIDC subject claim as the
+    # displayed username (a long hex string, not "steve") -- confirmed
+    # live in the dashboard's own user menu. subject_key:
+    # preferred_username uses the human-readable claim Authentik
+    # includes under the standard "profile" scope (already requested,
+    # see opensearch_security.openid.scope on the dashboard side).
+    #
     # Standard shape per OpenSearch security plugin docs. Left alongside
     # basic_internal_auth_domain (not replacing it) -- API/internal
     # tooling that authenticates with basic auth keeps working; the
@@ -49,7 +55,7 @@ def main() -> int:
             "type": "openid",
             "challenge": False,
             "config": {
-                "subject_key": "sub",
+                "subject_key": "preferred_username",
                 "roles_key": "roles",
                 "openid_connect_url": connect_url,
             },

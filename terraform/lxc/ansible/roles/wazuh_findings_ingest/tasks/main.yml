@@ -1,0 +1,381 @@
+---
+- name: Remove scheduled Wazuh findings ingest when not explicitly enabled
+  when: not (wazuh_findings_ingest_enabled | bool)
+  block:
+    - name: Stop and disable wazuh-findings-ingest timer
+      ansible.builtin.systemd:
+        name: wazuh-findings-ingest.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop wazuh-findings-ingest service if present
+      ansible.builtin.systemd:
+        name: wazuh-findings-ingest.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove wazuh-findings-ingest units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/wazuh-findings-ingest.timer
+        - /etc/systemd/system/wazuh-findings-ingest.service
+        - "{{ wazuh_findings_ingest_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale wazuh-findings-ingest service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed wazuh-findings-ingest.service wazuh-findings-ingest.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled Wazuh findings ingest when explicitly enabled
+  when: wazuh_findings_ingest_enabled | bool
+  block:
+    - name: Create wazuh-findings-ingest directory
+      ansible.builtin.file:
+        path: "{{ wazuh_findings_ingest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Create wazuh-findings-ingest assets directory
+      ansible.builtin.file:
+        path: "{{ wazuh_findings_ingest_dir }}/assets/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop:
+        - templates
+        - ingest_pipelines
+
+    - name: Copy es_setup_assets.py
+      ansible.builtin.copy:
+        src: es_setup_assets.py
+        dest: "{{ wazuh_findings_ingest_dir }}/es_setup_assets.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy wazuh_findings_sync.py
+      ansible.builtin.copy:
+        src: wazuh_findings_sync.py
+        dest: "{{ wazuh_findings_ingest_dir }}/wazuh_findings_sync.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy index template assets
+      ansible.builtin.copy:
+        src: "assets/templates/{{ item }}"
+        dest: "{{ wazuh_findings_ingest_dir }}/assets/templates/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - wazuh-findings.json
+
+    - name: Copy ingest pipeline assets
+      ansible.builtin.copy:
+        src: "assets/ingest_pipelines/{{ item }}"
+        dest: "{{ wazuh_findings_ingest_dir }}/assets/ingest_pipelines/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - wazuh-findings-normalize.json
+
+    # ---------------------------------------------------------------
+    # Scoped Wazuh Indexer internal user (read-only on
+    # wazuh-states-vulnerabilities-*, NOT wazuh-alerts-* -- see
+    # wazuh_findings_sync.py's own module docstring and
+    # docs/threat-vuln-platform/plan.md's 2026-09-01 correction note for
+    # why). Existence is checked against Wazuh's own live security API,
+    # not a local credential file -- see the correction note directly
+    # below on why the file-based check (every sibling role's own
+    # pattern) doesn't hold here.
+    # ---------------------------------------------------------------
+
+    - name: Check if Wazuh Indexer is reachable
+      ansible.builtin.wait_for:
+        host: "{{ wazuh_findings_ingest_wazuh_host }}"
+        port: 9200
+        timeout: 5
+      register: wazuh_findings_ingest_wazuh_reachable
+      ignore_errors: true
+
+    - name: Warn and skip Wazuh Indexer provisioning when it is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          Wazuh Indexer at {{ wazuh_findings_ingest_wazuh_host }}:9200 is not
+          reachable (timeout). Skipping wazuh-findings-ingest role/user setup --
+          re-run provision once wazuh-stack's indexer is up.
+      when: wazuh_findings_ingest_wazuh_reachable.failed | default(true)
+
+    # Checks the REMOTE user's actual existence, not a local file --
+    # real bug found and fixed 2026-09-01: the local credential-file stat
+    # check this replaced is a cheap proxy that goes stale whenever the
+    # remote object can be wiped independently of the local file, which
+    # is exactly what happens here. deploy-wazuh-stack.yml's own "Wire
+    # real Authentik OIDC" play conditionally runs
+    # `securityadmin.sh -cd $CONFIG_DIR -icl` (a FULL config-directory
+    # reapply) whenever its own OIDC-domain/all-access-wildcard check
+    # trips -- that reapply restores Wazuh Indexer's security config from
+    # the on-disk internal_users.yml this playbook writes (admin/
+    # kibanaserver/kibanaro only), silently deleting any user created
+    # only via the live REST API, this role's own user included. The
+    # role definition itself survived (a separate object, recreated
+    # earlier in this same task file, unconditionally), but the local
+    # wazuh-user.env file was left pointing at a password for a user
+    # that no longer existed -- confirmed live: real 401s from
+    # wazuh_findings_sync.py on the very next scheduled/manual run,
+    # despite a "successful" prior deploy. Always check the actual
+    # remote state before trusting a local artifact as a proxy for it.
+    - name: Check if the scoped Wazuh Indexer user actually exists remotely
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_wazuh_url }}/_plugins/_security/api/internalusers/{{ wazuh_findings_ingest_wazuh_user_name }}"
+        method: GET
+        url_username: "{{ wazuh_findings_ingest_wazuh_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_wazuh_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_wazuh_no_verify_tls }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      register: wazuh_findings_ingest_wazuh_user_get
+      when: not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+      delegate_to: localhost
+
+    - name: Generate a random password for the scoped Wazuh Indexer user
+      ansible.builtin.set_fact:
+        wazuh_findings_ingest_wazuh_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
+      no_log: true
+
+    # Unconditional (not gated on "credential file missing") -- unlike the
+    # user/password below, this is a plain idempotent PUT that must be
+    # able to pick up an index_permissions change on every deploy, not
+    # only the very first one. Real bug found and fixed 2026-09-01: this
+    # was originally gated the same way as the user-creation steps below,
+    # which meant a later fix to the index pattern here (wazuh-alerts-* ->
+    # wazuh-states-vulnerabilities-*) would have silently never reapplied
+    # once the credential file already existed from the first deploy.
+    - name: Ensure wazuh_findings_reader role exists in Wazuh Indexer
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_wazuh_url }}/_plugins/_security/api/roles/{{ wazuh_findings_ingest_wazuh_role_name }}"
+        method: PUT
+        url_username: "{{ wazuh_findings_ingest_wazuh_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_wazuh_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_wazuh_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            - index_patterns:
+                - "wazuh-states-vulnerabilities-*"
+              allowed_actions:
+                - "read"
+        status_code: [200, 201]
+      when: not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+      delegate_to: localhost
+
+    - name: Ensure scoped Wazuh Indexer user exists
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_wazuh_url }}/_plugins/_security/api/internalusers/{{ wazuh_findings_ingest_wazuh_user_name }}"
+        method: PUT
+        url_username: "{{ wazuh_findings_ingest_wazuh_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_wazuh_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_wazuh_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ wazuh_findings_ingest_wazuh_password }}"
+          opendistro_security_roles:
+            - "{{ wazuh_findings_ingest_wazuh_role_name }}"
+          description: "wazuh_findings_ingest service account (wazuh-stack) -- read-only, never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write Wazuh Indexer reader credential file
+      ansible.builtin.copy:
+        dest: "{{ wazuh_findings_ingest_dir }}/wazuh-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # wazuh-findings-ingest Wazuh Indexer reader credential - managed by Ansible, do not edit by hand
+          WAZUH_USER={{ wazuh_findings_ingest_wazuh_user_name }}
+          WAZUH_PASSWORD={{ wazuh_findings_ingest_wazuh_password }}
+      when:
+        - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Scoped OpenSearch internal user (destination) -- extends the
+    # existing es_findings_writer role's index_patterns to also cover
+    # wazuh-findings*, same technique cve_enrichment_sync used for
+    # unified-cve-exposure*. Idempotent PUT -- safe even if
+    # es_findings_ingest/gvm_findings_ingest/cve_enrichment_sync already
+    # created this role with a narrower pattern list; this is the union.
+    # ---------------------------------------------------------------
+
+    - name: Check for existing OpenSearch findings-writer credential
+      ansible.builtin.stat:
+        path: "{{ wazuh_findings_ingest_dir }}/es-user.env"
+      register: wazuh_findings_ingest_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning its scoped user
+      ansible.builtin.wait_for:
+        host: "{{ wazuh_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: wazuh_findings_ingest_es_reachable
+      ignore_errors: true
+      when: not wazuh_findings_ingest_es_credential_stat.stat.exists
+
+    - name: Warn and skip OpenSearch user provisioning when it is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ wazuh_findings_ingest_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping wazuh-findings-ingest user creation --
+          re-run provision once opensearch-stack is reachable.
+      when:
+        - not wazuh_findings_ingest_es_credential_stat.stat.exists
+        - wazuh_findings_ingest_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the scoped OpenSearch user
+      ansible.builtin.set_fact:
+        wazuh_findings_ingest_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not wazuh_findings_ingest_es_credential_stat.stat.exists
+        - not (wazuh_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure es_findings_writer role exists in OpenSearch (extended to wazuh-findings*)
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ wazuh_findings_ingest_es_role_name }}"
+        method: PUT
+        url_username: "{{ wazuh_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            - index_patterns:
+                - "harbor-findings*"
+                - "gvm-findings*"
+                - "es-findings-sync-state"
+                - "unified-cve-exposure*"
+                - "wazuh-findings*"
+              allowed_actions:
+                - "create_index"
+                - "write"
+                - "read"
+        status_code: [200, 201]
+      delegate_to: localhost
+
+    - name: Ensure scoped OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ wazuh_findings_ingest_es_user_name }}"
+        method: PUT
+        url_username: "{{ wazuh_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ wazuh_findings_ingest_es_password }}"
+          opendistro_security_roles:
+            - "{{ wazuh_findings_ingest_es_role_name }}"
+          description: "wazuh_findings_ingest service account (wazuh-stack) -- never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not wazuh_findings_ingest_es_credential_stat.stat.exists
+        - not (wazuh_findings_ingest_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch findings-writer credential file
+      ansible.builtin.copy:
+        dest: "{{ wazuh_findings_ingest_dir }}/es-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # wazuh-findings-ingest OpenSearch user credential - managed by Ansible, do not edit by hand
+          ES_FINDINGS_USER={{ wazuh_findings_ingest_es_user_name }}
+          ES_FINDINGS_PASSWORD={{ wazuh_findings_ingest_es_password }}
+      when:
+        - not wazuh_findings_ingest_es_credential_stat.stat.exists
+        - not (wazuh_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Check if OpenSearch is reachable for asset setup
+      ansible.builtin.wait_for:
+        host: "{{ wazuh_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: wazuh_findings_ingest_es_reachable_for_assets
+      ignore_errors: true
+
+    - name: Apply OpenSearch index templates and ingest pipelines
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/python3 {{ wazuh_findings_ingest_dir }}/es_setup_assets.py
+          --elasticsearch-url {{ wazuh_findings_ingest_elasticsearch_url }}
+          --user {{ wazuh_findings_ingest_elastic_admin_user }}
+          --password {{ wazuh_findings_ingest_elastic_admin_password | quote }}
+          {{ '--no-verify-tls' if wazuh_findings_ingest_es_no_verify_tls else '' }}
+          --apply
+      register: wazuh_findings_ingest_setup_assets_result
+      changed_when: >-
+        'created' in wazuh_findings_ingest_setup_assets_result.stdout
+        or 'updated' in wazuh_findings_ingest_setup_assets_result.stdout
+      when: not (wazuh_findings_ingest_es_reachable_for_assets.failed | default(true))
+      no_log: true
+
+    - name: Report asset setup skipped
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ wazuh_findings_ingest_elasticsearch_host }}:9200 is not reachable --
+          skipped index template / ingest pipeline setup this run.
+      when: wazuh_findings_ingest_es_reachable_for_assets.failed | default(true)
+
+    - name: Write wazuh-findings-ingest systemd service
+      ansible.builtin.template:
+        src: wazuh-findings-ingest.service.j2
+        dest: /etc/systemd/system/wazuh-findings-ingest.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write wazuh-findings-ingest systemd timer
+      ansible.builtin.template:
+        src: wazuh-findings-ingest.timer.j2
+        dest: /etc/systemd/system/wazuh-findings-ingest.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start wazuh-findings-ingest timer
+      ansible.builtin.systemd:
+        name: wazuh-findings-ingest.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

@@ -92,17 +92,52 @@
     # generate-indexer-certs.yml sets it), not just wrong.
     wazuh_cert_tool_version: "4.14"
   tasks:
-    - name: Create Wazuh compose and config directories
+    - name: Create Wazuh compose directory
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ wazuh_compose_dir }}"
         state: directory
         mode: "0750"
+
+    # Real bug found live on pve 2026-08-29: every one of these directories
+    # (and the config files written into them) defaulted to root:root, and
+    # a root-owned 0750 directory blocks traversal for any other uid
+    # entirely -- the indexer crashed on boot with AccessDeniedException
+    # reading its own bind-mounted opensearch.yml, even though the cert
+    # files inside wazuh_indexer_ssl_certs already had correct per-service
+    # ownership (the certs-generator sets that itself). Confirmed live via
+    # the actual file ownership the generator produced: wazuh.manager*/
+    # root-ca-manager.* are 999:999 (the wazuh-manager image's non-root
+    # user), everything else (wazuh.indexer*/wazuh.dashboard*/admin*/
+    # root-ca.*) is 1000:1000 (indexer/dashboard's shared non-root uid) --
+    # not guessed, read directly off disk.
+    # wazuh_indexer_ssl_certs is shared by all three services (each reads
+    # only its own cert files, already individually locked to 0400), so
+    # its directory needs to be traversable by every uid rather than
+    # owned by just one -- 0755 rather than a single owner override.
+    - name: Create Wazuh per-service config directories with matching ownership
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
       loop:
-        - "{{ wazuh_compose_dir }}"
-        - "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs"
-        - "{{ wazuh_compose_dir }}/config/wazuh_indexer"
-        - "{{ wazuh_compose_dir }}/config/wazuh_dashboard"
-        - "{{ wazuh_compose_dir }}/config/wazuh_cluster"
+        - path: "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs"
+          owner: root
+          group: root
+          mode: "0755"
+        - path: "{{ wazuh_compose_dir }}/config/wazuh_indexer"
+          owner: "1000"
+          group: "1000"
+          mode: "0750"
+        - path: "{{ wazuh_compose_dir }}/config/wazuh_dashboard"
+          owner: "1000"
+          group: "1000"
+          mode: "0750"
+        - path: "{{ wazuh_compose_dir }}/config/wazuh_cluster"
+          owner: "999"
+          group: "999"
+          mode: "0750"
 
     # Literal transcription of wazuh-docker v4.14.7's config/certs.yml —
     # node names here must match the hostnames used in docker-compose.yml
@@ -188,6 +223,15 @@
         lookup('env', 'WAZUH_API_PASSWORD')
         | mandatory('WAZUH_API_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
       }}
+    # Shared secret for wazuh-authd auto-enrollment (agent pilot rollout,
+    # 2026-08-29): every wazuh_agent-role host registers itself against
+    # this manager's :1515 using this same password, rather than
+    # generating+distributing a static key per agent.
+    wazuh_agent_authd_password: >-
+      {{
+        lookup('env', 'WAZUH_AGENT_AUTHD_PASSWORD')
+        | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+      }}
     wazuh_runtime_images:
       - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-manager:{{ wazuh_image_tag }}"
       - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-indexer:{{ wazuh_image_tag }}"
@@ -207,6 +251,8 @@
     - name: Write Wazuh indexer opensearch.yml
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_indexer/wazuh.indexer.yml"
+        owner: "1000"   # wazuh-indexer image's non-root uid -- confirmed live via cert ownership, see directory task above
+        group: "1000"
         mode: "0640"
         content: |
           network.host: "0.0.0.0"
@@ -251,6 +297,8 @@
     - name: Write Wazuh manager ossec.conf
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/wazuh_manager.conf"
+        owner: "999"   # wazuh-manager image's non-root uid -- confirmed live via cert ownership, see directory task above
+        group: "999"
         mode: "0640"
         content: |
           <ossec_config>
@@ -482,11 +530,18 @@
             </rule_test>
 
             <auth>
-              <disabled>no</disabled>
-              <port>1515</port>
-              <use_source_ip>no</use_source_ip>
-              <purge>yes</purge>
-              <use_password>no</use_password>
+              <!-- use_password: yes (upstream default: no) -- agent pilot
+                   rollout, 2026-08-29. wazuh-authd (this block) validates
+                   new agent registrations against a shared password file
+                   at /var/ossec/etc/authd.pass, injected by a later task
+                   in this same play once the manager container is up
+                   (that file lives in the wazuh_etc *named volume*, not
+                   a bind mount -- see the task comment for why it's
+                   injected via docker cp rather than templated in
+                   directly, matching this file's own wazuh.yml lesson
+                   about mixing bind-mounted files into a directory a
+                   named volume also covers). -->
+              <use_password>yes</use_password>
               <ciphers>HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH</ciphers>
               <ssl_verify_host>no</ssl_verify_host>
               <ssl_manager_cert>etc/sslmanager.cert</ssl_manager_cert>
@@ -578,6 +633,8 @@
     - name: Write Wazuh indexer internal_users.yml
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_indexer/internal_users.yml"
+        owner: "1000"   # wazuh-indexer image's non-root uid -- confirmed live via cert ownership
+        group: "1000"
         mode: "0640"
         content: |
           _meta:
@@ -650,12 +707,15 @@
     - name: Write Wazuh dashboard opensearch_dashboards.yml (baseline, pre-OIDC)
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/opensearch_dashboards.yml"
+        owner: "1000"   # wazuh-dashboard image's non-root uid -- confirmed live via cert ownership
+        group: "1000"
         mode: "0640"
         content: |
           server.host: 0.0.0.0
           server.port: 5601
           opensearch.hosts: https://wazuh.indexer:9200
           opensearch.ssl.verificationMode: certificate
+          opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
           opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
           opensearch_security.multitenancy.enabled: false
           opensearch_security.readonly_mode.roles: ["kibana_read_only"]
@@ -667,12 +727,49 @@
       notify: Recreate Wazuh stack
 
     # Literal transcription of wazuh-docker v4.14.7's
-    # config/wazuh_dashboard/wazuh.yml, with the numeric app-config id
-    # (1513629884013, a fixed constant used by every Wazuh dashboard
-    # install, not stack-specific) and password field templated.
+    # config/wazuh_dashboard/wazuh.yml, with the password field templated
+    # -- plus one deliberate change from upstream:
+    #
+    # NOTE on the `hosts` map's key (upstream default: the numeric
+    # constant 1513629884013, which shows up verbatim and unexplained in
+    # the dashboard's API selector dropdown): a same-day attempt to
+    # rename this to a readable label ("wazuh-stack") was tried and
+    # REVERTED after live verification found it triggers a real
+    # functional regression, not just a cosmetic rename. On container
+    # recreate with a non-numeric key, the dashboard app appended a
+    # SECOND stale `hosts` entry back into this same file, keyed on the
+    # original numeric constant and carrying upstream's own run_as: true
+    # default -- i.e. exactly the config that caused the "You have no
+    # permissions" bug this file's run_as: false fix (below) exists to
+    # solve. Confirmed via `wc -l` on the actual host-side file (14
+    # lines, two `hosts:` blocks) both before and independent of the
+    # container's bind-mounted view, ruling out a mount-layering
+    # artifact -- something in the dashboard app's own config
+    # validation/migration logic doesn't tolerate a non-numeric key and
+    # falls back to re-adding its default. Left as upstream's numeric
+    # key pending a real investigation of that app-side behavior; do not
+    # re-attempt the label rename without first re-verifying no
+    # duplicate entry reappears.
+    #
+    # run_as: true (upstream's own default) changed to false:
+    # real bug found live via an actual browser login, 2026-08-29 --
+    # "You have no permissions" for agent:read/sca:read even after the
+    # OpenSearch-level all_access fix. Wazuh's own RBAC (server-side,
+    # entirely separate from OpenSearch's roles_mapping.yml) is what
+    # gates these -- confirmed via Wazuh's own official docs: with
+    # run_as: true the dashboard tries to impersonate the logged-in
+    # dashboard user against the Wazuh API, but an OIDC-authenticated
+    # user has no corresponding Wazuh RBAC identity at all. Wazuh's own
+    # SSO guidance is explicit that run_as must be false for SSO
+    # deployments -- every API call then uses the fixed wazuh-wui
+    # service credential (already an implicit administrator) regardless
+    # of who's logged into the dashboard UI, appropriate for a
+    # single-operator lab already gated by Authentik SSO.
     - name: Write Wazuh dashboard app config (wazuh.yml)
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/wazuh.yml"
+        owner: "1000"   # wazuh-dashboard image's non-root uid -- confirmed live via cert ownership
+        group: "1000"
         mode: "0640"
         content: |
           hosts:
@@ -681,7 +778,7 @@
                 port: 55000
                 username: wazuh-wui
                 password: "{{ wazuh_api_password }}"
-                run_as: true
+                run_as: false
       no_log: true
       register: wazuh_dashboard_app_config
       notify: Recreate Wazuh stack
@@ -876,6 +973,83 @@
         port: 55000
         timeout: 300
 
+    # wazuh-authd's password file lives at /var/ossec/etc/authd.pass,
+    # inside the wazuh_etc *named volume* -- not a path this playbook
+    # bind-mounts from the host (ossec.conf itself is only staged in via
+    # /wazuh-config-mount/etc/ossec.conf, which the image's own
+    # entrypoint copies into the volume; there's no equivalent staging
+    # path for authd.pass). Deliberately NOT bind-mounting a single file
+    # onto a path a named volume also covers here -- that exact pattern
+    # (this file's own wazuh.yml, on the dashboard side) was tried
+    # earlier this same day and caused the dashboard app to silently
+    # append a stale duplicate entry back into the file on every
+    # container recreate. Writing the file into the already-running
+    # container via docker cp, matching how this playbook already
+    # injects the indexer's OIDC config.yml/roles_mapping.yml changes,
+    # avoids that risk entirely.
+    - name: Write authd.pass to the host (staging file, not container-mounted)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/authd.pass"
+        content: "{{ wazuh_agent_authd_password }}"
+        mode: "0600"
+      no_log: true
+      register: wazuh_authd_pass_staged
+
+    # Real bug found live, 2026-08-29: gating the copy/chown/restart below
+    # on wazuh_authd_pass_staged.changed alone breaks whenever the
+    # MANAGER CONTAINER gets rebuilt independently of this host-side
+    # staging file (e.g. `docker compose down -v` to rule out corrupted
+    # state, then a redeploy) -- the staging file's content is unchanged
+    # (same SOPS secret), so .changed is False, so every step here got
+    # skipped even though the fresh container had no authd.pass at all.
+    # Every one of the 5 pilot agents then failed enrollment with
+    # "Invalid password" (authd validating against a nonexistent file
+    # rejects everything) until this was caught and fixed. Checking
+    # whether the file actually exists INSIDE the container -- not just
+    # whether the host staging copy changed -- makes this self-healing
+    # across a container rebuild, not just a config edit.
+    - name: Check whether authd.pass already exists inside the manager container
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, test, -s, /var/ossec/etc/authd.pass]
+      register: wazuh_authd_pass_in_container
+      changed_when: false
+      failed_when: false
+
+    - name: Copy authd.pass into the running manager container
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/authd.pass",
+               "wazuh-stack-manager:/var/ossec/etc/authd.pass"]
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
+      changed_when: true
+
+    - name: Set ownership/permissions on the in-container authd.pass
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c,
+               "chown 999:999 /var/ossec/etc/authd.pass && chmod 640 /var/ossec/etc/authd.pass"]
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
+      changed_when: true
+
+    # ossec.conf's own use_password: yes change (above) already forces a
+    # full-stack recreate via the "Recreate Wazuh stack" handler at the
+    # end of this play -- but that recreate happens BEFORE authd.pass
+    # exists in the volume (handlers run once, at end of play, and this
+    # task runs mid-play, after the manager's already up). Restart just
+    # the manager container here so wazuh-authd re-reads its config with
+    # the password file actually present, instead of waiting on a second
+    # deploy run to pick it up.
+    - name: Restart the manager container to pick up authd.pass
+      ansible.builtin.command:
+        argv: [docker, restart, wazuh-stack-manager]
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
+      changed_when: true
+
+    - name: Wait for manager API port to accept connections again after authd restart
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 55000
+        timeout: 300
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
+
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
         host: 127.0.0.1
@@ -934,12 +1108,15 @@
     - name: Write Wazuh dashboard opensearch_dashboards.yml (with OIDC)
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/opensearch_dashboards.yml"
+        owner: "1000"   # wazuh-dashboard image's non-root uid -- confirmed live via cert ownership
+        group: "1000"
         mode: "0640"
         content: |
           server.host: 0.0.0.0
           server.port: 5601
           opensearch.hosts: https://wazuh.indexer:9200
           opensearch.ssl.verificationMode: certificate
+          opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
           opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
           opensearch_security.multitenancy.enabled: false
           opensearch_security.readonly_mode.roles: ["kibana_read_only"]
@@ -974,18 +1151,31 @@
     # (config.yml sits behind the securityconfig REST endpoint, which
     # is disabled by default; see project_opensearch_migration_status
     # memory / es_findings_ingest role's own comment on this exact
-    # distinction). Idempotent: skipped once the domain is already present.
+    # distinction). Idempotent: skipped once the domain is already
+    # present in its current desired shape.
+    #
+    # Checks specifically for "subject_key: preferred_username" rather
+    # than just the presence of openid_auth_domain -- real bug found
+    # live via actual browser login, 2026-08-29: the first version of
+    # this helper wrote subject_key: sub, which OpenSearch surfaces as
+    # the raw hashed OIDC subject claim as the displayed username
+    # instead of "steve". A grep for openid_auth_domain alone would have
+    # matched the stale block and skipped re-applying the fix on a
+    # re-run, since the domain itself already existed. PyYAML's
+    # safe_dump renders this as an unquoted plain scalar (confirmed:
+    # `subject_key: preferred_username`, no quoting), so a plain
+    # substring grep is reliable here.
     - name: Check whether indexer security config already has the OIDC domain
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-stack-indexer, grep, -q, openid_auth_domain,
-               /usr/share/wazuh-indexer/opensearch-security/config.yml]
+        argv: [docker, exec, wazuh-stack-indexer, grep, -q, "subject_key: preferred_username",
+               /usr/share/wazuh-indexer/config/opensearch-security/config.yml]
       register: wazuh_oidc_domain_present
       changed_when: false
       failed_when: false
 
     - name: Copy live security config.yml out of the indexer container
       ansible.builtin.command:
-        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml",
+        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/config.yml",
                "{{ wazuh_compose_dir }}/config.yml.orig"]
       when: wazuh_oidc_domain_present.rc != 0
 
@@ -994,6 +1184,17 @@
         src: "{{ playbook_dir }}/../files/wazuh-stack/add_openid_auth_domain.py"
         dest: "{{ wazuh_compose_dir }}/add_openid_auth_domain.py"
         mode: "0750"
+      when: wazuh_oidc_domain_present.rc != 0
+
+    # Real bug found live on pve, sixth deploy attempt: the LXC's own
+    # system python3 has no PyYAML installed by default (Ansible's own
+    # module execution doesn't need it on the host side), so the helper
+    # script's `import yaml` failed outright. Install it explicitly
+    # rather than assume it's already present.
+    - name: Ensure PyYAML is installed for the openid_auth_domain helper script
+      ansible.builtin.apt:
+        name: python3-yaml
+        state: present
       when: wazuh_oidc_domain_present.rc != 0
 
     - name: Add the openid_auth_domain block to security config.yml
@@ -1009,9 +1210,79 @@
     - name: Copy the updated security config.yml back into the indexer container
       ansible.builtin.command:
         argv: [docker, cp, "{{ wazuh_compose_dir }}/config.yml.new",
-               "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml"]
+               "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/config.yml"]
       when: wazuh_oidc_domain_present.rc != 0
 
+    # Real bug found live on pve, fifth deploy attempt: config.yml actually
+    # lives at .../config/opensearch-security/config.yml, not
+    # .../opensearch-security/config.yml -- confirmed by `find` inside the
+    # running container rather than guessed. CONFIG_DIR corrected to match;
+    # the certs dir is a sibling of opensearch-security under config/, i.e.
+    # $CONFIG_DIR/../certs (not $CONFIG_DIR/../config/certs, which would
+    # have doubled the config/ segment).
+
+    # Real bug found live on pve via an actual browser login (not just
+    # curl -- authentication succeeded, then every search failed with
+    # "no permissions for [indices:data/read/search]"): the
+    # openid_auth_domain's authentication_backend is "noop", so an
+    # OIDC-authenticated user arrives with an auto-generated username (a
+    # hash of their subject claim) and empty backend_roles. The default
+    # all_access role only maps backend_roles: ["admin"], so it never
+    # matches, and OpenSearch's security plugin has no other role for
+    # them at all. Fix: add a wildcard users: ["*"] match to all_access,
+    # the exact same pattern this file already uses for its own_index
+    # role -- appropriate for a single-operator lab already gated by
+    # Authentik SSO (reaching this login page at all already required
+    # real authentication upstream).
+    - name: Check whether all_access role already allows any authenticated user
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec wazuh-stack-indexer
+          awk '/^all_access:/,/^$/' /usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml
+          | grep -qE "^\s*-\s*['\"]?\*['\"]?\s*$"
+      register: wazuh_all_access_wildcard_present
+      changed_when: false
+      failed_when: false
+
+    - name: Copy live roles_mapping.yml out of the indexer container
+      ansible.builtin.command:
+        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml",
+               "{{ wazuh_compose_dir }}/roles_mapping.yml.orig"]
+      when: wazuh_all_access_wildcard_present.rc != 0
+
+    - name: Copy the all_access wildcard helper script to the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/add_all_access_wildcard_user.py"
+        dest: "{{ wazuh_compose_dir }}/add_all_access_wildcard_user.py"
+        mode: "0750"
+      when: wazuh_all_access_wildcard_present.rc != 0
+
+    - name: Add the wildcard user match to all_access in roles_mapping.yml
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ wazuh_compose_dir }}/add_all_access_wildcard_user.py"
+          - "{{ wazuh_compose_dir }}/roles_mapping.yml.orig"
+          - "{{ wazuh_compose_dir }}/roles_mapping.yml.new"
+      when: wazuh_all_access_wildcard_present.rc != 0
+
+    - name: Copy the updated roles_mapping.yml back into the indexer container
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/roles_mapping.yml.new",
+               "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/roles_mapping.yml"]
+      when: wazuh_all_access_wildcard_present.rc != 0
+
+    # securityadmin.sh's -cd flag pushes the whole opensearch-security
+    # config directory in one call (config.yml AND roles_mapping.yml
+    # together), so one push after both mutations covers everything --
+    # no need for a second securityadmin.sh run.
+    #
+    # Real bug found live on pve, seventh deploy attempt: securityadmin.sh
+    # shells out to `which` internally to locate java when JAVA_HOME isn't
+    # set, and this image has no `which` binary at all ("command not
+    # found", confirmed via the actual stderr, not guessed). Setting
+    # JAVA_HOME explicitly (the exact path Wazuh's own docs use for this
+    # image) avoids that code path entirely.
     - name: Push the updated security config via securityadmin.sh
       ansible.builtin.command:
         argv:
@@ -1021,9 +1292,32 @@
           - bash
           - -c
           - >-
-            CONFIG_DIR=/usr/share/wazuh-indexer/opensearch-security &&
+            export JAVA_HOME=/usr/share/wazuh-indexer/jdk &&
+            CONFIG_DIR=/usr/share/wazuh-indexer/config/opensearch-security &&
             bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
-            -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../config/certs/admin-key.pem
-            -cert $CONFIG_DIR/../config/certs/admin.pem
-            -cacert $CONFIG_DIR/../config/certs/root-ca.pem -nhnv -p 9200 -h localhost
-      when: wazuh_oidc_domain_present.rc != 0
+            -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../certs/admin-key.pem
+            -cert $CONFIG_DIR/../certs/admin.pem
+            -cacert $CONFIG_DIR/../certs/root-ca.pem -nhnv -p 9200 -h localhost
+      when: wazuh_oidc_domain_present.rc != 0 or wazuh_all_access_wildcard_present.rc != 0
+
+- name: Deploy findings ingestion (Wazuh -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new dedicated Wazuh Indexer
+  # reader + OpenSearch user -- does not touch any of the manager/
+  # indexer/dashboard deploy or OIDC plays above. Same shape as
+  # deploy-harbor-stack.yml's own "Deploy findings ingestion" play.
+  # Gated the same way es_findings_ingest/gvm_findings_ingest are:
+  # explicit opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: wazuh_findings_ingest
+      when: wazuh_findings_ingest_enabled | default(false) | bool
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

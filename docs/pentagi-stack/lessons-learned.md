@@ -496,6 +496,14 @@ through gpt-oss-120b instead of Qwen3.6. Temperature, reasoning-budget,
 and ctx-size are tuning specific to making llama.cpp behave, not
 inherent advantages vanilla lacks.
 
+**On (2) specifically**: still an open question as of this writing —
+see [model-recommendations.md](./model-recommendations.md) for what the
+separate eval-battery project's data does and doesn't say about it.
+GPQA (this project's own designated adviser-role proxy) was never run
+against gpt-oss-120b, so there's still no direct reasoning comparison
+to justify keeping it over Qwen3.6-35B alone; the one axis that is
+comparable (BFCL) actually favors Qwen3.6-35B.
+
 ### Open follow-up: subtask granularity via prompt customization
 
 Subtask decomposition granularity ("one subtask per service" vs the

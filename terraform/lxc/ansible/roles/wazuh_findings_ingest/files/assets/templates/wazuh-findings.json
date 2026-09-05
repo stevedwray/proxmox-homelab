@@ -1,0 +1,44 @@
+{
+  "index_patterns": ["wazuh-findings*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.default_pipeline": "wazuh-findings-normalize"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "source": { "type": "keyword" },
+        "finding_id": { "type": "keyword" },
+        "severity_raw": { "type": "keyword" },
+        "cvss_score": { "type": "float" },
+        "severity_assessed": { "type": "keyword" },
+        "assessed_reason": { "type": "text" },
+        "assessed_by": { "type": "keyword" },
+        "assessed_at": { "type": "date" },
+        "package": { "type": "keyword" },
+        "package_version": { "type": "keyword" },
+        "description": { "type": "text" },
+        "target": {
+          "properties": {
+            "agent_id": { "type": "keyword" },
+            "agent_name": { "type": "keyword" },
+            "stack": { "type": "keyword" },
+            "zone": { "type": "keyword" },
+            "in_production": { "type": "boolean" }
+          }
+        },
+        "scan_time": { "type": "date" },
+        "first_seen": { "type": "date" },
+        "last_seen": { "type": "date" },
+        "ingested_at": { "type": "date" }
+      }
+    }
+  },
+  "priority": 200,
+  "_meta": {
+    "description": "Wazuh current vulnerability state (sourced from wazuh-states-vulnerabilities-*, not wazuh-alerts-* — see docs/threat-vuln-platform/plan.md's 2026-09-01 correction note) — one document per CVE-per-package-per-agent, upserted on a deterministic _id so reruns update first_seen/last_seen rather than duplicating. Third *-findings source alongside harbor-findings and gvm-findings, feeding unified-cve-exposure.",
+    "managed_by": "wazuh_findings_ingest role, es_setup_assets.py"
+  }
+}

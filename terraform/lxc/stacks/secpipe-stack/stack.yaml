@@ -53,3 +53,12 @@ apt_cacher_host: "${lab_ip_apt_cacher}"
 # narrative, and writes results into unified-cve-exposure plus back onto
 # each finding's own severity_assessed/* fields.
 cve_enrichment_sync_enabled: true
+
+# cve_deep_dive (Phase 11, same role) -- separate weekly pass over just
+# the worst/most-exploitable CVEs (KEV-listed or PoC-available, in
+# production), using the local Ollama/laguna runtime (confirmed free
+# 2026-09-03) plus real stack-architecture context (zone/exposure) for a
+# genuine remediation call, not the routine narrative's generic text. See
+# cve_deep_dive.py's module docstring and docs/threat-vuln-platform/plan.md
+# Phase 11.
+cve_enrichment_sync_deep_dive_enabled: true

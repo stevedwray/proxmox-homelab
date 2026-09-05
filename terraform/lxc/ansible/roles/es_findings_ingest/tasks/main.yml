@@ -70,6 +70,14 @@
         group: root
         mode: "0750"
 
+    - name: Copy known-production-images classifier registry
+      ansible.builtin.copy:
+        src: "assets/known_production_images.json"
+        dest: "{{ es_findings_ingest_dir }}/assets/known_production_images.json"
+        owner: root
+        group: root
+        mode: "0640"
+
     - name: Copy index template assets
       ansible.builtin.copy:
         src: "assets/templates/{{ item }}"

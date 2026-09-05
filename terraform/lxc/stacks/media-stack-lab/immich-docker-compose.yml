@@ -1,0 +1,88 @@
+# Split from the original combined docker-compose.yml 2026-09-04 into
+# separate Portainer-controllable stacks, one per app (operator request).
+# cadvisor stays here (arbitrary but documented choice -- it monitors the
+# whole host via bind mounts, not scoped to either app specifically).
+# `name:` pins the Compose project name explicitly so it's identical
+# regardless of whether this is invoked by Ansible (docker compose up -d
+# from this directory) or by Portainer's own agent (stacks API) -- both
+# resolve to the same project, so either one recognizes the other's
+# already-running containers as up to date instead of conflicting.
+# Must match the "Name" registered with Portainer (stack.yaml
+# portainer_stacks) exactly -- confirmed live that Portainer's own
+# compose invocation uses its own "Name" as the project, ignoring this
+# file's name: key entirely, so a mismatch here causes a real container
+# name conflict rather than a clean idempotent no-op.
+name: media-stack-lab-immich
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    container_name: media-stack-lab-immich-server
+    user: "1000:1000"
+    environment:
+      - IMMICH_CONFIG_FILE=/immich-config.json
+      - DB_HOSTNAME=database
+      - DB_PORT=5432
+      - DB_USERNAME=immich
+      - DB_PASSWORD=${MEDIA_STACK_LAB_DB_PASSWORD}
+      - DB_DATABASE_NAME=immich
+    volumes:
+      - /nas-media/immich-photos:/data
+      - /nas-media/pictures:/nas-photos-import:ro
+      - /etc/localtime:/etc/localtime:ro
+      - ./immich-config.json:/immich-config.json:ro
+    ports:
+      - 2283:2283
+    depends_on:
+      - redis
+      - database
+    restart: unless-stopped
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    container_name: media-stack-lab-immich-machine-learning
+    volumes:
+      - model-cache:/cache
+    restart: unless-stopped
+
+  redis:
+    image: docker.io/valkey/valkey:9@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd
+    container_name: media-stack-lab-redis
+    restart: unless-stopped
+
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    container_name: media-stack-lab-database
+    environment:
+      - POSTGRES_PASSWORD=${MEDIA_STACK_LAB_DB_PASSWORD}
+      - POSTGRES_USER=immich
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+    volumes:
+      - immich-db-data:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: unless-stopped
+
+  cadvisor:
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
+    container_name: media-stack-lab-cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /etc/machine-id:/etc/machine-id:ro
+
+volumes:
+  # External: preserves the volumes created under the original combined
+  # "media-stack-lab" project name -- the Immich Postgres DB and the ML
+  # model cache must not be orphaned by this split.
+  model-cache:
+    external: true
+    name: media-stack-lab_model-cache
+  immich-db-data:
+    external: true
+    name: media-stack-lab_immich-db-data
