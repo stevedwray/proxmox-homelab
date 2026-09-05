@@ -1,7 +1,11 @@
 # GVM network-wide discovery & vulnerability scanning — rollout plan
 
-Status: **scoped, not started.** Decisions below were made with the operator
-2026-08-16; this file is the plan to implement them. Read
+Status: **Phases 1, 2, and 4 (weekly full-vuln scheduling) done and live in
+production, confirmed by a successful unattended overnight run 2026-08-17.**
+Phase 4's daily-discovery half, Phase 3 (deferred by decision), Phase 5, and
+Phase 6 remain open — see each phase's own status line below. Decisions
+below were made with the operator 2026-08-16; this file is the plan to
+implement them. Read
 [README.md](./README.md) and [pentagi-integration.md](./pentagi-integration.md)
 first — this project extends the same `greenbone-stack`, but is a genuinely
 different mission from both of those: this is *standing, scheduled,
@@ -97,13 +101,11 @@ file itself) so it stays a valid idempotent path for any future
 re-application, rather than describing a different, looser assumption
 than what's actually live.
 
-**Not yet done**: an actual reachability spot-check (`nc -zv`/`ping`) from
-inside `greenbone-stack` into 2–3 destination zones. The firewall rule
-being present and correctly placed is strong evidence but not the same as
-observed traffic — this needs either the operator running a couple of
-commands directly on `greenbone-stack`, or an SSH session against
-production `pve` on my end, which needs the standard `TASK_APPROVAL` flow
-per CLAUDE.md before I'd run it myself.
+**Superseded**: this section originally flagged an outstanding reachability
+spot-check (`nc -zv`/`ping`) as not yet done. That's since been proven far
+more thoroughly than a spot-check ever would — see the manual scan
+validation and the first scheduled overnight run further down, both of
+which are real scan traffic reaching every zone repeatedly.
 
 Add new MikroTik rules, all **scoped by source IP = `greenbone-stack`'s own
 address only**, one rule per destination zone (mirrors the existing
