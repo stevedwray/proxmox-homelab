@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Scaffold a new stack's five files using narrow-scoped OpenCode agents.
+"""Scaffold a new stack's five files -- DEPRECATED automation, do not run.
 
-This is the scripted coordinator that replaced a human/frontier-model
-driving each opencode invocation by hand. It exists because a single
-general-purpose agent asked to author all five files in one open-ended
-task reliably fails (see docs/stack-lifecycle-refactor/coding-agent-
-findings.md); five agents each scoped to exactly one file, gated by real
-validators between steps, does not.
+**opencode is a deprecated path in this lab (operator decision, 2026-09-04
+-- see docs/media-stack-lab/plan.md).** This script drove five narrow-scoped
+OpenCode agents (one per generated file, gated by real validators between
+steps) and is left in place only as a reference for that design, not as a
+runnable tool. `main()` refuses to run for that reason.
 
-Usage:
+Do this instead, the same way `docs/media-stack-lab/plan.md` records doing
+it: author the five files by hand from `stack-request.yaml`'s fields
+(`stack_yaml`, `compose_requirements`/`compose_forbidden`, `contract_facts`,
+`playbook_content`), modeled on an existing stack's real files for shape,
+then run the same validators this script would have run between steps:
+    validate-stack-metadata.sh
+    validate-compose.sh --stack <name>
+    validate-stack-metadata.sh --check-contract-sections
+    ansible-playbook --syntax-check <playbook>
+
+Original usage (kept for context, no longer supported):
     terraform/lxc/scaffold-stack.sh <stack-name>
 
 Reads terraform/lxc/stacks/<stack-name>/stack-request.yaml (human-authored,
-not part of the stack's final file set) and drives, in order:
+not part of the stack's final file set) and would have driven, in order:
     stack-yaml-writer -> validate-stack-metadata.sh
     compose-writer    -> validate-compose.sh
     contract-writer   -> validate-stack-metadata.sh --check-contract-sections
     terragrunt-writer -> (no validator; content is fixed boilerplate)
     playbook-writer   -> ansible-playbook --syntax-check
-
-Stops immediately on the first validator failure or agent error, so a
-partial, unverified stack is never silently left behind.
 """
 
 from __future__ import annotations
@@ -37,7 +43,20 @@ OPENCODE_MODEL = "ollama_lan/eval-qwen3-coder-30b-a3b:q4_k_m"
 
 
 def main() -> int:
-    args = parse_args()
+    die(
+        "scaffold-stack.py is deprecated: it drives opencode, which is a "
+        "deprecated path in this lab (operator decision, 2026-09-04 -- see "
+        "docs/media-stack-lab/plan.md). Author the five stack files by hand "
+        "from stack-request.yaml instead, then run the same validators this "
+        "script would have (see the module docstring for the exact list)."
+    )
+    return 1  # unreachable -- die() above calls sys.exit(1)
+
+
+def _scaffold_via_opencode(args: argparse.Namespace) -> int:
+    """Original opencode-driven implementation, kept only as a design
+    reference (see the module docstring) -- not called from main() anymore.
+    """
     repo_root = Path(__file__).resolve().parents[2]
     lxc_dir = repo_root / "terraform" / "lxc"
     stack_dir = lxc_dir / "stacks" / args.stack_name

@@ -3,7 +3,14 @@
 Run date: 2026-07-21. This is the Phase 0/Phase 1 decision record for the
 operator-directed Ollama-only path.
 
-## Decision
+**Superseded, 2026-09-04: opencode is now a deprecated path in this lab**
+(operator decision — see `docs/media-stack-lab/plan.md`). The "Decision"
+below naming OpenCode as primary no longer holds; do not stand up new
+automation on it (see `terraform/lxc/scaffold-stack.py`, which used to drive
+it and now refuses to run). Preserved below as the historical record of why
+it was picked in the first place.
+
+## Decision (superseded — see note above)
 
 Use **OpenCode 1.18.4** as the primary daily coding agent on this workstation,
 with **Aider 0.86.2** as the preferred fallback/control client. Both use

@@ -1,5 +1,10 @@
 # PentAGI ↔ Greenbone (GVM) integration — scoping
 
+**DEPRECATED, 2026-09-06 — per operator decision, PentAGI is no longer in use
+and is not supported in this lab.** GVM/`greenbone-stack` itself remains live
+and supported; only the PentAGI side of this integration is deprecated. The
+rest of this document is preserved as a historical record of what was built.
+
 **Status: implemented and deployed to production, 2026-08-03.** See
 "Implementation status" near the end for what was actually built,
 deployed, and validated, and what's still a known gap. Architecture

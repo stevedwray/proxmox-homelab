@@ -4,6 +4,11 @@ Status: **plan only, nothing built.** Next workspace after
 [`plan.md`](./plan.md) (inference layer, done) — this covers the
 agent/orchestration/UI layers on top of it.
 
+**Superseded, 2026-09-04: opencode is now a deprecated path in this lab**
+(operator decision — see `docs/media-stack-lab/plan.md`). Every "OpenCode:
+Primary"/recommended verdict below predates that and no longer holds;
+preserved as the historical bake-off record, not current guidance.
+
 ## Current state (2026-07-21)
 
 - `framework.gibbsgreatly.xyz` is still a **production-trust node**

@@ -1,5 +1,13 @@
 # PentAGI Stack
 
+**DEPRECATED, 2026-09-06 — per operator decision, PentAGI is no longer in use
+and is not supported in this lab.** Everything below is preserved as a
+historical record of what was built and validated; it is not a guide for new
+work, and `pentagi-stack` should not be treated as a template or dependency
+for anything else in this repo going forward. The deployed containers on
+`pve`/`pve-test-vm` and the `work/pentagi-v210-upgrade` branch have not been
+torn down as part of this note — that's a separate decision, not yet made.
+
 Workspace for deploying [PentAGI](https://github.com/vxcontrol/pentagi) — an
 autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 `pve-test-vm`, driving local Ollama/SearXNG on `framework.gibbsgreatly.xyz`
