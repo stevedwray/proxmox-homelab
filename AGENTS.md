@@ -5,14 +5,22 @@
 ```
 feat/* / fix/* / task/* / work/*   ← active development (temporary)
        ↓  appropriate validation tier (see below)
-stable                             ← validated on pve-test-vm, ready for pve
+stable                             ← validated per its tier, ready for pve
        ↓  incremental deploy on pve + smoke test passes
 main                               ← current production state
 ```
 
+**`pve-test-vm` is reserved for structural/high-blast-radius validation only**
+(Terraform/SDN/firewall zone work, full teardown cycles — see Validation
+Tiers below). It is no longer the default validation target for routine
+changes. Everything else — Ansible task/role changes, Authentik/Traefik/
+Harbor config, and similar app-level work — validates directly against
+`pve`, through the normal production approval flow (see Production
+Credential Controls), not on pve-test-vm first.
+
 | Branch | Meaning | Promotion gate |
 |---|---|---|
-| `stable` | Validated on pve-test-vm via the appropriate tier for the change class. | See Validation Tiers below. |
+| `stable` | Validated per the appropriate tier for the change class — `pve-test-vm` for structural/high-blast-radius changes, `pve` directly (under the production approval flow) for everything else. | See Validation Tiers below. |
 | `main` | Deployed to pve; smoke test passed. | Incremental deploy on pve succeeds with no regressions. |
 
 `baseline/teardown-validated` is frozen as a historical marker (last full-teardown-validated state). Do not use as a development base.
@@ -26,7 +34,7 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 - All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
 - Validate on the short-lived branch (live runs, tests, populate checks).
-- Promote to `stable` once the appropriate validation tier passes on pve-test-vm.
+- Promote to `stable` once the appropriate validation tier passes — on `pve-test-vm` for structural/high-blast-radius changes, directly on `pve` (under the production approval flow) for everything else.
 - `stable` is a **promotion target only** — never use it as the base for a new development branch.
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `stable` → `main` only after a successful incremental deploy to pve.
@@ -36,14 +44,24 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 Match validation depth to change risk. A full teardown is required only for high-risk structural changes, not every promotion.
 
+**`pve-test-vm` is reserved for the structural/high-blast-radius tiers below**
+(Terraform/SDN/firewall zone work, full teardown cycles). Every other tier
+validates directly against `pve`, via `./with-secrets-prod`/
+`./with-secrets-prod-framework` under the normal production approval flow
+(Preflight Summary → Operator Approval → `TASK_APPROVAL` → execute — see
+Production Credential Controls). `scripts/teardown-deploy-test.sh` is
+pve-test-vm-only (it self-wraps `with-secrets`, not `with-secrets-prod`) and
+does not apply to tiers validated on `pve`.
+
 | Change class | Minimum validation |
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
-| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test-vm |
-| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
+| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` directly on `pve`, under the production approval flow |
+| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | On `pve-test-vm`: apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
 | Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test-vm |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test-vm |
+| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers directly on `pve`, under the production approval flow, and check their actual login/routing paths (targeted `scripts/provision.sh --stack <name>` calls via `./with-secrets-prod`/`./with-secrets-prod-framework`, in dependency order). A full teardown cycle (`scripts/teardown-deploy-test.sh cycle` / `destroy`, always on pve-test-vm) is never the default — run one only when the operator explicitly asks for it by name. |
+| Harbor (or another shared internal registry/cache) — version bump or config change that doesn't alter what consumers pull or push against | `scripts/provision.sh --stack harbor-stack` directly on `pve`, under the production approval flow, then re-run `scripts/provision.sh --stack <name>` for 1–2 stacks that actually pull through it (cover at least one native-adapter project and one proxy-cache project) to confirm no regression. Full teardown not required — unlike Authentik/Traefik, a Harbor outage doesn't break stacks that are already running (their images are already resident locally); it only blocks new pulls, deploys, and scans. |
 
 Batch related changes during development and run the appropriate tier.
 
@@ -220,6 +238,6 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 
 ## Execution Guardrails
 
-- Before any `terragrunt apply` or deployment validation run, verify `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` returns `pve-test-vm`; otherwise stop and treat it as a targeting error.
+- Before any `terragrunt apply` or deployment validation run, confirm the target matches the change's validation tier (see Validation Tiers): for structural/high-blast-radius tiers, `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` must return `pve-test-vm`; for every other tier, the run goes through `./with-secrets-prod`/`./with-secrets-prod-framework` against `pve`/`pve-framework` under the production approval flow instead. Either way, stop and treat a mismatch between the intended target and the actual one as a targeting error.
 - For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.
 - `pvesh` runs only on a Proxmox node itself; it is not installed on the operator's workstation. For read-only API checks from the workstation, use `./with-secrets` and curl against `${TF_VAR_proxmox_api_url}` with the `PROXMOX_READONLY_TOKEN_ID`/`PROXMOX_READONLY_TOKEN_SECRET` header (`Authorization: PVEAPIToken=<id>=<secret>`), or SSH to the target node and run `pvesh`/`pct list` there.
