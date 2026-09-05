@@ -60,3 +60,10 @@ apt_cacher_host: "${lab_ip_apt_cacher}"
 ansible_playbook: "deploy-wazuh-stack"
 deployment_tier: platform
 portainer_agent: false
+
+# wazuh_findings_ingest role -- pulls only vulnerability-detector CVE
+# findings into opensearch-stack's wazuh-findings index (the *-findings
+# asset-state shape, third source alongside harbor-findings/gvm-findings
+# feeding unified-cve-exposure). See docs/threat-vuln-platform/plan.md
+# Phase 2.
+wazuh_findings_ingest_enabled: true

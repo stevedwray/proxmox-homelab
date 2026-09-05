@@ -1,0 +1,223 @@
+---
+# mikrotik-dns-reverse-zone-delegate.yml
+#
+# Delegates the SDN reverse (in-addr.arpa) zones that currently carry real
+# PTR records to Technitium, mirroring mikrotik-dns-lab-zone-delegate.yml's
+# forward-zone FWD pattern. Without this, MikroTik answers reverse queries
+# for these ranges itself (NXDOMAIN) instead of forwarding to Technitium, so
+# `dig -x <ip>` against the LAN's default resolver returns nothing even
+# though the PTR record genuinely exists and resolves correctly when
+# Technitium is queried directly (found live 2026-08-30 -- see
+# docs/dns-reverse-records/README.md "pve deployment" section).
+#
+# Scope: only the 3 reverse zones with live ptr:true records today
+# (mgmt_seg, edge_seg, infra_seg) -- see docs/dns-reverse-records/plan.md.
+# ai_seg/game_seg reverse delegation can be added the same way once their
+# ad-hoc DNS-record playbooks (configure-ai-stack-dns-records.yml,
+# configure-gaming-stack-dns-records.yml) are actually run against a real
+# environment.
+#
+# Prerequisite: technitium-stack deployed with PTR records already
+# published (see docs/dns-reverse-records/plan.md).
+#
+# Usage (run from the repo root):
+#   ./with-secrets bash -c '
+#     ansible-playbook ansible/00-initial-setup/mikrotik-dns-reverse-zone-delegate.yml \
+#       --extra-vars "mikrotik_host=${MIKROTIK_HOST} mikrotik_user=${MIKROTIK_ADMIN} mikrotik_password=${MIKROTIK_ADMIN_PASSWORD}"
+#   '
+#
+# Required env vars (sourced via with-secrets from terraform/secrets.common.enc.yaml or .env):
+#   MIKROTIK_HOST, MIKROTIK_ADMIN, MIKROTIK_ADMIN_PASSWORD
+#   LAB_DOMAIN, LAB_IP_TECHNITIUM, LAB_IP_PROXY, LAB_IP_HARBOR
+#   LAB_GW_MGMT
+
+- name: Delegate SDN reverse zones from MikroTik to Technitium
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    fwd_comment: "reverse-zone-delegate"
+
+    # The 3 reverse zones with live ptr:true records today (mgmt_seg,
+    # edge_seg, infra_seg) -- see docs/dns-reverse-records/plan.md.
+    reverse_zones:
+      - zone: "20.168.192.in-addr.arpa"
+        probe_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+        expected_ptr: "dns.{{ lab_domain }}."
+      - zone: "30.168.192.in-addr.arpa"
+        probe_ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+        expected_ptr: "traefik.{{ lab_domain }}."
+      - zone: "40.168.192.in-addr.arpa"
+        probe_ip: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+        expected_ptr: "harbor-bg.{{ lab_domain }}."
+
+    probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
+    public_probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
+    public_probe_name: "github.com"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user. Set MIKROTIK_ADMIN or MIKROTIK_USER.
+
+  tasks:
+    # ── Step 1: Fetch all existing static DNS entries ──────────────────────────
+
+    - name: Fetch all DNS static entries from MikroTik
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: existing_dns
+      no_log: true
+
+    # ── Step 2: Find existing reverse-zone-delegate FWD entries ────────────────
+
+    - name: Build list of existing reverse-zone-delegate FWD entries
+      ansible.builtin.set_fact:
+        existing_reverse_fwd_entries: >-
+          {{
+            existing_dns.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', fwd_comment)
+            | selectattr('type', 'defined')
+            | selectattr('type', 'equalto', 'FWD')
+            | list
+          }}
+
+    # ── Step 3: Add any missing per-zone FWD delegation entries ────────────────
+
+    - name: Add missing reverse-zone FWD delegation entries
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          regexp: "(^|\\.){{ item.zone | replace('.', '\\.') }}$"
+          type: "FWD"
+          forward-to: "{{ technitium_ip }}"
+          ttl: "5m"
+          comment: "{{ fwd_comment }}"
+        status_code: [200, 201]
+      loop: "{{ reverse_zones }}"
+      loop_control:
+        label: "{{ item.zone }}"
+      when: >-
+        existing_reverse_fwd_entries
+        | selectattr('regexp', 'equalto', '(^|\\.)' ~ (item.zone | replace('.', '\\.')) ~ '$')
+        | list
+        | length == 0
+      no_log: true
+
+    # ── Step 4: Fix forward-to on any stale entries ─────────────────────────────
+
+    - name: Update stale reverse-zone FWD entries to current Technitium target
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ item['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          forward-to: "{{ technitium_ip }}"
+          ttl: "5m"
+        status_code: [200, 204]
+      loop: "{{ existing_reverse_fwd_entries | rejectattr('forward-to', 'equalto', technitium_ip) | list }}"
+      loop_control:
+        label: "{{ item.regexp }}"
+      no_log: true
+
+    # ── Step 5: Validate delegated reverse resolution ───────────────────────────
+
+    - name: Probe each reverse zone through the mgmt_seg gateway resolver
+      ansible.builtin.command:
+        cmd: "dig @{{ probe_resolver }} +short +time=5 +tries=2 -x {{ item.probe_ip }}"
+      register: reverse_probe_results
+      loop: "{{ reverse_zones }}"
+      loop_control:
+        label: "{{ item.zone }}"
+      changed_when: false
+
+    - name: Assert reverse probes return expected PTR name
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == item.item.expected_ptr
+        fail_msg: >-
+          Resolver {{ probe_resolver }} returned '{{ item.stdout | trim }}'
+          for -x {{ item.item.probe_ip }}, expected {{ item.item.expected_ptr }}.
+          Check the reverse-zone-delegate FWD entry for {{ item.item.zone }}
+          and that Technitium ({{ technitium_ip }}) is reachable from
+          MikroTik with UDP/TCP 53.
+        success_msg: >-
+          {{ probe_resolver }} → -x {{ item.item.probe_ip }} = {{ item.stdout | trim }} ✓
+      loop: "{{ reverse_probe_results.results }}"
+
+    # ── Step 6: Validate public (non-delegated) path is preserved ──────────────
+
+    - name: Probe public name through mgmt_seg gateway resolver
+      ansible.builtin.command:
+        cmd: "dig @{{ public_probe_resolver }} +short +time=5 +tries=2 {{ public_probe_name }}"
+      register: public_probe_result
+      changed_when: false
+
+    - name: Assert public probe returns an answer (non-delegated path preserved)
+      ansible.builtin.assert:
+        that:
+          - public_probe_result.stdout | trim | length > 0
+        fail_msg: >-
+          Resolver {{ public_probe_resolver }} returned no answer for {{ public_probe_name }}.
+          MikroTik recursive forwarding path may be broken.
+        success_msg: >-
+          {{ public_probe_resolver }} → {{ public_probe_name }} = {{ public_probe_result.stdout | trim }} ✓
+
+    # ── Step 7: Print validation summary ────────────────────────────────────────
+
+    - name: Print validation summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Reverse DNS delegation validation ==="
+          - "{{ reverse_zones | map(attribute='zone') | list }} → {{ technitium_ip }} (Technitium)"
+          - "Delegated resolution:"
+          - "  @{{ probe_resolver }} -x {{ reverse_zones[0].probe_ip }} = {{ reverse_probe_results.results[0].stdout | trim }}"
+          - "  @{{ probe_resolver }} -x {{ reverse_zones[1].probe_ip }} = {{ reverse_probe_results.results[1].stdout | trim }}"
+          - "  @{{ probe_resolver }} -x {{ reverse_zones[2].probe_ip }} = {{ reverse_probe_results.results[2].stdout | trim }}"
+          - "Non-delegated (public probe):"
+          - "  @{{ public_probe_resolver }} {{ public_probe_name }} = {{ public_probe_result.stdout | trim }}"
+          - "=== Delegation phase complete ==="

@@ -32,6 +32,41 @@
       failed_when: false
       changed_when: false
 
+- name: Remove scheduled CVE deep-dive when not explicitly enabled
+  when: not (cve_enrichment_sync_deep_dive_enabled | bool)
+  block:
+    - name: Stop and disable cve-deep-dive timer
+      ansible.builtin.systemd:
+        name: cve-deep-dive.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop cve-deep-dive service if present
+      ansible.builtin.systemd:
+        name: cve-deep-dive.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove cve-deep-dive units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/cve-deep-dive.timer
+        - /etc/systemd/system/cve-deep-dive.service
+        - "{{ cve_enrichment_sync_dir }}/cve_deep_dive.py"
+        - "{{ cve_enrichment_sync_dir }}/mark_cve_resolved.py"
+        - "{{ cve_enrichment_sync_dir }}/stack-architecture.json"
+      notify: Reload systemd
+
+    - name: Clear stale cve-deep-dive service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed cve-deep-dive.service cve-deep-dive.timer
+      failed_when: false
+      changed_when: false
+
 - name: Install scheduled CVE enrichment sync when explicitly enabled
   when: cve_enrichment_sync_enabled | bool
   block:
@@ -67,6 +102,24 @@
         group: root
         mode: "0750"
 
+    - name: Copy cve_deep_dive.py
+      ansible.builtin.copy:
+        src: cve_deep_dive.py
+        dest: "{{ cve_enrichment_sync_dir }}/cve_deep_dive.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Copy mark_cve_resolved.py
+      ansible.builtin.copy:
+        src: mark_cve_resolved.py
+        dest: "{{ cve_enrichment_sync_dir }}/mark_cve_resolved.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
     - name: Copy index template assets
       ansible.builtin.copy:
         src: "assets/templates/{{ item }}"
@@ -76,6 +129,8 @@
         mode: "0640"
       loop:
         - unified-cve-exposure.json
+        - stack-risk-summary.json
+        - cve-remediation-assessment.json
 
     - name: Write LLM provider credential file
       ansible.builtin.copy:
@@ -149,6 +204,9 @@
                 - "gvm-findings*"
                 - "es-findings-sync-state"
                 - "unified-cve-exposure*"
+                - "wazuh-findings*"
+                - "stack-risk-summary*"
+                - "cve-remediation-assessment*"
               allowed_actions:
                 - "create_index"
                 - "write"
@@ -222,6 +280,40 @@
       when: not (cve_enrichment_sync_es_reachable_for_assets.failed | default(true))
       no_log: true
 
+    # Index templates only apply at index-CREATION time -- since
+    # cve-remediation-assessment was first created before the
+    # resolved/resolved_at/resolved_note/resolved_at_risk_score fields
+    # existed in this template (Phase 11's own resolved-state tracking
+    # follow-up), the already-existing live index's mapping needs an
+    # explicit, additive _mapping PUT too, or those fields would be
+    # accepted (dynamic:false doesn't reject unknown fields on write) but
+    # NOT queryable -- and mark_cve_resolved.py/the exporter's "exclude
+    # resolved" filter both need to query on them. Purely additive/
+    # idempotent: PUT-ing an already-present field mapping is a no-op.
+    - name: Ensure cve-remediation-assessment mapping includes resolved-state fields
+      ansible.builtin.uri:
+        url: "{{ cve_enrichment_sync_elasticsearch_url }}/cve-remediation-assessment/_mapping"
+        method: PUT
+        url_username: "{{ cve_enrichment_sync_elastic_admin_user }}"
+        url_password: "{{ cve_enrichment_sync_elastic_admin_password }}"
+        validate_certs: "{{ not cve_enrichment_sync_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          properties:
+            resolved: {type: boolean}
+            resolved_at: {type: date}
+            resolved_note: {type: text}
+            resolved_at_risk_score: {type: float}
+        status_code: [200, 404]
+      register: cve_enrichment_sync_remediation_mapping_result
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when:
+        - cve_enrichment_sync_deep_dive_enabled | bool
+        - not (cve_enrichment_sync_es_reachable_for_assets.failed | default(true))
+
     - name: Report asset setup skipped
       ansible.builtin.debug:
         msg: >-
@@ -256,3 +348,92 @@
         enabled: true
         state: started
       when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # CVE deep-dive (Phase 11): a separate, weekly, architecture-aware
+    # pass over just the worst/most-exploitable CVEs, see cve_deep_dive.py's
+    # own module docstring for why this is a distinct script/timer rather
+    # than a mode on cve_enrichment_sync.py itself.
+    # ---------------------------------------------------------------
+
+    - name: Create a fresh local temp file for the stack-architecture snapshot
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .stack-architecture.json
+      register: cve_enrichment_sync_architecture_tempfile
+      delegate_to: localhost
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Make the local temp file world-readable
+      # ansible.builtin.tempfile creates 0600 (owner-only) by default --
+      # the "Copy generated stack-architecture snapshot" task below reads
+      # this local src file under a different effective read context than
+      # the one that just wrote it (confirmed live: writing "ok", reading
+      # back "Permission denied" for the identical path/invoking user),
+      # so make it explicitly world-readable. Not a secrets-exposure
+      # concern -- this file only ever holds public stack.yaml/edge.yaml
+      # metadata (zone names, vmids, auth mode), the same class of data
+      # already checked into this repo in plaintext.
+      ansible.builtin.file:
+        path: "{{ cve_enrichment_sync_architecture_tempfile.path }}"
+        mode: "0644"
+      delegate_to: localhost
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Generate stack-architecture snapshot from this environment's network intent
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/python3 {{ playbook_dir }}/../../generate-stack-architecture.py
+          --network-intent {{ playbook_dir }}/../../network/{{ lookup('env', 'TF_VAR_proxmox_node') | default('pve', true) }}.yaml
+          --output {{ cve_enrichment_sync_architecture_tempfile.path }}
+      delegate_to: localhost
+      changed_when: false
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Copy generated stack-architecture snapshot to the target host
+      ansible.builtin.copy:
+        src: "{{ cve_enrichment_sync_architecture_tempfile.path }}"
+        dest: "{{ cve_enrichment_sync_dir }}/stack-architecture.json"
+        owner: root
+        group: root
+        mode: "0640"
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Remove the local temp file
+      ansible.builtin.file:
+        path: "{{ cve_enrichment_sync_architecture_tempfile.path }}"
+        state: absent
+      delegate_to: localhost
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Write cve-deep-dive systemd service
+      ansible.builtin.template:
+        src: cve-deep-dive.service.j2
+        dest: /etc/systemd/system/cve-deep-dive.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Write cve-deep-dive systemd timer
+      ansible.builtin.template:
+        src: cve-deep-dive.timer.j2
+        dest: /etc/systemd/system/cve-deep-dive.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Flush handlers before enabling deep-dive timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start cve-deep-dive timer
+      ansible.builtin.systemd:
+        name: cve-deep-dive.timer
+        enabled: true
+        state: started
+      when:
+        - not ansible_check_mode
+        - cve_enrichment_sync_deep_dive_enabled | bool

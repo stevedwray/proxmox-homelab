@@ -1,7 +1,11 @@
-# Add Technitium A records for gaming-stack-lab's direct game-port services,
-# matching the game_seg convention: gaming-stack.lab.gibbsgreatly.xyz and
+# Add Technitium A records (and a PTR record for the canonical name) for
+# gaming-stack-lab's direct game-port services, matching the game_seg
+# convention: gaming-stack.lab.gibbsgreatly.xyz and
 # foreverworld.lab.gibbsgreatly.xyz both point straight at the container's
-# own IP, not through Traefik (game protocols aren't HTTP).
+# own IP, not through Traefik (game protocols aren't HTTP). Both names
+# share one IP, so only gaming-stack -- the canonical container identity --
+# owns the PTR; foreverworld is an alias and cannot also own it (PTR is one
+# name per IP).
 #
 # These were mistakenly added to the retired CoreDNS zone instead
 # (terraform/lxc/ansible/files/coredns-lab.zone) when gaming-stack-lab was
@@ -11,7 +15,7 @@
 # correction, following the same pattern as
 # configure-ai-stack-dns-records.yml.
 ---
-- name: Add Technitium A records for gaming-stack-lab
+- name: Add Technitium A/PTR records for gaming-stack-lab
   hosts: localhost
   connection: local
   gather_facts: false
@@ -20,11 +24,10 @@
     technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
     technitium_api_base: "http://{{ technitium_ip }}:5380/api" # nosonar: ansible:S5332 -- Technitium admin API, private mgmt_seg only
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     gaming_stack_dns_records:
-      - name: gaming-stack.lab.gibbsgreatly.xyz
-        ip: 192.168.60.10
-      - name: foreverworld.lab.gibbsgreatly.xyz
-        ip: 192.168.60.10
+      - { name: "gaming-stack", zone: "{{ lab_domain }}", ip: "192.168.60.10", ptr: true }
+      - { name: "foreverworld", zone: "{{ lab_domain }}", ip: "192.168.60.10", ptr: false }
 
   tasks:
     - name: Log in to Technitium
@@ -43,25 +46,8 @@
         technitium_token: "{{ (technitium_login.content | from_json).token }}"
       no_log: true
 
-    - name: Add/update A record for each gaming-stack-lab service
-      ansible.builtin.uri:
-        # No explicit zone= param -- Technitium auto-resolves the zone from
-        # domain and rejects an explicit zone param that doesn't exactly
-        # match its own internal resolution, failing with a misleading
-        # "No such zone was found: <domain>" error that echoes the domain,
-        # not the zone param actually passed.
-        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}&type=A&ipAddress={{ item.ip }}&ttl=300&overwrite=true&token={{ technitium_token }}"
-        method: GET
-        return_content: true
-      loop: "{{ gaming_stack_dns_records }}"
-      loop_control:
-        label: "{{ item.name }} -> {{ item.ip }}"
-      register: technitium_add_result
-      failed_when: (technitium_add_result.content | from_json).status != 'ok'
-
-    - name: Report result
-      ansible.builtin.debug:
-        msg: "{{ item.item.name }} -> {{ item.item.ip }}: {{ (item.content | from_json).status }}"
-      loop: "{{ technitium_add_result.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
+    - name: Publish gaming-stack-lab A and PTR records via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ gaming_stack_dns_records }}"

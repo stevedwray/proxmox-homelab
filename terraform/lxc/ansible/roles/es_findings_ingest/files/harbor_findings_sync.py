@@ -51,8 +51,43 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 PAGE_SIZE = 100
+
+_REGISTRY_PATH = Path(__file__).parent / "assets" / "known_production_images.json"
+
+
+def load_production_registry(path: Path = _REGISTRY_PATH) -> dict:
+    """Load the known_production_images.json classifier registry -- see
+    docs/threat-vuln-platform/plan.md's UVM redesign phase for the design
+    and the operator's 2026-09-01 decisions this encodes. Missing/
+    unreadable registry degrades gracefully (every artifact classifies as
+    unknown/false rather than crashing the sync)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARN: could not load production registry from {path}: {exc}", file=sys.stderr)
+        return {"known_production": {}, "generic_base_images": {"exact": []}, "explicit_non_production": {"prefixes": []}}
+
+
+def classify_artifact(repository: str, registry: dict) -> tuple[bool, str | None, str | None]:
+    """Returns (in_production, stack, zone) for a Harbor artifact.repository
+    value. Exact-match only against the registry -- an unmatched
+    repository is unknown, never guessed (defaults to False/None/None)."""
+    if not repository:
+        return False, None, None
+    for prefix in registry.get("explicit_non_production", {}).get("prefixes", []):
+        if repository.startswith(prefix):
+            return False, None, None
+    known = registry.get("known_production", {})
+    if repository in known:
+        entry = known[repository]
+        return True, entry.get("stack"), entry.get("zone")
+    if repository in registry.get("generic_base_images", {}).get("exact", []):
+        return True, None, None
+    return False, None, None
 
 
 def _now_iso() -> str:
@@ -207,11 +242,15 @@ def _extract_cvss_score(vuln: dict) -> float | None:
     return score
 
 
-def build_documents(project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict], *, scan_time: str) -> list[dict]:
+def build_documents(
+    project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict],
+    *, scan_time: str, production_registry: dict,
+) -> list[dict]:
     digest = artifact.get("digest", "")
     tags = [t.get("name") for t in (artifact.get("tags") or []) if t.get("name")]
     tag = tags[0] if tags else None
     now = _now_iso()
+    in_production, stack, zone = classify_artifact(repo_short_name, production_registry)
 
     docs = []
     for vuln in vulnerabilities:
@@ -231,8 +270,9 @@ def build_documents(project_name: str, repo_short_name: str, artifact: dict, vul
                     "repository": repo_short_name,
                     "tag": tag,
                     "digest": digest,
-                    "in_production": None,
-                    "stack": None,
+                    "in_production": in_production,
+                    "stack": stack,
+                    "zone": zone,
                 },
                 "scan_time": scan_time,
                 "last_seen": now,
@@ -389,6 +429,7 @@ def main() -> int:
     es_base = args.elasticsearch_url.rstrip("/")
     harbor_auth = _basic_auth_header(args.harbor_user, args.harbor_password)
     es_auth = _basic_auth_header(args.es_user, args.es_password)
+    production_registry = load_production_registry()
 
     started = _now_iso()
     started_monotonic = time.monotonic()
@@ -445,7 +486,10 @@ def main() -> int:
                     continue
 
                 scan_time = artifact.get("push_time") or started
-                docs = build_documents(project_name, repo_short_name, artifact, vulns, scan_time=scan_time)
+                docs = build_documents(
+                    project_name, repo_short_name, artifact, vulns,
+                    scan_time=scan_time, production_registry=production_registry,
+                )
                 indexed, bulk_errors = bulk_upsert(
                     es_base, "harbor-findings", docs, auth_header=es_auth, verify_tls=not args.no_verify_tls, dry_run=args.dry_run
                 )

@@ -1,12 +1,15 @@
 # Ubuntu 26 Bare-Metal Migration — Plan
 
 Status: **in execution.** `framework.gibbsgreatly.xyz` is up and being
-built out live — Phases 0–3 are done and verified (see §0 checkpoint
-below). The old Proxmox host on this same physical hardware no longer
-exists (it was the same box, same IP, already repurposed) — the §11
-rollback plan's premise (keep Proxmox running until validated) is
-already moot for this hardware specifically; the models were fully
-backed up to NAS before that happened, so no data was at risk.
+built out live — Phases 0–5 and 7 are done and verified (see §0 checkpoint
+below); Phase 6 is superseded (§9) rather than done, and Phase 8's
+Terraform/LXC removal is done as of 2026-08-30 (§9) — its credential
+half was deliberately kept, repurposed per Decision 9. The old Proxmox
+host on this same physical hardware no longer exists (it was the same
+box, same IP, already repurposed) — the §11 rollback plan's premise
+(keep Proxmox running until validated) is already moot for this
+hardware specifically; the models were fully backed up to NAS before
+that happened, so no data was at risk.
 
 Date: 2026-07-20.
 
@@ -1066,6 +1069,16 @@ not just log-watching:
 
 **Phase 6 — `ai-services-stack` bring-up**
 
+**Superseded, 2026-08-30**: this phase never happened as bare-metal
+Docker on `framework` — a later, separate decision
+(`docs/ai-services-migration/plan.md`, 2026-08-02) moved OpenWebUI+SearXNG
+to their own `ai-services-stack` LXC on `pve` instead (validated first on
+`pve-test-vm`), alongside `mcp-utility-stack` in the `ai_seg` zone. That
+is the current live implementation (`terraform/lxc/environments/pve/ai-services-stack/`,
+`192.168.50.11`) — not this phase. The rest of this section is kept only
+as historical context for why `ai-services-stack` was originally
+considered for this host; Phase 8 below no longer waits on it.
+
 Not started as of 2026-07-21. **Decided (2026-07-21): the old `ai-stack`
 LXC on `pve` (VMID 116 — n8n/SearXNG/Postgres/LiteLLM/Redis/Flowise/
 Qdrant/AnythingLLM, no OpenWebUI despite the name) is out of scope here
@@ -1352,6 +1365,36 @@ Step-by-step:
 **Phase 8 — Decommission Proxmox/Terraform for this node**
 - Only after Phase 3–7 are validated end-to-end (§11).
 - Terraform/credential-model removal per §6.
+
+**Terraform/LXC removal done, 2026-08-30** (the §6 half of this phase
+that was actually still blocking on Proxmox/LXC state, not the
+credential-repurposing half — see below): removed
+`terraform/lxc/environments/pve-framework/` (all three stacks'
+`terragrunt.hcl` plus untracked `.tfstate`/`.terragrunt-cache`),
+`terraform/lxc/network/pve-framework.yaml`, and
+`terraform/lxc/storage/pve-framework.yaml`. Gated on Phase 6 no longer
+applies per the note above — `ai-services-stack`'s replacement is
+already live on `pve`, it just isn't on this host.
+
+**Deliberately left in place, per Decision 9** (repurposed, not dead):
+`pve-framework` entry in `terraform/PRODUCTION_NODES`, `.env.pve-framework`,
+`terraform/secrets.pve-framework.enc.yaml`, `with-secrets-prod-framework`.
+These still represent this host's production-trust identity — just
+redefined as a property of the host rather than a Proxmox API token, per
+Decision 9. The `classify_command()` read-only-category update Decision 9
+part 3 calls for (treating `ansible-playbook --check`/`systemctl status`/
+`docker compose config`/`logs` as read-only for this node) has not been
+done yet — still open, separate from this cleanup pass.
+
+**Still present, not removed by this pass — flagged, not actioned**: the
+old Terraform-era `terraform/lxc/ansible/playbooks/deploy-comfyui-stack.yml`
+and `deploy-llm-gpu-stack.yml` (the ones assuming `lxc_base`/`docker_base`,
+superseded by the `ansible/00-initial-setup/framework-desktop-*.yml`
+playbooks per §9 Phase 7) have no live Proxmox target anywhere in the
+repo anymore, but deleting them — and checking whether
+`terraform/lxc/ansible/roles/comfyui_stack`/`terraform/lxc/stacks/comfyui-stack`
+etc. are still shared with anything live — wasn't part of this cleanup's
+scope and needs its own pass.
 
 **Phase 9 — Documentation cleanup**
 - Per `decisions.md` and the mapping table in

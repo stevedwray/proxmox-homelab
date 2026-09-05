@@ -399,3 +399,10 @@
       ansible.builtin.command:
         cmd: update-ca-certificates
       when: cert_copy.changed
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

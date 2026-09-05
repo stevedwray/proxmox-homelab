@@ -117,6 +117,43 @@ ns1 IN A 10.57.1.13
         self.assertFalse(result.ok)
         self.assertIn("EMV002", {issue.code for issue in result.issues})
 
+    def test_ptr_owner_is_proxy_stack_for_shared_browser_ip(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            seed = tmp / "seed.zone"
+            output_records = tmp / "records.json"
+            seed.write_text(
+                """$ORIGIN lab.gibbsgreatly.xyz.
+$TTL 5m
+@ IN NS ns1.lab.gibbsgreatly.xyz.
+ns1 IN A 10.57.1.13
+""",
+                encoding="utf-8",
+            )
+
+            result = render_technitium_dry_run(
+                manifest_paths=[
+                    VALID_DIR / "traefik-dashboard.yaml",
+                    VALID_DIR / "grafana.yaml",
+                    VALID_DIR / "authentik.yaml",
+                ],
+                seed_zone_path=seed,
+                output_records_path=output_records,
+            )
+
+        self.assertTrue(result.ok)
+        ptr_map = {record.name: record.ptr for record in result.records}
+        # traefik-dashboard.yaml/grafana.yaml/authentik.yaml all target the
+        # same LAB_IP_PROXY (10.57.2.10, set module-wide above) -- only the
+        # record generated from proxy-stack's own manifest may own the PTR.
+        self.assertTrue(ptr_map["traefik"])
+        self.assertFalse(ptr_map["grafana"])
+        self.assertFalse(ptr_map["auth"])
+        # dns/ns1 both sit on LAB_IP_TECHNITIUM (a placeholder in this
+        # source-mode test) -- "dns" is the deterministic tiebreak owner.
+        self.assertTrue(ptr_map["dns"])
+        self.assertFalse(ptr_map["ns1"])
+
     def test_rejects_duplicate_generated_records(self):
         manifest_template = """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
 kind: EdgeManifest

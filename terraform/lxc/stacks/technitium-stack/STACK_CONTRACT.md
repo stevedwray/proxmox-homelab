@@ -108,6 +108,17 @@ No secret values are committed here. All sensitive values must come from the env
   instances in both `pve-test-vm` and `pve`; keep hardening idempotence and
   parity checks in the deploy playbook as the production cutover packet is
   prepared (see `docs/dns-refactor/plan.md`).
+- Every A record published via the technitium_dns_record role (both the
+  parity-zone publish above and the two ad-hoc
+  configure-ai-stack-dns-records.yml / configure-gaming-stack-dns-records.yml
+  playbooks) carries a `ptr` flag. Where `ptr: true`, the role also
+  creates (on demand, per /24) the matching reverse
+  (`<n>.<n>.<n>.in-addr.arpa`) zone and a PTR record. Because a PTR
+  record is one name per IP, only one record per shared IP may set
+  `ptr: true` -- see terraform/lxc/ansible/roles/technitium_dns_record/tasks/main.yml
+  for the exact contract. The short-lived bootstrap zone (`tech.<domain>`)
+  never sets ptr: true, since it shares physical IPs with this parity
+  zone and PTR ownership must not be contested between them.
 
 ## What May Depend on This Stack
 

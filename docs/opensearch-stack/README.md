@@ -124,6 +124,22 @@ plan verbatim.
   bug. Both findings dashboards use `h: 16` (metric/small tables) or
   `h: 32` (multi-row tables).
 
+**Operator decision 2026-09-02: do not build new visualizations/
+dashboards in OpenSearch Dashboards this way (or at all).** The four
+bullets above document real facts learned building the "Threat &
+Vulnerability Overview" dashboard by writing `visState` JSON directly
+into the `.kibana` system index via raw `curl` — not a supported API.
+After repeated rounds of this producing dashboards the operator called
+"not good" (no rendering feedback while authoring, a stale in-browser
+saved-object cache that made real fixes look broken, at least one
+genuinely version-sensitive classic-viz params schema), that whole
+approach was abandoned in favor of Grafana — see
+`docs/threat-vuln-platform/plan.md`'s Phase 10. These bullets are kept
+for reference in case OpenSearch Dashboards' saved objects need
+touching for something else (e.g. index-pattern field-cache refreshes,
+which are still done this way and still needed whenever an index's
+template gains a field) — not as a pattern to build new dashboards from.
+
 ## Decommissioning elasticsearch-stack (done 2026-08-17)
 
 For reference, the full sequence used to safely remove the old stack

@@ -1299,3 +1299,25 @@
             -cert $CONFIG_DIR/../certs/admin.pem
             -cacert $CONFIG_DIR/../certs/root-ca.pem -nhnv -p 9200 -h localhost
       when: wazuh_oidc_domain_present.rc != 0 or wazuh_all_access_wildcard_present.rc != 0
+
+- name: Deploy findings ingestion (Wazuh -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new dedicated Wazuh Indexer
+  # reader + OpenSearch user -- does not touch any of the manager/
+  # indexer/dashboard deploy or OIDC plays above. Same shape as
+  # deploy-harbor-stack.yml's own "Deploy findings ingestion" play.
+  # Gated the same way es_findings_ingest/gvm_findings_ingest are:
+  # explicit opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: wazuh_findings_ingest
+      when: wazuh_findings_ingest_enabled | default(false) | bool
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades
