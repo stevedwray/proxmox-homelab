@@ -65,15 +65,21 @@ def fetch_shortlist(
     es_url: str, top_n: int, *, auth_header: str, verify_tls: bool
 ) -> list[dict]:
     """Worst, most-exploitable, actually-deployed CVEs: KEV-listed or a
-    known PoC exists (minimum_should_match:1), in_production:true, sorted
-    by the composite risk_score cve-mcp-server's triage_cve already
-    computed. Reuses fields cve_enrichment_sync.py already writes onto
-    every unified-cve-exposure document -- no new data collection."""
+    known PoC exists (minimum_should_match:1), in_production:true AND
+    in_use:true, sorted by the composite risk_score cve-mcp-server's
+    triage_cve already computed. Reuses fields cve_enrichment_sync.py
+    already writes onto every unified-cve-exposure document -- no new
+    data collection. The in_use filter (Phase 13,
+    docs/threat-vuln-platform/plan.md) skips local-LLM deep-dive compute
+    on CVEs that are only present via a stale Harbor-cache artifact
+    nothing actually runs -- in_use defaults true for CVEs with no Harbor
+    angle at all (GVM/Wazuh-only), so this never suppresses a real
+    non-Harbor finding."""
     body = {
         "size": top_n,
         "query": {
             "bool": {
-                "filter": [{"term": {"in_production": True}}],
+                "filter": [{"term": {"in_production": True}}, {"term": {"in_use": True}}],
                 "should": [
                     {"term": {"kev_listed": True}},
                     {"term": {"poc_available": True}},

@@ -53,6 +53,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import harbor_live_usage
+
 PAGE_SIZE = 100
 
 _REGISTRY_PATH = Path(__file__).parent / "assets" / "known_production_images.json"
@@ -244,13 +246,31 @@ def _extract_cvss_score(vuln: dict) -> float | None:
 
 def build_documents(
     project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict],
-    *, scan_time: str, production_registry: dict,
+    *, scan_time: str, production_registry: dict, live_digests: set[str] | None = None,
 ) -> list[dict]:
     digest = artifact.get("digest", "")
     tags = [t.get("name") for t in (artifact.get("tags") or []) if t.get("name")]
     tag = tags[0] if tags else None
     now = _now_iso()
     in_production, stack, zone = classify_artifact(repo_short_name, production_registry)
+
+    artifact_fields = {
+        "project": project_name,
+        "repository": repo_short_name,
+        "tag": tag,
+        "digest": digest,
+        "in_production": in_production,
+        "stack": stack,
+        "zone": zone,
+    }
+    # live_digests is None when this run couldn't reach Portainer at all --
+    # in that case leave the in_use key out entirely (never set it to
+    # False) so bulk_upsert()'s copy-if-missing painless step carries the
+    # prior value forward instead of wiping it. See
+    # docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
+    # decision.
+    if live_digests is not None:
+        artifact_fields["in_use"] = digest in live_digests
 
     docs = []
     for vuln in vulnerabilities:
@@ -265,15 +285,7 @@ def build_documents(
                 "package_version": vuln.get("version"),
                 "fixed_version": vuln.get("fix_version") or None,
                 "description": (vuln.get("description") or "")[:2000] or None,
-                "artifact": {
-                    "project": project_name,
-                    "repository": repo_short_name,
-                    "tag": tag,
-                    "digest": digest,
-                    "in_production": in_production,
-                    "stack": stack,
-                    "zone": zone,
-                },
+                "artifact": dict(artifact_fields),
                 "scan_time": scan_time,
                 "last_seen": now,
             }
@@ -318,8 +330,20 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
                         # full rerun, until this fix). first_seen stays
                         # deliberately sticky (only set if still null) since
                         # it's meant to record original discovery date, not
-                        # get overwritten by putAll.
+                        # get overwritten by putAll. artifact.in_use gets
+                        # its own copy-if-missing step first: putAll
+                        # replaces ctx._source.artifact wholesale (it's a
+                        # nested object, not merged field-by-field), so a
+                        # doc built with live_digests=None (Portainer
+                        # unreachable this run -- in_use key genuinely
+                        # absent from params.doc.artifact) would otherwise
+                        # silently wipe a previously-recorded in_use value
+                        # instead of carrying it forward. See
+                        # docs/threat-vuln-platform/plan.md Phase 13.
                         "source": (
+                            "if (ctx._source.artifact != null && params.doc.artifact != null "
+                            "&& !params.doc.artifact.containsKey('in_use') && ctx._source.artifact.containsKey('in_use')) "
+                            "{ params.doc.artifact.in_use = ctx._source.artifact.in_use } "
                             "ctx._source.putAll(params.doc); "
                             "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
                         ),
@@ -431,6 +455,24 @@ def main() -> int:
     es_auth = _basic_auth_header(args.es_user, args.es_password)
     production_registry = load_production_registry()
 
+    live_digests: set[str] | None = None
+    portainer_url = os.environ.get("PORTAINER_URL", "")
+    portainer_token = os.environ.get("PORTAINER_TOKEN", "")
+    if portainer_url and portainer_token:
+        live_digests = harbor_live_usage.fetch_live_digests(
+            portainer_url, portainer_token, verify_tls=not args.no_verify_tls
+        )
+        if live_digests is None:
+            print(
+                "WARN: could not determine live image usage this run -- in_use carries forward from prior state",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            "WARN: PORTAINER_URL/PORTAINER_TOKEN not set -- in_use carries forward from prior state",
+            file=sys.stderr,
+        )
+
     started = _now_iso()
     started_monotonic = time.monotonic()
 
@@ -489,6 +531,7 @@ def main() -> int:
                 docs = build_documents(
                     project_name, repo_short_name, artifact, vulns,
                     scan_time=scan_time, production_registry=production_registry,
+                    live_digests=live_digests,
                 )
                 indexed, bulk_errors = bulk_upsert(
                     es_base, "harbor-findings", docs, auth_header=es_auth, verify_tls=not args.no_verify_tls, dry_run=args.dry_run

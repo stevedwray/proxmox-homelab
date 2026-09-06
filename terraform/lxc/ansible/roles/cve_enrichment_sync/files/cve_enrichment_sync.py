@@ -131,6 +131,11 @@ ASSET_FIELD_SPECS = {
         "production_field": "artifact.in_production",
         "zone_field": "artifact.zone",
         "stack_field": "artifact.stack",
+        # Only Harbor findings have a live-usage concept (a currently
+        # deployed digest) -- GVM host scans and Wazuh agent scans have no
+        # equivalent "is this specific artifact the one running right now"
+        # notion. See docs/threat-vuln-platform/plan.md Phase 13.
+        "in_use_field": "artifact.in_use",
     },
     "greenbone": {
         "source_fields": ["target.host", "target.hostname", "target.port", "target.zone"],
@@ -138,6 +143,7 @@ ASSET_FIELD_SPECS = {
         "production_field": "target.in_production",
         "zone_field": "target.zone",
         "stack_field": "target.stack",
+        "in_use_field": None,
     },
     "wazuh": {
         "source_fields": ["target.agent_id", "target.agent_name"],
@@ -149,6 +155,7 @@ ASSET_FIELD_SPECS = {
         "production_field": "target.in_production",
         "zone_field": "target.zone",
         "stack_field": "target.stack",
+        "in_use_field": None,
     },
 }
 
@@ -173,6 +180,7 @@ def build_assets_summary(sources_list: list[dict]) -> str:
 def fetch_cve_instances(
     es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
     *, auth_header: str, verify_tls: bool, production_field: str, zone_field: str, stack_field: str,
+    in_use_field: str | None = None,
 ) -> dict[str, dict]:
     """Terms-aggregate distinct CVE values + doc counts from one findings
     index, plus: (1) a top_hits sub-aggregation sampling up to
@@ -188,23 +196,27 @@ def fetch_cve_instances(
     a terms agg on an array field buckets each value independently, which
     is the correct behaviour here (a finding with 2 CVEs should count
     toward both)."""
+    cve_aggs = {
+        "assets": {
+            "top_hits": {
+                "size": ASSET_SAMPLE_SIZE,
+                "_source": asset_source_fields,
+                "sort": [{"last_seen": {"order": "desc"}}],
+            }
+        },
+        "production_count": {"filter": {"term": {production_field: True}}},
+        "zones": {"terms": {"field": zone_field, "size": 10}},
+        "stacks": {"terms": {"field": stack_field, "size": 10}},
+    }
+    if in_use_field is not None:
+        cve_aggs["in_use_count"] = {"filter": {"term": {in_use_field: True}}}
+
     body = {
         "size": 0,
         "aggs": {
             "cves": {
                 "terms": {"field": cve_field, "size": 10000},
-                "aggs": {
-                    "assets": {
-                        "top_hits": {
-                            "size": ASSET_SAMPLE_SIZE,
-                            "_source": asset_source_fields,
-                            "sort": [{"last_seen": {"order": "desc"}}],
-                        }
-                    },
-                    "production_count": {"filter": {"term": {production_field: True}}},
-                    "zones": {"terms": {"field": zone_field, "size": 10}},
-                    "stacks": {"terms": {"field": stack_field, "size": 10}},
-                },
+                "aggs": cve_aggs,
             }
         },
     }
@@ -227,6 +239,7 @@ def fetch_cve_instances(
             "count": b["doc_count"],
             "raw_assets": [h.get("_source", {}) for h in hits],
             "production_count": b.get("production_count", {}).get("doc_count", 0),
+            "in_use_count": b.get("in_use_count", {}).get("doc_count") if in_use_field is not None else None,
             "zones": zones,
             "stacks": stacks,
         }
@@ -447,7 +460,7 @@ def writeback_findings(
 
 def refresh_exposure_sources(
     es_url: str, cve_id: str, sources_list: list[dict], total_instances: int,
-    in_production: bool, zones: list[str], stacks: list[str],
+    in_production: bool, zones: list[str], stacks: list[str], in_use: bool,
     *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> bool:
     """Cheap update for an already-enriched CVE whose sources/counts/
@@ -471,6 +484,7 @@ def refresh_exposure_sources(
             "in_production": in_production,
             "zones": zones,
             "stacks": stacks,
+            "in_use": in_use,
         }},
         auth_header=auth_header, verify_tls=verify_tls,
     )
@@ -644,11 +658,16 @@ def main() -> int:
             args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
             auth_header=auth_header, verify_tls=verify_tls,
             production_field=spec["production_field"], zone_field=spec["zone_field"],
-            stack_field=spec["stack_field"],
+            stack_field=spec["stack_field"], in_use_field=spec["in_use_field"],
         )
         for cve_id, info in counts.items():
             entry = cve_map.setdefault(
-                cve_id, {"sources": [], "total_instances": 0, "production_count": 0, "zones": set(), "stacks": set()}
+                cve_id,
+                {
+                    "sources": [], "total_instances": 0, "production_count": 0,
+                    "harbor_total_count": 0, "harbor_in_use_count": 0,
+                    "zones": set(), "stacks": set(),
+                },
             )
             assets = [spec["format"](raw) for raw in info["raw_assets"]]
             entry["sources"].append({
@@ -660,14 +679,23 @@ def main() -> int:
             })
             entry["total_instances"] += info["count"]
             entry["production_count"] += info["production_count"]
+            if src["source"] == "harbor":
+                entry["harbor_total_count"] += info["count"]
+                entry["harbor_in_use_count"] += info["in_use_count"] or 0
             entry["zones"].update(info["zones"])
             entry["stacks"].update(info["stacks"])
 
     # Normalize the per-CVE production/zone/stack rollup computed above
     # (sets aren't JSON-serializable, and in_production is a simple
     # derived bool: true if ANY instance across ANY source is production).
+    # in_use only has meaning for Harbor findings (a GVM host-scan or
+    # Wazuh agent-scan has no "currently deployed digest" concept) -- a
+    # CVE with zero Harbor instances must read in_use:true (nothing to
+    # suppress it on), never get force-set to false just for lacking a
+    # Harbor angle. See docs/threat-vuln-platform/plan.md Phase 13.
     for entry in cve_map.values():
         entry["in_production"] = entry["production_count"] > 0
+        entry["in_use"] = True if entry["harbor_total_count"] == 0 else entry["harbor_in_use_count"] > 0
         entry["zones"] = sorted(entry["zones"])
         entry["stacks"] = sorted(entry["stacks"])
 
@@ -723,10 +751,11 @@ def main() -> int:
                     or existing.get("in_production") != entry["in_production"]
                     or existing.get("zones") != entry["zones"]
                     or existing.get("stacks") != entry["stacks"]
+                    or existing.get("in_use") != entry["in_use"]
                 ):
                     if refresh_exposure_sources(
                         args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
-                        entry["in_production"], entry["zones"], entry["stacks"],
+                        entry["in_production"], entry["zones"], entry["stacks"], entry["in_use"],
                         auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
                     ):
                         sources_refreshed += 1
@@ -774,6 +803,7 @@ def main() -> int:
             "total_instances": entry["total_instances"],
             "assets_summary": build_assets_summary(entry["sources"]),
             "in_production": entry["in_production"],
+            "in_use": entry["in_use"],
             "zones": entry["zones"],
             "stacks": entry["stacks"],
             **parsed,
