@@ -78,10 +78,17 @@
     opensearch_compose_dir: /opt/opensearch-stack
     opensearch_data_dir: /var/lib/opensearch-data   # extra_mount path from stack.yaml — already provisioned by Terraform
     opensearch_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-    # latest stable published for both opensearchproject/opensearch and
-    # opensearchproject/opensearch-dashboards on Docker Hub as of
-    # 2026-08-17 -- keep in sync
-    opensearch_image_tag: "2.19.1"
+    # Bumped 2026-09-07 (docs/threat-vuln-platform/ UVM remediation): 2.19.1
+    # was vulnerable to CVE-2025-27817 (bundled org.apache.kafka:kafka-clients
+    # 3.7.1) -- confirmed fixed in 2.19.6's real release notes ("Update Kafka
+    # to 3.9.2"). Also affected by CVE-2025-4138/-4517 (bundled python3-libs,
+    # base Amazon Linux 2023 image) and CVE-2026-29786/-33937 (bundled
+    # node-tar/handlebars) -- none of those three are mentioned as bumped in
+    # 2.19.6's release notes, so this upgrade does NOT confirm they're fixed;
+    # tracked as accepted risk in cve-remediation-assessment until a future
+    # OpenSearch build rebuilds on an updated base image. Keep opensearch/
+    # opensearch-dashboards in sync -- same variable drives both.
+    opensearch_image_tag: "2.19.6"
     opensearch_admin_password: >-
       {{
         lookup('env', 'OPENSEARCH_ADMIN_PASSWORD')
