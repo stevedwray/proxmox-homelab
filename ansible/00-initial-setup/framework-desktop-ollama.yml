@@ -70,7 +70,7 @@
         enabled: true
         state: started
 
-    - name: Add {{ framework_ollama_user }} to the docker group
+    - name: Add {{ framework_ollama_user }} to the docker group # noqa: name[template]
       ansible.builtin.user:
         name: "{{ framework_ollama_user }}"
         groups: docker

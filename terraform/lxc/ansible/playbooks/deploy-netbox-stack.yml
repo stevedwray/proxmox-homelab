@@ -241,7 +241,8 @@
       register: netbox_docker_login
 
     - name: Pull and start NetBox compose stack
-      ansible.builtin.shell:
+      ansible.builtin.shell: # noqa: command-instead-of-shell -- the leading `pull &&` clause is conditionally
+        # omitted via Jinja, which ansible.builtin.command can't do (it has no shell operators)
         cmd: >-
           {{ '' if netbox_docker_login.failed else 'docker compose -f ' ~ compose_file ~ ' pull &&' }}
           docker compose -f {{ compose_file }} up -d --remove-orphans

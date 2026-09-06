@@ -155,16 +155,14 @@
           <packages>yes</packages>
           <ports all="no">yes</ports>
           <processes>yes</processes>
-        </wodle>
-        {%- if wazuh_agent_docker_monitoring_enabled | bool %}
+        </wodle>{%- if wazuh_agent_docker_monitoring_enabled | bool %}
 
         <wodle name="docker-listener">
           <disabled>no</disabled>
           <interval>1m</interval>
           <attempts>5</attempts>
           <run_on_start>yes</run_on_start>
-        </wodle>
-        {%- endif %}
+        </wodle>{%- endif %}
 
         <sca>
           <enabled>yes</enabled>

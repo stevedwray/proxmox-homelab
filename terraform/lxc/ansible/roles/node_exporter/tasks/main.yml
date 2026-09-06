@@ -59,7 +59,7 @@
     - not ansible_check_mode
     - node_exporter_step_ca_reachable.failed | default(true)
 
-- name: node_exporter TLS cert setup
+- name: Set up node_exporter TLS certs
   when:
     - node_exporter_tls_enabled | default(true) | bool
     - not ansible_check_mode

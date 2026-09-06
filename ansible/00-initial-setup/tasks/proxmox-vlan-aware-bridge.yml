@@ -46,7 +46,7 @@
     - _vlan_aware_change.changed or _vlan_vids_change.changed
   changed_when: true
 
-- name: Verify {{ pmx_vlan_aware_bridge_name }} is VLAN-aware after reload
+- name: Verify {{ pmx_vlan_aware_bridge_name }} is VLAN-aware after reload # noqa: name[template]
   ansible.builtin.command: >-
     bridge -j vlan show dev {{ pmx_vlan_aware_bridge_name }}
   register: _vlan_aware_verify

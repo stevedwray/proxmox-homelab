@@ -126,7 +126,7 @@
         mode: '0644'
       when: not (framework_apt_cacher_reachable.failed | default(true))
 
-    - name: Add {{ framework_gpu_group_user }} to video/render groups for GPU device access
+    - name: Add {{ framework_gpu_group_user }} to video/render groups for GPU device access # noqa: name[template]
       ansible.builtin.user:
         name: "{{ framework_gpu_group_user }}"
         groups: video,render

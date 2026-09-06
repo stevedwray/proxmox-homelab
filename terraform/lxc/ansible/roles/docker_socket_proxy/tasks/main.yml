@@ -75,6 +75,7 @@
     - enable_docker_socket_proxy | default(false) | bool
     - not ansible_check_mode
     - docker_socket_proxy_image_check.rc | default(1) != 0
+  ignore_errors: true  # best-effort shortcut -- if this fails, the compose step below surfaces the real error as before
   block:
     - name: Pull docker_socket_proxy image from its upstream registry
       ansible.builtin.command:
@@ -83,7 +84,6 @@
     - name: Tag docker_socket_proxy image with Harbor proxy cache path
       ansible.builtin.command:
         cmd: "docker tag {{ docker_socket_proxy_upstream_image }} {{ docker_socket_proxy_image }}"
-  ignore_errors: true  # best-effort shortcut -- if this fails, the compose step below surfaces the real error as before
 
 - name: Deploy compose project (idempotent)
   community.docker.docker_compose_v2:
