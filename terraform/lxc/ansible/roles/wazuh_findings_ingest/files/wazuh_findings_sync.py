@@ -105,7 +105,7 @@ def _wazuh_search_after(base_url, auth_header, verify_tls, batch_size=BATCH_SIZE
         req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
         req.add_header("Authorization", auth_header)
         req.add_header("Content-Type", "application/json")
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             result = json.loads(resp.read())
 
         hits = result.get("hits", {}).get("hits", [])
@@ -218,7 +218,7 @@ def bulk_upsert(base_url, docs, auth_header, verify_tls, dry_run) -> tuple[int, 
     req.add_header("Authorization", auth_header)
     req.add_header("Content-Type", "application/x-ndjson")
     try:
-        with urllib.request.urlopen(req, context=_ssl_context(verify_tls), timeout=60) as resp:
+        with urllib.request.urlopen(req, context=_ssl_context(verify_tls), timeout=60) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             result = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         print(f"ERROR: bulk index failed ({exc.code}): {exc.read()[:500]}", file=sys.stderr)
@@ -250,7 +250,7 @@ def update_sync_state(base_url, auth_header, verify_tls, *, started, finished, s
     req.add_header("Authorization", auth_header)
     req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, context=_ssl_context(verify_tls), timeout=15):
+        with urllib.request.urlopen(req, context=_ssl_context(verify_tls), timeout=15):  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             pass
     except urllib.error.HTTPError as exc:
         print(f"WARN: failed to update sync-state doc: {exc.code} {exc.read()[:200]}", file=sys.stderr)

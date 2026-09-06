@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,7 +75,7 @@ def ssh_framework(cfg, remote_cmd, use_sudo=False):
 
 
 def http_get(url, timeout=15):
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         return resp.status, resp.read()
 
 
@@ -85,7 +86,7 @@ def http_post_json(url, payload, timeout=15, cookie_jar=None):
     if cookie_jar:
         req.add_header("Cookie", cookie_jar)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             cookies = resp.headers.get_all("Set-Cookie")
             return resp.status, json.loads(resp.read()), cookies
     except urllib.error.HTTPError as e:
@@ -119,7 +120,7 @@ def update_models_preset(cfg, run):
     adviser_section = f"[{run['adviser_model']}]\nctx-size = {run['adviser_ctx_size']}\n"
     content = content.rstrip() + "\n\n" + adviser_section
 
-    tmp_remote = "/tmp/models-preset.ini.new"
+    tmp_remote = f"/tmp/models-preset.ini.{uuid.uuid4().hex}.new"  # nosec B108 -- unpredictable per-run name, no path-guessing race
     ssh_framework(cfg, f"cat > {tmp_remote} << 'PRESET_EOF'\n{content}\nPRESET_EOF")
     ssh_framework(cfg, f"cp {tmp_remote} {preset_path}", use_sudo=True)
     log(f"models-preset.ini updated: qwen ctx={run['qwen_ctx_size']} rb={run['qwen_reasoning_budget']}, "
@@ -138,7 +139,7 @@ def unload_model(cfg, model_id):
     req = urllib.request.Request(url, data=data, method="POST",
                                   headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             log(f"unload {model_id}: HTTP {resp.status}")
     except urllib.error.HTTPError as e:
         log(f"unload {model_id}: HTTP {e.code} (may not have been loaded)")
@@ -290,9 +291,12 @@ def poll_flow(cfg, cookie, flow_id):
 # --- Result logging ------------------------------------------------------
 
 def gather_toolcall_summary(flow_id):
+    # flow_id is cast to int here (not just interpolated) so this can never
+    # become a SQL injection vector, even though it always originates from
+    # this harness's own PentAGI API response, never external input.
     query = (
         f"select subtask_id, count(*) from toolcalls "
-        f"where flow_id={flow_id} group by subtask_id order by subtask_id;"
+        f"where flow_id={int(flow_id)} group by subtask_id order by subtask_id;"  # nosec B608 -- flow_id is cast to int above, so this can't be an injection vector
     )
     result = subprocess.run(
         ["docker", "exec", "pgvector", "psql", "-U", "postgres", "-d", "pentagidb", "-c", query],

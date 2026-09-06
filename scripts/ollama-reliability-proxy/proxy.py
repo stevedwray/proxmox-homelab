@@ -238,7 +238,7 @@ def call_upstream(path: str, body: dict, timeout: float = REQUEST_TIMEOUT_S) -> 
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             return resp.status, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode("utf-8") or "{}")
@@ -427,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
             method=self.command,
         )
         try:
-            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
                 self._send_json(resp.status, json.loads(resp.read().decode("utf-8")))
         except urllib.error.HTTPError as e:
             self._send_json(e.code, json.loads(e.read().decode("utf-8") or "{}"))

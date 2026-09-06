@@ -244,4 +244,4 @@ def findings_all():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8010")))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8010")))  # nosec B104 — container-internal listener; exposure is controlled by Docker port mapping / Traefik, not this bind address

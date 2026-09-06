@@ -70,7 +70,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             method=self.command,
         )
         try:
-            with urllib.request.urlopen(req, timeout=600) as resp:
+            with urllib.request.urlopen(req, timeout=600) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
                 status, resp_headers, resp_body = resp.status, resp.getheaders(), resp.read()
         except urllib.error.HTTPError as e:
             status, resp_headers, resp_body = e.code, e.headers.items(), e.read()

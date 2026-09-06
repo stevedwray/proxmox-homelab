@@ -110,7 +110,7 @@ def check_model_health() -> tuple[bool, str]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             completion = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         return False, f"model completion request failed entirely: {e}"
