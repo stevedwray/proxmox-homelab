@@ -666,6 +666,16 @@ provision_stack() {
     cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
   fi
 
+  # Opt-in only: GitHub deletes a runner's registration after enough idle
+  # time (or certain server-side events), independent of whether the LXC
+  # itself is up. When that happens the runner service starts and exits
+  # immediately (see runsvc.sh's "registration has been deleted" error) --
+  # a plain restart never fixes it, it needs actual re-registration.
+  if [[ "$stack" == "ci-runner-01" && "${RUNNER_FORCE_RECONFIGURE:-false}" == "true" ]]; then
+    log "ci-runner-01: forcing runner de-registration + re-registration (RUNNER_FORCE_RECONFIGURE=true)"
+    cmd+=(-e "runner_force_reconfigure=true")
+  fi
+
   if [[ "$stack" == "technitium-stack" ]]; then
     local generated_records
     if [[ -n "${PVE_ENV:-}" ]]; then

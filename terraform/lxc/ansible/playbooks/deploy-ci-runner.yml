@@ -207,6 +207,31 @@
       failed_when: false
       no_log: true
 
+    # `config.sh remove` above is best-effort: if GitHub already considers
+    # the runner's registration gone (the exact incident this force-reconfigure
+    # path exists for), remove has nothing valid to invalidate server-side and
+    # can silently no-op -- but it's swallowed by failed_when: false above, so
+    # nothing here surfaces that. Either way, config.sh's own IsConfigured()
+    # check only looks at whether these local files exist, so leaving them in
+    # place makes the "Configure runner" task below fail with "Cannot
+    # configure the runner because it is already configured" even though
+    # --replace is set (--replace only overrides an existing *valid* GitHub-side
+    # registration under the same name, not this local-file check). Force-clear
+    # them here so the Configure step is guaranteed a clean slate.
+    - name: Remove stale local runner config files before reconfiguring
+      ansible.builtin.file:
+        path: "{{ runner_home }}/{{ item }}"
+        state: absent
+      loop:
+        - .runner
+        - .runner_migrated
+        - .credentials
+        - .credentials_migrated
+        - .service
+      become: true
+      become_user: "{{ runner_user }}"
+      when: runner_force_reconfigure | bool
+
     - name: Configure runner
       ansible.builtin.command:
         cmd: >
