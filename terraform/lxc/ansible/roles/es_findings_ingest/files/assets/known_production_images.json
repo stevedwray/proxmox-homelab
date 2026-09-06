@@ -4,6 +4,9 @@
     "operator_decisions_2026-09-01": [
       "vulhub/* and vxcontrol/* are EXPLICITLY non-production regardless of whether they'd otherwise match a deployed stack (vxcontrol/* is PentAGI, genuinely deployed via pentagi-stack, but PentAGI is declared defunct -- operator chose to exclude it from the production view anyway).",
       "elastic/* has no entry: the legacy elastic-stack LXC (vmid 112) that produced these Harbor scans was decommissioned 2026-09-01 -- stale historical data, correctly falls through to the unknown/false default."
+    ],
+    "operator_decisions_2026-09-07": [
+      "itzg/minecraft-server corrected from stack:gaming-stack to stack:gaming-stack-lab, zone:null to zone:game_seg. 'gaming-stack' (vmid 103, CT gaming-stack-legacy) is stopped -- kept quiescent only for rollback, not a live target for anything found there. The actual live Minecraft server (the one CVE-2022-36944 -- confirmed live via docker exec inspection, scala-library-2.13.1.jar present in mc-image-helper -- genuinely affects) is gaming-stack-lab (vmid 60010, game_seg), confirmed running foreverworld-minecraft on this exact image:tag. One repository name can only map to one stack here, and gaming-stack-lab is the one that's actually running it."
     ]
   },
   "known_production": {
@@ -66,7 +69,7 @@
     "cadvisor/cadvisor": {"stack": null, "zone": null},
     "gcr/cadvisor/cadvisor": {"stack": null, "zone": null},
 
-    "itzg/minecraft-server": {"stack": "gaming-stack", "zone": null},
+    "itzg/minecraft-server": {"stack": "gaming-stack-lab", "zone": "game_seg"},
 
     "yanwk/comfyui-boot": {"stack": "framework (bare-metal, not an LXC stack)", "zone": null}
   },
