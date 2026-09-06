@@ -80,7 +80,7 @@
         enabled: true
         state: started
 
-    - name: Add {{ framework_llamacpp_user }} to the docker group
+    - name: Add {{ framework_llamacpp_user }} to the docker group # noqa: name[template]
       ansible.builtin.user:
         name: "{{ framework_llamacpp_user }}"
         groups: docker

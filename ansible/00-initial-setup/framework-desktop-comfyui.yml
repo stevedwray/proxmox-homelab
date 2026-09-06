@@ -71,7 +71,7 @@
         enabled: true
         state: started
 
-    - name: Add {{ framework_comfyui_user }} to the docker group
+    - name: Add {{ framework_comfyui_user }} to the docker group # noqa: name[template]
       ansible.builtin.user:
         name: "{{ framework_comfyui_user }}"
         groups: docker
