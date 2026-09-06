@@ -1,0 +1,26 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: pentagi-edge
+  stack: pentagi-stack
+spec:
+  routes:
+    - name: pentagi
+      host: pentagi.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_PENTAGI}:8443
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # PentAGI's own login only supports Google/GitHub OAuth (confirmed
+        # from its Go source, backend/pkg/server/oauth/{google,github}.go —
+        # no generic OIDC client exists in the app itself), so it can't be
+        # a native-OIDC party the way OpenWebUI/NetBox are. forwardAuth
+        # gates the whole UI at Traefik's authentik middleware instead;
+        # PentAGI's own login stays as defense-in-depth behind that gate.
+        mode: forwardAuth

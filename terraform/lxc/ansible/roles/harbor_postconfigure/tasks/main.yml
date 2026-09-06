@@ -669,6 +669,55 @@
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
+# Push-based mirror project (pull-then-push fix for the proxy-cache
+# tag-creation bug -- see docs/harbor-stack/README.md Open Investigation)
+# -----------------------------------------------------------------------
+
+- name: Get existing projects (mirror check)
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects?name={{ harbor_postconfigure_mirror_project_name }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_mirror_project_lookup
+  delegate_to: localhost
+
+- name: Check if mirror project already exists
+  ansible.builtin.set_fact:
+    harbor_postconfigure_mirror_project_exists: true
+  when: harbor_postconfigure_mirror_project_lookup.json | selectattr('name', 'equalto', harbor_postconfigure_mirror_project_name) | list | length > 0
+  delegate_to: localhost
+
+- name: Create push-based mirror project
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ harbor_postconfigure_mirror_project_name }}"
+      public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_mirror_project_auto_scan else 'false' }}"
+    status_code: 201
+  when: harbor_postconfigure_mirror_project_exists is not defined
+  delegate_to: localhost
+
+- name: Display mirror project status
+  ansible.builtin.debug:
+    msg: >-
+      Push-based mirror project '{{ harbor_postconfigure_mirror_project_name }}'
+      {{ 'created' if harbor_postconfigure_mirror_project_exists is not defined else 'already exists' }}
+      (harbor_repull pushes here after pulling through the proxy-cache
+      projects above, so artifacts are durably tagged and scan-tracked;
+      push credential is provisioned by the harbor_repull role, not here)
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
 # CI robot account (system-level push/pull)
 # -----------------------------------------------------------------------
 
@@ -721,7 +770,7 @@
     msg:
       - "================================================================"
       - "ACTION REQUIRED: Harbor CI robot account created."
-      - "Copy these credentials and store them in terraform/secrets.enc.yaml"
+      - "Copy these credentials and store them in terraform/secrets.common.enc.yaml"
       - "(and terraform/secrets.pve.enc.yaml for production) under the keys:"
       - "  HARBOR_ROBOT_USER  = {{ harbor_postconfigure_robot_result.json.name }}"
       - "  HARBOR_ROBOT_PASSWORD = <secret shown below>"
@@ -849,4 +898,92 @@
   ansible.builtin.debug:
     msg: "Harbor nightly full scan schedule verified at '{{ harbor_postconfigure_scan_schedule }}'."
   when: not harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
+# Per-project CVE allowlists (deliberately vulnerable images -- see
+# defaults/main.yml for scope, and the header comment in each
+# files/cve_allowlist_*.txt for exactly how each list was derived)
+# -----------------------------------------------------------------------
+
+- name: Read CVE allowlist files and build project payloads
+  ansible.builtin.set_fact:
+    harbor_postconfigure_cve_allowlist_payloads: >-
+      {{
+        harbor_postconfigure_cve_allowlist_payloads | default([])
+        + [{
+            'project': item.project,
+            'cve_ids': (
+              lookup('file', role_path ~ '/files/' ~ item.file).splitlines()
+              | select('match', '^[A-Za-z0-9-]+$')
+              | list
+            )
+          }]
+      }}
+  loop: "{{ harbor_postconfigure_cve_allowlists }}"
+  loop_control:
+    label: "{{ item.project }}"
+  delegate_to: localhost
+
+- name: Get current project details for CVE allowlist projects
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects?name={{ item.project }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ harbor_postconfigure_cve_allowlist_payloads }}"
+  loop_control:
+    label: "{{ item.project }}"
+  register: harbor_postconfigure_cve_allowlist_project_lookup
+  delegate_to: localhost
+
+- name: Update CVE allowlist where it doesn't already match
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ (item.1.json | first).project_id }}"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_id: "{{ (item.1.json | first).project_id }}"
+      project_name: "{{ (item.1.json | first).name }}"
+      metadata: "{{ (item.1.json | first).metadata }}"
+      cve_allowlist:
+        items: "{{ item.0.cve_ids | map('community.general.dict_kv', 'cve_id') | list }}"
+    status_code: 200
+  loop: "{{ harbor_postconfigure_cve_allowlist_payloads | zip(harbor_postconfigure_cve_allowlist_project_lookup.results) | list }}"
+  loop_control:
+    label: "{{ item.0.project }}"
+  when: >-
+    (item.1.json | default([]) | length) > 0
+    and (
+      ((item.1.json | first).cve_allowlist['items'] | default([]) | map(attribute='cve_id') | list | sort)
+      != (item.0.cve_ids | sort)
+    )
+  # ansible.builtin.uri never reports changed on its own; the `when` above
+  # already gates this to only run on a real diff, so treat every actual
+  # run as a change for accurate reporting in the debug task below.
+  changed_when: true
+  register: harbor_postconfigure_cve_allowlist_update_result
+  delegate_to: localhost
+
+- name: Display CVE allowlist status
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'CVE allowlist project ' + item.0.project + ' does not exist on this Harbor instance yet -- skipped.'
+        if (item.1.json | default([]) | length) == 0
+        else (
+          'CVE allowlist for project ' + item.0.project + ': ' + (item.0.cve_ids | length | string) + ' entries '
+          + ('applied' if item.0.project in (harbor_postconfigure_cve_allowlist_update_result.results
+              | selectattr('item.0.project', 'defined') | selectattr('changed', 'true')
+              | map(attribute='item.0.project') | list) else 'already up to date') + '.'
+        )
+      }}
+  loop: "{{ harbor_postconfigure_cve_allowlist_payloads | zip(harbor_postconfigure_cve_allowlist_project_lookup.results) | list }}"
+  loop_control:
+    label: "{{ item.0.project }}"
   delegate_to: localhost

@@ -1,5 +1,12 @@
 # 06-app-stacks-03 — Migrate Pi-hole to new LXC stack
 
+> Historical task packet.
+> This document reflects the earlier Phase 06 migration planning workflow and
+> retired branch model.
+> Keep it as migration-planning history only. For current workflow and
+> environment rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

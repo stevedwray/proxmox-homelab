@@ -5,7 +5,7 @@
 ```
 feat/* / fix/* / task/* / work/*    ← active development (short-lived)
         ↓  appropriate validation tier (see below)
-stable                              ← validated on pve-test-vm, ready for pve
+stable                              ← validated per its tier, ready for pve
         ↓  incremental deploy on pve + smoke test passes
 main                                ← current production state
 ```
@@ -14,6 +14,16 @@ This model replaces the `baseline/teardown-validated` intermediate branch once
 the branch, CI triggers, and operator instructions have been migrated. Until
 that migration is complete, treat this document as the target branch model and
 follow the currently active repository guardrails for actual promotions.
+
+**`pve-test-vm` is reserved for structural/high-blast-radius validation only**
+(Terraform/SDN/firewall zone work, full teardown cycles). It is no longer the
+default validation target for routine changes — Ansible task/role changes,
+Authentik/Traefik/Harbor config, and similar app-level work validate directly
+against `pve` instead, through the normal production approval flow (see
+`CLAUDE.md`'s Production Credential Controls). `CLAUDE.md`'s own Validation
+Tiers table is the current authority on which tier uses which target; treat
+this document's copy below as illustrative, not authoritative, until it's
+reconciled.
 
 ---
 
@@ -26,8 +36,9 @@ happens on the branch before promotion. Never develop directly on `stable` or `m
 
 ### `stable`
 
-The intermediate branch. Represents: **validated on pve-test-vm, cleared for
-incremental deploy to pve**.
+The intermediate branch. Represents: **validated per its tier — pve-test-vm
+for structural/high-blast-radius changes, pve directly (under approval)
+otherwise — cleared for incremental deploy to pve**.
 
 The promotion gate is the appropriate validation tier for the change class
 (see below). A full teardown is only required for high-risk structural changes —

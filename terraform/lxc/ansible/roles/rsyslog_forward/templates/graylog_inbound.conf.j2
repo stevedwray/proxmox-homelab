@@ -1,0 +1,25 @@
+## Inbound syslog relay for Graylog. rsyslog receives on :514 (TCP + UDP)
+## from external appliances (Proxmox host, MikroTik) and Docker daemon on
+## :10514, then relays everything to Graylog's syslog TCP input on
+## `{{ rsyslog_forward_target_host }}:{{ rsyslog_forward_target_port }}`.
+##
+## Port 514 is bound by rsyslog (systemd root process). Graylog's container
+## listens only on localhost:5140 and never binds 514 directly.
+
+module(load="imudp")
+input(type="imudp" port="{{ rsyslog_inbound_udp_port }}")
+
+ruleset(name="ext-tcp" parser="rsyslog.rfc5424") {
+    *.* action(type="omfwd"
+               target="{{ rsyslog_forward_target_host }}"
+               port="{{ rsyslog_forward_target_port }}"
+               protocol="tcp"
+               Template="GraylogForward"
+               queue.type="LinkedList"
+               queue.filename="graylog-ext-tcp"
+               queue.maxDiskSpace="32m"
+               queue.saveOnShutdown="on"
+               action.resumeRetryCount="-1")
+}
+
+input(type="imtcp" port="{{ rsyslog_inbound_tcp_port }}" address="0.0.0.0" ruleset="ext-tcp")

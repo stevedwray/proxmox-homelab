@@ -1,6 +1,13 @@
-# hAP ax3 Desired Configuration
+# hAP ax3 Configuration
 
-Replacement for the hAP ac. Source of truth for reprovisioning.
+**This is the live, current router configuration**, not a future target —
+the hAP ac → hAP ax3 migration this document originally planned is complete.
+The VLAN addressing, hardware identity, RouterOS version, DHCP, DNS, and
+firewall/WiFi run-state below were all confirmed directly against the
+running device on 2026-07-03 via a working REST scrape (see
+[README.md](./README.md)'s "Verified Live State" and "Re-scraping" sections).
+The firewall rule *contents* (as opposed to counts) and WiFi security-profile
+details were not independently re-diffed line-by-line in this pass.
 
 ---
 
@@ -9,7 +16,7 @@ Replacement for the hAP ac. Source of truth for reprovisioning.
 | Field | Value |
 |-------|-------|
 | Model | MikroTik hAP ax3 (RBD53G-5HacD2HnD+TC) |
-| RouterOS | 7.22.2 stable |
+| RouterOS | 7.23.1 stable (confirmed live 2026-07-03; was 7.22.2 at authoring) |
 | Timezone | Pacific/Auckland (UTC+12/+13 DST) |
 | 2.5G port | ether1 → bridgeLocal (switch uplink) |
 | 1G ports | ether2 = WAN, ether3/4/5 = bridgeLocal |
@@ -24,10 +31,10 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | Interface | VLAN ID | Purpose |
 |-----------|---------|---------|
 | vlan1-wan | 10 | WAN uplink — tagged on ether2, DHCP client |
-| vlan10-build | 10 | build_seg gateway (10.57.0.1/24) |
-| vlan20-mgmt | 20 | mgmt_seg gateway (10.57.1.1/24) |
-| vlan30-edge | 30 | edge_seg gateway (10.57.2.1/24) |
-| vlan40-infra | 40 | infra_seg gateway (10.57.3.1/24) |
+| vlan10-build | 10 | build_seg gateway (192.168.10.1/24) |
+| vlan20-mgmt | 20 | mgmt_seg gateway (192.168.20.1/24) |
+| vlan30-edge | 30 | edge_seg gateway (192.168.30.1/24) |
+| vlan40-infra | 40 | infra_seg gateway (192.168.40.1/24) |
 
 ---
 
@@ -38,10 +45,10 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | bridgeLocal | 192.168.1.1/24 | LAN gateway |
 | bridgeLocal | 192.168.1.251/24 | Management (permanent, kept for API access) |
 | vlan1-wan | ISP-assigned | DHCP client, add-default-route=yes, use-peer-dns=no |
-| vlan10-build | 10.57.0.1/24 | |
-| vlan20-mgmt | 10.57.1.1/24 | |
-| vlan30-edge | 10.57.2.1/24 | |
-| vlan40-infra | 10.57.3.1/24 | |
+| vlan10-build | 192.168.10.1/24 | |
+| vlan20-mgmt | 192.168.20.1/24 | |
+| vlan30-edge | 192.168.30.1/24 | |
+| vlan40-infra | 192.168.40.1/24 | |
 | bridgeLocal | 2404:440c:234f:f00::/64 | IPv6 LAN — from-pool, advertise=yes |
 
 ---
@@ -60,7 +67,8 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 - **Fallback servers:** 8.8.8.8, 8.8.4.4
 - **Allow remote requests:** yes (router acts as local resolver on 192.168.1.1)
 - **Verify DoH cert:** no
-- **Static entries:** 80 host entries (copied from hAP ac)
+- **Static entries:** 72 host entries (was 80 when copied from the hAP ac —
+  some dropped during or after migration)
 - **DHCP hands out:** 192.168.1.22, 192.168.1.23 (Pi-holes) ✅
 - **ULA address on router:** fd00::1/64 on bridgeLocal (stable IPv6 for DNS)
 
@@ -68,9 +76,11 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 
 ## DHCP
 
-**Server:** `lan` on bridgeLocal, lease-time=10m
-**Pool:** dhcp-pool (192.168.1.100–192.168.1.199)
+**Server:** `lan` on bridgeLocal, lease-time=30m (was documented as 10m —
+corrected against live scrape)
+**Pool:** `dhcp_pool0` (192.168.1.100–192.168.1.200)
 **Network:** 192.168.1.0/24, gateway=192.168.1.1
+**Leases:** 13 total (5 static, 8 dynamic) as of 2026-07-03
 
 ### Static Leases
 
@@ -80,6 +90,7 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | argon-02 | E4:5F:01:F4:A4:88 | 192.168.1.23 | Pi-hole secondary |
 | garuda | 10:7C:61:B6:A4:91 | 192.168.1.104 | Workstation |
 | RBR350 | 34:98:B5:9D:56:0D | 192.168.1.110 | |
+| *(unlabeled)* | 88:A2:9E:57:E6:24 | 192.168.1.28 | Found in live scrape 2026-07-03 — no hostname/comment set on the router; identify this device and label it on the router and here |
 
 ---
 
@@ -177,5 +188,12 @@ Mirrors IPv4 forward chain exactly:
 
 ## Outstanding Issues
 
-1. **wifi1 stability** — confirm T5 survives reboot and client reconnects before consolidating security into shared profile
+1. **wifi1 stability** — likely resolved: live scrape (2026-07-03) shows
+   both `wifi1` and `wifi2` running with the router at ~3 weeks uptime, so
+   T5 has survived at least one long run without a security-profile
+   consolidation. Still hasn't been through an explicit, deliberate reboot
+   test — do that before finally consolidating into the shared profile.
 2. **IPv6 pool short lease (~10 min)** — ISP behaviour, not a config issue; prefix appears stable across renewals
+3. **Unlabeled static DHCP lease** (`192.168.1.28`, MAC `88:A2:9E:57:E6:24`)
+   — found in the 2026-07-03 scrape, not in the static-leases table above
+   until now. Identify the device and add a hostname/comment on the router.

@@ -1,8 +1,0 @@
-ROUTE_AFTER:
-10.55.0.62 dev tvinfra src 192.168.1.40 uid 0
-    cache
-PING_AFTER:
-PING 10.55.0.62 (10.55.0.62) 56(84) bytes of data.
-
---- 10.55.0.62 ping statistics ---
-3 packets transmitted, 0 received, 100% packet loss, time 2080ms

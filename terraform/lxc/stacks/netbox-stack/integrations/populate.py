@@ -791,6 +791,26 @@ def populate_static_hosts(nb, site, static_hosts: list) -> None:
             if _primary_ip_id(device) != ip_obj.get("id"):
                 _patch_managed_object(nb, NB_DCIM_DEVICES, device, {"primary_ip4": ip_obj["id"]})
 
+        # Declared, not live-probed: static hosts aren't part of the
+        # Proxmox/Portainer discovery this script otherwise relies on for
+        # service data, so a fixed list in the network intent YAML is the
+        # only source of truth here.
+        for svc_def in host_def.get("services", []):
+            nb.ensure(NB_IPAM_SERVICES, {
+                "name": svc_def["name"],
+                "parent_object_type": "dcim.device",
+                "parent_object_id": device["id"],
+                "protocol": svc_def.get("protocol", "tcp"),
+            }, {
+                "name": svc_def["name"],
+                "parent_object_type": "dcim.device",
+                "parent_object_id": device["id"],
+                "ports": [svc_def["port"]],
+                "protocol": svc_def.get("protocol", "tcp"),
+                "description": svc_def.get("description", ""),
+                "tags": managed_tags,
+            }, **_managed_patch_guard())
+
 
 def populate_foundation(nb):
     """Create site, manufacturers, platforms, cluster types, device roles, device types."""

@@ -1,6 +1,0 @@
-plan-target-validation
-238:11:48:43.609 STDOUT tofu:       + target_node  = "pve"
-235:11:48:43.609 STDOUT tofu:           + zone            = "edge_seg"
-160:11:48:43.608 STDOUT tofu:                   + address = "192.168.30.10/24"
-226:11:48:43.609 STDOUT tofu:       + ip_address   = "192.168.30.10/24"
-161:11:48:43.608 STDOUT tofu:                   + gateway = "192.168.30.1"

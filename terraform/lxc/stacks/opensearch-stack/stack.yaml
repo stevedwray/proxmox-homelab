@@ -1,0 +1,84 @@
+# OpenSearch + OpenSearch Dashboards — dedicated findings store, replacing
+# elasticsearch-stack (vmid 40013). Migration reason: real Authentik SSO
+# login requires Elasticsearch's paid Platinum+ SAML/OIDC realm, which the
+# operator declined to pay for (confirmed live: elasticsearch-stack's
+# cluster reports license type "basic"). OpenSearch's security plugin
+# bundles SAML/OIDC for free. See /home/steve/.claude/plans/jiggly-cuddling-squid.md
+# (or docs/opensearch-stack/plan.md once written) for the full migration plan.
+#
+# Built standalone alongside the still-running elasticsearch-stack (separate
+# vmid/IP, infra_seg has room for both) -- decommissioning the old stack is
+# separate, later work, not a prerequisite for standing this one up.
+#
+# Memory: starting directly at 6144MB (not the 3072MB elasticsearch-stack
+# started at) -- that OOM lesson (ES+Kibana+Docker daemon+docker-socket-proxy
+# left a 3GB LXC at 24Mi free) is already paid for, no need to re-learn it.
+hostname: opensearch-stack
+ip_address: "192.168.40.14/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
+network:
+  zone: infra_seg
+vmid: 40014
+cores: 2
+memory: 6144
+swap: 1024
+rootfs_size: 16
+storage_profile: platform-zfs
+docker_storage_size: "20G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "20G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - opensearch
+  - dashboards
+  - security
+  - findings
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: opensearch-http
+    port: 9200
+    protocol: tcp
+  - service: opensearch-dashboards-http
+    port: 5601
+    protocol: tcp
+
+# Dedicated data volume for OpenSearch indices — separate from the LXC's own
+# rootfs/docker-storage, on the durable-zfs profile (the `storage` ZFS pool,
+# 1.62TB free as of the elasticsearch-stack build — see that plan.md's
+# storage call, still valid). Started at 150G; grow-only.
+extra_mount_path: "/var/lib/opensearch-data"
+extra_mount_size: "150G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: opensearch-data
+  path: /var/lib/opensearch-data
+  size: "150G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Docker socket proxy — read-only Docker API endpoint, consistent with
+# harbor-stack/netbox-stack (NetBox discovery, cross-stack visibility)
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "192.168.40.14"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "192.168.40.14"
+
+ansible_playbook: "deploy-opensearch-stack"
+deployment_tier: platform
+portainer_agent: false

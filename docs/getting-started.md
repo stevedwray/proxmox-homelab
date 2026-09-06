@@ -1,24 +1,21 @@
 # Getting Started
 
-This guide is the current onboarding path for working on the `pve-test` build of the
-Proxmox homelab repository.
+This guide is the current onboarding path for working in this repository.
 
-It assumes the active project model:
+It assumes the current environment model:
 
-- `pve-test` is a bare-metal Proxmox host
+- `pve-test-vm` is the validation environment
+- `pve` is production
 - Terraform entry point is `terraform/lxc/`
-- Proxmox API access for discovery should use a dedicated read-only token
-  (example: `automation@pve!terraform-readonly`). Terraform provisioning may
-  still use the full-scope `automation@pve!terraform` token where write access
-  is required.
-- host bootstrap is handled through the planned bootstrap Ansible playbooks
+- secrets and environment selection are handled through wrapper scripts
+- host bootstrap is handled through the active Ansible playbooks
 
 ## What you need first
 
 - Git with SSH access to the repository
 - a Linux shell environment suitable for Terraform, Ansible, and SSH
-- SSH access to `root@pve-test.gibbsgreatly.xyz`
-- local copies of required environment files and secrets
+- SSH access to the target environment you are validating
+- local env files and SOPS access for the target environment
 
 If you are setting up your local toolchain from scratch, use:
 
@@ -36,78 +33,86 @@ git --version
 python3 -c "import proxmoxer; print('Proxmoxer available')"
 ```
 
-## Verify host access
+## Read these first
 
-Before using any automation, confirm the target host is reachable:
+- `docs/workflow/branch-model.md`
+- `docs/workflow/environments.md`
+- `docs/reference/secrets-management.md`
+- `terraform/lxc/README.md`
+
+## Pick the target environment
+
+For normal validation work, use `pve-test-vm`.
+
+Environment wrappers:
+
+- `./with-secrets` for `pve-test-vm`
+- `./with-secrets-prod` for `pve`
+
+Before any deploy or validation run, confirm the target node:
 
 ```bash
-ping -c 1 pve-test.gibbsgreatly.xyz
-ssh root@pve-test.gibbsgreatly.xyz "pveversion"
-curl -k https://pve-test.gibbsgreatly.xyz:8006
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 ```
 
 Expected:
 
-- DNS resolves correctly
-- root SSH works
-- the Proxmox web/API endpoint responds on port `8006`
+- for routine validation work, this should print `pve-test-vm`
+
+If it prints anything else, stop and resolve the targeting problem first.
+
+## Verify host access
+
+Before using automation, confirm the target host is reachable. For the default
+validation environment:
+
+```bash
+ping -c 1 pve-test-vm.gibbsgreatly.xyz
+ssh root@pve-test-vm.gibbsgreatly.xyz "pveversion"
+curl -k https://pve-test-vm.gibbsgreatly.xyz:8006
+```
 
 ## Bootstrap the Proxmox host
 
-If `pve-test` is freshly installed or has lost its automation baseline, run the current
-bootstrap flow:
+If the target Proxmox host is freshly installed or has lost its automation
+baseline, use the active host bootstrap playbooks described in:
 
-```bash
-cd ansible
-ansible-playbook -i inventory/dev.yml 00-initial-setup/proxmox-initial-setup.yml
-ansible-playbook -i inventory/dev.yml 01-base-system/terraform-token-management.yml
-```
-
-This establishes the current baseline, including:
-
-- Proxmox repository normalization
-- `automation@pve`
-- `automation@pve!terraform`
-- token output for Terraform use
-
-After rotating or creating the token, update your local `.env` and/or `.env.pve-test`
-with the printed token values.
+- `docs/reference/proxmox-server-baseline.md`
+- `docs/reference/proxmox-terraform-user.md`
+- `docs/troubleshooting/vm-reset-recovery.md`
 
 ## Configure local environment files
 
-At minimum, copy and populate the local environment file:
+At minimum, copy the base non-secret config:
 
 ```bash
 cp .env.template .env
 ```
 
-Fill in the values required by the current repo workflow. For Terraform auth, the active
-pattern is token-based. Prefer a read-only identifier for discovery and map it
-into `TF_VAR_pm_api_token_id` for Terraform compatibility when appropriate.
+Then make sure the environment-specific files you need exist:
 
-Example (preferred discovery identifier + compatibility mapping):
+- `.env.pve-test-vm` for validation work
+- `.env.pve` for production work
 
-```bash
-# Preferred non-secret identifier (set in .env.pve-test):
-PROXMOX_READONLY_TOKEN_ID=automation@pve!terraform-readonly
+For the current secrets workflow, use:
 
-# Terraform compatibility mapping (example):
-TF_VAR_pm_api_token_id=${PROXMOX_READONLY_TOKEN_ID:-automation@pve!terraform}
-TF_VAR_pm_api_token_secret=<TOKEN_SECRET>
-```
+- `docs/reference/secrets-management.md`
 
-Depending on the task, you may also need `.env.pve-test`.
+Do not rely on plaintext tracked secrets files. Use the wrapper scripts to load
+non-secret config plus SOPS-backed secrets.
 
 ## Verify Proxmox API access
 
-Before running Terraform, confirm the token works:
+Before running Terraform, confirm the wrapper resolves the right target and the
+token-backed environment loads:
 
 ```bash
-curl -ks -H "Authorization: PVEAPIToken=${PROXMOX_READONLY_TOKEN_ID}=${PROXMOX_READONLY_TOKEN_SECRET}" \
-  "https://pve-test.gibbsgreatly.xyz:8006/api2/json/version"
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 ```
 
-Expected: JSON containing Proxmox version data.
+For `pve-test-vm`, expected output is:
+
+- `pve-test-vm`
 
 ## Work from the active Terraform entry point
 
@@ -125,7 +130,8 @@ terragrunt plan
 Use the stack and network docs there as your primary implementation reference:
 
 - `terraform/lxc/README.md`
-- `terraform/lxc/network/pve-test.yaml`
+- `terraform/lxc/network/pve-test-vm.yaml` when working on the validation environment
+- `terraform/lxc/network/pve.yaml` when working on production-related docs or code
 - `terraform/lxc/stacks/<stack>/stack.yaml`
 
 ## Success criteria
@@ -133,12 +139,9 @@ Use the stack and network docs there as your primary implementation reference:
 You are ready to work when:
 
 - local Terraform and Ansible tooling is installed
-- `pve-test.gibbsgreatly.xyz` is reachable by SSH and HTTPS
-- the Proxmox bootstrap baseline has been applied if needed
-- a suitable Proxmox token is available and working; prefer a
-  read-only discovery token (`automation@pve!terraform-readonly`) for day-2
-  discovery and use `automation@pve!terraform` only where Terraform requires
-  write privileges.
+- the target Proxmox host is reachable by SSH and HTTPS
+- the bootstrap baseline has been applied if needed
+- the environment wrapper resolves the expected node
 - `terragrunt plan` or `tofu validate` succeeds from `terraform/lxc/`
 
 ## Common issues
@@ -148,16 +151,17 @@ You are ready to work when:
 Check:
 
 - your SSH key is present locally
-- root SSH works to `pve-test.gibbsgreatly.xyz`
-- `ansible/inventory/dev.yml` still matches the current host IP and key path
+- root SSH works to the selected environment host
+- the relevant inventory and environment files still match the current target
 
 ### Proxmox API authentication problems
 
 Check:
 
-- the token exists: `pveum user token list automation@pve`
-- the token secret in `.env` or `.env.pve-test` is current
-- you are using token auth, not the old password-based `access/ticket` flow
+- the wrapper resolves the expected `TF_VAR_proxmox_node`
+- the relevant env files exist and are current
+- the SOPS-backed secrets load successfully
+- you are using the wrapper-based token workflow, not an old manual auth path
 
 ### Host bootstrap drift
 
@@ -170,7 +174,8 @@ If the host has been rebuilt or partially reset, follow:
 ## Next places to read
 
 - `docs/plan/README.md`
-- `docs/plan/phase-00a-proxmox-host-bootstrap.md`
+- `docs/workflow/branch-model.md`
+- `docs/workflow/environments.md`
 - `docs/reference/proxmox-server-baseline.md`
 - `docs/reference/proxmox-terraform-user.md`
 - `docs/reference/secrets-management.md`

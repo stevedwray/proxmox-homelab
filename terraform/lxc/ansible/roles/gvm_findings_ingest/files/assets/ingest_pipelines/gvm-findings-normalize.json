@@ -1,0 +1,21 @@
+{
+  "description": "Normalize GVM finding documents at ingest time -- stamps ingested_at, and defaults the human-assessment fields to explicit nulls when the sync script didn't already carry forward a prior assessment. No severity-level filtering here -- threat=Log rows are already dropped in gvm_findings_sync.py before documents are built, not here, to avoid transmitting ~90-95%-noise payloads over the wire (see docs/elasticsearch-stack/README.md section 3).",
+  "processors": [
+    {
+      "set": {
+        "field": "ingested_at",
+        "value": "{{{_ingest.timestamp}}}"
+      }
+    },
+    {
+      "script": {
+        "description": "Default the human-assessment fields to explicit null only when absent -- same pattern (and same reason: OpenSearch's set processor rejects value:null) as harbor-findings-normalize.json, see project_opensearch_migration_status memory.",
+        "lang": "painless",
+        "source": "for (field in params.fields) { if (!ctx.containsKey(field)) { ctx.put(field, null); } }",
+        "params": {
+          "fields": ["severity_assessed", "assessed_reason", "assessed_by", "assessed_at"]
+        }
+      }
+    }
+  ]
+}

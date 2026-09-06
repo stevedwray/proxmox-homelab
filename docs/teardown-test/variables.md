@@ -12,7 +12,7 @@ default expectation but still require confirmation during preflight.
 | Planned start time | REQUIRES_OPERATOR_INPUT |
 | Planned stop/rollback deadline | REQUIRES_OPERATOR_INPUT; set during destructive go/no-go gate |
 | Communication channel/status notes location | `docs/teardown-test/` planning documents on this branch |
-| Maximum acceptable pve-test outage | REQUIRES_OPERATOR_INPUT; must be explicitly set before destructive execution |
+| Maximum acceptable pve-test-vm outage | REQUIRES_OPERATOR_INPUT; must be explicitly set before destructive execution |
 | Initial approval posture | Approved for documentation/planning only. Destroy/apply/live publish are not approved in this step. |
 
 ## Git And Targeting
@@ -21,7 +21,7 @@ default expectation but still require confirmation during preflight.
 |---|---|
 | Branch to test | REQUIRES_OPERATOR_INPUT |
 | Commit SHA to test | REQUIRES_OPERATOR_INPUT |
-| Target guard expected value | `pve-test` |
+| Target guard expected value | `pve-test-vm` |
 | Command for target guard | `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` |
 | Target guard actual output | VERIFY |
 | SOPS/age key confirmed present | VERIFY |
@@ -86,7 +86,7 @@ publish.
 
 | Service | Backup source | Restore confidence or restore test plan | Data-loss policy | Pre-destroy evidence path | Gate status |
 |---|---|---|---|---|---|
-| step-ca authority material | VMID 152 LXC backup plus authority-material capture | Required high confidence; restore drill plan includes CA/ACME issuance smoke test | Data loss not acceptable | `docs/teardown-test/evidence/${STAMP}/backups/step-ca/` | READY (policy approved) |
+| step-ca authority material | VMID 152 LXC backup plus authority-material capture | Required high confidence; restore drill plan includes CA/ACME issuance smoke test | Data loss not acceptable | `docs/teardown-test/artifacts/evidence/${STAMP}/backups/step-ca/` | READY (policy approved) |
 | Authentik | VMID 150 LXC backup plus `/opt/authentik-stack` config snapshot | Restore plan: health, admin login/API token workflow, provider/app checks | Data loss not acceptable | `docs/teardown-test/artifacts/evidence/${STAMP}/backups/authentik/` | READY (policy approved) |
 | Harbor | VMID 121 LXC backup plus `/opt/harbor-stack` config and policy export evidence | Restore plan: `/v2/` auth challenge and sample pull/push | Registry/config loss not acceptable; Trivy cache loss acceptable | `docs/teardown-test/artifacts/evidence/${STAMP}/backups/harbor/` | READY (policy approved) |
 | NetBox | VMID 143 LXC backup plus `/opt/netbox-stack` config snapshot | Restore plan: service/API auth and reference object checks | Data loss not acceptable | `docs/teardown-test/artifacts/evidence/${STAMP}/backups/netbox/` | READY (policy approved) |

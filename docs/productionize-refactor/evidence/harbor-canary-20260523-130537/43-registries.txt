@@ -1,5 +1,0 @@
-docker-hub docker-hub healthy
-ghcr docker-registry healthy
-quay docker-registry healthy
-lscr docker-registry healthy
-version: v2.14.3-fa517e2a auth_mode: oidc_auth read_only: False

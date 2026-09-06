@@ -56,16 +56,12 @@
   gather_facts: false
   vars:
     harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
-    harbor_installer_external_url: >-
-      {{
-        lookup('env', 'HARBOR_EXTERNAL_URL') |
-        default(
-          'https://' ~ harbor_installer_hostname
-          if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve'
-          else 'http://' ~ (lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var required for non-production Harbor')),
-          true
-        )
-      }}
+    # external_url must match what discover-authentik-edge.py registers as the OIDC
+    # redirect_uri (always the public FQDN, from HARBOR_EXTERNAL_URL / HARBOR_HOSTNAME).
+    # Same value in every environment, matching production's validated model — a
+    # prod/non-prod branch here previously diverged from the OIDC registration and
+    # broke browser login in non-prod.
+    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('https://' ~ harbor_installer_hostname, true) }}"
   roles:
     - harbor_installer
 
@@ -183,10 +179,29 @@
         - not (harbor_postconfigure_oidc_ready | default(false) | bool)
       delegate_to: localhost
       run_once: true
+
+    # Resolved here, before the role's own `vars:` block redefines
+    # harbor_postconfigure_oidc_enabled to mean "ready this run" instead of
+    # "desired at all" -- referencing the outer var by the same name from
+    # inside that same vars: block would silently pick up the redefinition
+    # instead (Ansible resolves same-named keys in one vars: dict against
+    # each other, not against the outer scope), making
+    # harbor_postconfigure_oidc_requested collapse to the same value as
+    # "ready this run" and defeating harbor_postconfigure_preserve_oidc_migration
+    # in exactly the case it exists to catch. Confirmed live: this let a
+    # from-scratch run create the breakglass user and CI robot account while
+    # Authentik wasn't ready yet, which then permanently blocked switching
+    # Harbor to OIDC on the next run ("the auth mode cannot be modified as
+    # new users have been inserted into database").
+    - name: Resolve whether Harbor OIDC was requested at all, before role-local shadowing
+      ansible.builtin.set_fact:
+        harbor_postconfigure_oidc_requested_resolved: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+      delegate_to: localhost
+      run_once: true
   roles:
     - role: harbor_postconfigure
       vars:
-        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_requested_resolved }}"
         harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"
 
 - name: Deploy cAdvisor for container metrics on Harbor host
@@ -196,7 +211,14 @@
 
   vars:
     harbor_cadvisor_compose_dir: /opt/harbor-cadvisor
-    harbor_cadvisor_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host or LAB_IP_HARBOR is required') }}"
+    # By the time this play runs, harbor_installer (Play 2) and
+    # harbor_postconfigure (Play 3) have already brought Harbor itself up
+    # earlier in this same playbook run -- there is no actual chicken-and-egg
+    # bootstrap problem here, so this routes through Harbor like every other
+    # image rather than pulling gcr.io directly. Must be the FQDN (routed
+    # through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    harbor_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   tasks:
     - name: Create cAdvisor compose directory
@@ -212,7 +234,7 @@
         content: |
           services:
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ harbor_cadvisor_registry_host }}/ghcr/google/cadvisor:v0.60.5"
               container_name: cadvisor
               restart: unless-stopped
               ports:
@@ -223,9 +245,53 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: harbor_cadvisor_compose_definition
 
     - name: Deploy cAdvisor via compose
       community.docker.docker_compose_v2:
         project_src: "{{ harbor_cadvisor_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if harbor_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live elsewhere this session). Force
+        # recreation whenever the compose file's own content changed,
+        # not just when the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (harbor_daemon_config.changed or harbor_cadvisor_compose_definition.changed)
+            else 'auto'
+          }}
+
+- name: Deploy findings ingestion (Harbor -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new dedicated Harbor robot +
+  # OpenSearch user -- does not touch harbor_installer, harbor_postconfigure,
+  # cAdvisor, or any credential/state either of those manage. Fully
+  # independent of harbor_repull too (that role runs on ci-runner-01, a
+  # different host entirely -- see terraform/lxc/ansible/playbooks/deploy-ci-runner.yml).
+  # Gated the same way docker_socket_proxy/harbor_repull are: explicit opt-in
+  # via a stack.yaml flag, off by default.
+  roles:
+    - role: es_findings_ingest
+      when: es_findings_ingest_enabled | default(false) | bool
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/harbor/harbor
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

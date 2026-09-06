@@ -1,10 +1,10 @@
-# Operational cutover evidence snapshots (local only)
+# Documentation workspace transient material (local only)
+docs/**/artifacts/
+docs/**/evidence/
+docs/**/handoffs/
+docs/**/reports/
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
-docs/**/handoffs/
-docs/**/artifacts/*
-docs/docker-refactor/evidence/
-docs/docker-refactor/reports/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
@@ -14,14 +14,24 @@ storage-audit
 .env.local
 *.env
 .env.*
-!.env
-!.env.pve
-!.env.pve-test
-!.env.pve-test-vm
-!.env.template
-!.env.pve-test.template
-!.env.pve-test-vm.template
-!.env.pve.template
+# The bare !.env negation below (for this repo's own root .env) would
+# otherwise unignore any file literally named .env anywhere in the tree --
+# fixed two ways, belt and suspenders: (1) anchored every exception to the
+# repo root with a leading /, so only the intended top-level files are
+# re-allowed; (2) still explicitly re-ignoring docs/pentagi-stack/original/
+# specifically, since that's the operator's prior PentAGI install with real
+# plaintext secrets (Langfuse S3/Redis, scraper creds), not repo-tracked
+# config, and not meant to be tracked at all regardless of anchoring.
+docs/pentagi-stack/original/
+docs/pentagi-stack/*.tar.gz
+!/.env
+!/.env.pve
+!/.env.pve-test
+!/.env.pve-test-vm
+!/.env.template
+!/.env.pve-test.template
+!/.env.pve-test-vm.template
+!/.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
@@ -98,8 +108,6 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
-certs/homelab-root.crt
-
 # Logs
 *.log
 
@@ -111,8 +119,10 @@ certs/homelab-root.crt
 # .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
 
-# Local CI artifacts (logs, scan outputs)
+# Local CI artifacts (logs, scan outputs, scratch notes)
 /artifacts/
 .tmp/
-docs/harbor-stack/artifacts
-!docs/harbor-stack/artifacts/.gitkeep
+certs/homelab-root.pve-test-vm.crt
+
+# local-ai-canary's own venv (workstation-local tooling, not committed)
+/scripts/local-ai-canary/.venv/

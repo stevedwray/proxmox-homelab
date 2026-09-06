@@ -60,3 +60,20 @@
       ansible.builtin.systemd:
         name: apt-cacher-ng
         state: restarted
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /etc/apt-cacher-ng
+  roles:
+    - wazuh_agent
+
+- name: Enable unattended security updates (pilot rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

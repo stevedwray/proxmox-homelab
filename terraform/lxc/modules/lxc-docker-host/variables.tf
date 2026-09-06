@@ -166,7 +166,25 @@ variable "extra_mount_backup_enabled" {
 }
 
 variable "host_bind_mounts" {
-  description = "Host filesystem paths to bind-mount into the container (no size — host path must exist on the Proxmox node)"
+  description = "Host filesystem paths to bind-mount into the container (no size — host path must exist on the Proxmox node). NOT applied by this resource -- Proxmox hardcodes bind-type mount points to root@pam authentication only (confirmed via a live 403: \"mount point type bind is only allowed for root@pam\"), regardless of the API token's RBAC role. This variable exists so the value flows from stack.yaml through Terraform for documentation/consistency; the actual application happens out-of-band via ansible/playbooks/configure-device-passthrough.yml (direct root SSH `pct set`, which runs as true root@pam)."
   type        = list(object({ host_path = string, lxc_path = string }))
   default     = []
+}
+
+variable "docker_enabled" {
+  description = "Whether this container gets the /var/lib/docker mount point. Default true preserves existing behavior for every current stack; native (non-Docker) GPU-passthrough stacks (llm-gpu-stack, comfyui-stack) set this false."
+  type        = bool
+  default     = true
+}
+
+variable "device_passthrough" {
+  description = "Host devices to pass through to the container via Proxmox's native LXC device-passthrough mechanism (PVE 8.1+) — e.g. /dev/kfd, /dev/dri/renderD128 for AMD GPU compute. Default empty list means zero behavior change for every stack that doesn't set it. NOT applied by this resource -- Proxmox hardcodes this field to root@pam authentication only (confirmed via a live 403: \"configuring device passthrough is only allowed for root@pam\"), regardless of the API token's RBAC role. This variable exists so the value flows from stack.yaml through Terraform for documentation/consistency; the actual application happens out-of-band via ansible/playbooks/configure-device-passthrough.yml (direct root SSH `pct set`, which runs as true root@pam)."
+  type = list(object({
+    path       = string
+    uid        = optional(number)
+    gid        = optional(number)
+    mode       = optional(string)
+    deny_write = optional(bool)
+  }))
+  default = []
 }

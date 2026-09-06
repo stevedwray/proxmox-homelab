@@ -1,0 +1,13 @@
+---
+# Debian security-only auto-updates. See docs/reference/unattended-upgrades.md
+# for why this exists and why the apt-daily timers need explicit unmasking.
+
+# Never auto-remove packages unattended-upgrades doesn't need to touch.
+unattended_upgrades_remove_unused_dependencies: true
+
+# Deliberately false: an LXC reboot restarts every Docker Compose stack on
+# it with no drain/coordination, which is unacceptable for shared services
+# (Harbor, Traefik, Authentik, DNS) run unattended overnight. A
+# reboot-required flag is left at /var/run/reboot-required for a human to
+# act on instead. Revisit only with an explicit per-stack maintenance window.
+unattended_upgrades_automatic_reboot: false

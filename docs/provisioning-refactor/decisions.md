@@ -57,7 +57,7 @@ CoreDNS has two classes of records:
 - Seed or non-browser records required before the edge reconciler is available.
 - Generated browser edge records derived from stack-owned manifests.
 
-Generated browser records must target the Traefik edge IP `10.57.2.10`. During
+Generated browser records must target the Traefik edge IP `192.168.30.10`. During
 migration, any direct service record for the same browser hostname is replaced
 one host at a time.
 

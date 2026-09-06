@@ -1,9 +1,0 @@
-Preflight passed: TF_VAR_proxmox_node=pve-test
-Counterpart target:
-  stack: portainer-stack
-  vmid: 20020
-  ip:   "${lab_ip_portainer}/24"
-  host: pve-test.gibbsgreatly.xyz
-  state: running
-Planned action: destroy
-Would stop the counterpart if running, then Terragrunt destroy portainer-stack on pve-test.

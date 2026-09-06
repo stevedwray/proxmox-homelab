@@ -41,7 +41,7 @@ reconciliation code is written.
 ## Validation
 
 - Fixture YAML parses.
-- Contract explicitly says browser DNS records target `10.57.2.10`.
+- Contract explicitly says browser DNS records target `192.168.30.10`.
 
 ## Stop Conditions
 

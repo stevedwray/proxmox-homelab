@@ -1,0 +1,78 @@
+---
+# Configure rsyslog on the Proxmox bare-metal host to forward all syslog to
+# the graylog-stack LXC rsyslog relay on TCP :514.
+#
+# Run command (pve-test-vm):
+#   PVE_ENV=pve-test-vm ./with-secrets ansible-playbook \
+#     -i ansible/inventory/dev.yml \
+#     ansible/00-initial-setup/configure-proxmox-syslog.yml \
+#     --limit pve-test-vm.gibbsgreatly.xyz
+#
+# Run command (pve production):
+#   PVE_ENV=pve ./with-secrets-prod ansible-playbook \
+#     -i ansible/inventory/production.yml \
+#     ansible/00-initial-setup/configure-proxmox-syslog.yml \
+#     -e target_host=pve.gibbsgreatly.xyz \
+#     --limit pve.gibbsgreatly.xyz
+#
+# Validation: after running, check Graylog for:
+#   source:<pve-test-vm|pve> AND application_name:ansible-proxmox-syslog-test
+
+- name: Configure Proxmox host rsyslog forwarding to Graylog
+  hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    graylog_syslog_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
+    graylog_syslog_port: "514"
+
+  tasks:
+    - name: Ensure rsyslog is installed
+      ansible.builtin.package:
+        name: rsyslog
+        state: present
+
+    - name: Write Graylog rsyslog forwarding config
+      ansible.builtin.copy:
+        dest: /etc/rsyslog.d/90-graylog-forward.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Forward all Proxmox host logs to Graylog via the graylog-stack rsyslog relay.
+          # rsyslog on graylog-stack binds TCP :514 as a root/systemd process and relays
+          # to the Graylog syslog input on 127.0.0.1:5140.
+          #
+          # RFC 5424 template: clean APPNAME (%programname%), no PID suffix, ISO 8601 timestamp.
+          template(name="GraylogForward" type="string"
+            string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - - %msg%\n")
+
+          $WorkDirectory /var/spool/rsyslog
+
+          *.* action(type="omfwd"
+                     target="{{ graylog_syslog_host }}"
+                     port="{{ graylog_syslog_port }}"
+                     protocol="tcp"
+                     Template="GraylogForward"
+                     queue.type="LinkedList"
+                     queue.filename="graylog-pve-fwd"
+                     queue.maxDiskSpace="64m"
+                     queue.saveOnShutdown="on"
+                     action.resumeRetryCount="-1")
+      notify: Restart rsyslog
+
+    - name: Flush handlers before probe message
+      ansible.builtin.meta: flush_handlers
+
+    - name: Emit probe message to verify Graylog ingestion
+      ansible.builtin.command: >
+        logger -t ansible-proxmox-syslog-test
+        'G4_PVE_SYSLOG_PROOF host={{ ansible_facts["hostname"] }} ts={{ ansible_facts["date_time"]["iso8601"] }}'
+      changed_when: false
+
+  handlers:
+    - name: Restart rsyslog
+      ansible.builtin.service:
+        name: rsyslog
+        state: restarted

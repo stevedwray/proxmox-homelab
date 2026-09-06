@@ -50,6 +50,41 @@
     - enable_docker_socket_proxy | default(false) | bool
     - docker_socket_proxy_compose_write is defined
 
+# Bootstrap fallback -- this role is included on nearly every stack via
+# deploy-stack.yml, including stacks that are themselves prerequisites for
+# Harbor-via-Traefik to be reachable (proxy-stack, harbor-stack,
+# authentik-stack, and anything provisioned before those exist during a
+# from-scratch deploy). Rather than fail the whole play when Harbor isn't
+# up yet, pull the image directly and tag it under the Harbor-namespaced
+# ref the compose file expects, so the "Deploy compose project" step below
+# finds it cached and never needs to reach Harbor at all. Once Harbor is
+# actually up, this is a no-op (image already present) or Harbor's own
+# proxy-cache path is used as normal.
+- name: Check if docker_socket_proxy image is already cached locally
+  ansible.builtin.command:
+    cmd: "docker image inspect {{ docker_socket_proxy_image }}"
+  register: docker_socket_proxy_image_check
+  failed_when: false
+  changed_when: false
+  when:
+    - enable_docker_socket_proxy | default(false) | bool
+    - not ansible_check_mode
+
+- name: Pre-pull docker_socket_proxy image directly when not cached
+  when:
+    - enable_docker_socket_proxy | default(false) | bool
+    - not ansible_check_mode
+    - docker_socket_proxy_image_check.rc | default(1) != 0
+  ignore_errors: true  # best-effort shortcut -- if this fails, the compose step below surfaces the real error as before
+  block:
+    - name: Pull docker_socket_proxy image from its upstream registry
+      ansible.builtin.command:
+        cmd: "docker pull {{ docker_socket_proxy_upstream_image }}"
+
+    - name: Tag docker_socket_proxy image with Harbor proxy cache path
+      ansible.builtin.command:
+        cmd: "docker tag {{ docker_socket_proxy_upstream_image }} {{ docker_socket_proxy_image }}"
+
 - name: Deploy compose project (idempotent)
   community.docker.docker_compose_v2:
     project_src: "{{ docker_socket_proxy_project_dir }}"

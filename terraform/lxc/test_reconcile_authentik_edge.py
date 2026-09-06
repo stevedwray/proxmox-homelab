@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+import urllib.error
 
 
 MODULE_PATH = Path(__file__).resolve().parent / "reconcile-authentik-edge.py"
@@ -54,6 +55,8 @@ class FakeClient:
         self,
         *,
         applications: list[dict] | None = None,
+        application_fetch_sequence: list[list[dict]] | None = None,
+        application_search_results: dict[str, list[dict]] | None = None,
         providers: list[dict] | None = None,
         oauth2_providers: list[dict] | None = None,
         outposts: list[dict] | None = None,
@@ -62,6 +65,10 @@ class FakeClient:
         scope_property_mappings: list[dict] | None = None,
     ) -> None:
         self.applications = list(applications or [])
+        self.application_fetch_sequence = [list(items) for items in (application_fetch_sequence or [])]
+        self.application_search_results = {
+            key: list(items) for key, items in (application_search_results or {}).items()
+        }
         self.providers = list(providers or [])
         self.oauth2_providers = list(oauth2_providers or [])
         self.outposts = list(outposts or [])
@@ -106,6 +113,7 @@ class FakeClient:
         self.writes: list[tuple[str, str, dict]] = []
         self.application_update_targets: list[str] = []
         self._next_id = 1000
+        self.fail_create_application_duplicate = False
 
     def _new_id(self) -> int:
         self._next_id += 1
@@ -113,7 +121,13 @@ class FakeClient:
 
     def fetch_applications(self):
         self.request_methods.append("GET")
+        if self.application_fetch_sequence:
+            return self.application_fetch_sequence.pop(0)
         return self.applications
+
+    def search_applications(self, query: str):
+        self.request_methods.append("GET")
+        return list(self.application_search_results.get(query, []))
 
     def fetch_proxy_providers(self):
         self.request_methods.append("GET")
@@ -173,6 +187,19 @@ class FakeClient:
 
     def create_application(self, payload: dict):
         self.request_methods.append("POST")
+        if self.fail_create_application_duplicate:
+            # Real Authentik 400 body on a duplicate slug/provider, kept for
+            # readability -- the reconciler only checks exc.code == 400 at
+            # this call site, never the body, so it's not wired into the
+            # HTTPError below (see reconcile-authentik-edge.py's duplicate-
+            # create handling).
+            raise urllib.error.HTTPError(
+                "https://authentik.example.test/api/v3/core/applications/",
+                400,
+                "Bad Request",
+                {},
+                None,
+            )
         self.writes.append(("application", "create", dict(payload)))
         obj = {"pk": self._new_id(), **payload}
         self.applications.append(obj)
@@ -206,6 +233,63 @@ class FakeClient:
 
 
 class TestReconcileAuthentikEdge(unittest.TestCase):
+    def test_apply_recovers_when_application_already_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "technitium.yaml"
+            _write_manifest(
+                manifest,
+                stack="technitium-stack",
+                route="technitium",
+                host="technitium.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient(
+                applications=[],
+                application_fetch_sequence=[
+                    [],
+                    [],
+                ],
+                application_search_results={
+                    "edge-technitium-stack-technitium": [
+                        {
+                            "pk": 301,
+                            "name": "edge-technitium-stack-technitium-app",
+                            "slug": "edge-technitium-stack-technitium",
+                            "launch_url": "https://technitium.lab.gibbsgreatly.xyz/",
+                            "meta_launch_url": "https://technitium.lab.gibbsgreatly.xyz/",
+                            "provider": 201,
+                        }
+                    ]
+                },
+                oauth2_providers=[
+                    {
+                        "pk": 201,
+                        "name": "edge-technitium-stack-technitium-provider",
+                        "client_id": "technitium",
+                        "redirect_uris": [
+                            {
+                                "matching_mode": "strict",
+                                "url": "https://technitium.lab.gibbsgreatly.xyz/sso/callback",
+                            }
+                        ],
+                    }
+                ],
+            )
+            client.fail_create_application_duplicate = True
+
+            with patch.dict(
+                MODULE.os.environ,
+                {"TECHNITIUM_OIDC_CLIENT_SECRET": "secret-value"},
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(result.write_count, 0)
+        self.assertNotIn("POST", client.request_methods)
+        self.assertEqual([], client.application_update_targets)
+        self.assertEqual([], client.applications)
+
     def test_dry_run_plans_create_without_writes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "portainer.yaml"
@@ -283,17 +367,98 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "name": "authentik Embedded Outpost",
                         "type": "proxy",
                         "providers": [],
+                        "config": {
+                            "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
+                            "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
+                            "log_level": "info",
+                            "authentik_host_insecure": False,
+                        },
                     }
                 ],
             )
 
-            result = reconcile_authentik([manifest], client, apply=False)
+            with patch.dict(MODULE.os.environ, {"LAB_FQDN_AUTHENTIK": "authentik.test.gibbsgreatly.xyz"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=False)
 
         self.assertTrue(result.ok)
         operations = {(action.object_kind, action.operation) for action in result.actions}
         self.assertIn(("provider", "update"), operations)
         self.assertIn(("application", "update"), operations)
         self.assertIn(("outpost", "update"), operations)
+
+    def test_apply_updates_shared_outpost_browser_host(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 11,
+                        "name": "edge-netbox-stack-netbox-provider",
+                        "external_host": "https://netbox.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 22,
+                        "name": "edge-netbox-stack-netbox-app",
+                        "slug": "edge-netbox-stack-netbox",
+                        "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz/",
+                        "provider": 11,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 33,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [11],
+                        "config": {
+                            "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
+                            "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
+                            "log_level": "info",
+                            "authentik_host_insecure": False,
+                        },
+                    }
+                ],
+            )
+
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "LAB_FQDN_AUTHENTIK": "authentik.test.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(result.write_count, 1)
+        self.assertEqual(
+            "https://authentik.test.gibbsgreatly.xyz",
+            client.outposts[0]["config"]["authentik_host_browser"],
+        )
+        self.assertIn(
+            (
+                "outpost",
+                "update",
+                {
+                    "config": {
+                        "authentik_host": "https://authentik.test.gibbsgreatly.xyz",
+                        "authentik_host_browser": "https://authentik.test.gibbsgreatly.xyz",
+                        "log_level": "info",
+                        "authentik_host_insecure": False,
+                    }
+                },
+            ),
+            client.writes,
+        )
 
     def test_prefers_embedded_outpost_when_legacy_custom_outpost_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -738,6 +903,9 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         )
 
     def test_harbor_oidc_apply_updates_existing_application_launch_url(self):
+        # When HARBOR_EXTERNAL_URL is an internal IP (non-prod), launch_url must still
+        # use the public FQDN (intent.host) — Authentik rejects bare IP launch_urls.
+        # The redirect_uri follows HARBOR_EXTERNAL_URL; launch_url is always intent.host.
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "harbor.yaml"
             _write_manifest(
@@ -753,7 +921,8 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "pk": 302,
                         "name": "edge-harbor-stack-harbor-app",
                         "slug": "edge-harbor-stack-harbor",
-                        "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                        "launch_url": "http://192.168.40.110/",
+                        "meta_launch_url": "http://192.168.40.110/",
                         "provider": 402,
                     }
                 ],
@@ -763,7 +932,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "name": "edge-harbor-stack-harbor-provider",
                         "client_id": "harbor",
                         "redirect_uris": [
-                            {"matching_mode": "strict", "url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
+                            {"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}
                         ],
                     }
                 ],
@@ -773,7 +942,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                 MODULE.os.environ,
                 {
                     "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
-                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                    "HARBOR_EXTERNAL_URL": "http://192.168.40.110",
                 },
                 clear=False,
             ):
@@ -781,10 +950,18 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertGreaterEqual(result.write_count, 1)
-        self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertEqual("https://harbor.lab.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertEqual("https://harbor.lab.gibbsgreatly.xyz/", client.applications[0]["launch_url"])
         self.assertEqual(["edge-harbor-stack-harbor"], client.application_update_targets)
         self.assertIn(
-            ("application", "update", {"meta_launch_url": "https://harbor.gibbsgreatly.xyz/"}),
+            (
+                "application",
+                "update",
+                {
+                    "launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                    "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                },
+            ),
             client.writes,
         )
 
@@ -838,6 +1015,36 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual(0, result.write_count)
         self.assertEqual([], client.writes)
         self.assertTrue(any(issue.code == "AKR007" for issue in result.issues))
+
+    def test_technitium_oidc_apply_writes_expected_provider_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "technitium.yaml"
+            _write_manifest(
+                manifest,
+                stack="technitium-stack",
+                route="technitium",
+                host="technitium.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(
+                MODULE.os.environ,
+                {"TECHNITIUM_OIDC_CLIENT_SECRET": "secret-value"},
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual("technitium", payload["client_id"])
+        self.assertEqual("secret-value", payload["client_secret"])
+        self.assertEqual(
+            [{"matching_mode": "strict", "url": "https://technitium.lab.gibbsgreatly.xyz/sso/callback"}],
+            payload["redirect_uris"],
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,40 @@
+# Independent upstream PentAGI control for the model A/B experiment.  This
+# deliberately stays in pentest_seg but has its own LXC, Docker daemon, DB,
+# and volumes; it must never share the patched stack's runtime state.
+hostname: pentagi-upstream-control
+ip_address: 192.168.70.13/24
+gateway: "${lab_gw_pentest}"
+dns_server: "${lab_gw_pentest}"
+network:
+  zone: pentest_seg
+vmid: 70013
+cores: 2
+memory: 8192
+swap: 2048
+rootfs_size: 30
+storage_profile: platform-default
+docker_storage_size: "50G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "50G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - pentagi
+  - pentest
+  - docker
+  - upstream
+  - control
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: pentagi-upstream-http
+    port: 8443
+    protocol: tcp
+ansible_playbook: "deploy-pentagi-upstream-control"
+deployment_tier: ai
+portainer_agent: false

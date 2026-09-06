@@ -37,6 +37,48 @@ fail() {
   exit 1
 }
 
+expected_pve_host_for_env() {
+  # SDN-VLAN-attached stacks deploy a genuinely separate instance per
+  # environment (see stack.yaml's `network: zone:`), so their inventory
+  # must point at the matching pve_host. Physical/pve-only stacks (no
+  # `network:` section, e.g. gaming-stack) have no such guarantee and are
+  # deliberately exempt — see assert_inventory_matches_env below.
+  case "${PVE_ENV:-}" in
+    pve) printf 'pve.gibbsgreatly.xyz' ;;
+    pve-test-vm|"") printf 'pve-test-vm.gibbsgreatly.xyz' ;;
+    *) printf '' ;;
+  esac
+}
+
+# Guards against the 2026-07-06 incident class: a stack not yet migrated to
+# the per-environment Terragrunt layout falls back to a single, shared
+# inventory.yml that silently carries whichever environment's connection
+# details Terraform last generated — regardless of the PVE_ENV this run
+# actually intends. See docs/dhcp-refactor/decisions.md Decision 5's
+# incident note for the concrete case this caught in review.
+assert_inventory_matches_env() {
+  local stack="$1"
+  local inventory_file="$2"
+  local stack_yaml="${STACKS_DIR}/${stack}/stack.yaml"
+
+  # Only stacks with an SDN `network:` zone are expected to have a distinct
+  # deployment per environment; physical/pve-only stacks are exempt.
+  [[ -f "$stack_yaml" ]] || return 0
+  grep -q '^network:' "$stack_yaml" || return 0
+
+  local expected_pve_host
+  expected_pve_host="$(expected_pve_host_for_env)"
+  [[ -n "$expected_pve_host" ]] || return 0
+
+  local actual_pve_host
+  actual_pve_host="$(grep -m1 'pve_host:' "$inventory_file" 2>/dev/null | awk '{print $2}')"
+  [[ -n "$actual_pve_host" ]] || return 0
+
+  if [[ "$actual_pve_host" != "$expected_pve_host" ]]; then
+    fail "${stack}: inventory (${inventory_file}) targets pve_host=${actual_pve_host}, but PVE_ENV=${PVE_ENV:-<unset>} expects ${expected_pve_host}. This stack is likely not yet on the per-environment Terragrunt layout (terraform/lxc/environments/<env>/${stack}/) and its shared inventory is stale from a different environment's last terraform apply. Regenerate the correct inventory before provisioning — do not proceed."
+  fi
+}
+
 is_truthy() {
   local value
   value="${1,,}"
@@ -52,14 +94,22 @@ is_truthy() {
 
 resolve_secrets_file_hint() {
   local pve_env="${PVE_ENV:-}"
-  local proxmox_node="${TF_VAR_proxmox_node:-}"
+  local repo_root
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-  if [[ "$pve_env" == "pve" || "$proxmox_node" == "pve" ]]; then
-    printf 'terraform/secrets.pve.enc.yaml'
+  # Most per-node secrets are per-node deltas now (see
+  # docs/framework-integration/decisions.md Decision 6) — only a handful of
+  # keys (the Proxmox token family, TF_VAR_lxc_password) actually live in
+  # terraform/secrets.<env>.enc.yaml; everything else is in secrets.common.enc.yaml.
+  # This previously only special-cased "pve" and silently fell back to the
+  # base file for every other env, including pve-test-vm — generalized here
+  # so the hint is correct for any environment with its own delta file.
+  if [[ -n "$pve_env" && -f "${repo_root}/terraform/secrets.${pve_env}.enc.yaml" ]]; then
+    printf 'terraform/secrets.%s.enc.yaml' "$pve_env"
     return 0
   fi
 
-  printf 'terraform/secrets.enc.yaml'
+  printf 'terraform/secrets.common.enc.yaml'
 }
 
 ensure_portainer_oauth_secret() {
@@ -167,6 +217,15 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
     return 0
   fi
 
+  # Physical home-LAN stacks (gaming/media/torrent/management) have no
+  # per-environment inventory and are only meaningful on pve. On any other
+  # environment the controller can still reach them (same LAN) but would
+  # register them against the wrong (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP portainer env registration: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
   log "Portainer env registration: ${stacks[*]}"
 
   for stack in "${stacks[@]}"; do
@@ -187,6 +246,73 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
       ansible-playbook -i "$inventory" -u root "$playbook"
     fi
   done
+}
+
+repair_portainer_migrated_app_stacks() {
+  local check_mode="$1"
+  local stacks_dir="$STACKS_DIR"
+  local repair_stacks=()
+
+  for stack_dir in "${stacks_dir}"/*; do
+    [[ -d "$stack_dir" ]] || continue
+
+    local stack
+    stack="$(basename "$stack_dir")"
+
+    local inventory
+    if [[ -f "${ENV_ROOT}/${stack}/inventory.yml" ]]; then
+      inventory="${ENV_ROOT}/${stack}/inventory.yml"
+    else
+      inventory="${stack_dir}/inventory.yml"
+    fi
+    [[ -f "$inventory" ]] || continue
+
+    local playbook_name
+    playbook_name="$(extract_ansible_playbook "$inventory")"
+    if [[ "$playbook_name" == "migrate-portainer-stack" || "$playbook_name" == "migrate-portainer-stack.yml" ]]; then
+      repair_stacks+=("$stack")
+    fi
+  done
+
+  if [[ ${#repair_stacks[@]} -eq 0 ]]; then
+    log "SKIP Portainer app endpoint repair: no stacks use migrate-portainer-stack"
+    return 0
+  fi
+
+  # These are physical home-LAN hosts with no per-environment inventory. The
+  # ansible controller (operator's machine) is on that LAN and can reach them
+  # regardless of which PVE_ENV is targeted — so the gate must be explicit, not
+  # based on network reachability. Only run repair on pve; on pve-test-vm the
+  # controller would SSH into the real hosts and register them against the wrong
+  # (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP Portainer app endpoint repair: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
+  log "Portainer app endpoint repair: ${repair_stacks[*]}"
+
+  if [[ "$check_mode" == "true" ]]; then
+    log "  dry-run: standalone portainer-stack recovery would re-pair migrated app endpoints"
+    return 0
+  fi
+
+  for stack in "${repair_stacks[@]}"; do
+    log "  repairing Portainer-managed app stack: ${stack}"
+    provision_stack "$stack" "false"
+  done
+}
+
+layers_include_stack() {
+  local stack_name="$1"
+  local layers_json="$2"
+
+  python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+target = sys.argv[1]
+sys.exit(0 if any(target in layer for layer in d['layers']) else 1)
+" "$stack_name" <<<"$layers_json"
 }
 
 extract_ansible_playbook() {
@@ -219,6 +345,30 @@ SOCKET_PROXY_KEYS = (
 PORTAINER_MIGRATION_KEYS = (
     "portainer_stacks",
     "portainer_migration_legacy_ip",
+)
+
+HARBOR_REPULL_KEYS = (
+    "harbor_repull_enabled",
+)
+
+ES_FINDINGS_INGEST_KEYS = (
+    "es_findings_ingest_enabled",
+)
+
+GVM_FINDINGS_INGEST_KEYS = (
+    "gvm_findings_ingest_enabled",
+)
+
+WAZUH_FINDINGS_INGEST_KEYS = (
+    "wazuh_findings_ingest_enabled",
+)
+
+CVE_ENRICHMENT_SYNC_KEYS = (
+    "cve_enrichment_sync_enabled",
+)
+
+CVE_DEEP_DIVE_KEYS = (
+    "cve_enrichment_sync_deep_dive_enabled",
 )
 
 
@@ -279,6 +429,30 @@ for key in PORTAINER_MIGRATION_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
+for key in HARBOR_REPULL_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in ES_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in GVM_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in WAZUH_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in CVE_ENRICHMENT_SYNC_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in CVE_DEEP_DIVE_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
 with open(output_file, "w", encoding="utf-8") as handle:
     yaml.safe_dump(extra_vars, handle, sort_keys=False)
 PY
@@ -304,6 +478,7 @@ APPROVED_PLATFORM_STACKS = {
     "harbor-stack",
     "ci-runner-01",
     "dns-stack",
+    "graylog-stack",
     "step-ca-stack",
     "authentik-stack",
     "proxy-stack",
@@ -447,10 +622,22 @@ provision_stack() {
 
   ensure_portainer_oauth_secret "$stack"
 
+  # dns-stack (CoreDNS) is frozen/rollback-only post-Technitium-cutover
+  # (docs/dns-refactor/plan.md Phase 6a). It stays deployed and answering
+  # queries as a manual rollback target, but is no longer part of the
+  # routine provisioning/reconciliation path -- no automatic zone
+  # regeneration, no automatic redeploy.
+  if [[ "$stack" == "dns-stack" ]]; then
+    log "SKIP ${stack}: frozen/rollback-only since the Technitium cutover (docs/dns-refactor/plan.md Phase 6a) -- no longer part of the routine provisioning path. Deploy manually via ansible-playbook if you specifically need to touch the rollback container."
+    return 0
+  fi
+
   if [[ ! -f "$inventory_file" ]]; then
     log "SKIP ${stack}: inventory file not found (${inventory_file})"
     return 0
   fi
+
+  assert_inventory_matches_env "$stack" "$inventory_file"
 
   local playbook_name
   playbook_name="$(extract_ansible_playbook "$inventory_file")"
@@ -473,29 +660,36 @@ provision_stack() {
 
   local cmd=(ansible-playbook -i "$inventory_file" "$playbook_file" -e "@${extra_vars_file}")
 
-  # Always regenerate zone from EdgeManifests before deploying dns-stack so the
-  # live zone is never stale with respect to declared routes.
-  if [[ "$stack" == "dns-stack" ]]; then
-    local generated_zone
+  # Graylog runtime is validated (pve-test-vm G0-G5, full teardown cycle) and
+  # is always deployed for real now, on every environment.
+  if [[ "$stack" == "graylog-stack" ]]; then
+    cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
+  fi
+
+  if [[ "$stack" == "technitium-stack" ]]; then
+    local generated_records
     if [[ -n "${PVE_ENV:-}" ]]; then
-      generated_zone="${ENV_ROOT}/.generated/coredns/coredns-lab.zone"
+      generated_records="${ENV_ROOT}/.generated/technitium/zone-records.json"
     else
-      generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
+      generated_records="${REPO_ROOT}/terraform/lxc/.generated/technitium/zone-records.json"
     fi
-    mkdir -p "$(dirname "$generated_zone")"
-    log "Regenerating CoreDNS zone from EdgeManifests"
-    python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
+    mkdir -p "$(dirname "$generated_records")"
+    log "Regenerating Technitium parity-zone records from EdgeManifests"
+    python3 "${REPO_ROOT}/terraform/lxc/render-edge-technitium.py" \
       --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
       --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
-      --output-zone "$generated_zone"
-    cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
+      --output-records "$generated_records"
+    cmd+=(-e "technitium_generated_zone_src=${generated_records}")
   fi
 
   [[ "$check_mode" == "true" ]] && cmd+=(--check)
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
 
   log "RUN ${stack}: ${cmd[*]}"
-  "${cmd[@]}"
+  if ! "${cmd[@]}"; then
+    rm -f "$extra_vars_file"
+    return 1
+  fi
   rm -f "$extra_vars_file"
 
   # H-1d: run per-stack smoke test if present (skipped in check mode)
@@ -675,6 +869,10 @@ if [[ -z "$explicit_csv" ]]; then
   register_portainer_environments "$check_mode"
 else
   log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
+fi
+
+if layers_include_stack "portainer-stack" "$layers_json"; then
+  repair_portainer_migrated_app_stacks "$check_mode"
 fi
 
 log "Completed provision orchestration"

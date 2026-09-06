@@ -1,0 +1,359 @@
+---
+# opensearch-stack — single-node OpenSearch + OpenSearch Dashboards findings
+# store, replacing elasticsearch-stack. See
+# terraform/lxc/stacks/opensearch-stack/STACK_CONTRACT.md and
+# /home/steve/.claude/plans/jiggly-cuddling-squid.md for the full design.
+#
+# Play 1: Docker base configuration (matches deploy-elasticsearch-stack.yml's
+#         shape).
+# Play 2: Deploy OpenSearch + Dashboards via a Docker Compose file templated
+#         inline (heap size computed from real container memory, same
+#         formula as elasticsearch-stack/Graylog's Data Node).
+#
+# BASELINE ONLY — this revision gets OpenSearch + Dashboards up, healthy,
+# and reachable with the native admin account. Real Authentik OIDC login
+# (the actual point of this migration) is a separate, later addition to
+# this same playbook, added once this baseline is verified working —
+# matching the "prove the foundation before adding edge/auth complexity"
+# order the original elasticsearch-stack build used successfully.
+#
+# No findings-ingestion provisioning here — that's the (separate, later)
+# es_findings_ingest role reworked for OpenSearch's security API, deployed
+# onto harbor-stack, not here. Keep this playbook scoped to "get OpenSearch
+# + Dashboards up and healthy."
+
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    opensearch_lab_ip_dns: >-
+      {{
+        lookup('env', 'LAB_IP_DNS')
+        | default(dns_server, true)
+        | mandatory('LAB_IP_DNS env var or dns_server inventory var is required')
+      }}
+    # FQDN, not the raw LAB_IP_HARBOR — proven pattern (elasticsearch-stack,
+    # deploy-graylog-stack.yml). docker login against the bare Harbor IP
+    # fails; Traefik's real TLS termination on the FQDN works.
+    opensearch_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+  roles:
+    - lxc_base
+    - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ opensearch_registry_host }}"],
+            "dns": ["{{ opensearch_lab_ip_dns }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before compose up
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy OpenSearch + OpenSearch Dashboards
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    opensearch_compose_dir: /opt/opensearch-stack
+    opensearch_data_dir: /var/lib/opensearch-data   # extra_mount path from stack.yaml — already provisioned by Terraform
+    opensearch_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    # latest stable published for both opensearchproject/opensearch and
+    # opensearchproject/opensearch-dashboards on Docker Hub as of
+    # 2026-08-17 -- keep in sync
+    opensearch_image_tag: "2.19.1"
+    opensearch_admin_password: >-
+      {{
+        lookup('env', 'OPENSEARCH_ADMIN_PASSWORD')
+        | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+      }}
+    # Same heap formula elasticsearch-stack/Graylog's Data Node use — half
+    # the container's real memory, floor, minimum 1GB.
+    opensearch_heap_gb: >-
+      {{
+        [
+          1,
+          (
+            (
+              hostvars[inventory_hostname].ansible_memtotal_mb
+              | default(hostvars[inventory_hostname].ansible_memory_mb.real.total)
+              | int
+            ) / 1024 / 2
+          ) | round(0, 'floor') | int
+        ] | max
+      }}
+    opensearch_runtime_images:
+      - "{{ opensearch_registry_host }}/dockerhub/opensearchproject/opensearch:{{ opensearch_image_tag }}"
+      - "{{ opensearch_registry_host }}/dockerhub/opensearchproject/opensearch-dashboards:{{ opensearch_image_tag }}"
+    # Real Authentik OIDC login for Dashboards -- see the security plugin's
+    # config.yml openid_auth_domain (applied separately, out-of-band via
+    # securityadmin.sh, not by this playbook -- see
+    # docs/opensearch-stack/runbook.md Stage 4) for the token-validation
+    # side. This is the Dashboards-side OAuth2 client config.
+    opensearch_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    opensearch_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ opensearch_lab_domain, true) }}"
+    opensearch_oidc_client_id: "{{ lookup('env', 'OPENSEARCH_OIDC_CLIENT_ID') | default('opensearch-dashboards', true) }}"
+    opensearch_oidc_client_secret: >-
+      {{
+        lookup('env', 'OPENSEARCH_OIDC_CLIENT_SECRET')
+        | mandatory('OPENSEARCH_OIDC_CLIENT_SECRET env var is required -- new SOPS secret')
+      }}
+    opensearch_dashboards_public_url: "https://dashboards.{{ opensearch_lab_domain }}"
+
+  tasks:
+    - name: Create OpenSearch compose directory
+      ansible.builtin.file:
+        path: "{{ opensearch_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Ensure OpenSearch data directory ownership matches the container's non-root user
+      ansible.builtin.file:
+        path: "{{ opensearch_data_dir }}"
+        state: directory
+        owner: "1000"   # the official opensearch image's non-root "opensearch" user
+        group: "1000"
+        mode: "0750"
+
+    - name: Write OpenSearch env file
+      ansible.builtin.copy:
+        dest: "{{ opensearch_compose_dir }}/opensearch.env"
+        mode: "0640"
+        content: |
+          OPENSEARCH_INITIAL_ADMIN_PASSWORD={{ opensearch_admin_password }}
+      no_log: true
+      register: opensearch_env_file
+      notify: Recreate OpenSearch stack
+
+    # A real file, bind-mounted, not env-var injection -- confirmed live
+    # 2026-08-17 that OPENSEARCH_HOSTS/OPENSEARCH_SSL_VERIFICATIONMODE env
+    # vars DO get applied by the Dashboards entrypoint (the on-disk demo
+    # config still shows the old defaults even though the running server
+    # correctly uses them), but the security-plugin-specific
+    # opensearch_security.* keys are baked into the demo config FILE
+    # itself with no evidence of an equivalent env-var path -- so those
+    # need a real file, matching this repo's established preference for
+    # real files over indirect env tricks (see
+    # reference_compose_inline_command_pitfalls in memory). This is a
+    # full replacement of the image's baked-in demo
+    # opensearch_dashboards.yml, not a fragment -- carries forward every
+    # non-comment setting from that file (opensearch.hosts pointed at the
+    # real service name instead of the demo's "localhost", which only
+    # worked before because the env var silently overrode it) plus the
+    # new OIDC block.
+    - name: Write OpenSearch Dashboards config
+      ansible.builtin.copy:
+        dest: "{{ opensearch_compose_dir }}/opensearch_dashboards.yml"
+        owner: "1000"   # the official opensearch-dashboards image's non-root user
+        group: "1000"
+        mode: "0640"
+        content: |
+          ---
+          server.host: '0.0.0.0'
+          opensearch.hosts: ["https://opensearch:9200"]
+          opensearch.ssl.verificationMode: none
+          # kibanaserver/kibanaserver -- OpenSearch's own built-in demo
+          # service account (confirmed live, present by default in
+          # internal_users.yml/roles_mapping.yml), reused rather than
+          # provisioning a new dedicated one -- least change, already
+          # proven working.
+          opensearch.username: kibanaserver
+          opensearch.password: kibanaserver
+          opensearch.requestHeadersWhitelist: [authorization, securitytenant]
+          opensearch_security.multitenancy.enabled: true
+          # Global first: every dashboard/visualization this platform builds
+          # is deliberately transplanted into the Global tenant (see
+          # "Dashboards multitenancy trap" in docs/opensearch-stack/README.md),
+          # so a fresh login with no cached tenant choice should land there
+          # by default instead of an empty Private tenant. Private stays
+          # available via the tenant switcher for anyone who wants it.
+          opensearch_security.multitenancy.tenants.preferred: [Global, Private]
+          opensearch_security.readonly_mode.roles: [kibana_read_only]
+          opensearch_security.cookie.secure: false
+          opensearch_security.auth.type: "openid"
+          opensearch_security.openid.connect_url: "https://{{ opensearch_authentik_fqdn }}/application/o/edge-opensearch-stack-dashboards/.well-known/openid-configuration"
+          opensearch_security.openid.client_id: "{{ opensearch_oidc_client_id }}"
+          opensearch_security.openid.client_secret: "{{ opensearch_oidc_client_secret }}"
+          opensearch_security.openid.scope: "openid profile email"
+          opensearch_security.openid.base_redirect_url: "{{ opensearch_dashboards_public_url }}"
+      no_log: true
+      register: opensearch_dashboards_config
+      notify: Recreate OpenSearch stack
+
+    - name: Write OpenSearch docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ opensearch_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            opensearch:
+              image: {{ opensearch_registry_host }}/dockerhub/opensearchproject/opensearch:{{ opensearch_image_tag }}
+              container_name: opensearch-stack-opensearch
+              env_file: opensearch.env
+              environment:
+                - node.name=opensearch-stack
+                - discovery.type=single-node
+                - OPENSEARCH_JAVA_OPTS=-Xms{{ opensearch_heap_gb }}g -Xmx{{ opensearch_heap_gb }}g
+                # HTTP-layer TLS stays ON deliberately (opposite of
+                # elasticsearch-stack's xpack.security.http.ssl.enabled=false)
+                # -- OpenSearch 2.12+ has an open bug where disabling it stops
+                # demo certs from even being generated
+                # (github.com/opensearch-project/security/issues/4348). Using
+                # OpenSearch's own self-signed demo cert; internal callers
+                # skip verification rather than fight this.
+              ports:
+                - "9200:9200"
+              volumes:
+                - {{ opensearch_data_dir }}:/usr/share/opensearch/data
+              # No bootstrap.memory_lock/ulimits.memlock -- same nested-LXC
+              # memlock rlimit rejection confirmed for elasticsearch-stack
+              # applies here too (same underlying JVM constraint).
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "curl -sk https://localhost:9200 | grep -q 'Unauthorized'"]
+                interval: 10s
+                timeout: 10s
+                retries: 60
+                start_period: 60s
+
+            dashboards:
+              image: {{ opensearch_registry_host }}/dockerhub/opensearchproject/opensearch-dashboards:{{ opensearch_image_tag }}
+              container_name: opensearch-stack-dashboards
+              depends_on:
+                opensearch:
+                  condition: service_healthy
+              volumes:
+                - ./opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
+              ports:
+                - "5601:5601"
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302'"]
+                interval: 10s
+                timeout: 10s
+                retries: 60
+                start_period: 60s
+      register: opensearch_compose_file
+      notify: Recreate OpenSearch stack
+
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ opensearch_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+
+    - name: Pre-pull OpenSearch/Dashboards runtime images from Harbor sequentially
+      ansible.builtin.command:
+        argv:
+          - docker
+          - pull
+          - "{{ item }}"
+      register: opensearch_image_pull
+      retries: 5
+      delay: 10
+      until: opensearch_image_pull.rc == 0
+      loop: "{{ opensearch_runtime_images }}"
+
+    - name: Bring up OpenSearch + Dashboards stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ opensearch_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: >-
+          {{
+            'always'
+            if (opensearch_env_file.changed or opensearch_compose_file.changed or opensearch_dashboards_config.changed)
+            else 'auto'
+          }}
+
+    - name: Wait for OpenSearch HTTPS port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9200
+        timeout: 180
+
+    - name: Confirm OpenSearch answers with security enforced
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/"
+        method: GET
+        validate_certs: false  # nosonar: ansible:S4830 — OpenSearch's own self-signed demo cert, internal SDN only
+        status_code: [401]
+      register: opensearch_auth_check
+      until: opensearch_auth_check.status == 401
+      retries: 30
+      delay: 10
+
+    - name: Confirm OpenSearch cluster health with credentials
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/health"
+        method: GET
+        validate_certs: false  # nosonar: ansible:S4830 — OpenSearch's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ opensearch_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: opensearch_cluster_health
+      until: opensearch_cluster_health.json.status is defined and opensearch_cluster_health.json.status in ['green', 'yellow']
+      retries: 30
+      delay: 10
+
+    - name: Wait for Dashboards HTTP port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 5601
+        timeout: 180
+
+    - name: Confirm Dashboards reports available
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:5601/api/status"
+        method: GET
+        url_username: admin
+        url_password: "{{ opensearch_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+        status_code: [200]
+      register: opensearch_dashboards_status
+      until: >-
+        opensearch_dashboards_status.status == 200 and
+        (opensearch_dashboards_status.json.status.overall.state | default('')) in ['green', 'yellow']
+      retries: 30
+      delay: 10
+
+  handlers:
+    - name: Recreate OpenSearch stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ opensearch_compose_dir }}"
+        state: present
+        recreate: always
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

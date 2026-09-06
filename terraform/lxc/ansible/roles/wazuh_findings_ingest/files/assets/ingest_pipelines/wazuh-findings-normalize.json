@@ -1,0 +1,21 @@
+{
+  "description": "Normalize Wazuh vulnerability-detector finding documents at ingest time — stamps ingested_at, and defaults the human-assessment fields to explicit nulls when the sync script didn't already carry forward a prior assessment. Same OpenSearch null-value workaround as harbor-findings-normalize.json (OpenSearch's set processor rejects an explicit null value; Elasticsearch's 'set value:null override:false' has no direct equivalent).",
+  "processors": [
+    {
+      "set": {
+        "field": "ingested_at",
+        "value": "{{{_ingest.timestamp}}}"
+      }
+    },
+    {
+      "script": {
+        "description": "Default the human-assessment fields to explicit null only when absent -- never overwrites a real value a downstream tool already wrote.",
+        "lang": "painless",
+        "source": "for (field in params.fields) { if (!ctx.containsKey(field)) { ctx.put(field, null); } }",
+        "params": {
+          "fields": ["severity_assessed", "assessed_reason", "assessed_by", "assessed_at"]
+        }
+      }
+    }
+  ]
+}

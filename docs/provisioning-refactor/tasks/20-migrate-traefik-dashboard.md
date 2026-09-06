@@ -38,7 +38,7 @@ Move `traefik.lab.gibbsgreatly.xyz` to stack-owned provisioning using
            service: api@internal
          dns:
            enabled: true
-           target: 10.57.2.10
+           target: 192.168.30.10
            ttl: 5m
          tls:
            resolver: letsencrypt
@@ -64,7 +64,7 @@ Move `traefik.lab.gibbsgreatly.xyz` to stack-owned provisioning using
 
 ## Validation
 
-- DNS resolves to `10.57.2.10`.
+- DNS resolves to `192.168.30.10`.
 - Dashboard route uses `api@internal`.
 - Generated route includes the shared Authentik forward-auth middleware.
 - `api@internal` renders as a direct Traefik service reference, not a load

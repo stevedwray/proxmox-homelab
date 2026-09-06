@@ -6,13 +6,13 @@ Destructive execution
 
 ## Objective
 
-Destroy the approved pve-test stack set in a controlled order and verify absence.
+Destroy the approved pve-test-vm stack set in a controlled order and verify absence.
 
 ## Files
 
 - `docs/teardown-test/variables.md`
 - `docs/teardown-test/runbook.md`
-- evidence directory under `docs/teardown-test/evidence/` (ignored if configured)
+- evidence directory under `docs/teardown-test/artifacts/evidence/` (ignored)
 
 ## Preconditions
 
@@ -31,12 +31,12 @@ Destroy the approved pve-test stack set in a controlled order and verify absence
 
 ## Postconditions
 
-- Approved stack set is absent from pve-test.
+- Approved stack set is absent from pve-test-vm.
 - No unapproved VMID was destroyed.
 
 ## Validation
 
-- `pct list` on `pve-test` shows selected VMIDs absent.
+- `pct list` on `pve-test-vm` shows selected VMIDs absent.
 
 ## Stop Conditions
 

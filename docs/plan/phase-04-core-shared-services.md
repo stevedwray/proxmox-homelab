@@ -18,7 +18,9 @@ Deploy in this order. Authentik must be running before Traefik (auth middleware 
 - [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
 - [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
 
-**Next phase:** [Phase 04b — Internal DNS authority](phase-04b-internal-dns.md) (deploys CoreDNS for `lab.gibbsgreatly.xyz` delegation)
+**Next phase:** [Phase 04b — Internal DNS authority](phase-04b-internal-dns.md)
+(now documented as the Technitium-backed internal authority, with CoreDNS
+retained only as rollback context)
 
 ## Current implementation status (2026-04-17)
 
@@ -57,9 +59,9 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 - Phase 01 (CI runner) complete — self-hosted runner is online
 - **Phase 02 (memory upgrade) complete** — pve-test must be at 32 GB before starting this phase
 - **Phase 03b complete** — Harbor has Trivy scanner enabled, proxy cache projects configured, and Phase 04 images already pulled and scanned
-- **Phase 03c complete** — apt-cacher-ng running at `10.57.3.11` in `infra_seg`; all LXC stacks deployed in this phase will route apt through the proxy automatically
-- Harbor is running at `10.57.3.10` in `infra_seg` (deployed earlier)
-- NetBox is running at `10.57.3.12` in `infra_seg` (deployed earlier)
+- **Phase 03c complete** — apt-cacher-ng running at `192.168.40.11` in `infra_seg`; all LXC stacks deployed in this phase will route apt through the proxy automatically
+- Harbor is running at `192.168.40.10` in `infra_seg` (deployed earlier)
+- NetBox is running at `192.168.40.12` in `infra_seg` (deployed earlier)
 - Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
 - **MikroTik resolver will conditionally forward `lab.gibbsgreatly.xyz` to an internal DNS server** — this is set up in Phase 04b (see Phase 04b task for details; Phase 04 uses temporary static A records during this phase)
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
@@ -78,20 +80,20 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 /interface vlan add interface=<trunk-iface> name=vlan20-mgmt  vlan-id=20
 /interface vlan add interface=<trunk-iface> name=vlan30-edge  vlan-id=30
 /interface vlan add interface=<trunk-iface> name=vlan40-infra vlan-id=40
-/ip address add address=10.57.0.1/24 interface=vlan10-build
-/ip address add address=10.57.1.1/24 interface=vlan20-mgmt
-/ip address add address=10.57.2.1/24 interface=vlan30-edge
-/ip address add address=10.57.3.1/24 interface=vlan40-infra
+/ip address add address=192.168.10.1/24 interface=vlan10-build
+/ip address add address=192.168.20.1/24 interface=vlan20-mgmt
+/ip address add address=192.168.30.1/24 interface=vlan30-edge
+/ip address add address=192.168.40.1/24 interface=vlan40-infra
 
 # DNS delegation baseline for lab.gibbsgreatly.xyz (THREE-PHASE APPROACH)
 # Phase 1 (Phase 04): During core services deployment, use static A records per platform name.
-/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-phase1
-/ip dns static add name=authentik.lab.gibbsgreatly.xyz type=A address=10.57.1.10 ttl=5m comment=lab-zone-phase1
-/ip dns static add name=step-ca.lab.gibbsgreatly.xyz type=A address=10.57.1.11 ttl=5m comment=lab-zone-phase1
-/ip dns static add name=monitoring.lab.gibbsgreatly.xyz type=A address=10.57.1.12 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=192.168.30.10 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=authentik.lab.gibbsgreatly.xyz type=A address=192.168.20.10 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=step-ca.lab.gibbsgreatly.xyz type=A address=192.168.20.11 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=monitoring.lab.gibbsgreatly.xyz type=A address=192.168.20.12 ttl=5m comment=lab-zone-phase1
 
 # Phase 2 (Phase 04b): When CoreDNS is deployed, replace static records with a FWD entry.
-# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=10.57.1.13 comment="lab-zone-fwd"
+# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=192.168.20.13 comment="lab-zone-fwd"
 # /ip dns static remove [find comment=lab-zone-phase1]
 
 # Phase 3 (Phase 06+): When Pi-hole is deployed, CoreDNS zone can be updated with app-stack records.
@@ -102,7 +104,7 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 #   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
 #     -X POST https://192.168.1.1/rest/ip/dns/static/add \
 #     -H "Content-Type: application/json" \
-#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-phase1"}'
+#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"192.168.30.10","ttl":"5m","comment":"lab-zone-phase1"}'
 ```
 
 **Proxmox one-time setup** — enable VLAN awareness on vmbr0:
@@ -135,12 +137,12 @@ All compose files in this phase use Harbor proxy cache image references — **ne
 
 | Upstream | Via Harbor |
 |---|---|
-| `docker.io/library/postgres:16-alpine` | `10.57.3.10/dockerhub/library/postgres:16-alpine` |
-| `ghcr.io/goauthentik/server:<ver>` | `10.57.3.10/ghcr/goauthentik/server:<ver>` |
-| `docker.io/grafana/grafana-oss:<ver>` | `10.57.3.10/dockerhub/grafana/grafana-oss:<ver>` |
-| `docker.io/library/traefik:<ver>` | `10.57.3.10/dockerhub/library/traefik:<ver>` |
-| `docker.io/victoriametrics/victoria-metrics:<ver>` | `10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<ver>` |
-| `docker.io/grafana/loki:<ver>` | `10.57.3.10/dockerhub/grafana/loki:<ver>` |
+| `docker.io/library/postgres:16-alpine` | `192.168.40.10/dockerhub/library/postgres:16-alpine` |
+| `ghcr.io/goauthentik/server:<ver>` | `192.168.40.10/ghcr/goauthentik/server:<ver>` |
+| `docker.io/grafana/grafana-oss:<ver>` | `192.168.40.10/dockerhub/grafana/grafana-oss:<ver>` |
+| `docker.io/library/traefik:<ver>` | `192.168.40.10/dockerhub/library/traefik:<ver>` |
+| `docker.io/victoriametrics/victoria-metrics:<ver>` | `192.168.40.10/dockerhub/victoriametrics/victoria-metrics:<ver>` |
+| `docker.io/grafana/loki:<ver>` | `192.168.40.10/dockerhub/grafana/loki:<ver>` |
 
 Always use the Harbor proxy address in compose files. If an image is not yet in Harbor, pull it through the proxy first (see Phase 03b Part E).
 
@@ -152,20 +154,20 @@ Phase 04 containers are placed in named SDN zones — not on the flat LAN bridge
 
 | Service | Zone | IP | VMID | Notes |
 |---|---|---|---|---|
-| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | Identity provider — reachable from edge_seg (Traefik forward-auth) |
-| Traefik | `edge_seg` | `10.57.2.10` | 153 | Ports 80 and 443 reachable from LAN via MikroTik route |
-| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | Internal only — ACME directory at `https://10.57.1.11/acme/acme/directory` |
-| Monitoring | `mgmt_seg` | `10.57.1.12` | 154 | Grafana/VictoriaMetrics/Loki — accessed via Traefik proxy |
+| Authentik | `mgmt_seg` | `192.168.20.10` | 20010 | Identity provider — reachable from edge_seg (Traefik forward-auth) |
+| Traefik | `edge_seg` | `192.168.30.10` | 30010 | Ports 80 and 443 reachable from LAN via MikroTik route |
+| step-ca | `mgmt_seg` | `192.168.20.11` | 20011 | Internal only — ACME directory at `https://192.168.20.11/acme/acme/directory` |
+| Monitoring | `mgmt_seg` | `192.168.20.12` | 20012 | Grafana/VictoriaMetrics/Loki — accessed via Traefik proxy |
 
 **Verify each IP is unallocated before deploying:**
 
 ```bash
 # Ping check — must timeout (no response means address is free)
-ping -c 3 10.57.1.10
+ping -c 3 192.168.20.10
 
-# NetBox check (NetBox runs locally on pve-test at 10.57.3.12)
+# NetBox check (NetBox runs locally on pve-test at 192.168.40.12)
 curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-  "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.1.10" | jq .count
+  "http://192.168.40.12/api/ipam/ip-addresses/?address=192.168.20.10" | jq .count
 # Should be 0 for each IP
 ```
 
@@ -186,9 +188,9 @@ Create `terraform/lxc/stacks/authentik-stack/stack.yaml`:
 ```yaml
 # Authentik identity provider — management zone
 hostname: authentik-stack
-ip_address: "10.57.1.10/24"
-gateway: "10.57.1.1"
-vmid: 150
+ip_address: "192.168.20.10/24"
+gateway: "192.168.20.1"
+vmid: 20010
 cores: 2
 memory: 2048
 swap: 1024
@@ -238,7 +240,7 @@ Minimal `docker-compose.yml` excerpt (all images via Harbor proxy cache — pre-
 ```yaml
 services:
   postgresql:
-    image: 10.57.3.10/dockerhub/library/postgres:16-alpine
+    image: 192.168.40.10/dockerhub/library/postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: "${AUTHENTIK_POSTGRES_PASSWORD}"
       POSTGRES_USER: authentik
@@ -247,11 +249,11 @@ services:
       - database:/var/lib/postgresql/data
 
   redis:
-    image: 10.57.3.10/dockerhub/library/redis:alpine
+    image: 192.168.40.10/dockerhub/library/redis:alpine
     command: --save 60 1 --loglevel warning
 
   server:
-    image: 10.57.3.10/ghcr/goauthentik/server:2024.12.3   # pin to specific version
+    image: 192.168.40.10/ghcr/goauthentik/server:2024.12.3   # pin to specific version
     command: server
     environment:
       AUTHENTIK_REDIS__HOST: redis
@@ -268,7 +270,7 @@ services:
       - redis
 
   worker:
-    image: 10.57.3.10/ghcr/goauthentik/server:2024.12.3   # same version as server
+    image: 192.168.40.10/ghcr/goauthentik/server:2024.12.3   # same version as server
     command: worker
     environment: *server-env  # reference server env block
     depends_on:
@@ -278,7 +280,7 @@ services:
 
 ### Initial configuration
 
-After deployment, access `http://10.57.1.10:9000/if/flow/initial-setup/` to set the initial admin password. Then:
+After deployment, access `http://192.168.20.10:9000/if/flow/initial-setup/` to set the initial admin password. Then:
 
 1. Create an admin user with the `AUTHENTIK_SUPERUSER_PASSWORD` value
 2. Create an API token — record in `.env` as `AUTHENTIK_SUPERUSER_API_TOKEN`
@@ -294,7 +296,7 @@ terragrunt apply
 source /home/steve/git/proxmox-homelab/.env
 
 ansible-playbook \
-  -i "10.57.1.10," \
+  -i "192.168.20.10," \
   terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
   --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
 ```
@@ -302,10 +304,10 @@ ansible-playbook \
 ### Validation
 
 ```bash
-curl -s http://10.57.1.10:9000/-/health/live/
+curl -s http://192.168.20.10:9000/-/health/live/
 # Expected: HTTP 204 (no body)
 
-curl -s http://10.57.1.10:9000/-/health/ready/
+curl -s http://192.168.20.10:9000/-/health/ready/
 # Expected: HTTP 204 (means DB and Redis connections healthy)
 ```
 
@@ -320,7 +322,7 @@ A dedicated reverse proxy LXC is the only ingress point from external networks i
 Two certificate resolvers are configured at deploy time:
 
 - **`letsencrypt`** — DNS-01 challenge via Cloudflare API. Issues `*.gibbsgreatly.xyz` wildcard. Used for all browser-facing routes. Active immediately on deploy.
-- **`step-ca`** — ACME via internal step-ca at `10.57.1.11`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
+- **`step-ca`** — ACME via internal step-ca at `192.168.20.11`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
 
 Ingress hostname policy for this phase:
 
@@ -334,9 +336,9 @@ Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
 ```yaml
 # Traefik reverse proxy — edge / ingress
 hostname: proxy-stack
-ip_address: "10.57.2.10/24"
-gateway: "10.57.2.1"
-vmid: 153
+ip_address: "192.168.30.10/24"
+gateway: "192.168.30.1"
+vmid: 30010
 cores: 1
 memory: 512
 swap: 256
@@ -402,7 +404,7 @@ certificatesResolvers:
   # Traefik will not contact this CA until a route explicitly requests it.
   step-ca:
     acme:
-      caServer: "https://10.57.1.11/acme/acme/directory"
+      caServer: "https://192.168.20.11/acme/acme/directory"
       email: "admin@gibbsgreatly.xyz"
       storage: "/certs/step-ca/acme.json"
       httpChallenge:
@@ -428,7 +430,7 @@ http:
   middlewares:
     authentik:
       forwardAuth:
-        address: "http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik"
+        address: "http://192.168.20.10:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader: true
         authResponseHeaders:
           - X-authentik-username
@@ -486,9 +488,9 @@ Create `terraform/lxc/stacks/step-ca-stack/stack.yaml`:
 ```yaml
 # step-ca internal certificate authority — management zone
 hostname: step-ca
-ip_address: "10.57.1.11/24"
-gateway: "10.57.1.1"
-vmid: 152
+ip_address: "192.168.20.11/24"
+gateway: "192.168.20.1"
+vmid: 20011
 cores: 1
 memory: 512
 swap: 256
@@ -527,7 +529,7 @@ the env-injection pattern.
    ```bash
    step ca init \
      --name "Homelab CA" \
-     --dns "step-ca,10.57.1.11" \
+     --dns "step-ca,192.168.20.11" \
      --address ":443" \
      --provisioner "acme" \
      --password-file /etc/step-ca/password.txt
@@ -562,10 +564,10 @@ To distribute manually after step-ca is running:
 
 ```bash
 # Fetch the root cert
-step ca root certs/homelab-root.crt --ca-url https://10.57.1.11
+step ca root certs/homelab-root.crt --ca-url https://192.168.20.11
 
 # Push to Traefik container
-ansible-playbook -i "10.57.2.10," \
+ansible-playbook -i "192.168.30.10," \
   terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 # Push to Proxmox host
@@ -582,7 +584,7 @@ Verify the resolver is reachable from the Traefik container:
 ```bash
 TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
 pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
-  https://10.57.1.11/acme/acme/directory | jq .
+  https://192.168.20.11/acme/acme/directory | jq .
 # Expected: ACME directory JSON
 ```
 
@@ -599,9 +601,9 @@ Create `terraform/lxc/stacks/monitoring-stack/stack.yaml`:
 ```yaml
 # Monitoring: VictoriaMetrics + Grafana + Loki — management zone
 hostname: monitoring-stack
-ip_address: "10.57.1.12/24"
-gateway: "10.57.1.1"
-vmid: 154
+ip_address: "192.168.20.12/24"
+gateway: "192.168.20.1"
+vmid: 20012
 cores: 2
 memory: 1536
 swap: 1024
@@ -631,7 +633,7 @@ Monitoring naming policy:
 ```yaml
 services:
   victoriametrics:
-    image: 10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<version>
+    image: 192.168.40.10/dockerhub/victoriametrics/victoria-metrics:<version>
     ports:
       - "8428:8428"
     volumes:
@@ -641,7 +643,7 @@ services:
       - "--retentionPeriod=90d"
 
   grafana:
-    image: 10.57.3.10/dockerhub/grafana/grafana-oss:<version>
+    image: 192.168.40.10/dockerhub/grafana/grafana-oss:<version>
     ports:
       - "3000:3000"
     volumes:
@@ -652,14 +654,14 @@ services:
       # ... Authentik OIDC vars (configure after Authentik is up)
 
   loki:
-    image: 10.57.3.10/dockerhub/grafana/loki:<version>
+    image: 192.168.40.10/dockerhub/grafana/loki:<version>
     ports:
       - "3100:3100"
     volumes:
       - loki-data:/loki
 
   promtail:
-    image: 10.57.3.10/dockerhub/grafana/promtail:<version>
+    image: 192.168.40.10/dockerhub/grafana/promtail:<version>
     volumes:
       - /var/log:/var/log:ro
       - ./promtail-config.yml:/etc/promtail/config.yml
@@ -692,12 +694,15 @@ Deploy `node_exporter` on each LXC (or as a Docker container). Add a scrape conf
 
 ## Commit strategy
 
-Create a short-lived branch for each service (`feat/authentik-stack`, `feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), merge to `baseline/teardown-validated` after each service passes its health checks.
+Create a short-lived branch for each service (`feat/authentik-stack`,
+`feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), validate there,
+then promote through the current `stable` -> `main` workflow after each
+service passes its health checks.
 
 After all services are deployed and healthy:
 
 ```bash
-git push origin baseline/teardown-validated
+git push origin stable
 ```
 
 Update NetBox to record all new services, IPs, and their relationships.
@@ -707,14 +712,14 @@ Update NetBox to record all new services, IPs, and their relationships.
 ## Acceptance criteria
 
 ### Authentik
-- [ ] LXC `authentik-stack` (VMID 150) running at `10.57.1.10`
-- [ ] `curl http://10.57.1.10:9000/-/health/ready/` returns HTTP 204
-- [ ] Admin UI accessible at `http://10.57.1.10:9000`
+- [ ] LXC `authentik-stack` (VMID 20010) running at `192.168.20.10`
+- [ ] `curl http://192.168.20.10:9000/-/health/ready/` returns HTTP 204
+- [ ] Admin UI accessible at `http://192.168.20.10:9000`
 - [ ] Initial admin user created
 
 ### Reverse proxy
-- [ ] LXC `proxy-stack` (VMID 153) running at `10.57.2.10`
-- [ ] `curl -o /dev/null -w "%{http_code}" http://10.57.2.10` returns 301 or 302
+- [ ] LXC `proxy-stack` (VMID 30010) running at `192.168.30.10`
+- [ ] `curl -o /dev/null -w "%{http_code}" http://192.168.30.10` returns 301 or 302
 - [ ] Traefik dashboard accessible via HTTPS with Authentik SSO gate
 - [ ] TLS cert for dashboard issued by Let's Encrypt (valid in browser without CA trust)
 - [ ] HTTP → HTTPS redirect working
@@ -722,17 +727,17 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] `step-ca` resolver block present in `traefik.yml` (inactive until task 04-04)
 
 ### step-ca
-- [ ] LXC `step-ca` (VMID 152) running at `10.57.1.11`
-- [ ] `step ca health --ca-url https://10.57.1.11` returns OK
+- [ ] LXC `step-ca` (VMID 20011) running at `192.168.20.11`
+- [ ] `step ca health --ca-url https://192.168.20.11` returns OK
 - [ ] Root CA cert saved to `certs/homelab-root.crt` in repository
 - [ ] Homelab root CA distributed to Traefik container and Proxmox host
 - [ ] Traefik `step-ca` resolver can reach ACME directory:
-  `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
+  `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -sk https://192.168.20.11/acme/acme/directory` returns JSON
 - [ ] At least one internal management endpoint issued a cert from step-ca
 
 ### Monitoring
-- [ ] LXC `monitoring-stack` (VMID 154) running at `10.57.1.12`
-- [ ] Grafana accessible at `http://10.57.1.12:3000` (and via proxy)
+- [ ] LXC `monitoring-stack` (VMID 20012) running at `192.168.20.12`
+- [ ] Grafana accessible at `http://192.168.20.12:3000` (and via proxy)
 - [ ] VictoriaMetrics scraping at least pve-test node_exporter
 - [ ] Loki receiving logs from at least one LXC
 - [ ] Grafana datasources for VictoriaMetrics and Loki configured
@@ -770,7 +775,7 @@ The goal is deterministic, rebuild-safe execution with small, reviewable changes
 1. DNS delegation baseline
   - Implement/verify MikroTik conditional forwarding for `lab.gibbsgreatly.xyz`.
   - Keep existing MikroTik static DNS behavior for non-delegated names.
-  - Validate from all zones via gateway resolvers (`10.57.0.1`, `10.57.1.1`, `10.57.2.1`, `10.57.3.1`).
+  - Validate from all zones via gateway resolvers (`192.168.10.1`, `192.168.20.1`, `192.168.30.1`, `192.168.40.1`).
 
 2. Naming policy alignment
   - Keep Traefik ingress routes on `*.gibbsgreatly.xyz`.
@@ -796,25 +801,25 @@ The goal is deterministic, rebuild-safe execution with small, reviewable changes
 
 ```bash
 # Resolver path checks for delegated lab zone (one per SDN gateway resolver)
-dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.10.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.30.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.40.1 +short traefik.lab.gibbsgreatly.xyz
 
 # Non-delegated public probe over the same resolver path
 # This confirms existing MikroTik static/recursive behavior is preserved.
-dig @10.57.1.1 +short github.com
+dig @192.168.20.1 +short github.com
 
 # Public ingress still works
-curl -I http://10.57.2.10
+curl -I http://192.168.30.10
 
 # step-ca directory reachable
-curl -sk https://10.57.1.11/acme/acme/directory | jq . >/dev/null
+curl -sk https://192.168.20.11/acme/acme/directory | jq . >/dev/null
 
 # Managed-host trust example
 TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
 pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
-  https://10.57.1.11/acme/acme/directory | jq . >/dev/null
+  https://192.168.20.11/acme/acme/directory | jq . >/dev/null
 ```
 
 ---
@@ -822,7 +827,7 @@ pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/ho
 ## Next phase after Phase 04 completion
 
 **Phase 04b — Internal DNS Authority** must be deployed before Phase 06 application migration begins. This task:
-- Deploys CoreDNS to `10.57.1.13` in `mgmt_seg`
+- Deploys CoreDNS to `192.168.20.13` in `mgmt_seg`
 - Converts MikroTik static A records to a conditional FWD rule
 - Validates all SDN zones can resolve lab-zone names
 - Prepares zone file structure for Phase 06 app onboarding

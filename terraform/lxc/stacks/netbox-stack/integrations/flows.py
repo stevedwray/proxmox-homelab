@@ -18,11 +18,9 @@ Standalone usage:
 Called from populate.py to push the model to NetBox as a config context.
 """
 
-import glob
 import json
 import os
 import re
-import sys
 from pathlib import Path
 
 import yaml
@@ -421,7 +419,8 @@ DATA_STORES = [
         "type": "filesystem",
         "data_classification": "secret",
         "contents": (
-            "terraform/secrets.enc.yaml and secrets.pve.enc.yaml. "
+            "terraform/secrets.common.enc.yaml and per-node secrets.<node>.enc.yaml "
+            "(e.g. secrets.pve.enc.yaml). "
             "DB passwords, API tokens, OIDC client secrets. "
             "Encrypted with age key at ~/.config/sops/age/keys.txt."
         ),

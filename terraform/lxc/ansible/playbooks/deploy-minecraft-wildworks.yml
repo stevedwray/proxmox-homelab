@@ -1,0 +1,548 @@
+---
+# Deploys the inspected Wildworks NeoForge release. The archive and legacy
+# access-control JSON files are operator-provided runtime inputs, never source
+# files in this repository.
+
+- name: Deploy Wildworks NeoForge Minecraft server
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    minecraft_project_dir: /srv/docker/minecraft/foreverworld
+    minecraft_previous_project_dir: /srv/docker/minecraft/wildworks
+    minecraft_portainer_stack_name: foreverworld
+    minecraft_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    minecraft_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ minecraft_lab_domain, true) }}"
+    minecraft_server_image: "{{ minecraft_registry_host }}/dockerhub/itzg/minecraft-server:java21"
+    minecraft_monitor_image: "{{ minecraft_registry_host }}/dockerhub/itzg/mc-monitor:latest"
+    minecraft_cadvisor_image: "{{ minecraft_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+    minecraft_jmx_exporter_version: "1.6.0"
+    minecraft_jmx_exporter_dir: "{{ minecraft_project_dir }}/jmx-exporter"
+    minecraft_jmx_exporter_jar: "{{ minecraft_jmx_exporter_dir }}/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar"
+    minecraft_jmx_exporter_config: "{{ minecraft_jmx_exporter_dir }}/config.yaml"
+    minecraft_jmx_javaagent_options: >-
+      -javaagent:/data/jmx-exporter/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar=9404:/data/jmx-exporter/config.yaml
+    minecraft_heap: 16G
+    minecraft_gc_log_options: >-
+      -Xlog:gc*:file=logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20M
+    minecraft_portainer_push_stack: false
+    minecraft_regenerate_world: false
+    minecraft_restart_for_configuration: false
+    minecraft_portainer_update_stack: false
+    minecraft_world_dir: "{{ minecraft_project_dir }}/world"
+    minecraft_world_backup_dir: "{{ minecraft_project_dir }}/world.pre-regenerate"
+    minecraft_release_archive: "{{ minecraft_release_tarball | mandatory('minecraft_release_tarball is required') }}"
+    minecraft_legacy_ops_source: "{{ minecraft_legacy_ops | mandatory('minecraft_legacy_ops is required') }}"
+    minecraft_legacy_whitelist_source: "{{ minecraft_legacy_whitelist | mandatory('minecraft_legacy_whitelist is required') }}"
+    minecraft_rcon_password: "{{ lookup('env', 'MINECRAFT_FOREVERWORLD_RCON_PASSWORD') | mandatory('MINECRAFT_FOREVERWORLD_RCON_PASSWORD is required') }}"
+
+  pre_tasks:
+    - name: Assert controller release and access-control files are present
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ minecraft_release_archive }}"
+        - "{{ minecraft_legacy_ops_source }}"
+        - "{{ minecraft_legacy_whitelist_source }}"
+      delegate_to: localhost
+      become: false
+      register: minecraft_controller_sources
+
+    - name: Fail when a required controller source is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Required Minecraft deployment source is missing: {{ item.item }}"
+      loop: "{{ minecraft_controller_sources.results }}"
+
+  tasks:
+    - name: Inspect the previous Wildworks project location
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ minecraft_previous_project_dir }}"
+        - "{{ minecraft_project_dir }}"
+      register: minecraft_project_paths
+
+    - name: Stop the previous direct Compose project before renaming it
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ minecraft_previous_project_dir }}"
+      when:
+        - minecraft_project_paths.results[0].stat.exists
+        - not minecraft_project_paths.results[1].stat.exists
+
+    - name: Rename the new Minecraft project to Foreverworld
+      ansible.builtin.command:
+        cmd: "mv {{ minecraft_previous_project_dir }} {{ minecraft_project_dir }}"
+      when:
+        - minecraft_project_paths.results[0].stat.exists
+        - not minecraft_project_paths.results[1].stat.exists
+
+    - name: Create Wildworks project directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ minecraft_project_dir }}"
+        - "{{ minecraft_project_dir }}/runtime"
+        - "{{ minecraft_jmx_exporter_dir }}"
+        - "{{ minecraft_project_dir }}/world"
+        - /srv/docker/minecraft/releases
+
+    - name: Allow the Minecraft process to read its JMX exporter files
+      ansible.builtin.file:
+        path: "{{ minecraft_jmx_exporter_dir }}"
+        owner: automation
+        group: automation
+        mode: "0750"
+
+    - name: Stop Foreverworld before regenerating its world
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ minecraft_project_dir }}"
+      when: minecraft_regenerate_world | bool
+
+    - name: Inspect the active and preserved regenerated-world paths
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ minecraft_world_dir }}"
+        - "{{ minecraft_world_backup_dir }}"
+      register: minecraft_world_paths
+      when: minecraft_regenerate_world | bool
+
+    - name: Preserve the prior generated world before replacement
+      ansible.builtin.command:
+        cmd: "mv {{ minecraft_world_dir }} {{ minecraft_world_backup_dir }}"
+      when:
+        - minecraft_regenerate_world | bool
+        - minecraft_world_paths.results[0].stat.exists
+        - not minecraft_world_paths.results[1].stat.exists
+
+    - name: Create an empty Foreverworld directory for regeneration
+      ansible.builtin.file:
+        path: "{{ minecraft_world_dir }}"
+        state: directory
+        mode: "0750"
+      when: minecraft_regenerate_world | bool
+
+    - name: Upload inspected Wildworks release archive
+      ansible.builtin.copy:
+        src: "{{ minecraft_release_archive }}"
+        dest: /srv/docker/minecraft/releases/Wildworks-Server-NeoForge-1.21.1.tar.gz
+        mode: "0640"
+
+    - name: Extract Wildworks release into its compose build context
+      ansible.builtin.unarchive:
+        src: /srv/docker/minecraft/releases/Wildworks-Server-NeoForge-1.21.1.tar.gz
+        dest: "{{ minecraft_project_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        creates: "{{ minecraft_project_dir }}/run.sh"
+
+    - name: Preserve legacy Foreverworld operator and whitelist data
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0640"
+      loop:
+        - { src: "{{ minecraft_legacy_ops_source }}", dest: "{{ minecraft_project_dir }}/ops.json" }
+        - { src: "{{ minecraft_legacy_whitelist_source }}", dest: "{{ minecraft_project_dir }}/whitelist.json" }
+
+    - name: Seed mutable server properties from the release
+      ansible.builtin.copy:
+        src: "{{ minecraft_project_dir }}/server.properties"
+        dest: "{{ minecraft_project_dir }}/server.properties"
+        remote_src: true
+        force: false
+        mode: "0640"
+
+    - name: Configure Wildworks server access and port
+      ansible.builtin.lineinfile:
+        path: "{{ minecraft_project_dir }}/server.properties"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: server-port, value: "25565" }
+        - { key: level-seed, value: "8829189879763754536" }
+        - { key: difficulty, value: hard }
+        - { key: allow-flight, value: "true" }
+        - { key: pvp, value: "false" }
+        - { key: max-players, value: "3" }
+        - { key: view-distance, value: "32" }
+        - { key: simulation-distance, value: "12" }
+        - { key: spawn-protection, value: "0" }
+        - { key: level-type, value: bclib }
+        - { key: motd, value: Foreverworld }
+        - { key: enable-rcon, value: "true" }
+        - { key: rcon.port, value: "25575" }
+        - { key: white-list, value: "true" }
+        - { key: enforce-whitelist, value: "true" }
+
+    - name: Restrict mutable server properties containing the RCON password
+      ansible.builtin.file:
+        path: "{{ minecraft_project_dir }}/server.properties"
+        mode: "0600"
+
+    - name: Set the RCON password in mutable server properties
+      ansible.builtin.lineinfile:
+        path: "{{ minecraft_project_dir }}/server.properties"
+        regexp: "^rcon.password="
+        line: "rcon.password={{ minecraft_rcon_password }}" # gitleaks:allow
+      no_log: true
+
+    - name: Install the Prometheus JMX Java agent
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/jmx_exporter/releases/download/{{ minecraft_jmx_exporter_version }}/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar"
+        dest: "{{ minecraft_jmx_exporter_jar }}"
+        owner: automation
+        group: automation
+        mode: "0644"
+
+    - name: Configure the Minecraft JVM Prometheus exporter
+      ansible.builtin.copy:
+        dest: "{{ minecraft_jmx_exporter_config }}"
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          lowercaseOutputName: true
+          lowercaseOutputLabelNames: true
+          rules:
+            - pattern: 'java.lang<type=Memory><HeapMemoryUsage>(used|committed|max): (.*)'
+              name: jvm_heap_memory_$1_bytes
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionCount>: (.*)'
+              name: jvm_gc_collection_count
+              value: '$2'
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionTime>: (.*)'
+              name: jvm_gc_collection_seconds_total
+              value: '$2'
+              valueFactor: 0.001
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=Threading><(ThreadCount|PeakThreadCount|DaemonThreadCount)>: (.*)'
+              name: jvm_threads_$1
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=OperatingSystem><ProcessCpuLoad>: (.*)'
+              name: jvm_process_cpu_load_ratio
+              value: '$1'
+              type: GAUGE
+            - pattern: 'java.lang<type=Runtime><Uptime>: (.*)'
+              name: jvm_uptime_seconds
+              value: '$1'
+              valueFactor: 0.001
+              type: GAUGE
+
+    - name: Restore the release-native entrypoint
+      ansible.builtin.copy:
+        dest: "{{ minecraft_project_dir }}/docker-entrypoint.sh"
+        mode: "0750"
+        content: |
+          #!/bin/sh
+          set -eu
+          if [ "${EULA:-}" != "TRUE" ]; then
+            echo "Set EULA=TRUE after accepting the Minecraft EULA to start this server." >&2
+            exit 1
+          fi
+          sed -i 's/^eula=.*/eula=true/' eula.txt
+          exec ./run.sh nogui
+
+    - name: Remove the superseded custom-image Dockerfile
+      ansible.builtin.file:
+        dest: "{{ minecraft_project_dir }}/Dockerfile"
+        state: absent
+
+    - name: Install Wildworks Docker Compose project
+      ansible.builtin.copy:
+        dest: "{{ minecraft_project_dir }}/compose.yaml"
+        mode: "0640"
+        content: |
+          services:
+            foreverworld:
+              image: {{ minecraft_server_image }}
+              container_name: foreverworld-minecraft
+              tty: true
+              stdin_open: true
+              tmpfs:
+                - /tmp:rw,exec,size=2g
+              environment:
+                EULA: "TRUE"
+                TYPE: "NEOFORGE"
+                VERSION: "1.21.1"
+                NEOFORGE_VERSION: "21.1.234"
+                SERVER_PORT: "25565"
+                OVERRIDE_SERVER_PROPERTIES: "false"
+                INIT_MEMORY: "{{ minecraft_heap }}"
+                MAX_MEMORY: "{{ minecraft_heap }}"
+                JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
+              ports:
+                - "25565:25565/tcp"
+                - "9404:9404/tcp"
+              volumes:
+                - ./:/data
+              restart: unless-stopped
+
+            minecraft-monitor:
+              image: {{ minecraft_monitor_image }}
+              container_name: foreverworld-monitor
+              command: export-for-prometheus
+              environment:
+                EXPORT_SERVERS: "foreverworld:25565"
+                EXPORT_PORT: "8080"
+              ports:
+                - "8081:8080"
+              restart: unless-stopped
+
+            cadvisor:
+              image: {{ minecraft_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+
+    - name: Start Foreverworld directly when Portainer ownership is not requested
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ minecraft_project_dir }}"
+      register: wildworks_compose_up
+      changed_when: "'Started' in wildworks_compose_up.stderr or 'Created' in wildworks_compose_up.stderr"
+      when: not minecraft_portainer_push_stack | bool
+
+    - name: Authenticate to Portainer for Foreverworld stack ownership
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/auth" # nosonar
+        method: POST
+        body_format: json
+        body:
+          Username: admin
+          Password: "{{ lookup('env', 'TF_VAR_portainer_admin_password') | mandatory('TF_VAR_portainer_admin_password is required') }}"
+        status_code: 200
+      register: wildworks_portainer_auth
+      delegate_to: localhost
+      no_log: true
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Get Portainer endpoints
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/endpoints" # nosonar
+        method: GET
+        headers:
+          Authorization: "Bearer {{ wildworks_portainer_auth.json.jwt }}"
+        status_code: 200
+      register: wildworks_portainer_endpoints
+      delegate_to: localhost
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Resolve the registered game server endpoint
+      ansible.builtin.set_fact:
+        wildworks_portainer_endpoint: >-
+          {{
+            wildworks_portainer_endpoints.json
+            | selectattr('Name', 'equalto', inventory_hostname)
+            | list | first | default({})
+          }}
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Assert the game server endpoint is registered in Portainer
+      ansible.builtin.assert:
+        that: wildworks_portainer_endpoint.Id is defined
+        fail_msg: "Portainer endpoint '{{ inventory_hostname }}' must be registered before stack deployment"
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Get Portainer stacks for the game server endpoint
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/stacks" # nosonar
+        method: GET
+        headers:
+          Authorization: "Bearer {{ wildworks_portainer_auth.json.jwt }}"
+        status_code: 200
+      register: wildworks_portainer_stacks
+      delegate_to: localhost
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Determine whether Foreverworld is already Portainer-managed
+      ansible.builtin.set_fact:
+        wildworks_portainer_stack: >-
+          {{
+            wildworks_portainer_stacks.json
+            | selectattr('Name', 'equalto', minecraft_portainer_stack_name)
+            | selectattr('EndpointId', 'equalto', wildworks_portainer_endpoint.Id | int)
+            | list | first | default({})
+          }}
+        wildworks_portainer_stack_exists: >-
+          {{
+            wildworks_portainer_stacks.json
+            | selectattr('Name', 'equalto', minecraft_portainer_stack_name)
+            | selectattr('EndpointId', 'equalto', wildworks_portainer_endpoint.Id | int)
+            | list | length > 0
+          }}
+      when: minecraft_portainer_push_stack | bool
+
+    - name: Stop the direct Compose container before Portainer takes ownership
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ minecraft_project_dir }}"
+      when:
+        - minecraft_portainer_push_stack | bool
+        - not wildworks_portainer_stack_exists | bool
+
+    - name: Create the Foreverworld stack in Portainer
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/stacks/create/standalone/string?endpointId={{ wildworks_portainer_endpoint.Id }}" # nosonar
+        method: POST
+        headers:
+          Authorization: "Bearer {{ wildworks_portainer_auth.json.jwt }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          Name: "{{ minecraft_portainer_stack_name }}"
+          StackFileContent: |
+            services:
+              foreverworld:
+                image: {{ minecraft_server_image }}
+                container_name: foreverworld-minecraft
+                tty: true
+                stdin_open: true
+                tmpfs:
+                  - /tmp:rw,exec,size=2g
+                environment:
+                  EULA: "TRUE"
+                  TYPE: "NEOFORGE"
+                  VERSION: "1.21.1"
+                  NEOFORGE_VERSION: "21.1.234"
+                  SERVER_PORT: "25565"
+                  OVERRIDE_SERVER_PROPERTIES: "false"
+                  INIT_MEMORY: "{{ minecraft_heap }}"
+                  MAX_MEMORY: "{{ minecraft_heap }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
+                ports:
+                  - "25565:25565/tcp"
+                  - "9404:9404/tcp"
+                volumes:
+                  - {{ minecraft_project_dir }}:/data
+                restart: unless-stopped
+
+              minecraft-monitor:
+                image: {{ minecraft_monitor_image }}
+                container_name: foreverworld-monitor
+                command: export-for-prometheus
+                environment:
+                  EXPORT_SERVERS: "foreverworld:25565"
+                  EXPORT_PORT: "8080"
+                ports:
+                  - "8081:8080"
+                restart: unless-stopped
+
+              cadvisor:
+                image: {{ minecraft_cadvisor_image }}
+                container_name: cadvisor
+                restart: unless-stopped
+                ports:
+                  - "8080:8080"
+                volumes:
+                  - /:/rootfs:ro
+                  - /var/run:/var/run:ro
+                  - /sys:/sys:ro
+                  - /var/lib/docker:/var/lib/docker:ro
+                  - /etc/machine-id:/etc/machine-id:ro
+          Env: []
+        status_code: 200
+      delegate_to: localhost
+      when:
+        - minecraft_portainer_push_stack | bool
+        - not wildworks_portainer_stack_exists | bool
+
+    - name: Update the Portainer Foreverworld stack to mount the full server directory
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/stacks/{{ wildworks_portainer_stack.Id }}?endpointId={{ wildworks_portainer_endpoint.Id }}" # nosonar
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ wildworks_portainer_auth.json.jwt }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          StackFileContent: |
+            services:
+              foreverworld:
+                image: {{ minecraft_server_image }}
+                container_name: foreverworld-minecraft
+                tty: true
+                stdin_open: true
+                tmpfs:
+                  - /tmp:rw,exec,size=2g
+                environment:
+                  EULA: "TRUE"
+                  TYPE: "NEOFORGE"
+                  VERSION: "1.21.1"
+                  NEOFORGE_VERSION: "21.1.234"
+                  SERVER_PORT: "25565"
+                  OVERRIDE_SERVER_PROPERTIES: "false"
+                  INIT_MEMORY: "{{ minecraft_heap }}"
+                  MAX_MEMORY: "{{ minecraft_heap }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
+                ports:
+                  - "25565:25565/tcp"
+                  - "9404:9404/tcp"
+                volumes:
+                  - {{ minecraft_project_dir }}:/data
+                restart: unless-stopped
+
+              minecraft-monitor:
+                image: {{ minecraft_monitor_image }}
+                container_name: foreverworld-monitor
+                command: export-for-prometheus
+                environment:
+                  EXPORT_SERVERS: "foreverworld:25565"
+                  EXPORT_PORT: "8080"
+                ports:
+                  - "8081:8080"
+                restart: unless-stopped
+
+              cadvisor:
+                image: {{ minecraft_cadvisor_image }}
+                container_name: cadvisor
+                restart: unless-stopped
+                ports:
+                  - "8080:8080"
+                volumes:
+                  - /:/rootfs:ro
+                  - /var/run:/var/run:ro
+                  - /sys:/sys:ro
+                  - /var/lib/docker:/var/lib/docker:ro
+                  - /etc/machine-id:/etc/machine-id:ro
+          Env: []
+          Prune: true
+          PullImage: false
+        status_code: 200
+      delegate_to: localhost
+      when:
+        - minecraft_portainer_push_stack | bool
+        - minecraft_portainer_update_stack | bool
+        - wildworks_portainer_stack_exists | bool
+
+    - name: Restart the Portainer-managed server for property changes
+      ansible.builtin.command: docker restart foreverworld-minecraft
+      when: minecraft_restart_for_configuration | bool
+
+    - name: Wait for Foreverworld Minecraft port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 25565
+        timeout: 180

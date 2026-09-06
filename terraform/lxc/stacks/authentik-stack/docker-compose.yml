@@ -5,7 +5,7 @@
 
 services:
   postgresql:
-    image: postgres:16-alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/postgres:16-alpine
     restart: unless-stopped
     env_file:
       - .env
@@ -17,7 +17,7 @@ services:
       - authentik-postgresql:/var/lib/postgresql/data
 
   redis:
-    image: redis:alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/redis:alpine
     restart: unless-stopped
     command:
       - sh
@@ -27,7 +27,7 @@ services:
       - authentik-redis:/data
 
   server:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
     restart: unless-stopped
     command: server
     env_file:
@@ -58,13 +58,14 @@ services:
     depends_on:
       - server
     ports:
+      - "443:443"
       - "9443:9443"
     volumes:
       - ./certs/direct:/certs/direct:ro
       - ./nginx/direct-tls.conf:/etc/nginx/conf.d/default.conf:ro
 
   worker:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
     restart: unless-stopped
     command: worker
     env_file:
@@ -78,8 +79,21 @@ services:
       - authentik-custom-templates:/templates
       - authentik-certs:/certs
 
+  ldap:
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
+    restart: unless-stopped
+    env_file:
+      - .ldap-outpost.env
+    environment:
+      AUTHENTIK_INSECURE: "true"
+    ports:
+      - "3389:3389"
+      - "6636:6636"
+    depends_on:
+      - server
+
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
     restart: unless-stopped
     ports:
       - "8080:8080"

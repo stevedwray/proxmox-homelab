@@ -1,0 +1,70 @@
+# mcp-utility-stack — external-utility MCP adapter tier.
+#
+# Runs cve-mcp-server (github.com/mukul975/cve-mcp-server, local-dev branch
+# merged onto upstream v0.2.0) in its native MCP_TRANSPORT=http mode. Holds
+# no internal infrastructure credentials; needs real internet egress to
+# public CVE/threat-intel APIs. See docs/mcp-stack/plan.md for the full
+# design (why this is a separate zone/stack from mcp-discovery-stack).
+#
+# Also runs docs-rag-mcp + pgvector (added 2026-08-23) — semantic search
+# over this repo's docs for agentic coding workflows, folded into this LXC
+# rather than a new stack (same trust class as cve-mcp-server). See
+# docs/coding-stack/plan.md.
+#
+# Storage grew (5G -> 15G, via scripts/resize-lxc-mount.sh's operational
+# path, not Terraform -- see docker_mount below) for pgvector + a second
+# Python service. Memory/swap deliberately NOT bumped yet (still 1024/512)
+# -- applying that via terragrunt on live `pve` turned out entangled with
+# an unrelated, pre-existing drift in this stack's SDN-attachment
+# resource (network_sdn_vars dropped a "vmid" field somewhere upstream,
+# forcing null_resource.configure_network_sdn_attachment to want
+# replacing, which hits its own destroy-guard and fails). Revisit the
+# memory bump once that's investigated separately -- not blocking
+# docs-rag-mcp, which runs fine at current memory.
+hostname: mcp-utility-stack
+ip_address: "${lab_ip_mcp_utility}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+network:
+  zone: ai_seg
+vmid: 50011
+cores: 2
+memory: 1024
+swap: 512
+rootfs_size: 10
+storage_profile: platform-default
+docker_storage_size: "15G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "15G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - mcp
+  - cve
+  - research
+  - docs-rag
+  - docker
+depends_on:
+  - apt-cacher-stack
+provides:
+  - service: cve-mcp-http
+    port: 8000
+    protocol: tcp
+  - service: docs-rag-mcp-http
+    port: 8001
+    protocol: tcp
+ansible_playbook: "deploy-mcp-utility-stack"
+deployment_tier: platform
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+# No registry_host: cve-mcp-server and docs-rag-mcp are both built directly
+# on the host from source copied by the ansible controller, not pulled
+# from Harbor (see deploy-mcp-utility-stack.yml's header comment). Only
+# the third-party pgvector image is pulled through Harbor's proxy-cache,
+# same as every other third-party image in this repo.
+apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -1,7 +1,22 @@
 ---
 # Defaults for docker_socket_proxy role
 enable_docker_socket_proxy: false
-docker_socket_proxy_image: tecnativa/docker-socket-proxy:latest
+# Self-sufficient rather than depending on the including playbook's own
+# *_registry_host var (they're all named differently: docker_registry_host,
+# monitoring_registry_host, effective_registry_host, ...). Must be the FQDN
+# (routed through Traefik), not LAB_IP_HARBOR -- Harbor's registry auth
+# realm always echoes back external_url's https scheme regardless of which
+# host/port the client connected on, so a pull against the raw container IP
+# fails. See docs/harbor-stack/image-sourcing-enforcement.md.
+docker_socket_proxy_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+docker_socket_proxy_image: "{{ docker_socket_proxy_registry_host }}/dockerhub/tecnativa/docker-socket-proxy:latest"
+# Direct-pull fallback source for docker_socket_proxy_image above -- see the
+# "Pre-pull ... when not cached" task in tasks/main.yml. This role is
+# included on nearly every stack via deploy-stack.yml, including ones that
+# are themselves prerequisites for Harbor-via-Traefik to be reachable
+# (proxy-stack, harbor-stack, authentik-stack), so a from-scratch
+# provision of those can hit this image before Harbor/Traefik exist yet.
+docker_socket_proxy_upstream_image: "tecnativa/docker-socket-proxy:latest"
 docker_socket_proxy_listen_port: 2375
 docker_socket_proxy_bind_addr: "{{ ansible_default_ipv4.address | default('127.0.0.1') }}"
 docker_socket_proxy_project_dir: /opt/docker-socket-proxy

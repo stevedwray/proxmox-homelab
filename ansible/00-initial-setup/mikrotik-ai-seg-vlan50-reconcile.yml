@@ -1,0 +1,329 @@
+---
+# Reconcile MikroTik ai_seg (VLAN 50) for pve-framework, mirroring the
+# proven mikrotik-build-seg-data-plane-reconcile.yml pattern (VLAN10).
+#
+# Corrected 2026-07-17 after a live failure: every existing SDN zone
+# (10/20/30/40/90) is tagged on BOTH ether1 and ether5, not just ether5 --
+# ether1 is the port fe-pve's traffic actually arrives on (confirmed via
+# the MikroTik's bridge host table showing fe-pve's MAC arriving via
+# ether1), ether5 is pve's/ci-runner's port. The first live attempt at
+# this (done manually via RouterOS CLI, not this playbook) only tagged
+# ether5, and ether1 has ingress-filtering=true (unlike ether5's false),
+# so it silently dropped every VLAN50 frame arriving there -- no ARP
+# reply, "Destination Host Unreachable" from fe-pve. Both interfaces must
+# be tagged for a zone to actually reach fe-pve.
+#
+# Deliberately does NOT touch either port's own bridge-port settings
+# (frame-types/ingress-filtering) -- both ports already correctly pass
+# tagged VLAN10/20/30/40/90 today with their current (different from each
+# other) settings; the missing piece was purely the bridge-vlan table's
+# tagged-interface list for VLAN 50, not port-level config.
+#
+# See docs/framework-integration/decisions.md Decision 4 for why ai_seg is
+# a new dedicated zone rather than reuse of mgmt_seg/edge_seg/infra_seg.
+#
+# This does NOT configure the separate physical switch fe-pve/pve are
+# behind -- that switch's own VLAN 50 membership (trunk + fe-pve's access
+# port) is a separate, out-of-band step outside what this repo can reach.
+#
+# Every mutating step here checks current state first and only acts if
+# something is actually missing/wrong -- safe to re-run.
+
+- name: Reconcile MikroTik ai_seg VLAN50 data-plane path
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    # NOTE: matches the existing build_seg playbooks' use of MIKROTIK_USER/
+    # MIKROTIK_PASSWORD for write operations, even though .env.template
+    # documents MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD as the "preferred"
+    # write-capable pair. Kept consistent with the already-proven-working
+    # precedent on this router rather than switching to an unproven
+    # credential for a live network change; worth reconciling the naming
+    # separately later.
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    bridge_name: bridgeLocal
+    trunk_interfaces:
+      - ether1
+      - ether5
+    ai_vlan_id: "50"
+    ai_vlan_name: vlan50-ai
+    ai_gateway_cidr: "{{ (lookup('env', 'LAB_GW_AI') | mandatory('LAB_GW_AI env var is required')) ~ '/24' }}"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read bridge definition
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: bridge_result
+      no_log: true
+
+    - name: Locate target bridge object
+      ansible.builtin.set_fact:
+        bridge_obj: >-
+          {{
+            (bridge_result.json | selectattr('name', 'equalto', bridge_name) | list | first)
+            | default({})
+          }}
+
+    - name: Assert target bridge exists
+      ansible.builtin.assert:
+        that:
+          - bridge_obj != {}
+        fail_msg: Expected bridgeLocal to exist on active MikroTik.
+
+    - name: Read VLAN interfaces
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/vlan"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: vlan_result
+      no_log: true
+
+    - name: Locate ai_seg VLAN object
+      ansible.builtin.set_fact:
+        ai_vlan_obj: >-
+          {{
+            (vlan_result.json | selectattr('name', 'equalto', ai_vlan_name) | list | first)
+            | default({})
+          }}
+
+    - name: Create ai_seg VLAN interface when missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/vlan/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          name: "{{ ai_vlan_name }}"
+          interface: "{{ bridge_name }}"
+          vlan-id: "{{ ai_vlan_id }}"
+          comment: "ai_seg gw"
+        status_code: [200, 201]
+      when: ai_vlan_obj == {}
+      no_log: true
+
+    - name: Ensure ai_seg VLAN is bound to bridge CPU interface
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/vlan/{{ ai_vlan_obj['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          interface: "{{ bridge_name }}"
+          disabled: "false"
+        status_code: [200, 201]
+      when:
+        - ai_vlan_obj != {}
+        - ai_vlan_obj.interface != bridge_name or (ai_vlan_obj.disabled | default('false')) == 'true'
+      no_log: true
+
+    - name: Read IP addresses
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: ip_result
+      no_log: true
+
+    - name: Locate ai_seg gateway address object
+      ansible.builtin.set_fact:
+        ai_ip_obj: >-
+          {{
+            (ip_result.json | selectattr('address', 'equalto', ai_gateway_cidr) | list | first)
+            | default({})
+          }}
+
+    - name: Add ai_seg gateway IP when missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          address: "{{ ai_gateway_cidr }}"
+          interface: "{{ ai_vlan_name }}"
+          comment: "pve-framework ai_seg gw"
+          disabled: "false"
+        status_code: [200, 201]
+      when: ai_ip_obj == {}
+      no_log: true
+
+    - name: Ensure ai_seg gateway IP remains attached to ai_seg VLAN
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/{{ ai_ip_obj['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          interface: "{{ ai_vlan_name }}"
+          disabled: "false"
+        status_code: [200, 201]
+      when:
+        - ai_ip_obj != {}
+        - ai_ip_obj.interface != ai_vlan_name or (ai_ip_obj.disabled | default('false')) == 'true'
+      no_log: true
+
+    - name: Read bridge VLAN table
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: bridge_vlan_result
+      no_log: true
+
+    - name: Locate ai_seg bridge VLAN table entry
+      ansible.builtin.set_fact:
+        ai_bridge_vlan_obj: >-
+          {{
+            (bridge_vlan_result.json | selectattr('vlan-ids', 'equalto', ai_vlan_id) | list | first)
+            | default({})
+          }}
+
+    - name: Add tagged bridge VLAN entry for ai_seg when missing (both trunk interfaces)
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          bridge: "{{ bridge_name }}"
+          vlan-ids: "{{ ai_vlan_id }}"
+          tagged: "{{ ([bridge_name] + trunk_interfaces) | join(',') }}"
+        status_code: [200, 201]
+      when: ai_bridge_vlan_obj == {}
+      no_log: true
+
+    # Handles exactly the failure mode hit live: an entry exists but is
+    # missing one of the required trunk interfaces (e.g. only ether5
+    # tagged, not ether1) -- patches the tagged list to the full set
+    # rather than assuming "exists" already means "complete".
+    - name: Ensure existing ai_seg bridge VLAN entry tags every trunk interface
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan/{{ ai_bridge_vlan_obj['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          tagged: "{{ ([bridge_name] + trunk_interfaces) | join(',') }}"
+        status_code: [200, 201]
+      when:
+        - ai_bridge_vlan_obj != {}
+        - trunk_interfaces | reject('in', ai_bridge_vlan_obj.tagged | default('')) | list | length > 0
+      no_log: true
+
+    - name: Read final VLAN interfaces
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/vlan"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: final_vlan_result
+      no_log: true
+
+    - name: Read final IP addresses
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: final_ip_result
+      no_log: true
+
+    - name: Read final bridge VLAN table
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: final_bridge_vlan_result
+      no_log: true
+
+    - name: Validate final ai_seg VLAN50 model
+      ansible.builtin.assert:
+        that:
+          - final_ai_vlan_obj != {}
+          - final_ai_vlan_obj.interface == bridge_name
+          - final_bridge_vlan_entry != {}
+          - bridge_name in (final_bridge_vlan_entry.tagged | default(''))
+          - trunk_interfaces | reject('in', final_bridge_vlan_entry.tagged | default('')) | list | length == 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', ai_gateway_cidr) | list | length) > 0
+        fail_msg: >-
+          ai_seg VLAN50 model was not reconciled as expected -- check which
+          trunk_interfaces are missing from the bridge VLAN entry's tagged list.
+        success_msg: ai_seg VLAN50 interface, gateway IP, and bridge tagging (both trunk interfaces) reconciled.
+      vars:
+        final_ai_vlan_obj: >-
+          {{
+            (final_vlan_result.json | selectattr('name', 'equalto', ai_vlan_name) | list | first)
+            | default({})
+          }}
+        final_bridge_vlan_entry: >-
+          {{
+            (final_bridge_vlan_result.json | selectattr('vlan-ids', 'equalto', ai_vlan_id) | list | first)
+            | default({})
+          }}

@@ -1,0 +1,146 @@
+---
+# Validate the disposable Stage A DHCP test client through pct exec on the
+# Proxmox host, avoiding routed SSH dependence on the throwaway VLAN.
+- name: Validate disposable DHCP test client via pct exec
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    dhcp_test_target_host: "{{ dhcp_test_target_host | default('dhcp-test-client-01') }}"
+    dhcp_test_target_vars: "{{ hostvars[dhcp_test_target_host] }}"
+    dhcp_test_pve_host: "{{ dhcp_test_target_vars.pve_host }}"
+    dhcp_test_vmid: "{{ dhcp_test_target_vars.vmid }}"
+    dhcp_test_ssh_key: "{{ dhcp_test_target_vars.ansible_ssh_private_key_file }}"
+    dhcp_test_interface: "{{ dhcp_test_validation_interface | default('eth0') }}"
+    dhcp_test_expected_ipv4: "{{ dhcp_test_validation_expected_ipv4 | default('') }}"
+    dhcp_test_expected_gateway: "{{ dhcp_test_validation_expected_gateway | default('') }}"
+    dhcp_test_expected_nameservers: >-
+      {{ dhcp_test_validation_expected_nameservers | default([]) }}
+
+  tasks:
+    - name: Read current /etc/network/interfaces from guest
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- cat /etc/network/interfaces
+      register: dhcp_test_interfaces_file
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Assert guest interface is configured for DHCP
+      ansible.builtin.assert:
+        that:
+          - ("iface " ~ dhcp_test_interface ~ " inet dhcp") in dhcp_test_interfaces_file.stdout
+        fail_msg: >-
+          {{ dhcp_test_target_host }} is not configured for DHCP on
+          {{ dhcp_test_interface }}.
+          Current /etc/network/interfaces:
+          {{ dhcp_test_interfaces_file.stdout }}
+
+    # dhclient backs off between DISCOVER bursts (observed: ~30-60s active
+    # bursts separated by ~4-5 minute sleeps), so a passive read here can
+    # land mid-sleep and see no address at all even though the reservation
+    # and relay path are both fine -- confirmed live twice: the check failed
+    # on an empty interface, then an on-demand renew immediately succeeded
+    # with the correct reserved address. Trigger a single bounded DHCP
+    # transaction (-1: one DISCOVER/OFFER/REQUEST/ACK cycle, then exit)
+    # instead of waiting on the client's own backoff timer, so this check
+    # measures whether the reservation/relay path works right now, not
+    # whether it happens to line up with dhclient's retry schedule.
+    - name: Trigger a single on-demand DHCP renewal on the test interface
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- dhclient -1 {{ dhcp_test_interface }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+      failed_when: false
+
+    - name: Read IPv4 address on test interface
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- ip -4 -o addr show dev {{ dhcp_test_interface }}
+      register: dhcp_test_interface_addr
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Assert test interface received the reserved IPv4 address
+      ansible.builtin.assert:
+        that:
+          - ("inet " ~ dhcp_test_expected_ipv4 ~ "/") in dhcp_test_interface_addr.stdout
+        fail_msg: >-
+          {{ dhcp_test_target_host }} did not receive the expected IPv4 address
+          {{ dhcp_test_expected_ipv4 }} on {{ dhcp_test_interface }}.
+          Current interface state:
+          {{ dhcp_test_interface_addr.stdout }}
+      when: dhcp_test_expected_ipv4 | length > 0
+
+    - name: Read default route from guest
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- ip route show default
+      register: dhcp_test_default_route
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Assert expected default gateway is installed
+      ansible.builtin.assert:
+        that:
+          - ("default via " ~ dhcp_test_expected_gateway ~ " ") in dhcp_test_default_route.stdout
+        fail_msg: >-
+          {{ dhcp_test_target_host }} does not have the expected default gateway
+          {{ dhcp_test_expected_gateway }}.
+          Current default route:
+          {{ dhcp_test_default_route.stdout }}
+      when: dhcp_test_expected_gateway | length > 0
+
+    - name: Read guest resolver configuration
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- cat /etc/resolv.conf
+      register: dhcp_test_resolv_conf
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Assert guest resolver includes expected DHCP nameservers
+      ansible.builtin.assert:
+        that:
+          - ("nameserver " ~ item) in dhcp_test_resolv_conf.stdout
+        fail_msg: >-
+          {{ dhcp_test_target_host }} is missing expected nameserver {{ item }}
+          in /etc/resolv.conf.
+          Current /etc/resolv.conf:
+          {{ dhcp_test_resolv_conf.stdout }}
+      loop: "{{ dhcp_test_expected_nameservers }}"
+
+    - name: Show DHCP lease files discovered on the guest
+      ansible.builtin.command:
+        cmd: >-
+          pct exec {{ dhcp_test_vmid }} -- bash -lc
+          "for candidate in /var/lib/dhcp/dhclient*.leases /var/lib/dhcp/*.leases /var/lib/dhclient/*.leases; do
+           if ls \$candidate >/dev/null 2>&1; then ls \$candidate; exit 0; fi;
+           done; exit 0"
+      register: dhcp_test_lease_files
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Print guest DHCP lease files
+      ansible.builtin.debug:
+        var: dhcp_test_lease_files.stdout_lines

@@ -4,6 +4,9 @@
   become: true
   vars:
     compose_src: "{{ playbook_dir }}/../../stacks/docker-socket-proxy-test/docker-compose.yml"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    docker_socket_proxy_test_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
     # Target-scoped enablement: this playbook is the disposable test path only.
     enable_docker_socket_proxy: true
     # Bind to the test VM's service IP (explicit, not 0.0.0.0)
@@ -31,6 +34,14 @@
       ansible.builtin.copy:
         src: "{{ compose_src }}"
         dest: /tmp/docker-socket-proxy-test/docker-compose.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Write .env with REGISTRY_HOST for harmless workload compose
+      ansible.builtin.copy:
+        dest: /tmp/docker-socket-proxy-test/.env
+        content: "REGISTRY_HOST={{ docker_socket_proxy_test_registry_host }}\n"
         owner: root
         group: root
         mode: '0644'

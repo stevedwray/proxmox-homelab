@@ -1,6 +1,6 @@
 # Repeatable Teardown/Deploy Test
 
-This document describes the reusable harness for running the `pve-test`
+This document describes the reusable harness for running the `pve-test-vm`
 teardown/deploy rehearsal during active development.
 
 The harness is intentionally conservative. It makes the non-destructive checks
@@ -30,7 +30,7 @@ docs/teardown-test/artifacts/evidence/<stamp>/state.json
 The script reuses the current workspace patterns:
 
 - secrets and secret-bearing commands go through `./with-secrets`
-- `pve-test` target guard is checked before live operations
+- `pve-test-vm` target guard is checked before live operations
 - deploy/destroy stack order is resolved from `docs/teardown-test/inventory.md`
   and checked against each stack's `stack.yaml`
 - generated edge artifacts are regenerated before publish
@@ -46,7 +46,7 @@ During normal development, run the source-only preflight first:
 scripts/teardown-deploy-test.sh source-preflight
 ```
 
-This phase has no network or live `pve-test` dependency. It validates source,
+This phase has no network or live `pve-test-vm` dependency. It validates source,
 removes and regenerates ignored edge artifacts, and records working tree state
 without requiring a clean tree by default. Add `--require-clean` when you want
 to use it as a stricter local gate:
@@ -64,7 +64,7 @@ scripts/teardown-deploy-test.sh source-preflight --require-clean
 - fresh Traefik/CoreDNS render output
 - generated artifact assertions for Traefik/CoreDNS output
 
-Run the live read-only preflight when `pve-test` is up and reachable:
+Run the live read-only preflight when `pve-test-vm` is up and reachable:
 
 ```bash
 scripts/teardown-deploy-test.sh live-preflight
@@ -73,12 +73,12 @@ scripts/teardown-deploy-test.sh live-preflight
 `live-preflight` checks:
 
 - working tree state, with optional clean-tree enforcement
-- `pve-test` target guard through `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'`
+- `pve-test-vm` target guard through `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'`
 - lightweight DNS and routed HTTPS sanity for the edge entrypoint
 - direct Authentik health
 - full edge reconciler dry-run
 
-If the execution environment blocks network access to `pve-test`, treat a
+If the execution environment blocks network access to `pve-test-vm`, treat a
 `live-preflight` failure as an environment/access blocker and do not weaken the
 checks.
 
@@ -91,7 +91,7 @@ scripts/teardown-deploy-test.sh platform-status
 
 `platform-status` checks the approved inventory from
 `docs/teardown-test/inventory.md` against each stack's `stack.yaml`, verifies
-the `pve-test` target guard, captures `pct status`, Docker container snapshots,
+the `pve-test-vm` target guard, captures `pct status`, Docker container snapshots,
 listener snapshots, and a stack-specific direct health probe where one is
 defined. It writes both a human table and machine-readable reports under the
 evidence stamp:
@@ -107,12 +107,12 @@ Socket-proxy disposable test: opt-in and proof expectations
 
 The `docker-socket-proxy-test` disposable target is excluded by default. To run the proxy proof as part of a repeatable teardown-test cycle follow the opt-in steps described in `variables.md` (create a temporary inventory and run the harness via `TEARDOWN_INVENTORY_FILE`). The expected, repeatable proof covers the following checks and evidence capture:
 
-- Target creation/deploy path: the harness deploy phase will run `terragrunt apply` for the test stack; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/deploy-docker-socket-proxy-test.log` (contains terragrunt/apply output).
+- Target creation/deploy path: the harness deploy phase will run `terragrunt apply` for the test stack; expected evidence: `docs/teardown-test/artifacts/evidence/<stamp>/logs/deploy-docker-socket-proxy-test.log` (contains terragrunt/apply output).
 - Workload containers present: verify via Ansible raw/curl against the test LXC inventory. Example (ip resolved from stack.yaml):
 
 ```bash
 IP=$(grep -E 'ip_address:' terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml | sed -E 's/.*ip_address: ?"?([^" ]+)"?.*/\1/' | cut -d'/' -f1)
-ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a "curl -sS 'http://$IP:2375/containers/json?all=1'" | tee docs/teardown-test/evidence/<stamp>/logs/proxy-probe.log
+ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a "curl -sS 'http://$IP:2375/containers/json?all=1'" | tee docs/teardown-test/artifacts/evidence/<stamp>/logs/proxy-probe.log
 ```
 
 - Proxy reachable: the `proxy-probe.log` above should contain JSON output listing deployed containers (nginx/whoami/redis/docker-socket-proxy, etc.).
@@ -122,13 +122,13 @@ ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-so
 ```bash
 ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a \
   "curl -sS -o /dev/null -w '%{http_code}' -XPOST -H 'Content-Type: application/json' -d '{\"Image\":\"alpine\"}' 'http://$IP:2375/containers/create'" \
-  | tee docs/teardown-test/evidence/<stamp>/logs/proxy-mutating-test.log
+  | tee docs/teardown-test/artifacts/evidence/<stamp>/logs/proxy-mutating-test.log
 # Expected result: 403
 ```
 
-- Optional cleanup/removal: when running `cycle` (with `--disposable`) the destroy phase should remove the test LXC; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/destroy-docker-socket-proxy-test.log` and the harness VMID verification logs.
+- Optional cleanup/removal: when running `cycle` (with `--disposable`) the destroy phase should remove the test LXC; expected evidence: `docs/teardown-test/artifacts/evidence/<stamp>/logs/destroy-docker-socket-proxy-test.log` and the harness VMID verification logs.
 
-Keep raw evidence under the standard evidence stamp (`docs/teardown-test/evidence/<stamp>/logs/`) and avoid committing raw evidence files. The temporary inventory remains local and reversible.
+Keep raw evidence under the standard evidence stamp (`docs/teardown-test/artifacts/evidence/<stamp>/logs/`) and avoid committing raw evidence files. The temporary inventory remains local and reversible.
 
 If `platform-status` cannot collect `pct status` because the operator host
 cannot reach or resolve the Proxmox SSH host, that stack is reported as
@@ -206,7 +206,7 @@ Minimum approval packet checks for destructive phases:
 
 - packet file exists
 - packet has a `stamp: <value>` field matching active `--stamp`
-- packet has a `target: pve-test` field
+- packet has a `target: pve-test-vm` field
 - packet has `approved commit SHA: <sha>` and it matches current HEAD
 - packet has non-empty `outage window:` and `rollback deadline:` fields
 - packet has non-empty `scope approval:` and `scope exclusions:` fields

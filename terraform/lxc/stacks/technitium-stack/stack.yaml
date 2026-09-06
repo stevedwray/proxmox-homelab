@@ -1,0 +1,45 @@
+# Technitium DNS Server — parity-window replacement for dns-stack (CoreDNS)
+# mgmt_seg zone. New identity per docs/dns-refactor/decisions.md Decision 3:
+# does NOT reuse dns-stack's VMID/IP — runs alongside it until cutover.
+hostname: technitium-stack
+ip_address: "${lab_ip_technitium}/24"
+gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
+vmid: 20015
+cores: 1
+memory: 2048
+swap: 1024
+rootfs_size: 12
+storage_profile: platform-default
+docker_storage_size: "6G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - technitium-stack
+  - dns
+  - core-services
+  - infrastructure
+  - docker
+depends_on:
+  - apt-cacher-stack
+provides:
+  - service: dns-authority
+    port: 53
+    protocol: tcp
+  - service: dns-authority-udp
+    port: 53
+    protocol: udp
+  - service: dhcp-server
+    port: 67
+    protocol: udp
+
+network:
+  zone: mgmt_seg
+
+ansible_playbook: "deploy-technitium-stack"
+deployment_tier: platform
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

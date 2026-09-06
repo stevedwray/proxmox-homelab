@@ -11,16 +11,25 @@
     regexp: '^module\(load="imklog"\)'
     line: '#module(load="imklog")   # disabled: LXC containers cannot access /proc/kmsg'
     backrefs: true
+  when: rsyslog_forward_disable_imklog | bool
+  notify: Restart rsyslog
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Remove stale victorialogs-named config (renamed to log-forwarding)
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/90-victorialogs.conf
+    state: absent
   notify: Restart rsyslog
 
-- name: Write VictoriaLogs forwarding config
+- name: Write log forwarding config
   ansible.builtin.template:
-    src: victorialogs.conf.j2
-    dest: /etc/rsyslog.d/90-victorialogs.conf
+    src: log-forwarding.conf.j2
+    dest: /etc/rsyslog.d/90-log-forwarding.conf
     owner: root
     group: root
     mode: "0644"
   notify: Restart rsyslog
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Enable and start rsyslog
   ansible.builtin.systemd:
@@ -28,6 +37,7 @@
     enabled: true
     state: started
     daemon_reload: false
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Flush handlers to apply rsyslog config before port availability check
   ansible.builtin.meta: flush_handlers
@@ -37,3 +47,33 @@
     host: 127.0.0.1
     port: 10514
     timeout: 15
+  when: not ansible_check_mode
+
+# Optional Graylog inbound relay: accept appliance/host syslog on :514 and
+# forward to the configured rsyslog_forward_target (typically 127.0.0.1:5140).
+- name: Write Graylog inbound relay config
+  ansible.builtin.template:
+    src: graylog_inbound.conf.j2
+    dest: /etc/rsyslog.d/91-graylog-inbound.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: rsyslog_inbound_enabled | bool
+  notify: Restart rsyslog
+
+- name: Remove Graylog inbound relay config when not enabled
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/91-graylog-inbound.conf
+    state: absent
+  when: not (rsyslog_inbound_enabled | bool)
+  notify: Restart rsyslog
+
+- name: Flush handlers to apply inbound rsyslog config before port check
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure rsyslog is listening on inbound syslog TCP port
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: "{{ rsyslog_inbound_tcp_port }}"
+    timeout: 15
+  when: rsyslog_inbound_enabled | bool

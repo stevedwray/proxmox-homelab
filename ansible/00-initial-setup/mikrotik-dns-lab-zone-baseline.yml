@@ -14,7 +14,7 @@
 #       --extra-vars "mikrotik_host=${MIKROTIK_HOST} mikrotik_user=${MIKROTIK_ADMIN} mikrotik_password=${MIKROTIK_ADMIN_PASSWORD}"
 #   '
 #
-# Required env vars (sourced via with-secrets from terraform/secrets.enc.yaml or .env):
+# Required env vars (sourced via with-secrets from terraform/secrets.common.enc.yaml or .env):
 #   MIKROTIK_HOST            — MikroTik router IP or hostname
 #   MIKROTIK_ADMIN           — MikroTik admin automation username
 #   MIKROTIK_ADMIN_PASSWORD  — MikroTik admin automation password

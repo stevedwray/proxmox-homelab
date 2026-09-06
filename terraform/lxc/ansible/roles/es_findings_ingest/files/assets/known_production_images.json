@@ -1,0 +1,89 @@
+{
+  "_meta": {
+    "description": "Exact-match registry of Harbor artifact.repository values -> owning stack + network zone, for harbor_findings_sync.py's in_production/stack classification. Built 2026-09-01 from the real distinct artifact.repository values seen live in harbor-findings (terms aggregation, not guessed) cross-referenced against terraform/lxc/stacks/*/ + each stack's real network_zone. Exact match only, deliberately not substring/prefix matching -- a substring like 'community/' would silently misclassify netboxcommunity/netbox as greenbone-stack. An unmatched repository defaults to in_production:false/stack:null (unknown), never guessed -- add it here explicitly once confirmed, per docs/threat-vuln-platform/plan.md's UVM redesign phase.",
+    "operator_decisions_2026-09-01": [
+      "vulhub/* and vxcontrol/* are EXPLICITLY non-production regardless of whether they'd otherwise match a deployed stack (vxcontrol/* is PentAGI, genuinely deployed via pentagi-stack, but PentAGI is declared defunct -- operator chose to exclude it from the production view anyway).",
+      "elastic/* has no entry: the legacy elastic-stack LXC (vmid 112) that produced these Harbor scans was decommissioned 2026-09-01 -- stale historical data, correctly falls through to the unknown/false default."
+    ]
+  },
+  "known_production": {
+    "goauthentik/server": {"stack": "authentik-stack", "zone": "mgmt_seg"},
+    "goauthentik/ldap": {"stack": "authentik-stack", "zone": "mgmt_seg"},
+    "ghcr/goauthentik/server": {"stack": "authentik-stack", "zone": "mgmt_seg"},
+    "ghcr/goauthentik/ldap": {"stack": "authentik-stack", "zone": "mgmt_seg"},
+
+    "technitium/dns-server": {"stack": "technitium-stack", "zone": "mgmt_seg"},
+    "dockerhub/technitium/dns-server": {"stack": "technitium-stack", "zone": "mgmt_seg"},
+
+    "netboxcommunity/netbox": {"stack": "netbox-stack", "zone": "infra_seg"},
+    "dockerhub/netboxcommunity/netbox": {"stack": "netbox-stack", "zone": "infra_seg"},
+
+    "wazuh/wazuh-manager": {"stack": "wazuh-stack", "zone": "infra_seg"},
+    "wazuh/wazuh-dashboard": {"stack": "wazuh-stack", "zone": "infra_seg"},
+    "wazuh/wazuh-indexer": {"stack": "wazuh-stack", "zone": "infra_seg"},
+    "wazuh/wazuh-certs-generator": {"stack": "wazuh-stack", "zone": "infra_seg"},
+
+    "grafana/grafana-oss": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+    "dockerhub/grafana/grafana-oss": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+    "victoriametrics/victoria-metrics": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+    "dockerhub/victoriametrics/victoria-metrics": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+    "prometheuscommunity/postgres-exporter": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+    "quay/prometheuscommunity/postgres-exporter": {"stack": "monitoring-stack", "zone": "mgmt_seg"},
+
+    "portainer/portainer-ce": {"stack": "portainer-stack", "zone": "mgmt_seg"},
+    "dockerhub/portainer/portainer-ce": {"stack": "portainer-stack", "zone": "mgmt_seg"},
+    "portainer/agent": {"stack": "portainer-stack", "zone": "mgmt_seg"},
+
+    "opensearchproject/opensearch": {"stack": "opensearch-stack", "zone": "infra_seg"},
+    "opensearchproject/opensearch-dashboards": {"stack": "opensearch-stack", "zone": "infra_seg"},
+    "pgvector/pgvector": {"stack": "opensearch-stack", "zone": "infra_seg"},
+
+    "community/openvas-scanner": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/openvas-scanner": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/ospd-openvas": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/ospd-openvas": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/gvmd": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/gvmd": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/nginx": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/nginx": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/gvm-config": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/gvm-config": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/gsad": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/gsad": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/gvm-tools": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/gvm-tools": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/pg-gvm": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/pg-gvm": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/pg-gvm-migrator": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/pg-gvm-migrator": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "community/redis-server": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+    "greenbone/community/redis-server": {"stack": "greenbone-stack", "zone": "pentest_seg"},
+
+    "library/traefik": {"stack": "proxy-stack", "zone": "edge_seg"},
+    "dockerhub/library/traefik": {"stack": "proxy-stack", "zone": "edge_seg"},
+    "google/cadvisor": {"stack": null, "zone": null},
+    "ghcr/google/cadvisor": {"stack": null, "zone": null},
+    "cadvisor/cadvisor": {"stack": null, "zone": null},
+    "gcr/cadvisor/cadvisor": {"stack": null, "zone": null},
+
+    "itzg/minecraft-server": {"stack": "gaming-stack", "zone": null},
+
+    "yanwk/comfyui-boot": {"stack": "framework (bare-metal, not an LXC stack)", "zone": null}
+  },
+  "generic_base_images": {
+    "description": "Base OS/runtime images used inside many real stacks' compose files as dependencies -- genuinely production (they run as part of real deployed services) but not identifiable to one specific owning stack from the image name alone. in_production:true, stack:null, zone:null.",
+    "exact": [
+      "library/postgres", "dockerhub/library/postgres",
+      "library/redis", "dockerhub/library/redis",
+      "library/nginx", "dockerhub/library/nginx",
+      "library/python", "dockerhub/library/python",
+      "library/alpine", "library/ubuntu", "library/mongo",
+      "valkey/valkey", "dockerhub/valkey/valkey",
+      "tecnativa/docker-socket-proxy", "dockerhub/tecnativa/docker-socket-proxy"
+    ]
+  },
+  "explicit_non_production": {
+    "description": "Always in_production:false regardless of any other match -- operator's explicit exceptions (see _meta above).",
+    "prefixes": ["vulhub/", "vxcontrol/"]
+  }
+}

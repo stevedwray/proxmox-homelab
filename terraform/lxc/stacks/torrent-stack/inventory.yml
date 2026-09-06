@@ -1,0 +1,14 @@
+all:
+  children:
+    torrent_stack:
+      hosts:
+        torrent-stack:
+          ansible_host: 192.168.1.5
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          stack_name: torrent-stack
+          ansible_playbook: migrate-portainer-stack
+          vmid: 100
+          pve_host: pve.gibbsgreatly.xyz
+          app_stack_name: torrent-stack

@@ -641,7 +641,7 @@ What live validation was actually performed:
 Exact recommended next pass:
 - workflow-hardening: Harden the operational workflow for extra-mount grow-only operations (Ansible playbook, idempotence checks, extra-mount-specific validation hooks).
 - broader-stack-migration: Roll canonical `extra_mount` blocks into other stacks that already have legacy fields, with a small promotion plan and compatibility checks.
-- gate: After workflow hardening and representative non-destructive validation on a test target, run a promotion gate to `baseline/teardown-validated` including required scans (Sonar, Snyk) and representative `terragrunt plan` checks.
+- gate: After workflow hardening and representative non-destructive validation on a test target, run a promotion gate to `stable` including required scans (Sonar, Snyk) and representative `terragrunt plan` checks.
 
 Durable author: GitHub Copilot (extra-mount follow-up implementation)
 

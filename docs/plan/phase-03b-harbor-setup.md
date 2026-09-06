@@ -2,7 +2,7 @@
 
 ## Goal
 
-Configure Harbor (deployed on pve-test at `10.57.3.10`) as the single internal image
+Configure Harbor (deployed on pve-test at `192.168.40.10`) as the single internal image
 registry before any new services are deployed. This phase:
 
 1. Runs `harbor_postconfigure` to (re-)apply proxy caches, robot account, scan-on-push,
@@ -13,7 +13,7 @@ registry before any new services are deployed. This phase:
 4. Stores the robot account credentials in `.env.template`
 5. Pre-pulls Phase 04 images so they are scanned before deployment
 
-**From Phase 04 onwards, all compose files reference `10.57.3.10/...` — never upstream
+**From Phase 04 onwards, all compose files reference `192.168.40.10/...` — never upstream
 registries directly.**
 
 ## Live task docs
@@ -26,7 +26,7 @@ follows once the base Harbor stack is healthy.
 
 ## Prerequisites
 
-- Phase 00b complete: Portainer running at `10.57.1.20` on `mgmt_seg`
+- Phase 00b complete: Portainer running at `192.168.20.20` on `mgmt_seg`
 - Phase 01 complete: ci-runner-01 running on pve-test
 - **Harbor LXC deployed to pve-test** via:
   ```bash
@@ -38,7 +38,7 @@ follows once the base Harbor stack is healthy.
     -i terraform/lxc/stacks/harbor-stack/inventory.yml \
     terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
   ```
-  Harbor should be healthy at `http://10.57.3.10` (port 80) before continuing.
+  Harbor should be healthy at `http://192.168.40.10` (port 80) before continuing.
   Login with `admin` / `HARBOR_ADMIN_PASSWORD` from `.env` to verify.
 - `HARBOR_ADMIN_PASSWORD` is set in `.env`
 
@@ -89,7 +89,7 @@ it is healthy:
 ```bash
 source .env
 curl -sk -u "admin:${HARBOR_ADMIN_PASSWORD}" \
-  "http://10.57.3.10/api/v2.0/scanners" | jq '.[] | {name, is_default, health}'
+  "http://192.168.40.10/api/v2.0/scanners" | jq '.[] | {name, is_default, health}'
 # Expected: {"name":"Trivy", "is_default":true, "health":"healthy"}
 ```
 
@@ -98,7 +98,7 @@ If the vulnerability database is stale, trigger an update:
 ```bash
 curl -sk -X POST \
   -u "admin:${HARBOR_ADMIN_PASSWORD}" \
-  "http://10.57.3.10/api/v2.0/system/scanAll/schedule" \
+  "http://192.168.40.10/api/v2.0/system/scanAll/schedule" \
   -H "Content-Type: application/json" \
   -d '{"schedule":{"type":"Manual"}}'
 ```
@@ -127,7 +127,7 @@ for PROJECT in infrastructure netbox harbor authentik monitoring apps; do
   curl -sk -X POST \
     -u "admin:${HARBOR_ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
-    "http://10.57.3.10/api/v2.0/projects" \
+    "http://192.168.40.10/api/v2.0/projects" \
     -d "{
       \"project_name\": \"${PROJECT}\",
       \"metadata\": {
@@ -150,7 +150,7 @@ Key metadata settings:
 
 ```bash
 curl -s -u "admin:${HARBOR_ADMIN_PASSWORD}" \
-  "http://10.57.3.10/api/v2.0/projects" | \
+  "http://192.168.40.10/api/v2.0/projects" | \
   jq '.[].name'
 ```
 
@@ -180,7 +180,7 @@ Verify the robot token is valid:
 ```bash
 source /home/steve/git/proxmox-homelab/.env
 echo "${HARBOR_ROBOT_PASSWORD}" | \
-  docker login 10.57.3.10 -u "${HARBOR_ROBOT_USER}" --password-stdin
+  docker login 192.168.40.10 -u "${HARBOR_ROBOT_USER}" --password-stdin
 # Expected: Login Succeeded
 ```
 
@@ -190,9 +190,9 @@ All compose files reference images via Harbor. This applies from Phase 04 onward
 
 | Upstream image | Via Harbor proxy |
 |---|---|
-| `docker.io/library/postgres:16-alpine` | `10.57.3.10/dockerhub/library/postgres:16-alpine` |
-| `ghcr.io/goauthentik/server:2024.12.3` | `10.57.3.10/ghcr/goauthentik/server:2024.12.3` |
-| `docker.io/grafana/grafana-oss:11.x` | `10.57.3.10/dockerhub/grafana/grafana-oss:11.x` |
+| `docker.io/library/postgres:16-alpine` | `192.168.40.10/dockerhub/library/postgres:16-alpine` |
+| `ghcr.io/goauthentik/server:2024.12.3` | `192.168.40.10/ghcr/goauthentik/server:2024.12.3` |
+| `docker.io/grafana/grafana-oss:11.x` | `192.168.40.10/dockerhub/grafana/grafana-oss:11.x` |
 
 ---
 
@@ -213,7 +213,7 @@ source /home/steve/git/proxmox-homelab/.env
 curl -s -X PUT \
   -u "admin:${HARBOR_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  "http://10.57.3.10/api/v2.0/system/gc/schedule" \
+  "http://192.168.40.10/api/v2.0/system/gc/schedule" \
   -d '{
     "schedule": {
       "type": "Custom",
@@ -227,7 +227,7 @@ curl -s -X PUT \
 ## Part E — Pre-pull Phase 04 images
 
 Before deploying Phase 04 services, pull each image through the Harbor proxy so it is
-scanned and cached. Phase 04 Ansible playbooks can then use `10.57.3.10/...` refs without
+scanned and cached. Phase 04 Ansible playbooks can then use `192.168.40.10/...` refs without
 hitting upstream registries at deploy time.
 
 Run from the workstation or ci-runner-01:
@@ -235,19 +235,19 @@ Run from the workstation or ci-runner-01:
 ```bash
 source /home/steve/git/proxmox-homelab/.env
 echo "${HARBOR_ROBOT_PASSWORD}" | \
-  docker login 10.57.3.10 -u "${HARBOR_ROBOT_USER}" --password-stdin
+  docker login 192.168.40.10 -u "${HARBOR_ROBOT_USER}" --password-stdin
 
 # Authentik — check https://github.com/goauthentik/authentik/releases for latest
 AUTHENTIK_VERSION="2024.12.3"
-docker pull 10.57.3.10/ghcr/goauthentik/server:${AUTHENTIK_VERSION}
-docker pull 10.57.3.10/dockerhub/library/postgres:16-alpine
-docker pull 10.57.3.10/dockerhub/library/redis:alpine
+docker pull 192.168.40.10/ghcr/goauthentik/server:${AUTHENTIK_VERSION}
+docker pull 192.168.40.10/dockerhub/library/postgres:16-alpine
+docker pull 192.168.40.10/dockerhub/library/redis:alpine
 
 # step-ca — native binary install, no Docker image needed
 
 # Traefik — check https://github.com/traefik/traefik/releases
 TRAEFIK_VERSION="v3.3"
-docker pull 10.57.3.10/dockerhub/library/traefik:${TRAEFIK_VERSION}
+docker pull 192.168.40.10/dockerhub/library/traefik:${TRAEFIK_VERSION}
 
 # Monitoring stack — check release pages for latest versions
 GRAFANA_VERSION="11.5.2"
@@ -255,10 +255,10 @@ VM_VERSION="v1.101.0"
 LOKI_VERSION="3.4.2"
 PROMTAIL_VERSION="3.4.2"
 
-docker pull 10.57.3.10/dockerhub/grafana/grafana-oss:${GRAFANA_VERSION}
-docker pull 10.57.3.10/dockerhub/victoriametrics/victoria-metrics:${VM_VERSION}
-docker pull 10.57.3.10/dockerhub/grafana/loki:${LOKI_VERSION}
-docker pull 10.57.3.10/dockerhub/grafana/promtail:${PROMTAIL_VERSION}
+docker pull 192.168.40.10/dockerhub/grafana/grafana-oss:${GRAFANA_VERSION}
+docker pull 192.168.40.10/dockerhub/victoriametrics/victoria-metrics:${VM_VERSION}
+docker pull 192.168.40.10/dockerhub/grafana/loki:${LOKI_VERSION}
+docker pull 192.168.40.10/dockerhub/grafana/promtail:${PROMTAIL_VERSION}
 ```
 
 Harbor scans each image automatically after pull. Wait a few minutes, then check for
@@ -268,7 +268,7 @@ CRITICAL findings before proceeding to Phase 04:
 source /home/steve/git/proxmox-homelab/.env
 # Example: check Authentik scan result
 curl -s -u "admin:${HARBOR_ADMIN_PASSWORD}" \
-  "http://10.57.3.10/api/v2.0/projects/ghcr/repositories/goauthentik%2Fserver/artifacts?with_scan_overview=true" | \
+  "http://192.168.40.10/api/v2.0/projects/ghcr/repositories/goauthentik%2Fserver/artifacts?with_scan_overview=true" | \
   jq '.[0].scan_overview'
 ```
 
@@ -318,7 +318,7 @@ git push origin baseline/teardown-validated
 **Part C — Robot credentials**
 - [ ] `HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` in `.env.template`
 - [ ] `HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` added as GitHub Actions secrets
-- [ ] `docker login 10.57.3.10 -u robot$ci-runner` succeeds
+- [ ] `docker login 192.168.40.10 -u robot$ci-runner` succeeds
 
 **Part D — GC schedule**
 - [ ] GC schedule configured: weekly, Sunday 3 AM (`0 3 * * 0`)

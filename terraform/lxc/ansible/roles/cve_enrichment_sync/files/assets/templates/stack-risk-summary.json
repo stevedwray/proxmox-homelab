@@ -1,0 +1,28 @@
+{
+  "index_patterns": ["stack-risk-summary*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "stack": { "type": "keyword" },
+        "total_cves": { "type": "integer" },
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "low": { "type": "integer" },
+        "avg_risk_score": { "type": "float" },
+        "sources_reporting": { "type": "integer" },
+        "updated_at": { "type": "date" }
+      }
+    }
+  },
+  "priority": 200,
+  "_meta": {
+    "description": "One document per stack, materializing a per-stack severity breakdown from unified-cve-exposure (Phase 9 follow-up, docs/threat-vuln-platform/plan.md, 2026-09-02). Exists because classic OpenSearch Dashboards visualizations cannot pivot an aggregation bucket (risk_band) into real table columns -- this precomputes the pivot server-side so the dashboard panel is a plain, aggregation-free table. Rebuilt in full on every cve_enrichment_sync run (small dataset, full recompute is cheap and avoids drift). Deliberately NOT time-based.",
+    "managed_by": "cve_enrichment_sync role, es_setup_assets.py"
+  }
+}

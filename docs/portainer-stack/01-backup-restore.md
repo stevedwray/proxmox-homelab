@@ -245,55 +245,97 @@ Then open a PR: `task/portainer-backup-restore` → `baseline/teardown-validated
 
 ## Restore Runbook
 
-**Verified 2026-06-19** — full destroy → apply → restore → provision cycle confirmed.
-
-### Automated path (use this)
-
-`scripts/portainer-restore.sh` automates the full sequence. It handles the ordering
-constraint (Portainer CE must start before restore, init must not run before restore),
-wipes stale DB state from the fresh LXC, and runs both provision phases.
+`scripts/portainer-restore.sh` is the single entry point for all restore scenarios.
+It probes the current Portainer state and automatically selects the correct path.
 
 ```bash
-# 1. Destroy the LXC
+export TASK_APPROVAL="portainer-restore"
+./with-secrets-prod scripts/portainer-restore.sh
+```
+
+### Path A — Normal restore (LXC rebuilt after teardown)
+
+Used when: Portainer LXC was destroyed and recreated, or Portainer has never started.
+The script detects this as HTTP ≠ 200 from `/api/system/status`.
+
+Sequence:
+1. Wipes `/var/lib/portainer` (stale DB can survive template recreation)
+2. Runs `provision.sh --stack portainer-stack --tags pre_restore` (Docker base + Portainer CE, no init)
+3. Waits for uninitialized Portainer API
+4. POSTs the latest NAS backup to `/api/restore` directly from pve (no bind mount needed)
+5. Restarts Portainer container to load restored DB
+6. Verifies InstanceID changed (confirms restore applied)
+7. Restarts portainer-agents on all 6 legacy hosts to re-pair with restored keypair
+8. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth and backup support apply idempotently)
+
+Trigger this path by running the full teardown + apply cycle first:
+
+```bash
 export TASK_APPROVAL="portainer-restore"
 NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
   ./with-secrets-prod terragrunt destroy \
   --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
-
-# 2. Recreate the LXC from template
 NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
   ./with-secrets-prod terragrunt apply \
   --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
-
-# 3. Run the restore script — handles everything from here
 ./with-secrets-prod scripts/portainer-restore.sh
 ```
 
-The script sequence:
-1. Wipes `/var/lib/portainer` (stale DB can survive template recreation)
-2. Runs `provision.sh --stack portainer-stack --tags pre_restore` (Docker base + Portainer CE, no init)
-3. Waits for uninitialized Portainer API
-4. POSTs the latest NAS backup to `/api/restore` from pve via SSH
-5. Restarts Portainer container to load restored DB
-6. Verifies InstanceID changed (confirms restore applied)
-7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth and backup support apply idempotently)
+### Path B — Emergency restore (database wiped while container was live)
 
-### Critical constraint: restore must happen before init
+Used when: Portainer is running and responding (HTTP 200) but the database was wiped
+or corrupted while the container was up. This is detected automatically by the script.
+
+This can happen when:
+- The LXC is reprovisioned without a full teardown and something clears `/var/lib/portainer`
+- `deploy-portainer-stack.yml` runs against an LXC with a missing or empty DB (it calls
+  `admin/init` immediately, permanently closing the `POST /api/restore` window)
+- Manual intervention goes wrong
+
+Because `POST /api/restore` requires an **uninitialized** instance (before `admin/init`),
+this path uses tar extraction instead. The NAS bind mount inside the LXC
+(`/var/backups/portainer/`) provides direct access to the backup files.
+
+Sequence:
+1. Stops the Portainer container
+2. Moves the current `/var/lib/portainer` aside (timestamped, for recovery)
+3. Finds the latest backup in `/var/backups/portainer/` inside the LXC
+4. Extracts it via tar to `/var/lib/portainer`
+5. Starts Portainer
+6. Restarts portainer-agents on all 6 legacy hosts to re-pair with restored keypair
+7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips)
+
+Just run the script — it detects the initialized state and switches to this path automatically:
+
+```bash
+export TASK_APPROVAL="portainer-restore"
+./with-secrets-prod scripts/portainer-restore.sh
+```
+
+**Verified 2026-06-29** — emergency tar path used to recover from database loss while
+Portainer was running and admin-initialized. Stacks and environment registrations
+fully restored from June 22 backup.
+
+### Critical constraint: restore must happen before init (normal path only)
 
 `POST /api/restore` only works on an **uninitialized** Portainer instance — before
-`POST /api/users/admin/init` has been called. The `pre_restore` tag in
-`deploy-portainer-stack.yml` splits the playbook so only plays 1+2 (Docker base,
-Portainer CE start) run before restore. Plays 3+4 (init, backup support) run after.
+`POST /api/users/admin/init` has been called. If you run `provision.sh --stack portainer-stack`
+or `deploy-portainer-stack.yml` directly against a fresh-DB Portainer, admin/init fires
+immediately and the restore window is permanently closed. **Always use `portainer-restore.sh`
+rather than running the playbook directly when recovering from data loss.**
 
 ### Backup file location
 
 The NAS backup bind mount (`/mnt/nas-backup/portainer-backup → /var/backups/portainer`
 inside the LXC) is applied by the `portainer_backup` Ansible role via `pct set` on pve.
-The restore script accesses the backup directly from pve via SSH rather than relying on
-the bind mount being present, so it works even before `provision.sh` has run.
 
-Backups: `/mnt/nas-backup/portainer-backup/portainer-YYYYMMDD.tar.gz` on pve.
-The script picks the latest file with `ls -t | head -1`.
+- Normal path: script accesses backups from pve directly (`/mnt/nas-backup/portainer-backup/`)
+  so it works before `provision.sh` has run and the bind mount configured.
+- Emergency path: script accesses backups from inside the LXC (`/var/backups/portainer/`)
+  via the existing bind mount (present because Portainer is still running on the same LXC).
+
+Backups: `portainer-YYYYMMDD.tar.gz`, 30-day retention. The script picks the latest
+file with `ls -t | head -1`.
 
 ---
 
@@ -301,4 +343,5 @@ The script picks the latest file with `ls -t | head -1`.
 
 - [x] Infrastructure Portainer deployed and stable on pve
 - [x] NAS reachable from pve (`/mnt/nas-backup` mounted and healthy)
-- [x] Restore cycle validated with no application stacks (2026-06-19)
+- [x] Normal restore path validated with no application stacks (2026-06-19)
+- [x] Emergency restore path validated with live application stacks (2026-06-29)

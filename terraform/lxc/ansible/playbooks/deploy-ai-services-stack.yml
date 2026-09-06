@@ -1,0 +1,694 @@
+# ai-services-stack -- ai_seg zone (pve / pve-test-vm).
+# See docs/ai-services-migration/plan.md for the full migration design.
+#
+# Deploys OpenWebUI and its private SearXNG search backend on a dedicated
+# ai_seg LXC. This replaces the bare-metal deployment on framework
+# (ansible/00-initial-setup/framework-desktop-openwebui.yml, retained there
+# for reference/rollback until the cutover is confirmed stable) -- both
+# services are pure network clients of the model-serving layer
+# (llamacpp-router/ollama), with no GPU need of their own, so they no longer
+# need to share framework's host.
+#
+# The one real config change versus the framework deployment: OpenWebUI's
+# llama.cpp/Ollama routes now cross a real subnet boundary (ai_seg ->
+# framework's flat LAN) instead of reaching a same-host Docker gateway, so
+# they point at framework.gibbsgreatly.xyz instead of host.docker.internal.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Configure Docker daemon logging
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "7"
+            }
+          }
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy OpenWebUI and SearXNG compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    ai_services_compose_dir: /opt/ai-services-stack
+    ai_services_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}"
+    # ollama-reliability-proxy: centralized here (not per-workstation) so
+    # every consumer of Ollama on this LXC -- OpenWebUI included, not just
+    # an external client like VS Code Copilot -- gets protection against
+    # this project's own documented, repeated Ollama corruption bugs
+    # (degenerate empty responses, dense content degenerating into "?"
+    # garbage). See docs/coding-stack/plan.md Phase 6 for the proxy's
+    # design/validation and why this stack (not mcp-utility-stack) is
+    # where it landed -- OpenWebUI is itself a direct Ollama consumer that
+    # benefits from being routed through it, unlike mcp-utility-stack's
+    # own services. Source lives at scripts/ollama-reliability-proxy/ in
+    # this repo (stdlib-only Python, no build step needed).
+    repo_root: "{{ (playbook_dir + '/../../../..') | realpath }}"
+    ai_services_reliability_proxy_source_dir: "{{ repo_root }}/scripts/ollama-reliability-proxy"
+    ai_services_reliability_proxy_build_dir: "{{ ai_services_compose_dir }}/ollama-reliability-proxy"
+    # Published on the LXC host (not just the internal compose network) so
+    # an external client like VS Code Copilot on the operator's workstation
+    # can reach it too -- needs its own MikroTik lan -> ai_seg:<port> rule,
+    # same host-scoped pattern as mcp-utility-stack's docs-rag-mcp :8001
+    # rule (see terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md).
+    ai_services_reliability_proxy_port: "{{ lookup('env', 'AI_SERVICES_RELIABILITY_PROXY_PORT') | default('11435', true) }}"
+    # ai_seg is a deliberately contained zone (same class as pentest_seg)
+    # with no direct route to Harbor's infra_seg IP -- confirmed live
+    # 2026-08-02 when a raw LAB_IP_HARBOR pull timed out
+    # ("context deadline exceeded" reaching Harbor's infra_seg IP
+    # directly). pentagi-stack/greenbone-stack (pentest_seg, the other
+    # contained zone) already solved this: pull via harbor.${LAB_DOMAIN},
+    # routed through Traefik/edge_seg, not Harbor's own IP directly. Uses
+    # the same ai_seg -> edge_seg:443 firewall rule this playbook's OIDC
+    # route already needs -- no separate Harbor-specific rule required.
+    ai_services_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ ai_services_lab_domain, true) }}"
+    # Pinned by digest rather than :main/:latest -- see
+    # ansible/00-initial-setup/framework-desktop-openwebui.yml's header
+    # comment for why. Same digests as the framework deployment being
+    # replaced (open-webui v0.10.2, searxng 2026.7.19+6da6eee26); a
+    # deliberate upgrade should update both playbooks together until the
+    # framework deployment is fully decommissioned (plan.md Step 8).
+    ai_services_openwebui_image: "{{ ai_services_registry_host }}/ghcr/open-webui/open-webui@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0"  # v0.10.2
+    ai_services_searxng_image: "{{ ai_services_registry_host }}/dockerhub/searxng/searxng@sha256:b8ca38ba06eea544d7555e88321e212ddc0d5c3c7de055419cfb2e5c6bf30812"  # 2026.7.19+6da6eee26
+    # Container port 8080 published as host port 8081 -- 8080 stays free
+    # in case something on this LXC ever wants it, matching edge.yaml's
+    # comment. No LAN-facing port collision to avoid here (unlike
+    # framework, which also runs llamacpp-router on :8080).
+    ai_services_openwebui_port: 8081
+    ai_services_searxng_port: 8082
+    # Internal direct-TLS endpoint (step-ca issued, mgmt_seg), not the
+    # public authentik.${LAB_DOMAIN} route -- corrected 2026-08-02: the
+    # public route's cert on pve-test-vm is Let's Encrypt *staging*
+    # (untrusted by design), which breaks OpenWebUI's backend-side OIDC
+    # discovery fetch even though a human can click through the same cert
+    # in a browser. authentik-int has no such issue (real Homelab-CA
+    # trust) and its self-reported authorize/token endpoints are fully
+    # functional on this hostname (confirmed live, both plain :443 and
+    # :9443 work identically). See docs/design/lessons-learned.md's
+    # Authentik section and the ai_seg -> mgmt_seg:443 firewall rule this
+    # requires (mikrotik-firewall-ai-services-stack.yml).
+    ai_services_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ ai_services_lab_domain, true) }}"
+    ai_services_openwebui_oidc_client_id: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_ID') | default('openwebui', true) }}"
+    ai_services_openwebui_oidc_client_secret: >-
+      {{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET')
+         | mandatory('OPENWEBUI_OIDC_CLIENT_SECRET env var is required') }}
+    ai_services_openwebui_lmstudio_api_base: "https://llm.{{ ai_services_lab_domain }}/v1"
+    # The one real config change versus the framework deployment: this LXC
+    # reaches llamacpp-router/ollama across a real ai_seg -> framework
+    # subnet hop, not a same-host Docker gateway -- see plan.md Step 3 and
+    # the ai_seg -> framework:8080,11434 egress rule it requires.
+    # FQDN, not LAB_IP_FRAMEWORK's raw IP -- matches the established
+    # precedent for the other contained zone reaching framework the same
+    # way: deploy-pentagi-stack.yml's pentagi_framework_host, same
+    # FRAMEWORK_HOST env var / framework.gibbsgreatly.xyz default, same
+    # :8080/:11434 ports. DNS resolution from containers on this LXC is
+    # already proven live (Harbor's own hostname pull succeeded the same
+    # way during this deployment).
+    ai_services_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
+    # See the DEFAULT_MODELS env var below for why this exists at all --
+    # keep in sync with whichever model is actually kept loaded on
+    # framework's llama-swap, not a general "best" default.
+    ai_services_openwebui_default_model: "{{ lookup('env', 'OPENWEBUI_DEFAULT_MODEL') | default('Laguna-S-2.1-UD-Q4_K_M-00001-of-00003', true) }}"
+    # Plaintext HTTP across a real subnet hop, not same-host -- unlike the
+    # SearXNG vars below. Deliberate, not overlooked: llamacpp-router
+    # enforces no auth on :8080 to any caller today (confirmed live
+    # 2026-08-02, see plan.md Step 3), so this widens network *reach* to
+    # an already-unauthenticated service, not authentication exposure --
+    # access control here is firewall-only already, same posture as
+    # Ollama's :11434. Revisit if the operator decides to add real auth to
+    # the router (open question in plan.md).
+    ai_services_openwebui_llamacpp_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
+    # Routed through ollama-reliability-proxy (internal compose network,
+    # not framework directly) since 2026-08-25 -- see docs/coding-stack/plan.md
+    # Phase 6. The proxy's own OLLAMA_UPSTREAM env var below is what
+    # actually makes the framework:11434 plaintext cross-subnet hop now.
+    ai_services_openwebui_ollama_api_base: "http://ollama-reliability-proxy:{{ ai_services_reliability_proxy_port }}"  # NOSONAR: internal-only Docker network
+    ai_services_openwebui_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+    # Reused as-is from the framework deployment -- signs sessions/JWTs, so
+    # a fresh data dir on this new LXC must not mint a new one and silently
+    # invalidate the migrated OpenWebUI DB's existing sessions.
+    ai_services_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
+    ai_services_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
+    # SearXNG remains available as the browser-facing metasearch service.
+    # OpenWebUI's AI search uses Brave's standard API directly, avoiding
+    # SearXNG's unreliable upstream-engine mix. The account's API key was
+    # verified against this endpoint; its LLM Context endpoint returns 400,
+    # so do not select brave_llm_context until the Brave plan supports it.
+    ai_services_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
+    # SearXNG uses its base URL to generate redirects (including after saving
+    # preferences). `searxng:8080` only resolves inside Docker, so it cannot
+    # be used here now that the service has a user-facing HTTPS route.
+    ai_services_searxng_base_url: "https://searxng.{{ ai_services_lab_domain }}/"
+    # Optional, unlike the mandatory secrets above -- web search works
+    # without either, just with fewer/lower-quality engines. See
+    # docs/design/lessons-learned.md's SearXNG entry for why the default
+    # scraped engines mostly don't work from this network and these were
+    # added.
+    ai_services_brave_search_api_key: "{{ lookup('env', 'BRAVE_SEARCH_API_KEY') | default('', true) }}"
+
+  tasks:
+    - name: Create ai-services-stack compose directory
+      ansible.builtin.file:
+        path: "{{ ai_services_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create ollama-reliability-proxy build directory
+      ansible.builtin.file:
+        path: "{{ ai_services_reliability_proxy_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy ollama-reliability-proxy source
+      ansible.builtin.copy:
+        src: "{{ ai_services_reliability_proxy_source_dir }}/proxy.py"
+        dest: "{{ ai_services_reliability_proxy_build_dir }}/proxy.py"
+        mode: "0640"
+      register: ai_services_reliability_proxy_copy_result
+
+    - name: Seed SearXNG settings with JSON output enabled
+      community.docker.docker_container:
+        name: ai-services-searxng-settings-seed
+        image: "{{ ai_services_registry_host }}/dockerhub/library/busybox:1.36"
+        state: started
+        detach: false
+        cleanup: true
+        volumes:
+          - "ai-services-searxng-data:/etc/searxng"
+        command:
+          - sh
+          - -c
+          - |
+            if [ ! -f /etc/searxng/settings.yml ]; then
+              cat > /etc/searxng/settings.yml <<'EOF'
+            use_default_settings: true
+            server:
+              secret_key: "{{ ai_services_searxng_secret_key }}"
+            search:
+              formats:
+                - html
+                - json
+            EOF
+            fi
+      no_log: true
+
+    - name: Ensure SearXNG's engine selection matches what's actually reachable
+      ansible.builtin.blockinfile:
+        path: "/var/lib/docker/volumes/ai-services-searxng-data/_data/settings.yml"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - working-engines override"
+        insertafter: EOF
+        block: |
+          engines:
+            # Confirmed live 2026-08-02: TCP connect to duckduckgo's html
+            # endpoint (20.43.x.x, Azure-hosted) times out from this LAN --
+            # reproduced from both pve-test-vm and a separate workstation on
+            # the same WAN uplink, so it's a network-path issue upstream of
+            # this stack, not an ai_seg firewall gap. google cse, startpage,
+            # brave, qwant, and yahoo are all reachable but bot-detect and
+            # suspend/CAPTCHA a self-hosted SearXNG's scraped requests within
+            # a query or two. Left enabled by SearXNG's own defaults
+            # (use_default_settings: true), these don't just fail
+            # silently -- they eat the whole per-engine timeout window on
+            # every query, which is what surfaces to OpenWebUI as
+            # "404: No results found from web search" even though other
+            # engines would have answered in time. See
+            # docs/design/lessons-learned.md's SearXNG entry.
+            - name: duckduckgo
+              disabled: true
+            - name: duckduckgo web
+              disabled: true
+            - name: google cse
+              disabled: true
+            - name: startpage
+              disabled: true
+            - name: brave
+              disabled: true
+            - name: qwant
+              disabled: true
+            - name: yahoo
+              disabled: true
+            - name: presearch
+              disabled: true
+            # Confirmed live 2026-08-02: both return real, relevant results
+            # with no bot-detection pushback from this network -- mwmbl is
+            # an independent crowdsourced index, searchmysite indexes
+            # personal/independent sites. Neither is enabled by SearXNG's
+            # own defaults.
+            - name: mwmbl
+              disabled: false
+            - name: searchmysite
+              disabled: false
+            # Confirmed live 2026-08-02: scraped Bing, unlike the other
+            # scraped engines above, returns clean results with zero
+            # bot-detection pushback from this network. Not enabled by
+            # SearXNG's own defaults.
+            - name: bing
+              disabled: false
+            {% if ai_services_brave_search_api_key %}
+            # Real API, not the scraped `brave` engine (left disabled
+            # above) -- structurally avoids the CAPTCHA problem instead of
+            # hoping this network's IP reputation improves.
+            - name: braveapi
+              engine: braveapi
+              shortcut: bra
+              api_key: "{{ ai_services_brave_search_api_key }}"
+              # API-key engines are inactive in SearXNG's defaults.  Setting
+              # disabled: false alone leaves the engine removed from both
+              # searches and the preferences page.
+              inactive: false
+              disabled: false
+              # Confirmed live 2026-08-02: scraped `bing` returns
+              # completely unrelated content (NZ regional news) for
+              # recency-flavored queries like "latest X 2026" -- looks
+              # like its scraper is picking up Bing's "top stories" news
+              # carousel instead of organic results for that query shape
+              # (it's fine on other queries, see the mwmbl/searchmysite
+              # comment above). braveapi gave genuinely on-topic results
+              # for the same query. Weighted above bing's default (1.0)
+              # so its results rank higher when both contribute, rather
+              # than disabling bing outright -- it's still a free/
+              # unlimited fallback for when braveapi's quota is hit.
+              weight: 2.0
+            {% endif %}
+      register: ai_services_searxng_settings_reconciled
+      no_log: true
+
+    - name: Check whether the searxng container already exists
+      community.docker.docker_container_info:
+        name: searxng
+      register: ai_services_searxng_container_info
+
+    - name: Restart SearXNG after engine settings change
+      community.docker.docker_container:
+        name: searxng
+        state: started
+        restart: true
+      when:
+        - ai_services_searxng_settings_reconciled.changed
+        - ai_services_searxng_container_info.exists
+      # On a genuinely fresh LXC (confirmed live 2026-08-02 deploying to
+      # pve) the searxng container doesn't exist yet at this point in the
+      # playbook -- "Deploy ... via docker compose" below is what creates
+      # it. Without the exists guard, docker_container tries to create a
+      # container with no image specified and fails outright. Redeploys
+      # (container already exists) still restart correctly to pick up
+      # the new settings.yml.
+
+    - name: Install OpenWebUI docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ ai_services_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          # Neither service sets its own `logging:` block -- both inherit
+          # the host-level Docker daemon syslog log-driver configured above.
+          services:
+            openwebui:
+              image: {{ ai_services_openwebui_image }}
+              container_name: openwebui
+              restart: unless-stopped
+              ports:
+                - "{{ ai_services_openwebui_port }}:8080"
+              volumes:
+                - ai-services-openwebui-data:/app/backend/data
+                # Bind-mounts the LXC host's own trusted CA bundle (already
+                # includes the Homelab root CA -- see
+                # ansible/00-initial-setup/ai-services-data-migration.yml's
+                # "Trust the homelab root CA" play) into the container at
+                # the same path Python's default SSL context resolves to
+                # on this image (verified: /usr/lib/ssl/cert.pem symlinks
+                # here). Without this, OpenWebUI's own backend OIDC
+                # discovery fetch to authentik-int.${LAB_DOMAIN}
+                # (step-ca-issued cert) fails TLS verification even though
+                # the host trusts it fine -- containers have their own
+                # separate cert store. Read-only: openwebui never needs to
+                # write here.
+                - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+                # authlib (OpenWebUI's actual OAuth library) makes its real
+                # HTTP calls via httpx, which -- unlike urllib/aiohttp --
+                # does NOT consult the system trust store above at all; it
+                # loads its own bundled certifi package file exclusively.
+                # Confirmed live 2026-08-02: the system-store mount alone
+                # left authlib's own discovery fetch failing with the same
+                # SSL error, traced via the container's actual traceback
+                # (authlib -> httpx_client -> httpx -> httpcore). Mounting
+                # the same trusted bundle over certifi's file fixes the
+                # actual code path OIDC login uses, not just python's
+                # stdlib ssl default.
+                - /etc/ssl/certs/ca-certificates.crt:/usr/local/lib/python3.11/site-packages/certifi/cacert.pem:ro
+              environment:
+                WEBUI_SECRET_KEY: "{{ ai_services_openwebui_webui_secret_key }}"
+                ENABLE_OPENAI_API: "true"
+                ENABLE_OLLAMA_API: "true"
+                OPENAI_API_BASE_URLS: "{{ ai_services_openwebui_lmstudio_api_base }};{{ ai_services_openwebui_llamacpp_api_base }}"
+                OPENAI_API_KEYS: "{{ ai_services_openwebui_llm_api_key }};{{ ai_services_openwebui_llm_api_key }}"
+                # Not an OpenWebUI setting -- purely so the model-discovery
+                # verification task below can tell the LM Studio URL apart
+                # from llamacpp's in the semicolon-joined list above.
+                LMSTUDIO_API_BASE: "{{ ai_services_openwebui_lmstudio_api_base }}"
+                OLLAMA_BASE_URL: "{{ ai_services_openwebui_ollama_api_base }}"
+                WEBUI_URL: "https://openwebui.{{ ai_services_lab_domain }}"
+                ENABLE_OAUTH_SIGNUP: "true"
+                OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
+                OAUTH_CLIENT_ID: "{{ ai_services_openwebui_oidc_client_id }}"
+                OAUTH_CLIENT_SECRET: "{{ ai_services_openwebui_oidc_client_secret }}"
+                OPENID_PROVIDER_URL: "https://{{ ai_services_authentik_fqdn }}/application/o/edge-ai-services-stack-openwebui/.well-known/openid-configuration"
+                OAUTH_PROVIDER_NAME: "Authentik"
+                OAUTH_SCOPES: "openid email profile"
+                ENABLE_WEB_SEARCH: "true"
+                WEB_SEARCH_ENGINE: "brave"
+                BRAVE_SEARCH_API_KEY: "{{ ai_services_brave_search_api_key }}"
+                # Brave's free tier permits one request per second. Keeping
+                # this sequential avoids a multi-query model immediately
+                # exhausting that quota; OpenWebUI retries one 429 once.
+                WEB_SEARCH_CONCURRENT_REQUESTS: "1"
+                WEB_SEARCH_RESULT_COUNT: "5"
+                # Retained only for a deliberate admin switch back to
+                # SearXNG; it is not used by Brave's direct API.
+                SEARXNG_QUERY_URL: "{{ ai_services_searxng_query_url }}"
+                # Without this, OpenWebUI defaults new chats to whichever
+                # model sorts first alphabetically among everything
+                # llamacpp-router reports -- not whichever model is
+                # actually loaded in VRAM. llama-swap only keeps
+                # `--models-max` (3) models loaded at once and evicts on
+                # demand; picking an unloaded model from a fresh chat
+                # triggers a real load, which for large models can take
+                # hours (confirmed live 2026-08-02: an accidental request
+                # against an unloaded 30B model started evicting the
+                # then-loaded Laguna model, which takes ~7h to reload).
+                # Keep this in sync with whichever model the operator is
+                # actually keeping warm -- it is not a statement that this
+                # specific model is somehow the "right" default in general.
+                DEFAULT_MODELS: "{{ ai_services_openwebui_default_model }}"
+              depends_on:
+                searxng:
+                  condition: service_healthy
+                ollama-reliability-proxy:
+                  condition: service_healthy
+
+            # Centralized here so every Ollama consumer on this LXC --
+            # OpenWebUI included -- gets protection from this project's
+            # own documented Ollama corruption bugs, not just an external
+            # client like VS Code Copilot. See
+            # docs/coding-stack/plan.md Phase 6 and
+            # scripts/ollama-reliability-proxy/proxy.py's own module
+            # docstring for the full design. Stdlib-only Python, no build
+            # step -- bind-mounted straight into a plain python image.
+            ollama-reliability-proxy:
+              image: "{{ ai_services_registry_host }}/dockerhub/library/python:3.12-slim"
+              container_name: ollama-reliability-proxy
+              restart: unless-stopped
+              command: ["python3", "/proxy.py"]
+              ports:
+                - "{{ ai_services_reliability_proxy_port }}:{{ ai_services_reliability_proxy_port }}"
+              environment:
+                PROXY_HOST: "0.0.0.0"
+                PROXY_PORT: "{{ ai_services_reliability_proxy_port }}"
+                # 900s (15min): a real, working-but-slow answer to a big
+                # question against a large repo context can genuinely take
+                # several minutes on this hardware. The old 180s default
+                # cut those off mid-generation with no visible error (see
+                # proxy.py's 2026-08-25 fix #2) -- this is the operator's
+                # explicit tolerance ("its reasonable for it to take
+                # ages"), not just a bigger arbitrary number.
+                PROXY_TIMEOUT_S: "900"
+                # The one real plaintext cross-subnet hop this stack makes
+                # to framework -- same accepted-risk posture as the
+                # llamacpp/Ollama routes above (llamacpp-router/Ollama
+                # enforce no auth on this network either way).
+                OLLAMA_UPSTREAM: "http://{{ ai_services_framework_host }}:11434"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
+              volumes:
+                - "{{ ai_services_reliability_proxy_build_dir }}/proxy.py:/proxy.py:ro"
+              healthcheck:
+                test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ ai_services_reliability_proxy_port }}/v1/models', timeout=10)"]
+                interval: 10s
+                timeout: 15s
+                retries: 6
+                start_period: 10s
+
+            searxng:
+              image: {{ ai_services_searxng_image }}
+              container_name: searxng
+              restart: unless-stopped
+              ports:
+                - "{{ ai_services_searxng_port }}:8080"
+              volumes:
+                - ai-services-searxng-data:/etc/searxng
+              environment:
+                SEARXNG_BASE_URL: "{{ ai_services_searxng_base_url }}"
+              healthcheck:
+                test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/search?q=test&format=json"]
+                interval: 30s
+                timeout: 5s
+                retries: 3
+                start_period: 15s
+
+          volumes:
+            ai-services-openwebui-data:
+              name: ai-services-openwebui-data
+            ai-services-searxng-data:
+              name: ai-services-searxng-data
+      register: ai_services_compose_definition
+
+    - name: Deploy OpenWebUI and SearXNG via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ ai_services_compose_dir }}"
+        state: present
+        # No recreate: at all here previously means the module's own
+        # default ('auto') always applied -- 'auto' does not reliably
+        # recreate on an image-tag-only compose change (confirmed live
+        # elsewhere this session). Force recreation whenever the compose
+        # file's own content changed.
+        recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
+
+    - name: Determine whether ollama-reliability-proxy's source actually changed this run
+      ansible.builtin.set_fact:
+        ai_services_reliability_proxy_changed: "{{ ai_services_reliability_proxy_copy_result.changed and not ai_services_compose_definition.changed }}"
+        # A compose-file change already forced 'recreate: always' above, which
+        # picks up the new bind-mounted proxy.py for free. This only needs to
+        # fire for the source-only-changed case, which 'auto' silently misses
+        # (bind-mount content diffs don't trigger a compose recreate -- same
+        # bug class as docs-rag-mcp's corpus, found live 2026-08-25 when a
+        # real Copilot session kept dropping tool calls after a proxy.py fix
+        # that had been "deployed" but never actually loaded).
+
+    - name: Restart ollama-reliability-proxy to pick up a source-only change
+      community.docker.docker_container:
+        name: ollama-reliability-proxy
+        state: started
+        restart: true
+      when: ai_services_reliability_proxy_changed | bool
+
+    - name: Wait for ollama-reliability-proxy to come back up after a source-change restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ai_services_reliability_proxy_port }}/v1/models"
+        status_code: [200, 404]
+      register: ai_services_reliability_proxy_health_after_restart
+      retries: 30
+      delay: 5
+      until: ai_services_reliability_proxy_health_after_restart.status is defined
+      failed_when: false
+      when: ai_services_reliability_proxy_changed | bool
+
+    - name: Fail if ollama-reliability-proxy never came back up after restart
+      ansible.builtin.assert:
+        that:
+          - ai_services_reliability_proxy_health_after_restart.status is defined
+          - ai_services_reliability_proxy_health_after_restart.status in [200, 404]
+        fail_msg: "ollama-reliability-proxy did not come back up after a source-change restart"
+      when: ai_services_reliability_proxy_changed | bool
+
+    - name: Reconcile infrastructure-managed OpenWebUI connection settings
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - openwebui
+          - python
+          - -c
+          - |
+            import json
+            import os
+            import sqlite3
+            import time
+
+            database = "/app/backend/data/webui.db"
+            backup = f"{database}.ai-services-stack-pre-connection-fix"
+            connection = sqlite3.connect(database)
+            openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
+            openai_api_keys = os.environ["OPENAI_API_KEYS"].split(";")
+            desired = {
+                "openai.enable": json.dumps(True),
+                "openai.api_base_urls": json.dumps(
+                    openai_base_urls, separators=(",", ":")
+                ),
+                "openai.api_keys": json.dumps(
+                    openai_api_keys, separators=(",", ":")
+                ),
+                "ollama.enable": json.dumps(True),
+                "ollama.base_urls": json.dumps(
+                    [os.environ["OLLAMA_BASE_URL"]], separators=(",", ":")
+                ),
+                "web.search.enable": json.dumps(True),
+                "web.search.engine": json.dumps("brave"),
+                "web.search.brave_search_api_key": json.dumps(
+                    os.environ["BRAVE_SEARCH_API_KEY"]
+                ),
+                "web.search.concurrent_requests": json.dumps(
+                    int(os.environ["WEB_SEARCH_CONCURRENT_REQUESTS"])
+                ),
+                "web.search.result_count": json.dumps(
+                    int(os.environ["WEB_SEARCH_RESULT_COUNT"])
+                ),
+                "webui.url": json.dumps(os.environ["WEBUI_URL"]),
+                "ui.default_models": json.dumps(os.environ["DEFAULT_MODELS"]),
+            }
+            pending = []
+            for key, value in desired.items():
+                row = connection.execute(
+                    "SELECT value FROM config WHERE key = ?", (key,)
+                ).fetchone()
+                if row is None or row[0] != value:
+                    pending.append((key, value))
+
+            if pending:
+                if not os.path.exists(backup):
+                    backup_connection = sqlite3.connect(backup)
+                    connection.backup(backup_connection)
+                    backup_connection.close()
+                    os.chmod(backup, 0o600)
+
+                updated_at = int(time.time())
+                connection.executemany(
+                    """
+                    INSERT INTO config (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value = excluded.value,
+                      updated_at = excluded.updated_at
+                    """,
+                    [(key, value, updated_at) for key, value in pending],
+                )
+                connection.commit()
+
+            connection.close()
+            print(json.dumps({
+                "changed": bool(pending),
+                "keys": [key for key, _value in pending],
+            }))
+      register: ai_services_openwebui_connection_reconcile
+      changed_when: >-
+        (ai_services_openwebui_connection_reconcile.stdout | from_json).changed
+
+    - name: Restart OpenWebUI after connection settings change
+      community.docker.docker_compose_v2:
+        project_src: "{{ ai_services_compose_dir }}"
+        state: restarted
+        services:
+          - openwebui
+      when: ai_services_openwebui_connection_reconcile.changed
+
+    - name: Wait for OpenWebUI after connection reconciliation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ai_services_openwebui_port }}/"
+        status_code: 200
+      register: ai_services_openwebui_health
+      retries: 30
+      delay: 2
+      until: ai_services_openwebui_health.status == 200
+
+    - name: Verify OpenWebUI can discover models from all managed LLM routes
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - openwebui
+          - python
+          - -c
+          - |
+            import json
+            import os
+            import urllib.error
+            import urllib.request
+
+            # Reversed 2026-08-25 (docs/coding-stack/plan.md Phase 6):
+            # originally (2026-08-02) llamacpp was the hard requirement
+            # and Ollama/LM Studio were soft, reflecting which backend was
+            # actually in active use at the time. That's flipped since --
+            # Ollama (Laguna) is the actively-used backend today, llamacpp
+            # isn't running on framework at all right now. Keeping
+            # llamacpp/LM Studio fully configured and documented (not
+            # removed -- may come back into use later), just no longer
+            # treated as hard requirements. Confirmed live 2026-08-25: this
+            # exact check hadn't been re-exercised since llamacpp-router
+            # went down, so it silently failed every deploy of this stack
+            # on an unrelated, non-fatal condition until this fix.
+            discovered = {}
+            warnings = []
+            openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
+            openai_api_keys = os.environ["OPENAI_API_KEYS"].split(";")
+            for base_url, api_key in zip(openai_base_urls, openai_api_keys):
+                request = urllib.request.Request(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                try:
+                    with urllib.request.urlopen(request, timeout=15) as response:
+                        models = [
+                            model.get("id")
+                            for model in json.load(response).get("data", [])
+                            if model.get("id")
+                        ]
+                        if models:
+                            discovered[base_url] = models
+                        else:
+                            warnings.append(f"{base_url}: reachable but returned no models (llamacpp/LM Studio not in active use, not fatal)")
+                except urllib.error.URLError as error:
+                    warnings.append(f"{base_url}: {error} (llamacpp/LM Studio not in active use, not fatal)")
+
+            ollama_base_url = os.environ["OLLAMA_BASE_URL"]
+            try:
+                with urllib.request.urlopen(
+                    f"{ollama_base_url}/api/tags", timeout=15
+                ) as response:
+                    discovered[ollama_base_url] = [
+                        model.get("name")
+                        for model in json.load(response).get("models", [])
+                        if model.get("name")
+                    ]
+            except urllib.error.URLError as error:
+                raise SystemExit(f"Ollama route ({ollama_base_url}) is not reachable -- this is the actively-used backend, not optional: {error}")
+
+            empty_routes = [
+                base_url for base_url, models in discovered.items() if not models
+            ]
+            if empty_routes:
+                raise SystemExit(f"managed LLM routes returned no models: {empty_routes}")
+            print(json.dumps({"models": discovered, "warnings": warnings}))
+      changed_when: false
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

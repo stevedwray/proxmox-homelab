@@ -1,0 +1,66 @@
+# Greenbone Community Edition (GVM/OpenVAS) vulnerability scanner —
+# joins pentagi-stack's existing pentest_seg zone rather than getting its
+# own dedicated zone. See docs/greenbone-stack/plan.md for the deployment
+# plan and docs/framework-integration/decisions.md Decision 4 for why
+# pentest_seg exists as its own contained zone in the first place.
+#
+# Sized at Greenbone's stated MINIMUM spec (2 cores / 4GB RAM), not their
+# "recommended" 4 cores / 8GB — pve-test-vm is a 16GB bare-metal box and
+# pentagi-stack alone already reserves 8192+2048MB. Feed sync and scans
+# will be slower at this tier; revisit sizing when promoting to pve.
+hostname: greenbone-stack
+ip_address: "${lab_ip_greenbone}/24"
+gateway: "${lab_gw_pentest}"
+dns_server: "${lab_gw_pentest}"
+network:
+  zone: pentest_seg
+vmid: 70011
+cores: 2
+memory: 4096
+swap: 2048
+rootfs_size: 20
+storage_profile: platform-default
+docker_storage_size: "40G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  # Grown 20G -> 40G 2026-08-17: filled to 95%/disk-quota-exceeded after
+  # ~2 weeks live -- real usage was legitimate GVM data (postgres findings
+  # DB + SCAP/CVE feed sync), not cruft; see docs/opensearch-stack/README.md.
+  size: "40G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - greenbone
+  - gvm
+  - pentest
+  - security
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: gvm-https
+    port: 443
+    protocol: tcp
+  - service: gvm-http
+    port: 8080
+    protocol: tcp
+ansible_playbook: "deploy-greenbone-stack"
+deployment_tier: ai
+portainer_agent: false
+
+# Findings ingestion (gvm_findings_ingest role) -- reads GVM/Greenbone
+# scan results via gvm-bridge's own already-authenticated GMP session
+# (a new /findings/all endpoint, not a second direct socket connection)
+# and bulk-indexes them into opensearch-stack. Fully independent of
+# gvm-bridge's existing PentAGI-facing endpoints, gvmd, and ospd-openvas.
+# See docs/opensearch-stack/README.md and docs/elasticsearch-stack/README.md
+# section 3.
+gvm_findings_ingest_enabled: true
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

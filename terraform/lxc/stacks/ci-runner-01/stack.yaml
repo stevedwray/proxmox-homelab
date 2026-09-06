@@ -39,3 +39,8 @@ registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env
 ansible_playbook: "deploy-ci-runner"
 deployment_tier: platform
 portainer_agent: false
+
+# Stage C of docs/harbor-stack/image-sourcing-enforcement.md: non-destructive
+# scheduled re-pull of known Harbor-routed images, keeping Harbor's cache/scan
+# data fresh for stacks that don't otherwise force a re-pull on redeploy.
+harbor_repull_enabled: true

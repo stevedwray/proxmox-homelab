@@ -4,10 +4,19 @@
   gather_facts: false
 
   vars:
+    # NOT self-referencing (see 2026-08-17 fix): an earlier version's default
+    # chain referenced its own name as the first term. That only ever
+    # resolved when the caller also injected a same-named -e extra-var
+    # (which outranks play vars and short-circuits the template entirely,
+    # as resize-lxc-mount.sh does for PVE_TEST_FQDN) -- against production
+    # pve, with no such extra-var, Ansible had to resolve the play var
+    # against itself and recursed infinitely ("Recursive loop detected in
+    # template"). This path had never been exercised against production
+    # before; fixed live during the first real production run.
     proxmox_delegate_host: >-
       {{
-        proxmox_delegate_host
-        | default(pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true), true)
+        pve_host
+        | default(lookup('env', 'PVE_TEST_FQDN'), true)
         | default('pve-test.gibbsgreatly.xyz', true)
       }}
     requested_mount_path: "{{ resize_mount_path | default('/var/lib/docker') }}"

@@ -298,7 +298,7 @@ gh issue close 28 --comment "Refactored. discover.py complexity 70→<15, proxmo
 ## Batch 6 — Fix stale Harbor IP in CI (task 03-06)
 
 One-line fix in `validate.yml`: update the `harbor-image-policy` error message from
-`192.168.1.10` (old vmbr0 address) to `10.57.3.10` (current infra_seg address).
+`192.168.1.10` (old vmbr0 address) to `192.168.40.10` (current infra_seg address).
 
 See [docs/plan/tasks/03-code-quality-06-fix-harbor-ip-in-ci.md](tasks/03-code-quality-06-fix-harbor-ip-in-ci.md).
 

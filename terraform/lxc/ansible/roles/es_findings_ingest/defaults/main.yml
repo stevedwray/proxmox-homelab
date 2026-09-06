@@ -1,0 +1,72 @@
+---
+# Defaults for es_findings_ingest role — see docs/elasticsearch-stack/plan.md
+# "Ingestion pattern". Explicit opt-in, matching harbor_repull_enabled's
+# pattern — only ever included on harbor-stack, gated by a flag so it never
+# silently attaches to any other host that happens to reuse this role file.
+es_findings_ingest_enabled: false
+
+es_findings_ingest_dir: /opt/es-findings-ingest
+es_findings_ingest_log_path: /var/log/es-findings-ingest.log
+
+# systemd OnCalendar expression. Independent of ci-runner-01's
+# harbor-repull.timer (03:17 UTC) -- this runs on harbor-stack itself, a
+# different host, so there's no direct chaining dependency. 05:30 UTC gives
+# Harbor's own async Trivy scan of anything harbor_repull freshly pulled
+# (~04:20-04:35 UTC finish, see project_harbor_alerting_automation_plan in
+# memory) a comfortable margin to actually complete before this reads
+# scan_overview.
+es_findings_ingest_on_calendar: "*-*-* 05:30:00"
+
+# --- OpenSearch connection -----------------------------------------------
+# Var/role/file names throughout this role still say "es"/"elastic" --
+# deliberately kept (see project_opensearch_migration_status memory):
+# "elastic-search-family findings ingestion" is still an accurate
+# description of what this role does, not worth a rename. Only the actual
+# connection target changed, from elasticsearch-stack to opensearch-stack.
+es_findings_ingest_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+# HTTPS, not HTTP -- opensearch-stack keeps plugins.security.ssl.http
+# ENABLED (the opposite of elasticsearch-stack's build -- OpenSearch has an
+# open bug where disabling HTTP-layer TLS stops demo certs from generating
+# at all, see terraform/lxc/stacks/opensearch-stack/STACK_CONTRACT.md).
+# OpenSearch's own self-signed demo cert -- callers skip verification
+# rather than fight that bug, same pattern Dashboards' own config uses.
+es_findings_ingest_elasticsearch_url: "https://{{ es_findings_ingest_elasticsearch_host }}:9200"
+es_findings_ingest_es_no_verify_tls: true
+
+# OpenSearch admin superuser -- needed only to bootstrap this role's own
+# scoped OpenSearch user/role and to idempotently apply index templates/
+# ingest pipelines (es_setup_assets.py). Never used at runtime by
+# harbor_findings_sync.py, which only ever uses the scoped
+# es_findings_ingest user credential written locally to
+# es_findings_ingest_dir (same "bootstrap with the privileged credential
+# once, hand the job a scoped one" shape harbor_repull's own robot
+# provisioning already uses).
+es_findings_ingest_elastic_admin_user: admin
+es_findings_ingest_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Scoped OpenSearch internal user this role provisions for itself --
+# limited to create_index/write/read on harbor-findings-*, gvm-findings-*,
+# and es-findings-sync-state, never the admin superuser.
+es_findings_ingest_es_role_name: es_findings_writer
+es_findings_ingest_es_user_name: es_findings_ingest
+
+# --- Harbor connection ---------------------------------------------------
+# Same host:port pattern harbor_postconfigure/harbor_repull already use for
+# their own admin API calls -- direct HTTP to Harbor's own port, not
+# through Traefik. (The LAB_FQDN_HARBOR-not-IP lesson is specifically about
+# docker login/registry-pull traffic hitting the OAuth token service's
+# HTTPS redirect -- it doesn't apply to Harbor's plain REST admin API,
+# which every existing role already calls this same way.)
+es_findings_ingest_harbor_admin_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var not set') }}"
+es_findings_ingest_harbor_admin_port: "{{ lookup('env', 'HARBOR_HTTP_PORT') | default(80, true) }}"
+es_findings_ingest_harbor_admin_user: admin
+es_findings_ingest_harbor_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+es_findings_ingest_harbor_url: "http://{{ es_findings_ingest_harbor_admin_host }}:{{ es_findings_ingest_harbor_admin_port }}"  # nosonar
+
+# Dedicated read-only robot (system-level, repository:pull only -- pull
+# scope is sufficient to read artifacts/tags/vulnerability reports, this
+# role never pushes or deletes anything in Harbor). Deliberately separate
+# from harbor_repull's own mirror-push robot and from the shared CI robot
+# -- fully independent credential, independent lifecycle, so nothing here
+# can affect either of those.
+es_findings_ingest_harbor_robot_name_prefix: "es-findings-ingest"

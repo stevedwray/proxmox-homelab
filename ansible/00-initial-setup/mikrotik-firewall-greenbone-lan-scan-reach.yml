@@ -1,0 +1,190 @@
+---
+# Phase 1 of docs/greenbone-stack/network-scan-rollout-plan.md: broaden
+# greenbone-stack's own network reach so it can run discovery/vulnerability
+# scans against every Proxmox SDN zone plus the flat LAN, without widening
+# pentest_seg as a whole -- pentagi-stack's existing containment is
+# untouched. Every rule below matches on greenbone-stack's own IP as
+# source, never the pentest_seg subnet.
+#
+# One rule per destination zone/LAN, no `protocol` key set -- RouterOS
+# treats an omitted protocol as "any". Deliberately mirrors the existing
+# precedent of scoping by destination IP/CIDR rather than by port list
+# (see pve.yaml's pentest_seg <-> 192.168.1.113 Metasploitable2 rules,
+# "protocol: all") -- discovery/vuln scanning is inherently open-ended
+# port enumeration; a fixed port list would defeat the point.
+#
+# Same idempotent read-check-insert-before-anchor-reread-assert pattern as
+# mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml, looped over
+# multiple destinations sharing one source and one anchor.
+#
+# CORRECTED 2026-08-16 after live inspection, before this playbook was ever
+# run: the original draft anchored on "the first forward drop/reject rule
+# found," copying mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml's
+# assumption unchanged. A live GET against /ip/firewall/filter showed that
+# assumption was imprecise here -- the *actual* pentest_seg containment
+# mechanism is `in-interface=vlan70-pentest` on one specific rule
+# (comment "pentest_seg default-deny to LAN/other zones"), not a generic
+# "first drop encountered" (the real first forward drop/reject on this
+# router is game_seg's own outbound deny, `src-address=192.168.60.0/24`,
+# which doesn't match greenbone-stack's traffic at all and would have been
+# a harmless-but-sloppy anchor -- correct by luck, not by design). None of
+# the six destination zones have their own inbound-side deny, so this one
+# rule is the only anchor that actually matters. The 7 rules described here
+# were applied live via the router's own Safe Mode console (operator-run,
+# not this playbook) using the corrected anchor, and independently
+# reverified afterward -- see docs/greenbone-stack/network-scan-rollout-plan.md
+# Phase 1 for the full record. This playbook is kept, corrected to match,
+# as the idempotent path for any future re-application (e.g. if a rule is
+# ever individually removed and needs recreating) rather than left
+# describing a different, looser anchor than what's actually live.
+#
+# Re-read `/ip/firewall/filter` in order after any future run of this
+# playbook to confirm placement, not just that the assert passed -- per
+# the rule-ordering gotcha in docs/pentagi-stack/harness-target.md (a rule
+# appended after an existing catch-all is silently dead despite being
+# correctly written).
+
+- name: Ensure greenbone-stack -> every zone/LAN discovery+vuln-scan firewall reach exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    lab_ip_greenbone: "{{ lookup('env', 'LAB_IP_GREENBONE') | mandatory('LAB_IP_GREENBONE env var is required') }}"
+
+    # One entry per destination. game_seg and the flat LAN have no
+    # LAB_SUBNET_*_CIDR env var (matching pve.yaml's own hardcoding of
+    # 192.168.60.0/24 for game_seg), so those two are hardcoded here too.
+    greenbone_scan_destinations:
+      - zone: build_seg
+        cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | mandatory('LAB_SUBNET_BUILD_CIDR env var is required') }}"
+      - zone: mgmt_seg
+        cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | mandatory('LAB_SUBNET_MGMT_CIDR env var is required') }}"
+      - zone: edge_seg
+        cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | mandatory('LAB_SUBNET_EDGE_CIDR env var is required') }}"
+      - zone: infra_seg
+        cidr: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') | mandatory('LAB_SUBNET_INFRA_CIDR env var is required') }}"
+      - zone: ai_seg
+        cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
+      - zone: game_seg
+        cidr: "192.168.60.0/24"
+      - zone: lan
+        cidr: "192.168.1.0/24"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find the pentest_seg default-deny rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | selectattr('in-interface', 'defined')
+              | selectattr('in-interface', 'equalto', 'vlan70-pentest')
+              | list)
+            | first | default({})
+          }}
+
+    - name: Assert the pentest_seg default-deny anchor exists
+      ansible.builtin.assert:
+        that:
+          - forward_drop_anchor != {}
+        fail_msg: >-
+          No forward-chain drop/reject rule with in-interface=vlan70-pentest
+          found -- this is the actual pentest_seg containment mechanism
+          (confirmed live 2026-08-16, see this file's header), not a
+          src-address match. If it's genuinely gone or renamed, add these
+          rules manually and update this playbook's assumption.
+
+    - name: Add each destination's accept rule, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          comment: "greenbone-stack: LAN/VLAN discovery+vuln scan reach -> {{ item.zone }}"
+          chain: "forward"
+          action: "accept"
+          src-address: "{{ lab_ip_greenbone }}"
+          dst-address: "{{ item.cidr }}"
+          place-before: "{{ forward_drop_anchor['.id'] }}"
+        status_code: [200, 201]
+      loop: "{{ greenbone_scan_destinations }}"
+      loop_control:
+        label: "{{ item.zone }}"
+      when: >-
+        (firewall_filters.json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'equalto', "greenbone-stack: LAN/VLAN discovery+vuln scan reach -> " ~ item.zone)
+          | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert every destination's rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            (firewall_filters_final.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', "greenbone-stack: LAN/VLAN discovery+vuln scan reach -> " ~ item.zone)
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'equalto', 'accept')
+              | selectattr('src-address', 'equalto', lab_ip_greenbone)
+              | selectattr('dst-address', 'equalto', item.cidr)
+              | list) | length > 0
+        fail_msg: "Expected MikroTik forward allow rule for {{ item.zone }} was not found after apply."
+      loop: "{{ greenbone_scan_destinations }}"
+      loop_control:
+        label: "{{ item.zone }}"
+
+    - name: Report the firewall rules are present
+      ansible.builtin.debug:
+        msg: >-
+          greenbone-stack LAN/VLAN discovery+vuln scan reach confirmed present
+          for all {{ greenbone_scan_destinations | length }} destinations.
+          Manually re-verify rule ORDER (not just presence) against each
+          destination zone's own catch-all before trusting this live --
+          see this file's header comment.

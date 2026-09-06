@@ -1,0 +1,47 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: ai-services-edge
+  stack: ai-services-stack
+  annotations:
+    repo.auth.oidc.client_id_env: OPENWEBUI_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: OPENWEBUI_OIDC_CLIENT_SECRET
+spec:
+  routes:
+    - name: openwebui
+      host: openwebui.${LAB_DOMAIN}
+      backend:
+        type: url
+        # LAB_IP_AI_SERVICES is this stack's own ai_seg LXC address (not
+        # framework's flat-LAN IP -- see docs/ai-services-migration/plan.md's
+        # "Addressing" section). OpenWebUI's container port 8080 is published
+        # as host port 8081 here; :8080 is not reused, avoiding any
+        # collision with llamacpp-router's own :8080 on framework.
+        url: http://${LAB_IP_AI_SERVICES}:8081
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc
+    - name: searxng
+      host: searxng.${LAB_DOMAIN}
+      backend:
+        type: url
+        # SearXNG's internal container port is published on the LXC at 8082.
+        # This route is intentionally separate from OpenWebUI's Docker-only
+        # `http://searxng:8080` query path.
+        url: http://${LAB_IP_AI_SERVICES}:8082
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # SearXNG has no accounts or RBAC. It is deliberately an
+        # unauthenticated network service; individual browser preferences
+        # are stored in the user's cookie, not in an Authentik identity.
+        mode: none

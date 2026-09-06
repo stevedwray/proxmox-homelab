@@ -60,15 +60,11 @@ Priority order:
 - For broader edits, code changes, or multi-file command-heavy work, prefer a
   Copilot handoff prompt with bounded scope and explicit validation.
 
-## Prompt Pack
+## Working Packet
 
-Use:
-
-- [docs/prompts/post-baseline-evolution-pack.md](../prompts/post-baseline-evolution-pack.md)
-
-Prompts 01 through 05 are historical and already complete.
-
-Use the next prompt in that pack for:
+The earlier prompt pack has been removed as transient agent-support material.
+If this historical note is reused, create a fresh task or short session note
+for:
 
 1. `platform-status` hardening
 2. then the first Phase 06 implementation-planning slice

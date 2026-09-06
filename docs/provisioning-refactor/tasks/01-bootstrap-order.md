@@ -15,7 +15,6 @@ access are healthy.
 - `docs/design/bootstrap.md`
 - `docs/provisioning-refactor/decisions.md`
 - `docs/provisioning-refactor/tasks/01-bootstrap-order.md`
-- `docs/provisioning-refactor/prompts/01-bootstrap-order.yaml`
 
 ## Preconditions
 

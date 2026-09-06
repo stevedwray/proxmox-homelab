@@ -1,5 +1,12 @@
 # 00c-bootstrap-01 — Stage 1: Temporary bootstrap containers
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` bootstrap workflow and retired
+> branch model.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING
@@ -59,7 +66,7 @@ self-hosted GitHub Actions pipeline run has completed successfully.
 ## Inputs
 
 - [docs/plan/phase-00c-bootstrap-sequence.md](../phase-00c-bootstrap-sequence.md)
-- [docs/design/bootstrap-stages.md](../../design/bootstrap-stages.md)
+- [docs/design/bootstrap.md](../../design/bootstrap.md)
 - `terraform/lxc/stacks/portainer-stack/`
 - `terraform/lxc/stacks/harbor-stack/`
 - `terraform/lxc/stacks/ci-runner-01/`
@@ -117,7 +124,7 @@ It deploys infrastructure and commits nothing.
 
 READ THESE FILES FIRST (before running any command):
   docs/plan/phase-00c-bootstrap-sequence.md
-  docs/design/bootstrap-stages.md
+  docs/design/bootstrap.md
   docs/plan/tasks/00c-bootstrap-01-stage1-temporary.md
 
 ---

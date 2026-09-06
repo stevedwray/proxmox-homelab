@@ -2,17 +2,20 @@
 
 ## Purpose
 
-This directory is the working documentation home for the productionization
-refactor: the work required to make the current `pve-test`-oriented platform
-safe, parameterized, and incrementally deployable on production `pve`.
+This directory now acts as a reduced historical reference for the
+productionization refactor: the work required to make the platform safe,
+parameterized, and incrementally deployable on production `pve`.
 
-This refactor is not a single cutover. It is a staged program covering:
+The detailed execution artifacts that used to live here have been removed. What
+remains should be treated as durable reference material only.
+
+The retained scope covers:
 
 - environment separation
 - storage and network parameterization
 - production credential controls
-- migration sequencing from `pve-test` to `pve`
-- early validation and canary workflows
+- migration sequencing from `pve-test-vm` to `pve`
+- production canary outcomes that may still be useful as reference
 
 Current migration sequence status:
 
@@ -21,30 +24,15 @@ Current migration sequence status:
 - `netbox-stack` canary completed
 - `ci-runner-01` is the next production migration after netbox
 
-## Branch Model
+## Workflow Note
 
-Primary branch for this refactor:
+Do not use this directory as a source of truth for the current branch model or
+promotion workflow.
 
-- `refactor/productionize`
+For current workflow rules, use:
 
-Base branch:
-
-- `baseline/teardown-validated`
-
-Recommended child-branch pattern during implementation:
-
-- `work/productionize-01-storage-manifest`
-- `work/productionize-02-network-intent`
-- `work/productionize-03-credential-guardrails`
-- `work/productionize-04-stack-decoupling`
-- `work/productionize-05-canary-validation`
-
-Working rule:
-
-- merge focused implementation branches back into `refactor/productionize`
-- keep `refactor/productionize` as the integration branch for this whole
-  program
-- do not promote directly from partial work branches
+- [docs/workflow/branch-model.md](/home/steve/git/proxmox-homelab/docs/workflow/branch-model.md:1)
+- [docs/workflow/environments.md](/home/steve/git/proxmox-homelab/docs/workflow/environments.md:1)
 
 ## Documents
 
@@ -52,8 +40,8 @@ Working rule:
   [pve-production-readiness.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/pve-production-readiness.md:1)
 - Task backlog:
   [tasks/README.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/tasks/README.md:1)
-- Copilot handoff packets:
-  [handoffs/README.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/README.md:1)
+- Retained inventory / teardown reference:
+  [pve-infra-teardown-inventory.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/pve-infra-teardown-inventory.md:1)
 
 ## Relationship To Other Docs
 
@@ -67,7 +55,7 @@ Working rule:
 ## Outcomes We Want
 
 - production storage and network intent are first-class tracked configuration
-- active stacks are not hardcoded to `pve-test`
+- active stacks are not hardcoded to `pve-test-vm`
 - production credentials are tightly gated and not casually available to AI
 - one-stack-at-a-time migration to `pve` is possible
 - early canary validation proves networking before critical services move

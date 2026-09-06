@@ -8,7 +8,7 @@ Proxmox host to the state expected by the current `terraform/lxc` deployment pat
 The active Phase 00a sequence is:
 
 1. Run `proxmox-initial-setup.yml` to align repositories, host tuning, and Terraform API access.
-2. Run `proxmox-sdn-setup.yml` to create the four Proxmox SDN VLAN zones and VNets defined in `terraform/lxc/network/pve-test.yaml`.
+2. Run `proxmox-sdn-setup.yml` to create the five Proxmox SDN VLAN zones and VNets defined in `terraform/lxc/network/pve-test.yaml`.
 3. Run `build-debian-13-template.yml` to build and package the Debian LXC template expected by the active Terraform stacks.
 
 These playbooks are the canonical bootstrap path for `pve-test`.
@@ -80,7 +80,7 @@ ansible-playbook \
 Purpose:
 
 - read `terraform/lxc/network/pve-test.yaml` as the source of truth
-- create or validate the four VLAN SDN zones and VNets on `pve-test`
+- create or validate the five VLAN SDN zones and VNets on `pve-test`
 - apply SDN changes with `pvesh set /cluster/sdn`
 - verify the expected VNet bridges exist on the host
 
@@ -98,6 +98,21 @@ Expected VLAN SDN objects:
 - zone `tvmgmt`, VNet `tvmgmt`, VLAN `20`
 - zone `tvedge`, VNet `tvedge`, VLAN `30`
 - zone `tvinfra`, VNet `tvinfra`, VLAN `40`
+- zone `tvgames`, VNet `tvgames`, VLAN `60`
+
+### `mikrotik-game-seg.yml`
+
+Purpose:
+
+- create RouterOS VLAN interface `vlan60-games` and gateway `192.168.60.1/24`
+- add the VLAN 60 tagged membership on `bridgeLocal`, `ether1`, and `ether5`
+- install the bounded game-stack policy for Minecraft, Portainer, monitoring, Graylog, step-ca, Harbor, apt-cacher, and package/image egress
+
+The physical switch trunks must be configured first. Run intentionally against the live router:
+
+```bash
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-game-seg.yml
+```
 
 ### `build-debian-13-template.yml`
 

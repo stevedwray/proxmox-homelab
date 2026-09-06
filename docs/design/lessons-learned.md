@@ -34,6 +34,38 @@ The Terraform SDN provisioner handles Simple zones only; VLAN zones are applied 
 Multiple setup and validation steps use it for Harbor and NetBox API checks. Add it to the
 Ansible bootstrap alongside other base tooling.
 
+**Contained zones (`ai_seg`, `pentest_seg`) have no direct route to `infra_seg`.**
+Docker image pulls using the raw `LAB_IP_HARBOR` address time out from these zones —
+confirmed live via a `docker pull` that hung until killed. Use `harbor.${LAB_DOMAIN}`
+(routed through Traefik/`edge_seg`) instead, matching `deploy-pentagi-stack.yml`'s
+`pentagi_framework_host`-style pattern. This reuses whatever `<zone>→edge_seg:443` rule
+the stack likely already needs for other reasons (OIDC, LM Studio), so it's usually not
+an extra firewall rule.
+
+**Live MikroTik state can silently diverge from `network/*.yaml` documentation.**
+A rule documented as an FQDN-based allowlist "the MikroTik must enforce via
+address-lists" turned out, on live inspection via the router's own read-only REST API
+(`MIKROTIK_READONLY_USER`/`MIKROTIK_READONLY_PASSWORD`), to be a flat subnet-wide accept
+rule with zero address-lists configured — the FQDN allowlist was the original intent,
+never the actual enforcement. Read the router's live state via the read-only API before
+extending a zone's firewall policy; don't assume the `.yaml` docs are ground truth.
+
+**`ansible.builtin.fetch` is a poor choice for large files.**
+It uses the `slurp` module internally — base64-encodes the entire remote file and ships
+it through Ansible's JSON result channel, with no streaming. An ~845MB real-world
+tarball took 18+ minutes and never completed. `ansible.posix.synchronize` (an rsync
+wrapper) does an efficient binary/delta transfer instead; the same transfer dropped to
+under 3 minutes. Reserve `fetch`/`copy` for genuinely small files.
+
+**Shared roles with relative-path assumptions break when reused from a different
+playbook location.** `lxc_base`'s CA-install task builds its source path as
+`{{ playbook_dir }}/../../../../certs/homelab-root.<env>.crt` — correct only for
+playbooks 4 directories deep under `terraform/lxc/ansible/playbooks/`. Reusing the role
+from a playbook at a different depth (e.g. `ansible/00-initial-setup/`, 2 deep) silently
+resolves the path outside the repo and skips CA install with no error — no failure, just
+quietly wrong. Don't reuse a shared role outside the directory depth it was written for;
+write correctly-pathed one-off tasks instead if the role can't be generalized.
+
 ## Harbor
 
 **Harbor's own images pull from Docker Hub on the first deployment pass.**
@@ -72,7 +104,7 @@ fields in `stack.yaml` so `/opt/proxy-stack/certs` is persisted.
 ## Authentik
 
 **Authentik must be in `mgmt_seg` with explicit allow rules from `edge_seg` and any app zone.**
-Traefik (edge_seg) reaches the Authentik forward-auth endpoint at `10.57.1.10:9000`.
+Traefik (edge_seg) reaches the Authentik forward-auth endpoint at `192.168.20.10:9000`.
 Any service that delegates auth to Authentik must also be able to reach it. Verify zone
 reachability before wiring up any protected route.
 
@@ -82,6 +114,232 @@ an API token, create Proxy Providers for Traefik forward-auth, and create OIDC p
 each integrated service (Grafana). This is the main obstacle to a fully automated rebuild.
 The `terraform-provider-authentik` can automate these steps and should be implemented before
 the platform is considered rebuild-safe.
+
+**LE staging on `pve-test-vm` breaks backend-side OIDC discovery against Authentik's
+*public* route — but the fix is the internal endpoint, not "wait for pve".**
+`authentik-stack/edge.yaml` uses the standard `letsencrypt` resolver (not the
+`step-ca`-backed override Harbor gets), so on `pve-test-vm` its cert is Let's Encrypt
+*staging* — untrusted by design (see the LE staging CA note above). Any backend service
+doing a server-side OIDC discovery fetch (not a human clicking through a browser
+warning) will hard-fail TLS verification against `authentik.${LAB_DOMAIN}` on
+`pve-test-vm`. **This does not mean OIDC is unvalidatable pre-promotion** — a first pass
+at this problem wrongly concluded that and deferred it, which was wrong and got
+corrected the same session. The actual fix: point the app's discovery URL at
+`authentik-int.${LAB_DOMAIN}` (step-ca-issued direct-TLS endpoint in `mgmt_seg`,
+already proven for Grafana/Portainer — see
+`docs/step-ca-implementation/internal-tls-consumer-matrix.md`), which needs a new
+`<zone> → mgmt_seg:443` firewall rule if the app's zone is contained (`ai_seg`,
+`pentest_seg`) and doesn't already reach `mgmt_seg`. Same root cause also affects the
+`llm.${LAB_DOMAIN}` (LM Studio) route, which has no split-endpoint override in
+OpenWebUI's case (see below) and so stays on the public route, accepted as a
+browser-only click-through wart rather than fixed.
+
+**Apps without a split authorize/token-endpoint override can't cleanly use
+`authentik-int` for the *interactive* leg — check first, don't assume.** Grafana and
+Portainer set `token_url`/`api_url` to the internal endpoint while keeping `auth_url`
+(the browser redirect target) on the public one — that's why they work today with an
+LE-staging cert nobody trusts. Generic OIDC clients that derive every endpoint from one
+`server_metadata_url` (OpenWebUI's `authlib`-based provider is one; so is Harbor's,
+already flagged "explicitly deferred" in the consumer matrix for this exact reason) have
+no such split — pointing them at `authentik-int` sends the *browser* there too, not just
+the backend. That's fine as long as the operator's own client trusts the pve-test-vm
+step-ca root (`certs/homelab-root.pve-test-vm.crt`) and can reach `mgmt_seg:443`/`:9443`
+directly (LAN already could, in this case, no new rule needed for that side) — but it's
+a real architectural difference from the Grafana/Portainer pattern, not a drop-in
+substitution. Confirm which category an app falls into before assuming its migration to
+`authentik-int` is as simple as Grafana's was.
+
+**`authlib`'s real HTTP client (`httpx`) ignores the container's system CA trust store
+entirely — it loads its own bundled `certifi` file.** A bind-mount that correctly fixes
+`urllib`/`aiohttp` TLS verification (`/etc/ssl/certs/ca-certificates.crt` at its usual
+path) leaves `authlib`'s actual discovery/token fetches still failing, silently, with no
+error surfaced anywhere except a wrong/missing redirect. Confirmed by reading the actual
+traceback through `authlib → httpx_client → httpx → httpcore`, not by guessing from the
+symptom. Fix: also bind-mount the trusted CA bundle onto
+`/usr/local/lib/python{version}/site-packages/certifi/cacert.pem` (or wherever
+`certifi.where()` reports for the image). When manually appending a cert to an existing
+PEM bundle file (rather than bind-mounting), a missing newline before `-----BEGIN
+CERTIFICATE-----` silently corrupts the previous entry — verify with `openssl x509 -in
+<bundle> -noout -subject` after any manual edit, not just a line count.
+
+**`scripts/provision.sh --stack <name>` never reconciles Traefik/DNS/Authentik-app
+config for that stack — full runs do it automatically, single-stack runs don't.**
+Every `--stack` invocation logs `"SKIP edge reconcile: single-stack mode (activate-edge
+phase handles this)"`, easy to miss in a long log. `activate-edge` is a phase of the
+*full teardown-cycle* tooling (`scripts/teardown-deploy-test.sh`), not something
+`--stack` triggers on its own — deploying a brand-new stack with `provision.sh --stack`
+alone leaves its edge route unpublished indefinitely, with no error, while the container
+itself runs fine and looks correctly configured. Symptom: the public hostname keeps
+behaving like nothing changed no matter what gets fixed on the app side, because
+requests never reach the new container's corrected code at all. Fix for a single new
+stack outside a full cycle: run `terraform/lxc/reconcile-edge.py --apply <path to that
+stack's edge.yaml>` directly (scoping to one manifest also avoids tripping over
+unrelated stacks with pre-existing reconcile issues — a full un-scoped run can crash
+entirely on a single stale manifest elsewhere), then push the result via
+`ansible-playbook deploy-proxy-stack.yml -e traefik_generated_source_dir=<generated
+dir>`, replicating what `reconcile_all_edge()` in `provision.sh` does for full runs.
+
+## SearXNG
+
+**SearXNG's stock default engine set (`use_default_settings: true`, no
+`engines:` override) is largely non-functional for a self-hosted instance
+behind a residential/lab IP — this looks like a migration regression but
+usually isn't.** Confirmed live 2026-08-02 on `ai-services-stack`: of the
+defaults enabled for the `general` category, `duckduckgo`/`duckduckgo web`
+failed with a hard TCP connect timeout to `html.duckduckgo.com`'s Azure IP
+— reproduced identically from a completely separate workstation on the same
+WAN uplink, proving it's a network-path issue upstream of the lab, not an
+`ai_seg` (or any zone's) firewall gap. `google cse`, `startpage`, `brave`,
+and `qwant` all connect fine but bot-detect and suspend/CAPTCHA scraped
+requests within a query or two (`SearxEngineTooManyRequestsException`,
+`Suspended: CAPTCHA`) — an inherent problem with unauthenticated scraping
+from a small pool of source IPs, present on any SearXNG deployment with
+this engine set, not something a migration introduces. Two engines *not*
+enabled by default came back with real, relevant results and no
+bot-pushback when tested directly: `mwmbl` (independent crowdsourced index)
+and `searchmysite` (indexes personal/independent sites). Practical
+consequence for the app consuming SearXNG: enabled-but-broken engines don't
+fail fast — they eat the full per-engine timeout on every single query, so
+a query that would've had a real answer from a working engine still surfaces
+as "no results" upstream (OpenWebUI: `404: [ERROR: No results found from
+web search]`) because the response never comes back in time. Fix: disable
+the broken/blocked engines and enable ones actually confirmed reachable, via
+an `engines:` block appended to `settings.yml` — reachability is
+network/reputation-dependent, so re-verify with a direct
+`/search?q=X&format=json&engines=<name>` call against the live instance
+before trusting any specific engine list, rather than assuming SearXNG's
+shipped defaults work out of the box.
+
+**Prefer official APIs over scraped engines wherever one exists — it's a
+structural fix, not a reputation gamble.** `braveapi` (needs a Brave Search
+API key, has a free tier) returned clean results with zero bot-detection
+pushback, unlike the scraped `brave` engine. Confirmed live 2026-08-02.
+Also worth trying before assuming a whole domain is unreachable: `bing`
+(scraped, not enabled by SearXNG's own defaults) worked cleanly too —
+default-disabled doesn't mean broken, it can just mean untested by
+upstream's own defaults for this use case.
+
+**Google Custom Search's "search the entire web" mode is not available for
+newly-created Programmable Search Engines** — Google restricted it to
+already-grandfathered accounts. A new CSE can only search the specific
+sites/domains you explicitly list. That rules it out as a *general* web
+search backend, but a curated-site CSE (a deliberate small site list) is
+still a legitimate targeted supplement, if you actually want that.
+
+**SearXNG's built-in `google_cse` engine is not the real Google Custom
+Search JSON API and ignores any `api_key`/`cx` you configure** — it's
+hardcoded to a shared third-party CSE token (`partner-pub-...`, belongs to
+blackle.com) and scrapes Google's CSE JSONP frontend. Confirmed by reading
+the actual module source in both the deployed image and upstream
+SearXNG's current `master` branch (a GitHub code search for
+`googleapis.com/customsearch` across the whole repo returns nothing) —
+this isn't version lag, no release has ever implemented the real API.
+Using a real Google Cloud API key + CSE ID requires a custom engine
+module (SearXNG dynamically imports `searx.engines.<name>` from whatever
+`.py` files exist in that directory — no static whitelist/`__all__`, so
+dropping in a new module and referencing it via `engine: <module_name>`
+in `settings.yml` just works). Two gotchas hit writing one:
+- **SearXNG rejects duplicate engine shortcuts even when the other engine
+  using that shortcut is `disabled: true`.** Picking an already-used
+  two/three-letter shortcut (e.g. `goc`, already claimed by the built-in
+  disabled `google cse` engine) crashes every worker on startup with
+  `Engine config error: ambiguous shortcut: <x>` — check the full engine
+  list's shortcuts first, not just the ones you're actively using.
+- **SearXNG's own HTTP error handling swallows the real API error body**
+  for any non-2xx response, raising a generic `SearxEngineAccessDenied
+  Exception` before your engine's `response()` function ever runs — the
+  UI/JSON output just says `"Suspended: access denied"` with no detail.
+  To see the actual provider error message (e.g. Google's specific
+  `PERMISSION_DENIED` reason), make the same request manually from
+  inside the container using the real configured credentials (read them
+  out of the running `settings.yml`, don't re-derive from SOPS on the
+  operator's own machine — decrypting a secret and building a command
+  with the plaintext value inline is a red flag worth avoiding even when
+  the intent is benign) and inspect the raw response body directly.
+- **A directory bind-mount over `/usr/local/searxng/searx/engines/`
+  itself would mask every built-in engine module** (bing, braveapi,
+  mwmbl, the works), not just add one. Bind-mount the single new `.py`
+  file to its own destination path inside that directory instead, the
+  same pattern already used for the CA-cert bind mounts.
+
+**Follow-up, 2026-08-03: the real Custom Search JSON API call still
+fails with `PERMISSION_DENIED — "This project does not have the access
+to Custom Search JSON API."` even when every checkable condition on the
+Google Cloud side is correct** — confirmed via `gcloud` (installed for
+this specific investigation), not just the Cloud Console UI, which can
+show stale/misleading state:
+- Billing is linked to the project.
+- The calling account holds `roles/owner` on the project.
+- The project has no GCP organization/folder above it, and both
+  `constraints/gcp.restrictApiKeyCreation` and
+  `...restrictApiKeyUsage` come back with no override set — so it's not
+  an org policy either (this also explained a separate red herring:
+  Cloud Console's "Create credentials" dropdown was missing the "API
+  key" option entirely, which looked like a hard restriction but turned
+  out to be a console UI quirk — `gcloud services api-keys create`
+  worked fine from the CLI).
+- `gcloud services list --enabled` confirms `customsearch.googleapis.com`
+  is actually enabled for the project (ground truth, independent of
+  what the Console's "Enable API" page displays).
+- The API key itself lives in the same project and is correctly
+  restricted to `customsearch.googleapis.com` only (`gcloud services
+  api-keys describe`).
+- Programmable Search Engine's own control panel
+  (`programmablesearchengine.google.com`, where `cx` lives) no longer
+  exposes a separate "Custom Search JSON API" activation step in its
+  current UI — so there's no separate per-engine toggle to be missing.
+- Forced a full `gcloud services disable customsearch.googleapis.com
+  --force` / `enable` cycle on the project and polled the real API
+  every 20s for 10 attempts (~3.5 minutes) — identical `PERMISSION_DENIED`
+  on every attempt, ruling out simple propagation delay too.
+
+Every lever available from this side (billing, IAM, org policy, API
+enablement, key scoping, forced re-enable) was exhausted and consistent.
+Google Custom Search was subsequently removed from SearXNG: it cannot
+provide general-web coverage under Google's current terms, and its failed
+request logging can expose the API key in container logs.
+
+**The word "latest" (and likely similar temporal-trigger words like
+"recent", a bare year) in a query gets classified as a recency/news-intent
+signal by both Bing's and Brave's search backends, surfacing generic
+region-locked trending news instead of substantive results** — confirmed
+live 2026-08-02: "openssl CVE vulnerability details" returned genuinely
+relevant results from both `bing` and `braveapi`; the identical query with
+"latest" prepended returned New Zealand regional news outlets (`stuff.co.nz`,
+`nzherald.co.nz`) from both engines instead, matching this server's
+geo-located egress IP. Not fixable at the SearXNG config layer -- it's
+inherent to how these engines interpret query intent, independent of engine
+choice or API vs scraped access. If a RAG pipeline's tool-calling model
+tends to phrase its own search queries with "latest X <year>" (a common
+pattern), expect this noise regardless of which engines are enabled;
+weighting one engine over another only helps when the higher-weighted
+engine actually returns better content for that specific query, which
+isn't guaranteed here since both mainstream engines share the same
+"latest" quirk.
+
+**When testing SearXNG's actual engine-specific behavior, don't use
+"cache-busting" nonsense suffixes on real queries.** SearXNG appears to
+cache results by query text regardless of `engines=` scoping -- re-running
+the *same* query text scoped to a different single engine can silently
+return the previous (different-engine) cached response instead of a fresh
+one, making it look like an engine returned something it didn't. Worse,
+appending genuinely nonsense tokens (random strings, or accidentally real
+but unrelated product names) to "bust" that cache produces query text no
+real search engine can meaningfully match, so it falls back to loosely
+associated or even viral/trending content -- this is normal search-engine
+behavior for garbled queries, not a bug in the integration. Use fresh,
+realistic, single-purpose query strings to test engine behavior, not
+mangled ones.
+
+**When hand-patching a live container's config file mid-session and later
+also managing the same file with `ansible.builtin.blockinfile`, clean up
+the manual edits first.** `blockinfile` only recognizes content between its
+own markers — a prior plain-append (e.g. `cat >> file <<EOF`) leaves a
+second, unmarked copy of the same top-level YAML key in the file.
+Duplicate top-level keys are likely tolerated by most YAML loaders
+(last-key-wins), so it can silently keep working, but it's undefined
+behavior to rely on and gets confusing fast. Strip the stale manual block
+down to a single instance of the key once the managed block exists.
 
 ## Chainloop
 

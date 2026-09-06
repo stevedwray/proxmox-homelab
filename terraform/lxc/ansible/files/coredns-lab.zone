@@ -2,7 +2,7 @@ $ORIGIN ${LAB_DOMAIN}.
 $TTL 5m
 
 @               IN  SOA ns1.${LAB_DOMAIN}. admin.${LAB_DOMAIN}. (
-						2026053003 ; serial
+						2026053005 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -32,8 +32,18 @@ monitoring-bg   IN  A   ${LAB_IP_MONITORING}; grafana/monitoring direct (breakgl
 netbox-bg       IN  A   ${LAB_IP_NETBOX}    ; netbox direct (breakglass)
 portainer-bg    IN  A   ${LAB_IP_PORTAINER} ; portainer direct (breakglass)
 proxy-bg        IN  A   ${LAB_IP_PROXY}     ; traefik dashboard direct (breakglass)
+media-stack-lab-bg IN A ${LAB_IP_MEDIA_STACK_LAB} ; media-stack-lab (Jellyfin+Immich) direct (breakglass)
 
 ; Phase 06 application services — populated during app migration
 ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)
 ; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)
 ; jellyfin     A   10.60.0.30          (Jellyfin, migrated in Phase 06)
+
+; CoreDNS has not been the live production DNS delegate target since the
+; 2026-07-05 Technitium cutover (docs/dns-refactor/production-cutover-packet.md).
+; It is kept deployed only as an old parallel authority/rollback point and is
+; deliberately NOT kept in sync with records added after cutover (graylog,
+; technitium, gvm, and others exist only in Technitium). Do not add new
+; records here -- add them to Technitium instead, e.g. via
+; terraform/lxc/ansible/playbooks/configure-gaming-stack-dns-records.yml or
+; configure-ai-stack-dns-records.yml as a pattern.

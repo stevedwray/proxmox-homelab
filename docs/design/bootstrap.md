@@ -37,7 +37,7 @@ Nothing runs on Proxmox during Stage 0. All work is on the operator's local mach
 
 - Retrieve the age private key from Bitwarden (`proxmox-homelab age private key`) and
   install it at `~/.config/sops/age/keys.txt` with mode `0600`
-- Verify `sops --decrypt terraform/secrets.enc.yaml` succeeds
+- Verify `sops --decrypt terraform/secrets.common.enc.yaml` succeeds
 - Confirm the `with-secrets` wrapper exists at the repository root and is executable
 
 ### Secrets posture
@@ -46,7 +46,7 @@ Stage 0 is where the `with-secrets` migration (Phase 03d) lives. From Stage 0 on
 there is no `.env` file and no `sync-secrets.sh`. The age private key at
 `~/.config/sops/age/keys.txt` is the only credential that needs to exist on the
 workstation. `with-secrets` handles all further secret delivery by decrypting
-`terraform/secrets.enc.yaml` in memory via `sops exec-env`. The decrypted values are
+`terraform/secrets.common.enc.yaml` in memory via `sops exec-env`. The decrypted values are
 injected into the subprocess environment only and are never written to disk.
 
 This design is consistent with ADR-06 (secrets runtime delivery via SOPS) and directly
@@ -64,7 +64,7 @@ control that `with-secrets` makes unnecessary by eliminating the file entirely.
 
 ### Exit condition
 
-- `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml`
+- `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.common.enc.yaml`
   succeeds without error
 - `./with-secrets echo OK` exits 0
 - Phase 03d (Secrets Delivery Hardening) is merged into the active development branch
@@ -99,15 +99,15 @@ throughout the bootstrap.
 
 | Service | VMID | Zone | IP |
 |---|---|---|---|
-| Portainer (temporary) | 20020 | `mgmt_seg` | `10.57.1.20` |
-| Harbor (temporary) | 40010 | `infra_seg` | `10.57.3.10` |
-| CI runner (temporary) | 10063 | `build_seg` | `10.57.0.63` |
+| Portainer (temporary) | 20020 | `mgmt_seg` | `192.168.20.20` |
+| Harbor (temporary) | 40010 | `infra_seg` | `192.168.40.10` |
+| CI runner (temporary) | 10063 | `build_seg` | `192.168.10.63` |
 
 All Stage 1 containers pull their images directly from Docker Hub. This is the only phase
 in which Docker Hub direct pulls are permitted at deployment time. Harbor's proxy cache
 projects are configured immediately after the Harbor LXC is healthy, enabling the
 pre-seeding step. The CI runner registers with GitHub Actions using a repository-scoped
-registration token stored in `terraform/secrets.enc.yaml`.
+registration token stored in `terraform/secrets.common.enc.yaml`.
 
 The critical Stage 1 deliverable is Harbor being pre-seeded with all images that Stage 2
 and Phase 04 will need. This pre-seeding step is the handoff between Stage 1 and Stage 2:
@@ -128,14 +128,14 @@ containers pull from Docker Hub directly rather than via robot account.
 - Stage 0 complete — `with-secrets` works and the age key is on the workstation
 - Proxmox host is running and accessible
 - SDN VLAN zones (`mgmt_seg`, `infra_seg`, `build_seg`) are applied to `pve-test`
-- `terraform/secrets.enc.yaml` contains real values for all Proxmox API credentials
+- The relevant node's `terraform/secrets.<node>.enc.yaml` contains real values for its Proxmox API credentials (these are per-node, not in `secrets.common.enc.yaml` — see `docs/reference/secrets-management.md`)
 
 ### Exit condition
 
-- Harbor is running at `10.57.3.10` with all Stage 2 and Phase 04 required images
+- Harbor is running at `192.168.40.10` with all Stage 2 and Phase 04 required images
   pre-pulled and available in the proxy cache
 - CI runner is registered with GitHub Actions and at least one pipeline run has succeeded
-- Portainer is accessible at `10.57.1.20` for container inspection
+- Portainer is accessible at `192.168.20.20` for container inspection
 
 ---
 
@@ -151,9 +151,9 @@ healthy. After Stage 2, the platform has the foundation required for Phase 04.
 
 | Service | VMID | Zone | IP |
 |---|---|---|---|
-| Portainer (permanent) | 20020 | `mgmt_seg` | `10.57.1.20` |
-| Harbor (permanent) | 40010 | `infra_seg` | `10.57.3.10` |
-| CI runner (permanent) | 10063 | `build_seg` | `10.57.0.63` |
+| Portainer (permanent) | 20020 | `mgmt_seg` | `192.168.20.20` |
+| Harbor (permanent) | 40010 | `infra_seg` | `192.168.40.10` |
+| CI runner (permanent) | 10063 | `build_seg` | `192.168.10.63` |
 
 Stage 2 uses the same VMIDs as Stage 1. The transition is an in-place replacement:
 `terragrunt destroy` of the Stage 1 stack followed by `terragrunt apply` of the Stage 2
@@ -178,7 +178,7 @@ described above. Revisit if a data migration or snapshot-based approach is later
 
 All secrets delivered via `with-secrets` as in Stage 1. Stage 2 adds robot account
 authentication for Harbor image pulls (SEC-06): Ansible playbooks reference images at
-`10.57.3.10/...` and authenticate as `robot$ci-runner`. No anonymous image pulls are
+`192.168.40.10/...` and authenticate as `robot$ci-runner`. No anonymous image pulls are
 permitted once Stage 2 is complete.
 
 ### Entry condition
@@ -186,13 +186,13 @@ permitted once Stage 2 is complete.
 - Stage 1 complete — Harbor is running with all Stage 2 images available, CI runner is
   registered and has validated at least one pipeline run
 - Robot account credentials (`HARBOR_ROBOT_USER`, `HARBOR_ROBOT_PASSWORD`) are stored in
-  `terraform/secrets.enc.yaml`
+  `terraform/secrets.common.enc.yaml`
 
 ### Exit condition
 
 - Permanent Portainer, Harbor, and CI runner are running at their assigned VMIDs
 - Stage 1 temporary containers are torn down and confirmed absent
-- All subsequent container deployments reference Harbor at `10.57.3.10` as the image source
+- All subsequent container deployments reference Harbor at `192.168.40.10` as the image source
 - Phase 04 prerequisites can be satisfied
 
 ---
@@ -203,24 +203,27 @@ permitted once Stage 2 is complete.
 
 Bring up the DNS, ingress, certificate, and identity services that stack-owned
 browser provisioning depends on. This stage resolves the bootstrap problem for
-the edge reconciler: manifests cannot be applied until CoreDNS, Traefik, and
-Authentik API access exist.
+the edge reconciler: manifests cannot be applied until the internal DNS
+authority, Traefik, and Authentik API access exist.
 
 ### Deployment order
 
 Stage 3a order is load-bearing in Mode 2:
 
-1. **CoreDNS** (`dns-stack`, VMID 20013, `10.57.1.13`) with a seed
-   `lab.gibbsgreatly.xyz` zone. The seed zone contains only bootstrap and
-   non-browser records required before generated browser records exist.
-2. **Traefik** (`proxy-stack`, VMID 30010, `10.57.2.10`) with static runtime
+1. **Internal DNS authority**. Historically this was CoreDNS
+   (`dns-stack`, VMID 20013, `192.168.20.13`). The durable implementation is
+   Technitium (`technitium-stack`, VMID 20015, `192.168.20.15`) with CoreDNS
+   retained only as rollback context during the refactor. The active authority
+   serves a seed internal zone containing only bootstrap and non-browser
+   records required before generated browser records exist.
+2. **Traefik** (`proxy-stack`, VMID 30010, `192.168.30.10`) with static runtime
    configuration: entrypoints, providers, certificate resolvers, default store,
    and shared middleware definitions. Per-service browser routes are not
    considered stack-owned until the edge reconciler publishes generated files.
-3. **step-ca** (`step-ca-stack`, VMID 20011, `10.57.1.11`). ACME challenge paths
+3. **step-ca** (`step-ca-stack`, VMID 20011, `192.168.20.11`). ACME challenge paths
    that depend on Traefik are validated only after Traefik and the required
    MikroTik policy are in place.
-4. **Authentik** (`authentik-stack`, VMID 20010, `10.57.1.10`) via direct IP
+4. **Authentik** (`authentik-stack`, VMID 20010, `192.168.20.10`) via direct IP
    first boot. The operator completes first setup and stores the automation API
    token in SOPS before Authentik reconciliation is allowed.
 
@@ -228,8 +231,9 @@ Stage 3a order is load-bearing in Mode 2:
 
 The stack-owned edge reconciler is disabled during Stage 3a until:
 
-- CoreDNS answers authoritative queries for `lab.gibbsgreatly.xyz`
-- MikroTik conditionally forwards `lab.gibbsgreatly.xyz` to CoreDNS
+- The active internal DNS authority answers authoritative queries for the
+  internal zone
+- MikroTik conditionally forwards the internal zone to the active authority
 - Traefik is running and can load file-provider dynamic config
 - Authentik is healthy and an API token is available for routes that need
   Authentik objects
@@ -239,7 +243,7 @@ The operator runs the explicit edge reconciler after Stage 3a exits.
 
 ### Exit condition
 
-- CoreDNS, Traefik, step-ca, and Authentik are deployed on pve-test.
+- The internal DNS authority, Traefik, step-ca, and Authentik are deployed on pve-test.
 - Authentik direct first boot is complete and the automation API token is stored.
 - Edge reconciliation can run in dry-run mode and report planned DNS, Traefik,
   and Authentik changes.

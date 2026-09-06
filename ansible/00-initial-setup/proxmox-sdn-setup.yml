@@ -14,6 +14,8 @@
     sdn_gw_tvedge: "{{ lookup('env', 'lab_gw_edge') }}"
     sdn_subnet_tvnetc: "{{ lookup('env', 'lab_subnet_build_cidr') }}"
     sdn_gw_tvnetc: "{{ lookup('env', 'lab_gw_build') }}"
+    sdn_subnet_tvgames: "192.168.60.0/24"
+    sdn_gw_tvgames: "192.168.60.1"
     proxmox_sdn_attachments: >-
       {{
         attachments
@@ -44,7 +46,7 @@
       ansible.builtin.assert:
         that:
           - proxmox.target_node == (lookup('env', 'TF_VAR_proxmox_node') | default('pve-test', true))
-          - proxmox_sdn_attachments | length == 4
+          - proxmox_sdn_attachments | length == 5
           - proxmox_sdn_attachments | map(attribute='value.sdn.zone_type') | unique == ['vlan']
           - proxmox_sdn_attachments | map(attribute='value.sdn.bridge') | unique == ['vmbr0']
         fail_msg: "The loaded SDN network definition does not match the expected VLAN model for {{ proxmox.target_node }}."

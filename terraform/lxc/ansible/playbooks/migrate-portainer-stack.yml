@@ -33,6 +33,67 @@
   vars:
     _legacy_ip: "{{ portainer_migration_legacy_ip | default('192.168.1.4') }}"
   tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Inspect existing portainer-agent container
+      community.docker.docker_container_info:
+        name: portainer-agent
+      register: portainer_agent_container_info
+
+    - name: Check for modern portainer-agent compose directory
+      ansible.builtin.stat:
+        path: /opt/portainer-agent/docker-compose.yml
+      register: portainer_agent_compose_modern
+
+    - name: Check for legacy portainer compose directory
+      ansible.builtin.stat:
+        path: /opt/portainer/docker-compose.yml
+      register: portainer_agent_compose_legacy
+
+    - name: Resolve agent compose project directory
+      ansible.builtin.set_fact:
+        portainer_agent_migration_compose_dir: >-
+          {{
+            '/opt/portainer-agent'
+            if portainer_agent_compose_modern.stat.exists
+            else (
+              '/opt/portainer'
+              if portainer_agent_compose_legacy.stat.exists
+              else portainer_agent_compose_dir | default('/opt/portainer')
+            )
+          }}
+
+    - name: Resolve current portainer-agent management mode
+      ansible.builtin.set_fact:
+        portainer_agent_migration_mode: >-
+          {{
+            'compose'
+            if (
+              portainer_agent_container_info.exists
+              and (
+                portainer_agent_container_info.container.Config.Labels['com.docker.compose.project.working_dir']
+                | default('')
+              ) | length > 0
+            )
+            else (
+              'systemd'
+              if (portainer_agent_service_unit | default('portainer-agent.service')) in ansible_facts.services
+              else 'compose'
+            )
+          }}
+
+    - name: Prefer compose project path from live container labels when available
+      ansible.builtin.set_fact:
+        portainer_agent_migration_compose_dir: >-
+          {{
+            portainer_agent_container_info.container.Config.Labels['com.docker.compose.project.working_dir']
+          }}
+      when:
+        - portainer_agent_migration_mode == 'compose'
+        - portainer_agent_container_info.exists
+        - (portainer_agent_container_info.container.Config.Labels['com.docker.compose.project.working_dir'] | default('')) | length > 0
+
     - name: Block legacy Portainer from reconnecting during migration
       ansible.builtin.iptables:
         chain: INPUT
@@ -43,13 +104,35 @@
 
     - name: Bring compose project down (removes container and clears pairing state)
       community.docker.docker_compose_v2:
-        project_src: "{{ portainer_agent_compose_dir | default('/opt/portainer') }}"
+        project_src: "{{ portainer_agent_migration_compose_dir }}"
         state: absent
+      when: portainer_agent_migration_mode == 'compose'
+
+    - name: Stop portainer-agent systemd unit before container reset
+      ansible.builtin.systemd:
+        name: "{{ portainer_agent_service_unit | default('portainer-agent.service') }}"
+        state: stopped
+      when: portainer_agent_migration_mode == 'systemd'
+
+    - name: Ensure any previous portainer-agent container is absent
+      community.docker.docker_container:
+        name: portainer-agent
+        state: absent
+      when: portainer_agent_migration_mode == 'systemd'
 
     - name: Bring portainer-agent back up (fresh, no pairing state)
       community.docker.docker_compose_v2:
-        project_src: "{{ portainer_agent_compose_dir | default('/opt/portainer') }}"
+        project_src: "{{ portainer_agent_migration_compose_dir }}"
         state: present
+      when: portainer_agent_migration_mode == 'compose'
+
+    - name: Start portainer-agent systemd unit after container reset
+      ansible.builtin.systemd:
+        name: "{{ portainer_agent_service_unit | default('portainer-agent.service') }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: portainer_agent_migration_mode == 'systemd'
 
     - name: Wait for agent to be reachable
       ansible.builtin.uri:

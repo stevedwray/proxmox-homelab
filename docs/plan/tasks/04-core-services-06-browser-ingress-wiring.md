@@ -1,5 +1,12 @@
 # 04-core-services-06 — Wire browser-facing service UIs through Traefik and Authentik
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` Phase 04 deployment workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md),
+> [docs/workflow/environments.md](../../workflow/environments.md), and
+> [docs/teardown-test/README.md](../../teardown-test/README.md).
+
 ## GitHub Issue
 
 [stevedwray/proxmox-homelab#144](https://github.com/stevedwray/proxmox-homelab/issues/144)

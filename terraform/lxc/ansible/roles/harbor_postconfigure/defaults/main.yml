@@ -21,12 +21,29 @@ harbor_postconfigure_proxy_project_name: "dockerhub"
 # Additional proxy cache registries (docker-registry type, unauthenticated)
 # Each entry creates one endpoint and one proxy project.
 harbor_postconfigure_proxy_registries:
+  - name: gcr
+    url: https://gcr.io
   - name: ghcr
     url: https://ghcr.io
   - name: quay
     url: https://quay.io
   - name: lscr
     url: https://lscr.io
+  - name: greenbone
+    url: https://registry.community.greenbone.net
+
+# Push-based mirror project (pull-then-push fix for the proxy-cache
+# tag-creation bug -- see docs/harbor-stack/README.md Open Investigation).
+# harbor_repull pulls through the proxy-cache projects above, then pushes
+# into this plain project so the artifact is durably tagged, retention-
+# safe, and scan-tracked -- mirrors how the pentagi project already works.
+# The push credential is managed entirely by the harbor_repull role itself
+# (a project-scoped robot with a unique generated name, persisted only on
+# ci-runner-01) -- not here, and not through SOPS, specifically to avoid
+# the kind of stale-credential drift already seen with the shared
+# robot$ci-runner account (HARBOR_ROBOT_PASSWORD).
+harbor_postconfigure_mirror_project_name: "mirror"
+harbor_postconfigure_mirror_project_auto_scan: "{{ harbor_postconfigure_scan_on_push }}"
 
 # CI robot account (system-level, push/pull across all projects)
 harbor_postconfigure_robot_name: "ci-runner"
@@ -76,3 +93,18 @@ harbor_postconfigure_verify_scan_smoke_registry_url: >-
 # The controller used for live verification may not trust Harbor's external
 # certificate chain yet. Keep smoke verification tolerant by default.
 harbor_postconfigure_verify_scan_smoke_registry_insecure: true
+
+# Per-project CVE allowlists, for images that are DELIBERATELY vulnerable
+# (pentesting targets, tooling) rather than accidentally so -- see
+# docs/harbor-stack/README.md Open Investigation, docs/pentagi-stack/
+# harness-target.md. Each `file` is one CVE ID per line (comments/blanks
+# ignored), derived from a real Trivy scan and hand-checked against every
+# other image sharing that project to avoid silently suppressing a real
+# finding elsewhere -- see the header comment in each file for the exact
+# derivation. Project-level is Harbor's only granularity for this (no
+# per-repository allowlist), which is exactly why that cross-check matters.
+harbor_postconfigure_cve_allowlists:
+  - project: dockerhub
+    file: cve_allowlist_dockerhub.txt
+  - project: pentagi
+    file: cve_allowlist_pentagi.txt

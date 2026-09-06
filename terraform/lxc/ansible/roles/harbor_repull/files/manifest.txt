@@ -1,0 +1,88 @@
+# Known Harbor-routed images to periodically re-pull (see
+# docs/harbor-stack/image-sourcing-enforcement.md Stage C).
+#
+# One `<project>/<repo>:<tag>` reference per line — REGISTRY_HOST is
+# prefixed at run time by harbor_repull.py, do not include it here.
+# Comment lines and blank lines are ignored.
+#
+# v1 scope: every entry below is a tag confirmed live via `docker ps` on
+# pve-test-vm during the Stage B validation pass (2026-08-15), so these are
+# known-correct, not guessed. ai-services-stack, graylog-stack,
+# greenbone-stack, and pentagi-stack were already confirmed Harbor-routed
+# in code during this same pass but not re-verified against their exact
+# live tags in this session — add them here once similarly confirmed,
+# rather than transcribing from source and risking a stale/wrong tag.
+#
+# Refreshed 2026-08-16 for the Harbor vulnerability remediation pass
+# (traefik/victoria-metrics/grafana-oss/cadvisor/portainer-ce/authentik
+# version bumps) — every tag below re-verified against each deploy
+# playbook's current vars, not transcribed from the prior stale copy.
+# cadvisor's canonical registry also moved gcr.io -> ghcr.io this same
+# pass (gcr.io/cadvisor/cadvisor tops out at v0.55.1, unmaintained).
+
+# portainer-stack
+dockerhub/portainer/portainer-ce:2.39.5
+
+# proxy-stack / monitoring-stack / netbox-stack / authentik-stack / harbor-stack
+# cadvisor sidecar (same image, shared across every stack that runs one)
+ghcr/google/cadvisor:v0.60.5
+
+# proxy-stack
+dockerhub/library/traefik:v3.7.10
+
+# monitoring-stack
+dockerhub/victoriametrics/victoria-metrics:v1.148.0
+dockerhub/grafana/grafana-oss:13.0.2
+dockerhub/library/python:3.12-alpine
+
+# technitium-stack
+dockerhub/technitium/dns-server:15.2.0
+
+# docker_socket_proxy role (shared sidecar across 6 stacks)
+dockerhub/tecnativa/docker-socket-proxy:latest
+
+# authentik-stack
+ghcr/goauthentik/server:2026.5.6
+ghcr/goauthentik/ldap:2026.5.6
+dockerhub/library/nginx:1.27-alpine
+dockerhub/library/postgres:16-alpine
+dockerhub/library/redis:alpine
+
+# netbox-stack
+dockerhub/netboxcommunity/netbox:v4.5-4.0.2
+dockerhub/library/postgres:18-alpine
+dockerhub/valkey/valkey:9.0-alpine
+
+# greenbone-stack -- added 2026-08-16. This project uses Harbor's generic
+# (non-native) proxy-cache adapter, which failed to catalog ANY of these
+# repos at all (artifact_count: 0 for all 16, not just untagged) despite
+# every one being genuinely live/in-use -- confirmed via `docker ps -a` on
+# both pve-test-vm and pve (16 timed init-container tags + 3 long-running).
+# Same fix as portainer-ce/authentik: a real client pull + this role's
+# existing pull-then-push mirror step, since Harbor won't self-heal this
+# on its own no matter how many times the compose stack itself pulls
+# these (confirmed: nginx access logs show only HEAD manifest checks
+# reaching Harbor, same signature as the other broken repos).
+greenbone/community/vulnerability-tests:latest
+greenbone/community/notus-data:latest
+greenbone/community/scap-data:latest
+greenbone/community/cert-bund-data:latest
+greenbone/community/dfn-cert-data:latest
+greenbone/community/data-objects:latest
+greenbone/community/report-formats:latest
+greenbone/community/gpg-data:latest
+greenbone/community/redis-server:latest
+greenbone/community/pg-gvm:stable
+greenbone/community/pg-gvm-migrator:stable
+greenbone/community/gvmd:stable
+greenbone/community/gsa:stable-slim
+greenbone/community/gsad:stable
+greenbone/community/gvm-config:latest
+greenbone/community/nginx:latest
+greenbone/community/openvas-scanner:stable
+greenbone/community/ospd-openvas:stable
+greenbone/community/gvm-tools:latest
+
+# pentagi-stack -- postgres-exporter sidecar, same generic-adapter
+# cataloging bug (quay project), added alongside greenbone above.
+quay/prometheuscommunity/postgres-exporter:v0.16.0

@@ -80,7 +80,15 @@
 
   vars:
     portainer_compose_dir: /opt/portainer
-    portainer_version: "2.27.3"
+    portainer_version: "2.39.5"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR: Harbor's
+    # registry auth realm always echoes back external_url's scheme (https),
+    # so a pull against the raw container IP gets handed an HTTPS token
+    # realm on a host that only serves HTTP internally and fails outright.
+    # Matches the convention already used by ai-services/graylog/pentagi/
+    # greenbone/monitoring's *_registry_host vars — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   tasks:
     - name: Create Portainer compose directory
@@ -96,7 +104,7 @@
         content: |
           services:
             portainer:
-              image: portainer/portainer-ce:{{ portainer_version }}
+              image: "{{ docker_registry_host }}/dockerhub/portainer/portainer-ce:{{ portainer_version }}"
               restart: unless-stopped
               ports:
                 - "9000:9000"
@@ -108,7 +116,7 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
 
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ docker_registry_host }}/ghcr/google/cadvisor:v0.60.5"
               container_name: cadvisor
               restart: unless-stopped
               ports:
@@ -119,17 +127,37 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: portainer_compose_write
 
-    - name: Pull Portainer image
-      community.docker.docker_image:
-        name: "portainer/portainer-ce:{{ portainer_version }}"
-        source: pull
-
+    # No separate pre-pull task here on purpose. A prior "Pull Portainer
+    # image" task pulled the bare portainer/portainer-ce:{{ portainer_version }}
+    # name directly from Docker Hub -- an image reference the compose file
+    # above never actually uses (it only ever references the Harbor-
+    # prefixed name). That pre-pull pre-seeded Docker's local
+    # content-addressed blob store with the same digests, so the compose
+    # task's own pull of the Harbor-prefixed reference below was silently
+    # satisfied entirely from local cache (confirmed live via Harbor's own
+    # nginx access logs: only HEAD manifest checks, zero GET blob
+    # requests) -- Harbor's proxy-cache never saw a real fetch, so it
+    # never registered the artifact, leaving Harbor's own vulnerability
+    # scan data permanently stale for this image. Let the compose task
+    # below do the only pull, so it actually goes through Harbor.
     - name: Start Portainer via compose
       community.docker.docker_compose_v2:
         project_src: "{{ portainer_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if portainer_docker_daemon_config.changed else 'auto' }}"
+        # Explicit, not relying on the module's 'policy' default resolving
+        # to the compose spec's own 'missing' -- makes the intent (pull
+        # only when the Harbor-prefixed reference isn't already present)
+        # unambiguous now that nothing else pre-seeds the local cache.
+        pull: missing
+        recreate: >-
+          {{
+            'always'
+            if (portainer_docker_daemon_config.changed or portainer_compose_write.changed
+                or (portainer_force_recreate | default(false) | bool))
+            else 'never'
+          }}
         remove_orphans: true
 
 - name: Initialise Portainer admin account
@@ -625,3 +653,10 @@
     portainer_backup_use_nas_mount: "{{ lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' }}"
   roles:
     - portainer_backup
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

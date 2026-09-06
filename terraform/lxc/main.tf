@@ -21,27 +21,40 @@ provider "proxmox" {
 locals {
   stack_name = var.stack_name
   stack_template_vars = {
-    lab_ip_portainer      = var.lab_ip_portainer
-    lab_ip_authentik      = var.lab_ip_authentik
-    lab_ip_step_ca        = var.lab_ip_step_ca
-    lab_ip_monitoring     = var.lab_ip_monitoring
-    lab_ip_dns            = var.lab_ip_dns
-    lab_ip_proxy          = var.lab_ip_proxy
-    lab_ip_harbor         = var.lab_ip_harbor
-    lab_ip_netbox         = var.lab_ip_netbox
-    lab_ip_apt_cacher     = var.lab_ip_apt_cacher
-    lab_ip_ci_runner      = var.lab_ip_ci_runner
-    lab_gw_mgmt           = var.lab_gw_mgmt
-    lab_gw_edge           = var.lab_gw_edge
-    lab_gw_infra          = var.lab_gw_infra
-    lab_gw_build          = var.lab_gw_build
-    lab_subnet_mgmt_cidr  = var.lab_subnet_mgmt_cidr
-    lab_subnet_edge_cidr  = var.lab_subnet_edge_cidr
-    lab_subnet_infra_cidr = var.lab_subnet_infra_cidr
-    lab_subnet_build_cidr = var.lab_subnet_build_cidr
-    proxmox_host          = var.proxmox_host
-    dayz_steam_username   = var.dayz_steam_username
-    dayz_steam_password   = var.dayz_steam_password
+    lab_ip_portainer        = var.lab_ip_portainer
+    lab_ip_authentik        = var.lab_ip_authentik
+    lab_ip_step_ca          = var.lab_ip_step_ca
+    lab_ip_monitoring       = var.lab_ip_monitoring
+    lab_ip_graylog          = var.lab_ip_graylog
+    lab_ip_dns              = var.lab_ip_dns
+    lab_ip_technitium       = var.lab_ip_technitium
+    lab_ip_proxy            = var.lab_ip_proxy
+    lab_ip_harbor           = var.lab_ip_harbor
+    lab_ip_netbox           = var.lab_ip_netbox
+    lab_ip_apt_cacher       = var.lab_ip_apt_cacher
+    lab_ip_ci_runner        = var.lab_ip_ci_runner
+    lab_ip_llm_gpu          = var.lab_ip_llm_gpu
+    lab_ip_comfyui          = var.lab_ip_comfyui
+    lab_ip_ai_services      = var.lab_ip_ai_services
+    lab_ip_pentagi          = var.lab_ip_pentagi
+    lab_ip_greenbone        = var.lab_ip_greenbone
+    lab_ip_mcp_utility      = var.lab_ip_mcp_utility
+    lab_ip_secpipe          = var.lab_ip_secpipe
+    lab_gw_mgmt             = var.lab_gw_mgmt
+    lab_gw_edge             = var.lab_gw_edge
+    lab_gw_infra            = var.lab_gw_infra
+    lab_gw_build            = var.lab_gw_build
+    lab_gw_ai               = var.lab_gw_ai
+    lab_gw_pentest          = var.lab_gw_pentest
+    lab_subnet_mgmt_cidr    = var.lab_subnet_mgmt_cidr
+    lab_subnet_edge_cidr    = var.lab_subnet_edge_cidr
+    lab_subnet_infra_cidr   = var.lab_subnet_infra_cidr
+    lab_subnet_build_cidr   = var.lab_subnet_build_cidr
+    lab_subnet_ai_cidr      = var.lab_subnet_ai_cidr
+    lab_subnet_pentest_cidr = var.lab_subnet_pentest_cidr
+    proxmox_host            = var.proxmox_host
+    dayz_steam_username     = var.dayz_steam_username
+    dayz_steam_password     = var.dayz_steam_password
   }
   stack = yamldecode(templatefile(var.stack_yaml_path, local.stack_template_vars))
 
@@ -519,7 +532,6 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_expected_target   = local.effective_target_node
     network_sdn_expected_pve_host = local.effective_pve_host
     network_sdn_allow_destroy     = local.effective_target_node == "pve-test"
-    network_sdn_vmid              = try(local.stack.vmid, null)
     network_sdn_zone              = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type         = try(local.resolved_sdn_attachment.zone_type, null)
     network_sdn_bridge            = try(local.resolved_sdn_attachment.bridge, null)
@@ -543,7 +555,6 @@ resource "null_resource" "configure_network_sdn_attachment" {
     ansible_roles_path = local.ansible_roles_path
     sdn_vars           = local_file.network_sdn_vars[0].content
     sdn_vars_file      = local_file.network_sdn_vars[0].filename
-    vmid               = tostring(try(local.stack.vmid, ""))
   }
 
   provisioner "local-exec" {
@@ -612,6 +623,7 @@ module "lxc" {
   ip_address   = coalesce(var.stack_ip_address, local.stack.ip_address)
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
+  unprivileged = try(local.stack.unprivileged, true)
 
   cores                       = try(local.stack.cores, 2)
   memory                      = try(local.stack.memory, 2048)
@@ -621,6 +633,16 @@ module "lxc" {
   docker_storage              = local.resolved_docker_storage
   docker_storage_size         = local.resolved_docker_storage_size
   docker_mount_backup_enabled = local.resolved_docker_mount_backup_enabled
+  # Optional, additive — default true/[] preserves existing behavior for
+  # every stack that doesn't set these. Native (non-Docker) GPU-passthrough
+  # stacks (llm-gpu-stack, comfyui-stack) set docker_enabled=false and pass
+  # device_passthrough entries for /dev/kfd, /dev/dri/*.
+  docker_enabled     = try(local.stack.docker_enabled, true)
+  device_passthrough = try(local.stack.device_passthrough, [])
+  # Was previously never wired through at all (module default "debian" was
+  # always used regardless of stack.yaml) -- additive fix, existing stacks
+  # are all Debian templates so this is a no-op for them.
+  ostype = try(local.stack.ostype, "debian")
 
   ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))

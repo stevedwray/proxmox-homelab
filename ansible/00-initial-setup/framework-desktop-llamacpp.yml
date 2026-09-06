@@ -1,0 +1,195 @@
+---
+# Deploys llama.cpp (HIP/ROCm, router mode) as a custom-built Docker
+# container on the Framework Desktop, per docs/framework-ubuntu/plan.md
+# Phase 3 (§9) -- replaces the earlier native-systemd build via the
+# terraform/lxc/ansible/roles/llm_gpu_stack role (Decision 5 reversed:
+# "dockerise everything that can", 2026-07-20).
+#
+# No off-the-shelf image was used: gfx1151 (Strix Halo) needs an explicit
+# -DAMDGPU_TARGETS=gfx1151 HIP build, same as the native install this
+# replaces, and the pinned commit matters (see the commit-pin comment
+# below) -- neither is something a generic ghcr.io/ggml-org/llama.cpp tag
+# guarantees. Instead this builds the same HIP configuration inside Docker,
+# directly following the pattern already proven working on this exact
+# hardware in /home/steve/git/local-ai-testing's
+# roles/llamacpp_docker_bench (Dockerfile.j2 + docker run invocation) --
+# that repo's runtime-comparison matrix
+# (docs/framework/runtime-matrix-checkpoint-2026-07-16.md) confirmed
+# backend_verified: true with real GPU utilization for llama.cpp in Docker
+# on host bare-metal, so this is a known-working configuration, not a new
+# experiment.
+#
+# All serving flags (ctx-size, parallel slots, DRY sampling, --jinja,
+# --perf, models-dir/models-max for router mode) are carried over unchanged
+# from llm_gpu_stack's defaults/main.yml and llama-router.service.j2 -- see
+# that role's own defaults file for the reasoning behind each value
+# (ctx-size 65536, parallel 1 to avoid the multi-slot HIP corruption bug,
+# dry_multiplier 0.0, etc.). Nothing about the serving behavior changes
+# here, only the hosting mechanism.
+#
+# Base image and llama.cpp build both pulled/cloned through Harbor's
+# dockerhub proxy-cache / this host's own network path, matching the
+# established pattern (see framework-desktop-comfyui.yml).
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-llamacpp.yml
+
+- name: Deploy llama.cpp (HIP, router mode) via a custom-built Docker image
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_llamacpp_user: steve
+    framework_llamacpp_dir: /opt/llamacpp-docker
+    framework_llamacpp_base_image: "harbor.lab.gibbsgreatly.xyz/dockerhub/library/ubuntu:26.04"
+    framework_llamacpp_amdgpu_target: gfx1151
+    # Same pinned commit as the native build this replaces -- see
+    # terraform/lxc/ansible/roles/llm_gpu_stack/defaults/main.yml for why
+    # this is pinned rather than tracking master.
+    framework_llamacpp_commit: 571d0d540df04f25298d0e159e520d9fc62ed121
+    framework_llamacpp_models_dir: /storage/models/llm
+    framework_llamacpp_port: 8080
+    framework_llamacpp_models_max: 1
+    framework_llamacpp_ctx_size: 65536
+    framework_llamacpp_parallel_slots: 1
+    framework_llamacpp_n_predict: 8192
+    framework_llamacpp_dry_multiplier: "0.0"
+    framework_llamacpp_dry_base: "1.75"
+    framework_llamacpp_dry_allowed_length: "3"
+    framework_llamacpp_dry_penalty_last_n: "-1"
+
+  tasks:
+    - name: Stop and disable the old native llama-router.service, if present
+      ansible.builtin.systemd:
+        name: llama-router
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add {{ framework_llamacpp_user }} to the docker group # noqa: name[template]
+      ansible.builtin.user:
+        name: "{{ framework_llamacpp_user }}"
+        groups: docker
+        append: true
+
+    - name: Determine render/video GIDs on the host
+      ansible.builtin.command: getent group render video
+      register: framework_llamacpp_gid_result
+      changed_when: false
+
+    - name: Parse render/video GIDs
+      ansible.builtin.set_fact:
+        framework_llamacpp_render_gid: "{{ (framework_llamacpp_gid_result.stdout_lines | select('match', '^render:') | first).split(':')[2] }}"
+        framework_llamacpp_video_gid: "{{ (framework_llamacpp_gid_result.stdout_lines | select('match', '^video:') | first).split(':')[2] }}"
+
+    - name: Create llama.cpp docker-compose/build directory
+      ansible.builtin.file:
+        path: "{{ framework_llamacpp_dir }}"
+        state: directory
+        mode: '0755'  # nosonar: ansible:S2612 — Docker build context dir, no secrets, needs to be traversable
+        owner: "{{ framework_llamacpp_user }}"
+        group: "{{ framework_llamacpp_user }}"
+
+    - name: Install llama.cpp Dockerfile (HIP build, pinned commit)
+      ansible.builtin.copy:
+        dest: "{{ framework_llamacpp_dir }}/Dockerfile"
+        mode: '0644'  # nosonar: ansible:S2612 — Dockerfile, no secrets (pinned commit is public), docker build needs to read it
+        content: |
+          FROM {{ framework_llamacpp_base_image }}
+
+          ARG BUILD_JOBS=8
+          ARG AMDGPU_TARGET={{ framework_llamacpp_amdgpu_target }}
+
+          RUN export DEBIAN_FRONTEND=noninteractive && \
+              apt-get update -qq && \
+              apt-get install -y -qq \
+                git ca-certificates build-essential cmake ninja-build pkg-config \
+                libcurl4-openssl-dev rocm-dev rocm-smi
+
+          RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp && \
+              git -C /opt/llama.cpp checkout {{ framework_llamacpp_commit }}
+
+          RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+                cmake -S /opt/llama.cpp -B /opt/llama.cpp/build-hip -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DGGML_HIP=ON -DAMDGPU_TARGETS="${AMDGPU_TARGET}" && \
+              HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+                cmake --build /opt/llama.cpp/build-hip -j "${BUILD_JOBS}"
+
+          WORKDIR /opt/llama.cpp
+          ENTRYPOINT ["/opt/llama.cpp/build-hip/bin/llama-server"]
+      register: framework_llamacpp_dockerfile
+
+    - name: Install llama.cpp docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ framework_llamacpp_dir }}/docker-compose.yml"
+        mode: '0644'  # nosonar: ansible:S2612 — no api key set (llm_gpu_stack_api_key empty), no secrets in this file
+        content: |
+          services:
+            llamacpp:
+              build:
+                context: .
+                args:
+                  BUILD_JOBS: "{{ ansible_facts.processor_vcpus | default(ansible_facts.processor_count, true) }}"
+                  AMDGPU_TARGET: {{ framework_llamacpp_amdgpu_target }}
+              image: llamacpp-router:hip
+              container_name: llamacpp-router
+              restart: unless-stopped
+              devices:
+                - /dev/kfd
+                - /dev/dri
+              group_add:
+                - "{{ framework_llamacpp_render_gid }}"
+                - "{{ framework_llamacpp_video_gid }}"
+              ports:
+                - "{{ framework_llamacpp_port }}:{{ framework_llamacpp_port }}"
+              volumes:
+                - {{ framework_llamacpp_models_dir }}:/models
+              command:
+                - --host
+                - "0.0.0.0"
+                - --port
+                - "{{ framework_llamacpp_port }}"
+                - --models-dir
+                - /models
+                - --models-max
+                - "{{ framework_llamacpp_models_max }}"
+                - --n-gpu-layers
+                - "999"
+                - --ctx-size
+                - "{{ framework_llamacpp_ctx_size }}"
+                - --parallel
+                - "{{ framework_llamacpp_parallel_slots }}"
+                - --n-predict
+                - "{{ framework_llamacpp_n_predict }}"
+                - --dry-multiplier
+                - "{{ framework_llamacpp_dry_multiplier }}"
+                - --dry-base
+                - "{{ framework_llamacpp_dry_base }}"
+                - --dry-allowed-length
+                - "{{ framework_llamacpp_dry_allowed_length }}"
+                - --dry-penalty-last-n
+                - "{{ framework_llamacpp_dry_penalty_last_n }}"
+                - --perf
+                - --jinja
+      register: framework_llamacpp_compose
+
+    - name: Build and bring up llama.cpp via docker compose (build can take several minutes)
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ framework_llamacpp_dir }}"
+      register: framework_llamacpp_up
+      changed_when: "'Started' in framework_llamacpp_up.stderr or 'Created' in framework_llamacpp_up.stderr"

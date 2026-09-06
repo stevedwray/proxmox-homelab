@@ -1,0 +1,18 @@
+[Unit]
+Description=Harbor findings sync -> OpenSearch (es_findings_ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HARBOR_URL={{ es_findings_ingest_harbor_url }}
+Environment=ELASTICSEARCH_URL={{ es_findings_ingest_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ es_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+EnvironmentFile=-{{ es_findings_ingest_dir }}/harbor-robot.env
+EnvironmentFile=-{{ es_findings_ingest_dir }}/es-user.env
+ExecStart=/usr/bin/python3 {{ es_findings_ingest_dir }}/harbor_findings_sync.py
+StandardOutput=append:{{ es_findings_ingest_log_path }}
+StandardError=append:{{ es_findings_ingest_log_path }}
+
+[Install]
+WantedBy=multi-user.target

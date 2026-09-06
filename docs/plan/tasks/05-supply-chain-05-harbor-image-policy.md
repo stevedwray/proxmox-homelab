@@ -1,5 +1,11 @@
 # 05-supply-chain-05 — Add Harbor-only image policy enforcement to CI
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` CI and branch workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

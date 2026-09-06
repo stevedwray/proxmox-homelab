@@ -3,6 +3,13 @@
 # NOTE: This LXC hosts Minecraft AND multiple ARK servers (not just Minecraft).
 #       Renamed category: "gaming-stack" to reflect actual use.
 #
+# itzg/minecraft-server REQUIRES the environment variable EULA=TRUE (accepts
+# Mojang's EULA) or the container starts, prints a notice, and exits without
+# running the server. This is the image's own documented behavior, not a
+# repo-specific setting — do not omit it from any compose file using this
+# image. Minecraft Java Edition itself is TCP-only on 25565; UDP/25565 below
+# is a requirement for ARK's servers on this shared box, not Minecraft.
+#
 # CURRENT STATE (discovered 2026-06-18 via Portainer):
 #   IP: 192.168.1.7 (on vmbr0, LAN bridge)
 #   Portainer endpoint: tcp://192.168.1.7:9001
@@ -21,7 +28,8 @@
 #   No named Docker volumes — all data is in /ark/ bind mounts
 #
 # GAME PORT REQUIREMENTS (MikroTik must expose from game_seg):
-#   Minecraft: tcp+udp/25565
+#   Minecraft: tcp/25565 (UDP not required for vanilla Java Edition play;
+#     only needed if server.properties enables the query protocol)
 #   ARK: udp/7777, udp/7778, udp/27015 (per-server, may need multiple ranges)
 #
 # HARBOR IMAGES NEEDED:

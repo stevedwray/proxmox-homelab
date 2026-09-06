@@ -11,6 +11,16 @@
     enabled: true
     state: started
     daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Create node_exporter textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_dir }}"
+    state: directory
+    owner: root
+    group: prometheus
+    mode: "0755"  # nosonar: ansible:S2612 — textfile collector scripts run as root and need to write here; node_exporter (group prometheus) only needs read/traverse
+  when: node_exporter_textfile_dir | length > 0
 
 - name: Assert TLS secrets are non-empty
   ansible.builtin.assert:
@@ -22,7 +32,7 @@
     fail_msg: >-
       NODE_EXPORTER_SCRAPE_PASSWORD, NODE_EXPORTER_SCRAPE_PASSWORD_HASH,
       STEP_CA_PROVISIONER_PASSWORD, and LAB_IP_STEP_CA must all be set.
-      Run via ./with-secrets to load secrets.enc.yaml.
+      Run via ./with-secrets to load secrets.common.enc.yaml.
     quiet: true
   when:
     - node_exporter_tls_enabled | default(true) | bool
@@ -49,7 +59,7 @@
     - not ansible_check_mode
     - node_exporter_step_ca_reachable.failed | default(true)
 
-- name: node_exporter TLS cert setup
+- name: Set up node_exporter TLS certs
   when:
     - node_exporter_tls_enabled | default(true) | bool
     - not ansible_check_mode
@@ -203,7 +213,7 @@
         content: |
           [Service]
           ExecStart=
-          ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml
+          ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml{{ ' --collector.textfile.directory=' + node_exporter_textfile_dir if node_exporter_textfile_dir | length > 0 else '' }}
       register: node_exporter_dropin
 
     - name: Restart node_exporter when TLS config changes

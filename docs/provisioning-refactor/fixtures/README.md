@@ -23,7 +23,7 @@ All valid fixtures use:
 - `apiVersion: homelab.gibbsgreatly.xyz/v1alpha1`
 - `kind: EdgeManifest`
 - hostnames under `*.lab.gibbsgreatly.xyz`
-- `dns.target: 10.57.2.10`
+- `dns.target: 192.168.30.10`
 
 ## Invalid Fixtures
 

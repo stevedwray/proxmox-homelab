@@ -30,6 +30,9 @@ provides:
   - service: authentik-http
     port: 9000
     protocol: tcp
+  - service: authentik-https-standard
+    port: 443
+    protocol: tcp
   - service: authentik-https
     port: 9443
     protocol: tcp
@@ -40,7 +43,6 @@ network:
 ansible_playbook: "deploy-authentik-stack"
 deployment_tier: platform
 portainer_agent: false
-register_portainer_env: true
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
 enable_docker_socket_proxy: true

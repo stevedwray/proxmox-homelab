@@ -25,7 +25,7 @@ Harden migration validation substrate before forward-auth route migrations.
 ## Required Outcomes
 
 1. Resolver contract is explicit:
-   - Either `10.57.2.11` is restored as required endpoint and validated from
+   - Either `192.168.30.11` is restored as required endpoint and validated from
      runtime contexts.
    - Or runbook/reconciler DNS checks are updated to validate through the
      intended reachable lab resolvers.

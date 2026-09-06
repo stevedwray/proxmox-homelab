@@ -40,13 +40,14 @@ Working rules:
      local edits
    - ensure the promotion artifact does not include scratch files
 
-3. Promote to `baseline/teardown-validated`.
-   - follow the repo branch model exactly
+3. Promote to `stable`.
+   - follow the repo branch model exactly (see
+     [docs/workflow/branch-model.md](../workflow/branch-model.md))
    - preserve evidence references so future sessions can see why the promotion
      is valid
-   - note explicitly that this promotion proves the `pve-test`-validated
-     storage safety contract, while later `pve` rollout remains separate
-     follow-on work
+   - note explicitly that this promotion proves the `pve-test-vm`-validated
+     storage safety contract, while later `pve` rollout (promotion to `main`
+     after incremental deploy) remains separate follow-on work
 
 4. Leave the repo in a clear post-promotion state.
    - summarize what was merged
@@ -55,8 +56,7 @@ Working rules:
 
 Definition of done for this pass:
 
-- the validated storage-refactor branch is merged to
-  `baseline/teardown-validated`, or
+- the validated storage-refactor branch is merged to `stable`, or
 - the exact promotion blocker is documented clearly
 
 The hand-back must be review-ready in the response itself, not only written to

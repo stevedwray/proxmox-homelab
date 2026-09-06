@@ -1,0 +1,25 @@
+# Disposable Stage A client for the DHCP refactor workspace.
+# Bootstraps with a static address only so the current Terraform/LXC pipeline
+# can create and reach it deterministically; the guest interface is then
+# flipped to DHCP in-guest before lease/reservation/renewal testing begins.
+hostname: dhcp-test-client-01
+ip_address: "192.168.90.61/24"
+gateway: "192.168.90.1"
+dns_server: "192.168.90.1"
+network:
+  zone: test_dhcp_seg
+  access_path: proxyjump_compat
+vmid: 138
+cores: 1
+memory: 512
+rootfs_size: 4
+storage_profile: validation-small
+docker_storage_size: "4G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "4G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"

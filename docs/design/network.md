@@ -13,12 +13,27 @@ enforced by MikroTik firewall ACLs, not by Proxmox. The Proxmox VNet firewall is
 for per-container inbound filtering but has a known cross-zone rule generation bug (see
 [Known gaps](#known-gaps)).
 
+## Administrative access
+
+The operator workstation on LAN `192.168.1.0/24` reaches SDN-attached guests directly
+through MikroTik routing — Proxmox is not an SSH/Ansible jump host in the target model.
+This is the default: `terraform/lxc/main.tf`'s `effective_network_access_path` resolves to
+`direct` for any stack attached to an SDN VNet (`terraform/lxc/main.tf:184`).
+
+`ProxyJump=root@<pve_host>` through Proxmox (`terraform/lxc/templates/inventory.tpl:10`)
+remains only as the `proxyjump_compat` fallback for non-SDN-attached (legacy/bridge)
+resources, gated by `stack.network.access_path`. It is not part of the target model for
+SDN-attached stacks and should not be extended to new ones. See
+`docs/network-refactor/target-model.md` for the refactor that established this contract and
+`docs/network-refactor/session-8-summary.md` for the validation record (final gate passed
+2026-05-22).
+
 ## Zones
 
 | Zone | Internal name | VLAN ID | Subnet | Gateway | Purpose |
 |---|---|---|---|---|---|
 | build_seg | `tvsegc` | 10 | `192.168.10.0/24` | `192.168.10.1` | CI runner — isolated build environment |
-| mgmt_seg | `tvmgmt` | 20 | `192.168.20.0/24` | `192.168.20.1` | Management plane — Portainer, Authentik, step-ca, monitoring, CoreDNS |
+| mgmt_seg | `tvmgmt` | 20 | `192.168.20.0/24` | `192.168.20.1` | Management plane — Portainer, Authentik, step-ca, monitoring, internal DNS authority |
 | edge_seg | `tvedge` | 30 | `192.168.30.0/24` | `192.168.30.1` | Public ingress — Traefik only |
 | infra_seg | `tvinfra` | 40 | `192.168.40.0/24` | `192.168.40.1` | Infrastructure services — Harbor, apt-cacher, NetBox |
 
@@ -34,6 +49,7 @@ Future zones (Phase 06+): `app_seg`, `game_seg`.
 | step-ca | `mgmt_seg` | `192.168.20.11` | 20011 | 04 |
 | Monitoring | `mgmt_seg` | `192.168.20.12` | 20012 | 04 |
 | CoreDNS | `mgmt_seg` | `192.168.20.13` | 20013 | 04b |
+| Technitium | `mgmt_seg` | `192.168.20.15` | 20015 | 04b / DNS refactor |
 | Traefik | `edge_seg` | `192.168.30.10` | 30010 | 04 |
 | Harbor | `infra_seg` | `192.168.40.10` | 40010 | 03b |
 | apt-cacher-ng | `infra_seg` | `192.168.40.11` | 40011 | 03c |
@@ -52,18 +68,20 @@ collisions when both environments are simultaneously attached to the MikroTik tr
 | step-ca | `mgmt_seg` | `192.168.20.11` | `192.168.20.111` |
 | Monitoring | `mgmt_seg` | `192.168.20.12` | `192.168.20.112` |
 | CoreDNS | `mgmt_seg` | `192.168.20.13` | `192.168.20.113` |
+| Technitium | `mgmt_seg` | `192.168.20.15` | `192.168.20.115` |
 | Traefik | `edge_seg` | `192.168.30.10` | `192.168.30.110` |
 | Harbor | `infra_seg` | `192.168.40.10` | `192.168.40.110` |
 | apt-cacher-ng | `infra_seg` | `192.168.40.11` | `192.168.40.111` |
 | NetBox | `infra_seg` | `192.168.40.12` | `192.168.40.112` |
 
-pve-test-vm CoreDNS holds authority for `test.gibbsgreatly.xyz`. MikroTik must have a
-separate FWD rule forwarding `test.gibbsgreatly.xyz` queries to `192.168.20.113` (the
-pve-test-vm CoreDNS container). This is manual configuration (TM-09).
+pve now delegates `lab.gibbsgreatly.xyz` to Technitium at `192.168.20.15`, and
+pve-test-vm delegates `test.gibbsgreatly.xyz` to Technitium at `192.168.20.115`.
+CoreDNS remains deployed in both environments as a parallel rollback target while the
+manual MikroTik forwarding model still exists (TM-09).
 
 ## Cross-zone traffic policy
 
-Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test.yaml`.
+Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test-vm.yaml`.
 
 | From | To | Allowed | Purpose |
 |---|---|---|---|
@@ -75,7 +93,7 @@ Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test.yaml`.
 | All other cross-zone | — | Deny | Default deny east-west |
 
 **Note:** MikroTik ACL rules are currently applied manually. There is no IaC for MikroTik
-configuration (TM-09). A full pve-test rebuild requires manual MikroTik reconfiguration.
+configuration (TM-09). A full `pve-test-vm` rebuild requires manual MikroTik reconfiguration.
 
 ## DNS
 
@@ -85,17 +103,22 @@ Two-tier model:
    Each zone's gateway IP is the resolver that containers use. The MikroTik handles public
    name resolution and conditionally forwards the internal zone.
 
-2. **CoreDNS** (`192.168.20.13`) holds authority for `lab.gibbsgreatly.xyz`. MikroTik
-   conditionally forwards queries matching `lab.gibbsgreatly.xyz` to CoreDNS via a FWD
-   rule. All other queries are resolved by MikroTik directly (public DNS via DoH upstream).
+2. **Technitium** (`192.168.20.15` on pve, `192.168.20.115` on pve-test-vm) is the active
+   internal authoritative DNS server. MikroTik conditionally forwards
+   `lab.gibbsgreatly.xyz` / `test.gibbsgreatly.xyz` queries to Technitium via a FWD rule.
+   All other queries are resolved by MikroTik directly (public DNS via DoH upstream).
+
+CoreDNS (`192.168.20.13` / `192.168.20.113`) remains deployed as the legacy authority and
+immediate rollback target during the refactor, but it is no longer the active delegate path
+for clients.
 
 ### Name spaces
 
 | Namespace | Resolver | Used for |
 |---|---|---|
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
-| `lab.gibbsgreatly.xyz` | CoreDNS on pve (`192.168.20.13`) | Internal platform identity — service-to-service, managed host access on pve |
-| `test.gibbsgreatly.xyz` | CoreDNS on pve-test-vm (`192.168.20.113`) | Same as above for pve-test-vm environment; separate zone avoids DNS collisions |
+| `lab.gibbsgreatly.xyz` | Technitium on pve (`192.168.20.15`) | Internal platform identity — service-to-service, managed host access on pve |
+| `test.gibbsgreatly.xyz` | Technitium on pve-test-vm (`192.168.20.115`) | Same as above for pve-test-vm environment; separate zone avoids DNS collisions |
 
 ### DNS configuration per LXC
 
@@ -132,7 +155,7 @@ The staging issuer shows `(STAGING) Let's Encrypt` in browsers — this is expec
 
 | Gap | Ref | Description |
 |---|---|---|
-| MikroTik has no IaC | TM-09 | All ACL rules, VLAN config, and DNS forwarding rules are applied manually. A pve-test rebuild requires manual MikroTik reconfiguration. |
+| MikroTik has no IaC | TM-09 | All ACL rules, VLAN config, and DNS forwarding rules are applied manually. A `pve-test-vm` rebuild requires manual MikroTik reconfiguration. |
 | VNet firewall cross-zone rule bug | — | `vnet_policy_candidates` in `terraform/lxc/main.tf:86-95` requires both `from` and `to` to match the current container's VNet, making cross-zone ACCEPT rules impossible to generate. Proxmox VNet firewall is disabled for dev passes. |
-| MikroTik remains out of band | TM-09 | SDN VLAN attachment creation for `pve-test` is automated in `configure-network-sdn-vnet.yml`, but MikroTik VLAN interfaces, gateway IPs, DNS forwarding, and firewall ACLs are still manual prerequisites. |
+| MikroTik remains out of band | TM-09 | SDN VLAN attachment creation for `pve-test-vm` is automated in `configure-network-sdn-vnet.yml`, but MikroTik VLAN interfaces, gateway IPs, DNS forwarding, and firewall ACLs are still manual prerequisites. |
 | `dns_server` contract coverage | — | Explicit `dns_server` is now set in stack metadata and validated from generated inventories; future stacks should continue to use the zone or bridge gateway explicitly. |

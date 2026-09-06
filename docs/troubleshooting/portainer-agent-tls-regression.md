@@ -89,6 +89,12 @@ curl -s -X POST http://192.168.20.20:9000/api/endpoints \
 For the four stacks with `ansible_playbook: migrate-portainer-stack` in their inventory,
 running `provision.sh --stack <name>` handles the reset and re-registration atomically.
 
+As of the current recovery automation, running `provision.sh --stack portainer-stack`
+also triggers this repair flow for the migrated legacy app stacks after Portainer itself
+has been restored or reprovisioned. That closes the previous gap where a standalone
+Portainer recovery could leave `torrent-stack`, `media-stack`, and `gaming-stack`
+registered but unreachable until each host was repaired separately.
+
 After recovery: take a fresh NAS backup via `pct exec 20020 -- systemctl start portainer-backup.service`.
 
 ---

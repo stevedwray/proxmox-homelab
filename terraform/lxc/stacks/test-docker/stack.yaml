@@ -16,3 +16,6 @@ portainer_agent: true
 portainer_stacks:
   - name: test-docker
     compose_file: docker-compose.yml
+    env:
+      - name: REGISTRY_HOST
+        value: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"

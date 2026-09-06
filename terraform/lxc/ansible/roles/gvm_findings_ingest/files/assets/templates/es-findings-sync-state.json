@@ -1,0 +1,26 @@
+{
+  "index_patterns": ["es-findings-sync-state"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "source": { "type": "keyword" },
+        "last_run_started": { "type": "date" },
+        "last_run_finished": { "type": "date" },
+        "last_run_status": { "type": "keyword" },
+        "artifacts_scanned": { "type": "long" },
+        "findings_indexed": { "type": "long" },
+        "errors": { "type": "long" }
+      }
+    }
+  },
+  "priority": 200,
+  "_meta": {
+    "description": "One document per ingestion source (harbor, gvm, ...) recording the last sync run's outcome — the cursor/state store described in docs/elasticsearch-stack/plan.md's Ingestion pattern, no separate state store needed.",
+    "managed_by": "es_findings_ingest role, es_setup_assets.py"
+  }
+}

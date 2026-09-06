@@ -1,0 +1,1524 @@
+---
+- name: Configure Graylog pilot host
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    graylog_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    graylog_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ graylog_lab_domain, true) }}"
+    graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ graylog_lab_domain, true) }}"
+    graylog_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(graylog_lab_fqdn_harbor, true) }}"
+    docker_registry_host: "{{ graylog_registry_host }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ graylog_lab_ip_dns }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before writing scaffold
+      ansible.builtin.meta: flush_handlers
+
+    - name: Stop and mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        state: stopped
+        masked: true
+        enabled: false
+      failed_when: false
+
+    - name: Remove legacy Portainer agent container residue
+      community.docker.docker_container:
+        name: portainer-agent
+        state: absent
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Graylog runtime (optional)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    graylog_compose_dir: /opt/graylog-stack
+    graylog_datanode_config_dir: /opt/graylog-stack/datanode-config
+    graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    graylog_cadvisor_image: "{{ graylog_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+    graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
+    graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
+    graylog_mongodb_image_tag: "7"
+    graylog_datanode_image_tag: "7.1.3"
+    graylog_server_image_tag: "7.1.3"
+    graylog_datanode_heap_gb: >-
+      {{
+        [
+          1,
+          (
+            (
+              hostvars[inventory_hostname].ansible_memtotal_mb
+              | default(hostvars[inventory_hostname].ansible_memory_mb.real.total)
+              | int
+            ) / 1024 / 2
+          ) | round(0, 'floor') | int
+        ] | max
+      }}
+    graylog_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
+    graylog_lab_admin_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is required') }}"
+    graylog_authentik_ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
+    graylog_authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is required') }}"
+    graylog_authentik_ldap_service_password: "{{ lookup('env', 'AUTHENTIK_LDAP_SERVICE_PASSWORD') | default(graylog_authentik_superuser_password, true) }}"
+    graylog_runtime_images:
+      - "{{ graylog_registry_host }}/dockerhub/mongo:{{ graylog_mongodb_image_tag }}"
+      - "{{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:{{ graylog_datanode_image_tag }}"
+      - "{{ graylog_registry_host }}/dockerhub/graylog/graylog:{{ graylog_server_image_tag }}"
+      - "{{ graylog_cadvisor_image }}"
+
+  tasks:
+    - name: Create Graylog compose directory
+      ansible.builtin.file:
+        path: "{{ graylog_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create Graylog Data Node config directory
+      ansible.builtin.file:
+        path: "{{ graylog_datanode_config_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create Graylog Data Node OpenSearch config directory
+      ansible.builtin.file:
+        path: "{{ graylog_datanode_config_dir }}/opensearch"
+        state: directory
+        mode: "0750"
+
+    - name: Include rsyslog_forward with Graylog relay vars
+      ansible.builtin.include_role:
+        name: rsyslog_forward
+      vars:
+        rsyslog_forward_target_host: "127.0.0.1"
+        rsyslog_forward_target_port: "5140"
+        rsyslog_inbound_enabled: "{{ graylog_deploy_runtime | bool }}"
+
+    - name: Write Graylog env file
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/graylog.env"
+        mode: "0640"
+        content: |
+          GRAYLOG_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
+          GRAYLOG_DATANODE_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
+          GRAYLOG_ROOT_PASSWORD_SHA2={{ lookup('env', 'GRAYLOG_ROOT_PASSWORD_SHA2') | mandatory }}
+          GRAYLOG_HTTP_EXTERNAL_URI=https://{{ graylog_lab_fqdn_graylog }}/
+          GRAYLOG_MONGODB_URI=mongodb://mongodb:27017/graylog
+          GRAYLOG_DATANODE_MONGODB_URI=mongodb://mongodb:27017/graylog
+          GRAYLOG_HTTP_BIND_ADDRESS=0.0.0.0:9000
+      no_log: true
+      when: graylog_deploy_runtime | bool
+      register: graylog_env_file
+      notify: Recreate Graylog
+
+    - name: Write Graylog Data Node JVM options
+      ansible.builtin.copy:
+        dest: "{{ graylog_datanode_config_dir }}/jvm.options"
+        mode: "0644"
+        content: |
+          # JVM Heap Settings
+          #
+          # Size OpenSearch heap against the actual LXC budget, not the nested
+          # Docker container's misleading host-memory view.
+          -Xms{{ graylog_datanode_heap_gb }}g
+          -Xmx{{ graylog_datanode_heap_gb }}g
+
+          # General JVM Settings
+          #
+          # Garbage collector
+          -XX:+UseG1GC
+
+          # Ensure full stack traces for debugging
+          -XX:-OmitStackTraceInFastThrow
+
+          # Allow usage of experimental JVM options
+          -XX:+UnlockExperimentalVMOptions
+
+          # Avoid endless loop with some TLSv1.3 implementations
+          -Djdk.tls.acknowledgeCloseNotify=true
+      when: graylog_deploy_runtime | bool
+      register: graylog_datanode_jvm_options_file
+      notify: Recreate Graylog
+
+    - name: Write Graylog Data Node OpenSearch JVM options
+      ansible.builtin.copy:
+        dest: "{{ graylog_datanode_config_dir }}/opensearch/jvm.options"
+        mode: "0644"
+        content: |
+          # OpenSearch JVM Heap Settings
+          #
+          # Graylog's heap warning is about the embedded OpenSearch process, not
+          # the Data Node wrapper JVM. Size this against the LXC budget.
+          -Xms{{ graylog_datanode_heap_gb }}g
+          -Xmx{{ graylog_datanode_heap_gb }}g
+
+          ## JVM configuration
+
+          ################################################################
+          ## IMPORTANT: JVM heap size
+          ################################################################
+          ##
+          ## You should always set the min and max JVM heap
+          ## size to the same value. For example, to set
+          ## the heap to 3 GB, set:
+          ##
+          ## -Xms3g
+          ## -Xmx3g
+          ##
+          ## See https://opensearch.org/docs/latest/install-and-configure/install-opensearch/index/
+          ## for more information
+          ##
+
+          # Turn on JRuby invokedynamic
+          -Djruby.compile.invokedynamic=true
+
+          # Turn on G1GC
+          -XX:+UseG1GC
+
+          # Set the JVM temporary directory
+          -Djava.io.tmpdir=${OPENSEARCH_TMPDIR}
+
+          # Set JVM to headless mode
+          -Djava.awt.headless=true
+
+          # ensure UTF-8 encoding by default (e.g. filenames)
+          -Dfile.encoding=UTF-8
+
+          # use our provided JNA always versus the system one
+          -Djna.nosys=true
+
+          # flags to configure Netty
+          -Dio.netty.noUnsafe=true
+          -Dio.netty.noKeySetOptimization=true
+          -Dio.netty.recycler.maxCapacityPerThread=0
+          -Dio.netty.allocator.numDirectArenas=0
+
+          # log4j 2
+          -Dlog4j.shutdownHookEnabled=false
+          -Dlog4j2.disable.jmx=true
+
+          # turn off JDK 9+ illegal reflective access warnings
+          -Djava.locale.providers=SPI,COMPAT
+
+          # GC tuning
+          -XX:G1ReservePercent=25
+          -XX:InitiatingHeapOccupancyPercent=30
+
+          # heap dumps
+          -XX:+HeapDumpOnOutOfMemoryError
+
+          # disable explicit calls to System.gc()
+          -XX:+DisableExplicitGC
+
+          # OpenSearch security manager
+          -Djava.security.manager=allow
+
+          # reduce direct memory to leave room inside the 6G LXC budget
+          -XX:MaxDirectMemorySize=536870912
+      when: graylog_deploy_runtime | bool
+      register: graylog_datanode_opensearch_jvm_options_file
+      notify: Recreate Graylog
+
+    - name: Write Graylog docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            mongodb:
+              image: {{ graylog_registry_host }}/dockerhub/mongo:{{ graylog_mongodb_image_tag }}
+              command: ["--quiet"]
+              volumes:
+                - mongodb_data:/data/db
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+                interval: 60s
+                timeout: 5s
+                retries: 5
+                start_period: 30s
+
+            datanode:
+              image: {{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:{{ graylog_datanode_image_tag }}
+              env_file: graylog.env
+              hostname: datanode
+              volumes:
+                - graylog_datanode:/var/lib/graylog-datanode
+                - {{ graylog_datanode_config_dir }}/jvm.options:/etc/graylog/datanode/jvm.options:ro
+                - {{ graylog_datanode_config_dir }}/opensearch/jvm.options:/var/lib/graylog-datanode/opensearch/config/opensearch/jvm.options
+              restart: unless-stopped
+              depends_on:
+                mongodb:
+                  condition: service_healthy
+
+            graylog:
+              image: {{ graylog_registry_host }}/dockerhub/graylog/graylog:{{ graylog_server_image_tag }}
+              env_file: graylog.env
+              ports:
+                - "9000:9000"
+                - "127.0.0.1:5140:5140"
+              volumes:
+                - graylog_data:/usr/share/graylog/data
+              restart: unless-stopped
+              depends_on:
+                mongodb:
+                  condition: service_healthy
+                datanode:
+                  condition: service_started
+
+            cadvisor:
+              image: {{ graylog_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+
+          volumes:
+            mongodb_data:
+            graylog_datanode:
+            graylog_data:
+      when: graylog_deploy_runtime | bool
+      register: graylog_compose_file
+      notify: Recreate Graylog
+
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ graylog_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+      when: graylog_deploy_runtime | bool
+
+    - name: Pre-pull Graylog runtime images from Harbor sequentially
+      ansible.builtin.command:
+        argv:
+          - docker
+          - pull
+          - "{{ item }}"
+      register: graylog_image_pull
+      retries: 5
+      delay: 10
+      until: graylog_image_pull.rc == 0
+      loop: "{{ graylog_runtime_images }}"
+      when: graylog_deploy_runtime | bool
+
+    - name: Bring up Graylog stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ graylog_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_datanode_jvm_options_file.changed or graylog_datanode_opensearch_jvm_options_file.changed or graylog_compose_file.changed) else 'auto' }}"
+      when: graylog_deploy_runtime | bool
+
+    - name: Wait for Graylog web port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9000
+        timeout: 120
+      when: graylog_deploy_runtime | bool
+
+    - name: Check if Graylog is already ALIVE (skip preflight if so)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/lbstatus"
+        method: GET
+        status_code: [200, 404]
+        return_content: true
+      register: graylog_lbstatus_check
+      until: graylog_lbstatus_check.status in [200, 404]
+      retries: 20
+      delay: 10
+      when: graylog_deploy_runtime | bool
+
+    # Preflight automation: on fresh installs Graylog serves a setup wizard instead of
+    # the normal API. The wizard password is randomly generated and logged to stdout.
+    # API sequence for a true cold start:
+    #   POST /api/ca/create            → self-signed CA for DataNode internal TLS only
+    #   POST /api/renewal_policy       → set cert renewal mode
+    #   POST /api/generate             → provision DataNode with CA-signed cert
+    #   GET  /api/data_nodes           → DataNode appears but can remain UNCONFIGURED
+    #   POST /api/status/finish-config → finalize, Graylog restarts into normal mode
+    #   GET  /api/data_nodes           → DataNode transitions to AVAILABLE after normal mode
+    - name: Extract Graylog preflight password from container logs
+      ansible.builtin.command:
+        cmd: >
+          docker logs graylog-stack-graylog-1
+      register: graylog_container_logs
+      changed_when: false
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Collect Graylog preflight password matches from logs
+      ansible.builtin.set_fact:
+        graylog_preflight_password_matches: >-
+          {{ (graylog_container_logs.stderr + graylog_container_logs.stdout)
+             | regex_findall("password '([^']+)'") }}
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Assert Graylog preflight password was present in container logs
+      ansible.builtin.assert:
+        that:
+          - graylog_preflight_password_matches | length > 0
+        fail_msg: >-
+          Graylog preflight password was not found in container logs even though
+          Graylog has not yet reported ALIVE. This usually means the preflight
+          log format changed and the setup automation needs to be updated.
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Parse preflight password from logs
+      ansible.builtin.set_fact:
+        graylog_preflight_password: "{{ graylog_preflight_password_matches | first }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Create Graylog preflight CA
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/ca/create"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          organization: "Graylog CA"
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Set Graylog certificate renewal policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/renewal_policy"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          mode: AUTOMATIC
+          certificate_lifetime: P30D
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Provision DataNode certificates
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/generate"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Wait for DataNode to register in preflight
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/data_nodes"
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_datanodes_preflight
+      until: >-
+        (graylog_datanodes_preflight.json | default([]) | length) > 0
+      retries: 30
+      delay: 10
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Finalize Graylog preflight configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/status/finish-config"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Wait for Graylog to report ALIVE
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/lbstatus"  # nosonar: ansible:S5332 — unauthenticated health check on private SDN
+        method: GET
+        status_code: [200, 404]
+        return_content: true
+      register: graylog_lbstatus
+      failed_when: false
+      until: graylog_lbstatus.status == 200 and graylog_lbstatus.content == "ALIVE"
+      retries: 30
+      delay: 10
+      when: graylog_deploy_runtime | bool
+
+    # Post-ALIVE: provision syslog TCP input (idempotent)
+    - name: Check existing Graylog inputs
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/inputs"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_inputs
+      when: graylog_deploy_runtime | bool
+
+    - name: Provision Graylog syslog TCP input on port 5140
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/inputs"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "syslog-tcp-5140"
+          type: "org.graylog2.inputs.syslog.tcp.SyslogTCPInput"
+          global: true
+          configuration:
+            bind_address: "0.0.0.0"
+            port: 5140
+            recv_buffer_size: 1048576
+            number_worker_threads: 2
+            override_source: null
+            force_rdns: false
+            allow_override_date: true
+            store_full_message: false
+            expand_structured_data: false
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_inputs.json.inputs | default([])
+           | selectattr('title', 'eq', 'syslog-tcp-5140') | list | length) == 0
+
+    # Post-ALIVE: LDAP auth service configuration via Authentik LDAP outpost
+    - name: Check existing Graylog LDAP auth service backends
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/backends"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_auth_backends
+      when: graylog_deploy_runtime | bool
+
+    - name: Resolve Graylog Reader role ID for auth-service provisioning
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - graylog-stack-mongodb-1
+          - mongosh
+          - graylog
+          - --quiet
+          - --eval
+          - 'JSON.stringify(db.roles.findOne({name:"Reader"},{_id:1,name:1}))'
+      register: graylog_reader_role
+      changed_when: false
+      failed_when:
+        - graylog_reader_role.rc != 0
+        - (graylog_reader_role.stdout | trim) == ""
+        - (graylog_reader_role.stdout | from_json)._id is not defined
+      when: graylog_deploy_runtime | bool
+
+    - name: Set Graylog Reader role ID fact
+      ansible.builtin.set_fact:
+        graylog_reader_role_id: "{{ (graylog_reader_role.stdout | from_json)._id }}"
+      when: graylog_deploy_runtime | bool
+
+    - name: Provision Graylog LDAP auth service backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/backends"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "authentik-ldap"
+          description: "Authentik LDAP outpost — users authenticate with Authentik credentials"
+          default_roles:
+            - "{{ graylog_reader_role_id }}"
+          config:
+            type: "ldap"
+            servers:
+              - host: "{{ graylog_authentik_ip }}"
+                port: 3389
+            transport_security: "none"
+            system_user_dn: "cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io"
+            system_user_password: "{{ graylog_authentik_ldap_service_password }}"
+            user_search_base: "ou=users,dc=ldap,dc=goauthentik,dc=io"
+            user_search_pattern: "(cn={0})"
+            user_name_attribute: "cn"
+            user_unique_id_attribute: "uid"
+            user_full_name_attribute: "cn"
+        status_code: [200, 201]
+      register: graylog_ldap_backend_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_auth_backends.json.backends | default([])
+           | selectattr('title', 'eq', 'authentik-ldap') | list | length) == 0
+
+    - name: Resolve Graylog LDAP backend ID
+      ansible.builtin.set_fact:
+        graylog_ldap_backend_id: >-
+          {{
+            (graylog_auth_backends.json.backends | default([])
+             | selectattr('title', 'eq', 'authentik-ldap') | list | first).id
+            if (graylog_auth_backends.json.backends | default([])
+                | selectattr('title', 'eq', 'authentik-ldap') | list | length) > 0
+            else graylog_ldap_backend_create.json.backend.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Ensure Graylog LDAP auth service backend grants Reader by default
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/backends/{{ graylog_ldap_backend_id }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: PUT
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "authentik-ldap"
+          description: "Authentik LDAP outpost"
+          default_roles:
+            - "{{ graylog_reader_role_id }}"
+          config:
+            type: "ldap"
+            servers:
+              - host: "{{ graylog_authentik_ip }}"
+                port: 3389
+            transport_security: "none"
+            verify_certificates: true
+            system_user_dn: "cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io"
+            system_user_password: "{{ graylog_authentik_ldap_service_password }}"
+            user_search_base: "ou=users,dc=ldap,dc=goauthentik,dc=io"
+            user_search_pattern: "(cn={0})"
+            user_name_attribute: "cn"
+            user_unique_id_attribute: "uid"
+            user_full_name_attribute: "cn"
+            email_attributes:
+              - "mail"
+              - "rfc822Mailbox"
+        status_code: [200]
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          ((graylog_auth_backends.json.backends | default([])
+            | selectattr('title', 'eq', 'authentik-ldap') | list | first).default_roles | default([])) != [graylog_reader_role_id]
+
+    - name: Check Graylog authentication service active configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/configuration"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_auth_config
+      when: graylog_deploy_runtime | bool
+
+    - name: Activate Graylog LDAP auth service backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/configuration"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          active_backend: "{{ graylog_ldap_backend_id }}"
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - (graylog_auth_config.json.configuration.active_backend | default('')) != graylog_ldap_backend_id
+
+    - name: Check whether Graylog admin user exists
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/users/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      register: graylog_lab_admin_user
+      when: graylog_deploy_runtime | bool
+
+    - name: Delete stale Graylog external admin user when Authentik uid has changed
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/users/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: DELETE
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lab_admin_user.status == 200
+        - (graylog_lab_admin_user.json.auth_service_uid | default('')) | length > 0
+
+    - name: Bootstrap Graylog external admin user via LDAP login
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/sessions"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          username: "{{ graylog_lab_admin_username }}"
+          password: "{{ graylog_lab_admin_password }}"
+        status_code: [200]
+      no_log: true
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          graylog_lab_admin_user.status == 404
+          or ((graylog_lab_admin_user.json.auth_service_uid | default('')) | length > 0)
+
+    - name: Wait for Graylog external admin user to exist after bootstrap login
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/users/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_lab_admin_user_after_bootstrap
+      until: graylog_lab_admin_user_after_bootstrap.status == 200
+      retries: 12
+      delay: 5
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          graylog_lab_admin_user.status == 404
+          or ((graylog_lab_admin_user.json.auth_service_uid | default('')) | length > 0)
+
+    - name: Refresh Graylog admin user details
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/users/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_lab_admin_user_current
+      when: graylog_deploy_runtime | bool
+
+    - name: Check Graylog Admin role membership
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/roles/Admin/members"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_admin_role_members
+      when: graylog_deploy_runtime | bool
+
+    - name: Add Graylog lab admin user to Admin role
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/roles/Admin/members/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: PUT
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body: {}
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_admin_role_members.json.users | default([])
+           | selectattr('username', 'eq', graylog_lab_admin_username) | list | length) == 0
+
+    - name: Confirm Graylog lab admin user has Admin role
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/users/{{ graylog_lab_admin_username }}"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_lab_admin_user_final
+      failed_when: "'Admin' not in (graylog_lab_admin_user_final.json.roles | default([]))"
+      when: graylog_deploy_runtime | bool
+
+    # Dashboard provisioning — import JSON files from graylog-stack/dashboards/
+    # Idempotent: checks by title before creating. Add dashboards by building them
+    # in the Graylog UI, exporting via GET /api/views/{id}, and committing JSON to
+    # terraform/lxc/stacks/graylog-stack/dashboards/ (strip id/_version/created_at).
+    - name: Check whether local Graylog dashboards directory exists
+      ansible.builtin.stat:
+        path: "{{ playbook_dir | dirname }}/../../stacks/graylog-stack/dashboards"
+      delegate_to: localhost
+      become: false
+      register: graylog_dashboard_dir
+      when: graylog_deploy_runtime | bool
+
+    - name: Find local Graylog dashboard JSON files
+      ansible.builtin.find:
+        paths: "{{ playbook_dir | dirname }}/../../stacks/graylog-stack/dashboards"
+        patterns: "*.json"
+      delegate_to: localhost
+      become: false
+      register: graylog_dashboard_files
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_dir.stat.exists | default(false)
+        - graylog_dashboard_dir.stat.isdir | default(false)
+
+    - name: List existing Graylog dashboards
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/views?type=DASHBOARD&per_page=100"  # nosonar: ansible:S5332
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_existing_dashboards
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_files.files | default([]) | length > 0
+
+    - name: Import Graylog dashboards from JSON files
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/views"  # nosonar: ansible:S5332
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body: >-
+          {{
+            (lookup('file', item) | from_json)
+            | dict2items
+            | rejectattr('key', 'in', ['id', '_version', 'created_at'])
+            | items2dict
+          }}
+        status_code: [200, 201]
+      loop: "{{ graylog_dashboard_files.files | default([]) | map(attribute='path') | list }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_files.files | default([]) | length > 0
+        - >-
+          (graylog_existing_dashboards.json.views | default([])
+           | selectattr('title', 'eq',
+               (lookup('file', item) | from_json).title | default(''))
+           | list | length) == 0
+
+    # Post-ALIVE: pipeline rule to fix appliance source identities that don't
+    # set a usable syslog HOSTNAME (e.g. the Omada Controller embeds its
+    # identity in the message body instead of the syslog header, so it
+    # arrives with source=<connecting IP>)
+    - name: Check existing Graylog pipeline rules
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/rule"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_pipeline_rules
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog pipeline rule to rewrite Omada source
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/rule"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "rewrite-omada-source"
+          description: >-
+            Omada controller sends its identity in the message body, not the
+            syslog header, so it arrives with source=<connecting IP>. Rewrite
+            it to a clean identity.
+          source: |-
+            rule "rewrite-omada-source"
+            when
+              to_string($message.source) == "192.168.1.252"
+            then
+              set_field("source", "omada");
+            end
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_omada_rule_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_pipeline_rules.json | default([])
+           | selectattr('title', 'eq', 'rewrite-omada-source') | list | length) == 0
+
+    - name: Assert Omada pipeline rule compiled cleanly
+      ansible.builtin.assert:
+        that:
+          - graylog_omada_rule_create.json.errors is none
+        fail_msg: "Graylog rejected the rewrite-omada-source pipeline rule: {{ graylog_omada_rule_create.json.errors }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_pipeline_rules.json | default([])
+           | selectattr('title', 'eq', 'rewrite-omada-source') | list | length) == 0
+
+    - name: Check existing Graylog pipelines
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/pipeline"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_pipelines
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog source-identity-fixups pipeline
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/pipeline"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "source-identity-fixups"
+          description: "Rewrites the source field for appliances that do not set a usable syslog HOSTNAME."
+          source: |-
+            pipeline "source-identity-fixups"
+            stage 0 match either
+              rule "rewrite-omada-source";
+            end
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_source_fixups_pipeline_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_pipelines.json | default([])
+           | selectattr('title', 'eq', 'source-identity-fixups') | list | length) == 0
+
+    - name: Assert source-identity-fixups pipeline compiled cleanly
+      ansible.builtin.assert:
+        that:
+          - graylog_source_fixups_pipeline_create.json.errors is none
+        fail_msg: "Graylog rejected the source-identity-fixups pipeline: {{ graylog_source_fixups_pipeline_create.json.errors }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_pipelines.json | default([])
+           | selectattr('title', 'eq', 'source-identity-fixups') | list | length) == 0
+
+    - name: Resolve source-identity-fixups pipeline ID
+      ansible.builtin.set_fact:
+        graylog_source_fixups_pipeline_id: >-
+          {{
+            (graylog_pipelines.json | default([])
+             | selectattr('title', 'eq', 'source-identity-fixups')
+             | map(attribute='id') | list | first)
+            if (graylog_pipelines.json | default([])
+                | selectattr('title', 'eq', 'source-identity-fixups')
+                | list | length) > 0
+            else graylog_source_fixups_pipeline_create.json.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Check existing Graylog stream pipeline connections
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/connections"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_pipeline_connections
+      when: graylog_deploy_runtime | bool
+
+    - name: Compute existing pipeline_ids connected to the Default Stream
+      ansible.builtin.set_fact:
+        graylog_default_stream_pipeline_ids: >-
+          {{
+            (graylog_pipeline_connections.json | default([])
+             | selectattr('stream_id', 'eq', '000000000000000000000001')
+             | map(attribute='pipeline_ids') | list | first | default([]))
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Connect source-identity-fixups pipeline to the Default Stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/connections/to_stream"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          stream_id: "000000000000000000000001"
+          pipeline_ids: "{{ graylog_default_stream_pipeline_ids + [graylog_source_fixups_pipeline_id] }}"
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_source_fixups_pipeline_id not in graylog_default_stream_pipeline_ids
+
+    # Post-ALIVE: Sprint P7 — index set segmentation (Security / Docker / General).
+    # API payload shapes below (index set fields, the streams entity/share_request
+    # wrapper, and the starts_with() function-call GRPL syntax) were validated
+    # against the live instance with a create-then-delete prototype cycle before
+    # being encoded here.
+    - name: Check existing Graylog index sets
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/indices/index_sets"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_index_sets
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog Security index set
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/indices/index_sets"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "Security"
+          description: "Auth-facility syslog events (SSH, sudo, PAM) from managed LXCs. Kept longer than general logs."
+          index_prefix: "gl-security"
+          shards: 1
+          replicas: 0
+          rotation_strategy_class: "org.graylog2.indexer.rotation.strategies.TimeBasedSizeOptimizingStrategy"
+          rotation_strategy:
+            type: "org.graylog2.indexer.rotation.strategies.TimeBasedSizeOptimizingStrategyConfig"
+            index_lifetime_min: "P90D"
+            index_lifetime_max: "P120D"
+          retention_strategy_class: "org.graylog2.indexer.retention.strategies.DeletionRetentionStrategy"
+          retention_strategy:
+            type: "org.graylog2.indexer.retention.strategies.DeletionRetentionStrategyConfig"
+            max_number_of_indices: 8
+          data_tiering:
+            type: "hot_only"
+            index_lifetime_min: "P90D"
+            index_lifetime_max: "P120D"
+          index_analyzer: "standard"
+          index_optimization_max_num_segments: 1
+          index_optimization_disabled: false
+          field_type_refresh_interval: 5000
+          use_legacy_rotation: false
+          writable: true
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_security_indexset_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_index_sets.json.index_sets | default([])
+           | selectattr('title', 'eq', 'Security') | list | length) == 0
+
+    - name: Create Graylog Docker Chatter index set
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/indices/index_sets"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "Docker Chatter"
+          description: "Container stdout/stderr from all stacks. High volume, low value per message — short retention."
+          index_prefix: "gl-docker"
+          shards: 1
+          replicas: 0
+          rotation_strategy_class: "org.graylog2.indexer.rotation.strategies.TimeBasedSizeOptimizingStrategy"
+          rotation_strategy:
+            type: "org.graylog2.indexer.rotation.strategies.TimeBasedSizeOptimizingStrategyConfig"
+            index_lifetime_min: "P7D"
+            index_lifetime_max: "P10D"
+          retention_strategy_class: "org.graylog2.indexer.retention.strategies.DeletionRetentionStrategy"
+          retention_strategy:
+            type: "org.graylog2.indexer.retention.strategies.DeletionRetentionStrategyConfig"
+            max_number_of_indices: 6
+          data_tiering:
+            type: "hot_only"
+            index_lifetime_min: "P7D"
+            index_lifetime_max: "P10D"
+          index_analyzer: "standard"
+          index_optimization_max_num_segments: 1
+          index_optimization_disabled: false
+          field_type_refresh_interval: 5000
+          use_legacy_rotation: false
+          writable: true
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_docker_indexset_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_index_sets.json.index_sets | default([])
+           | selectattr('title', 'eq', 'Docker Chatter') | list | length) == 0
+
+    - name: Resolve Security index set ID
+      ansible.builtin.set_fact:
+        graylog_security_indexset_id: >-
+          {{
+            (graylog_index_sets.json.index_sets | default([])
+             | selectattr('title', 'eq', 'Security')
+             | map(attribute='id') | list | first)
+            if (graylog_index_sets.json.index_sets | default([])
+                | selectattr('title', 'eq', 'Security') | list | length) > 0
+            else graylog_security_indexset_create.json.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Resolve Docker Chatter index set ID
+      ansible.builtin.set_fact:
+        graylog_docker_indexset_id: >-
+          {{
+            (graylog_index_sets.json.index_sets | default([])
+             | selectattr('title', 'eq', 'Docker Chatter')
+             | map(attribute='id') | list | first)
+            if (graylog_index_sets.json.index_sets | default([])
+                | selectattr('title', 'eq', 'Docker Chatter') | list | length) > 0
+            else graylog_docker_indexset_create.json.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Check existing Graylog streams
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/streams"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_streams
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog Security stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/streams"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          entity:
+            title: "Security"
+            description: "Auth-facility syslog events (SSH, sudo, PAM) from managed LXCs."
+            index_set_id: "{{ graylog_security_indexset_id }}"
+            matching_type: "AND"
+            remove_matches_from_default_stream: false
+          share_request: null
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_security_stream_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_streams.json.streams | default([])
+           | selectattr('title', 'eq', 'Security') | list | length) == 0
+
+    - name: Create Graylog Docker Chatter stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/streams"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          entity:
+            title: "Docker Chatter"
+            description: "Container stdout/stderr from all stacks."
+            index_set_id: "{{ graylog_docker_indexset_id }}"
+            matching_type: "AND"
+            remove_matches_from_default_stream: false
+          share_request: null
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_docker_stream_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_streams.json.streams | default([])
+           | selectattr('title', 'eq', 'Docker Chatter') | list | length) == 0
+
+    - name: Resolve Security stream ID
+      ansible.builtin.set_fact:
+        graylog_security_stream_id: >-
+          {{
+            (graylog_streams.json.streams | default([])
+             | selectattr('title', 'eq', 'Security')
+             | map(attribute='id') | list | first)
+            if (graylog_streams.json.streams | default([])
+                | selectattr('title', 'eq', 'Security') | list | length) > 0
+            else graylog_security_stream_create.json.stream_id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Resolve Docker Chatter stream ID
+      ansible.builtin.set_fact:
+        graylog_docker_stream_id: >-
+          {{
+            (graylog_streams.json.streams | default([])
+             | selectattr('title', 'eq', 'Docker Chatter')
+             | map(attribute='id') | list | first)
+            if (graylog_streams.json.streams | default([])
+                | selectattr('title', 'eq', 'Docker Chatter') | list | length) > 0
+            else graylog_docker_stream_create.json.stream_id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    # New streams are created disabled. Resuming is idempotent (a no-op on an
+    # already-active stream), so this runs unconditionally every deploy rather
+    # than depending on ansible.builtin.uri's changed-detection — the uri
+    # module is a generic HTTP client and does not reliably report `changed`
+    # for POST requests, so gating on `is changed` here previously left both
+    # streams permanently disabled after their one-time creation.
+    - name: Resume Graylog Security stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/streams/{{ graylog_security_stream_id }}/resume"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when: graylog_deploy_runtime | bool
+
+    - name: Resume Graylog Docker Chatter stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/streams/{{ graylog_docker_stream_id }}/resume"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when: graylog_deploy_runtime | bool
+
+    - name: Check existing Graylog pipeline rules for log segmentation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/rule"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_segmentation_rules
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog pipeline rule to route Docker chatter
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/rule"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "route-docker-chatter"
+          description: "Move all container stdout/stderr into the Docker Chatter stream/index set instead of General."
+          source: |-
+            rule "route-docker-chatter"
+            when
+              starts_with(to_string($message.application_name), "docker-")
+            then
+              route_to_stream(id: "{{ graylog_docker_stream_id }}");
+              remove_from_stream(id: "000000000000000000000001");
+            end
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_docker_route_rule_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_rules.json | default([])
+           | selectattr('title', 'eq', 'route-docker-chatter') | list | length) == 0
+
+    - name: Assert Docker chatter routing rule compiled cleanly
+      ansible.builtin.assert:
+        that:
+          - graylog_docker_route_rule_create.json.errors is none
+        fail_msg: "Graylog rejected the route-docker-chatter pipeline rule: {{ graylog_docker_route_rule_create.json.errors }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_rules.json | default([])
+           | selectattr('title', 'eq', 'route-docker-chatter') | list | length) == 0
+
+    - name: Create Graylog pipeline rule to route Security auth events
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/rule"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "route-security-auth"
+          description: "Move non-Docker auth-facility syslog events into the Security stream/index set instead of General."
+          source: |-
+            rule "route-security-auth"
+            when
+              to_string($message.facility) == "security/authorization" AND
+              NOT starts_with(to_string($message.application_name), "docker-")
+            then
+              route_to_stream(id: "{{ graylog_security_stream_id }}");
+              remove_from_stream(id: "000000000000000000000001");
+            end
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_security_route_rule_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_rules.json | default([])
+           | selectattr('title', 'eq', 'route-security-auth') | list | length) == 0
+
+    - name: Assert Security routing rule compiled cleanly
+      ansible.builtin.assert:
+        that:
+          - graylog_security_route_rule_create.json.errors is none
+        fail_msg: "Graylog rejected the route-security-auth pipeline rule: {{ graylog_security_route_rule_create.json.errors }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_rules.json | default([])
+           | selectattr('title', 'eq', 'route-security-auth') | list | length) == 0
+
+    - name: Check existing Graylog pipelines for log segmentation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/pipeline"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_segmentation_pipelines
+      when: graylog_deploy_runtime | bool
+
+    - name: Create Graylog log-segmentation pipeline
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/pipeline"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "log-segmentation"
+          description: "Routes Docker container chatter and non-Docker auth-facility syslog into their own streams/index sets."
+          source: |-
+            pipeline "log-segmentation"
+            stage 0 match either
+              rule "route-docker-chatter";
+              rule "route-security-auth";
+            end
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_segmentation_pipeline_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_pipelines.json | default([])
+           | selectattr('title', 'eq', 'log-segmentation') | list | length) == 0
+
+    - name: Assert log-segmentation pipeline compiled cleanly
+      ansible.builtin.assert:
+        that:
+          - graylog_segmentation_pipeline_create.json.errors is none
+        fail_msg: "Graylog rejected the log-segmentation pipeline: {{ graylog_segmentation_pipeline_create.json.errors }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_segmentation_pipelines.json | default([])
+           | selectattr('title', 'eq', 'log-segmentation') | list | length) == 0
+
+    - name: Resolve log-segmentation pipeline ID
+      ansible.builtin.set_fact:
+        graylog_segmentation_pipeline_id: >-
+          {{
+            (graylog_segmentation_pipelines.json | default([])
+             | selectattr('title', 'eq', 'log-segmentation')
+             | map(attribute='id') | list | first)
+            if (graylog_segmentation_pipelines.json | default([])
+                | selectattr('title', 'eq', 'log-segmentation') | list | length) > 0
+            else graylog_segmentation_pipeline_create.json.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    # Re-query connections rather than reuse graylog_pipeline_connections —
+    # the Omada pipeline's own connection task above may have just changed it
+    # within this same play run.
+    - name: Check existing Graylog stream pipeline connections (log-segmentation)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/connections"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_pipeline_connections_refresh
+      when: graylog_deploy_runtime | bool
+
+    - name: Compute existing pipeline_ids connected to the Default Stream (log-segmentation)
+      ansible.builtin.set_fact:
+        graylog_default_stream_pipeline_ids_refresh: >-
+          {{
+            (graylog_pipeline_connections_refresh.json | default([])
+             | selectattr('stream_id', 'eq', '000000000000000000000001')
+             | map(attribute='pipeline_ids') | list | first | default([]))
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Connect log-segmentation pipeline to the Default Stream
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/pipelines/connections/to_stream"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          stream_id: "000000000000000000000001"
+          pipeline_ids: "{{ graylog_default_stream_pipeline_ids_refresh + [graylog_segmentation_pipeline_id] }}"
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_segmentation_pipeline_id not in graylog_default_stream_pipeline_ids_refresh
+
+  handlers:
+    - name: Recreate Graylog
+      community.docker.docker_compose_v2:
+        project_src: "{{ graylog_compose_dir }}"
+        state: present
+        recreate: always
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

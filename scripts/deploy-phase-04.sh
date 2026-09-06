@@ -7,7 +7,7 @@
 # - Harbor with Trivy
 # - apt-cacher-ng accessible
 # - SDN zones configured
-# - Secrets in SOPS (terraform/secrets.enc.yaml)
+# - Secrets in SOPS (terraform/secrets.common.enc.yaml)
 
 set -euo pipefail
 

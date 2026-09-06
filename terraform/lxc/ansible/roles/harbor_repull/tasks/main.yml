@@ -1,0 +1,270 @@
+---
+- name: Remove scheduled Harbor re-pull when not explicitly enabled
+  when: not (harbor_repull_enabled | bool)
+  block:
+    - name: Stop and disable harbor-repull timer
+      ansible.builtin.systemd:
+        name: harbor-repull.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop harbor-repull service if present
+      ansible.builtin.systemd:
+        name: harbor-repull.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove harbor-repull units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/harbor-repull.timer
+        - /etc/systemd/system/harbor-repull.service
+        - "{{ harbor_repull_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale harbor-repull service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed harbor-repull.service harbor-repull.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled Harbor re-pull when explicitly enabled
+  when: harbor_repull_enabled | bool
+  block:
+    - name: Create harbor-repull directory
+      ansible.builtin.file:
+        path: "{{ harbor_repull_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy harbor-repull script
+      ansible.builtin.copy:
+        src: harbor_repull.py
+        dest: "{{ harbor_repull_dir }}/harbor_repull.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy known-image manifest
+      ansible.builtin.copy:
+        src: manifest.txt
+        dest: "{{ harbor_repull_manifest_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # ---------------------------------------------------------------
+    # Mirror-push credential (pull-then-push fix -- see
+    # docs/harbor-stack/README.md Open Investigation)
+    # ---------------------------------------------------------------
+
+    - name: Check for existing harbor-repull mirror push credential
+      ansible.builtin.stat:
+        path: "{{ harbor_repull_dir }}/mirror-push.env"
+      register: harbor_repull_mirror_credential_stat
+
+    - name: Generate a unique name for this role's mirror-push robot
+      ansible.builtin.set_fact:
+        harbor_repull_mirror_robot_suffix: "{{ now(fmt='%s') }}-{{ 9999 | random }}"
+      when: not harbor_repull_mirror_credential_stat.stat.exists
+
+    # Bootstrap-ordering: ci-runner-01 is a foundation stack and can redeploy
+    # before harbor-stack (a platform stack) during a full teardown/redeploy,
+    # so Harbor's admin API may not exist yet. Same shape as node_exporter's
+    # step-ca reachability check -- probe first, warn and skip rather than
+    # hard-fail. Deliberately NOT falling back to the production ("lab")
+    # Harbor here: that API call is a mutating POST (robot creation), and
+    # doing that unattended would mean routine pve-test-vm provisioning
+    # gains a standing, unapproved write path into pve's services -- exactly
+    # what CLAUDE.md's production controls forbid. harbor_repull.py already
+    # degrades gracefully to pull-only when this credential file is simply
+    # absent, so skipping here is self-healing: the next provision run (or
+    # the next harbor-repull.timer firing) picks it up once the local
+    # Harbor is actually reachable.
+    - name: Check if the local Harbor admin API is reachable before creating a robot
+      ansible.builtin.wait_for:
+        host: "{{ harbor_repull_admin_host }}"
+        port: "{{ harbor_repull_admin_port }}"
+        timeout: 5
+      register: harbor_repull_admin_reachable
+      ignore_errors: true
+      when: not harbor_repull_mirror_credential_stat.stat.exists
+
+    - name: Warn and skip mirror-push robot creation when Harbor is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          Harbor admin API at {{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}
+          is not reachable (timeout). Skipping harbor-repull mirror-push robot creation --
+          re-run provision (or wait for harbor-repull.timer) once harbor-stack is deployed.
+      when:
+        - not harbor_repull_mirror_credential_stat.stat.exists
+        - harbor_repull_admin_reachable.failed | default(true)
+
+    # Deliberately a fresh, uniquely-named robot rather than a fixed name
+    # reused across deploys -- Harbor's GET /robots does not reliably
+    # list/return project-scoped robots (confirmed in
+    # deploy-pentagi-stack.yml), so an existence check or delete-by-lookup
+    # before recreating isn't trustworthy. A unique name sidesteps that
+    # entirely: this task only ever runs when the local credential file is
+    # missing, so POST always succeeds with 201 the first time -- no 409
+    # case to handle, and no dependency on SOPS, since the secret only ever
+    # needs to exist on this one host. Deliberately NOT the shared
+    # 'robot$ci-runner' system-level robot -- its SOPS secret is already
+    # known stale (see docs/harbor-stack/README.md,
+    # [[project_harbor_ci_robot_credential_mismatch]] in memory) and that
+    # credential is also shared with GitHub Actions CI workflows.
+    - name: Create project-scoped Harbor robot for harbor-repull mirror pushes
+      ansible.builtin.uri:
+        url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ harbor_repull_admin_user }}"
+        url_password: "{{ harbor_repull_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "repull-push-{{ harbor_repull_mirror_robot_suffix }}"
+          description: "harbor_repull role only (ci-runner-01) -- push/pull for the mirror project's pull-then-push artifacts, not shared with CI"
+          duration: -1
+          level: "project"
+          permissions:
+            - kind: "project"
+              namespace: "{{ harbor_repull_mirror_project }}"
+              access:
+                - resource: "repository"
+                  action: "pull"
+                - resource: "repository"
+                  action: "push"
+        status_code: 201
+      register: harbor_repull_mirror_robot_create
+      when:
+        - not harbor_repull_mirror_credential_stat.stat.exists
+        - not (harbor_repull_admin_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write harbor-repull mirror push credential file
+      ansible.builtin.copy:
+        dest: "{{ harbor_repull_dir }}/mirror-push.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # harbor-repull mirror push credential - managed by Ansible, do not edit by hand
+          HARBOR_REPULL_MIRROR_USER={{ harbor_repull_mirror_robot_create.json.name }}
+          HARBOR_REPULL_MIRROR_PASSWORD={{ harbor_repull_mirror_robot_create.json.secret }}
+      when:
+        - not harbor_repull_mirror_credential_stat.stat.exists
+        - not (harbor_repull_admin_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Retention policy for the mirror project (2026-08-16 addition)
+    # ---------------------------------------------------------------
+    #
+    # harbor_repull re-pushes the same manifest entries every night, and
+    # a mutable tag (e.g. pentagi-fixed:latest, rebuilt on every
+    # deploy-pentagi-stack.yml run) leaves its previous digest behind as
+    # an orphaned, untagged artifact each time -- confirmed live: 8
+    # separate untagged copies of pentagi-fixed accumulated with no
+    # cleanup. The mirror project is push-only (nothing ever pulls from
+    # it directly), so the usual nDaysSinceLastPull retention template
+    # doesn't apply -- everything in it would look "unused" and get
+    # pruned regardless of currency. latestPushedK (keep the most
+    # recently pushed artifact per repo) is the correct rule for a
+    # push-only project. Runs unconditionally (not gated on the
+    # credential-file-exists check above) since it's a cheap, idempotent
+    # GET-then-maybe-POST every run, not a one-time bootstrap step.
+    - name: Check if the local Harbor admin API is reachable for retention setup
+      ansible.builtin.wait_for:
+        host: "{{ harbor_repull_admin_host }}"
+        port: "{{ harbor_repull_admin_port }}"
+        timeout: 5
+      register: harbor_repull_retention_admin_reachable
+      ignore_errors: true
+
+    - name: Ensure mirror project has a retention policy
+      when: not (harbor_repull_retention_admin_reachable.failed | default(true))
+      block:
+        - name: Fetch mirror project metadata
+          ansible.builtin.uri:
+            url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/projects/{{ harbor_repull_mirror_project }}"
+            method: GET
+            url_username: "{{ harbor_repull_admin_user }}"
+            url_password: "{{ harbor_repull_admin_password }}"
+            force_basic_auth: true
+            status_code: [200, 404]
+          register: harbor_repull_mirror_project_get
+          delegate_to: localhost
+          failed_when: false
+
+        - name: Create latestPushedK retention policy for the mirror project
+          ansible.builtin.uri:
+            url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/retentions"
+            method: POST
+            url_username: "{{ harbor_repull_admin_user }}"
+            url_password: "{{ harbor_repull_admin_password }}"
+            force_basic_auth: true
+            body_format: json
+            body:
+              algorithm: "or"
+              rules:
+                - action: "retain"
+                  template: "latestPushedK"
+                  params:
+                    latestPushedK: 1
+                  priority: 1
+                  scope_selectors:
+                    repository:
+                      - decoration: "repoMatches"
+                        kind: "doublestar"
+                        pattern: "**"
+                  tag_selectors:
+                    - decoration: "matches"
+                      kind: "doublestar"
+                      pattern: "**"
+              scope:
+                level: "project"
+                ref: "{{ harbor_repull_mirror_project_get.json.project_id }}"
+              trigger:
+                kind: "Schedule"
+                settings:
+                  cron: "0 30 0 * * *"
+            status_code: 201
+          delegate_to: localhost
+          when:
+            - harbor_repull_mirror_project_get.status == 200
+            - harbor_repull_mirror_project_get.json.metadata.retention_id is not defined
+
+    - name: Write harbor-repull systemd service
+      ansible.builtin.template:
+        src: harbor-repull.service.j2
+        dest: /etc/systemd/system/harbor-repull.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write harbor-repull systemd timer
+      ansible.builtin.template:
+        src: harbor-repull.timer.j2
+        dest: /etc/systemd/system/harbor-repull.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start harbor-repull timer
+      ansible.builtin.systemd:
+        name: harbor-repull.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

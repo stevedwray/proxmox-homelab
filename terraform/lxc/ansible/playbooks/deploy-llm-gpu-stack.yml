@@ -1,0 +1,38 @@
+# llm-gpu-stack — native (no Docker) GPU-passthrough llama.cpp router-mode
+# deployment for pve-framework's ai_seg zone.
+# Play 1: LXC base configuration (DNS, apt-cacher, root CA)
+# Play 2: ROCm/HIP toolchain, llama.cpp HIP build, llama-router systemd service
+#
+# See docs/framework/llamacpp-router-mode-deployment.md for the deployment
+# pattern this implements and
+# docs/framework/proxmox-strix-halo-setup-notes.md for the GPU-enablement
+# findings this codifies (device passthrough itself is handled by
+# Terraform's native device_passthrough mechanism, not this playbook).
+
+---
+- name: Configure LXC base (DNS, apt-cacher, root CA)
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+
+- name: Deploy llama.cpp router-mode service
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    # Set now that this service is being exposed through Traefik --
+    # Decision 8: llama-server uses its own native API-key auth instead of
+    # Authentik (it's a machine API, not a browser login), so this is the
+    # actual security boundary once the edge route's auth.mode is `none`.
+    llm_gpu_stack_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+  roles:
+    - llm_gpu_stack
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

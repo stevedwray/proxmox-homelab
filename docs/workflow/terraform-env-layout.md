@@ -1,8 +1,9 @@
 # Terraform Environment Runtime Isolation
 
-**Status:** In progress — code committed (`037c328`), PR #386 open →
-`main`. Steps 1–5 and 8 complete. Step 9 (pve state migration) partially
-complete. Steps 6, 7, and 10 pending.
+**Status as of June 29, 2026:** Merged to `main` and `stable` as
+`fe05636` (`feat(infra): per-environment Terragrunt layout for runtime
+isolation (#386)`). Steps 1–5 and 8 are complete. Step 9 (pve state
+migration) is partially complete. Steps 6, 7, and 10 remain pending.
 
 | Step | Status |
 |------|--------|
@@ -30,9 +31,12 @@ this gap in the interim.
 This is the next structural prerequisite for safe parallel work on `pve` and
 `pve-test-vm`.
 
-**Problem:** `pve` and `pve-test-vm` still share runtime outputs in one working
-tree. A run against one environment can overwrite files later consumed by the
-other environment. This has already caused production contamination:
+**Problem:** `pve` and `pve-test-vm` shared runtime outputs in one working
+tree. A run against one environment could overwrite files later consumed by the
+other environment. That was one half of the June 24 production incident; the
+other half was environment processing that allowed stale `TF_VAR_lab_*` values
+to survive across sessions when the selected env's `LAB_*` values should have
+won. This document covers the structural file-path isolation piece:
 
 - `terraform/lxc/stacks/<stack>/terraform.tfstate`
 - `terraform/lxc/stacks/<stack>/inventory.yml`
@@ -446,8 +450,43 @@ worktree per environment:
 - use a separate checkout for pve-test-vm rebuild and validation work
 - do not alternate pve and pve-test-vm Terraform/provision runs in the same
   checkout without re-verifying inventories, generated edge files, and root CA
+- **always drive deploys through `scripts/provision.sh --stack <name>`**
+  (with `./with-secrets` or `./with-secrets-prod` and the right `PVE_ENV`),
+  never a hand-typed `ansible-playbook -i <path>` call. `provision.sh`
+  resolves `terraform/lxc/environments/<env>/<stack>/inventory.yml` first
+  and runs `assert_inventory_matches_env()` as a guard; a manual invocation
+  gets neither, even for a stack (like `proxy-stack`) that's already fully
+  migrated to the per-environment layout. See the incident below for what
+  bypassing it costs.
 
 This is a mitigation only. The target state is structural isolation in one repo.
+
+### Incident: 2026-08-16, prod-intended deploy landed on pve-test-vm
+
+While upgrading `proxy-stack` (Traefik) on `pve`, a hand-typed
+`ansible-playbook -i terraform/lxc/stacks/proxy-stack/inventory.yml ...`
+call was used instead of `scripts/provision.sh`. That path is the stale,
+gitignored, non-environment-scoped fallback file (last written by whichever
+environment's Terraform ran most recently in that checkout) — not
+`terraform/lxc/environments/pve/proxy-stack/inventory.yml`, which already
+existed and was correct. The deploy ran with `pve` secrets/domain but
+against pve-test-vm's real host, overwriting its Docker registry trust,
+full Traefik dynamic router table, and ACME resolvers with `pve`'s values.
+Real DNS-01 challenges were attempted against the production Cloudflare
+zone for two hostnames using the shared `CF_DNS_API_TOKEN` (both failed
+validation; 4 stale `_acme-challenge` TXT records were left behind and
+required manual cleanup via the Cloudflare API — `dig` against public
+resolvers lagged the actual zone state, so confirm cleanup via the
+Cloudflare API directly, not `dig`), and 11 real certificates were issued
+by production's step-ca for production hostnames, left inert in
+pve-test-vm's `acme.json` (step-ca is internal-only; no public trust/CT-log
+exposure). Both environments were fully restored and re-verified after the
+fact. `proxy-stack` was already on the per-environment layout — the
+guardrail (`assert_inventory_matches_env()`) that would have caught this
+was simply never invoked, because `provision.sh` itself was bypassed.
+
+Full incident writeup: `feedback_env_isolation_rules` in the operator's
+Claude Code memory (Recurrence, 2026-08-16).
 
 ---
 

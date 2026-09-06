@@ -4,7 +4,7 @@
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
   roles:
     - lxc_base
     - docker_base
@@ -53,15 +53,23 @@
 
   vars:
     proxy_compose_dir: /opt/proxy-stack
-    traefik_version: "v3.1.6"
-    traefik_image: "traefik:{{ traefik_version }}"
+    traefik_version: "v3.7.10"
     proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    proxy_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ proxy_lab_domain, true) }}"
+    traefik_image: "{{ proxy_registry_host }}/dockerhub/library/traefik:{{ traefik_version }}"
     proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
     # Control-node source dir for generated per-stack Traefik files.
-    # Defaults to terraform/lxc/.generated/traefik and can be overridden.
-    # Files are published into /opt/proxy-stack/dynamic/ so the active file
-    # provider always loads router definitions.
-    traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
+    # When PVE_ENV is set, defaults to the env-scoped directory so a
+    # pve-test-vm provision never pollutes the pve deploy path (and vice
+    # versa). reconcile-edge.py writes to the same env-scoped path, so
+    # full-provision and single-stack --stack proxy-stack both use the
+    # same source. Can be overridden explicitly via -e.
+    traefik_generated_source_dir: >-
+      {{ (playbook_dir ~ '/../../environments/' ~ lookup('env', 'PVE_ENV') ~ '/.generated/traefik')
+         if lookup('env', 'PVE_ENV') | length > 0
+         else (playbook_dir ~ '/../../.generated/traefik') }}
 
   tasks:
     - name: Create Traefik directory structure
@@ -110,8 +118,18 @@
                   entryPoint:
                     to: websecure
                     scheme: https
+                # CVE-2026-54763 mitigation: default is "keep", which
+                # leaves underscore-variant headers on the wire for
+                # backends that normalize dash/underscore identically
+                # (e.g. NetBox's REMOTE_AUTH_HEADER trusting
+                # HTTP_X_AUTHENTIK_USERNAME) to collide with Traefik's
+                # own stripped/rewritten identity headers from the
+                # authentik forwardAuth middleware.
+                underscoreHeadersStrategy: reject
             websecure:
               address: ":443"
+              http:
+                underscoreHeadersStrategy: reject
             metrics:
               address: ":8082"
 
@@ -149,6 +167,7 @@
           metrics:
             prometheus:
               entryPoint: metrics
+      register: traefik_static_config
 
     - name: Write shared Authentik middleware config
       ansible.builtin.copy:
@@ -163,6 +182,12 @@
                   tls:
                     ca: /certs/combined-ca.crt
                   trustForwardHeader: true
+                  # v3.6.9+ warns on every router using this middleware
+                  # when unset ("unlimited response body size ... DoS
+                  # attacks and memory exhaustion"). The outpost's real
+                  # response is small (headers + at most a short
+                  # redirect/error body); 1MiB is generous headroom.
+                  maxResponseBodySize: 1048576
                   authResponseHeaders:
                     - X-authentik-username
                     - X-authentik-groups
@@ -223,7 +248,7 @@
                 - ./certs/combined-ca.crt:/certs/combined-ca.crt:ro
 
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ proxy_registry_host }}/ghcr/google/cadvisor:v0.60.5"
               container_name: cadvisor
               restart: unless-stopped
               ports:
@@ -234,6 +259,7 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: traefik_compose_definition
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:
@@ -300,6 +326,37 @@
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live: the v3.7.10 bump left the old container
+        # running with failed=0/changed=true reported). Force recreation
+        # whenever the compose file or the static traefik.yml (entryPoints/
+        # providers/certificatesResolvers are startup-only, not hot-
+        # reloaded like the dynamic/ directory) actually changed content,
+        # not just when the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed or traefik_compose_definition.changed
+                or traefik_static_config.changed)
+            else 'auto'
+          }}
         remove_orphans: true
       when: not ansible_check_mode
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/proxy-stack
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

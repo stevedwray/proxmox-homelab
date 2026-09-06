@@ -53,18 +53,122 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Check compose files use Harbor proxy
+      - name: "Check every image: reference routes through Harbor"
         run: |
-          if grep -RInE \
+          set -euo pipefail
+          violations=0
+
+          # Scans terraform/lxc/ansible/ (playbooks + roles — where every real
+          # image: line actually lives) as well as terraform/lxc/stacks/ (any
+          # stack-owned static compose file). Earlier versions of this check
+          # only scanned terraform/lxc/stacks/, so it never saw the
+          # ansible/-side violations documented in
+          # docs/harbor-stack/image-sourcing-enforcement.md Finding 2.
+          #
+          # A line's *effective* value passes if it references a
+          # registry_host var, in any of the conventions this repo uses:
+          # Ansible Jinja ("{{ ai_services_registry_host }}/...", optionally
+          # quoted), or a plain Docker Compose "${REGISTRY_HOST}"
+          # substitution. If the image: line is a single bare var reference
+          # (this repo's "*_image:" indirection convention, e.g.
+          # "image: {{ vm_image }}"), the check resolves that var's own
+          # definition — same file first, then that role's own
+          # defaults/main.yml if the var is defined elsewhere in the same
+          # role (covers both roles/<name>/tasks/main.yml and
+          # roles/<name>/templates/*.j2) — and tests *that* value instead,
+          # so an indirected bad value (like minecraft-wildworks's
+          # minecraft_server_image, or docker_socket_proxy's template
+          # referencing its role default) can't hide behind the
+          # indirection. Anything else — a literal upstream registry
+          # reference or a bare
+          # Docker Hub shorthand like "portainer/portainer-ce" — fails,
+          # rather than only rejecting a fixed list of known registry
+          # hostnames.
+          #
+          # Known limitation: var resolution only follows one hop (the
+          # image: line's own var, plus that var's role-defaults sibling if
+          # applicable) — a var defined via a second layer of indirection
+          # would not be resolved. None of this repo's stacks currently do
+          # that.
+          #
+          # Excluded, each for a different documented reason:
+          #  - gaming-stack/torrent-stack/media-stack: legacy, pre-contract
+          #    LXCs not provisioned by this repo's Terraform/Ansible flow
+          #    yet (see docs/application-migration/) — no playbook here a
+          #    fix would even apply through.
+          #  - roles/app_stack/: confirmed zero live consumers (no
+          #    stack.yaml points ansible_playbook at deploy-stack) — see
+          #    docs/harbor-stack/image-sourcing-enforcement.md Finding 1.
+          #  - stacks/harness-target/ and stacks/harness-target-pve/:
+          #    intentionally pinned to production Harbor's FQDN rather than
+          #    ${REGISTRY_HOST}, confirmed by the operator — they only ever
+          #    pull (read-only) through prod Harbor's proxy cache, never
+          #    mutate it, so this is accepted as-is, not a violation to fix.
+          #  - stacks/*/stack-request.yaml: human-authored scaffolding input
+          #    consumed by scaffold-stack.py, not a deployed artifact — see
+          #    that script's own docstring. Its image: lines describe the
+          #    upstream images the generated compose file should end up
+          #    referencing through ${REGISTRY_HOST}, not a live reference
+          #    of its own.
+          passes_registry_host() {
+            local v="$1"
+            [[ "${v}" =~ \{\{[^}]*registry_host[^}]*\}\} ]] && return 0
+            [[ "${v}" =~ \$\{[^}]*registry_host[^}]*\} ]] && return 0
+            return 1
+          }
+
+          resolve_var() {
+            local var_name="$1" file="$2" def_line
+            def_line=$(grep -E "^[[:space:]]*${var_name}:[[:space:]]*" "${file}" | head -1 || true)
+            if [[ -z "${def_line}" && "${file}" =~ ^(.*/roles/[^/]+/)([^/]+/.*)?$ ]]; then
+              local defaults_file="${BASH_REMATCH[1]}defaults/main.yml"
+              if [[ -f "${defaults_file}" && "${defaults_file}" != "${file}" ]]; then
+                def_line=$(grep -E "^[[:space:]]*${var_name}:[[:space:]]*" "${defaults_file}" | head -1 || true)
+              fi
+            fi
+            [[ -n "${def_line}" ]] && sed -e 's/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*:[[:space:]]*//' <<<"${def_line}"
+          }
+
+          while IFS=: read -r file lineno content; do
+            trimmed=$(sed -e 's/^[[:space:]]*//' <<<"${content}")
+            [[ "${trimmed:0:1}" == "#" ]] && continue
+
+            value=$(sed -e 's/^[[:space:]]*image:[[:space:]]*//' <<<"${content}")
+            dequoted="${value%\"}"; dequoted="${dequoted#\"}"
+            dequoted="${dequoted%\'}"; dequoted="${dequoted#\'}"
+            effective_value="${value}"
+
+            if [[ "${dequoted}" =~ ^\{\{[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\}\}$ ]]; then
+              resolved=$(resolve_var "${BASH_REMATCH[1]}" "${file}")
+              [[ -n "${resolved}" ]] && effective_value="${resolved}"
+            fi
+
+            lower_value="${effective_value,,}"
+            passes_registry_host "${lower_value}" && continue
+
+            echo "VIOLATION: ${file}:${lineno}:${content}   [resolved: ${effective_value}]"
+            violations=$((violations + 1))
+          done < <(grep -RInE \
             --exclude-dir='.terragrunt-cache' \
+            --exclude-dir='gaming-stack' \
+            --exclude-dir='torrent-stack' \
+            --exclude-dir='media-stack' \
+            --exclude-dir='app_stack' \
+            --exclude-dir='harness-target' \
+            --exclude-dir='harness-target-pve' \
             --include='*.yml' \
             --include='*.yaml' \
-            '^[[:space:]]*image:[[:space:]]*.*(docker\.io|ghcr\.io|quay\.io|registry\.k8s\.io)' \
-            terraform/lxc/stacks/; then
-            echo "ERROR: Direct upstream registry references found. Use harbor.lab.gibbsgreatly.xyz/... (proxy cache) instead."
+            --include='*.j2' \
+            '^[[:space:]]*image:[[:space:]]*[^[:space:]]' \
+            terraform/lxc/ansible/ terraform/lxc/stacks/ \
+            | grep -vE '/stack-request\.yaml:')
+
+          if [[ "${violations}" -gt 0 ]]; then
+            echo "ERROR: ${violations} image: reference(s) above do not route through Harbor."
+            echo "Use {{ <stack>_registry_host }}/<project>/<image>:<tag> (or \${REGISTRY_HOST}/... in a static compose file) instead."
             exit 1
           fi
-          echo "OK — all image references use Harbor proxy."
+          echo "OK — every image: reference routes through Harbor."
 
   terraform-validate:
     name: Terraform validate
@@ -187,5 +291,11 @@ jobs:
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
         run: |
-          sops --decrypt terraform/secrets.enc.yaml > /dev/null
-          echo "Decryption successful"
+          # Check every secrets file, not just the common one — the per-env
+          # delta files (secrets.pve.enc.yaml etc.) are real secrets files
+          # too and were previously untested here. See
+          # docs/framework-integration/decisions.md Decision 6.
+          for f in terraform/secrets*.enc.yaml; do
+            sops --decrypt "$f" > /dev/null
+            echo "Decryption successful: $f"
+          done

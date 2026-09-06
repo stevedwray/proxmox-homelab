@@ -1,6 +1,6 @@
 # Copilot Task: Fix Proxmox API 401 for netbox-populate service
 
-**Output:** Write `artifacts/proxmox-401-fix.md` as a handback when done.
+**Output:** Write `docs/netbox-stack/artifacts/proxmox-401-fix.md` as a handback when done.
 **Scope:** Diagnose, fix, re-provision, verify. Do not stop to ask for input — work through
 the full chain in one session, making reasonable decisions at each step.
 
@@ -21,7 +21,7 @@ The Ansible playbook (`deploy-netbox-stack.yml`) resolves the Proxmox token ID w
 fallback chain: `PROXMOX_READONLY_TOKEN_ID` → `PROXMOX_TOKEN_ID` → `TF_VAR_pm_api_token_id`.
 The secret uses the same pattern with `_SECRET` suffixes.
 
-The previous diagnostic (see `artifacts/proxmox-401-diagnosis.md`) found that
+The previous diagnostic (see `docs/netbox-stack/artifacts/proxmox-401-diagnosis.md`) found that
 `PROXMOX_READONLY_TOKEN_ID` is absent from `secrets.enc.yaml`, so the token ID is coming
 from a fallback source. The 401 is most likely either an ID/secret mismatch (ID and secret
 belong to different tokens) or a stale/rotated secret.
@@ -182,7 +182,7 @@ Co-Authored-By: GitHub Copilot <noreply@github.com>"
 
 ## Handback document
 
-Write `artifacts/proxmox-401-fix.md` with these sections:
+Write `docs/netbox-stack/artifacts/proxmox-401-fix.md` with these sections:
 
 ```markdown
 # Proxmox 401 Fix — Handback

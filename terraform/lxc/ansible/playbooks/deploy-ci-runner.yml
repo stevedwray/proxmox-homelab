@@ -19,10 +19,12 @@
       }}
     runner_force_reconfigure: false
     terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
-    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   roles:
     - lxc_base
+    - role: harbor_repull
+      when: harbor_repull_enabled | default(false) | bool
 
   pre_tasks:
     - name: Derive the GitHub repository slug for runner registration
@@ -49,6 +51,17 @@
           - repos/{{ runner_repo_slug }}/actions/runners/registration-token
           - --jq
           - .token
+      # gh CLI prioritizes GH_TOKEN/GITHUB_TOKEN env vars over its own
+      # keyring-stored login. with-secrets injects GITHUB_TOKEN repo-wide
+      # for an unrelated, narrowly-scoped purpose (mcp-utility-stack's
+      # read-only CVE lookups) -- without clearing both here, this command
+      # silently uses that low-privilege token instead of the operator's
+      # actual `gh auth login` session and fails with a 403, regardless of
+      # how well-authenticated gh itself is. See
+      # docs/harbor-stack/image-sourcing-enforcement.md Finding 11.
+      environment:
+        GH_TOKEN: ""
+        GITHUB_TOKEN: ""
       delegate_to: localhost
       become: false
       register: runner_registration_token_generated
@@ -168,6 +181,11 @@
           - repos/{{ runner_repo_slug }}/actions/runners/remove-token
           - --jq
           - .token
+      # See the "Generate runner registration token" task above for why
+      # this is needed.
+      environment:
+        GH_TOKEN: ""
+        GITHUB_TOKEN: ""
       delegate_to: localhost
       become: false
       register: runner_removal_token_result
@@ -327,6 +345,11 @@
           - repos/{{ runner_repo_slug }}/actions/runners
           - --jq
           - "[.runners[] | select(.name == \"{{ runner_name }}\") | .status][0]"
+      # See the "Generate runner registration token" task above for why
+      # this is needed.
+      environment:
+        GH_TOKEN: ""
+        GITHUB_TOKEN: ""
       delegate_to: localhost
       become: false
       register: runner_online_check
@@ -341,3 +364,10 @@
       ansible.builtin.systemd:
         name: docker
         state: restarted
+
+- name: Enable unattended security updates (pilot rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

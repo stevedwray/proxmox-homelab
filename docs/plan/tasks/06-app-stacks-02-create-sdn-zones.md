@@ -1,5 +1,13 @@
 # 06-app-stacks-02 — Create app_seg and game_seg SDN zones
 
+> Historical task packet.
+> This task still references the retired `baseline/teardown-validated`
+> promotion path and the earlier `pve-test` validation model.
+> Keep it as migration-planning history rather than current workflow guidance.
+> For current branch and environment rules, use
+> [docs/workflow/branch-model.md](../../workflow/branch-model.md) and
+> [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

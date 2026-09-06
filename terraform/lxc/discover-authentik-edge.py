@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import sys
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 import ssl
 import urllib.request
 
@@ -21,7 +21,16 @@ if str(SCRIPT_DIR) not in sys.path:
 from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests  # noqa: E402
 
 
-DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
+def _default_authentik_url() -> str:
+    configured_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if configured_host:
+        if "://" in configured_host:
+            return configured_host.rstrip("/")
+        return f"https://{configured_host}"
+    return "https://authentik.lab.gibbsgreatly.xyz"
+
+
+DEFAULT_AUTHENTIK_URL = _default_authentik_url()
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 OWNED_NAME_PREFIX = "edge-"
 LEGACY_MANAGED_SHARED_FORWARD_OUTPOST = "edge-forwardauth-outpost"
@@ -34,11 +43,23 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("harbor-stack", "harbor"): ("HARBOR_OIDC_CLIENT_ID", "harbor"),
     ("monitoring-stack", "grafana"): ("GRAFANA_OAUTH_CLIENT_ID", "grafana"),
     ("portainer-stack", "portainer"): ("PORTAINER_OAUTH_CLIENT_ID", "portainer"),
+    ("technitium-stack", "technitium"): ("TECHNITIUM_OIDC_CLIENT_ID", "technitium"),
+    ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
+    ("opensearch-stack", "dashboards"): ("OPENSEARCH_OIDC_CLIENT_ID", "opensearch-dashboards"),
+    ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
+    ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
+    ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
     ("monitoring-stack", "grafana"): "GRAFANA_OAUTH_CLIENT_SECRET",
     ("portainer-stack", "portainer"): "PORTAINER_OAUTH_CLIENT_SECRET",
+    ("technitium-stack", "technitium"): "TECHNITIUM_OIDC_CLIENT_SECRET",
+    ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
+    ("opensearch-stack", "dashboards"): "OPENSEARCH_OIDC_CLIENT_SECRET",
+    ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
+    ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
+    ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
 }
 
 
@@ -177,6 +198,10 @@ class AuthentikApiClient:
     def fetch_applications(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/core/applications/")
 
+    def search_applications(self, query: str) -> list[dict[str, Any]]:
+        params = urlencode({"search": query})
+        return self._get_paginated(f"/api/v3/core/applications/?{params}")
+
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
@@ -188,7 +213,8 @@ class AuthentikApiClient:
 
     def _get_paginated(self, path: str) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        next_url: str | None = f"{self.base_url}{path}?page_size=200"
+        separator = "&" if "?" in path else "?"
+        next_url: str | None = f"{self.base_url}{path}{separator}page_size=200"
 
         while next_url:
             payload = self._request_json(next_url, "GET")
@@ -428,10 +454,6 @@ def _oidc_base_url(intent: RouteIntent) -> str:
             if parsed.scheme and parsed.netloc:
                 return f"{parsed.scheme}://{parsed.netloc}"
 
-        hostname = os.environ.get("HARBOR_HOSTNAME", "").strip()
-        if hostname:
-            return f"https://{hostname}"
-
     return f"https://{intent.host}"
 
 
@@ -443,6 +465,63 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/login/generic_oauth",)
     if _oidc_route_key(intent) == ("portainer-stack", "portainer"):
         return (base_url,)
+    if _oidc_route_key(intent) == ("technitium-stack", "technitium"):
+        return (f"{base_url}/sso/callback",)
+    if _oidc_route_key(intent) == ("ai-services-stack", "openwebui"):
+        return (f"{base_url}/oauth/oidc/callback",)
+    if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
+        # OpenSearch Dashboards' security plugin builds its OIDC redirect_uri
+        # as base_redirect_url + this fixed suffix (base_redirect_url is the
+        # bare public URL, same convention as every other stack here).
+        return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Wazuh's dashboard forks OpenSearch Dashboards' same security
+        # plugin, so it builds its redirect_uri the same way. Real bug
+        # found live 2026-08-29: this entry was missing on first deploy --
+        # the created provider got redirect_uris: [] and Authentik's
+        # /application/o/authorize/ rejected the real login with a
+        # "Redirect URI Error", confirmed via the actual browser flow.
+        return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "jellyfin"):
+        return (f"{base_url}/authentik/callback",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
+        return (f"{base_url}/auth/login",)
+    return ()
+
+
+def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
+    # Deliberately narrow: only routes listed here get grant_types set in
+    # the provider payload at all (see _oidc_provider_payload's comment in
+    # reconcile-authentik-edge.py for why leaving it unset elsewhere is
+    # required, not just simpler).
+    if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
+        # Matches the common baseline already used by 6 of the other
+        # providers in this Authentik instance. authorization_code is all
+        # this route's real login flow needs; client_credentials/password
+        # included only for parity with that existing baseline.
+        return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Same reasoning as opensearch-stack/dashboards immediately above --
+        # same underlying plugin, same requirement. Real bug found live
+        # 2026-08-29: this entry was missing, so the created provider got
+        # Authentik's create-time default grant_types: [], which makes
+        # /application/o/authorize/ reject every request as malformed (see
+        # reconcile-authentik-edge.py's _oidc_provider_payload comment).
+        return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) in (
+        ("media-stack-lab", "jellyfin"),
+        ("media-stack-lab", "immich"),
+    ):
+        # Same bug, found live again 2026-09-04: both were newly-created
+        # providers via this script (not pre-existing/patched), so both hit
+        # the identical create-time grant_types: [] default -- confirmed
+        # live via a real failed SSO login attempt (Authentik redirected to
+        # the callback with error=invalid_request, "the request is
+        # otherwise malformed"; GET on the provider showed grant_types: []).
+        # jellyfin-plugin-authentik and Immich's native OAuth both only use
+        # authorization_code (with PKCE for jellyfin), but matching the
+        # common baseline for consistency, same as opensearch/wazuh above.
+        return ("authorization_code", "client_credentials", "password")
     return ()
 
 
@@ -478,6 +557,49 @@ def _dedupe_provider_records(providers: list[dict[str, Any]]) -> list[dict[str, 
         seen.add(key)
         deduped.append(provider)
     return deduped
+
+
+def _dedupe_application_records(applications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for application in applications:
+        app_id = _as_id(application.get("pk") or application.get("id"))
+        app_name = _get_name(application)
+        app_slug = str(application.get("slug", "")).strip()
+        key = (app_id or "", app_name, app_slug)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(application)
+    return deduped
+
+
+def _application_search_queries(intent: RouteIntent) -> list[str]:
+    host = _normalize_url_host(_oidc_base_url(intent)) if intent.auth_mode == "oidc" else intent.host.lower()
+    return [intent.app_slug, intent.app_name, host]
+
+
+def _augment_inventory_with_targeted_application_searches(
+    client: AuthentikApiClient,
+    intents: list[RouteIntent],
+    inventory: AuthentikInventory,
+) -> DiscoveryIssue | None:
+    seen_queries: set[str] = set()
+    augmented = list(inventory.applications)
+    try:
+        for intent in intents:
+            for query in _application_search_queries(intent):
+                if not query or query in seen_queries:
+                    continue
+                seen_queries.add(query)
+                augmented.extend(client.search_applications(query))
+    except Exception as exc:
+        return DiscoveryIssue(
+            code="AKD101",
+            message=f"failed to query Authentik application search endpoint: {exc}",
+        )
+    inventory.applications = _dedupe_application_records(augmented)
+    return None
 
 
 def _fetch_authentik_inventory(
@@ -855,7 +977,10 @@ def _classify_oidc_route(
     if prov_differing:
         differing = True
 
-    expected_launch_host = _normalize_url_host(_oidc_base_url(intent)) or intent.host.lower()
+    # launch_url is always the public FQDN (intent.host), not _oidc_base_url —
+    # for Harbor in non-prod, _oidc_base_url returns an internal IP used only
+    # for the OIDC redirect_uri, not for the Authentik app catalogue link.
+    expected_launch_host = intent.host.lower()
     app_reasons, app_ids, app_differing = _check_app_match(
         intent,
         app,
@@ -1023,6 +1148,16 @@ def discover_authentik_drift(
             route_results=(),
             unmanaged=(),
             issues=(fetch_issue,),
+            stop_conditions=(),
+            request_methods=tuple(client.request_methods),
+        )
+
+    search_issue = _augment_inventory_with_targeted_application_searches(client, intents, inventory)
+    if search_issue:
+        return DiscoveryResult(
+            route_results=(),
+            unmanaged=(),
+            issues=(search_issue,),
             stop_conditions=(),
             request_methods=tuple(client.request_methods),
         )

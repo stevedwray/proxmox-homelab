@@ -343,15 +343,16 @@ These are the storage risks this project should address:
 
 This remains infrastructure work and should follow the repo branch model:
 
-1. Implementation work happens on a short-lived `work/*` branch cut from
-   `baseline/teardown-validated`.
+1. Implementation work happens on a short-lived `work/*` branch cut from the
+   current working HEAD.
 2. Mutation development and testing happen on a dedicated disposable test LXC
-   in `pve-test`, not on interconnected infrastructure stacks.
+   on `pve-test-vm`, not on interconnected infrastructure stacks.
    This test LXC should be the tracked stack `test-storage`, kept on a normal
    SDN/VLAN-backed zone, but excluded from broad teardown/redeploy gates unless
    explicitly enabled for a validation pass.
-3. Promotion goes back to `baseline/teardown-validated` after the required repo
-   gates pass.
+3. Promotion goes to `stable` after the required repo gates pass, then to
+   `main` after a successful incremental deploy on `pve` (see
+   [docs/workflow/branch-model.md](../workflow/branch-model.md)).
 4. The resulting contract must stay environment-scoped so a later `pve` rollout
    can use it without redesign.
 5. Stack changes are in scope only when they are needed to make storage intent,

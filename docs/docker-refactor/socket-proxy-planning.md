@@ -47,12 +47,8 @@ design caveat, see `docs/docker-refactor/current-state.md`.
   infrastructure set.
 - Use `./with-secrets <command>` for credentialed commands.
 - Do not create tracked temporary reports, handoffs, or evidence.
-- Put session handbacks, handoffs, and prompts under the ignored local artifact
-  path:
+- Put all temporary session material under the ignored local artifact path:
   - `docs/docker-refactor/artifacts/`
-- Put any local evidence or scratch reports under:
-  - `docs/docker-refactor/evidence/`
-  - `docs/docker-refactor/reports/`
 - Avoid bookkeeping churn. A session must produce material source changes,
   validation evidence, or a precise blocker. Handback wording changes alone do
   not count as progress.

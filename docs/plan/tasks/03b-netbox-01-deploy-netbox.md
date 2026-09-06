@@ -1,5 +1,11 @@
 # 03b-netbox-01 — Deploy NetBox IPAM on infra_seg
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` deployment workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

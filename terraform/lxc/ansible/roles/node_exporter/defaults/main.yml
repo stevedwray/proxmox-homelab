@@ -10,3 +10,7 @@ node_exporter_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME')
 node_exporter_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') }}"
 node_exporter_scrape_password: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') }}"
 node_exporter_scrape_password_hash: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD_HASH') }}"
+# Opt-in: when set, enables node_exporter's textfile collector at this
+# directory (for host-specific custom metrics, e.g. GPU stats scripts).
+# Empty by default so the other 10+ managed hosts are unaffected.
+node_exporter_textfile_dir: ""

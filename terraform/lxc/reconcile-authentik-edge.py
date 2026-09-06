@@ -13,12 +13,22 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import ssl
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 
-DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
+def _default_authentik_url() -> str:
+    configured_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if configured_host:
+        if "://" in configured_host:
+            return configured_host.rstrip("/")
+        return f"https://{configured_host}"
+    return "https://authentik.lab.gibbsgreatly.xyz"
+
+
+DEFAULT_AUTHENTIK_URL = _default_authentik_url()
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
 INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"
@@ -36,8 +46,6 @@ DEFAULT_INVALIDATION_FLOW_SLUGS = (
 DEFAULT_OIDC_SCOPE_NAMES = ("openid", "profile", "email")
 # Minimum outpost config — Authentik requires this field on creation.
 OUTPOST_DEFAULT_CONFIG = {
-    "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
-    "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
     "log_level": "info",
     "authentik_host_insecure": False,
 }
@@ -146,6 +154,10 @@ class AuthentikApiClient:
     def fetch_applications(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/core/applications/")
 
+    def search_applications(self, query: str) -> list[dict[str, Any]]:
+        params = urlencode({"search": query})
+        return self._get_paginated(f"/api/v3/core/applications/?{params}")
+
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
@@ -206,7 +218,8 @@ class AuthentikApiClient:
 
     def _get_paginated(self, path: str) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        next_url: str | None = f"{self.base_url}{path}?page_size=200"
+        separator = "&" if "?" in path else "?"
+        next_url: str | None = f"{self.base_url}{path}{separator}page_size=200"
         while next_url:
             payload = self._request_json(next_url, "GET")
             if isinstance(payload, dict) and isinstance(payload.get("results"), list):
@@ -251,11 +264,17 @@ class AuthentikApiClient:
             if extra_ca:
                 context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
                 context.load_verify_locations(cafile=extra_ca)
-        with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
-            raw = response.read().decode("utf-8")
-            if not raw:
-                return {}
-            return json.loads(raw)
+        try:
+            with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
+                raw = response.read().decode("utf-8")
+                if not raw:
+                    return {}
+                return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise urllib.error.HTTPError(
+                exc.url, exc.code, f"{exc.reason} — body: {body}", exc.headers, None
+            ) from None
 
 
 def parse_args() -> argparse.Namespace:
@@ -402,6 +421,21 @@ def _provider_payload(
     }
 
 
+def _desired_outpost_config() -> dict[str, Any]:
+    browser_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if browser_host:
+        browser_url = f"https://{browser_host}"
+    else:
+        parsed = urlparse(DEFAULT_AUTHENTIK_URL)
+        browser_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else DEFAULT_AUTHENTIK_URL
+
+    return {
+        **OUTPOST_DEFAULT_CONFIG,
+        "authentik_host": browser_url,
+        "authentik_host_browser": browser_url,
+    }
+
+
 def _oidc_provider_secret(intent: RouteIntent) -> tuple[str | None, ReconcileIssue | None]:
     env_name = _DISCOVER._oidc_client_secret_env(intent)
     if not env_name:
@@ -435,7 +469,7 @@ def _oidc_provider_payload(
     signing_key_pk: str,
     property_mapping_ids: list[str],
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "name": intent.provider_name,
         "client_type": "confidential",
         "client_id": _DISCOVER._oidc_client_id(intent),
@@ -452,6 +486,23 @@ def _oidc_provider_payload(
         "signing_key": signing_key_pk,
         "property_mappings": property_mapping_ids,
     }
+    # grant_types was never set here historically -- every pre-existing
+    # provider this script only ever PATCHed (not created) already had a
+    # non-empty grant_types from its original manual creation in the
+    # Authentik UI, so the gap was silent. opensearch-stack/dashboards was
+    # the first provider actually created via this script's own
+    # create_provider() call, which surfaced it: Authentik's API defaults
+    # an omitted grant_types to [] on create, which makes
+    # /application/o/authorize/ reject every request as malformed. Only
+    # set it for routes with an explicit entry below -- leaving it out of
+    # the payload for every other route preserves current behavior exactly
+    # (this script never patches an existing provider's grant_types), so a
+    # future reconcile run against Harbor/Grafana/Portainer/Technitium/
+    # OpenWebUI cannot narrow their existing (larger) grant_types sets.
+    grant_types = _DISCOVER._oidc_grant_types(intent)
+    if grant_types:
+        payload["grant_types"] = list(grant_types)
+    return payload
 
 
 def _resolve_oidc_signing_key_id(
@@ -626,10 +677,16 @@ def _resolve_proxy_flow_ids(
 
 
 def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[str, Any]:
+    # launch_url is the public-facing entry point shown in the Authentik app catalogue.
+    # Always use the edge route hostname (public FQDN), not _oidc_base_url: for some
+    # stacks (Harbor in non-prod) the OIDC redirect_uri uses an internal IP which
+    # Authentik rejects as an application launch_url.
+    launch_url = f"https://{intent.host}/"
     payload: dict[str, Any] = {
         "name": intent.app_name,
         "slug": intent.app_slug,
-        "meta_launch_url": f"{_DISCOVER._oidc_base_url(intent)}/",
+        "launch_url": launch_url,
+        "meta_launch_url": launch_url,
     }
     if provider_id:
         try:
@@ -643,7 +700,7 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     patch: dict[str, Any] = {}
     for key, value in desired.items():
         current = existing.get(key)
-        if key == "meta_launch_url":
+        if key in {"launch_url", "meta_launch_url"}:
             current_host = _DISCOVER._normalize_url_host(current)
             desired_host = _DISCOVER._normalize_url_host(value)
             if current_host != desired_host:
@@ -658,6 +715,66 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
         if current != value:
             patch[key] = value
     return patch
+
+
+def _resolve_existing_application_after_duplicate(
+    *,
+    intent: RouteIntent,
+    applications: list[dict[str, Any]],
+    app_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected_slug = str(app_payload.get("slug", "")).strip()
+    expected_provider = _DISCOVER._as_id(app_payload.get("provider"))
+    expected_host = _DISCOVER._normalize_url_host(
+        app_payload.get("meta_launch_url") or app_payload.get("launch_url")
+    )
+
+    matches = _DISCOVER._pick_candidates(
+        applications,
+        [
+            lambda item, expected_slug=expected_slug: bool(expected_slug)
+            and str(item.get("slug", "")).strip() == expected_slug,
+            lambda item, expected_provider=expected_provider: bool(expected_provider)
+            and _DISCOVER._as_id(item.get("provider")) == expected_provider,
+            lambda item, expected_host=expected_host: bool(expected_host)
+            and _DISCOVER._normalize_url_host(
+                item.get("meta_launch_url") or item.get("launch_url")
+            ) == expected_host,
+            lambda item, expected_name=intent.app_name: _DISCOVER._get_name(item) == expected_name,
+        ],
+    )
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _search_existing_application(
+    client: Any,
+    *,
+    intent: RouteIntent,
+    app_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    queries = [
+        str(app_payload.get("slug", "")).strip(),
+        intent.app_name,
+        _DISCOVER._normalize_url_host(
+            app_payload.get("meta_launch_url") or app_payload.get("launch_url")
+        ),
+    ]
+    seen_queries: set[str] = set()
+    for query in queries:
+        if not query or query in seen_queries:
+            continue
+        seen_queries.add(query)
+        matches = client.search_applications(query)
+        existing = _resolve_existing_application_after_duplicate(
+            intent=intent,
+            applications=matches,
+            app_payload=app_payload,
+        )
+        if existing is not None:
+            return existing
+    return None
 
 
 def _resolve_forwardauth_candidates(
@@ -706,6 +823,7 @@ def _resolve_forwardauth_candidates(
 
 
 def _resolve_oidc_candidates(
+    client: Any,
     intent: RouteIntent,
     applications: list[dict[str, Any]],
     providers: list[dict[str, Any]],
@@ -748,6 +866,13 @@ def _resolve_oidc_candidates(
         stack=intent.stack,
         route=intent.route,
     )
+    if app_obj is None and app_stop is None:
+        provider_id = _as_id(provider_obj) if provider_obj is not None else None
+        app_obj = _search_existing_application(
+            client,
+            intent=intent,
+            app_payload=_application_payload(intent, provider_id or ""),
+        )
 
     stops = [msg for msg in (provider_stop, app_stop) if msg]
     return app_obj, provider_obj, stops
@@ -1075,7 +1200,40 @@ def _reconcile_application_for_intent(
             operation="create", reason="owned application is missing",
         ))
         if apply and not route_stops and not stop_conditions:
-            created = client.create_application(app_payload)
+            try:
+                created = client.create_application(app_payload)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 400:
+                    raise
+                # Application already exists (created by a previous partial run or
+                # an inline reconcile in a stack playbook) but wasn't found by the
+                # initial discovery scan. Fetch by slug and fall through to update.
+                existing = _resolve_existing_application_after_duplicate(
+                    intent=intent,
+                    applications=client.fetch_applications(),
+                    app_payload=app_payload,
+                )
+                if existing is None:
+                    existing = _search_existing_application(
+                        client,
+                        intent=intent,
+                        app_payload=app_payload,
+                    )
+                if existing is None:
+                    raise
+                app_obj = existing
+                app_id = _as_id(app_obj)
+                app_patch = _patch_from_existing(app_obj, app_payload)
+                if app_patch and app_id:
+                    updated = client.update_application(
+                        app_obj.get("slug") or intent.app_slug, app_patch
+                    )
+                    write_count += 1
+                    existing.update(updated)
+                existing_id = _as_id(existing)
+                if existing_id:
+                    consumed["application"].add(existing_id)
+                return write_count
             write_count += 1
             applications.append(created)
             created_id = _as_id(created)
@@ -1118,8 +1276,8 @@ def _build_outpost_update_patch(
     outpost_config = outpost_config if isinstance(outpost_config, dict) else {}
     desired_config = dict(outpost_config)
     config_changed = False
-    for key, value in OUTPOST_DEFAULT_CONFIG.items():
-        if outpost_config.get(key) in (None, ""):
+    for key, value in _desired_outpost_config().items():
+        if outpost_config.get(key) != value:
             desired_config[key] = value
             config_changed = True
     patch: dict[str, Any] = {}
@@ -1158,7 +1316,7 @@ def _reconcile_shared_outpost(
                 "name": SHARED_FORWARD_OUTPOST,
                 "type": SHARED_OUTPOST_TYPE,
                 "providers": sorted(required_provider_ids),
-                "config": OUTPOST_DEFAULT_CONFIG,
+                "config": _desired_outpost_config(),
             })
             write_count += 1
             outposts.append(created)
@@ -1258,7 +1416,12 @@ def _process_intent(
                 object_kind="provider", object_name=intent.provider_name,
             ))
             return 0
-        app_obj, provider_obj, route_stops = _resolve_oidc_candidates(intent, applications, providers)
+        app_obj, provider_obj, route_stops = _resolve_oidc_candidates(
+            client,
+            intent,
+            applications,
+            providers,
+        )
     stop_conditions.extend(route_stops)
     provider_payload, payload_issue = _resolve_intent_provider_payload(
         intent, prereqs.auth_pk, prereqs.inval_pk, prereqs.signing_pk, prereqs.scope_ids,

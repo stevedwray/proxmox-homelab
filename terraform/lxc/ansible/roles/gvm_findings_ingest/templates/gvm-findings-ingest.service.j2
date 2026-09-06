@@ -1,0 +1,17 @@
+[Unit]
+Description=GVM findings sync -> OpenSearch (gvm_findings_ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=GVM_BRIDGE_URL={{ gvm_findings_ingest_bridge_url }}
+Environment=ELASTICSEARCH_URL={{ gvm_findings_ingest_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ gvm_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+EnvironmentFile=-{{ gvm_findings_ingest_dir }}/es-user.env
+ExecStart=/usr/bin/python3 {{ gvm_findings_ingest_dir }}/gvm_findings_sync.py
+StandardOutput=append:{{ gvm_findings_ingest_log_path }}
+StandardError=append:{{ gvm_findings_ingest_log_path }}
+
+[Install]
+WantedBy=multi-user.target

@@ -76,6 +76,16 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
         is_storage_related_item(path, value) for path, value in [*before_items, *after_items]
     )
 
+    # A no-op means Terraform detected zero drift for this resource -- by
+    # definition there is no field transition to classify, safe or
+    # otherwise. Without this early return, a no-op against any resource
+    # with disk/mount_point/datastore_id fields (i.e. every LXC stack) always
+    # fell through to the "unknown_or_ambiguous" catch-all below, since
+    # `storage_related` is computed from field *names*, not from whether
+    # anything actually changed.
+    if actions == ["no-op"]:
+        return results
+
     # If provider reports replacement via actions, only treat it as storage
     # risk when the diff surface is storage-related AND there is prior state
     # (before is not None).  A pure create (before=null, actions=["create"])

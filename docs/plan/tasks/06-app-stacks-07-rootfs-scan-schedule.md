@@ -1,5 +1,12 @@
 # 06-app-stacks-07 — Add Trivy rootfs scheduled scan workflow
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` Phase 06 and supply-chain
+> planning workflow and retired branch model.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

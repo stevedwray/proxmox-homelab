@@ -1,0 +1,6 @@
+---
+- name: Reload systemd and restart llama-router
+  ansible.builtin.systemd:
+    name: llama-router
+    daemon_reload: true
+    state: restarted

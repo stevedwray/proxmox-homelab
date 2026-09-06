@@ -36,7 +36,6 @@ keyctl: true
 ansible_playbook: "deploy-netbox-stack"
 deployment_tier: platform
 portainer_agent: false
-register_portainer_env: true
 app_stack_name: "netbox"
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery

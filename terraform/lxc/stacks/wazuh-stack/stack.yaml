@@ -1,0 +1,69 @@
+hostname: wazuh-stack
+ip_address: "192.168.40.15/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
+network:
+  zone: infra_seg
+vmid: 40015
+cores: 4
+memory: 8192
+swap: 2048
+rootfs_size: 16
+storage_profile: platform-zfs
+docker_storage_size: "20G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "20G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - wazuh
+  - siem
+  - security
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+  - authentik-stack
+provides:
+  - service: wazuh-dashboard-http
+    port: 5601
+    protocol: tcp
+  - service: wazuh-manager-agent
+    port: 1514
+    protocol: tcp
+  - service: wazuh-manager-enrollment
+    port: 1515
+    protocol: tcp
+  - service: wazuh-api
+    port: 55000
+    protocol: tcp
+
+extra_mount_path: "/var/lib/wazuh-indexer-data"
+extra_mount_size: "50G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: wazuh-indexer-data
+  path: /var/lib/wazuh-indexer-data
+  size: "50G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+ansible_playbook: "deploy-wazuh-stack"
+deployment_tier: platform
+portainer_agent: false
+
+# wazuh_findings_ingest role -- pulls only vulnerability-detector CVE
+# findings into opensearch-stack's wazuh-findings index (the *-findings
+# asset-state shape, third source alongside harbor-findings/gvm-findings
+# feeding unified-cve-exposure). See docs/threat-vuln-platform/plan.md
+# Phase 2.
+wazuh_findings_ingest_enabled: true

@@ -1,0 +1,126 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "Foreverworld availability and infrastructure performance. Minecraft-native timings remain a modpack concern.",
+  "editable": true,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "minecraft_status_healthy{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Minecraft status", "refId": "A" }],
+      "title": "Minecraft Status", "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "minecraft_status_response_time_seconds{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Status latency", "refId": "A" }],
+      "title": "Status Response Time", "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "minecraft_status_players_online_count{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Online", "refId": "A" }],
+      "title": "Players Online", "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "minecraft_status_players_max_count{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Maximum", "refId": "A" }],
+      "title": "Player Capacity", "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "rate(container_cpu_usage_seconds_total{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}[5m])", "legendFormat": "Foreverworld", "refId": "A" }],
+      "title": "Minecraft Container CPU", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "container_memory_working_set_bytes{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}", "legendFormat": "Working set", "refId": "A" },
+        { "expr": "container_spec_memory_limit_bytes{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}", "legendFormat": "Limit", "refId": "B" }
+      ],
+      "title": "Minecraft Container Memory", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "1 - avg by (instance) (rate(node_cpu_seconds_total{job=\"node_exporter\",stack=\"gaming-stack-lab\",mode=\"idle\"}[5m]))", "legendFormat": "LXC CPU", "refId": "A" }],
+      "title": "Gaming LXC CPU", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "node_memory_MemAvailable_bytes{job=\"node_exporter\",stack=\"gaming-stack-lab\"}", "legendFormat": "Available", "refId": "A" },
+        { "expr": "node_memory_MemTotal_bytes{job=\"node_exporter\",stack=\"gaming-stack-lab\"}", "legendFormat": "Total", "refId": "B" }
+      ],
+      "title": "Gaming LXC Memory", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "Bps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "rate(container_fs_reads_bytes_total{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}[5m])", "legendFormat": "Read", "refId": "A" },
+        { "expr": "rate(container_fs_writes_bytes_total{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}[5m])", "legendFormat": "Write", "refId": "B" }
+      ],
+      "title": "Minecraft Container Disk I/O", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "jvm_heap_memory_used_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Used", "refId": "A" },
+        { "expr": "jvm_heap_memory_committed_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Committed", "refId": "B" },
+        { "expr": "jvm_heap_memory_max_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Maximum", "refId": "C" }
+      ],
+      "title": "JVM Heap", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "rate(jvm_gc_collection_seconds_sum{job=\"minecraft-jvm\",server=\"foreverworld\"}[5m])", "legendFormat": "{{gc}} GC seconds/s", "refId": "A" }],
+      "title": "JVM GC Time Rate", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "jvm_threads_current{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Live threads", "refId": "A" }, { "expr": "jvm_threads_daemon{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Daemon threads", "refId": "B" }],
+      "title": "JVM Threads", "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["minecraft", "foreverworld", "gaming"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Foreverworld",
+  "uid": "foreverworld",
+  "version": 1
+}

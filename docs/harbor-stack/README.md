@@ -18,9 +18,290 @@ The immediate goals are:
 
 Working note:
 
-- hand-off and hand-back documents for this workstream belong under
-  `docs/harbor-stack/artifacts/`
-- that directory is intentionally git-ignored except for a tracked `.gitkeep`
+- transient handoff, handback, evidence, and scratch material for this
+  workstream belongs under `docs/harbor-stack/artifacts/`
+- that directory is local-only and git-ignored
+
+## Open Investigation — Proxy-Cache Artifact Registration Gap (2026-08-15)
+
+Triggered by `image-sourcing-enforcement.md`'s rollout: after confirming every
+in-use image actually routes through Harbor, checked whether Harbor was
+actually scanning all of them. It isn't.
+
+**Confirmed at the database level** (`SELECT repository_name, count(*) FROM
+artifact GROUP BY repository_name` against `harbor-db`'s own Postgres): on
+`pve`, only the `dockerhub` project (native `docker-hub` adapter type) and
+`pentagi` (push-based, not proxy-cache at all) have any artifact rows.
+`gcr`, `ghcr`, `quay`, `greenbone` — all using the generic `docker-registry`
+adapter type — have **zero** artifact rows despite real, successful pulls
+(`pull_count` climbing, and for `greenbone` specifically, 1.8GB of real blob
+storage consumed). Trivy never scans what Harbor never registers as an
+artifact.
+
+Ruled out, with direct evidence for each:
+- **Not a registry-adapter-type limitation** in the "some registries just
+  don't work" sense — see the corrected root cause below.
+- **Not a multi-arch/OCI-image-index issue** — `dockerhub/library/postgres`
+  (which scans fine) is also an OCI image index, same media type as the
+  broken `greenbone` repos.
+- **Not Harbor version, component health, quota, or system-level config** —
+  both instances run identical v2.14.3, `pve`'s `/api/v2.0/health` reports
+  every component healthy, quotas are unlimited on both, and a full
+  `/api/v2.0/configurations` diff between the two instances showed no
+  functional difference.
+- **Not stale runtime state** — restarted `harbor-core` on `pve` and forced
+  a genuinely fresh (non-cached) pull afterward; still zero DB rows at that
+  point.
+- **Not an environment difference between `pve` and pve-test-vm at all** —
+  see below. This was the working hypothesis for a while and was wrong;
+  corrected the same day once tested directly.
+
+**Root cause, confirmed (2026-08-15, final).** Debug logging on `pve`'s
+`harbor-core` (temporarily enabled via the normal `harbor_installer` role
+path, reverted after) showed a working `dockerhub` pull running through
+`controller/proxy/local.go` (full artifact-registration flow: blob checks,
+manifest `PUT`, `PUSH_ARTIFACT` event, Trivy trigger, `SCANNING_COMPLETED`)
+versus a broken `gcr` pull running through a different path,
+`controller/proxy/controller.go:216` ("manifest list cache"), which logged
+almost nothing and triggered no scan — even though the `docker pull` itself
+succeeded a second later. That narrowed *where* the gap was, but not why
+pve-test-vm appeared unaffected for the same adapter type.
+
+Testing that directly resolved it: **pulling a genuinely new tag that
+neither Harbor instance had ever seen** (`gcr/cadvisor/cadvisor:v0.55.1`,
+vs. the long-standing `v0.49.1` every stack actually uses) produced an
+identical result on **both** `pve` and pve-test-vm — a real artifact gets
+created, and Trivy scans it successfully (`scan_status: Success`, real
+severity data) within seconds. **The artifact is just never tagged.**
+Confirmed Harbor deliberately disallows fixing this by hand: `POST
+.../artifacts/{digest}/tags` on a proxy-cache project returns `405
+METHOD_NOT_ALLOWED`, `"the operation isn't supported for a proxy cache
+project"` — tag creation for proxy-cache pulls is meant to happen
+automatically as part of the pull-through flow, and for the generic
+`docker-registry` adapter type, that automatic step doesn't fire.
+
+So: **there is no environment difference.** `gcr/cadvisor/cadvisor:v0.49.1`
+looking "fine" earlier was misleading — it was tagged once, long enough ago
+to predate whatever changed, and every pull since (by any of the 6+ stacks
+using it) has been silently creating fresh untagged, invisible-by-default
+artifacts that genuinely were scanned, just impossible to find by tag.
+`repo.artifact_count` does correctly count untagged artifacts (confirmed:
+went from `0` to `1` after the `v0.55.1` test pull), so the original "zero
+artifacts" finding for these projects, before any of today's test pulls,
+was accurate — this isn't a case of the scans existing all along and just
+being hidden from view.
+
+One more wrinkle found the same way: every project has a **daily retention
+schedule** (`0 0 0 * * *`, confirmed via `/api/v2.0/schedules`) — retention
+policies commonly prune untagged artifacts, so even a scan that *does*
+happen via a fresh pull may not survive past the next retention run, since
+nothing (no tag) protects it from cleanup. Not confirmed to actually delete
+these specific artifacts (would need to observe across a retention cycle),
+but it's a second reason not to treat "it got scanned once" as durable
+coverage.
+
+**Upgrade to Harbor 2.15.2 tested directly on pve-test-vm (2026-08-15) —
+does not fix it, and is a one-way door.** Online research surfaced a real,
+matching upstream issue
+([goharbor/harbor#17135](https://github.com/goharbor/harbor/issues/17135),
+["Proxy cache isn't tagging images"](https://knowledge.broadcom.com/external/article/398201/proxy-cache-isnt-tagging-images.html))
+and a stated fix landing in Harbor 2.15 (2.15.0 shipped its own unrelated
+proxy-cache regression, fixed in
+[2.15.1](https://github.com/goharbor/harbor/issues/23025); 2.15.2 is
+current). Worth testing directly rather than trusting the changelog:
+
+- Upgraded pve-test-vm's `harbor-stack` to v2.15.2 (the role's own
+  idempotency check only looks at whether *any* installer is already
+  extracted, not whether it's the *requested* version — had to remove
+  `/opt/harbor/harbor` first, leaving `/var/lib/harbor`'s actual data
+  volume untouched, to force a genuine re-download).
+- All 8 components came up healthy; the Docker Hub/Cloudflare health-check
+  issue that originally forced the 2.14.3 downgrade did **not** resurface
+  (the `harbor_postconfigure` fix removing Docker Hub credentials from that
+  check is apparently still sufficient).
+- **The live bug is not fixed.** Pulled two more genuinely fresh tags
+  (`v0.54.1`, `v0.52.1`) after the upgrade — both still registered
+  **untagged**, identical to pre-upgrade behavior. What Harbor 2.15's
+  migration actually does is a **one-time backfill of tags on artifacts
+  that already existed at upgrade time** (confirmed: the earlier
+  pre-upgrade `v0.55.1` untagged artifact acquired a tag, under a new
+  digest, right after the upgrade) — it does not fix the live
+  registration path for anything pulled afterward.
+- **Attempting to revert to 2.14.3 broke Harbor outright.** `harbor-db`'s
+  schema had moved forward, and — unexpectedly — Harbor 2.15.2 replaced
+  Redis with Valkey as the cache backend; 2.14.3's older `redis-photon`
+  image couldn't read the now-Valkey-formatted data. Both `redis` and
+  `harbor-jobservice` crash-looped, `harbor-core` never went healthy
+  (`502` for the full 300s retry window). Recovered by moving forward to
+  2.15.2 again (not backward) — full health restored within a minute.
+  **Conclusion: upgrading past 2.14.3 is a one-way door on this Harbor
+  install** — don't attempt it against `pve` without accepting that a
+  rollback isn't a safe option if something else goes wrong.
+- **Net result:** pve-test-vm's `harbor-stack` is now genuinely running
+  v2.15.2, diverged from the repo's committed `harbor_installer_version:
+  "2.14.3"` default. Not yet reconciled either direction — an open decision
+  (adopt 2.15.2 as the new default given it's a strict improvement even
+  though it doesn't fix this specific bug, or document pve-test-vm's state
+  as a deliberate, called-out test-only divergence) rather than something
+  to silently drift on.
+
+**Fix options, reassessed with both the confirmed root cause and the
+upgrade test:**
+- **Pull-then-push job** (recommended), extending the existing
+  `harbor_repull` role (`terraform/lxc/ansible/roles/harbor_repull/`) to
+  explicitly `docker push` affected images into a plain, non-proxy-cache
+  project — mirrors the `pentagi` project's already-proven-working pattern,
+  which never touches the proxy-cache tag-creation step at all. The clearly
+  right option now: it's the only one confirmed to actually work, on the
+  Harbor version actually in use, without a risky one-way upgrade.
+- **Harbor native Replication** — same weaker assessment as before, now
+  reinforced: the 2.15.2 test confirms the underlying tag-creation code is
+  broken regardless of Harbor version, so there's no reason to expect
+  Replication (which still relies on that same tag-creation step) fares any
+  better.
+- **Upgrading Harbor** is no longer a live option for fixing this
+  specifically — confirmed not to work, and confirmed to be a one-way
+  migration. Might still be worth doing *eventually* for its own reasons
+  (newer Harbor, Valkey instead of Redis), but as a separate, deliberately
+  staged decision — not a fix for this bug, and not safe to attempt on
+  `pve` without accepting the rollback risk demonstrated here.
+- Filing this as an upstream Harbor bug (confirmed still present in 2.15.2,
+  generic `docker-registry` proxy-cache adapter fails to tag on the
+  "manifest list cache" code path — existing issue #17135 predates 2.15 and
+  wasn't actually closed by it) is worth doing independent of which local
+  fix gets picked.
+
+**Version divergence, decided (2026-08-15):** adopting 2.15.2 deliberately
+rather than reverting pve-test-vm back to 2.14.3. Reasoning: the one-way
+Redis/Valkey boundary is inherent to crossing 2.14→2.15, not something that
+gets easier by waiting — it'll be forced eventually by some future
+CVE/security fix that only ships in 2.15+, so taking it now, tested, on a
+deliberate schedule beats taking it later under pressure. Once on 2.15.2,
+the *next* bump (whenever the proxy-cache tagging bug is actually fixed
+upstream) is an ordinary forward move, not a second one-way door. The
+residual cost is real but narrow: no cheap revert below 2.15 if something
+unrelated surfaces later — accepted, not eliminated. Repo default
+(`harbor_installer_version` in
+`terraform/lxc/ansible/roles/harbor_installer/defaults/main.yml`) bumped to
+`"2.15.2"` to match.
+
+**Validation approach for this change, also decided (2026-08-15):** not a
+full teardown cycle. A Harbor version bump that doesn't change what
+consumers pull/push against has a narrower blast radius than
+Authentik/Traefik — a Harbor outage doesn't break stacks that are already
+running (their images are already resident locally), it only blocks new
+pulls/deploys/scans. `CLAUDE.md`'s Validation Tiers table now has a
+dedicated row for this: `scripts/provision.sh --stack harbor-stack` on
+pve-test-vm, then the same for 1–2 stacks that actually pull through it
+(one native-adapter project, one proxy-cache project) to confirm no
+regression. Full platform teardown stays reserved for changes that would
+actually break something currently running.
+
+**Rollout complete (2026-08-15).** `pve` and pve-test-vm both confirmed
+running `v2.15.2-a97e7b83`, all 8 components healthy on both
+(`/api/v2.0/health`). Scoped validation (this section, above) ran clean on
+pve-test-vm: `harbor-stack` itself, plus `portainer-stack` (dockerhub/
+native-adapter consumer) and `netbox-stack` (gcr/proxy-cache consumer via
+its cAdvisor sidecar), all redeployed and smoke-tested with `failed=0`.
+
+**Real recurrence of the idempotency bug, worth fixing at the source.**
+The first `pve` upgrade attempt reported a clean `changed=4` run but
+`systeminfo` still showed `v2.14.3` afterward — the exact
+role-level idempotency-check gap from lessons-learned #10, reproducing on
+a second, independent environment exactly as that lesson predicted. Fixed
+the same way (remove `/opt/harbor/harbor` scaffold, re-run — `changed=7`
+the second time, version genuinely moved). Since this has now recurred
+across both environments this same change touched, it's no longer just a
+one-off gotcha to remember — the role's "Check if Harbor installer has
+already been extracted" task should compare the extracted version against
+`harbor_installer_version` and force re-extraction on a mismatch, instead
+of relying on an operator remembering to blow away the scaffold by hand.
+**Fixed (2026-08-15)** — see lessons-learned.md #10 for the version-marker
+mechanism and how it was validated on pve-test-vm without any risk to the
+running install.
+
+**Idempotency fix rolled to `pve` (2026-08-15).** Same outcome as
+pve-test-vm: marker missing on first run (`changed=7`, safe same-version
+reinstall, marker written), second run a true no-op. Version and health
+unchanged (`v2.15.2-a97e7b83`, all 8 components healthy).
+
+**Scan-coverage gap actually fixed (2026-08-15).** Implemented the
+pull-then-push extension to `harbor_repull`
+(`terraform/lxc/ansible/roles/harbor_repull/`): a new plain, non-proxy-cache
+`mirror` project (created by `harbor_postconfigure`), and a project-scoped
+push robot provisioned entirely by `harbor_repull`'s own tasks (unique
+generated name, secret written only to `ci-runner-01`, no SOPS round-trip —
+deliberately avoids the kind of drift already seen with the shared
+`robot$ci-runner` credential, see
+[[project_harbor_ci_robot_credential_mismatch]]). After each successful
+pull through a proxy-cache project (everything except `dockerhub`, whose
+native adapter already tags correctly), `harbor_repull.py` now also
+`docker tag`s and pushes the same image into `mirror/<original-path>` —
+the exact push flow `pentagi` already proves works, since it never touches
+the broken tag-creation code path at all.
+
+Validated on pve-test-vm with a real manual trigger of the systemd
+service: 16/16 pulls succeeded, 3/3 mirror pushes succeeded (the two
+`ghcr` and one `gcr` entries currently in the manifest). Confirmed at the
+API level, not just a clean run — `mirror/gcr/cadvisor/cadvisor` came back
+tagged (`v0.49.1`) with `scan_status: Success` and real severity data,
+where the same image via the proxy-cache path has zero tagged artifacts.
+Gracefully degrades to pull-only if the mirror credential isn't
+provisioned yet (e.g. a rebuild before `harbor_repull` has run once).
+
+**Rolled out to `pve` and closed out (2026-08-15).** `harbor_postconfigure`
+created the `mirror` project on `pve`; `harbor_repull`'s push robot
+provisioned the same way on `ci-runner-01`. A real repull run against
+`pve` confirmed 16/16 pulls and 16/16 mirror pushes — every currently
+manifest-tracked image, including `dockerhub` entries (see below).
+
+**dockerhub included too, not skipped.** The original assumption that
+dockerhub's native adapter always tags correctly didn't survive contact
+with a full production audit: `grafana-oss`, `victoria-metrics`, `traefik`,
+and `portainer-ce` all turned up as a single untagged artifact despite
+using the "safe" adapter. Root cause not fully chased down (retention's
+tag_selectors likely can't protect an artifact that loses its tag for any
+reason, regardless of adapter), but the fix already built is
+adapter-agnostic — `harbor_repull_mirror_skip_projects` now defaults to
+empty, mirroring everything.
+
+**Full vulnerability audit run against `pve`'s Harbor, all 61 artifacts
+across 8 projects.** Two images are deliberately vulnerable (pentest
+targets) and now carry a Harbor-native CVE allowlist — `dockerhub`
+(`vulhub/struts2`, 257 CVE IDs) and `pentagi` (`kali-linux-fixed`, 131 CVE
+IDs) — each list hand-cross-checked against every other image sharing that
+project first, since Harbor's allowlist has no per-repository granularity.
+Everything else got a real upstream-version check; full findings, fix
+targets, and the allowlist rationale are in the published report.
+
+**Next steps, in order:**
+1. Expand `manifest.txt` — it's still v1 scope (confirmed live tags for a
+   subset of stacks only, e.g. `itzg/minecraft-server` and
+   `portainer/agent` aren't tracked yet). Every image actually in use
+   should be in this manifest for scan coverage to be complete, not just
+   tracked.
+2. Work through the fix/upgrade list from the audit report, starting with
+   `goauthentik/server`/`ldap` (highest Critical count, core auth infra)
+   and `cadvisor` (already confirmed pullable at a newer tag, low-risk
+   sidecar — good first one to actually execute).
+3. Optional, independent of the above: file the upstream Harbor bug
+   report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
+   worth an update/new issue with this session's specific findings:
+   `controller/proxy/controller.go:216`, confirmed still broken in
+   2.15.2). Explicitly declined for this session — the operator doesn't
+   want it filed.
+
+**Security finding from this investigation, already fixed:** ad-hoc
+`ansible -m shell -a "..."` commands against a target host get their fully
+expanded command line (including any interpolated secret) logged via
+syslog and forwarded to Graylog — `HARBOR_DB_PASSWORD` was exposed this way
+during this investigation. Rotated on both `pve` and pve-test-vm (shared
+value in `terraform/secrets.common.enc.yaml`) same day; both Harbor
+instances redeployed and verified healthy afterward. See
+[lessons-learned.md](lessons-learned.md) for the safe pattern
+(`environment:`/`args: stdin:` + `no_log: true`) verified to actually
+prevent this leak, empirically tested with a dummy value before use on the
+real password.
 
 ## Verified Current State
 
@@ -726,5 +1007,10 @@ This plan does not include:
 - full CI supply-chain redesign
 - Harbor content trust / Cosign policy enforcement changes
 - broad Harbor project taxonomy changes unrelated to scan reliability
+- whether every platform image actually gets routed through Harbor in the
+  first place, and whether that routing can be enforced rather than left to
+  convention — see
+  [docs/harbor-stack/image-sourcing-enforcement.md](image-sourcing-enforcement.md)
+  (durable gotchas from that work: [lessons-learned.md](lessons-learned.md))
 
 Those can be planned later once Harbor scan coverage is reliable and visible.

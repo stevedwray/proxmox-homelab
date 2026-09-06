@@ -63,6 +63,20 @@ These are declared in `variables.tf` and may be overridden per environment:
 `main.tf` → `templates/inventory.tpl` as generated host vars. Stacks can override
 them in `stack.yaml` if a stack needs a non-default upstream.
 
+**`registry_host` (this IP) is not what a stack's own deploy playbook
+should use for `docker login`/image pulls.** Every existing playbook that
+actually authenticates to Harbor (`deploy-graylog-stack.yml`,
+`deploy-harbor-stack.yml`, `deploy-portainer-stack.yml`,
+`deploy-netbox-stack.yml`, `deploy-greenbone-stack.yml`, and others) uses
+a separate `LAB_FQDN_HARBOR` env var (`harbor.${LAB_DOMAIN}`) instead —
+confirmed live 2026-08-17: `docker login` against the bare IP fails
+(Harbor's token service redirects to HTTPS:443, which the raw IP has no
+valid cert for and refuses), while the FQDN succeeds because it routes
+through Traefik's real TLS termination. When writing a new playbook,
+copy an existing one's `*_registry_host`/`LAB_FQDN_HARBOR` pattern
+directly rather than reusing `registry_host`/`LAB_IP_HARBOR` for this
+purpose, even though the naming makes them look interchangeable.
+
 The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 `templates/inventory.tpl` as host vars so playbooks pick them up automatically.
 
@@ -138,6 +152,12 @@ The generated inventory is the Terraform-to-Ansible handoff artifact.
   role or stack-specific logic.
 - Tier 2 `deployment_tier: apps` stacks continue to use `portainer_agent`,
   `portainer_api`, and `app_stack`.
+- Docker Compose networking: bridge networking + explicit port publishing
+  is the default for every stack. `network_mode: host` is a narrow,
+  per-stack exception requiring its own documented decision (currently only
+  `technitium-stack`, for its DHCP server-identifier requirement — see
+  `docs/dhcp-refactor/decisions.md` Decision 5) — not a pattern to adopt
+  elsewhere without the same level of justification.
 - Tier 1 playbooks must actively mask `portainer-agent.service`.
 
 ## What must not be edited casually
@@ -234,6 +254,11 @@ following files in this repository:
 - `terraform/lxc/PLATFORM_CONTRACT.md` — this document (contract source).
 - `terraform/lxc/stacks/*/STACK_CONTRACT.md` — per-stack contracts the platform
   consumes (examples: `stacks/portainer-stack/STACK_CONTRACT.md`).
+- `terraform/lxc/STACK_CONTRACT.template.md` — copy this when authoring a new
+  stack's contract; it has every required section heading pre-filled with
+  placeholders so `validate-stack-metadata.sh --check-contract-sections`
+  passes by construction instead of by remembering which headings are
+  required.
 
 If you edit the contract semantics here, add or update the cross-link above to
 point readers at the representative implementation example(s).

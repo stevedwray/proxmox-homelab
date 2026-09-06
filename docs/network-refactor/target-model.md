@@ -23,12 +23,12 @@ Reference architecture:
 
 ## Administrative Access Contract
 
-The intended administrative path for `pve-test` is:
+The intended administrative path for `pve-test-vm` is:
 
 1. operator workstation on LAN `192.168.1.0/24`
 2. MikroTik routes to the destination VLAN subnet
 3. guest answers directly on its assigned zone IP, currently
-   `192.168.<vlan-id>.x` on `pve-test`
+   `192.168.<vlan-id>.x` on `pve-test-vm`
 
 Implications:
 
@@ -72,9 +72,9 @@ provisioning is considered valid:
 4. MikroTik firewall rules that allow the expected admin and cross-zone traffic
 
 Specific RouterOS commands for items 1–2 and DNS baseline setup are documented
-in `terraform/lxc/network/pve-test.yaml` under the "MikroTik one-time setup"
+in `terraform/lxc/network/pve-test-vm.yaml` under the "MikroTik one-time setup"
 header. That file is the authoritative reference for what must be done manually
-before a `pve-test` direct-SSH provisioning pass.
+before a `pve-test-vm` direct-SSH provisioning pass.
 
 ## Temporary Exceptions
 
@@ -83,7 +83,7 @@ target model. Neither should be extended to new stacks.
 
 | Exception | Location | Retirement condition |
 |---|---|---|
-| `ProxyJump=root@<pve_host>` | `terraform/lxc/templates/inventory.tpl` | Remove once direct SSH from the workstation is validated end-to-end on `pve-test` |
+| `ProxyJump=root@<pve_host>` | `terraform/lxc/templates/inventory.tpl` | Remove once direct SSH from the workstation is validated end-to-end on `pve-test-vm` |
 
 `ProxyJump` is the accepted temporary escape hatch during migration. It must
 remain explicitly labeled and must be removed before the validation gate passes.
@@ -100,7 +100,7 @@ knobs behind these exceptions, use
 1. Prefer direct-SSH proof before removing compatibility shims.
 2. Do not reintroduce host-side route priming as a compatibility path.
 3. Make exceptions explicit, time-bounded, and easy to delete.
-4. Keep `pve-test` as the proving ground before reusing the pattern on `pve`.
+4. Keep `pve-test-vm` as the proving ground before reusing the pattern on `pve`.
 
 ## Evidence Requirements
 
@@ -121,5 +121,5 @@ These are explicitly out of scope for this refactor:
    origin for now).
 4. MikroTik IaC automation (tracked separately as TM-09; MikroTik configuration
    remains manual for this refactor).
-5. Any production (`pve`) environment changes before `pve-test` validation is
+5. Any production (`pve`) environment changes before `pve-test-vm` validation is
    complete and the teardown gate is passed.

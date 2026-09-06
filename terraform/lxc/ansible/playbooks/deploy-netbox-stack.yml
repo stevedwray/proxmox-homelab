@@ -74,7 +74,7 @@
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | default(registry_host, true) | mandatory('LAB_IP_HARBOR env var or registry_host inventory var is required') }}"
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
     netbox_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | default('', true), true) }}"
   roles:
@@ -208,10 +208,9 @@
   gather_facts: false
 
   vars:
-    # Prefer LAB_IP_HARBOR from env (set by .env.pve-test-vm with test IP) over the
-    # inventory's registry_host, which is Terraform-generated from the FQDN at apply time
-    # and may carry the production hostname in test environments.
-    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else lookup('env', 'LAB_IP_HARBOR') | default(registry_host, true) | mandatory('LAB_IP_HARBOR env var or registry_host inventory var is required') }}"
+    # Use Harbor's FQDN for registry auth and image pulls so token service redirects stay
+    # on the same host that Docker logged into.
+    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
 
   tasks:
     - name: Write NetBox secrets env file
@@ -242,7 +241,8 @@
       register: netbox_docker_login
 
     - name: Pull and start NetBox compose stack
-      ansible.builtin.shell:
+      ansible.builtin.shell: # noqa: command-instead-of-shell -- the leading `pull &&` clause is conditionally
+        # omitted via Jinja, which ansible.builtin.command can't do (it has no shell operators)
         cmd: >-
           {{ '' if netbox_docker_login.failed else 'docker compose -f ' ~ compose_file ~ ' pull &&' }}
           docker compose -f {{ compose_file }} up -d --remove-orphans
@@ -557,3 +557,10 @@
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

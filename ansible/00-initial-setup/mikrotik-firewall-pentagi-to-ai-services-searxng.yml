@@ -1,0 +1,182 @@
+---
+# PentAGI's adviser/searcher roles use SearXNG for web search. It was
+# pointed at framework's original flat-LAN SearXNG (192.168.1.8:8082);
+# ai-services-migration moved the real, actively-maintained SearXNG
+# instance (with the engine-tuning fixes in
+# docs/ai-services-migration/current-state.md -- mwmbl/searchmysite/
+# Brave/Bing/Google CSE enabled, broken default engines disabled) onto
+# ai-services-stack in ai_seg (VLAN 50). pentest_seg (VLAN 70, where
+# pentagi-stack lives) has no existing route into ai_seg -- confirmed
+# live 2026-08-02 via a direct curl from pentagi-stack to
+# ai-services-stack's SearXNG (HTTP 000, connection timed out). This
+# playbook adds the one rule needed to fix that, following the same
+# idempotent pattern as mikrotik-firewall-ai-services-stack.yml (match
+# by full criteria, not comment alone; insert before the first forward
+# drop/reject; re-read and assert).
+#
+# Scoped to the whole pentest_seg subnet as source (not a single IP),
+# matching how ai-services-stack's own rules scope ai_seg as a subnet
+# -- PentAGI's ephemeral worker containers and greenbone-stack both
+# live in this same zone and either could plausibly need this path
+# later, and the destination is narrowly scoped to ai-services-stack's
+# specific IP and SearXNG's specific port, so this isn't a broad grant.
+
+- name: Ensure pentest_seg -> ai-services-stack SearXNG firewall rule exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    lab_subnet_pentest_cidr: "{{ lookup('env', 'LAB_SUBNET_PENTEST_CIDR') | mandatory('LAB_SUBNET_PENTEST_CIDR env var is required') }}"
+    lab_ip_ai_services: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
+
+    pentagi_searxng_firewall_rule:
+      comment: "pentagi-stack: pentest_seg to ai-services-stack searxng 8082"
+      chain: "forward"
+      action: "accept"
+      protocol: "tcp"
+      src-address: "{{ lab_subnet_pentest_cidr }}"
+      dst-address: "{{ lab_ip_ai_services }}"
+      dst-port: "8082"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add the rule before the first forward drop/reject, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ pentagi_searxng_firewall_rule | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', pentagi_searxng_firewall_rule.comment)
+            | selectattr('chain', 'equalto', pentagi_searxng_firewall_rule.chain)
+            | selectattr('action', 'equalto', pentagi_searxng_firewall_rule.action)
+            | selectattr('protocol', 'equalto', pentagi_searxng_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', pentagi_searxng_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', pentagi_searxng_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', pentagi_searxng_firewall_rule['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Add the rule when no forward drop/reject anchor exists, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ pentagi_searxng_firewall_rule }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor == {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', pentagi_searxng_firewall_rule.comment)
+            | selectattr('chain', 'equalto', pentagi_searxng_firewall_rule.chain)
+            | selectattr('action', 'equalto', pentagi_searxng_firewall_rule.action)
+            | selectattr('protocol', 'equalto', pentagi_searxng_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', pentagi_searxng_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', pentagi_searxng_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', pentagi_searxng_firewall_rule['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert the rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', pentagi_searxng_firewall_rule.comment)
+            | selectattr('chain', 'equalto', pentagi_searxng_firewall_rule.chain)
+            | selectattr('action', 'equalto', pentagi_searxng_firewall_rule.action)
+            | selectattr('protocol', 'equalto', pentagi_searxng_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', pentagi_searxng_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', pentagi_searxng_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', pentagi_searxng_firewall_rule['dst-port'])
+            | list | length > 0
+        fail_msg: "Expected MikroTik forward allow rule '{{ pentagi_searxng_firewall_rule.comment }}' was not found after apply."
+
+    - name: Report the firewall rule is present
+      ansible.builtin.debug:
+        msg: "pentest_seg -> ai-services-stack SearXNG MikroTik firewall rule confirmed present."

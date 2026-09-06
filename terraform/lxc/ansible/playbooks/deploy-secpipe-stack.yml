@@ -1,0 +1,47 @@
+# secpipe-stack -- ai_seg zone. CVE correlation/enrichment pipeline, see
+# docs/threat-vuln-platform/plan.md. Pure Python + systemd-timer host, no
+# Docker service (same execution model as harbor_findings_sync.py/
+# gvm_findings_sync.py) -- no docker_base role needed, matching
+# step-ca-stack's own precedent for a lightweight non-Docker utility
+# stack that still uses the standard Docker-capable base template.
+
+---
+- name: Prepare secpipe-stack host
+  hosts: all
+  become: true
+  gather_facts: false
+
+  roles:
+    - lxc_base
+
+  pre_tasks:
+    - name: Wait for SSH to become available after container creation
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 2
+
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Mask portainer-agent service (platform tier -- no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+- name: Deploy CVE correlation/enrichment sync
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - role: cve_enrichment_sync
+      when: cve_enrichment_sync_enabled | default(false) | bool
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

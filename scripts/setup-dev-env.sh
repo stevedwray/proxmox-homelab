@@ -203,7 +203,7 @@ setup_environment() {
     log_info "Setting up environment configuration..."
 
     log_info "Secrets are managed via SOPS — no .env file required."
-    log_info "All infrastructure credentials are stored in terraform/secrets.enc.yaml"
+    log_info "All infrastructure credentials are stored in terraform/secrets.common.enc.yaml"
     echo "  Ensure the age private key is present at ~/.config/sops/age/keys.txt"
     echo "  Retrieve from Bitwarden: 'proxmox-homelab age private key'"
     echo "  Then: mkdir -p ~/.config/sops/age && install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"

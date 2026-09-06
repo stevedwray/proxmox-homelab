@@ -1,3 +1,0 @@
-MikroTik preflight skipped by operator decision: VLAN already validated and unchanged
-timestamp=2026-05-23T10:20:10+12:00
-prior_evidence=/tmp/preflight-production-mikrotik.txt (latest attempted path)

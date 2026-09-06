@@ -1,0 +1,12 @@
+# Proxmox nodes treated as production-trust by with-secrets and
+# with-secrets-prod. One node name per line, matching TF_VAR_proxmox_node /
+# PVE_ENV values. Blank lines and lines starting with # are ignored.
+#
+# Adding a node here is what makes it production: with-secrets refuses to
+# target it without ALLOW_PVE=true, and with-secrets-prod's PVE_PROD_NODE
+# selector will accept it. Do not hardcode node names into new automation —
+# read this file instead. See docs/framework-integration/decisions.md
+# Decision 6.
+
+pve
+pve-framework

@@ -33,7 +33,7 @@ logs, and the operator-facing observability entry point for the homelab.
 | `LAB_ADMIN_USERNAME` | env var | Used in Grafana OIDC role mapping defaults |
 | `LAB_IP_AUTHENTIK` | env var | Used for token and API backchannel defaults |
 | `LAB_IP_HARBOR` | env var | Used when deriving temporary DNS/registry fallback behavior |
-| `NODE_EXPORTER_SCRAPE_PASSWORD` | secrets.enc.yaml | Plaintext scrape credential written into VictoriaMetrics scrape.yml for node_exporter basic auth |
+| `NODE_EXPORTER_SCRAPE_PASSWORD` | secrets.common.enc.yaml | Plaintext scrape credential written into VictoriaMetrics scrape.yml for node_exporter basic auth |
 | `portainer_server_ip` | stack.yaml / env | Shared platform IP metadata |
 | `registry_host` | stack.yaml / env | Harbor registry host used by the compose stack |
 | `apt_cacher_host` | stack.yaml / env | Apt cache host passed through the stack metadata |

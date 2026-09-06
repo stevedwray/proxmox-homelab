@@ -33,11 +33,14 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     size         = var.rootfs_size
   }
 
-  mount_point {
-    volume = var.docker_storage
-    size   = var.docker_storage_size
-    path   = "/var/lib/docker"
-    backup = var.docker_mount_backup_enabled
+  dynamic "mount_point" {
+    for_each = var.docker_enabled ? [1] : []
+    content {
+      volume = var.docker_storage
+      size   = var.docker_storage_size
+      path   = "/var/lib/docker"
+      backup = var.docker_mount_backup_enabled
+    }
   }
 
   dynamic "mount_point" {
@@ -50,14 +53,18 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     }
   }
 
-  dynamic "mount_point" {
-    for_each = var.host_bind_mounts
-    content {
-      volume = mount_point.value.host_path
-      path   = mount_point.value.lxc_path
-      backup = false
-    }
-  }
+  # host_bind_mounts (raw host-path bind mounts, as opposed to the two
+  # managed-storage mount_point blocks above) and device_passthrough are
+  # NOT managed here -- Proxmox hardcodes both to root@pam authentication
+  # only, regardless of the API token's RBAC role. Confirmed via two live
+  # 403s: "mount point type bind is only allowed for root@pam" and
+  # "configuring device passthrough is only allowed for root@pam". Same
+  # restriction class as the keyctl feature flag below. Both applied
+  # out-of-band instead, via
+  # ansible/playbooks/configure-device-passthrough.yml (direct root SSH
+  # `pct set`, which runs as true root@pam and isn't subject to this
+  # check) -- see var.host_bind_mounts/var.device_passthrough's
+  # descriptions.
 
   operating_system {
     template_file_id = var.ostemplate
@@ -91,6 +98,28 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     name     = "eth0"
     bridge   = var.network_bridge
     firewall = var.network_firewall
+  }
+
+  lifecycle {
+    # keyctl is enabled out-of-band via configure-keyctl.yml because the
+    # automation API token cannot manage non-nesting feature flags.
+    #
+    # mount_point: any host_bind_mounts entries (see that variable's
+    # description above) are applied out-of-band via direct root SSH
+    # `pct set`, same root@pam-only restriction as keyctl. The provider's
+    # own refresh reads these back from the live container and diffs them
+    # against the (deliberately shorter) declared mount_point list here,
+    # which plans a forced replacement of the whole container to "remove"
+    # mounts Terraform never created in the first place. Confirmed live
+    # 2026-09-04 on media-stack-lab: `terragrunt plan` proposed destroying
+    # and recreating the container solely to drop its hand-added NFS
+    # mount_points. Ignoring the whole attribute means Terraform no longer
+    # actively reconciles docker_storage_size/extra_mount resizes either
+    # (those still need a manual `pct set` + `terraform apply -refresh-only`
+    # or state edit) -- an accepted tradeoff for stacks that use
+    # host_bind_mounts, matching the "grow-only" mutation policy those
+    # mounts already use in practice.
+    ignore_changes = [features[0].keyctl, mount_point]
   }
 }
 

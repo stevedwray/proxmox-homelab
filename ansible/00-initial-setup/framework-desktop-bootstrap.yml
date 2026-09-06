@@ -1,0 +1,525 @@
+---
+# Bootstraps the Framework Desktop (bare-metal Ubuntu 26.04, AMD Strix
+# Halo / gfx1151) for AI/LLM workloads, per docs/framework-ubuntu/plan.md
+# Phase 1 (§9). Covers everything left after manual installer partitioning
+# (EFI + separate /boot + root as a plain ext4 partition, not LVM, + swap,
+# with an empty `vg0` VG already assembled on the remaining ~1.7TB -- see
+# plan.md §3):
+#
+#   - video/render group membership, needed before any process can open
+#     /dev/dri or /dev/kfd as a non-root user
+#   - a `models` logical volume in the existing `vg0`, mounted at
+#     /storage, matching the /storage/models/{llm,comfyui} path
+#     convention already used throughout findings-plan.md,
+#     comfyui-image-video-gen-findings.md, and the download scripts in
+#     docs/framework-ubuntu/model-sources/ -- deliberately not /data/models
+#     (that was the LXC-internal bind-mount target; there's no container
+#     namespace to bridge on bare metal, so this uses the host-side path
+#     convention directly)
+#   - ttm.pages_limit/ttm.page_pool_size GRUB tuning, reusing the existing
+#     shared task (tasks/proxmox-gpu-unified-memory-tuning.yml) so the
+#     ceiling is computed from this host's actual RAM rather than the
+#     literal old-host page count -- pmx_gpu_gtt_reserved_host_mb: 32768
+#     matches the documented 32GB-on-128GB policy
+#     (proxmox-strix-halo-setup-notes.md §6 / plan.md §8), not the task's
+#     own 16GB default
+#   - Mesa Vulkan + ROCm/HIP packages via plain apt -- no LXC abstraction
+#     boundary to reason about anymore, this IS the Ubuntu host directly
+#   - NFS client (nfs-common) + an on-demand automount fstab entry for the
+#     NAS models export (same noauto/x-systemd.automount shape the old
+#     host used -- backup/restore only, never a live-serving dependency)
+#
+# Does NOT yet: actually restore models from the NAS backup onto
+# /storage/models/{llm,comfyui} (separate step, real data transfer, run
+# once this playbook has created both ends of that path), or install
+# Docker/Ollama/llama.cpp/LM Studio (Phase 3, §9).
+#
+# `containers` LV (2026-07-20): Docker/containerd's image and layer data
+# was filling up the plain, non-LVM 96GB root partition (confirmed live --
+# root had 27G free and shrinking with every benchmark image pulled or
+# built). `models` was originally created with 100%FREE, leaving vg0 with
+# 0 free extents, so it had to be shrunk first (1.71TB -> 1.41TB; only
+# 258G actually used at the time, so ample headroom either side) to make
+# room for a dedicated 300GB `containers` LV, bind-mounted onto
+# /var/lib/docker and /var/lib/containerd. On a fresh rebuild this just
+# works -- the LV/mount/bind-mounts below are created before Docker is
+# ever installed (Phase 3, in each service's own playbook), so
+# /var/lib/docker and /var/lib/containerd are empty bind-mount targets
+# from the start, no migration needed. If this is instead being run
+# against an already-provisioned host with existing container data (as
+# it was here), that data must be migrated manually first -- stop
+# docker.service/containerd.service and every container, rsync -aHAX the
+# existing /var/lib/docker and /var/lib/containerd into the new LV's
+# docker/ and containerd/ subdirectories (preserving hardlinks -- overlay2
+# relies on them for layer sharing), *then* apply this playbook so the
+# bind mounts land on top of the already-migrated data rather than
+# masking it with empty directories. This is a one-time operator action,
+# not automated here, matching this repo's existing pattern for
+# not-safely-automatable one-time migrations (see the LM Studio model
+# catalog re-import note in framework-desktop-lmstudio.yml).
+#
+# Run (from repo root; ANSIBLE_ROLES_PATH is required so the shared
+# node_exporter/rsyslog_forward roles below resolve -- this playbook family
+# has no ansible.cfg of its own, unlike terraform/lxc/ansible/ which
+# provision.sh points ANSIBLE_CONFIG at):
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets \
+#     ansible-playbook -i ansible/inventory/ \
+#     ansible/00-initial-setup/framework-desktop-bootstrap.yml
+
+- name: Bootstrap Framework Desktop for AI/LLM workloads
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_gpu_group_user: steve
+    framework_models_vg: vg0
+    framework_models_lv_name: models
+    # Was 100%FREE; fixed at 1410G (2026-07-20) to leave room in vg0 for
+    # the containers LV below -- see the header note above. 1410G is
+    # deliberately far above actual model usage (258G at the time), not a
+    # tight fit.
+    framework_models_lv_size: 1410G
+    framework_models_mount_point: /storage
+    framework_models_filesystem: ext4
+    framework_models_filesystem_label: models
+    framework_containers_vg: vg0
+    framework_containers_lv_name: containers
+    framework_containers_lv_size: 300G
+    framework_containers_mount_point: /mnt/container-storage
+    framework_containers_filesystem: ext4
+    framework_containers_filesystem_label: containers
+    framework_nas_export: "nas.gibbsgreatly.xyz:/volume1/Models"
+    framework_nas_mount_point: /mnt/nas-models
+    pmx_gpu_unified_memory_tuning_enabled: true
+    # Matches "we used 32GB on a 128GB box" (proxmox-strix-halo-setup-notes.md
+    # §6) rather than the shared task's own 16GB default -- overridden
+    # deliberately, not left at default.
+    pmx_gpu_gtt_reserved_host_mb: 32768
+    # 192.168.40.11:3142 -- confirmed reachable from this host (nc test,
+    # 2026-07-20), matching the existing "all zones and LAN to Harbor and
+    # apt-cacher" firewall policy (terraform/lxc/network/pve.yaml). Same
+    # apt-cacher-ng proxy pattern lxc_base's role uses elsewhere in this
+    # repo, applied here since this host was set up without it initially.
+    framework_apt_cacher_host: 192.168.40.11
+    # node_exporter's textfile-collector directory for the GPU/Ollama
+    # stats scripts below -- opt-in via node_exporter_textfile_dir, only
+    # set here (the other 10+ managed hosts don't set it).
+    framework_textfile_collector_dir: /var/lib/node_exporter/textfile_collector
+
+  tasks:
+    - name: Check if apt-cacher-ng is reachable before configuring proxy
+      ansible.builtin.wait_for:
+        host: "{{ framework_apt_cacher_host }}"
+        port: 3142
+        timeout: 3
+      register: framework_apt_cacher_reachable
+      ignore_errors: true
+
+    - name: Configure apt to use apt-cacher-ng proxy
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/01proxy
+        content: |
+          Acquire::http::Proxy "http://{{ framework_apt_cacher_host }}:3142";
+        owner: root
+        group: root
+        mode: '0644'
+      when: not (framework_apt_cacher_reachable.failed | default(true))
+
+    - name: Add {{ framework_gpu_group_user }} to video/render groups for GPU device access # noqa: name[template]
+      ansible.builtin.user:
+        name: "{{ framework_gpu_group_user }}"
+        groups: video,render
+        append: true
+
+    - name: Check if models logical volume exists
+      ansible.builtin.command: "lvdisplay {{ framework_models_vg }}/{{ framework_models_lv_name }}"
+      register: framework_models_lv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create models logical volume (remaining vg0 free space)
+      community.general.lvol:
+        vg: "{{ framework_models_vg }}"
+        lv: "{{ framework_models_lv_name }}"
+        size: "{{ framework_models_lv_size }}"
+        state: present
+      when: framework_models_lv_check.rc != 0
+
+    - name: Check if models LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+      register: framework_models_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format models logical volume
+      community.general.filesystem:
+        fstype: "{{ framework_models_filesystem }}"
+        dev: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        opts: "-L {{ framework_models_filesystem_label }}"
+      when: framework_models_fs_check.stdout | default('') == ''
+
+    - name: Create models mount point
+      ansible.builtin.file:
+        path: "{{ framework_models_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add models volume to fstab
+      ansible.posix.mount:
+        path: "{{ framework_models_mount_point }}"
+        src: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        fstype: "{{ framework_models_filesystem }}"
+        opts: defaults
+        state: present
+
+    - name: Mount models volume
+      ansible.posix.mount:
+        path: "{{ framework_models_mount_point }}"
+        src: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        fstype: "{{ framework_models_filesystem }}"
+        opts: defaults
+        state: mounted
+
+    - name: Create /storage/models/{llm,comfyui} subdirectories
+      ansible.builtin.file:
+        path: "/storage/models/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - llm
+        - comfyui
+
+    - name: Check if containers logical volume exists
+      ansible.builtin.command: "lvdisplay {{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+      register: framework_containers_lv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create containers logical volume
+      community.general.lvol:
+        vg: "{{ framework_containers_vg }}"
+        lv: "{{ framework_containers_lv_name }}"
+        size: "{{ framework_containers_lv_size }}"
+        state: present
+      when: framework_containers_lv_check.rc != 0
+
+    - name: Check if containers LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+      register: framework_containers_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format containers logical volume
+      community.general.filesystem:
+        fstype: "{{ framework_containers_filesystem }}"
+        dev: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        opts: "-L {{ framework_containers_filesystem_label }}"
+      when: framework_containers_fs_check.stdout | default('') == ''
+
+    - name: Create containers mount point
+      ansible.builtin.file:
+        path: "{{ framework_containers_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add containers volume to fstab
+      ansible.posix.mount:
+        path: "{{ framework_containers_mount_point }}"
+        src: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        fstype: "{{ framework_containers_filesystem }}"
+        opts: defaults
+        state: present
+
+    - name: Mount containers volume
+      ansible.posix.mount:
+        path: "{{ framework_containers_mount_point }}"
+        src: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        fstype: "{{ framework_containers_filesystem }}"
+        opts: defaults
+        state: mounted
+
+    - name: Create docker/containerd subdirectories on the containers volume
+      ansible.builtin.file:
+        path: "{{ framework_containers_mount_point }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - docker
+        - containerd
+
+    # /var/lib/docker and /var/lib/containerd are bind-mounted onto the
+    # containers LV rather than reconfiguring Docker/containerd's own
+    # data-root paths -- keeps their default config untouched. Docker
+    # isn't installed by this playbook (Phase 3, per-service playbooks),
+    # so on a fresh host these are just empty directories at this point;
+    # whatever Docker/containerd later create lands transparently on the
+    # dedicated LV instead of root.
+    - name: Create /var/lib/docker and /var/lib/containerd mount points
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0711'
+      loop:
+        - /var/lib/docker
+        - /var/lib/containerd
+
+    - name: Bind-mount containers volume subdirectories onto /var/lib/docker and /var/lib/containerd
+      ansible.posix.mount:
+        path: "{{ item.dest }}"
+        src: "{{ framework_containers_mount_point }}/{{ item.src }}"
+        fstype: none
+        opts: bind
+        state: mounted
+      loop:
+        - { src: docker, dest: /var/lib/docker }
+        - { src: containerd, dest: /var/lib/containerd }
+
+    - name: Install NFS client (for the NAS backup/restore mount, §4 -- on-demand only, not a live-serving dependency)
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+
+    - name: Create NAS mount point
+      ansible.builtin.file:
+        path: "{{ framework_nas_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add NAS models export to fstab (on-demand automount, matching the old host's convention -- not mounted at boot)
+      ansible.posix.mount:
+        path: "{{ framework_nas_mount_point }}"
+        src: "{{ framework_nas_export }}"
+        fstype: nfs4
+        opts: "rw,_netdev,noauto,x-systemd.automount,x-systemd.idle-timeout=600"
+        state: present
+
+    - name: Apply unified-memory GTT/TTM tuning (ttm.pages_limit/page_pool_size)
+      ansible.builtin.import_tasks: tasks/proxmox-gpu-unified-memory-tuning.yml
+
+    - name: Install Mesa Vulkan drivers and ROCm/HIP packages
+      ansible.builtin.apt:
+        name:
+          - mesa-vulkan-drivers
+          - vulkan-tools
+          - rocm-dev
+          - rocm-smi
+          - cmake
+          - build-essential
+          - git
+          - libcurl4-openssl-dev
+        state: present
+        update_cache: true
+
+    # This host is reached over wired ethernet only (enp191s0, static IP)
+    # -- the onboard wifi radio (wlp192s0) is unused (confirmed
+    # NO-CARRIER/DOWN, 2026-07-20). wpa_supplicant.service runs generically
+    # via dbus by default; masked rather than just disabled so it can't be
+    # dbus-activated back on by some other component querying it.
+    - name: Stop and mask wpa_supplicant.service (wifi unused, wired-only host)
+      ansible.builtin.systemd:
+        name: wpa_supplicant.service
+        state: stopped
+        enabled: false
+        masked: true
+
+    # --- Platform integration: Graylog + Grafana/VictoriaMetrics ---
+    # docs/framework-ubuntu/platform-integration-plan.md. Both roles already
+    # target "a Linux host" generically (used as-is on 10 other LXCs) --
+    # reused here without modification except the imklog override below.
+    #
+    # node_exporter's step-ca cert issuance needs the homelab root CA
+    # trusted locally first -- every other managed host gets this via
+    # lxc_base (terraform/lxc/ansible/roles/lxc_base/tasks/main.yml
+    # lines ~55-92), which this playbook doesn't use. Same logic,
+    # reproduced directly: env-specific cert if one exists for this
+    # PVE_ENV, else the shared one. Found live 2026-07-25 -- cert
+    # issuance failed with "no such file or directory" for
+    # /usr/local/share/ca-certificates/homelab-root.crt before this task
+    # existed.
+    - name: Check for env-specific homelab root CA on control node
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../certs/homelab-root.{{ lookup('env', 'PVE_ENV') }}.crt"
+      delegate_to: localhost
+      become: false
+      register: framework_env_ca_stat
+      when: lookup('env', 'PVE_ENV') | length > 0
+
+    - name: Check whether shared homelab root CA exists on control node
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+      delegate_to: localhost
+      become: false
+      register: framework_shared_ca_stat
+
+    - name: Resolve root CA source path (env-specific if available, else shared)
+      ansible.builtin.set_fact:
+        framework_root_ca_src: >-
+          {{ (playbook_dir + '/../../certs/homelab-root.' + lookup('env', 'PVE_ENV') + '.crt')
+             if (framework_env_ca_stat.stat.exists | default(false))
+             else (playbook_dir + '/../../certs/homelab-root.crt') }}
+        framework_root_ca_exists: >-
+          {{ (framework_env_ca_stat.stat.exists | default(false)) or framework_shared_ca_stat.stat.exists }}
+
+    - name: Install homelab root CA on framework
+      ansible.builtin.copy:
+        src: "{{ framework_root_ca_src }}"
+        dest: /usr/local/share/ca-certificates/homelab-root.crt
+        mode: "0644"
+      when: framework_root_ca_exists | bool
+      register: framework_homelab_root_ca_copy
+
+    - name: Refresh CA trust store after root CA update
+      ansible.builtin.command:
+        cmd: update-ca-certificates
+      when:
+        - framework_root_ca_exists | bool
+        - framework_homelab_root_ca_copy.changed
+
+    # Found live 2026-07-25: this inventory group's ansible_host defaults to
+    # the FQDN string unless FRAMEWORK_HOST_IP is set (ansible/inventory/
+    # inventory.yml), so node_exporter's step-ca cert (SANs come from
+    # ansible_host/inventory_hostname) previously had no IP SAN --
+    # VictoriaMetrics scrapes by IP (LAB_IP_FRAMEWORK) and TLS verification
+    # failed: "doesn't contain any IP SANs". FRAMEWORK_HOST_IP is now set in
+    # .env, so any *future* reissuance gets it right -- this task only
+    # forces the one-time reissuance of an already-existing, wrong cert;
+    # once it has the IP SAN it stays a no-op.
+    - name: Check whether existing node_exporter cert has the host's IP as a SAN
+      ansible.builtin.command:
+        cmd: openssl x509 -in /etc/node_exporter/certs/tls.crt -noout -ext subjectAltName
+      register: framework_node_exporter_cert_sans
+      changed_when: false
+      failed_when: false
+
+    - name: Remove node_exporter cert lacking an IP SAN (forces reissuance below)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/node_exporter/certs/tls.crt
+        - /etc/node_exporter/certs/tls.key
+      when: >-
+        framework_node_exporter_cert_sans.rc == 0
+        and ('IP Address:' + ansible_host) not in framework_node_exporter_cert_sans.stdout
+
+    - name: Install node_exporter for host metrics collection (scraped by monitoring-stack)
+      ansible.builtin.include_role:
+        name: node_exporter
+      vars:
+        node_exporter_textfile_dir: "{{ framework_textfile_collector_dir }}"
+
+    # GPU and Ollama neither one exposes Prometheus metrics natively
+    # (confirmed live 2026-07-25: llama.cpp's /metrics returned nothing,
+    # Ollama's /metrics 404s) -- these two small scripts poll AMDGPU
+    # sysfs and Ollama's /api/ps respectively and write node_exporter
+    # textfile-collector output, reusing the already-scraped node_exporter
+    # job instead of standing up new scrape targets. See
+    # docs/framework-ubuntu/platform-integration-plan.md "Local AI
+    # dashboard" section.
+    - name: Copy GPU stats textfile-collector script
+      ansible.builtin.copy:
+        src: files/gpu_stats_textfile.py
+        dest: /usr/local/bin/gpu_stats_textfile.py
+        owner: root
+        group: root
+        mode: "0755"  # nosonar: ansible:S2612 — executable script, root-owned, no secrets
+
+    - name: Copy Ollama stats textfile-collector script
+      ansible.builtin.copy:
+        src: files/ollama_stats_textfile.py
+        dest: /usr/local/bin/ollama_stats_textfile.py
+        owner: root
+        group: root
+        mode: "0755"  # nosonar: ansible:S2612 — executable script, root-owned, no secrets
+
+    - name: Write framework AI stats systemd service (runs both textfile-collector scripts)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/framework-ai-stats.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
+        content: |
+          [Unit]
+          Description=Write AMDGPU + Ollama stats for node_exporter's textfile collector
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/python3 /usr/local/bin/gpu_stats_textfile.py
+          ExecStart=/usr/bin/python3 /usr/local/bin/ollama_stats_textfile.py
+      register: framework_ai_stats_service
+
+    - name: Write framework AI stats systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/framework-ai-stats.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
+        content: |
+          [Unit]
+          Description=Periodically refresh AMDGPU + Ollama stats for node_exporter
+
+          [Timer]
+          OnBootSec=15s
+          OnUnitActiveSec=15s
+
+          [Install]
+          WantedBy=timers.target
+      register: framework_ai_stats_timer
+
+    - name: Enable and start framework AI stats timer
+      ansible.builtin.systemd:
+        name: framework-ai-stats.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ framework_ai_stats_service.changed or framework_ai_stats_timer.changed }}"
+
+    - name: Install rsyslog_forward for Graylog log shipping
+      ansible.builtin.include_role:
+        name: rsyslog_forward
+      vars:
+        # This is real hardware with a real kernel log, unlike the LXC
+        # guests this role's default targets -- keep imklog enabled.
+        rsyslog_forward_disable_imklog: false
+
+    # Docker's own log-driver default (json-file) never reaches Graylog.
+    # One daemon.json covers all Docker Compose stacks on this host
+    # (llama.cpp, Ollama, ComfyUI, ai-services-stack all share the same
+    # daemon) -- written here, before any of those playbooks install
+    # Docker, so a fresh host picks it up on first install. Matches
+    # docker_base role's daemon.json.j2 log-driver block elsewhere in the
+    # repo, minus the registry-mirror settings framework doesn't use.
+    - name: Ensure /etc/docker directory exists
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: "0755"
+
+    - name: Configure Docker daemon-level syslog log-driver (Graylog ingestion via local rsyslog)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            }
+          }
+      register: framework_docker_daemon_config
+
+    - name: Gather service facts to check whether Docker is already installed
+      ansible.builtin.service_facts:
+      when: framework_docker_daemon_config.changed
+
+    - name: Restart Docker to apply daemon.json changes (only if already installed)
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+      when:
+        - framework_docker_daemon_config.changed
+        - "'docker.service' in ansible_facts.services | default({})"

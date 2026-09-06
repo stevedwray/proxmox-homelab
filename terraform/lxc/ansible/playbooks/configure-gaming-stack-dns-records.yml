@@ -1,0 +1,53 @@
+# Add Technitium A records (and a PTR record for the canonical name) for
+# gaming-stack-lab's direct game-port services, matching the game_seg
+# convention: gaming-stack.lab.gibbsgreatly.xyz and
+# foreverworld.lab.gibbsgreatly.xyz both point straight at the container's
+# own IP, not through Traefik (game protocols aren't HTTP). Both names
+# share one IP, so only gaming-stack -- the canonical container identity --
+# owns the PTR; foreverworld is an alias and cannot also own it (PTR is one
+# name per IP).
+#
+# These were mistakenly added to the retired CoreDNS zone instead
+# (terraform/lxc/ansible/files/coredns-lab.zone) when gaming-stack-lab was
+# first scaffolded. CoreDNS has not been the live production DNS delegate
+# target since the 2026-07-05 Technitium cutover
+# (docs/dns-refactor/production-cutover-packet.md) -- this playbook is the
+# correction, following the same pattern as
+# configure-ai-stack-dns-records.yml.
+---
+- name: Add Technitium A/PTR records for gaming-stack-lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api" # nosonar: ansible:S5332 -- Technitium admin API, private mgmt_seg only
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    gaming_stack_dns_records:
+      - { name: "gaming-stack", zone: "{{ lab_domain }}", ip: "192.168.60.10", ptr: true }
+      - { name: "foreverworld", zone: "{{ lab_domain }}", ip: "192.168.60.10", ptr: false }
+
+  tasks:
+    - name: Log in to Technitium
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: technitium_login
+      no_log: true
+      until: technitium_login.status == 200
+      retries: 3
+      delay: 5
+
+    - name: Extract session token
+      ansible.builtin.set_fact:
+        technitium_token: "{{ (technitium_login.content | from_json).token }}"
+      no_log: true
+
+    - name: Publish gaming-stack-lab A and PTR records via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ gaming_stack_dns_records }}"

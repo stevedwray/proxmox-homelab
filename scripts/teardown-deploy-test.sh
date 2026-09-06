@@ -19,9 +19,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
-HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
+HOMELAB_ROOT_CA_DEFAULT="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${TEARDOWN_INVENTORY_FILE:-${REPO_ROOT}/docs/teardown-test/inventory.md}"
-TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${PVE_ENV:-${TF_VAR_proxmox_node:-pve-test}}}"
+TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${PVE_ENV:-${TF_VAR_proxmox_node:-pve-test-vm}}}"
 if [[ "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
   DEFAULT_WITH_SECRETS_WRAPPER="with-secrets-prod"
   DEFAULT_TARGET_PVE_HOST="${PVE_PROD_FQDN:-pve.gibbsgreatly.xyz}"
@@ -102,6 +102,7 @@ BROWSER_HOSTS=(
   "authentik"
   "harbor"
   "grafana"
+  "graylog"
   "portainer"
   "netbox"
   "traefik"
@@ -121,6 +122,7 @@ export LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
 export LAB_IP_DNS="${LAB_IP_DNS:-}"
 export LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
 export LAB_IP_PROXY="${LAB_IP_PROXY:-}"
+export LAB_IP_GRAYLOG="${LAB_IP_GRAYLOG:-}"
 export LAB_GW_MGMT="${LAB_GW_MGMT:-}"
 export LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
 export LAB_BASE_DOMAIN="${LAB_BASE_DOMAIN:-${LAB_DOMAIN}}"
@@ -191,6 +193,20 @@ EOF
 
 now_utc() {
   date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+resolve_homelab_root_ca() {
+  local env_specific_ca=""
+
+  if [[ -n "${TARGET_NODE_EXPECTED}" ]]; then
+    env_specific_ca="${REPO_ROOT}/certs/homelab-root.${TARGET_NODE_EXPECTED}.crt"
+    if [[ -f "${env_specific_ca}" ]]; then
+      printf '%s\n' "${env_specific_ca}"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "${HOMELAB_ROOT_CA_DEFAULT}"
 }
 
 git_current_branch() {
@@ -1093,14 +1109,24 @@ hydrate_live_env_contract() {
     LAB_IP_DNS
     LAB_IP_PORTAINER
     LAB_IP_PROXY
+    LAB_IP_GRAYLOG
+    LAB_IP_HARBOR
+    LAB_IP_MONITORING
+    LAB_IP_NETBOX
+    HARBOR_TLS_RESOLVER
     LAB_GW_MGMT
+    LAB_DOMAIN
+    LAB_BASE_DOMAIN
+    LAB_FQDN_TRAEFIK
+    LAB_FQDN_GRAFANA
+    LAB_FQDN_NETBOX
+    LAB_FQDN_HARBOR
+    LAB_FQDN_AUTHENTIK
+    LAB_FQDN_AUTHENTIK_INTERNAL
+    LAB_FQDN_PORTAINER
   )
 
   for key in "${vars[@]}"; do
-    if [[ -n "${!key:-}" ]]; then
-      continue
-    fi
-
     value="$("${WITH_SECRETS}" printenv "${key}" || true)"
     if [[ -n "${value}" ]]; then
       printf -v "${key}" '%s' "${value}"
@@ -1117,7 +1143,13 @@ require_live_env_contract() {
     LAB_IP_DNS
     LAB_IP_PORTAINER
     LAB_IP_PROXY
+    LAB_IP_GRAYLOG
     LAB_GW_MGMT
+    LAB_DOMAIN
+    LAB_FQDN_TRAEFIK
+    LAB_FQDN_GRAFANA
+    LAB_FQDN_NETBOX
+    LAB_FQDN_HARBOR
   )
 
   hydrate_live_env_contract
@@ -1308,6 +1340,7 @@ validate_approval_packet() {
     "netbox:netbox"
     "monitoring:monitoring"
     "portainer:portainer"
+    "graylog:graylog"
   )
   local -a recreatable_services=(
     "apt-cacher:apt[- ]?cacher"
@@ -1538,13 +1571,24 @@ stack_apply() {
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
   guard_target
-  if [[ "${stack}" == "portainer-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" && "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
     run_logged "restore-${stack}" \
       env PORTAINER_RESTORE_PVE_HOST="${TARGET_PVE_HOST}" \
       "${WITH_SECRETS}" "${REPO_ROOT}/scripts/portainer-restore.sh"
   else
     run_logged "provision-${stack}" \
       "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
+  fi
+  if [[ "${stack}" == "technitium-stack" && "${TARGET_NODE_EXPECTED}" != "pve" ]]; then
+    # configure-technitium-dhcp-scope-via-api.yml deliberately stays standalone
+    # from deploy-technitium-stack.yml (decisions.md Decision 7), so a fresh
+    # destroy/recreate leaves the DHCP scope unconfigured until this runs.
+    # Scoped to the Stage A throwaway VLAN only -- never point this at `pve`.
+    run_logged "reconcile-dhcp-scope-${stack}" \
+      "${WITH_SECRETS}" ansible-playbook \
+        -i "${REPO_ROOT}/terraform/lxc/stacks/dhcp-test-client-01/inventory.yml" \
+        -e dhcp_test_target_host=dhcp-test-client-01 \
+        "${REPO_ROOT}/terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml"
   fi
   validate_stack_smoke "${spec}"
 }
@@ -1557,14 +1601,14 @@ stack_destroy() {
 
   ensure_workspace_dir "${stack}"
 
-  if [[ "${stack}" == "portainer-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" && "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
     run_logged "pre-destroy-backup-${stack}" \
       ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
         "pct exec ${vmid} -- bash -c 'set -a; source /etc/portainer-backup/env; set +a; /opt/portainer-backup/backup.sh'"
   fi
 
   guard_target
-  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "graylog-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "technitium-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' REBUILD_GATE_TARGET_HOST='${TARGET_PVE_HOST}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
@@ -1607,6 +1651,33 @@ validate_stack_smoke() {
       run_logged "health-${stack}-authoritative" dig "@${ip}" +short "${LAB_FQDN_TRAEFIK}"
       run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short "${LAB_FQDN_TRAEFIK}"
       ;;
+    technitium-stack)
+      # Confirms dhcp-test-client-01 (Stage A's disposable fixture on the
+      # throwaway test_dhcp_seg VLAN, never destroyed/recreated by this
+      # harness -- see docs/dhcp-refactor/plan.md Stage C) still holds the
+      # exact reserved lease Stage B declares, proving the scope survived
+      # this stack's destroy/recreate cycle intact. This runs during
+      # stack_apply (a mutating phase), not final-validation, so it's not
+      # bound by that phase's read-only contract. It used to skip forcing a
+      # renew, assuming the scope's 10-minute test lease time meant a full
+      # DORA renegotiation had already happened naturally by the time a full
+      # platform cycle reached this check -- confirmed live (2026-07-12)
+      # that assumption doesn't hold: dhclient backs off for minutes between
+      # retry bursts, and this check runs immediately after the scope
+      # reconcile, so it can land mid-backoff and see no address at all even
+      # though the reservation is fine. validate-dhcp-test-client-via-pct.yml
+      # now triggers a single bounded `dhclient -1` renewal itself before
+      # reading interface state, instead of waiting on the client's own
+      # retry schedule.
+      run_logged "health-${stack}-dhcp-lease" \
+        ansible-playbook \
+          -i "${REPO_ROOT}/terraform/lxc/stacks/dhcp-test-client-01/inventory.yml" \
+          -e dhcp_test_target_host=dhcp-test-client-01 \
+          -e dhcp_test_validation_expected_ipv4=192.168.90.61 \
+          -e dhcp_test_validation_expected_gateway=192.168.90.1 \
+          -e '{"dhcp_test_validation_expected_nameservers": ["192.168.90.1"]}' \
+          "${REPO_ROOT}/terraform/lxc/ansible/playbooks/validate-dhcp-test-client-via-pct.yml"
+      ;;
     proxy-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"
       ;;
@@ -1621,6 +1692,16 @@ validate_stack_smoke() {
       ;;
     netbox-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_NETBOX}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_NETBOX}/"
+      ;;
+    graylog-stack)
+      run_logged "health-${stack}" \
+        bash -lc "for i in \$(seq 1 24); do
+          code=\$(curl -o /dev/null -s -w '%{http_code}' 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' || true)
+          body=\$(curl -fsS 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' 2>/dev/null || true)
+          echo \"attempt=\${i} http_code=\${code} body=\${body}\"
+          [[ \"\${body}\" == 'ALIVE' ]] && exit 0
+          sleep 5
+        done; echo 'Graylog did not report ALIVE after 24 attempts' >&2; exit 1"  # NOSONAR — unauthenticated health check on private SDN
       ;;
   esac
 }
@@ -1722,6 +1803,22 @@ probe_stack_health() {
         PLATFORM_HEALTH_DETAIL="authoritative dns failed"
       fi
       ;;
+    technitium-stack)
+      # Not authoritative for the live resolver path yet (parity window --
+      # see deploy-technitium-stack.yml's header comment), so this probes
+      # Technitium's own IP directly for the same parity-zone record
+      # dns-stack serves, the same way validate_stack_smoke() does for
+      # this stack elsewhere in this script.
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "dig '@${ip}' +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns failed"
+      fi
+      ;;
     proxy-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
@@ -1756,12 +1853,12 @@ probe_stack_health() {
     monitoring-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready' && curl -fsS 'http://${ip}:9428/health'"; then  # NOSONAR — unauthenticated health check on private SDN
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready' >/dev/null"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
-        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, and victorialogs ok"
+        PLATFORM_HEALTH_DETAIL="grafana and victoriametrics ok"
       else
         PLATFORM_HEALTH_STATUS="failed"
-        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, or victorialogs failed"
+        PLATFORM_HEALTH_DETAIL="grafana or victoriametrics failed"
       fi
       ;;
     netbox-stack)
@@ -1773,6 +1870,17 @@ probe_stack_health() {
       else
         PLATFORM_HEALTH_STATUS="failed"
         PLATFORM_HEALTH_DETAIL="netbox http failed"
+      fi
+      ;;
+    graylog-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "curl -fsS 'http://${ip}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"; then  # NOSONAR — unauthenticated health check on private SDN
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="graylog lbstatus ALIVE"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="graylog lbstatus not ALIVE"
       fi
       ;;
   esac
@@ -1991,10 +2099,10 @@ run_live_preflight_checks() {
   run_logged "https-route-traefik" \
     bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
-    curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
+    curl --cacert "$(resolve_homelab_root_ca)" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -2142,6 +2250,7 @@ phase_deploy_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  require_live_env_contract
   rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
   run_logged "render-edge-traefik-deploy" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-deploy" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
@@ -2158,13 +2267,14 @@ phase_activate_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  require_live_env_contract
   guard_target
   authentik_url="$(get_authentik_url)" || return 1
   wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
 
@@ -2177,7 +2287,23 @@ phase_activate_edge() {
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
+      --authentik-url "${authentik_url}" --json
+}
+
+reconcile_edge_auth_after_platform() {
+  local authentik_url
+  require_live_env_contract
+  guard_target
+  authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
+  run_logged "reconcile-edge-post-platform-apply" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
+      --authentik-url "${authentik_url}" --apply --json
+  run_logged "reconcile-edge-post-platform-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -2194,6 +2320,7 @@ phase_deploy_platform() {
   for spec in "${specs[@]}"; do
     stack_apply "${spec}"
   done
+  reconcile_edge_auth_after_platform
 }
 
 phase_final_validation() {
@@ -2229,9 +2356,9 @@ phase_final_validation() {
 
   run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
-  run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
+  run_logged "authentik-direct-health" curl --cacert "$(resolve_homelab_root_ca)" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
