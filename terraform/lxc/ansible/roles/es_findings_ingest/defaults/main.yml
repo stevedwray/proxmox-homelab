@@ -70,3 +70,11 @@ es_findings_ingest_harbor_url: "http://{{ es_findings_ingest_harbor_admin_host }
 # -- fully independent credential, independent lifecycle, so nothing here
 # can affect either of those.
 es_findings_ingest_harbor_robot_name_prefix: "es-findings-ingest"
+
+# --- Portainer connection (Phase 13, live-usage lookup) -------------------
+# Same HTTPS/9443 + X-API-Key convention as the existing PortainerClient in
+# terraform/lxc/stacks/netbox-stack/integrations/discover.py -- reused, not
+# reinvented. PORTAINER_TOKEN itself is read directly from the environment
+# in tasks/main.yml (already a SOPS secret, terraform/secrets.common.enc.yaml),
+# not a role default, since there's nothing role-specific about its value.
+es_findings_ingest_portainer_url: "https://{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var not set') }}:9443"

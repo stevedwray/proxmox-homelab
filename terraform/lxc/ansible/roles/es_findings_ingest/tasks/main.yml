@@ -70,6 +70,14 @@
         group: root
         mode: "0750"
 
+    - name: Copy harbor_live_usage.py
+      ansible.builtin.copy:
+        src: harbor_live_usage.py
+        dest: "{{ es_findings_ingest_dir }}/harbor_live_usage.py"
+        owner: root
+        group: root
+        mode: "0750"
+
     - name: Copy known-production-images classifier registry
       ansible.builtin.copy:
         src: "assets/known_production_images.json"
@@ -178,6 +186,29 @@
       when:
         - not es_findings_ingest_harbor_credential_stat.stat.exists
         - not (es_findings_ingest_harbor_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Portainer live-usage credential (Phase 13,
+    # docs/threat-vuln-platform/plan.md) -- a static SOPS secret already
+    # used elsewhere (netbox-stack's discovery), not a per-role-minted
+    # robot credential like the Harbor one above, so no create-API-call
+    # step is needed: just write whatever's in the environment. Always
+    # rewritten (not stat-guarded like harbor-robot.env) since there's
+    # nothing to mint once and preserve -- a rotated PORTAINER_TOKEN
+    # should land on the next deploy. Deliberately non-mandatory: an
+    # empty/missing value here degrades to harbor_findings_sync.py's own
+    # documented WARN + sticky carry-forward, not a failed deploy.
+    - name: Write Portainer live-usage credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/portainer.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # es-findings-ingest Portainer live-usage credential - managed by Ansible, do not edit by hand
+          PORTAINER_URL={{ es_findings_ingest_portainer_url }}
+          PORTAINER_TOKEN={{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}
       no_log: true
 
     # ---------------------------------------------------------------
