@@ -3136,3 +3136,302 @@ Added:
   `mark_cve_resolved.py` invocation, and why a resolved CVE can still
   legitimately reappear. `README.md` also refreshed -- it was still
   describing Phase 1 as "not built yet" through Phase 11.
+
+## Follow-up, same day (2026-09-07): `resolved_review_after` (time-boxed ACCEPT_RISK)
+
+Found running the actual remediation sequence against `wazuh-stack`:
+three CVEs (`CVE-2023-48795`/`golang.org/x/crypto`, `CVE-2020-8559`/
+`k8s.io/apimachinery`, `CVE-2026-33937`/`handlebars`, shared with
+`opensearch-dashboards`) all turned out to be bundled Go/Node
+dependencies that Wazuh's own dependency-update changelog never
+mentions bumping across any 4.14.x release -- an `ACCEPT_RISK` genuinely
+blocked on "no upstream fix exists yet," not a version we can bump our
+way out of. The existing `resolved`/`resolved_at_risk_score`
+carry-forward (Phase 11) only reopens a CVE when `risk_score` changes --
+which never happens for a static "no fix available" situation, so it
+would stay silently resolved forever even after upstream ships a fix
+nobody went looking for. Operator's framing: this isn't resolved until
+upstream actually ships something, and it should be revisited on a
+schedule regardless.
+
+Added `resolved_review_after` (ISO timestamp, `mark_cve_resolved.py
+--review-after-days N`): `cve_deep_dive.py`'s `upsert_assessment()` now
+also stops carrying `resolved:true` forward once this date passes, same
+mechanism as a `risk_score` change, just time-triggered instead of
+data-triggered. Index template + live-index mapping both updated (the
+live-index-needs-an-explicit-PUT lesson from Phase 6, again). Applied to
+the three CVEs above at 30 days. Documented in
+`remediation-runbook.md`.
+
+## Phase 12 (planned, not started): automated upstream-fix checking
+
+**Goal**: the situation above -- an `ACCEPT_RISK` sitting on a dashboard
+for a month with nobody re-checking whether upstream shipped a fix in
+the meantime -- is exactly what `resolved_review_after` forces a human
+to eventually do manually. Operator's direction, 2026-09-07: this is
+standard UVM-product territory (upstream advisory/release monitoring is
+a real feature in Tenable/Qualys/Rapid7-class tools), and worth
+productionizing here rather than leaving as a once-a-month manual check.
+
+### Design decisions (operator-confirmed 2026-09-07, not defaulted silently)
+
+- **Where it lives**: new code in `cve_enrichment_sync.py`'s sibling
+  scripts on `secpipe-stack` (code this repo owns, plain Python, same
+  convention as every other sync script here) -- **not** an extension to
+  `cve-mcp-server`. Confirmed during planning: `cve-mcp-server` is
+  third-party source (`github.com/mukul975/cve-mcp-server`) built from a
+  vendored copy (`mcp-utility-stack/stack.yaml`'s own comment: "built
+  directly on the host from source... not pulled"), so extending it
+  means maintaining a fork against an upstream OSS project -- a
+  materially different maintenance posture than adding to code we
+  already fully own.
+- **Data source**: [OSV.dev](https://osv.dev/) (`POST
+  https://api.osv.dev/v1/query`) -- free, unauthenticated, one unified
+  schema across Go/npm/PyPI/Maven/RubyGems/etc., confirmed live via its
+  real API docs during planning (not assumed). Response's
+  `affected[].ranges[].events[]` carries a `fixed` version directly when
+  one exists -- exactly the "has upstream shipped a fix, and what
+  version" question this needs answered, without per-ecosystem custom
+  parsing.
+  - **Known, accepted gap**: OSV.dev's ecosystem coverage is solid for
+    Go/npm/PyPI/Maven/RubyGems but uncertain for OS-level RPM packages
+    (e.g. Amazon Linux's `python3-libs`, the `opensearch-stack` Phase-11
+    accept-risk CVEs). Those get a best-effort ecosystem guess and may
+    simply never match -- that's correct "no data available," not a bug
+    to chase in this phase.
+- **Scope**: only CVEs already `resolved:true` with `resolved_review_after`
+  set -- i.e. exactly the CVEs already recorded as "no fix exists yet,"
+  not every shortlisted CVE. Most shortlisted CVEs already have a real,
+  actionable recommendation; running an upstream-fix check against those
+  too would mostly re-confirm what's already known.
+- **Cadence**: a new daily timer (`upstream-fix-check.timer`),
+  independent of the weekly `cve-deep-dive.timer`. OSV lookups are plain
+  HTTP with no LLM cost, so there's no reason to tie fix-discovery
+  latency to the weekly cadence the way the LLM-driven deep-dive needs
+  to be bounded.
+- **On a fix found**: never auto-applies or auto-resolves anything --
+  matches how every other part of this pipeline already works (it
+  recommends, a human/operator acts). Sets new fields
+  (`upstream_fix_available`, `upstream_fix_version`,
+  `upstream_fix_checked_at`) on the `cve-remediation-assessment` doc for
+  a human to see and act on via the existing `mark_cve_resolved.py`
+  workflow -- does **not** flip `resolved` back to `false` by itself
+  (that stays governed by `resolved_review_after`/`risk_score` as
+  already built).
+
+### `check_upstream_fixes.py` (new script, colocated with
+`cve_enrichment_sync.py`/`cve_deep_dive.py`, imports `ces._es_request`/
+`ces._now_iso` rather than duplicating them)
+
+```python
+#!/usr/bin/env python3
+"""Check whether upstream has shipped a fix for CVEs accepted as risk
+specifically because no fix existed yet (docs/threat-vuln-platform/
+plan.md Phase 12). Queries OSV.dev (https://osv.dev/) -- free,
+unauthenticated, one schema across ecosystems -- using the exact
+package/version pulled from the original *-findings source doc, never
+guessed. Never auto-applies or auto-resolves anything: only sets
+upstream_fix_available/upstream_fix_version/upstream_fix_checked_at for
+a human to act on via the existing mark_cve_resolved.py workflow.
+
+Scope (operator-confirmed 2026-09-07): only cve-remediation-assessment
+docs with resolved:true AND resolved_review_after set -- an ACCEPT_RISK
+made specifically because no upstream fix existed at the time. Runs
+daily (upstream-fix-check.timer), independent of the weekly
+cve-deep-dive run, since OSV lookups carry no LLM cost.
+
+Known gap, not solved here: OSV.dev's ecosystem coverage is solid for
+Go/npm/PyPI/Maven/RubyGems but uncertain for OS-level RPM packages (e.g.
+Amazon Linux's python3-libs) -- those get a best-effort ecosystem guess
+via guess_ecosystem() and may simply never match; that is correct
+"no data available," not a bug.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+import cve_enrichment_sync as ces
+
+OSV_QUERY_URL = "https://api.osv.dev/v1/query"
+
+
+def guess_ecosystem(package: str) -> str | None:
+    """Best-effort package-name-shape -> OSV ecosystem name. Deliberately
+    returns None (skip, don't guess) for anything that looks like an
+    RPM-style OS package (e.g. 'python3-libs') rather than falsely
+    reporting 'no fix available' for an ecosystem OSV likely can't answer
+    for anyway.
+
+    Live-tested against OSV.dev during planning (2026-09-07): the first
+    cut of this heuristic mislabeled 'python3-libs' as npm (it matched
+    "lowercase, no dot, alnum-once-hyphens-stripped") -- fixed by
+    excluding any name containing a digit, since RPM-style OS package
+    names commonly embed one (python3-libs, libxml2) while this
+    deliberately accepts sometimes skipping a genuinely digit-bearing
+    npm/PyPI name too, per the same "skip, don't guess" rule."""
+    if not package:
+        return None
+    first_segment = package.split("/")[0]
+    if "/" in package and "." in first_segment:
+        return "Go"  # e.g. golang.org/x/crypto, k8s.io/apimachinery
+    if any(char.isdigit() for char in package):
+        return None  # RPM-style OS package names commonly embed a digit
+    if package.replace("-", "").replace("_", "").isalnum() and package.islower() and "." not in package:
+        return "npm"  # weak heuristic; good enough as a first pass
+    return None
+
+
+def query_osv(package: str, ecosystem: str, version: str) -> dict | None:
+    body = json.dumps({
+        "package": {"name": package, "ecosystem": ecosystem},
+        "version": version,
+    }).encode()
+    req = urllib.request.Request(
+        OSV_QUERY_URL, data=body, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310 -- fixed OSV.dev API endpoint, never user-supplied
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        print(f"WARN: OSV query failed for {package}@{version} ({ecosystem}): {exc}", file=sys.stderr)
+        return None
+
+
+def extract_fixed_version(osv_result: dict, cve_id: str) -> str | None:
+    """Find this CVE among osv_result['vulns'] (matched by id or alias)
+    and return the first 'fixed' event's version found in any range."""
+    for vuln in osv_result.get("vulns", []):
+        ids = {vuln.get("id")} | set(vuln.get("aliases", []))
+        if cve_id not in ids:
+            continue
+        for affected in vuln.get("affected", []):
+            for rng in affected.get("ranges", []):
+                for event in rng.get("events", []):
+                    if "fixed" in event:
+                        return event["fixed"]
+    return None
+
+
+def fetch_package_identity(es_url: str, cve_id: str, *, auth_header: str, verify_tls: bool) -> tuple[str, str] | None:
+    """Pull the real package name + installed version from whichever
+    *-findings doc actually reported this CVE -- never re-derive or
+    guess it, same rule this whole pipeline already follows elsewhere."""
+    for index in ("harbor-findings", "gvm-findings", "wazuh-findings"):
+        status, result = ces._es_request(
+            es_url, f"/{index}/_search",
+            method="POST",
+            body={"size": 1, "query": {"term": {"finding_id": cve_id}}},
+            auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if status != 200 or not result:
+            continue
+        hits = result.get("hits", {}).get("hits", [])
+        if not hits:
+            continue
+        src = hits[0]["_source"]
+        package, version = src.get("package"), src.get("package_version")
+        if package and version:
+            return package, version
+    return None
+
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--elasticsearch-url", default=os.environ.get("ELASTICSEARCH_URL", "https://127.0.0.1:9200"))
+    parser.add_argument("--es-user", default=os.environ.get("ES_FINDINGS_USER"))
+    parser.add_argument("--es-password", default=os.environ.get("ES_FINDINGS_PASSWORD"))
+    parser.add_argument("--no-verify-tls", action="store_true", default=os.environ.get("ES_FINDINGS_NO_VERIFY_TLS") == "1")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    if not args.es_user or not args.es_password:
+        print("ERROR: --es-user/--es-password (or ES_FINDINGS_USER/ES_FINDINGS_PASSWORD) are required", file=sys.stderr)
+        return 1
+
+    auth_header = "Basic " + base64.b64encode(f"{args.es_user}:{args.es_password}".encode()).decode()
+    verify_tls = not args.no_verify_tls
+
+    status, result = ces._es_request(
+        args.elasticsearch_url, "/cve-remediation-assessment/_search",
+        method="POST",
+        body={"size": 100, "query": {"bool": {"filter": [
+            {"term": {"resolved": True}},
+            {"exists": {"field": "resolved_review_after"}},
+        ]}}},
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    if status != 200 or not result:
+        print(f"ERROR: failed to query accept-risk-pending CVEs ({status}): {result}", file=sys.stderr)
+        return 1
+
+    candidates = result.get("hits", {}).get("hits", [])
+    print(f"Checking {len(candidates)} accept-risk-pending-upstream-fix CVE(s) against OSV.dev")
+
+    checked = found = errors = 0
+    for hit in candidates:
+        cve_id = hit["_id"]
+        identity = fetch_package_identity(
+            args.elasticsearch_url, cve_id, auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if not identity:
+            continue
+        package, version = identity
+        ecosystem = guess_ecosystem(package)
+        if not ecosystem:
+            continue
+        checked += 1
+        osv_result = query_osv(package, ecosystem, version)
+        if osv_result is None:
+            errors += 1
+            continue
+        fixed_version = extract_fixed_version(osv_result, cve_id)
+        update = {
+            "upstream_fix_available": bool(fixed_version),
+            "upstream_fix_version": fixed_version,
+            "upstream_fix_checked_at": ces._now_iso(),
+        }
+        if fixed_version:
+            found += 1
+            print(f"  {cve_id}: fix available upstream -- {package} {fixed_version}")
+        if not args.dry_run:
+            ces._es_request(
+                args.elasticsearch_url, f"/cve-remediation-assessment/_update/{cve_id}",
+                method="POST", body={"doc": update}, auth_header=auth_header, verify_tls=verify_tls,
+            )
+
+    print(f"Done -- candidates={len(candidates)} checked={checked} fix_found={found} errors={errors}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+### Open items / not decided yet
+
+- Exact Grafana surface for `upstream_fix_available` -- simplest is a
+  new column on `uvm-dashboard-exporter`'s existing `/remediation.json`
+  (the "Top CVEs Needing Attention" panel already renders that
+  response's fields as table columns with no code change needed on the
+  Grafana side, same as every other field there); a dedicated panel is a
+  nice-to-have, not needed for a first cut.
+- `guess_ecosystem()`'s npm heuristic is weak (any short, dotless,
+  lowercase, alnum-ish name) -- fine as a first pass since a wrong guess
+  just produces a `WARN` from a failed/empty OSV query, not a false
+  positive, but worth tightening if it produces noisy warnings once
+  live.
+- Systemd wiring (`upstream-fix-check.service`/`.timer`,
+  `cve_enrichment_sync_upstream_check_enabled` flag following the exact
+  `cve_deep_dive_enabled` pattern, `provision.sh` key-passthrough
+  addition) is straightforward given the existing `cve-deep-dive.timer`
+  role scaffold as a direct template, but not written out step-by-step
+  here yet -- do that pass immediately before implementation, following
+  this doc's own "literal, not guessed" rule, rather than leaving it as
+  something to figure out at execution time.

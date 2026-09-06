@@ -48,3 +48,7 @@ remediation call for the worst/most-exploitable subset.
 - OpenSearch Transform-job rollups (Phase 3, an explicit one-off
   departure from this repo's plain-Python-sync convention) — scoped but
   not step-blocked pending a live schema check.
+- Automated upstream-fix checking (Phase 12) — design decided and a
+  live-tested `check_upstream_fixes.py` sketch written, queries OSV.dev
+  daily for CVEs already accepted as risk pending an upstream fix; not
+  yet wired into a systemd service/timer or deployed.
