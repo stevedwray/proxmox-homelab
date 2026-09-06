@@ -53,7 +53,7 @@ def _request(
         ctx.verify_mode = ssl.CERT_NONE
 
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             raw = resp.read()
             parsed = json.loads(raw) if raw else None
             return resp.status, parsed

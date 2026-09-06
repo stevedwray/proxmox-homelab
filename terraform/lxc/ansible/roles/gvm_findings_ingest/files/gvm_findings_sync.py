@@ -105,7 +105,7 @@ def _basic_auth_header(user: str, password: str) -> str:
 
 def fetch_gvm_findings(bridge_url: str, *, timeout: int = 120) -> list[dict]:
     req = urllib.request.Request(f"{bridge_url.rstrip('/')}/findings/all", method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         body = json.loads(resp.read())
     return body.get("results", [])
 
@@ -224,7 +224,7 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
         ctx.verify_mode = ssl.CERT_NONE
 
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             result = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         print(f"ERROR: bulk index failed ({exc.code}): {exc.read()[:500]}", file=sys.stderr)
@@ -267,7 +267,7 @@ def update_sync_state(
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=15):
+        with urllib.request.urlopen(req, context=ctx, timeout=15):  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             pass
     except urllib.error.HTTPError as exc:
         print(f"WARN: failed to update sync state: {exc}", file=sys.stderr)

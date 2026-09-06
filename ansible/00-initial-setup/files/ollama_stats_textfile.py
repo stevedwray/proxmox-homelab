@@ -36,7 +36,7 @@ def expires_in_seconds(expires_at):
 
 
 def fetch_models():
-    with urllib.request.urlopen(OLLAMA_URL, timeout=5) as response:
+    with urllib.request.urlopen(OLLAMA_URL, timeout=5) as response:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         payload = json.load(response)
     return payload.get("models", [])
 

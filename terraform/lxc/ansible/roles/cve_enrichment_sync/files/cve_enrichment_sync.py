@@ -74,7 +74,7 @@ def _es_request(
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as exc:
@@ -300,7 +300,7 @@ def call_cve_mcp_triage(mcp_url: str, cve_id: str, *, depth: str = "standard", t
             "Accept": "application/json, text/event-stream",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         raw = resp.read().decode("utf-8")
     for line in raw.splitlines():
         if line.startswith("data:"):
@@ -350,7 +350,7 @@ def _call_anthropic(api_key: str, prompt: str, *, model: str = "claude-haiku-4-5
             "anthropic-version": "2023-06-01",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         result = json.loads(resp.read())
     return "".join(b.get("text", "") for b in result.get("content", []) if b.get("type") == "text").strip()
 
@@ -363,7 +363,7 @@ def _call_openai(api_key: str, prompt: str, *, model: str = "gpt-4o-mini", timeo
         method="POST",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         result = json.loads(resp.read())
     return result["choices"][0]["message"]["content"].strip()
 
@@ -386,7 +386,7 @@ def _call_ollama(ollama_url: str, model: str, prompt: str, *, timeout: int = 120
         method="POST",
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
         result = json.loads(resp.read())
     return (result.get("response") or "").strip()
 

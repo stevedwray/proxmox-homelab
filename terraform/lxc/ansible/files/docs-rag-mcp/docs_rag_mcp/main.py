@@ -29,7 +29,7 @@ def _allowed_hosts() -> list[str]:
 
 
 def main() -> None:
-    host = os.environ.get("HOST", "0.0.0.0")
+    host = os.environ.get("HOST", "0.0.0.0")  # nosec B104 — container-internal MCP listener; exposure is controlled by Docker port mapping / Traefik, not this bind address
     port = int(os.environ.get("PORT", "8001"))
     transport_security = TransportSecuritySettings(allowed_hosts=_allowed_hosts())
     logger.info("starting docs-rag-mcp on %s:%s", host, port)
