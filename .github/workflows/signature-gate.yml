@@ -47,8 +47,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$IMAGE_REF" =~ ^10\.57\.3\.10/ ]]; then
-            echo "Signature gate requires Harbor image refs (10.57.3.10/...)." >&2
+          if [[ ! "$IMAGE_REF" =~ ^192\.168\.40\.10/ ]]; then
+            echo "Signature gate requires Harbor image refs (192.168.40.10/...)." >&2
             exit 1
           fi
 
