@@ -99,11 +99,17 @@ jobs:
           #  - roles/app_stack/: confirmed zero live consumers (no
           #    stack.yaml points ansible_playbook at deploy-stack) — see
           #    docs/harbor-stack/image-sourcing-enforcement.md Finding 1.
-          #  - stacks/harness-target/: intentionally pinned to production
-          #    Harbor's FQDN rather than ${REGISTRY_HOST}, confirmed by the
-          #    operator — it only ever pulls (read-only) through prod
-          #    Harbor's proxy cache, never mutates it, so this is accepted
-          #    as-is, not a violation to fix.
+          #  - stacks/harness-target/ and stacks/harness-target-pve/:
+          #    intentionally pinned to production Harbor's FQDN rather than
+          #    ${REGISTRY_HOST}, confirmed by the operator — they only ever
+          #    pull (read-only) through prod Harbor's proxy cache, never
+          #    mutate it, so this is accepted as-is, not a violation to fix.
+          #  - stacks/*/stack-request.yaml: human-authored scaffolding input
+          #    consumed by scaffold-stack.py, not a deployed artifact — see
+          #    that script's own docstring. Its image: lines describe the
+          #    upstream images the generated compose file should end up
+          #    referencing through ${REGISTRY_HOST}, not a live reference
+          #    of its own.
           passes_registry_host() {
             local v="$1"
             [[ "${v}" =~ \{\{[^}]*registry_host[^}]*\}\} ]] && return 0
@@ -149,11 +155,13 @@ jobs:
             --exclude-dir='media-stack' \
             --exclude-dir='app_stack' \
             --exclude-dir='harness-target' \
+            --exclude-dir='harness-target-pve' \
             --include='*.yml' \
             --include='*.yaml' \
             --include='*.j2' \
             '^[[:space:]]*image:[[:space:]]*[^[:space:]]' \
-            terraform/lxc/ansible/ terraform/lxc/stacks/)
+            terraform/lxc/ansible/ terraform/lxc/stacks/ \
+            | grep -vE '/stack-request\.yaml:')
 
           if [[ "${violations}" -gt 0 ]]; then
             echo "ERROR: ${violations} image: reference(s) above do not route through Harbor."
