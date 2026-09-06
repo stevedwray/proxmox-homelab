@@ -52,3 +52,8 @@ remediation call for the worst/most-exploitable subset.
   live-tested `check_upstream_fixes.py` sketch written, queries OSV.dev
   daily for CVEs already accepted as risk pending an upstream fix; not
   yet wired into a systemd service/timer or deployed.
+- Scoping CVE reporting + Harbor cleanup to images actually in use
+  (Phase 13) — design decided (a new digest-exact `in_use` field, mirrors
+  the existing `in_production` pattern, sourced from Portainer's already-
+  registered endpoints via the existing `PortainerClient`/`PORTAINER_TOKEN`
+  pattern) and every file change written out literally; not yet applied.

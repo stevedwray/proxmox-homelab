@@ -3435,3 +3435,330 @@ if __name__ == "__main__":
   here yet -- do that pass immediately before implementation, following
   this doc's own "literal, not guessed" rule, rather than leaving it as
   something to figure out at execution time.
+
+## Phase 13 (planned, not started): scope reporting + Harbor cleanup to images actually in use
+
+### Problem
+
+`harbor_findings_sync.py` walks every Harbor project/repository/artifact
+and indexes Trivy findings for anything with a completed scan --
+including every tag ever pulled through a proxy-cache project, every
+digest a stack's since-superseded, and one-off pulls that never became a
+running container. `known_production_images.json`'s
+`in_production`/`stack` classification is a **name-based label** (which
+stack an image *belongs to*), not a live-usage check (whether the
+specific cached digest is what's actually deployed right now) -- so
+stale cache noise shows up identically to real, currently-running risk.
+
+Harbor's own retention/GC doesn't fix this either: only the
+`harbor_repull` mirror project has a retention policy
+(`terraform/lxc/ansible/roles/harbor_repull/tasks/main.yml`); every other
+project (native and proxy-cache) has none, and GC only reclaims blobs for
+*deleted* artifacts, not superseded-but-still-tagged ones. Worse, Harbor's
+native proxy-cache tag-creation is a **confirmed, still-live upstream
+bug** (`docs/harbor-stack/README.md`, ~line 103: tested directly on
+Harbor 2.15.2 -- the version this repo actually runs -- pulling genuinely
+fresh tags still leaves them untagged), so a naive retention policy
+applied directly to proxy-cache projects wouldn't reliably distinguish
+old-vs-new versions anyway.
+
+### Design decisions (operator-confirmed, 2026-09-07)
+
+- **Mirror the existing `in_production` pattern, don't replace it.**
+  `in_production` is already a derived enrichment field
+  (`cve_enrichment_sync.py`'s `entry["production_count"] > 0`), not an
+  ingestion filter. `in_use` gets the same shape: computed and stored
+  alongside it, ingestion keeps indexing everything (full audit trail
+  preserved), and the dashboard/deep-dive default to `in_use: true`.
+- **Digest-exact matching, not tag-string matching.** The whole point is
+  disambiguating an old cached digest of a floating tag (`:latest`,
+  `:stable`) from the new one that superseded it -- matching on the tag
+  string alone can't tell those apart. Requires cross-referencing each
+  endpoint's `docker/images/json` (`RepoDigests`) against
+  `docker/containers/json` (`ImageID`), not just reading a container's
+  `Image` field directly.
+  `harbor_repull_mirror_skip_projects: []` (harbor_repull's own default,
+  already covers every registry).
+- **Reuse, don't rebuild, the Portainer access path.** Every stack is
+  already a registered Portainer endpoint
+  (`register_portainer_environments` in `scripts/provision.sh`), and a
+  working `PortainerClient` already exists
+  (`terraform/lxc/stacks/netbox-stack/integrations/discover.py`,
+  `X-API-Key` auth via the `PORTAINER_TOKEN` SOPS secret already used by
+  `netbox-stack`'s own discovery). No new Portainer credential or
+  endpoint-registration work is needed.
+- **On a failed live-usage lookup, carry the prior value forward** rather
+  than defaulting to `in_use: false` -- a transient Portainer outage
+  during a sync run must not make every CVE look unused in the default
+  dashboard view. This has a real implementation consequence: the bulk
+  upsert's painless script does `ctx._source.putAll(params.doc)`, which
+  replaces the whole nested `artifact` object, not a per-field merge --
+  so sticky carry-forward needs an explicit painless-side copy-if-missing
+  step (see step 2 below), not just "omit the key and hope."
+- **Also gate `cve_deep_dive.py`'s shortlist**, not just the dashboard --
+  saves local-LLM compute on CVEs that aren't actually deployed anywhere,
+  at the cost of coupling this change to the weekly deep-dive job in the
+  same pass. `fetch_shortlist()` already filters on
+  `in_production: true`; adding `in_use: true` alongside it is a
+  one-line change.
+- **Include the `harbor_repull` manifest audit in this same plan** --
+  it needs the exact same live-usage inventory this plan already builds,
+  so doing it now avoids redoing the discovery work later.
+
+### uvm-13-01 — new live-usage lookup module
+
+New file: `terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_live_usage.py`. Literal content (stdlib-only, matching `harbor_findings_sync.py`'s own conventions):
+
+```python
+#!/usr/bin/env python3
+"""Live-usage lookup: every image manifest digest currently backing a
+running container anywhere, via Portainer.
+
+Reuses the exact PortainerClient auth pattern already proven in
+terraform/lxc/stacks/netbox-stack/integrations/discover.py (X-API-Key via
+the PORTAINER_TOKEN SOPS secret) rather than inventing a new one -- every
+stack is already a registered Portainer endpoint
+(register_portainer_environments in scripts/provision.sh).
+
+Digest-exact, not tag-exact: this is what lets a floating tag's
+superseded old digest correctly read in_use:false once a newer pull
+replaces what's actually deployed under the same tag string. Matching a
+container's Image field (the tag string) can't make that distinction --
+cross-referencing docker/containers/json's ImageID against
+docker/images/json's RepoDigests can.
+
+fetch_live_digests() returns None (never an empty set) on any
+whole-run failure to reach Portainer at all, so callers can distinguish
+"confirmed nothing is running anywhere" (never actually true on this
+platform) from "couldn't find out this run" -- see
+docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
+decision. A single unreachable *endpoint* (one stack's edge agent mid-
+restart) is a narrower, per-endpoint degrade: skip that endpoint, keep
+the rest of the run's real data.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+
+def _ssl_ctx(verify_tls: bool):
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _get(url: str, api_key: str, *, verify_tls: bool, timeout: float = 20.0):
+    req = urllib.request.Request(url, headers={"X-API-Key": api_key})
+    with urllib.request.urlopen(req, context=_ssl_ctx(verify_tls), timeout=timeout) as resp:  # nosec B310 -- internal Portainer API on private SDN
+        return json.loads(resp.read())
+
+
+def fetch_live_digests(portainer_url: str, api_key: str, *, verify_tls: bool = False) -> set[str] | None:
+    base = portainer_url.rstrip("/")
+    try:
+        endpoints = _get(f"{base}/api/endpoints", api_key, verify_tls=verify_tls)
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+        print(f"WARN: harbor_live_usage: could not list Portainer endpoints: {exc}", file=sys.stderr)
+        return None
+
+    digests: set[str] = set()
+    for endpoint in endpoints:
+        endpoint_id = endpoint.get("Id")
+        if endpoint_id is None:
+            continue
+        try:
+            containers = _get(f"{base}/api/endpoints/{endpoint_id}/docker/containers/json", api_key, verify_tls=verify_tls)
+            images = _get(f"{base}/api/endpoints/{endpoint_id}/docker/images/json", api_key, verify_tls=verify_tls)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+            print(f"WARN: harbor_live_usage: endpoint {endpoint_id} unreachable: {exc}", file=sys.stderr)
+            continue
+
+        running_image_ids = {c.get("ImageID") for c in containers if c.get("ImageID")}
+        for image in images:
+            if image.get("Id") not in running_image_ids:
+                continue
+            for repo_digest in image.get("RepoDigests") or []:
+                # "repo@sha256:...." -- keep only the digest half; Harbor's
+                # own artifact.digest field is bare "sha256:...." with no
+                # repo prefix.
+                if "@" in repo_digest:
+                    digests.add(repo_digest.rsplit("@", 1)[1])
+
+    return digests
+
+
+if __name__ == "__main__":
+    # Standalone use for the step-7 manifest audit -- prints one digest
+    # per line to stdout, warnings to stderr.
+    url = os.environ.get("PORTAINER_URL", "")
+    token = os.environ.get("PORTAINER_TOKEN", "")
+    if not url or not token:
+        print("ERROR: PORTAINER_URL and PORTAINER_TOKEN must be set", file=sys.stderr)
+        sys.exit(2)
+    result = fetch_live_digests(url, token, verify_tls=os.environ.get("PORTAINER_NO_VERIFY_TLS") != "1")
+    if result is None:
+        sys.exit(1)
+    for d in sorted(result):
+        print(d)
+```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_live_usage.py` (syntax only -- no live Portainer credential available to a local-model executor; live behavior gets proven in step 7's manifest audit, which does run against production).
+
+### uvm-13-02 — thread live usage through `harbor_findings_sync.py`
+
+File: `terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`.
+
+1. Add `import harbor_live_usage` alongside the existing stdlib imports.
+2. In `main()`, immediately after `production_registry = load_production_registry()`, add:
+   ```python
+   live_digests = None
+   portainer_url = os.environ.get("PORTAINER_URL", "")
+   portainer_token = os.environ.get("PORTAINER_TOKEN", "")
+   if portainer_url and portainer_token:
+       live_digests = harbor_live_usage.fetch_live_digests(
+           portainer_url, portainer_token, verify_tls=not args.no_verify_tls
+       )
+       if live_digests is None:
+           print("WARN: could not determine live image usage this run -- in_use carries forward from prior state", file=sys.stderr)
+   else:
+       print("WARN: PORTAINER_URL/PORTAINER_TOKEN not set -- in_use carries forward from prior state", file=sys.stderr)
+   ```
+3. Add `live_digests` as a parameter to `build_documents(...)` (default `None`) and to its one call site inside `main()`'s artifact loop.
+4. Inside `build_documents()`, replace the inline `"artifact": {...}` dict literal with a variable built the same way, then conditionally add the key:
+   ```python
+   artifact = {
+       "project": project_name,
+       "repository": repo_short_name,
+       "tag": tag,
+       "digest": digest,
+       "in_production": in_production,
+       "stack": stack,
+       "zone": zone,
+   }
+   if live_digests is not None:
+       artifact["in_use"] = digest in live_digests
+   ```
+   and use `"artifact": artifact` in the per-vulnerability doc dict instead of the old inline literal.
+5. In `bulk_upsert()`'s painless script `source` string, add a copy-if-missing step **before** the existing `putAll` line, so a doc built with `live_digests is None` (the key genuinely absent from `params.doc["artifact"]`) doesn't have its previously-recorded `in_use` wiped out by `putAll` replacing the whole `artifact` object wholesale:
+   ```python
+   "source": (
+       "if (ctx._source.artifact != null && params.doc.artifact != null "
+       "&& !params.doc.artifact.containsKey('in_use') && ctx._source.artifact.containsKey('in_use')) "
+       "{ params.doc.artifact.in_use = ctx._source.artifact.in_use } "
+       "ctx._source.putAll(params.doc); "
+       "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
+   ),
+   ```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`, plus `python3 harbor_findings_sync.py --dry-run` against real Harbor/ES/Portainer credentials (operator-run, not local-model-executable -- needs production secrets).
+
+### uvm-13-03 — `harbor-findings` mapping
+
+File: `terraform/lxc/ansible/roles/es_findings_ingest/files/assets/templates/harbor-findings.json`. Add one line inside `mappings.properties.artifact.properties`, alongside the existing `zone` field:
+
+```json
+            "zone": { "type": "keyword" },
+            "in_use": { "type": "boolean" }
+```
+
+Index templates only apply at index *creation* (established lesson, Phase 6/11) -- the already-existing live `harbor-findings` index also needs an explicit additive mapping PUT, same shape as `cve-remediation-assessment`'s `resolved_review_after` addition:
+
+```
+PUT /harbor-findings/_mapping
+{"properties": {"artifact": {"properties": {"in_use": {"type": "boolean"}}}}}
+```
+
+Gate (operator-run against production, needs ES credentials): confirm via `GET /harbor-findings/_mapping` that `artifact.properties.in_use` is present.
+
+### uvm-13-04 — thread `in_use` through `cve_enrichment_sync.py`'s correlation
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`. `in_use` only has meaning for Harbor findings (a GVM host-scan or Wazuh agent-scan has no "currently deployed digest" concept) -- so a CVE with zero Harbor instances must read `in_use: true` (nothing to suppress it on), never get force-set to `false` just because it happens to lack a Harbor angle. Five touch points, all mirroring the existing `in_production`/`production_count` pattern exactly:
+
+1. `ASSET_FIELD_SPECS`: add `"in_use_field": "artifact.in_use"` under `"harbor"` only; add `"in_use_field": None` under `"greenbone"` and `"wazuh"`.
+2. `fetch_cve_instances()`: add an `in_use_field: str | None` parameter. When not `None`, add an `in_use_count` filter sub-agg identical in shape to the existing `production_count` one (`{"filter": {"term": {in_use_field: True}}}`); when `None`, skip it and return `in_use_count: None` for that source's buckets. Thread the new param through the one call site in `main()`.
+3. In `main()`'s per-source accumulation loop (the `for cve_id, info in counts.items()` block), track two new running totals on `entry` — `harbor_total_count` and `harbor_in_use_count` — incremented only `if src["source"] == "harbor"` (using `info["count"]` and `info["in_use_count"] or 0` respectively).
+4. In the normalize loop (`entry["in_production"] = entry["production_count"] > 0`), add directly below it:
+   ```python
+   entry["in_use"] = True if entry["harbor_total_count"] == 0 else entry["harbor_in_use_count"] > 0
+   ```
+5. Thread `entry["in_use"]` everywhere `entry["in_production"]` already flows: `refresh_exposure_sources()`'s signature/body (`"in_use": in_use` alongside `"in_production": in_production`), the backfill-trigger condition (add `or existing.get("in_use") != entry["in_use"]`), and the new-doc `doc` dict in the main enrichment loop (`"in_use": entry["in_use"]` alongside `"in_production": entry["in_production"]`).
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`.
+
+### uvm-13-05 — `unified-cve-exposure` mapping
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/assets/templates/unified-cve-exposure.json`. Add one line alongside the existing `in_production` field:
+
+```json
+        "in_production": { "type": "boolean" },
+        "in_use": { "type": "boolean" },
+```
+
+Same live-index caveat as step 3:
+
+```
+PUT /unified-cve-exposure/_mapping
+{"properties": {"in_use": {"type": "boolean"}}}
+```
+
+Gate (operator-run): confirm via `GET /unified-cve-exposure/_mapping` that `in_use` is present.
+
+### uvm-13-06 — gate the deep-dive shortlist
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py`, `fetch_shortlist()`. One-line change to the existing filter list:
+
+```python
+"filter": [{"term": {"in_production": True}}, {"term": {"in_use": True}}],
+```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py`. No dashboard-side change needed for the "Top CVEs Needing Attention" panel -- `uvm_dashboard_exporter.py`'s `_fetch_remediation_rows()` reads `cve-remediation-assessment` directly, which will only ever contain in-use CVEs once this shortlist gate is live.
+
+### uvm-13-07 — audit and extend `harbor_repull`'s manifest against real live usage
+
+This step's exact content can't be pre-written -- it depends on live data
+from running `harbor_live_usage.py` against production, and on the state
+of `terraform/lxc/ansible/roles/harbor_repull/files/manifest.txt` at
+execution time. Procedure, not a literal diff:
+
+1. Run `harbor_live_usage.py` directly against production Portainer (needs
+   real `PORTAINER_URL`/`PORTAINER_TOKEN`) to get the live digest set.
+2. Cross-reference against `known_production_images.json`'s
+   `known_production` entries (repository names) and Harbor's own
+   artifact listing (`harbor_findings_sync.py`'s `list_projects`/
+   `list_repositories`/`list_artifacts`, or a live Harbor query) to
+   resolve each live digest back to a `<project>/<repo>:<tag>` reference.
+3. Diff that resolved list against `manifest.txt`'s existing entries.
+4. Append any missing `<project>/<repo>:<tag>` line(s) to `manifest.txt`,
+   in the same comment-grouped-by-stack format already used there (see
+   the existing `# portainer-stack` / `# proxy-stack / monitoring-stack /
+   ...` groupings).
+
+Gate: none scriptable ahead of time -- this is inherently a live-data
+reconciliation step; verify by re-running `harbor_repull.py --dry-run`
+(if it has one) or checking the next scheduled `harbor-repull.service`
+run's log shows the newly-added entries being pulled/pushed without
+error.
+
+### Open items / not decided yet
+
+- No dedicated Grafana panel/column for `in_use` beyond the free
+  narrowing described in step 6 -- if a broader always-shows-everything
+  view (e.g. a future `stack-risk-summary`-style rollup) wants to
+  surface "N findings hidden as not-in-use" as its own number, that's a
+  separate, later addition, not needed for this phase's goal.
+- `harbor_live_usage.py`'s TLS verification defaults to `False` (matching
+  `discover.py`'s existing `PortainerClient`, which already runs against
+  Portainer's self-signed cert) -- revisit once/if Portainer gets a real
+  cert, same open item already tracked for the existing client.
+- Step 7 is one-time reconciliation, not a recurring job -- if
+  `manifest.txt` drifts from live usage again later, re-running the same
+  procedure is the fix; no automation is proposed here to keep it in
+  sync continuously.
