@@ -98,6 +98,29 @@ def _get_path(d: dict, path: str):
     return cur
 
 
+def _format_greenbone_asset(src: dict) -> str:
+    """GVM only ever captures a raw IP:port for a stack-less scan target --
+    no product identity of its own. Without a real hostname in the string,
+    the only identity text a downstream consumer (cve_deep_dive.py's LLM
+    prompt) ever sees is 'greenbone (1): <ip>:<port> (<zone>)' -- and with
+    no stacks[] to anchor on, the model has been observed inventing
+    'Greenbone security appliance' as the asset's identity, reading the
+    *scanner* name as the target's name (confirmed 2026-09-07 against
+    CVE-2017-5715/2026-4480/2026-4890/2026-4893: the real hosts are plain
+    Debian machines, argon-01/argon-02.lan.local, unrelated to Greenbone as
+    a product). gvm_findings_sync.py already captures the scan's own
+    reverse-DNS/host-detection result as target.hostname when GVM found
+    one -- surface it explicitly here so the prompt has a real name to use
+    instead of guessing. See docs/threat-vuln-platform/plan.md's UVM
+    remediation-sequence review for the full root-cause writeup."""
+    host = _get_path(src, "target.host") or "?"
+    hostname = _get_path(src, "target.hostname")
+    port = _get_path(src, "target.port") or "?"
+    zone = _get_path(src, "target.zone") or "?"
+    identity = f"{hostname} ({host})" if hostname else host
+    return f"{identity}:{port} ({zone})"
+
+
 ASSET_FIELD_SPECS = {
     "harbor": {
         "source_fields": ["artifact.repository", "artifact.tag"],
@@ -110,12 +133,8 @@ ASSET_FIELD_SPECS = {
         "stack_field": "artifact.stack",
     },
     "greenbone": {
-        "source_fields": ["target.host", "target.port", "target.zone"],
-        "format": lambda src: (
-            f"{_get_path(src, 'target.host') or '?'}:"
-            f"{_get_path(src, 'target.port') or '?'}"
-            f" ({_get_path(src, 'target.zone') or '?'})"
-        ),
+        "source_fields": ["target.host", "target.hostname", "target.port", "target.zone"],
+        "format": _format_greenbone_asset,
         "production_field": "target.in_production",
         "zone_field": "target.zone",
         "stack_field": "target.stack",

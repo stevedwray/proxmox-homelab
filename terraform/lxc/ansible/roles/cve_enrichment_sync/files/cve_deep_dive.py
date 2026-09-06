@@ -95,7 +95,27 @@ def fetch_shortlist(
 
 def describe_architecture(stacks: list[str], architecture: dict) -> str:
     if not stacks:
-        return "No specific stack identified for this CVE -- treat as environment-wide."
+        # Confirmed 2026-09-07: with no stack to anchor on, the model has
+        # invented a vendor/product identity for the asset out of nothing --
+        # e.g. "Greenbone security appliance" for CVE-2017-5715/2026-4480/
+        # 2026-4890/2026-4893, when the real hosts (argon-01/argon-02.lan.local)
+        # are plain Debian machines unrelated to Greenbone as a product. The
+        # model read the *scanner* name sitting in the vulnerable-asset text
+        # (e.g. "greenbone: 192.168.1.23:...") as the target's own name. Say
+        # so explicitly rather than relying on the scanner-vs-target note
+        # above alone -- that note has a stack name to fall back on; this
+        # branch doesn't.
+        return (
+            "No specific stack identified for this CVE -- this is a raw "
+            "network-scanned host or standalone asset, not a container/stack "
+            "this repo manages. The scanner name in the vulnerable-asset line "
+            "above (e.g. 'greenbone') is the tool that found this, never the "
+            "asset's own identity -- do not describe the asset as a product "
+            "or appliance made by that scanner's vendor. If a real hostname "
+            "is given in that line, use it verbatim as the asset's identity; "
+            "if none is given, say the asset's identity is unconfirmed and "
+            "should be looked up manually rather than guessed."
+        )
     lines = []
     for stack in stacks:
         info = architecture.get(stack)
@@ -161,6 +181,16 @@ def build_prompt(cve: dict, architecture: dict) -> str:
         f"fields above if they conflict): {cve.get('llm_narrative') or '(none)'}\n\n"
         "Architecture of the affected stack(s):\n"
         f"{describe_architecture(stacks, architecture)}\n\n"
+        "None of the CVSS/EPSS/KEV/PoC signals above name a specific fixed "
+        "version -- this pipeline never feeds you real vendor-advisory data, "
+        "only risk signals. Confirmed 2026-09-07: a prior run of this exact "
+        "prompt cited 'Wazuh v4.7+' as CVE-2023-48795's fix version with "
+        "nothing in the input to base that on, while the stack was already "
+        "on a newer 4.14.7 -- the number was invented, not sourced. Do NOT "
+        "state a specific version number as the fix unless it is literally "
+        "present somewhere above; instead say to consult the vendor's own "
+        "security advisory for the exact patched release. A wrong cited "
+        "version is worse than none.\n\n"
         "Respond in exactly this format:\n"
         "RECOMMENDED ACTION: <one of PATCH, UPGRADE, ISOLATE, ACCEPT_RISK, INVESTIGATE>\n"
         "ASSESSMENT: <3-5 sentences. Reference the actual zone/exposure above -- "
@@ -193,7 +223,18 @@ def upsert_assessment(
     instances or a triage-data shift, i.e. something material enough that
     a resolved CVE genuinely needs a fresh look, not a silently-inherited
     flag hiding it forever (see docs/threat-vuln-platform/
-    remediation-runbook.md)."""
+    remediation-runbook.md).
+
+    Confirmed 2026-09-07 (wazuh-stack Stage 3 review): a genuine
+    ACCEPT_RISK call ("no upstream fix exists yet") is not the same thing
+    as "done forever" -- the operator wants those revisited on a bounded
+    schedule regardless of whether risk_score ever moves, since a static
+    score tells you nothing about whether upstream has since shipped a
+    fix. mark_cve_resolved.py's --review-after-days sets
+    resolved_review_after (an ISO timestamp); once that passes, the
+    carry-forward below stops applying even if the score hasn't changed,
+    and the CVE reappears on the panel for a fresh look -- same mechanism
+    as a score change, just time-triggered instead of data-triggered."""
     if dry_run:
         return False
     status, existing = ces._es_request(
@@ -202,11 +243,14 @@ def upsert_assessment(
     )
     if status == 200 and existing and existing.get("found"):
         prev = existing.get("_source", {})
-        if prev.get("resolved") and prev.get("resolved_at_risk_score") == doc.get("risk_score"):
+        review_after = prev.get("resolved_review_after")
+        review_expired = bool(review_after) and ces._now_iso() >= review_after
+        if prev.get("resolved") and prev.get("resolved_at_risk_score") == doc.get("risk_score") and not review_expired:
             doc["resolved"] = True
             doc["resolved_at"] = prev.get("resolved_at")
             doc["resolved_note"] = prev.get("resolved_note")
             doc["resolved_at_risk_score"] = prev.get("resolved_at_risk_score")
+            doc["resolved_review_after"] = review_after
     status, result = ces._es_request(
         es_url, f"/cve-remediation-assessment/_doc/{urllib.parse.quote(cve_id, safe='')}",
         method="PUT", body=doc, auth_header=auth_header, verify_tls=verify_tls,
@@ -280,6 +324,7 @@ def main() -> int:
             "resolved_at": None,
             "resolved_note": None,
             "resolved_at_risk_score": None,
+            "resolved_review_after": None,
         }
         if upsert_assessment(args.elasticsearch_url, cve_id, doc, auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run):
             assessed += 1
