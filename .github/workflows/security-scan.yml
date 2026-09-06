@@ -394,11 +394,18 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog OSS
+        # On a `push` event, base/head must be the actual before/after commit
+        # range -- using default_branch/HEAD unconditionally breaks whenever
+        # the push lands directly on default_branch itself (e.g. a stable ->
+        # main promotion merge), since base and head then resolve to the same
+        # commit and the action fatal-errors ("BASE and HEAD commits are the
+        # same") instead of scanning nothing. pull_request/workflow_dispatch
+        # keep the previous, working default_branch/HEAD comparison.
         uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event_name == 'push' && github.event.before || github.event.repository.default_branch }}
+          head: ${{ github.event_name == 'push' && github.event.after || 'HEAD' }}
           extra_args: --only-verified
 
   sonarcloud:
