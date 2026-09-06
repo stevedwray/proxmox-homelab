@@ -120,7 +120,7 @@
     # PentAGI's own pgvector, ollama:rocm). FQDN via Traefik/edge_seg, not
     # a raw infra_seg IP -- ai_seg has no direct route to infra_seg (same
     # reasoning ai-services-stack's own STACK_CONTRACT.md documents).
-    mcp_harbor_fqdn: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' + lookup('env', 'LAB_DOMAIN'), true) }}"
+    mcp_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' + lookup('env', 'LAB_DOMAIN'), true) }}"
 
   tasks:
     - name: Create mcp-utility-stack compose directory
@@ -391,7 +391,7 @@
                 - mcp-home:/home/app
 
             pgvector:
-              image: "{{ mcp_harbor_fqdn }}/dockerhub/pgvector/pgvector:pg16"
+              image: "{{ mcp_registry_host }}/dockerhub/pgvector/pgvector:pg16"
               container_name: docs-rag-pgvector
               restart: unless-stopped
               environment:
