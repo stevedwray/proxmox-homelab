@@ -65,7 +65,7 @@ jobs:
 
           # Discover additional candidate projects from Harbor catalog visibility.
           CATALOG_JSON="$RUNNER_TEMP/harbor-catalog.json"
-          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://10.57.3.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://192.168.40.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             mapfile -t CATALOG_PROJECTS < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); repos=data.get("repositories") or []; projects=sorted({r.split("/",1)[0] for r in repos if isinstance(r,str) and "/" in r}); print("\n".join(projects))' "$CATALOG_JSON" 2>/dev/null || true)
 
             for project in "${CATALOG_PROJECTS[@]}"; do
@@ -94,7 +94,7 @@ jobs:
               continue
             fi
 
-            PROBE_URL="http://10.57.3.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+            PROBE_URL="http://192.168.40.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-${CANDIDATE_PROJECT}-${RANDOM}.txt"
             PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             PROBE_RESULTS+=("${candidate}:${PROBE_STATUS}")
@@ -106,7 +106,7 @@ jobs:
                 if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
                   CANCEL_URL="$PROBE_LOCATION"
                 else
-                  CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+                  CANCEL_URL="http://192.168.40.10${PROBE_LOCATION}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
                 fi
                 curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
               fi
@@ -131,7 +131,7 @@ jobs:
           TARGET_IMAGE="${SELECTED_TARGET#*/}"
           echo "Selected Harbor target ${TARGET_PROJECT}/${TARGET_IMAGE}"
 
-          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          IMAGE_REF="192.168.40.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           SOURCE_REF="docker.io/library/alpine:3.20"
 
           CRANE_VERSION="v0.20.3"
@@ -144,19 +144,19 @@ jobs:
           if [[ -n "$DOCKERHUB_USER" && -n "$DOCKERHUB_PASS" ]]; then
             DOCKERHUB_AUTH_B64="$(printf '%s:%s' "$DOCKERHUB_USER" "$DOCKERHUB_PASS" | base64 -w0)"
             cat > "$HOME/.docker/config.json" <<EOF
-          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
+          {"auths":{"192.168.40.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
           EOF
           else
             echo "HARBOR_DOCKERHUB_USERNAME/HARBOR_DOCKERHUB_PASSWORD are not set; Docker Hub source pulls may be rate limited." >&2
             cat > "$HOME/.docker/config.json" <<EOF
-          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"}}}
+          {"auths":{"192.168.40.10":{"auth":"${HARBOR_AUTH_B64}"}}}
           EOF
           fi
 
           "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
 
           DIGEST="$("$RUNNER_TEMP/crane" digest --insecure "$IMAGE_REF")"
-          DIGEST_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
+          DIGEST_REF="192.168.40.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
           if [[ -z "$DIGEST_REF" ]]; then
             echo "Failed to resolve digest for $IMAGE_REF" >&2
             exit 1
@@ -204,7 +204,7 @@ jobs:
       - name: Generate SBOM (SPDX)
         env:
           SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
-          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "192.168.40.10"
           SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
@@ -292,7 +292,7 @@ jobs:
       - name: Generate SBOM (SPDX)
         env:
           SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
-          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "192.168.40.10"
           SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
           IMAGE_REF: ${{ needs.build-proof-image.outputs.image_ref }}
