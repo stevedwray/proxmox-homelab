@@ -41,8 +41,8 @@ portainer_server_ip: "${lab_ip_portainer}"
 # env: Portainer's own stack-create API does NOT read the .env file
 # Ansible writes alongside each compose file -- it only ever sees the Env
 # list passed explicitly here (confirmed live: omitting it made immich's
-# ${REGISTRY_HOST} resolve empty, producing an "invalid reference format"
-# 500 on cadvisor's image). Values use the same ${VAR} placeholder
+# $${REGISTRY_HOST} resolve empty, producing an "invalid reference format"
+# 500 on cadvisor's image). Values use the same $${VAR} placeholder
 # resolution as portainer_server_ip above -- provision.sh substitutes
 # from the real environment (SOPS-backed for the DB password), nothing
 # here is a literal secret.
@@ -51,14 +51,14 @@ portainer_stacks:
   compose_file: jellyfin-docker-compose.yml
   env:
   - name: LAB_DOMAIN
-    value: "${lab_domain}"
+    value: "$${lab_domain}"
 - name: media-stack-lab-immich
   compose_file: immich-docker-compose.yml
   env:
   - name: MEDIA_STACK_LAB_DB_PASSWORD
-    value: "${media_stack_lab_db_password}"
+    value: "$${media_stack_lab_db_password}"
   - name: REGISTRY_HOST
-    value: "${lab_fqdn_harbor}"
+    value: "$${lab_fqdn_harbor}"
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction as

@@ -10,7 +10,7 @@ cores: 2
 memory: 1536
 swap: 1024
 rootfs_size: 8
-storage_profile: platform-default
+storage_profile: platform-monitoring-zfs
 docker_storage_size: "52G"
 docker_mount:
   logical_name: docker-data

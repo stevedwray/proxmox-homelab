@@ -19,7 +19,7 @@ cores: 2
 memory: 4096
 swap: 2048
 rootfs_size: 20
-storage_profile: platform-default
+storage_profile: platform-security-zfs
 docker_storage_size: "40G"
 docker_mount:
   logical_name: docker-data

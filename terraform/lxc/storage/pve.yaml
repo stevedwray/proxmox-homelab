@@ -19,6 +19,15 @@ storage_backends:
   gaming-containers:
     content_types: [rootdir]
     backend_type: zfs
+  security-containers:
+    content_types: [rootdir]
+    backend_type: zfs
+  monitoring-containers:
+    content_types: [rootdir]
+    backend_type: zfs
+  apps-containers:
+    content_types: [rootdir]
+    backend_type: zfs
   local-zfs:
     content_types: [images, rootdir]
   storage-template:
@@ -57,6 +66,44 @@ profiles:
   platform-zfs:
     rootfs_storage: infrastructure-containers
     docker_storage: infrastructure-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  # The five profiles below reflect a manual, non-destructive rebalance
+  # performed 2026-09-08 (docs/threat-vuln-platform or session notes --
+  # see the pmxcfs-contention/rpool-capacity investigation): every profile
+  # above resolves to the same backend (infrastructure-containers / pool
+  # `rpool`) regardless of name, which is why every stack piled onto one
+  # disk that also backs pmxcfs's own config.db. These name real
+  # destinations chosen by actual pool headroom + device speed (NVMe vs
+  # SATA SSD), not by the pool's original functional-sounding name --
+  # `rpool` was at 83%+38.8GB free and I/O-contended; the alternates were
+  # 2-16% used. Applied live via `pct move-volume` (rsync-based, default
+  # keeps the old rpool copy as an unused volume -- not deleted) BEFORE
+  # these profile declarations existed, so this is the config catching up
+  # to already-live reality, not a change that should trigger a move.
+  platform-security-zfs:
+    rootfs_storage: security-containers
+    docker_storage: security-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-gaming-zfs:
+    rootfs_storage: gaming-containers
+    docker_storage: gaming-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-storage-zfs:
+    rootfs_storage: storage-containers
+    docker_storage: storage-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-apps-zfs:
+    rootfs_storage: apps-containers
+    docker_storage: apps-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-monitoring-zfs:
+    rootfs_storage: monitoring-containers
+    docker_storage: monitoring-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
 

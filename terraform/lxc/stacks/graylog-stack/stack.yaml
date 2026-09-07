@@ -7,10 +7,10 @@ network:
   zone: mgmt_seg
 vmid: 20014
 cores: 2
-memory: 6144
+memory: 10240
 swap: 1024
 rootfs_size: 8
-storage_profile: platform-default
+storage_profile: platform-gaming-zfs
 docker_storage_size: "40G"
 docker_mount:
   logical_name: docker-data

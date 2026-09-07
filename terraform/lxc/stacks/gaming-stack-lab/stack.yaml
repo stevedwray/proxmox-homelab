@@ -14,7 +14,7 @@ cores: 8
 memory: 24576
 swap: 2048
 rootfs_size: 16
-storage_profile: platform-zfs
+storage_profile: platform-storage-zfs
 
 # Docker engine state is distinct from game-server state. The latter is the
 # dedicated gaming-containers ZFS volume mounted at /srv/docker below.
