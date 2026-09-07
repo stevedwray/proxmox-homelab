@@ -3763,7 +3763,49 @@ error.
   procedure is the fix; no automation is proposed here to keep it in
   sync continuously.
 
-## Phase 14 (planned, not started): holistic live-usage tracking + active Harbor cleanup
+## Phase 14 (uvm-14-01/02/03 DONE and verified live 2026-09-07; uvm-14-04 through 14-07 not started): holistic live-usage tracking + active Harbor cleanup
+
+**uvm-14-01/02/03 status: live, verified, real result.** Deployed
+`docker_live_usage_reporter` to 10 of the 12 confirmed gap-list stacks
+(`harness-target` has no live inventory right now; `pentagi-upstream-control`
+was unreachable at deploy time -- neither is a code problem, both will
+pick up the role whenever next provisioned/reachable). Harbor-sourced
+CVEs correctly retained in the `in_production AND in_use` shortlist went
+from **356 -> 2,313** (out of 4,413 in-production) once the merged data
+flowed through `cve_enrichment_sync.py` -- `in_use:true` in
+`harbor-findings` itself went from 660 docs/7 images (Portainer only) to
+**5,307 docs across 26 distinct images**, now correctly including
+Wazuh's own manager/dashboard/indexer, the full GVM/Greenbone scanner
+engine, OpenSearch, Grafana, and NetBox -- exactly the security/infra
+tier `in_use` was blind to before this phase.
+
+Three real bugs found and fixed live during this rollout, not assumed
+away:
+- `scripts/provision.sh`'s `render_stack_ansible_extra_vars()` only
+  forwards a hardcoded allowlist of `stack.yaml` keys to Ansible --
+  `docker_live_usage_reporter_enabled` wasn't on it, so the role never
+  actually ran anywhere despite every `provision.sh` call reporting
+  `failed=0`. Fixed by adding a `DOCKER_LIVE_USAGE_REPORTER_KEYS` entry
+  matching the existing per-feature-flag pattern.
+- `pentagi-stack/stack.yaml`'s `ansible_playbook` is temporarily swapped
+  to `deploy-pentagi-upstream-vanilla-companion` (a clean-room
+  investigation, per its own comment) -- the role addition only landed
+  on the (currently unused) `deploy-pentagi-stack.yml` until this was
+  caught live and both files patched.
+- Un-gating `es_findings_ingest`'s copy of the shared
+  `es_findings_writer` OpenSearch role-PUT (needed so the new
+  `docker-live-usage*` grant actually reconciles on an
+  already-bootstrapped `harbor-stack`) silently wiped
+  `cve_enrichment_sync`'s/`wazuh_findings_ingest`'s own index patterns
+  the next time it ran, since their own copies of the same task are
+  still gated to "only once, at bootstrap" and never got a chance to
+  reassert theirs. This role name is shared, independently, across four
+  different roles, each with its own hardcoded "extended to X" copy of
+  the same PUT -- no merge, no single source of truth, a pre-existing
+  fragility this tripped over rather than introduced. Fixed by making
+  `es_findings_ingest`'s now-unconditional copy the full union of every
+  known consumer's needs; **flagged, not fixed**, as a real structural
+  risk for whoever adds a fifth consumer of this role next.
 
 ### Problem
 

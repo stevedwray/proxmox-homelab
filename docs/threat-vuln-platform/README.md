@@ -52,17 +52,23 @@ remediation call for the worst/most-exploitable subset.
   live-tested `check_upstream_fixes.py` sketch written, queries OSV.dev
   daily for CVEs already accepted as risk pending an upstream fix; not
   yet wired into a systemd service/timer or deployed.
-- Scoping CVE reporting to images actually in use (Phase 13) — **live**,
-  reporting half only. A new `in_use` field (digest-exact, with a
-  tag-exact fallback added 2026-09-07 after digest-exact alone matched
-  ~0 Harbor-sourced CVEs live) gates the CVE dashboard/deep-dive
-  shortlist. Confirmed working end-to-end: 356 genuinely-deployed Harbor
-  CVEs (including `CVE-2022-36944`, the live Minecraft server target)
-  correctly retained out of 4,413 merely-`in_production` ones.
+- Scoping CVE reporting to images actually in use (Phase 13 + Phase 14
+  uvm-14-01/02/03) — **live**, and now genuinely holistic. Phase 13's
+  `in_use` field (digest-exact + tag-exact fallback) was Portainer-only
+  at first, which turned out to be blind to most of the platform's
+  actual security/infra tier (only 9 real stacks are Portainer-registered
+  — every security/infra stack was deliberately exempted for
+  attack-surface reasons). Phase 14 added a second, self-reporting
+  collector (`docker_live_usage_reporter`, strictly read-only against
+  each host's own Docker socket, no SSH-based polling) for that exempt
+  tier, deployed to 10 of 12 confirmed gap-list stacks. Result: Harbor
+  CVEs correctly retained in the shortlist went from 356 to **2,313**
+  (out of 4,413 in-production) once Wazuh's own manager/dashboard/
+  indexer, the GVM/Greenbone scanner engine, OpenSearch, Grafana, and
+  NetBox's images stopped being invisible to `in_use`.
 - Harbor cleanup itself — the other half of Phase 13's original title —
-  **not built**. `in_use` only filters the dashboard; it doesn't shrink
-  Harbor's scan surface or delete anything. Phase 14 (planned, not
-  started) designs actual usage-based cleanup, plus fixes Phase 13's
-  incorrect founding assumption that every stack is a registered
-  Portainer endpoint (only 9 real stacks are — every security/infra-tier
-  stack was deliberately exempted, and needs a second live-usage source).
+  **still not built**. `in_use` only filters the dashboard; it doesn't
+  shrink Harbor's scan surface or delete anything. Phase 14's remaining
+  steps (uvm-14-04 through 14-07 — exemption list, consecutive-absence
+  tracking, active deletion via Harbor's API, revisiting `manifest.txt`
+  auto-generation) are designed but not started.
