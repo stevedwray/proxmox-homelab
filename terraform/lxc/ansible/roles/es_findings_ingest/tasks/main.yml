@@ -255,6 +255,20 @@
         - not (es_findings_ingest_es_reachable.failed | default(true))
       no_log: true
 
+    # Deliberately NOT gated on "credential file doesn't exist yet" like the
+    # user-generation tasks below it -- role *permissions* need to converge
+    # every run (e.g. Phase 14's docker-live-usage* read grant, added to an
+    # already-bootstrapped harbor-stack), whereas the *password* below is
+    # generated exactly once. A separate, ungated reachability check keeps
+    # this from depending on the credential-generation gate at all.
+    - name: Check if OpenSearch is reachable for role-permission reconciliation
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: es_findings_ingest_es_reachable_for_role
+      ignore_errors: true
+
     - name: Ensure es_findings_writer role exists in OpenSearch
       ansible.builtin.uri:
         url: "{{ es_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ es_findings_ingest_es_role_name }}"
@@ -285,10 +299,16 @@
                 - "create_index"
                 - "write"
                 - "read"
+            # Read-only -- Phase 14 (docs/threat-vuln-platform/plan.md,
+            # uvm-14-03). es_findings_ingest never writes here; that's
+            # docker_live_usage_reporter's own scoped role, on the hosts
+            # that role is deployed to.
+            - index_patterns:
+                - "docker-live-usage*"
+              allowed_actions:
+                - "read"
         status_code: [200, 201]
-      when:
-        - not es_findings_ingest_es_credential_stat.stat.exists
-        - not (es_findings_ingest_es_reachable.failed | default(true))
+      when: not (es_findings_ingest_es_reachable_for_role.failed | default(true))
       delegate_to: localhost
 
     - name: Ensure scoped OpenSearch user exists

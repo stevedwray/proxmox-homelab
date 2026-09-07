@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for docker-live-usage-report.service
+
+[Timer]
+OnCalendar={{ docker_live_usage_reporter_on_calendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

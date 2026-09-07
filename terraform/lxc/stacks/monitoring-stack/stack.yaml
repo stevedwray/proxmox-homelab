@@ -58,3 +58,8 @@ docker_socket_proxy_bind_addr: "${lab_ip_monitoring}"
 docker_socket_proxy_listen_port: 2375
 docker_socket_proxy_targets:
   - "${lab_ip_monitoring}"
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

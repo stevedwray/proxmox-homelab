@@ -1,0 +1,51 @@
+---
+# Defaults for docker_live_usage_reporter — see
+# docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02). Explicit
+# opt-in per stack, matching es_findings_ingest_enabled's own pattern —
+# only ever included on the confirmed gap-list hosts (uvm-14-01: 12
+# stacks Portainer deliberately doesn't reach), gated by a flag so it
+# never silently attaches to a stack that reuses this role file.
+docker_live_usage_reporter_enabled: false
+
+docker_live_usage_reporter_dir: /opt/docker-live-usage-reporter
+docker_live_usage_reporter_log_path: /var/log/docker-live-usage-report.log
+
+# Shortly before es-findings-ingest.service's existing 05:30 UTC slot
+# (terraform/lxc/ansible/roles/es_findings_ingest/defaults/main.yml) so
+# harbor_findings_sync.py reads fresh data, not yesterday's.
+docker_live_usage_reporter_on_calendar: "*-*-* 05:00:00"
+
+# --- OpenSearch connection -------------------------------------------
+# Same host/URL/TLS pattern as es_findings_ingest — see that role's
+# defaults for why OpenSearch keeps HTTP-layer TLS enabled with a
+# self-signed demo cert.
+docker_live_usage_reporter_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+docker_live_usage_reporter_elasticsearch_url: "https://{{ docker_live_usage_reporter_elasticsearch_host }}:9200"
+docker_live_usage_reporter_es_no_verify_tls: true
+
+# OpenSearch admin superuser — needed only to bootstrap this role's own
+# scoped user/role/index once. Never used at runtime by
+# docker_live_usage_report.py, which only ever uses the scoped
+# credential below.
+docker_live_usage_reporter_elastic_admin_user: admin
+docker_live_usage_reporter_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Scoped OpenSearch internal user this role provisions for itself —
+# limited to create_index/write/read on docker-live-usage only.
+#
+# Deliberately a single SHARED identity across every gap-list host, not
+# one generated per-host: es_findings_ingest's own "generate a random
+# password locally on first run" pattern only works because exactly one
+# host (harbor-stack) ever holds that credential. Twelve independently-
+# provisioned hosts sharing one OpenSearch user identity would each
+# generate a different random password and overwrite each other's via
+# the idempotent PUT to /_plugins/_security/api/internalusers -- a real
+# design bug caught during planning, not discovered live. The password
+# is instead a genuine SOPS common secret
+# (terraform/secrets.common.enc.yaml, DOCKER_LIVE_USAGE_ES_PASSWORD),
+# same "same secret everywhere" model PORTAINER_TOKEN already uses, read
+# directly from the environment in tasks/main.yml (not a role default,
+# since there's nothing role-specific about its value).
+docker_live_usage_reporter_es_role_name: docker_live_usage_writer
+docker_live_usage_reporter_es_user_name: docker_live_usage_reporter
+docker_live_usage_reporter_es_index: docker-live-usage

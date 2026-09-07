@@ -25,3 +25,8 @@ provides:
 ansible_playbook: deploy-harness-target
 deployment_tier: apps
 portainer_agent: false
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

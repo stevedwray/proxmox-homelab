@@ -306,6 +306,65 @@ def build_documents(
     return docs
 
 
+def fetch_docker_live_usage(
+    es_base: str, *, auth_header: str, verify_tls: bool, max_age_hours: int = 48,
+) -> tuple[set[str], set[tuple[str, str, str]]]:
+    """Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-03): reads every
+    fresh per-host report docker_live_usage_reporter has written to the
+    docker-live-usage index (one document per Portainer-exempt host) and
+    unions their digest sets and tag-ref sets into the same two shapes
+    harbor_live_usage.fetch_live_usage() already returns for
+    Portainer-backed hosts. A stale report (older than max_age_hours,
+    default 48h -- twice the daily reporting cadence, so one missed run
+    doesn't drop a host) is excluded rather than trusted indefinitely; a
+    missing/empty index (no gap-list host deployed yet, or OpenSearch
+    unreachable) returns two empty sets, not an error -- this source
+    degrading never collapses the whole run, since Portainer's own data
+    is unioned in separately by the caller."""
+    cutoff = (datetime.now(timezone.utc).timestamp() - max_age_hours * 3600)
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = json.dumps({
+        "size": 1000,
+        "query": {"range": {"reported_at": {"gte": cutoff_iso}}},
+        "_source": ["hostname", "digests", "tag_refs"],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{es_base}/docker-live-usage/_search", data=body, method="POST",
+    )
+    req.add_header("Authorization", auth_header)
+    req.add_header("Content-Type", "application/json")
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    digests: set[str] = set()
+    tag_refs: set[tuple[str, str, str]] = set()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=20.0) as resp:  # nosec B310 -- internal operator-configured OpenSearch endpoint, never user-supplied
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # Index doesn't exist yet -- no gap-list host has reported at
+            # all (e.g. docker_live_usage_reporter not deployed anywhere
+            # yet). Not an error, just nothing to union.
+            return digests, tag_refs
+        print(f"WARN: docker-live-usage query failed: {exc.code} {exc.read()}", file=sys.stderr)
+        return digests, tag_refs
+    except (urllib.error.URLError, ValueError, OSError) as exc:
+        print(f"WARN: docker-live-usage query failed: {exc}", file=sys.stderr)
+        return digests, tag_refs
+
+    for hit in result.get("hits", {}).get("hits", []):
+        source = hit.get("_source", {})
+        digests.update(source.get("digests") or [])
+        for ref in source.get("tag_refs") or []:
+            project, repository, tag = ref.get("project"), ref.get("repository"), ref.get("tag")
+            if project and repository and tag:
+                tag_refs.add((project, repository, tag))
+    return digests, tag_refs
+
+
 def doc_id(doc: dict) -> str:
     artifact = doc["artifact"]
     artifact_key = f"{artifact['project']}/{artifact['repository']}@{artifact['digest']}"
@@ -486,6 +545,20 @@ def main() -> int:
             "WARN: PORTAINER_URL/PORTAINER_TOKEN not set -- in_use carries forward from prior state",
             file=sys.stderr,
         )
+
+    # Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-03): union in the
+    # self-reported gap-list data (Portainer-exempt security/infra tier) on
+    # top of Portainer's. Additive only -- this source's own degrade modes
+    # (index not yet created, a stale/missing individual host report) never
+    # downgrade an otherwise-successful Portainer read back to None; only a
+    # failed Portainer read on its own already sets live_digests to None
+    # above, and this union still runs against whatever (possibly empty)
+    # sets Portainer left behind so a Portainer outage doesn't also hide
+    # gap-list hosts' real data.
+    gap_digests, gap_tag_refs = fetch_docker_live_usage(es_base, auth_header=es_auth, verify_tls=not args.no_verify_tls)
+    if gap_digests or gap_tag_refs:
+        live_digests = (live_digests or set()) | gap_digests
+        live_tag_refs = (live_tag_refs or set()) | gap_tag_refs
 
     started = _now_iso()
     started_monotonic = time.monotonic()

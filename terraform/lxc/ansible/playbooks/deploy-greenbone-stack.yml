@@ -948,6 +948,21 @@
     - role: gvm_findings_ingest
       when: gvm_findings_ingest_enabled | default(false) | bool
 
+- name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive: a new role, new files under its own directory, a new
+  # systemd timer, and a new dedicated (shared) OpenSearch user -- does not
+  # touch this stack's own compose deployment or any other role's state.
+  # See docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02) -- this stack
+  # is one of the confirmed gap-list hosts Portainer deliberately doesn't
+  # reach. Gated the same way es_findings_ingest/harbor_repull are: explicit
+  # opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: docker_live_usage_reporter
+      when: docker_live_usage_reporter_enabled | default(false) | bool
+
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all
   become: true

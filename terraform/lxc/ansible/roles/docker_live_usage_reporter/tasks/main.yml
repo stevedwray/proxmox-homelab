@@ -1,0 +1,181 @@
+---
+# docker_live_usage_reporter — see docs/threat-vuln-platform/plan.md
+# Phase 14 (uvm-14-02). Deploys a strictly read-only local collector
+# (docker ps/inspect against this host's own socket only) plus a
+# systemd timer that self-reports to a dedicated OpenSearch index —
+# never an Ansible-driven pull, see the Design decisions section in
+# plan.md for why.
+
+- name: Skip docker_live_usage_reporter entirely when not enabled
+  ansible.builtin.meta: end_play
+  when: not docker_live_usage_reporter_enabled
+
+- name: Ensure docker_live_usage_reporter install directory exists
+  ansible.builtin.file:
+    path: "{{ docker_live_usage_reporter_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy docker_live_usage_report.py
+  ansible.builtin.copy:
+    src: docker_live_usage_report.py
+    dest: "{{ docker_live_usage_reporter_dir }}/docker_live_usage_report.py"
+    owner: root
+    group: root
+    mode: "0755"
+
+# ---------------------------------------------------------------------
+# Scoped OpenSearch internal user — a single shared identity across
+# every gap-list host (see defaults/main.yml's comment for why this
+# can't be the "generate randomly on first run" pattern
+# es_findings_ingest uses). Bootstrapped idempotently every run against
+# the SOPS-sourced password, not gated behind a "does the local
+# credential file already exist" check the way es_findings_ingest's
+# role is, since there's no local secret generation step to skip here.
+# ---------------------------------------------------------------------
+
+- name: Read the DOCKER_LIVE_USAGE_ES_PASSWORD SOPS secret from the environment
+  ansible.builtin.set_fact:
+    docker_live_usage_reporter_es_password: "{{ lookup('env', 'DOCKER_LIVE_USAGE_ES_PASSWORD') | mandatory('DOCKER_LIVE_USAGE_ES_PASSWORD env var not set -- see terraform/secrets.common.enc.yaml') }}"
+  no_log: true
+
+- name: Check if OpenSearch is reachable before provisioning the shared scoped user
+  ansible.builtin.wait_for:
+    host: "{{ docker_live_usage_reporter_elasticsearch_host }}"
+    port: 9200
+    timeout: 5
+  register: docker_live_usage_reporter_es_reachable
+  ignore_errors: true
+
+- name: Warn and skip OpenSearch user/index provisioning when it is not yet reachable
+  ansible.builtin.debug:
+    msg: >-
+      OpenSearch at {{ docker_live_usage_reporter_elasticsearch_host }}:9200 is
+      not reachable (timeout). Skipping docker_live_usage_reporter user/index
+      provisioning -- re-run provision once opensearch-stack is reachable.
+  when: docker_live_usage_reporter_es_reachable.failed | default(true)
+
+- name: Ensure docker_live_usage_writer role exists in OpenSearch
+  ansible.builtin.uri:
+    url: "{{ docker_live_usage_reporter_elasticsearch_url }}/_plugins/_security/api/roles/{{ docker_live_usage_reporter_es_role_name }}"
+    method: PUT
+    url_username: "{{ docker_live_usage_reporter_elastic_admin_user }}"
+    url_password: "{{ docker_live_usage_reporter_elastic_admin_password }}"
+    validate_certs: "{{ not docker_live_usage_reporter_es_no_verify_tls }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      index_permissions:
+        - index_patterns:
+            - "{{ docker_live_usage_reporter_es_index }}*"
+          allowed_actions:
+            - "create_index"
+            - "write"
+            - "read"
+    status_code: [200, 201]
+  when: not (docker_live_usage_reporter_es_reachable.failed | default(true))
+  delegate_to: localhost
+
+- name: Ensure shared scoped OpenSearch user exists
+  ansible.builtin.uri:
+    url: "{{ docker_live_usage_reporter_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ docker_live_usage_reporter_es_user_name }}"
+    method: PUT
+    url_username: "{{ docker_live_usage_reporter_elastic_admin_user }}"
+    url_password: "{{ docker_live_usage_reporter_elastic_admin_password }}"
+    validate_certs: "{{ not docker_live_usage_reporter_es_no_verify_tls }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      password: "{{ docker_live_usage_reporter_es_password }}"
+      opendistro_security_roles:
+        - "{{ docker_live_usage_reporter_es_role_name }}"
+      description: "docker_live_usage_reporter shared service account (every gap-list host) -- never the admin superuser"
+    status_code: [200, 201]
+  when: not (docker_live_usage_reporter_es_reachable.failed | default(true))
+  delegate_to: localhost
+  no_log: true
+
+- name: Check whether the docker-live-usage index already exists
+  ansible.builtin.uri:
+    url: "{{ docker_live_usage_reporter_elasticsearch_url }}/{{ docker_live_usage_reporter_es_index }}"
+    method: HEAD
+    url_username: "{{ docker_live_usage_reporter_elastic_admin_user }}"
+    url_password: "{{ docker_live_usage_reporter_elastic_admin_password }}"
+    validate_certs: "{{ not docker_live_usage_reporter_es_no_verify_tls }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: docker_live_usage_reporter_index_check
+  when: not (docker_live_usage_reporter_es_reachable.failed | default(true))
+  delegate_to: localhost
+
+- name: Create the docker-live-usage index with an explicit keyword mapping
+  ansible.builtin.uri:
+    url: "{{ docker_live_usage_reporter_elasticsearch_url }}/{{ docker_live_usage_reporter_es_index }}"
+    method: PUT
+    url_username: "{{ docker_live_usage_reporter_elastic_admin_user }}"
+    url_password: "{{ docker_live_usage_reporter_elastic_admin_password }}"
+    validate_certs: "{{ not docker_live_usage_reporter_es_no_verify_tls }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      mappings:
+        properties:
+          hostname: { type: keyword }
+          reported_at: { type: date }
+          digests: { type: keyword }
+          tag_refs:
+            properties:
+              project: { type: keyword }
+              repository: { type: keyword }
+              tag: { type: keyword }
+    status_code: [200, 201]
+  when:
+    - not (docker_live_usage_reporter_es_reachable.failed | default(true))
+    - docker_live_usage_reporter_index_check.status == 404
+  delegate_to: localhost
+
+- name: Write OpenSearch docker-live-usage credential file
+  ansible.builtin.copy:
+    dest: "{{ docker_live_usage_reporter_dir }}/es-user.env"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # docker_live_usage_reporter OpenSearch credential - managed by Ansible, do not edit by hand
+      ES_DOCKER_LIVE_USAGE_USER={{ docker_live_usage_reporter_es_user_name }}
+      ES_DOCKER_LIVE_USAGE_PASSWORD={{ docker_live_usage_reporter_es_password }}
+      ELASTICSEARCH_URL={{ docker_live_usage_reporter_elasticsearch_url }}
+      ES_DOCKER_LIVE_USAGE_INDEX={{ docker_live_usage_reporter_es_index }}
+      ES_DOCKER_LIVE_USAGE_NO_VERIFY_TLS={{ '1' if docker_live_usage_reporter_es_no_verify_tls else '0' }}
+  no_log: true
+
+- name: Install docker-live-usage-report.service
+  ansible.builtin.template:
+    src: docker-live-usage-report.service.j2
+    dest: /etc/systemd/system/docker-live-usage-report.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_live_usage_reporter_service_file
+
+- name: Install docker-live-usage-report.timer
+  ansible.builtin.template:
+    src: docker-live-usage-report.timer.j2
+    dest: /etc/systemd/system/docker-live-usage-report.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_live_usage_reporter_timer_file
+
+- name: Reload systemd after installing docker-live-usage-report units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: docker_live_usage_reporter_service_file.changed or docker_live_usage_reporter_timer_file.changed
+
+- name: Enable and start docker-live-usage-report.timer
+  ansible.builtin.systemd:
+    name: docker-live-usage-report.timer
+    enabled: true
+    state: started
