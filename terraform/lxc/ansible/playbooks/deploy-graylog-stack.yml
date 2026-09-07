@@ -7,7 +7,9 @@
     graylog_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     graylog_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ graylog_lab_domain, true) }}"
     graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ graylog_lab_domain, true) }}"
-    graylog_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    # Points at technitium-stack, not dns-stack -- see
+    # reference_dns_stack_docker_daemon_dependency memory/incident.
+    graylog_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(graylog_lab_fqdn_harbor, true) }}"
     docker_registry_host: "{{ graylog_registry_host }}"
   roles:

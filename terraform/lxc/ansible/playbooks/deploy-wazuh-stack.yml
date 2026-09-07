@@ -35,11 +35,13 @@
   become: true
   gather_facts: true
   vars:
+    # Points at technitium-stack, not dns-stack -- see
+    # reference_dns_stack_docker_daemon_dependency memory/incident.
     wazuh_lab_ip_dns: >-
       {{
-        lookup('env', 'LAB_IP_DNS')
+        lookup('env', 'LAB_IP_TECHNITIUM')
         | default(dns_server, true)
-        | mandatory('LAB_IP_DNS env var or dns_server inventory var is required')
+        | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required')
       }}
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
   roles:
