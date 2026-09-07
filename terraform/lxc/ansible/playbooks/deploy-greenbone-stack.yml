@@ -35,6 +35,16 @@
     - docker_base
 
   tasks:
+    # Fixes a real gap found 2026-09-08 investigating the GVM login outage:
+    # this task previously overrode docker_base's syslog default back to
+    # json-file, with no comment explaining why -- almost certainly a
+    # copy-paste leftover predating the syslog-forwarding convention, not a
+    # deliberate exception. That meant gvmd's crash logs during the outage
+    # (Postgres socket errors, semaphore/DB failures) never reached Graylog,
+    # only ever existed in local `docker logs`. None of this stack's compose
+    # services set their own per-service `logging:` block, so switching the
+    # daemon default here is safe -- unlike deploy-pentagi-stack.yml, which
+    # has explicit per-service json-file log-opts that need separate handling.
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
@@ -42,10 +52,11 @@
         content: |
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
-            "log-driver": "json-file",
+            "log-driver": "syslog",
             "log-opts": {
-              "max-size": "50m",
-              "max-file": "7"
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
             }
           }
       notify: Restart Docker
