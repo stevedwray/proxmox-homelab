@@ -3763,7 +3763,38 @@ error.
   procedure is the fix; no automation is proposed here to keep it in
   sync continuously.
 
-## Phase 14 (uvm-14-01/02/03 DONE and verified live 2026-09-07; uvm-14-04 through 14-07 not started): holistic live-usage tracking + active Harbor cleanup
+## Phase 14 (uvm-14-01 through 14-06 DONE and verified live 2026-09-07, dry-run only; uvm-14-07 explicitly deferred): holistic live-usage tracking + active Harbor cleanup
+
+**uvm-14-04/05/06 status: live, verified, dry-run confirmed working
+end-to-end.** `harbor_cleanup_exempt.json` seeded with `pentagi` (the
+`dns-stack` entry the draft assumed was needed turned out unnecessary --
+CoreDNS there is a raw systemd binary, never in Harbor's catalog at
+all). `artifact.not_in_use_since` is live on `harbor-findings`
+(20,749 of 21,634 not-in-use documents now carry a real timestamp; the
+remainder are stale historical records for digests Harbor's own API no
+longer returns at all -- correctly never revisited, and correctly
+nothing for `harbor_cleanup.py` to delete there either, since Harbor's
+side is already gone). `harbor-cleanup.service`/`.timer` run daily,
+dry-run only (`es_findings_ingest_harbor_cleanup_execute: false`) --
+confirmed a real dry-run pass completes cleanly (`candidates=0`, exactly
+expected since nothing has aged past the 7-day grace period yet on the
+very first day this field exists).
+
+**One real deployment bug found and fixed live**, the second time this
+exact lesson has now bitten this pipeline: forgot the explicit additive
+`PUT /harbor-findings/_mapping` for the new `not_in_use_since` field --
+updating only the index *template* (which only applies at index
+*creation*, an already-documented lesson from Phase 6/11/13) silently
+left the live index without the field mapped at all, so the painless
+script's writes were accepted but the field was then invisible to any
+`exists`/`range` query against it. Caught by directly testing the
+painless logic against OpenSearch's `_scripts/painless/_execute` API
+(proved the script itself was correct) and then testing `bulk_upsert()`
+against one real document with request/response spied (proved the
+write really happened) before finding the actual gap via a direct
+`GET .../_mapping` check. Fixed with the explicit `PUT`; re-running
+`es-findings-ingest.service` afterward correctly backfilled the field
+onto the existing corpus.
 
 **uvm-14-01/02/03 status: live, verified, real result.** Deployed
 `docker_live_usage_reporter` to 10 of the 12 confirmed gap-list stacks

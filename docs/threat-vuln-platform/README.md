@@ -67,8 +67,13 @@ remediation call for the worst/most-exploitable subset.
   indexer, the GVM/Greenbone scanner engine, OpenSearch, Grafana, and
   NetBox's images stopped being invisible to `in_use`.
 - Harbor cleanup itself — the other half of Phase 13's original title —
-  **still not built**. `in_use` only filters the dashboard; it doesn't
-  shrink Harbor's scan surface or delete anything. Phase 14's remaining
-  steps (uvm-14-04 through 14-07 — exemption list, consecutive-absence
-  tracking, active deletion via Harbor's API, revisiting `manifest.txt`
-  auto-generation) are designed but not started.
+  **built and live, dry-run only.** `harbor_cleanup.py` runs daily
+  (`harbor-cleanup.timer`), identifying artifacts confirmed `in_use:
+  false` for 7+ consecutive days (`artifact.not_in_use_since`) and
+  logging what it *would* delete via Harbor's own artifact API —
+  excluding the `pentagi` pentest-target project. Real deletion
+  (`--execute`) stays off until the operator reviews a full grace
+  period's worth of dry-run output by hand. `manifest.txt`
+  auto-generation (uvm-14-07) stays explicitly deferred, per the plan's
+  own design — not enough time has passed on the combined live-usage
+  source to "trust it now."
