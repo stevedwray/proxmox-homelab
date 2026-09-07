@@ -26,7 +26,7 @@ is a cache, not a source of truth.
 | `apt-cacher-stack` | 40011 | `infra_seg` | 192.168.40.11 | Transparent apt proxy for all LXC containers during provisioning |
 | `authentik-stack` | 20010 | `mgmt_seg` | 192.168.20.10 | Identity provider / SSO gateway for the platform |
 | `ci-runner-01` | 10063 | `build_seg` | 192.168.10.63 | Self-hosted GitHub Actions runner |
-| `dns-stack` | 20013 | `mgmt_seg` | 192.168.20.13 | Rollback-only CoreDNS — **not** the active DNS delegate (`technitium-stack` is) |
+| `dns-stack` | 20013 | `mgmt_seg` | 192.168.20.13 | Rollback-only CoreDNS — **not** the active DNS delegate (`technitium-stack` is). **Do not treat this as safe to stop/relocate/deprioritize**: its IP was hardcoded as the Docker-daemon-level DNS resolver on several other stacks (a leftover from before the cutover), and stopping it has already broken Harbor's image pulls fleet-wide once (2026-08-16) via that path — see `reference_dns_stack_docker_daemon_dependency` |
 | `graylog-stack` | 20014 | `mgmt_seg` | 192.168.20.14 | Production log platform (Graylog 7.1.3) |
 | `greenbone-stack` | 70011 | `pentest_seg` | 192.168.70.11 | GVM/OpenVAS vulnerability scanner, live network scanning |
 | `harbor-stack` | 40010 | `infra_seg` | 192.168.40.10 | Private container registry + proxy-cache for all image pulls |
