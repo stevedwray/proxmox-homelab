@@ -246,7 +246,9 @@ def _extract_cvss_score(vuln: dict) -> float | None:
 
 def build_documents(
     project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict],
-    *, scan_time: str, production_registry: dict, live_digests: set[str] | None = None,
+    *, scan_time: str, production_registry: dict,
+    live_digests: set[str] | None = None,
+    live_tag_refs: set[tuple[str, str, str]] | None = None,
 ) -> list[dict]:
     digest = artifact.get("digest", "")
     tags = [t.get("name") for t in (artifact.get("tags") or []) if t.get("name")]
@@ -263,14 +265,25 @@ def build_documents(
         "stack": stack,
         "zone": zone,
     }
-    # live_digests is None when this run couldn't reach Portainer at all --
-    # in that case leave the in_use key out entirely (never set it to
-    # False) so bulk_upsert()'s copy-if-missing painless step carries the
-    # prior value forward instead of wiping it. See
-    # docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
+    # live_digests/live_tag_refs are None together when this run couldn't
+    # reach Portainer at all -- in that case leave the in_use key out
+    # entirely (never set it to False) so bulk_upsert()'s copy-if-missing
+    # painless step carries the prior value forward instead of wiping it.
+    # See docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
     # decision.
+    #
+    # Digest-exact match OR tag-exact match (see harbor_live_usage.py's
+    # module docstring, 2026-09-07 update): confirmed live that
+    # digest-exact alone matched essentially nothing across the entire
+    # Harbor-sourced CVE population, not just the genuinely-stale entries
+    # it was meant to filter, because Harbor's own catalog for a floating
+    # tag routinely lags what a stack's deploy pull actually resolved to.
+    # The tag fallback can't mismatch a superseded digest onto the wrong
+    # artifact -- only the one harbor-findings doc Harbor currently
+    # considers this tag's artifact carries that tag value at all.
     if live_digests is not None:
-        artifact_fields["in_use"] = digest in live_digests
+        tag_match = tag is not None and (project_name, repo_short_name, tag) in (live_tag_refs or set())
+        artifact_fields["in_use"] = (digest in live_digests) or tag_match
 
     docs = []
     for vuln in vulnerabilities:
@@ -456,10 +469,11 @@ def main() -> int:
     production_registry = load_production_registry()
 
     live_digests: set[str] | None = None
+    live_tag_refs: set[tuple[str, str, str]] | None = None
     portainer_url = os.environ.get("PORTAINER_URL", "")
     portainer_token = os.environ.get("PORTAINER_TOKEN", "")
     if portainer_url and portainer_token:
-        live_digests = harbor_live_usage.fetch_live_digests(
+        live_digests, live_tag_refs = harbor_live_usage.fetch_live_usage(
             portainer_url, portainer_token, verify_tls=not args.no_verify_tls
         )
         if live_digests is None:
@@ -531,7 +545,7 @@ def main() -> int:
                 docs = build_documents(
                     project_name, repo_short_name, artifact, vulns,
                     scan_time=scan_time, production_registry=production_registry,
-                    live_digests=live_digests,
+                    live_digests=live_digests, live_tag_refs=live_tag_refs,
                 )
                 indexed, bulk_errors = bulk_upsert(
                     es_base, "harbor-findings", docs, auth_header=es_auth, verify_tls=not args.no_verify_tls, dry_run=args.dry_run
