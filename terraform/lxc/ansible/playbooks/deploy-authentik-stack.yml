@@ -57,7 +57,15 @@
     lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(lab_admin_username ~ '@' ~ lab_domain, true) }}"
-    authentik_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    # Points at technitium-stack (the real live DNS since the CoreDNS->
+    # Technitium cutover, docs/dns-refactor/README.md) -- NOT dns-stack's
+    # LAB_IP_DNS. This var name is legacy; dns-stack is only "rollback-only"
+    # for its old MikroTik zone-delegate role, but was still hardcoded here
+    # as this container's Docker-daemon-level DNS resolver until this fix
+    # (see reference_dns_stack_docker_daemon_dependency memory/incident,
+    # 2026-08-16: stopping dns-stack broke Harbor's pulls fleet-wide because
+    # of exactly this kind of leftover reference).
+    authentik_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(dns_server, true) | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required') }}"
     authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
     authentik_internal_tls_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
 

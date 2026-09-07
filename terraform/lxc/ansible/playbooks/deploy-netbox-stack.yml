@@ -75,7 +75,13 @@
   gather_facts: true
   vars:
     docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
-    netbox_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    # Points at technitium-stack (the real live DNS since the CoreDNS->
+    # Technitium cutover, docs/dns-refactor/README.md) -- NOT dns-stack's
+    # LAB_IP_DNS, which was hardcoded here as this container's Docker-daemon
+    # DNS resolver until this fix (reference_dns_stack_docker_daemon_dependency
+    # memory/incident, 2026-08-16: stopping dns-stack broke Harbor's pulls
+    # fleet-wide because of exactly this kind of leftover reference).
+    netbox_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(dns_server, true) | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required') }}"
     netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | default('', true), true) }}"
   roles:
     - lxc_base

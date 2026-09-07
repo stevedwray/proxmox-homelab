@@ -9,7 +9,13 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
-    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    # Points at technitium-stack (the real live DNS since the CoreDNS->
+    # Technitium cutover, docs/dns-refactor/README.md) -- NOT dns-stack's
+    # LAB_IP_DNS, which was hardcoded here as this container's Docker-daemon
+    # DNS resolver until this fix (reference_dns_stack_docker_daemon_dependency
+    # memory/incident, 2026-08-16: stopping dns-stack broke Harbor's pulls
+    # fleet-wide because of exactly this kind of leftover reference).
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     docker_registry_host: "{{ monitoring_registry_host }}"
@@ -66,7 +72,9 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
-    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    # Points at technitium-stack, not dns-stack -- see the matching comment
+    # on this same var in the "Configure Docker base" play above.
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.148.0"
