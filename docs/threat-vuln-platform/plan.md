@@ -3920,50 +3920,86 @@ list. Treat this as a starting point to re-verify, not a final answer.
 
 Gate: none -- output is the confirmed list feeding uvm-14-02/03.
 
-### uvm-14-02 — direct-query collector for the Portainer-exempt tier
+### uvm-14-02 — self-reporting local collector for the Portainer-exempt tier
 
-New role or script (exact placement TBD at execution time -- likely a
-new lightweight role alongside `es_findings_ingest`, run from
-`ci-runner-01` since it already has broad Ansible SSH reach to every
-stack as the automation host) that, for the confirmed gap list from
-uvm-14-01:
+**Design change from the first draft of this phase (operator, 2026-09-07):
+not an Ansible-driven pull.** Every other source in this pipeline
+(`harbor_findings_sync.py`, `gvm_findings_sync.py`,
+`wazuh_findings_sync.py`, `cve_enrichment_sync.py`) is a self-contained
+script that runs locally on its own host as a systemd timer and pushes
+to OpenSearch directly -- none of them are centrally SSH-polled. An
+Ansible-pull design for this one source would be the odd one out, and
+has real problems beyond consistency: every ad-hoc `ansible -m shell`
+against production is already classified ambiguous/mutating by this
+repo's own approval flow (`CLAUDE.md`'s Command Classification table),
+so a *daily automated* job built on that transport either needs a
+standing bypass of that gate or can't run unattended at all; it also
+gets logged verbatim to syslog/Graylog (the exact mechanism that leaked
+`HARBOR_DB_PASSWORD` earlier this session); and it re-creates the same
+"one central node reaches into every host" shape the Portainer
+exemption was designed to avoid in the first place, just with a
+different puller.
 
-- runs `docker inspect $(docker ps -q)` (or equivalent single-pass
-  query) on each host via Ansible, over the same SSH access already used
-  throughout this session's production verification work -- no new
-  agent, no new credential, no Portainer-endpoint registration for these
-  hosts;
-- extracts the same two shapes `harbor_live_usage.py` already produces
-  for Portainer-backed hosts: a digest set (`RepoDigests` cross-
-  referenced against the running container's image ID) and a
+Instead: a new small role (e.g. `docker_live_usage_reporter`),
+provisioned **once** the normal way (`scripts/provision.sh`, same as any
+other role -- Ansible only appears at deploy time, never in the
+recurring path) onto each host in uvm-14-01's confirmed gap list. It
+installs:
+
+- a local script (`docker_live_usage_report.py`, stdlib-only, matching
+  this pipeline's existing convention) that runs `docker inspect
+  $(docker ps -q)` **locally against that host's own Docker socket** --
+  read-only, no SSH, no new agent, no Portainer-endpoint registration --
+  and extracts the same two shapes `harbor_live_usage.py` already
+  produces for Portainer-backed hosts: a digest set (`RepoDigests`
+  cross-referenced against the running container's image ID) and a
   `(project, repository, tag)` set (via the same registry-host-agnostic
   `parse_image_ref()` already written for Phase 13's tag-fallback fix --
-  reuse it, don't reimplement);
-- writes its result somewhere `harbor_findings_sync.py` (running on
-  `harbor-stack`) can read at ingest time -- exact transport is an
-  execution-time decision (a small JSON file pushed to `harbor-stack` at
-  the end of the same Ansible run that collects it, vs. a scoped
-  OpenSearch document `es-findings-ingest`'s own scoped user can read) --
-  whichever is simpler to keep in sync with the existing 05:30 UTC
-  ingest cadence without adding a new always-on service.
+  factor it into a small shared module both roles import, don't
+  duplicate it);
+- a scoped OpenSearch write credential (same pattern as
+  `es_findings_ingest_es_user_name`/`es_findings_ingest_es_role_name` --
+  a dedicated user limited to write on one new index, never broad
+  cluster access) that the script uses to `PUT` one small per-host
+  document (e.g. `docker-live-usage/_doc/<hostname>`) containing its
+  digest set, tag-ref set, and a report timestamp;
+- a systemd timer running shortly before `es-findings-ingest.service`'s
+  existing `05:30 UTC` slot (e.g. `05:00 UTC`) so the data is fresh when
+  `harbor_findings_sync.py` reads it.
 
-Gate: for each host in the confirmed gap list, the collected digest/tag
-set actually includes every container Ansible's own
-`docker ps --format '{{.Names}}\t{{.Image}}'` shows running on that host
-at collection time (spot-check, not exhaustive).
+Privilege model: run the script as whatever local account already
+manages that host's own Docker Compose stack (already effectively
+Docker-privileged) rather than provisioning a new docker-group grant
+purely for this -- confirm the exact existing account per stack at
+execution time rather than assuming one shape fits all 11 gap-list
+hosts.
+
+Gate: for each host in the confirmed gap list, the resulting
+`docker-live-usage/<hostname>` document's digest/tag set actually
+includes every container that host's own
+`docker ps --format '{{.Names}}\t{{.Image}}'` shows running at
+collection time (spot-check, not exhaustive); the scoped write
+credential is confirmed unable to write anywhere outside the
+`docker-live-usage` index.
 
 ### uvm-14-03 — merge both live-usage sources
 
 `harbor_findings_sync.py`'s `main()` currently calls
 `harbor_live_usage.fetch_live_usage()` once (Portainer only). Extend it
-to also read uvm-14-02's collected set and union both digest sets and
-both tag-ref sets before passing the combined result into
+to also query the `docker-live-usage` index (all documents with a report
+timestamp inside some reasonable freshness window, e.g. the last 48
+hours -- a host whose reporter has gone stale should drop out of the
+combined set rather than have main() trust a weeks-old snapshot) and
+union every per-host digest set and tag-ref set from that query with
+Portainer's, before passing the combined result into
 `build_documents()` -- `build_documents()`'s signature (`live_digests`,
 `live_tag_refs`) doesn't need to change, only what `main()` passes into
 it. Preserve the existing sticky-carry-forward semantics: the combined
-result is `None` only if *both* sources fail outright this run, not if
-either one alone fails (a single source's failure should degrade to
-"whatever the other source still found," not "found nothing").
+result is `None` only if *both* sources produce nothing this run (Portainer
+totally unreachable AND the `docker-live-usage` index has no fresh
+documents at all), not if either one alone is degraded -- a single
+stale/missing host's report should just be absent from the union, not
+collapse the whole run to "found nothing."
 
 Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`; live run shows the previously-blind gap-list stacks' images now resolving `in_use: true` where genuinely running (e.g. Wazuh's own container image on `wazuh-stack`, Grafana's on `monitoring-stack`).
 
@@ -4037,9 +4073,9 @@ explicitly deferred, not defaulted.
 
 ### Open items / not decided yet
 
-- Exact transport mechanism for uvm-14-02's collected data reaching
-  `harbor-stack` (file push vs. OpenSearch doc) -- left as an execution-
-  time decision, not pre-committed.
+- Exact local privilege model for `docker_live_usage_reporter` (uvm-14-02)
+  varies across the 11 gap-list hosts -- confirm per-host at execution
+  time rather than assuming one account shape fits all.
 - Whether Wazuh's `docker-listener` data ever gets connected to this
   pipeline as a genuine third source (rather than staying an unconnected,
   partially-deployed parallel signal) -- explicitly deferred per the
