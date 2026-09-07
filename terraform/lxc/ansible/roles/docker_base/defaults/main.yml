@@ -1,0 +1,28 @@
+# Defaults for docker_base role.
+
+# Root-cause fix for a real outage (2026-09-08, docs/threat-vuln-platform
+# investigation): nothing in this fleet ever pruned unused/superseded Docker
+# image layers on any host. greenbone-stack's own frequent `pull: always`
+# feed re-pulls silently accumulated ~20GB of dangling image versions over
+# weeks until /var/lib/docker hit 100% -- which crashed pg-gvm, corrupted
+# Docker's own container-state bookkeeping (docker ps kept reporting the
+# crashed container as "healthy" and "up"), and took gvmd's GMP auth down
+# for ~28 hours before anyone noticed. Enabled fleet-wide by default (every
+# stack includes this role) rather than only on greenbone-stack, since any
+# stack that gets redeployed/rebuilt repeatedly accumulates the same way,
+# just slower -- see the disk-usage sweep in that same investigation
+# (pentagi at 36%, wazuh at 46% were the next-highest, already trending the
+# same direction).
+docker_base_image_prune_enabled: true
+
+# `until=24h` (not an unfiltered prune) is deliberate: a stack mid-deploy
+# may have just pulled an image that isn't attached to a container yet
+# (docker compose pull, then up moments later) -- pruning immediately could
+# remove it before it's ever used. 24h is comfortably longer than any
+# deploy window this repo's playbooks take.
+docker_base_image_prune_min_age: "24h"
+
+# systemd OnCalendar expression. Default: once daily, off-the-hour to avoid
+# a thundering-herd alignment with other scheduled jobs (matches
+# harbor_repull_on_calendar's own reasoning).
+docker_base_image_prune_on_calendar: "*-*-* 03:47:00"

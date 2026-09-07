@@ -65,3 +65,47 @@
     name: root
     groups: docker
     append: true
+
+# Root-cause fix for a real outage (2026-09-08) -- see defaults/main.yml
+# for the full incident writeup. Enabled on every stack that includes this
+# role, not just the one that triggered it, since the underlying gap
+# (nothing ever prunes old image layers) applies fleet-wide.
+- name: Write docker-image-prune systemd service
+  ansible.builtin.template:
+    src: docker-image-prune.service.j2
+    dest: /etc/systemd/system/docker-image-prune.service
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+  register: docker_image_prune_service
+  when: docker_base_image_prune_enabled | bool
+
+- name: Write docker-image-prune systemd timer
+  ansible.builtin.template:
+    src: docker-image-prune.timer.j2
+    dest: /etc/systemd/system/docker-image-prune.timer
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+  register: docker_image_prune_timer
+  when: docker_base_image_prune_enabled | bool
+
+- name: Reload systemd after docker-image-prune unit changes
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: (docker_image_prune_service.changed | default(false)) or (docker_image_prune_timer.changed | default(false))
+
+- name: Enable and start docker-image-prune timer
+  ansible.builtin.systemd:
+    name: docker-image-prune.timer
+    state: started
+    enabled: true
+  when: docker_base_image_prune_enabled | bool
+
+- name: Disable docker-image-prune timer when opted out
+  ansible.builtin.systemd:
+    name: docker-image-prune.timer
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: not (docker_base_image_prune_enabled | bool)
