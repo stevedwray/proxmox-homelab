@@ -1,0 +1,24 @@
+[Unit]
+Description=Active usage-based Harbor artifact cleanup (harbor_cleanup, Phase 14)
+After=network-online.target es-findings-ingest.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HARBOR_URL={{ es_findings_ingest_harbor_url }}
+Environment=ELASTICSEARCH_URL={{ es_findings_ingest_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ es_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+Environment=HARBOR_CLEANUP_GRACE_DAYS={{ es_findings_ingest_harbor_cleanup_grace_days }}
+Environment=HARBOR_CLEANUP_NO_VERIFY_TLS={{ es_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+EnvironmentFile=-{{ es_findings_ingest_dir }}/harbor-cleanup-robot.env
+EnvironmentFile=-{{ es_findings_ingest_dir }}/es-user.env
+{# --execute is intentionally never templated in here -- flip
+   es_findings_ingest_harbor_cleanup_execute only after reviewing a full
+   grace period's worth of dry-run output by hand (see
+   docs/threat-vuln-platform/plan.md Phase 14 uvm-14-06's gate). #}
+ExecStart=/usr/bin/python3 {{ es_findings_ingest_dir }}/harbor_cleanup.py{{ ' --execute' if es_findings_ingest_harbor_cleanup_execute | bool else '' }}
+StandardOutput=append:{{ es_findings_ingest_harbor_cleanup_log_path }}
+StandardError=append:{{ es_findings_ingest_harbor_cleanup_log_path }}
+
+[Install]
+WantedBy=multi-user.target

@@ -445,3 +445,142 @@
         enabled: true
         state: started
       when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # Active usage-based cleanup (Phase 14, uvm-14-06). Own robot
+    # credential (delete-scoped), own service/timer -- see
+    # es_findings_ingest_harbor_cleanup_enabled's own comment in
+    # defaults/main.yml for why this isn't folded into
+    # es-findings-ingest.service itself.
+    # ---------------------------------------------------------------
+
+    - name: Copy harbor_cleanup.py
+      ansible.builtin.copy:
+        src: harbor_cleanup.py
+        dest: "{{ es_findings_ingest_dir }}/harbor_cleanup.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Copy Harbor cleanup exemption list
+      ansible.builtin.copy:
+        src: "assets/harbor_cleanup_exempt.json"
+        dest: "{{ es_findings_ingest_dir }}/assets/harbor_cleanup_exempt.json"
+        owner: root
+        group: root
+        mode: "0640"
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Check for existing Harbor cleanup robot credential
+      ansible.builtin.stat:
+        path: "{{ es_findings_ingest_dir }}/harbor-cleanup-robot.env"
+      register: es_findings_ingest_harbor_cleanup_credential_stat
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Generate a unique name for the Harbor cleanup robot
+      ansible.builtin.set_fact:
+        es_findings_ingest_harbor_cleanup_robot_suffix: "{{ now(fmt='%s') }}-{{ 9999 | random }}"
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+
+    - name: Check if the Harbor admin API is reachable before creating the cleanup robot
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_harbor_admin_host }}"
+        port: "{{ es_findings_ingest_harbor_admin_port }}"
+        timeout: 5
+      register: es_findings_ingest_harbor_cleanup_reachable
+      ignore_errors: true
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+
+    - name: Warn and skip Harbor cleanup robot creation when Harbor is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          Harbor admin API at {{ es_findings_ingest_harbor_admin_host }}:{{ es_findings_ingest_harbor_admin_port }}
+          is not reachable (timeout). Skipping harbor-cleanup robot creation --
+          re-run provision (or wait for the next scheduled run) once harbor-stack is reachable.
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - es_findings_ingest_harbor_cleanup_reachable.failed | default(true)
+
+    - name: Create system-level delete-scoped Harbor robot for cleanup
+      ansible.builtin.uri:
+        url: "{{ es_findings_ingest_harbor_url }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ es_findings_ingest_harbor_admin_user }}"
+        url_password: "{{ es_findings_ingest_harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ es_findings_ingest_harbor_cleanup_robot_name_prefix }}-{{ es_findings_ingest_harbor_cleanup_robot_suffix }}"
+          description: "harbor_cleanup.py (harbor-stack) -- Phase 14 active usage-based cleanup, delete-scoped, fully independent of es-findings-ingest's own read-only robot"
+          duration: -1
+          level: "system"
+          permissions:
+            - kind: "project"
+              namespace: "*"
+              access:
+                - resource: "repository"
+                  action: "delete"
+                - resource: "repository"
+                  action: "pull"
+        status_code: 201
+      register: es_findings_ingest_harbor_cleanup_robot_create
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_cleanup_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write Harbor cleanup robot credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/harbor-cleanup-robot.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # harbor_cleanup.py Harbor robot credential - managed by Ansible, do not edit by hand
+          HARBOR_ROBOT_USER={{ es_findings_ingest_harbor_cleanup_robot_create.json.name }}
+          HARBOR_ROBOT_PASSWORD={{ es_findings_ingest_harbor_cleanup_robot_create.json.secret }}
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_cleanup_reachable.failed | default(true))
+      no_log: true
+
+    - name: Write harbor-cleanup systemd service
+      ansible.builtin.template:
+        src: harbor-cleanup.service.j2
+        dest: /etc/systemd/system/harbor-cleanup.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+      notify: Reload systemd
+
+    - name: Write harbor-cleanup systemd timer
+      ansible.builtin.template:
+        src: harbor-cleanup.timer.j2
+        dest: /etc/systemd/system/harbor-cleanup.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling the cleanup timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start harbor-cleanup timer
+      ansible.builtin.systemd:
+        name: harbor-cleanup.timer
+        enabled: true
+        state: started
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not ansible_check_mode

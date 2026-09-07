@@ -71,6 +71,29 @@ es_findings_ingest_harbor_url: "http://{{ es_findings_ingest_harbor_admin_host }
 # can affect either of those.
 es_findings_ingest_harbor_robot_name_prefix: "es-findings-ingest"
 
+# --- Active usage-based cleanup (Phase 14, uvm-14-06) ---------------------
+# Deliberately its own systemd unit and its own Harbor robot credential
+# (delete-scoped), not folded into es-findings-ingest.service -- that
+# service's own robot is read-only ("never pushes/deletes anything in
+# Harbor", see its own description above) on purpose, and mixing a
+# delete-capable credential into the same process/timer as the read-only
+# scan sync would blur that boundary for no real benefit. Runs after
+# es-findings-ingest.service's 05:30 UTC slot so it reads freshly
+# recomputed artifact.in_use/not_in_use_since, not yesterday's.
+es_findings_ingest_harbor_cleanup_enabled: true
+es_findings_ingest_harbor_cleanup_log_path: /var/log/harbor-cleanup.log
+es_findings_ingest_harbor_cleanup_on_calendar: "*-*-* 06:00:00"
+es_findings_ingest_harbor_cleanup_robot_name_prefix: "es-harbor-cleanup"
+# Dry-run only until explicitly flipped -- see harbor_cleanup.py's own
+# docstring and docs/threat-vuln-platform/plan.md Phase 14's uvm-14-06
+# gate: run dry-run for at least one full grace period, spot-check the
+# candidate list by hand, before ever setting this true.
+es_findings_ingest_harbor_cleanup_execute: false
+# Operator-confirmed 2026-09-07 (docs/threat-vuln-platform/plan.md Phase
+# 14 Design decisions) -- how many consecutive daily confirmed-absent
+# runs before an artifact becomes a deletion candidate at all.
+es_findings_ingest_harbor_cleanup_grace_days: 7
+
 # --- Portainer connection (Phase 13, live-usage lookup) -------------------
 # Same HTTPS/9443 + X-API-Key convention as the existing PortainerClient in
 # terraform/lxc/stacks/netbox-stack/integrations/discover.py -- reused, not

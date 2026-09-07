@@ -384,6 +384,20 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
         _id = doc_id(doc)
         upsert_doc = dict(doc)
         upsert_doc["first_seen"] = now
+        # Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-05): on a
+        # genuinely brand-new artifact document, if it's already in_use:
+        # false at the moment of its very first scan, that IS the first
+        # confirmed-absent moment -- set not_in_use_since here directly,
+        # same as first_seen above. The update-script path below handles
+        # every subsequent run instead (this only ever fires once, the
+        # very first time this exact digest gets a document at all). A
+        # real copy is required, not a reference into doc["artifact"]
+        # (also used for params.doc below) -- mutating that shared dict
+        # in place would leak not_in_use_since into the update script's
+        # params.doc.artifact too, which must stay entirely
+        # painless-computed for the update path (see the script below).
+        upsert_doc["artifact"] = dict(doc["artifact"])
+        upsert_doc["artifact"]["not_in_use_since"] = now if doc["artifact"].get("in_use") is False else None
         lines.append(json.dumps({"update": {"_index": index, "_id": _id}}))
         lines.append(
             json.dumps(
@@ -412,12 +426,34 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
                         # silently wipe a previously-recorded in_use value
                         # instead of carrying it forward. See
                         # docs/threat-vuln-platform/plan.md Phase 13.
+                        #
+                        # not_in_use_since (Phase 14, uvm-14-05): entirely
+                        # painless-computed, never present in params.doc --
+                        # putAll would otherwise wipe it every run the same
+                        # way it would have wiped in_use without the
+                        # copy-if-missing step above. Captured BEFORE putAll
+                        # (oldNotInUseSince), then recomputed AFTER putAll
+                        # against the FINAL (possibly carried-forward)
+                        # in_use value: true clears it to null; false keeps
+                        # the original first-observed timestamp if one
+                        # already exists, or sets it to now if this is the
+                        # first run this artifact has ever been seen
+                        # not-in-use. uvm-14-06's deletion gate reads this
+                        # field directly -- it must only ever move forward
+                        # (or clear to null), never reset on every still-
+                        # not-in-use run, or the grace period would never
+                        # actually elapse.
                         "source": (
+                            "def oldNotInUseSince = (ctx._source.artifact != null && ctx._source.artifact.containsKey('not_in_use_since')) ? ctx._source.artifact.not_in_use_since : null; "
                             "if (ctx._source.artifact != null && params.doc.artifact != null "
                             "&& !params.doc.artifact.containsKey('in_use') && ctx._source.artifact.containsKey('in_use')) "
                             "{ params.doc.artifact.in_use = ctx._source.artifact.in_use } "
                             "ctx._source.putAll(params.doc); "
-                            "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
+                            "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now } "
+                            "if (ctx._source.artifact != null && ctx._source.artifact.containsKey('in_use')) { "
+                            "if (ctx._source.artifact.in_use == true) { ctx._source.artifact.not_in_use_since = null } "
+                            "else { ctx._source.artifact.not_in_use_since = (oldNotInUseSince != null) ? oldNotInUseSince : params.now } "
+                            "}"
                         ),
                         "lang": "painless",
                         "params": {"now": now, "doc": doc},
