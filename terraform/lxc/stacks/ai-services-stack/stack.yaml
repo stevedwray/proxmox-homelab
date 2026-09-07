@@ -46,7 +46,8 @@ provides:
     protocol: tcp
 ansible_playbook: "deploy-ai-services-stack"
 deployment_tier: ai
-portainer_agent: false
+portainer_agent: true
+register_portainer_env: true
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
