@@ -52,8 +52,17 @@ remediation call for the worst/most-exploitable subset.
   live-tested `check_upstream_fixes.py` sketch written, queries OSV.dev
   daily for CVEs already accepted as risk pending an upstream fix; not
   yet wired into a systemd service/timer or deployed.
-- Scoping CVE reporting + Harbor cleanup to images actually in use
-  (Phase 13) — design decided (a new digest-exact `in_use` field, mirrors
-  the existing `in_production` pattern, sourced from Portainer's already-
-  registered endpoints via the existing `PortainerClient`/`PORTAINER_TOKEN`
-  pattern) and every file change written out literally; not yet applied.
+- Scoping CVE reporting to images actually in use (Phase 13) — **live**,
+  reporting half only. A new `in_use` field (digest-exact, with a
+  tag-exact fallback added 2026-09-07 after digest-exact alone matched
+  ~0 Harbor-sourced CVEs live) gates the CVE dashboard/deep-dive
+  shortlist. Confirmed working end-to-end: 356 genuinely-deployed Harbor
+  CVEs (including `CVE-2022-36944`, the live Minecraft server target)
+  correctly retained out of 4,413 merely-`in_production` ones.
+- Harbor cleanup itself — the other half of Phase 13's original title —
+  **not built**. `in_use` only filters the dashboard; it doesn't shrink
+  Harbor's scan surface or delete anything. Phase 14 (planned, not
+  started) designs actual usage-based cleanup, plus fixes Phase 13's
+  incorrect founding assumption that every stack is a registered
+  Portainer endpoint (only 9 real stacks are — every security/infra-tier
+  stack was deliberately exempted, and needs a second live-usage source).

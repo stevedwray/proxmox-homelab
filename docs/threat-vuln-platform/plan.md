@@ -3762,3 +3762,294 @@ error.
   `manifest.txt` drifts from live usage again later, re-running the same
   procedure is the fix; no automation is proposed here to keep it in
   sync continuously.
+
+## Phase 14 (planned, not started): holistic live-usage tracking + active Harbor cleanup
+
+### Problem
+
+Phase 13's original title promised "scope reporting + Harbor cleanup" but
+only the reporting half got built. Live verification on 2026-09-07 (the
+same session that fixed `in_use`'s digest-exact matching to also accept
+a tag-exact fallback -- see the fix note above the Phase 13 steps) surfaced
+that the whole approach still falls short of the operator's actual goal:
+**run Trivy centrally against images that are in use, instead of on every
+individual Docker host** -- which necessarily means images *not* in use
+get identified and cleaned up, not just hidden from a dashboard filter.
+
+Three concrete gaps, found live, not assumed:
+
+1. **`in_use` is a reporting-layer filter only.** It changes what the CVE
+   dashboard/deep-dive shortlist shows. It does not shrink Harbor's own
+   scan surface (`scanAll` still rescans every cataloged artifact,
+   in-use or not), does not reduce `harbor-findings`' size (47,173 docs
+   the day this was checked, the overwhelming majority `in_use: false`),
+   and does not delete anything from Harbor's storage. Harbor's only
+   native cleanup is a daily per-project retention schedule that prunes
+   *untagged* artifacts -- confirmed configured, **never confirmed to
+   actually delete anything** (`docs/harbor-stack/README.md`) -- and it
+   does nothing for a still-tagged artifact that's simply no longer
+   deployed (a decommissioned stack's image, an old pinned version
+   nobody rolled forward). Those sit in Harbor's catalog and get
+   rescanned forever.
+
+2. **Phase 13's founding assumption was wrong.** Its own "Design
+   decisions" section states "every stack is already a registered
+   Portainer endpoint" -- reused as the justification for making
+   Portainer the sole live-usage source. Checked live on 2026-09-07: only
+   **9 real stacks** (`ai-services-stack`, `framework.gibbsgreatly.xyz`,
+   `gaming-stack`, `gaming-stack-lab`, `management-stack`,
+   `mcp-utility-stack`, `media-stack`, `media-stack-lab`,
+   `torrent-stack`) plus Portainer's own `local` endpoint are actually
+   registered. Every security/infra-tier stack was **deliberately**
+   exempted from Portainer registration during the earlier
+   integration-gap pass this same session (operator: "technitium
+   exempt, proxy exempt, monitoring/netbox/graylog/apt-cacher exempt...
+   ci-runner exempt, harness-target exempt") -- correctly, for attack-
+   surface reasons (Portainer's agent is a shared management plane with
+   real blast radius). The practical effect: `in_use` is currently blind
+   to every Docker-running container on `harbor-stack`, `authentik-stack`,
+   `proxy-stack`, `technitium-stack`, `monitoring-stack`, `netbox-stack`,
+   `graylog-stack`, `greenbone-stack`, `opensearch-stack`,
+   `pentagi-stack`, `wazuh-stack`, `portainer-stack` itself, `ci-runner-01`,
+   and `secpipe-stack` -- i.e. blind to most of the platform's actual
+   security/infra tier, which is exactly the tier a CVE dashboard most
+   needs to be right about. Confirmed (2026-09-07, operator prompted the
+   check directly): 4 of these (`harbor-stack`, `proxy-stack`,
+   `authentik-stack`, `technitium-stack`) already run Wazuh's
+   `docker-listener` wodle (`wazuh_agent_docker_monitoring_enabled: true`
+   in their deploy playbooks) -- a second, independent per-host signal
+   already partway deployed for exactly this tier, but never connected to
+   `in_use` or to any cleanup mechanism, and not yet extended to the
+   remaining ~9 stacks in that tier that also run Docker.
+
+3. **`harbor_repull`'s `manifest.txt` is a hand-maintained substitute for
+   live-usage tracking, and it drifts.** Two real gaps were found and
+   fixed by hand in this same session (`itzg/minecraft-server`,
+   `portainer/agent` were both live and Harbor-routed but absent from the
+   manifest until the Phase 13 step-7 audit caught it). It's a separate,
+   parallel "what's in use" list from the one `in_use` now computes,
+   maintained by a different, manual process, with no automated
+   cross-check between the two.
+
+### Design decisions (operator-confirmed, 2026-09-07)
+
+- **Cleanup is active, not passive.** Confirmed not-in-use artifacts get
+  actually deleted from Harbor via its artifact API -- not merely
+  excluded from a dashboard, and not left for Harbor's own
+  unconfirmed-to-work retention schedule.
+- **Deletion requires N consecutive confirmed-absent runs before
+  acting**, not a single observation -- protects against a transient
+  Portainer/endpoint blip, a container briefly down for a restart, or a
+  host mid-redeploy. Default proposed: **7 consecutive daily
+  `es-findings-ingest.service` runs** (matches its existing `05:30 UTC`
+  daily cadence -- a full week's grace before anything is deleted).
+  Operator should confirm or adjust this number before uvm-14-05 below
+  is implemented; not treated as silently settled by this default.
+- **Portainer alone is not a holistic live-usage picture** -- explicit
+  operator correction to Phase 13's founding assumption. A second,
+  independent collection path is needed for the security/infra tier
+  Portainer deliberately doesn't reach (see gap 2 above). This phase
+  does not extend Portainer's own reach into that tier (would undo the
+  attack-surface reasoning that excluded them in the first place);
+  instead it adds a separate, narrower collector using access this repo
+  already has and already trusts for that tier: direct SSH/Ansible
+  `docker inspect` queries, the same production-approval-gated access
+  pattern used throughout this session's live verification work, not a
+  new agent or a new credential.
+- **Wazuh's `docker-listener` wodle is a secondary/future cross-check,
+  not this phase's primary mechanism for the exempt tier.** It's already
+  live on 4 of the ~13 relevant stacks, but it streams discrete container
+  lifecycle *events* into Wazuh's alert pipeline (a different index than
+  `wazuh-findings`, which this platform doesn't currently ingest at all)
+  rather than exposing a queryable "what's running right now" snapshot
+  the way Portainer's `docker/containers/json` does. Reconstructing
+  current state from an event stream is real extra work with its own
+  failure modes (a missed stop/start event drifts the reconstructed
+  state silently) for a signal a direct `docker inspect` query gets in
+  one synchronous call. Not ruled out permanently -- worth revisiting if
+  the direct-query approach turns out to have its own problems live --
+  but not the design this phase commits to.
+- **Explicit exemptions from cleanup, decided now rather than discovered
+  the hard way later:**
+  - The `pentagi` Harbor project (deliberately vulnerable pentest
+    targets, `vulhub/struts2` and `kali-linux-fixed`, both already
+    carrying hand-built CVE allowlists per `docs/harbor-stack/README.md`)
+    is fully exempt from usage-based cleanup regardless of live container
+    state -- these images are supposed to exist in Harbor whether or not
+    anything is actively running them at scan time.
+  - Any image an operator has deliberately kept for rollback/standby
+    purposes despite nothing currently running it (the precedent already
+    on record: `dns-stack`, kept live in code as the pre-cutover DNS
+    backend per `docs/dns-refactor/README.md`, "rollback-only, not the
+    active delegate") needs a real, explicit exemption list -- not an
+    inferred one. uvm-14-04 below defines where that list lives.
+- **`manifest.txt`'s auto-generation question (raised, not settled, in
+  Phase 13) stays open until uvm-14-03 lands.** The operator's objection
+  to auto-generating it from Portainer alone -- "Portainer doesn't cover
+  everything, this needs a more holistic picture" -- is exactly gap 2
+  above; auto-generating from the *combined* holistic source this phase
+  builds is worth revisiting once that source exists and has run for
+  long enough to trust, but committing to it now, before the second
+  collector exists, would repeat the same mistake Phase 13 made in
+  reverse. Tracked as uvm-14-07.
+
+### uvm-14-01 — enumerate the exact current gap (research, not code)
+
+Confirm, at execution time (state may have shifted since 2026-09-07), the
+precise list of stacks that (a) actually run Docker, (b) are not a
+registered Portainer endpoint, and (c) do not yet have
+`wazuh_agent_docker_monitoring_enabled: true`. Cross-reference:
+
+- `GET /api/endpoints` against the live Portainer instance (same
+  `PORTAINER_URL`/`PORTAINER_TOKEN` `harbor_live_usage.py` already uses)
+  for (b).
+- `grep -rn "wazuh_agent_docker_monitoring_enabled: true"
+  terraform/lxc/ansible/playbooks/` (source playbooks only, not
+  `.terragrunt-cache/` copies) for (c).
+- `terraform/lxc/ansible/roles/*/tasks/main.yml` `docker_compose`/
+  compose-file evidence, or this repo's own Stack Service Types table in
+  `CLAUDE.md`, for (a).
+
+As of 2026-09-07 this list was: `harbor-stack`, `netbox-stack`,
+`monitoring-stack`, `graylog-stack`, `greenbone-stack`,
+`opensearch-stack`, `pentagi-stack`, `wazuh-stack`, `portainer-stack`,
+`ci-runner-01`, `secpipe-stack` (11 stacks) -- `authentik-stack`,
+`proxy-stack`, and `technitium-stack` already have the Wazuh
+docker-listener path, so they're gap-2-solved already, not part of this
+list. Treat this as a starting point to re-verify, not a final answer.
+
+Gate: none -- output is the confirmed list feeding uvm-14-02/03.
+
+### uvm-14-02 — direct-query collector for the Portainer-exempt tier
+
+New role or script (exact placement TBD at execution time -- likely a
+new lightweight role alongside `es_findings_ingest`, run from
+`ci-runner-01` since it already has broad Ansible SSH reach to every
+stack as the automation host) that, for the confirmed gap list from
+uvm-14-01:
+
+- runs `docker inspect $(docker ps -q)` (or equivalent single-pass
+  query) on each host via Ansible, over the same SSH access already used
+  throughout this session's production verification work -- no new
+  agent, no new credential, no Portainer-endpoint registration for these
+  hosts;
+- extracts the same two shapes `harbor_live_usage.py` already produces
+  for Portainer-backed hosts: a digest set (`RepoDigests` cross-
+  referenced against the running container's image ID) and a
+  `(project, repository, tag)` set (via the same registry-host-agnostic
+  `parse_image_ref()` already written for Phase 13's tag-fallback fix --
+  reuse it, don't reimplement);
+- writes its result somewhere `harbor_findings_sync.py` (running on
+  `harbor-stack`) can read at ingest time -- exact transport is an
+  execution-time decision (a small JSON file pushed to `harbor-stack` at
+  the end of the same Ansible run that collects it, vs. a scoped
+  OpenSearch document `es-findings-ingest`'s own scoped user can read) --
+  whichever is simpler to keep in sync with the existing 05:30 UTC
+  ingest cadence without adding a new always-on service.
+
+Gate: for each host in the confirmed gap list, the collected digest/tag
+set actually includes every container Ansible's own
+`docker ps --format '{{.Names}}\t{{.Image}}'` shows running on that host
+at collection time (spot-check, not exhaustive).
+
+### uvm-14-03 — merge both live-usage sources
+
+`harbor_findings_sync.py`'s `main()` currently calls
+`harbor_live_usage.fetch_live_usage()` once (Portainer only). Extend it
+to also read uvm-14-02's collected set and union both digest sets and
+both tag-ref sets before passing the combined result into
+`build_documents()` -- `build_documents()`'s signature (`live_digests`,
+`live_tag_refs`) doesn't need to change, only what `main()` passes into
+it. Preserve the existing sticky-carry-forward semantics: the combined
+result is `None` only if *both* sources fail outright this run, not if
+either one alone fails (a single source's failure should degrade to
+"whatever the other source still found," not "found nothing").
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`; live run shows the previously-blind gap-list stacks' images now resolving `in_use: true` where genuinely running (e.g. Wazuh's own container image on `wazuh-stack`, Grafana's on `monitoring-stack`).
+
+### uvm-14-04 — cleanup exemption list
+
+New file, shape TBD at execution time but likely a small YAML sibling to
+`known_production_images.json` (e.g.
+`terraform/lxc/ansible/roles/es_findings_ingest/files/assets/harbor_cleanup_exempt.yaml`)
+listing `project/repository` (or `project/repository:tag` where the
+exemption is narrower than the whole repository) entries that active
+cleanup (uvm-14-06) must never delete regardless of live-usage state.
+Seed it with the two categories already decided above: the `pentagi`
+project (whole-project exemption), and `dns-stack`'s rollback-standby
+image(s) (confirm the exact current image reference at execution time --
+`docs/dns-refactor/README.md` names the stack, not necessarily today's
+exact tag).
+
+Gate: none scriptable -- this is a literal, reviewed list, not derived
+data. Have the operator review the seeded list before uvm-14-06 can act
+on it.
+
+### uvm-14-05 — track consecutive not-in-use runs
+
+`harbor-findings`' `artifact.in_use` is currently a plain boolean,
+recomputed fresh (not incrementally) every ingest run -- there's no
+memory of *how long* something has been `false`. Add
+`artifact.not_in_use_since` (ISO timestamp, set the first run an artifact
+is observed `in_use: false`, cleared back to `null` the moment it's ever
+seen `true` again) to `harbor-findings.json`'s mapping and to
+`build_documents()`'s `artifact_fields`, computed via the same
+copy-if-missing painless pattern already proven for `in_use`'s carry-
+forward (Phase 13, `bulk_upsert()`). uvm-14-06's deletion gate becomes
+"`in_use: false` AND `not_in_use_since` is more than N days ago" (N from
+the operator-confirmed default in the Design decisions section above).
+
+Gate: `PUT /harbor-findings/_mapping` adds the field cleanly; after one
+ingest run, spot-check a known not-in-use artifact shows a real
+`not_in_use_since` timestamp, and a known in-use one shows `null`.
+
+### uvm-14-06 — active deletion job
+
+New script, likely `harbor_cleanup.py` colocated with
+`harbor_findings_sync.py` (shares its Harbor auth/API-call helpers --
+import, don't duplicate). Queries `harbor-findings` for artifacts where
+`artifact.in_use: false` and `artifact.not_in_use_since` exceeds the
+configured grace period, excludes anything matching uvm-14-04's
+exemption list, and calls Harbor's artifact delete endpoint (`DELETE
+/api/v2.0/projects/{project}/repositories/{repository}/artifacts/{digest}`)
+for the rest. Ships with a `--dry-run` default (matching every other
+script in this pipeline's convention) that only logs what *would* be
+deleted -- the operator should run dry-run for at least one full grace
+period before enabling real deletion, not enable it in the same pass
+this script is first deployed.
+
+Gate: `python3 -m py_compile`; a dry-run against production lists a
+plausible, small set of genuinely-stale artifacts (spot-check a few by
+hand against Harbor's own UI/API before trusting the list); the
+`pentagi` project and `dns-stack`'s exempted image never appear in a
+dry-run's delete list.
+
+### uvm-14-07 — revisit `manifest.txt` auto-generation
+
+Once uvm-14-03's combined holistic source has run in production for a
+reasonable stretch (operator's call on how long counts as "trust this
+now" -- not pre-decided here), re-raise the auto-generation question
+from Phase 13 with the operator: generate `manifest.txt` from the same
+combined live-usage set `in_use` now uses, instead of hand-maintaining
+it, now that the "Portainer doesn't cover everything" objection has an
+actual fix behind it. Not committed to either outcome by this phase --
+explicitly deferred, not defaulted.
+
+### Open items / not decided yet
+
+- Exact transport mechanism for uvm-14-02's collected data reaching
+  `harbor-stack` (file push vs. OpenSearch doc) -- left as an execution-
+  time decision, not pre-committed.
+- Whether Wazuh's `docker-listener` data ever gets connected to this
+  pipeline as a genuine third source (rather than staying an unconnected,
+  partially-deployed parallel signal) -- explicitly deferred per the
+  Design decisions section above, not ruled out permanently.
+- The 7-day default grace period (uvm-14-05/06) is a proposal, not an
+  operator-confirmed final number -- confirm before implementing.
+- Harbor's own daily untagged-artifact retention schedule was never
+  confirmed to actually delete anything (`docs/harbor-stack/README.md`).
+  This phase doesn't depend on it working, but if it turns out *not* to
+  work, `harbor-findings`' size problem is worse than currently measured
+  (untagged historical digests piling up too, not just stale-but-tagged
+  ones) -- worth a dedicated verification pass independent of this
+  phase.
