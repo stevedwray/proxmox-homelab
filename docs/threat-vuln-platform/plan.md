@@ -3910,13 +3910,33 @@ registered Portainer endpoint, and (c) do not yet have
   compose-file evidence, or this repo's own Stack Service Types table in
   `CLAUDE.md`, for (a).
 
-As of 2026-09-07 this list was: `harbor-stack`, `netbox-stack`,
-`monitoring-stack`, `graylog-stack`, `greenbone-stack`,
-`opensearch-stack`, `pentagi-stack`, `wazuh-stack`, `portainer-stack`,
-`ci-runner-01`, `secpipe-stack` (11 stacks) -- `authentik-stack`,
-`proxy-stack`, and `technitium-stack` already have the Wazuh
-docker-listener path, so they're gap-2-solved already, not part of this
-list. Treat this as a starting point to re-verify, not a final answer.
+**Confirmed (2026-09-07, this step actually executed, not a
+placeholder):** `netbox-stack`, `monitoring-stack`, `graylog-stack`,
+`greenbone-stack`, `opensearch-stack`, `pentagi-stack`, `wazuh-stack`,
+`portainer-stack`, `ci-runner-01`, `harness-target`, `harness-target-pve`,
+`pentagi-upstream-control` (12 stacks). Two corrections against the
+scoping section's earlier estimate above: **`harbor-stack` does not
+belong on this list** -- it already has
+`wazuh_agent_docker_monitoring_enabled: true` (confirmed by the same
+grep the scoping section above describes; an inconsistency in the first
+draft of this phase, caught while actually executing this step, not
+before). **`secpipe-stack` does not belong on this list either** -- its
+deploy playbook has zero `docker_compose`/`community.docker` task
+references; it's pure systemd/Python (matches `README.md`'s own
+description: "runs `cve_enrichment_sync`... and `cve_deep_dive`... as
+systemd timers"), not a Docker host at all. Two real stacks the
+scoping section's estimate missed entirely: `harness-target-pve`
+(shares `harness-target`'s own confirmed-Docker playbook, deployed to a
+different node) and `pentagi-upstream-control` (its own playbook, 4
+`docker_compose` references). `authentik-stack`, `proxy-stack`,
+`technitium-stack`, and `harbor-stack` already have the Wazuh
+docker-listener path, so all four are gap-2-solved already, not part of
+this list. `ci-runner-01`'s Docker usage is transient/CI-job-scoped
+(build/pull/push during `harbor_repull.py` and Actions runs, not
+long-lived services) -- still worth collecting, but expect its
+`docker-live-usage` reports to be noisier/less stable than a normal
+compose stack's, and treat that as expected rather than a collector
+bug.
 
 Gate: none -- output is the confirmed list feeding uvm-14-02/03.
 
