@@ -110,7 +110,10 @@ Two-tier model:
 
 CoreDNS (`192.168.20.13` / `192.168.20.113`) remains deployed as the legacy authority and
 immediate rollback target during the refactor, but it is no longer the active delegate path
-for clients.
+for clients. **This does not make it safe to stop or relocate** — its IP is still hardcoded
+as the Docker-daemon-level DNS resolver on several other stacks (a pre-cutover leftover),
+and stopping it has already broken Harbor's image pulls fleet-wide once via that exact path.
+See `reference_dns_stack_docker_daemon_dependency` for the incident and affected stacks.
 
 ### Name spaces
 

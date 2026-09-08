@@ -242,7 +242,7 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 |---|---|---|
 | `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
 | `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on both `pve` and `pve-test-vm` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
-| `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it |
+| `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it. **This does NOT mean it's safe to stop/relocate/deprioritize** — its IP is still hardcoded as the Docker-daemon-level DNS resolver on several other stacks (a pre-cutover leftover), and stopping it has already broken Harbor's image pulls fleet-wide once via that exact path. Check current dependents before treating it as low-risk. |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
 | `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
