@@ -108,12 +108,14 @@ Two-tier model:
    `lab.gibbsgreatly.xyz` / `test.gibbsgreatly.xyz` queries to Technitium via a FWD rule.
    All other queries are resolved by MikroTik directly (public DNS via DoH upstream).
 
-CoreDNS (`192.168.20.13` / `192.168.20.113`) remains deployed as the legacy authority and
-immediate rollback target during the refactor, but it is no longer the active delegate path
-for clients. **This does not make it safe to stop or relocate** — its IP is still hardcoded
-as the Docker-daemon-level DNS resolver on several other stacks (a pre-cutover leftover),
-and stopping it has already broken Harbor's image pulls fleet-wide once via that exact path.
-See `reference_dns_stack_docker_daemon_dependency` for the incident and affected stacks.
+CoreDNS on `pve` (`192.168.20.13`) was **removed, 2026-09-08** — decommissioned via
+`pct destroy`, not just stopped, after fixing 8 stacks' hardcoded Docker-daemon-level
+dependency on its IP (a pre-cutover leftover that had already broken Harbor's image
+pulls fleet-wide once via that exact path — see
+`reference_dns_stack_docker_daemon_dependency` for the incident). CoreDNS on
+`pve-test-vm` (`192.168.20.113`) remains deployed as a rollback target — don't assume
+the same decommission reasoning applies there without re-checking its own dependents
+first.
 
 ### Name spaces
 
