@@ -269,7 +269,43 @@ def payload_shape(body: dict) -> dict:
         "total_message_chars": total_chars,
         "tool_count": len(tools),
         "tools_schema_chars": len(json.dumps(tools)) if tools else 0,
+        # 2026-09-09: added per a real lead (ollama/ollama#15539) -- a
+        # confirmed Ollama Gemma4 parser bug triggers specifically on the
+        # combination of a system prompt + think:false + tools. Different
+        # symptom than what this project hit (a leaked-but-readable tool
+        # call vs. pure token-garbage repetition), but the same trigger
+        # combination, so whether the real failing request actually sets
+        # this is directly relevant, not a guess.
+        "think": body.get("think"),
     }
+
+
+DEBUG_CAPTURE_PATH = os.environ.get("PROXY_DEBUG_CAPTURE_PATH", "")
+
+
+def debug_capture_once(body: dict, reason: str) -> None:
+    """If PROXY_DEBUG_CAPTURE_PATH is set (opt-in, unset by default -- see
+    deploy-ai-services-stack.yml), write the first real degenerate
+    request's full body -- actual prompt/tool content, not just shape --
+    to that path, without overwriting a capture that's already there.
+
+    2026-09-09: added because payload_shape() alone (message/role counts,
+    character volume) is enough to see that a request is unusually large,
+    but not enough to actually replay it, bisect its tool list, or test
+    it against a different quantization/runtime -- everything a real
+    root-cause investigation needs. This is opt-in and one-shot
+    specifically because, unlike shape metadata, it's the operator's
+    literal real prompt/code content -- not something to log by default
+    or accumulate indefinitely."""
+    if not DEBUG_CAPTURE_PATH or os.path.exists(DEBUG_CAPTURE_PATH):
+        return
+    try:
+        os.makedirs(os.path.dirname(DEBUG_CAPTURE_PATH) or ".", exist_ok=True)
+        with open(DEBUG_CAPTURE_PATH, "w") as f:
+            json.dump({"reason": reason, "captured_at": time.time(), "body": body}, f, indent=2)
+        log.warning("captured full failing request body to %s for offline diagnosis", DEBUG_CAPTURE_PATH)
+    except OSError as e:
+        log.warning("debug capture failed (non-fatal, continuing normally): %s", e)
 
 
 def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
@@ -451,6 +487,7 @@ class Handler(BaseHTTPRequestHandler):
                 "degenerate response detected (%s) -- retrying once after unload -- request shape=%s",
                 reason, payload_shape(upstream_body),
             )
+            debug_capture_once(upstream_body, reason)
             record_retry()
             unload_model(model)
             result = self._call_upstream_safe(self.path, upstream_body)

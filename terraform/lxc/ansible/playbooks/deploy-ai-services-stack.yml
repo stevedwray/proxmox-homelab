@@ -72,6 +72,15 @@
     # same host-scoped pattern as mcp-utility-stack's docs-rag-mcp :8001
     # rule (see terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md).
     ai_services_reliability_proxy_port: "{{ lookup('env', 'AI_SERVICES_RELIABILITY_PROXY_PORT') | default('11435', true) }}"
+    # Opt-in, off by default: captures the first real degenerate/corrupt
+    # response's full request body (actual prompt/tool content, not just
+    # shape) to a bind-mounted debug file for offline root-cause
+    # diagnosis -- see proxy.py's debug_capture_once(). Only meant to be
+    # set for a bounded diagnostic session (e.g.
+    # AI_SERVICES_PROXY_DEBUG_CAPTURE=true ./with-secrets-prod ...),
+    # never left on by default, since unlike every other log line this
+    # proxy writes, a capture is the operator's literal real content.
+    ai_services_reliability_proxy_debug_capture: "{{ lookup('env', 'AI_SERVICES_PROXY_DEBUG_CAPTURE') | default('', true) }}"
     # ai_seg is a deliberately contained zone (same class as pentest_seg)
     # with no direct route to Harbor's infra_seg IP -- confirmed live
     # 2026-08-02 when a raw LAB_IP_HARBOR pull timed out
@@ -176,6 +185,12 @@
     - name: Create ollama-reliability-proxy build directory
       ansible.builtin.file:
         path: "{{ ai_services_reliability_proxy_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create ollama-reliability-proxy debug-capture directory
+      ansible.builtin.file:
+        path: "{{ ai_services_reliability_proxy_build_dir }}/debug"
         state: directory
         mode: "0750"
 
@@ -436,8 +451,14 @@
                 # llamacpp/Ollama routes above (llamacpp-router/Ollama
                 # enforce no auth on this network either way).
                 OLLAMA_UPSTREAM: "http://{{ ai_services_framework_host }}:11434"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
+                # Opt-in diagnostic capture, unset (off) unless the deploy
+                # explicitly set AI_SERVICES_PROXY_DEBUG_CAPTURE=true --
+                # see the variable's own comment above and proxy.py's
+                # debug_capture_once().
+                PROXY_DEBUG_CAPTURE_PATH: "{{ '/debug/degenerate-capture.json' if ai_services_reliability_proxy_debug_capture == 'true' else '' }}"
               volumes:
                 - "{{ ai_services_reliability_proxy_build_dir }}/proxy.py:/proxy.py:ro"
+                - "{{ ai_services_reliability_proxy_build_dir }}/debug:/debug:rw"
               healthcheck:
                 test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ ai_services_reliability_proxy_port }}/v1/models', timeout=10)"]
                 interval: 10s
