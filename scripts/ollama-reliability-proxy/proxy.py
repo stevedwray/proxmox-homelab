@@ -175,6 +175,49 @@ def reset_stats() -> dict:
     return snapshot
 
 
+REPETITION_WINDOW = 800
+REPETITION_MAX_PERIOD = 200
+REPETITION_RATIO_THRESHOLD = 0.6
+
+
+def _repetition_ratio(text: str, window: int = REPETITION_WINDOW, max_period: int = REPETITION_MAX_PERIOD) -> float:
+    """Return the fraction of the tail of `text` covered by the longest run
+    of some short (<= max_period char) unit repeated immediately back-to-
+    back with zero variation. 1.0 means that whole tail is one repeated
+    unit. Only the tail (last `window` chars) is checked -- a real answer
+    followed by a collapse into garbage should still be caught, and
+    bounding the window keeps this cheap even on an 8000+ token response.
+
+    2026-09-09: added after a live Gemma4 corruption (`<unused49>` x N,
+    Gemma's reserved-vocab placeholder token) sailed straight through the
+    original `?`-ratio check untouched -- that check only recognizes one
+    specific historical garbage character, not the general "the model
+    collapsed into looping one short unit" failure class it's actually an
+    instance of. This subsumes it (a run of `?` scores 1.0 here too) and
+    also catches the project's other documented real case, a whole
+    sentence repeated verbatim several times, which is wider than the old
+    64-char ceiling this replaced. Calibrated against real prose, code,
+    numbered lists, and changelog-style content (all land under ~0.35)
+    plus all three known corruption transcripts (all land at ~1.0) --
+    see test_proxy.py."""
+    tail = text[-window:] if len(text) > window else text
+    n = len(tail)
+    if n < 30:
+        return 0.0
+    best = 0
+    for period in range(1, min(max_period, n // 3) + 1):
+        unit = tail[:period]
+        count = 0
+        pos = 0
+        while tail[pos:pos + period] == unit:
+            count += 1
+            pos += period
+        covered = count * period
+        if covered > best:
+            best = covered
+    return best / n
+
+
 def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
     """Return a short reason string if the response looks like a known
     Ollama corruption pattern, else None. See module docstring for the
@@ -185,10 +228,10 @@ def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
             return "empty content"
         return None
     stripped = content.strip()
-    if len(stripped) > 20:
-        q_ratio = stripped.count("?") / len(stripped)
-        if q_ratio > 0.5:
-            return f"degenerate '?' output ({q_ratio:.0%} of {len(stripped)} chars)"
+    if len(stripped) > 40:
+        ratio = _repetition_ratio(stripped)
+        if ratio > REPETITION_RATIO_THRESHOLD:
+            return f"repetition collapse ({ratio:.0%} of last {min(len(stripped), REPETITION_WINDOW)} chars is one repeated unit)"
     return None
 
 
