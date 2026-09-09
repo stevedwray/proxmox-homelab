@@ -85,5 +85,54 @@ class RepetitionCollapseTests(unittest.TestCase):
         self.assertIsNone(PROXY.is_degenerate({"content": 'print("Hello, World")'}, "stop"))
 
 
+class PayloadShapeTests(unittest.TestCase):
+    """2026-09-09: added alongside repetition-collapse detection so a real
+    degenerate-response log line carries a comparable signature (message/
+    role counts, character volume, tool schema size) instead of just the
+    reason string -- content is never logged here, only structure."""
+
+    def test_counts_messages_and_roles(self):
+        body = {
+            "messages": [
+                {"role": "system", "content": "You are an assistant."},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi there"},
+            ],
+            "tools": [],
+        }
+        shape = PROXY.payload_shape(body)
+        self.assertEqual(shape["message_count"], 3)
+        self.assertEqual(shape["role_counts"], {"system": 1, "user": 1, "assistant": 1})
+        self.assertEqual(shape["total_message_chars"], len("You are an assistant.") + len("hello") + len("hi there"))
+        self.assertEqual(shape["tool_count"], 0)
+        self.assertEqual(shape["tools_schema_chars"], 0)
+
+    def test_counts_tool_schema_size_and_tool_call_arguments(self):
+        body = {
+            "messages": [
+                {"role": "user", "content": "do it"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "create_file", "arguments": '{"filePath":"a.py"}'}}
+                    ],
+                },
+            ],
+            "tools": [{"type": "function", "function": {"name": "create_file", "parameters": {}}}],
+        }
+        shape = PROXY.payload_shape(body)
+        self.assertEqual(shape["message_count"], 2)
+        self.assertEqual(shape["tool_count"], 1)
+        self.assertGreater(shape["tools_schema_chars"], 0)
+        self.assertGreater(shape["total_message_chars"], len("do it"))
+
+    def test_handles_empty_payload(self):
+        self.assertEqual(
+            PROXY.payload_shape({}),
+            {"message_count": 0, "role_counts": {}, "total_message_chars": 0, "tool_count": 0, "tools_schema_chars": 0},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

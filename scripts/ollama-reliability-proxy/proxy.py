@@ -240,6 +240,38 @@ def _truncate(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "...(truncated)"
 
 
+def payload_shape(body: dict) -> dict:
+    """Structural summary of a request payload -- message/role counts and
+    total character volume, never actual content -- so a degenerate-
+    response log line carries a real signature to compare against a
+    terminal repro attempt.
+
+    2026-09-09: added after Gemma4 corrupted identically twice in a row on
+    a real Copilot request that this project's own terminal-based repro
+    attempts (a single tool, a full 15-tool realistic stress payload, 5x
+    repeats of both) could not reproduce even once. The gap is something
+    specific about the literal real request -- this is what lets the next
+    real occurrence actually say what, instead of guessing again."""
+    messages = body.get("messages") or []
+    role_counts: dict[str, int] = {}
+    total_chars = 0
+    for m in messages:
+        role_counts[m.get("role", "?")] = role_counts.get(m.get("role", "?"), 0) + 1
+        content = m.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+        for tc in m.get("tool_calls") or []:
+            total_chars += len(json.dumps(tc.get("function", {}).get("arguments", "")))
+    tools = body.get("tools") or []
+    return {
+        "message_count": len(messages),
+        "role_counts": role_counts,
+        "total_message_chars": total_chars,
+        "tool_count": len(tools),
+        "tools_schema_chars": len(json.dumps(tools)) if tools else 0,
+    }
+
+
 def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
     """Log a real summary of what was asked and what came back. The
     default http.server access-log line (just a status code) gives no
@@ -266,9 +298,10 @@ def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
     usage = usage or {}
     log.info(
         "exchange model=%s user=%r tools_offered=%s -- content=%r tool_calls=%s "
-        "usage=(prompt=%s completion=%s total=%s)",
+        "usage=(prompt=%s completion=%s total=%s) shape=%s",
         body.get("model", ""), user_summary, tool_names, content_summary, calls_summary,
         usage.get("prompt_tokens", "?"), usage.get("completion_tokens", "?"), usage.get("total_tokens", "?"),
+        payload_shape(body),
     )
 
 
@@ -414,7 +447,10 @@ class Handler(BaseHTTPRequestHandler):
         finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
         reason = is_degenerate(message, finish_reason)
         if reason:
-            log.warning("degenerate response detected (%s) -- retrying once after unload", reason)
+            log.warning(
+                "degenerate response detected (%s) -- retrying once after unload -- request shape=%s",
+                reason, payload_shape(upstream_body),
+            )
             record_retry()
             unload_model(model)
             result = self._call_upstream_safe(self.path, upstream_body)
@@ -427,7 +463,11 @@ class Handler(BaseHTTPRequestHandler):
             finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
             reason2 = is_degenerate(message, finish_reason)
             if reason2:
-                log.error("still degenerate after retry (%s) -- surfacing as an error, not passing it through", reason2)
+                log.error(
+                    "still degenerate after retry (%s) -- surfacing as an error, not passing it through -- "
+                    "request shape=%s",
+                    reason2, payload_shape(upstream_body),
+                )
                 record_request()
                 self._send_json(
                     502,
