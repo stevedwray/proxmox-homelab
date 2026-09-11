@@ -48,8 +48,16 @@ manual UI steps, or judgment calls):
    all return `302` to Authentik's `/application/o/authorize/` flow;
    jellyseerr returns `307` to its own `/setup`, no Authentik redirect
    — exactly the intended split.
-1. **Confirm NAS NFS allowlist** covers `192.168.80.11` (may already be
-   covered via the shared `/mnt/nas-media` mount — check, don't assume).
+1. ~~Confirm NAS NFS allowlist covers `192.168.80.11`~~ — **DONE,
+   confirmed by operator 2026-09-12**: `192.168.80.11` added to the
+   NAS's media share allowlist directly on the NAS (ADM), not via any
+   file in this repo. Independently verified live (`pct exec 80011 --
+   ls /nas-media`, read-only): real content visible —
+   `video/movies`, `video/tv`, `music`, etc. — matching the exact
+   subpaths `docker-compose.yml` mounts into radarr/sonarr/lidarr.
+   `/incoming` also confirmed populated with legacy's real in-flight
+   torrent data. Both bind mounts are genuinely working, not just
+   configured.
 2. **Real end-to-end validation**: search → grab → download → import →
    visible on the NAS. This also implicitly tests whether the
    `edge.yaml` routes are actually reachable via Traefik — now a real
