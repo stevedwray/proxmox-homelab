@@ -945,13 +945,29 @@ them are safe or possible for an unsupervised local-model step.
    Docker's storage silently ran on the container's plain 8G rootfs
    instead of its own 20G volume, which is almost certainly why the
    next step's `docker compose up -d` died partway through pulling 8
-   images. **Fix: destroy and recreate the container clean** (operator
-   approved — nothing of value existed on it, no deploy had ever
-   succeeded), then re-run `terragrunt apply` and set the bind mounts
-   again correctly, starting at `mp1` this time (see `stack.yaml`'s
-   corrected comment). `pct set 80011 -mp1
-   /mnt/nas-media,mp=/nas-media,backup=0 -mp2
-   /storage/ct-100/incoming,mp=/incoming,backup=0` — never `-mp0`.
+   images. **Fixed and DONE, 2026-09-12.** Operator approved destroying
+   and recreating the container clean (nothing of value existed on it,
+   no deploy had ever succeeded). Destroy required a separate real
+   safety gate to work through first — `network_sdn_allow_destroy`
+   defaults to `false` for every target except `pve-test`
+   (`terraform/lxc/main.tf`), a deliberate production guardrail, not a
+   bug. Verified before overriding it that the underlying ansible
+   playbook (`destroy-network-sdn-vnet.yml`) independently checks for
+   other LXCs still using the `tvmedia` bridge before ever touching the
+   shared VNet/zone — `media-stack-lab` still does, so the actual zone
+   deletion would be (and was) safely skipped regardless. Overrode with
+   `NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true`, destroy completed
+   (independently confirmed via a fresh API read: `80011` returned
+   "Configuration file does not exist"; `media-stack-lab` at `80010`
+   confirmed still running, untouched). Re-ran `terragrunt apply` —
+   clean `6 added, 0 changed, 0 destroyed` again, same `container_id =
+   80011` / `ip_address = 192.168.80.11/24`. Verified `mp0` was
+   correctly the docker-storage volume again before touching anything,
+   then ran `pct set 80011 -mp1 /mnt/nas-media,mp=/nas-media,backup=0
+   -mp2 /storage/ct-100/incoming,mp=/incoming,backup=0` (never `-mp0`).
+   Independently re-verified via a fresh API read: `mp0` (docker
+   storage, untouched), `mp1` (`/nas-media`), `mp2` (`/incoming`) all
+   exactly correct.
 
 5. ~~`./with-secrets-prod scripts/provision.sh --stack
    torrent-stack-lab`~~ — **ATTEMPTED twice 2026-09-12, both failed for
@@ -973,8 +989,8 @@ them are safe or possible for an unsupervised local-model step.
    pulls actually started this time — but then failed again with `rc:
    1` partway through pulling 8 images' worth of layers, almost
    certainly the mp0 mount-point corruption from item 4 (8G rootfs
-   exhausted). Needs a clean re-run after item 4's destroy/recreate
-   and correct re-mount.
+   exhausted). Item 4's destroy/recreate and correct re-mount are now
+   done and independently verified — ready for a clean third attempt.
 
 6. **Generate or export a ProtonVPN WireGuard config and place it** at
    `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` on the
