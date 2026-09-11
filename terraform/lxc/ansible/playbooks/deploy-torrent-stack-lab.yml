@@ -65,6 +65,7 @@
         group: root
         content: |
           LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          REGISTRY_HOST={{ docker_registry_host }}
       no_log: true
 
     - name: Validate docker compose configuration
