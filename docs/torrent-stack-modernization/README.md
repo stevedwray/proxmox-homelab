@@ -1,21 +1,20 @@
 # torrent-stack-modernization (planning workspace)
 
-Status: **plan committed (`task/torrent-stack-modernization-plan`,
-`7d71022f`), first real step executed.** Research + operator decisions
-complete 2026-09-12 across three passes: initial research and
-network/scope/migration/image decisions, then a correction after the
-operator clarified the real NAS and `/incoming` mount behavior (this
-also caught a real mount-path bug in the first compose draft), then a
-qBittorrent-vs-alternatives question answered inline. `torrent-lab-01a`
-has since run for real against `pve` (approved production read) and
-confirmed `/incoming`'s real host path — see Confirmed facts below.
-**Execution decision (2026-09-12): this session drives the remaining
-steps directly, not via local-model handoff**
-(`implement-step.prompt.md`) — the operator judged this stack complex
-enough, with enough real ways to go wrong, to keep a frontier model on
-it end to end. The `plan.md` step shape is kept anyway for the
-discipline (literal edits, real gates), just executed here instead of
-handed off.
+Status: **all 9 plan steps executed and committed
+(`task/torrent-stack-modernization-plan`, `7c876590`).**
+`torrent-stack-lab`'s five IaC files (`stack.yaml`, `docker-compose.yml`,
+`STACK_CONTRACT.md`, `terragrunt.hcl`, `edge.yaml`) plus its Ansible
+playbook and a new MikroTik firewall playbook all exist and pass every
+gate on a clean re-run. **Nothing is deployed** — no `terragrunt
+apply`, no `provision.sh`, no MikroTik rule actually applied against
+the live router. Research and operator decisions were made across
+several passes 2026-09-12 (network/scope/migration/image/client/auth
+decisions — see the table below); execution then found and fixed
+several more real gaps that only showed up when the plan's own gates
+were actually run, not just read — see "Real findings" below for the
+full list. Next step is entirely the operator's: work through
+`plan.md`'s 13-item Operator-only actions list, starting with
+confirming media_seg's real MikroTik anchor rule.
 
 ## Why this workspace exists
 
@@ -153,6 +152,51 @@ them silently"):
   instructs verifying the current tag at execution time rather than
   trusting a hardcoded value that will already be stale.
 
+### Real findings from execution (not just planning), 2026-09-12
+
+Running the plan's own gates for real, not just reading them, found
+several more real gaps — all fixed in `plan.md` and this workspace, not
+silently worked around:
+
+- **`validate-stack-metadata.sh` (and `--check-contract-sections`)
+  only check a small hardcoded `ACTIVE_STACKS` list inside
+  `validate-stack-metadata.py` itself** — there's no flag to validate
+  an arbitrary stack. Checked before trusting a clean run: none of the
+  last several "-lab"/app-tier stacks (`media-stack-lab`,
+  `gaming-stack-lab`, `greenbone-stack`, `pentagi-stack`, ...) are in
+  that list either, so running it against `torrent-stack-lab` would
+  have silently validated nothing while still printing "passed."
+  Following that same precedent, `torrent-stack-lab` wasn't added to
+  the list — replaced with real YAML-syntax and section-presence checks
+  in both `torrent-lab-02` and `torrent-lab-04`.
+- **`.env.template` does not mirror every `LAB_IP_*` var** — the
+  original `torrent-lab-01` step assumed it did, modeled on
+  `LAB_IP_MEDIA_STACK_LAB`. Checked directly: none of
+  `media-stack-lab`/`pentagi-stack`/`greenbone-stack`/
+  `mcp-utility-stack`/`secpipe-stack` have their IP there either, only
+  in `.env`. Fixed before touching any file.
+- **`ansible-playbook --syntax-check` for a playbook using `roles:`
+  must run from `terraform/lxc/ansible/`** (its own `ansible.cfg` sets
+  `roles_path=roles`) — running from the repo root fails with `role
+  'lxc_base' was not found`. Confirmed by testing against
+  `deploy-media-stack-lab.yml` too, not just the new playbook.
+- **`validate-edge-manifests.py` resolves `${LAB_DOMAIN}` etc. from the
+  real environment, not as a literal string** — needs `.env` sourced
+  first, or every host fails `must end with .lab.gibbsgreatly.xyz`.
+  Confirmed general (not specific to this file) by running
+  `media-stack-lab`'s own `edge.yaml` through it unsourced and getting
+  the identical failure.
+- **Fresh tag lookup at execution time (as instructed) caught two more
+  real things a plan-time snapshot missed**: `prowlarr:2.6.3`, the tag
+  found during research, was never actually promoted to stable —
+  pulling the raw registry tag list directly shows only
+  `2.6.3-develop` exists at that version; `2.5.2` is the real latest
+  stable. And Jellyseerr's GitHub releases page (`v3.4.1`) is ahead of
+  what either Docker Hub or GHCR has ever published as a container
+  image — the raw tag list for both stops at `2.7.3`, confirmed by
+  listing every tag, not a filtered guess. Pinned to what's actually
+  pullable.
+
 ## What's still genuinely operator-only (not step blocks — see plan.md)
 
 `terragrunt apply` (creates the LXC), `scripts/provision.sh --stack
@@ -173,8 +217,9 @@ sequence.
 
 ## Next step
 
-`torrent-lab-01a-confirm-incoming-mount` is done (see Confirmed facts
-above). Nothing else executed. Start at `torrent-lab-01-env-ip` in
-`plan.md`, then `torrent-lab-02-stack-yaml` onward — all file-authoring
-steps, no live infrastructure facts left to confirm before they can
-run.
+All 9 file-authoring steps are done and committed. Everything left is
+in `plan.md`'s Operator-only actions list (13 items) — start with #1
+(confirm media_seg's real MikroTik anchor rule), then work through
+`terragrunt apply`, the MikroTik rule, `provision.sh`, and the manual
+post-deploy steps (WireGuard credentials, disabling built-in auth,
+Jellyseerr's setup wizard) in order.
