@@ -812,19 +812,33 @@ gates:
     critical: true
 ```
 
-**DONE, 2026-09-12.** Gate passed. Real design decision made while
-authoring (not run live, per scope): unlike pentest_seg,
-`pve.yaml` never frames media_seg as a "contained" zone, so this
-playbook can't safely assume a forward-deny anchor exists the way the
-greenbone playbook could. It looks for one anyway (guessing the
-interface name `vlan80-media` from this repo's confirmed
-`vlan<N>-<zone>` convention — `vlan60-games`, `vlan50-ai`,
-`vlan70-pentest`, never verified for media_seg specifically) and falls
-back to adding the rule with no `place-before` constraint if none is
-found, reporting clearly which case happened rather than silently
-guessing. Operator-only action #1 still does the real live check
-first — this fallback is a safety net for an honestly uncertain case,
-not a substitute for it.
+**DONE, 2026-09-12, then CORRECTED the same day after a real live
+check.** Operator-only action #1 (confirm media_seg's real MikroTik
+anchor) was done for real via a read-only GET against
+`/ip/firewall/filter` (operator confirmed this session has that read
+access) — and it invalidated the first draft's design. The first
+draft guessed the anchor would be a forward drop/reject on
+`in-interface=vlan80-media` (the interface name itself was right,
+confirmed live) and fell back to an unanchored "no `place-before`"
+insert if that guess found nothing. **The real anchor (rule `*8A`,
+comment "media_seg default-deny to LAN and other zones") matches on
+`src-address=192.168.80.0/24`, not `in-interface` at all** — so the
+first draft's guess would have matched zero rules, taken the fallback
+path, and landed the new accept rule *after* the deny in evaluation
+order: permanently dead, exactly the "rule appended after an existing
+catch-all is silently dead" failure mode this file's own header
+already quoted from precedent, just not yet caught in its own logic.
+Fixed to match on `src-address` (the confirmed real field), with the
+fallback path removed entirely — there is now exactly one, confirmed
+way to do this, not two. Also matched the established "internet"
+convention found live in the same read (rule `*89`): `dst-address:
+!192.168.0.0/16`, not an unscoped destination. Validated the fixed
+Jinja anchor-detection logic offline against the real fetched JSON
+(not just `--syntax-check`, which can't catch this class of bug) — it
+correctly finds `*8A` and asserts on its exact fields. Added a final
+order-check task (`list.index()` on rule comments) asserting the new
+rule's position is before the deny's, since presence alone doesn't
+prove it'll ever fire.
 
 ---
 
@@ -835,12 +849,14 @@ Preflight/Approval/Execute/After-Action flow from `CLAUDE.md`'s
 Production Credential Controls), physically manual, or both. None of
 them are safe or possible for an unsupervised local-model step.
 
-1. **Confirm the anchor rule for media_seg on the live MikroTik**
-   before running `torrent-lab-09`'s playbook — re-run the same live
-   `/ip/firewall/filter` inspection the greenbone playbook's header
-   documents doing, specifically for media_seg's own containment rule
-   (do not assume it matches pentest_seg's `vlan70-pentest`
-   in-interface anchor).
+1. ~~Confirm the anchor rule for media_seg on the live MikroTik~~ —
+   **DONE, 2026-09-12.** Read-only GET against `/ip/firewall/filter`
+   confirmed the real anchor (rule `*8A`, `src-address=192.168.80.0/24`,
+   NOT the guessed `in-interface=vlan80-media`) — see
+   `torrent-lab-09`'s corrected step for the full finding. This
+   directly disproved the first playbook draft's assumption before it
+   was ever run for real; `torrent-lab-09`'s file is already fixed to
+   match.
 
 2. **`terragrunt plan` on `pve-test-vm`** for the `torrent-lab-08`
    `pve.yaml` policy change, confirming it shows only the two new

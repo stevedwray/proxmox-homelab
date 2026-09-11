@@ -12,9 +12,12 @@ several passes 2026-09-12 (network/scope/migration/image/client/auth
 decisions — see the table below); execution then found and fixed
 several more real gaps that only showed up when the plan's own gates
 were actually run, not just read — see "Real findings" below for the
-full list. Next step is entirely the operator's: work through
-`plan.md`'s 13-item Operator-only actions list, starting with
-confirming media_seg's real MikroTik anchor rule.
+full list. **Operator-only action #1 (confirm media_seg's real
+MikroTik anchor) is also done** — this session has read-only API
+access to the MikroTik and used it, which invalidated and fixed a real
+bug in the first draft of `torrent-lab-09`'s playbook before it was
+ever run for real (see below). Remaining work is `plan.md`'s
+Operator-only actions #2–13.
 
 ## Why this workspace exists
 
@@ -196,6 +199,24 @@ silently worked around:
   image — the raw tag list for both stops at `2.7.3`, confirmed by
   listing every tag, not a filtered guess. Pinned to what's actually
   pullable.
+- **A real bug in `torrent-lab-09`'s MikroTik playbook, caught before
+  it was ever run for real.** Confirmed this session has genuine
+  read-only API access to the MikroTik and used it: a GET against
+  `/ip/firewall/filter` showed media_seg's actual containment anchor
+  (rule `*8A`, "media_seg default-deny to LAN and other zones")
+  matches on `src-address=192.168.80.0/24` — not
+  `in-interface=vlan80-media`, which the first playbook draft had
+  guessed (the interface name itself was real and correct, confirmed
+  live too — it's just used by a different, unrelated accept rule,
+  `*85`). Under the original logic this would have found no anchor,
+  taken an "append without `place-before`" fallback, and landed the
+  new accept rule *after* the deny in evaluation order — permanently
+  dead. Fixed to match the confirmed real field, fallback path removed
+  entirely, and the fix was validated offline against the real fetched
+  JSON (not just `--syntax-check`, which can't catch this class of
+  bug) before being trusted. A final order-check assertion was also
+  added, since rule *presence* was never actually the risk here — rule
+  *order* was.
 
 ## What's still genuinely operator-only (not step blocks — see plan.md)
 
@@ -217,9 +238,10 @@ sequence.
 
 ## Next step
 
-All 9 file-authoring steps are done and committed. Everything left is
-in `plan.md`'s Operator-only actions list (13 items) — start with #1
-(confirm media_seg's real MikroTik anchor rule), then work through
-`terragrunt apply`, the MikroTik rule, `provision.sh`, and the manual
-post-deploy steps (WireGuard credentials, disabling built-in auth,
-Jellyseerr's setup wizard) in order.
+All 9 file-authoring steps are done and committed. Operator-only
+action #1 is also done (see above). Everything left is `plan.md`'s
+Operator-only actions #2–13 — `terragrunt plan` on `pve-test-vm` for
+the network policy change, then applying the (now-verified) MikroTik
+rule, `terragrunt apply` + `provision.sh` for the stack itself, and the
+manual post-deploy steps (WireGuard credentials, disabling built-in
+auth, Jellyseerr's setup wizard) in order.
