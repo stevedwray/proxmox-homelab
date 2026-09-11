@@ -119,10 +119,26 @@
       ansible.builtin.command:
         cmd: docker compose down
         chdir: "{{ torrent_stack_lab_dir }}"
-      when:
+      when: &torrent_stack_lab_network_stale
         - not ansible_check_mode
         - torrent_stack_lab_network_info.exists
         - torrent_stack_lab_network_info.network.IPAM.Config | selectattr('Subnet', 'equalto', qbittorrent_trusted_subnet) | list | length == 0
+
+    # Real bug found the same day: an earlier failed attempt at this fix
+    # (force:true on community.docker.docker_network, since reverted --
+    # see the comment above) left a network that Docker Compose itself
+    # doesn't consider it owns (missing the com.docker.compose.network
+    # label), so `docker compose down` skips removing it and the next
+    # `up -d` refuses to attach to it at all ("exists but was not
+    # created by compose"). All containers are already stopped by the
+    # `down` above, so removing the network directly here is safe --
+    # nothing is attached to reconfigure gateways under.
+    - name: Remove the stale network directly if compose didn't own it
+      community.docker.docker_network:
+        name: "{{ stack_name }}_default"
+        state: absent
+      failed_when: false
+      when: *torrent_stack_lab_network_stale
 
     - name: Start torrent-stack-lab via docker compose
       ansible.builtin.command:
