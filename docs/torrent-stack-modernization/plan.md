@@ -241,7 +241,10 @@ portainer_stacks:
 # mount points are root@pam-only on Proxmox, same restriction
 # media-stack-lab's host_bind_mounts already documents). mp0 reuses the
 # SAME host path media-stack-lab already has mounted on pve
-# (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- no new NFS
+# (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- backup=0
+# here, same reasoning as mp1 below: media-stack-lab's own container
+# already backs up this content, a second container re-backing up the
+# identical NFS-mounted tree would be redundant. No new NFS
 # setup needed on the pve host, just a second bind-mount-point pointing
 # at the same already-mounted directory. mp1's host_path
 # (/storage/ct-100/incoming) is legacy torrent-stack's own real
@@ -259,7 +262,7 @@ portainer_stacks:
 # 100's own backup=1 on the same directory -- one backup job covering
 # it (legacy's) is enough; a second container backing up the identical
 # 1TB tree would be redundant. Apply both via direct root SSH `pct set
-# 80011 -mp0 /mnt/nas-media,mp=/nas-media -mp1
+# 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1
 # /storage/ct-100/incoming,mp=/incoming,backup=0` (operator-only, see
 # plan.md "Operator-only actions"), then confirm live via
 # `pvesh get /nodes/pve/lxc/80011/config`.
@@ -467,7 +470,12 @@ change: >
   Dependencies: none at platform level; runtime dependency on the same
   NAS NFS export media-stack-lab already mounts (192.168.1.3, flat
   LAN, via the shared /mnt/nas-media host bind mount) and on Authentik
-  for forwardAuth once edge.yaml is live -- plus a real, load-bearing
+  for forwardAuth once edge.yaml is live -- five of the six routes
+  (qbittorrent, prowlarr, radarr, sonarr, lidarr); jellyseerr
+  deliberately has no edge-level auth dependency at all (auth.mode:
+  none, operator decision 2026-09-12 -- it gates itself via its own
+  "Sign in with Jellyfin" instead, so household members without a full
+  Authentik account can still use it) -- plus a real, load-bearing
   dependency on legacy torrent-stack's own local /incoming storage
   (shared, not owned by this stack; see torrent-lab-01a). Persistent
   State: 7 named Docker volumes owned by this stack alone
@@ -615,13 +623,28 @@ change: >
   url pointing at http://${LAB_IP_TORRENT_STACK_LAB}:<port> (8080 for
   qbittorrent since it's published via gluetun on that port; 9696,
   7878, 8989, 8686, 5055 for the others), dns.enabled true with
-  target ${LAB_IP_PROXY} and ttl 5m, tls.resolver letsencrypt, and
-  auth.mode: forwardAuth (not oidc -- none of these six apps support
-  native SSO, matching the edge-manifest doc's own guidance that
-  forwardAuth is for "services that don't have their own auth but need
-  user gating"). Do not add a repo.auth.oidc.client_id_env/
-  client_secret_env annotation to metadata -- that pattern is only for
-  auth.mode: oidc routes, which none of these are.
+  target ${LAB_IP_PROXY} and ttl 5m, tls.resolver letsencrypt. Five of
+  the six (qbittorrent, prowlarr, radarr, sonarr, lidarr) get
+  auth.mode: forwardAuth -- none of them support native SSO, matching
+  the edge-manifest doc's own guidance that forwardAuth is for
+  "services that don't have their own auth but need user gating," and
+  these are single-operator admin tools where one shared gate is
+  correct. jellyseerr is the deliberate exception: auth.mode: none
+  (operator decision 2026-09-12) -- it's a household-facing request
+  portal, not an admin tool, and forwardAuth would require every
+  household member to already hold a full Authentik lab account just
+  to reach Jellyseerr's own login screen, blocking anyone who only has
+  a Jellyfin account. Jellyseerr's own built-in "Sign in with Jellyfin"
+  login becomes the real gate instead -- same posture
+  media-stack-lab/edge.yaml already gives Jellyfin and Immich
+  themselves (auth.mode: oidc there, not forwardAuth, precisely
+  because those apps also handle their own per-user identity rather
+  than sitting behind a blanket admin gate). Do not add a
+  repo.auth.oidc.client_id_env/client_secret_env annotation to
+  metadata -- that pattern is only for auth.mode: oidc routes, and
+  none of these six routes use oidc (jellyseerr uses none, not oidc,
+  despite also being household-facing -- it has no native OIDC client
+  of its own, only "sign in with Jellyfin").
 
 scope:
   allowed_paths:
@@ -629,11 +652,16 @@ scope:
   forbidden_actions:
     - "Any change outside this one file"
     - "Adding an auth.mode: oidc route for any of these six services"
+    - "Adding auth.mode: forwardAuth to the jellyseerr route"
 
 gates:
   - id: edge-manifest-validate
     cmd: "terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/torrent-stack-lab/edge.yaml"
     expect: "exit 0, no validation errors"
+    critical: true
+  - id: jellyseerr-auth-mode
+    cmd: "grep -A6 'name: jellyseerr' terraform/lxc/stacks/torrent-stack-lab/edge.yaml | grep -c 'mode: none'"
+    expect: "1 (jellyseerr uses auth.mode: none, not forwardAuth)"
     critical: true
 ```
 
@@ -767,7 +795,7 @@ them are safe or possible for an unsupervised local-model step.
    placement, not just that the apply succeeded.
 
 4. **`terragrunt apply`** (creates the `torrent-stack-lab` LXC) and
-   **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media -mp1
+   **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1
    /storage/ct-100/incoming,mp=/incoming,backup=0`** (both root@pam-only
    bind mounts from `torrent-lab-02`'s `stack.yaml` comment — the
    `/incoming` path confirmed live 2026-09-12, see
@@ -802,18 +830,26 @@ them are safe or possible for an unsupervised local-model step.
 9. **Wire Jellyseerr's Jellyfin/Radarr/Sonarr connections** via its
    own setup wizard (API keys, not IaC) — genuinely a one-time UI
    step, matching the `STACK_CONTRACT.md`'s note that this isn't
-   templated into the compose file.
+   templated into the compose file. This is also where Jellyseerr's
+   own auth actually gets configured — since it has `auth.mode: none`
+   at the edge (operator decision 2026-09-12), its own "Sign in with
+   Jellyfin" setup during this wizard IS the real access control, not
+   an afterthought. Set a real admin account here; don't leave it on
+   whatever the setup wizard defaults to.
 
 10. **Disable each arr app's and qBittorrent's built-in web-UI auth**
     (Settings → General → Authentication → None) once forwardAuth is
     confirmed working end-to-end for that app — avoids double-login,
     same as the superseded plan correctly called out. Leave API-key
-    auth in place for intra-stack calls. **qBittorrent specifically**
-    also needs its own Host-header allowlist updated (WebUI → Options
-    → Web UI) to accept requests arriving as
-    `qbittorrent.${LAB_DOMAIN}` — its WebUI rejects requests with an
-    unrecognized Host header by default, which otherwise looks
-    indistinguishable from a broken forwardAuth setup.
+    auth in place for intra-stack calls. **This does NOT apply to
+    Jellyseerr** — its own auth is the only gate it has (`auth.mode:
+    none` at the edge), so its built-in login must stay enabled, not
+    be disabled. **qBittorrent specifically** also needs its own
+    Host-header allowlist updated (WebUI → Options → Web UI) to accept
+    requests arriving as `qbittorrent.${LAB_DOMAIN}` — its WebUI
+    rejects requests with an unrecognized Host header by default,
+    which otherwise looks indistinguishable from a broken forwardAuth
+    setup.
 
 11. **Watch for the real risk of sharing `/incoming` between two live
     qBittorrent instances** (legacy's and torrent-stack-lab's,

@@ -47,6 +47,9 @@ them silently"):
 | Content migration | **None needed** — not a decision so much as a corrected fact | Operator clarified 2026-09-12: legacy torrent-stack already uploads finished downloads directly into the real movies/TV NAS content, not a separate copy. An earlier draft of this plan (and a line in `docs/plan/pve-migration-inventory.md`) treated `/nas-media/...` and `/nas/...` as two different libraries needing a migration step — that was wrong for planning purposes; trust the operator's live knowledge over that doc |
 | `/incoming` staging | **Share it** between legacy torrent-stack and torrent-stack-lab, for now | Operator: it's a separate local (non-NAS) filesystem mount on legacy, not something to recreate empty — reuse the same one. Real concurrency risk accepted as a temporary state, not a long-term design (see plan.md's Operator-only actions) |
 | lidarr image | Switch to **official `lscr.io/linuxserver/lidarr`** | Live stack's `blampe/lidarr` fork was a stopgap for old official-image lag; no longer needed |
+| Jellyseerr auth | **`auth.mode: none`** at the edge, not `forwardAuth` | Caught while re-reviewing the plan before execution: Jellyseerr is the one household-facing piece of this stack, not an admin tool. forwardAuth would require every household member to hold a full Authentik lab account just to see Jellyseerr's own login screen — its own "Sign in with Jellyfin" becomes the real gate instead, same posture `media-stack-lab/edge.yaml` already gives Jellyfin/Immich themselves |
+| VPN provider | **Still ProtonVPN**, gluetun env vars unchanged from legacy | Operator confirmed 2026-09-12 — no compose change needed |
+| Image tag pinning | Pin to whatever the **current** stable version is **at execution time**, not the 2026-09-12 research snapshot | Operator: don't carry forward legacy's floating-tag habit, but also don't trust a plan-time snapshot that'll already be stale by the time it's actually run (this is exactly what happened to the Jellyseerr tag found during research) |
 
 ## Real findings from research
 
@@ -126,10 +129,15 @@ them silently"):
   `authentik@file` middleware, which is what the old dead plan used) is
   this repo's current mechanism for exactly this class of service —
   see `docs/provisioning-refactor/edge-manifest-v1alpha1.md`. None of
-  qbittorrent/prowlarr/radarr/sonarr/lidarr/jellyseerr have native SSO,
-  so all six get `forwardAuth` routes in `edge.yaml`; `flaresolverr`
-  gets no route at all (internal-only, called by prowlarr over the
-  Docker bridge), matching the old plan's one correct call here. One
+  qbittorrent/prowlarr/radarr/sonarr/lidarr have native SSO, so those
+  five get `forwardAuth` routes in `edge.yaml`. **Jellyseerr is the
+  deliberate exception** — `auth.mode: none`, caught on a pre-execution
+  re-review (see the decisions table): it's the one household-facing
+  piece of this stack, and forwardAuth would gate it behind a full
+  Authentik lab account before anyone could even see its own login
+  screen, defeating the point of adding it. `flaresolverr` gets no
+  route at all (internal-only, called by prowlarr over the Docker
+  bridge), matching the old plan's one correct call here. One
   real qBittorrent-specific gotcha found while answering the operator's
   client-choice question: its WebUI has its own Host-header allowlist
   that will reject requests proxied through `qbittorrent.${LAB_DOMAIN}`
