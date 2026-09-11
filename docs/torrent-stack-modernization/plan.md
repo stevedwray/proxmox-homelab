@@ -48,26 +48,28 @@ change: >
   torrent-stack-lab (arr suite + gluetun + jellyseerr) service IPv4
   (media_seg VLAN 80); fresh install alongside legacy torrent-stack
   (192.168.1.5, flat LAN, unaffected), see
-  docs/torrent-stack-modernization/plan.md`. Add the matching
-  placeholder line to .env.template in the same relative position
-  (after its LAB_IP_MEDIA_STACK_LAB line): `export
-  LAB_IP_TORRENT_STACK_LAB='192.168.80.11'`. Do not add this to
-  .env.pve, .env.pve-framework, or any other per-node file — this is
-  the same non-secret-config pattern LAB_IP_MEDIA_STACK_LAB already
-  uses.
+  docs/torrent-stack-modernization/plan.md`. Do NOT add this to
+  .env.template -- CORRECTED during execution 2026-09-12: the
+  original draft of this step assumed .env.template mirrors every
+  LAB_IP_* var, modeled on LAB_IP_MEDIA_STACK_LAB, but checking the
+  actual file found that's false -- none of the last 5 app-tier
+  stacks added (media-stack-lab, pentagi-stack, greenbone-stack,
+  mcp-utility-stack, secpipe-stack) have their IP in .env.template,
+  only in .env. Follow the real, repeated convention, not the
+  incorrect plan-time assumption. Also do not add this to .env.pve,
+  .env.pve-framework, or any secrets.*.enc.yaml file.
 
 scope:
   allowed_paths:
     - .env
-    - .env.template
   forbidden_actions:
-    - "Any change outside these two files"
-    - "Adding this to .env.pve, .env.pve-framework, or any secrets.*.enc.yaml file"
+    - "Any change outside this one file"
+    - "Adding this to .env.template, .env.pve, .env.pve-framework, or any secrets.*.enc.yaml file"
 
 gates:
   - id: line-present
-    cmd: "grep -c 'LAB_IP_TORRENT_STACK_LAB=.192.168.80.11.' .env .env.template"
-    expect: "1 for each file"
+    cmd: "grep -c 'LAB_IP_TORRENT_STACK_LAB=.192.168.80.11.' .env"
+    expect: "1"
     critical: true
 ```
 
@@ -179,11 +181,24 @@ scope:
     - "Running terragrunt plan/apply — validation only in this step"
 
 gates:
-  - id: metadata-validate
-    cmd: "terraform/lxc/validate-stack-metadata.sh"
-    expect: "exit 0, no errors reported for torrent-stack-lab"
+  - id: yaml-syntax-valid
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/torrent-stack-lab/stack.yaml'))\""
+    expect: "exit 0"
     critical: true
 ```
+
+**Gate note (found during execution 2026-09-12):** the originally
+written gate, `terraform/lxc/validate-stack-metadata.sh`, only checks
+a small hardcoded `ACTIVE_STACKS` tuple inside
+`validate-stack-metadata.py` itself -- there is no flag to validate an
+arbitrary stack. Checked before trusting a clean run: none of the last
+several "-lab"/app-tier stacks (`media-stack-lab`, `gaming-stack-lab`,
+`greenbone-stack`, `pentagi-stack`, `secpipe-stack`, ...) are in that
+list either, so running it would have silently validated nothing for
+`torrent-stack-lab` while still reporting "passed." Following that
+same established precedent (none of those were added to the list),
+`torrent-stack-lab` isn't added either -- replaced with a real YAML
+syntax check instead.
 
 Literal content for `terraform/lxc/stacks/torrent-stack-lab/stack.yaml`:
 
@@ -440,6 +455,23 @@ gates:
     critical: true
 ```
 
+**DONE, 2026-09-12.** All 3 gates passed. Tags verified against each
+registry's raw tag API directly (curl + JSON parsing, not a
+paraphrased summary -- an earlier paraphrase-based lookup during
+research had wrongly picked prowlarr `2.6.3`, which the raw data shows
+is not actually a stable/promoted tag): gluetun `v3.41.3`, qbittorrent
+`5.2.3_v2.0.14-ls475`, flaresolverr `v3.5.0`, prowlarr
+`2.5.2.5491-ls159`, radarr `6.3.0.10514-ls315`, sonarr
+`4.0.19.2979-ls323`, lidarr `3.1.0.4875-ls41`. **Real discrepancy
+found and worth recording**: Jellyseerr's GitHub releases page shows
+`v3.4.1` as latest, but pulling the complete raw tag list from both
+Docker Hub and GHCR directly shows neither registry has ever published
+a container image past `2.7.3` -- pinned to `2.7.3`, the actual latest
+pullable tag, not the source release number. `qbittorrent-config` etc.
+volumes and the `/incoming`/`/nas-media/...` bind mounts match
+`torrent-lab-02`'s `host_bind_mounts` and this step's own
+`compose_requirements` exactly.
+
 ---
 
 ### torrent-lab-04-contract
@@ -506,11 +538,13 @@ scope:
     - "Any change outside this one file"
 
 gates:
-  - id: contract-sections
-    cmd: "terraform/lxc/validate-stack-metadata.sh --check-contract-sections"
-    expect: "exit 0, no missing-section errors for torrent-stack-lab"
+  - id: required-sections-present
+    cmd: "grep -c '^## Provides$\\|^## Dependencies$' terraform/lxc/stacks/torrent-stack-lab/STACK_CONTRACT.md"
+    expect: "2 (same ACTIVE_STACKS limitation as torrent-lab-02 -- validate-stack-metadata.sh's --check-contract-sections wouldn't check this file either, confirmed by running it)"
     critical: true
 ```
+
+**DONE, 2026-09-12.**
 
 ---
 
@@ -597,10 +631,14 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml"
-    expect: "exit 0"
+    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-torrent-stack-lab.yml"
+    expect: "exit 0 (must run from terraform/lxc/ansible/ -- its own ansible.cfg sets roles_path=roles; running from repo root fails with role 'lxc_base' not found, confirmed during execution 2026-09-12)"
     critical: true
 ```
+
+**DONE, 2026-09-12.** Gate passed once run from the correct directory
+(the plan's original gate command, run from repo root, was itself
+wrong -- corrected above).
 
 ---
 
@@ -656,14 +694,19 @@ scope:
 
 gates:
   - id: edge-manifest-validate
-    cmd: "terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/torrent-stack-lab/edge.yaml"
-    expect: "exit 0, no validation errors"
+    cmd: "set -a && source .env && set +a && python3 terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/torrent-stack-lab/edge.yaml"
+    expect: "exit 0, no validation errors (must source .env first -- the validator resolves ${LAB_DOMAIN} etc. from the real environment, not as a literal string; confirmed during execution 2026-09-12 by seeing media-stack-lab's own edge.yaml fail identically without it)"
     critical: true
   - id: jellyseerr-auth-mode
-    cmd: "grep -A6 'name: jellyseerr' terraform/lxc/stacks/torrent-stack-lab/edge.yaml | grep -c 'mode: none'"
+    cmd: "grep -A13 'name: jellyseerr' terraform/lxc/stacks/torrent-stack-lab/edge.yaml | grep -c 'mode: none'"
     expect: "1 (jellyseerr uses auth.mode: none, not forwardAuth)"
     critical: true
 ```
+
+**DONE, 2026-09-12.** Both gates passed once `.env` was sourced first
+(cross-checked against `media-stack-lab`'s own `edge.yaml`, which fails
+the exact same way unsourced — a real, general requirement of this
+validator, not specific to this file).
 
 ---
 
@@ -713,7 +756,16 @@ gates:
     cmd: "grep -c '51820' terraform/lxc/network/pve.yaml"
     expect: "1"
     critical: true
+  - id: yaml-syntax-valid
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
 ```
+
+**DONE, 2026-09-12.** All gates passed; `git diff` reviewed directly
+and confirmed purely additive (2 new lines: the containers-list entry
+and the two new policy blocks; zero lines changed or removed anywhere
+else in the file).
 
 ---
 
@@ -759,6 +811,20 @@ gates:
     expect: "exit 0"
     critical: true
 ```
+
+**DONE, 2026-09-12.** Gate passed. Real design decision made while
+authoring (not run live, per scope): unlike pentest_seg,
+`pve.yaml` never frames media_seg as a "contained" zone, so this
+playbook can't safely assume a forward-deny anchor exists the way the
+greenbone playbook could. It looks for one anyway (guessing the
+interface name `vlan80-media` from this repo's confirmed
+`vlan<N>-<zone>` convention — `vlan60-games`, `vlan50-ai`,
+`vlan70-pentest`, never verified for media_seg specifically) and falls
+back to adding the rule with no `place-before` constraint if none is
+found, reporting clearly which case happened rather than silently
+guessing. Operator-only action #1 still does the real live check
+first — this fallback is a safety net for an honestly uncertain case,
+not a substitute for it.
 
 ---
 
