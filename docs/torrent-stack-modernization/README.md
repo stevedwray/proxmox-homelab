@@ -1,13 +1,17 @@
 # torrent-stack-modernization (planning workspace)
 
-Status: **all 9 plan steps executed and committed
-(`task/torrent-stack-modernization-plan`, `7c876590`), MikroTik rule
-live.** `torrent-stack-lab`'s five IaC files (`stack.yaml`,
-`docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`,
-`edge.yaml`) plus its Ansible playbook and a new MikroTik firewall
-playbook all exist and pass every gate on a clean re-run. **The LXC
-itself is not deployed yet** — no `terragrunt apply`, no
-`provision.sh` — but the MikroTik WireGuard egress rule IS now live
+Status: **LXC created (VMID 80011, `pve`), MikroTik rule live, compose
+deploy failed once and is now fixed, not yet redeployed.**
+`torrent-stack-lab`'s five IaC files (`stack.yaml`, `docker-compose.yml`,
+`STACK_CONTRACT.md`, `terragrunt.hcl`, `edge.yaml`) plus its Ansible
+playbook and a new MikroTik firewall playbook all exist and pass every
+gate on a clean re-run. `terragrunt apply` succeeded cleanly (6 added,
+0 changed, 0 destroyed). `provision.sh` then failed on a real bug
+(`REGISTRY_HOST` never written into the compose `.env`, every image
+reference resolved blank) — fixed in the playbook, not yet re-run. The
+`pct set` bind mounts (`/nas-media`, `/incoming`) also haven't been set
+yet — needed before a redeploy can actually work end-to-end. The
+MikroTik WireGuard egress rule IS live
 and independently verified. Research and operator decisions were made
 across several passes 2026-09-12 (network/scope/migration/image/
 client/auth decisions — see the table below); execution then found and

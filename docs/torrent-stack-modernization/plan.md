@@ -914,20 +914,39 @@ them are safe or possible for an unsupervised local-model step.
    121 — correctly placed, confirmed by actual rule order, not just
    presence.
 
-4. **`terragrunt apply`** (creates the `torrent-stack-lab` LXC) and
-   **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1
-   /storage/ct-100/incoming,mp=/incoming,backup=0`** (both root@pam-only
-   bind mounts from `torrent-lab-02`'s `stack.yaml` comment — the
-   `/incoming` path confirmed live 2026-09-12, see
-   `torrent-lab-01a`) — both against `pve` directly under the normal
-   production approval flow (`./with-secrets-prod`), per this being an
-   Ansible/app-level stack, not a structural/high-blast-radius change.
-   `pct` itself isn't installed on the workstation — this needs to run
-   on `pve` (SSH) or via the equivalent Proxmox API call, the same
-   substitution `torrent-lab-01a` needed.
+4. ~~`terragrunt apply`~~ — **DONE, 2026-09-12.** Operator ran it
+   directly (this session's own attempt was blocked by the Claude Code
+   harness's auto-mode classifier, same as `torrent-lab-09`'s MikroTik
+   playbook). `Apply complete! Resources: 6 added, 0 changed, 0
+   destroyed` — matches the pre-validated plan exactly. Confirmed live:
+   `container_id = 80011`, `ip_address = "192.168.80.11/24"`,
+   `zone = "media_seg"`, `target_node = "pve"`. **`pct set 80011 -mp0
+   /mnt/nas-media,mp=/nas-media,backup=0 -mp1
+   /storage/ct-100/incoming,mp=/incoming,backup=0` (the bind mounts)
+   was NOT yet run** — the operator went straight to `provision.sh`
+   (item 5) instead, which failed before the mounts would have mattered
+   (see below). Still needed before a real deploy can succeed
+   end-to-end: `pct` isn't installed on the workstation, run via `ssh
+   root@pve pct set ...` or the equivalent Proxmox API call.
 
-5. **`./with-secrets-prod scripts/provision.sh --stack
-   torrent-stack-lab`** to actually deploy — same approval flow.
+5. ~~`./with-secrets-prod scripts/provision.sh --stack
+   torrent-stack-lab`~~ — **ATTEMPTED 2026-09-12, FAILED, real bug
+   found and fixed, not yet re-run.** Failed at "Start torrent-stack-lab
+   via docker compose" with `invalid reference format` on every image
+   — `REGISTRY_HOST` was never written into the stack's `.env` file, so
+   every `${REGISTRY_HOST}/...` reference resolved to a blank host
+   (leading slash, no host). Root cause: Ansible's `command` module
+   doesn't inherit the control machine's environment when running over
+   SSH to a remote LXC — `docker_registry_host` was already computed as
+   a playbook variable but never actually written where Docker Compose
+   reads it (its own project `.env`). Fixed in
+   `terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml`
+   (added the missing line, matching `media-stack-lab`'s immich `.env`
+   task, which does this correctly — its jellyfin one has the identical
+   gap, flagged to the operator separately, not fixed here, unrelated
+   stack). `terragrunt apply` (item 4) was unaffected by this failure —
+   it completed first and stayed applied. Re-run needed, after the bind
+   mounts (item 4) are actually set.
 
 6. **Generate or export a ProtonVPN WireGuard config and place it** at
    `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` on the
