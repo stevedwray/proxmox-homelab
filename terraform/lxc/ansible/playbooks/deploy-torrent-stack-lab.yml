@@ -95,16 +95,34 @@
     # Compose would otherwise get whatever subnet Docker's IPAM pool
     # happens to hand out next, which is exactly what bit us 2026-09-12
     # -- a hand-run qBittorrent auth-bypass fix silently broke on the
-    # next recreate because the "trusted" subnet had drifted. force:true
-    # only actually recreates the network if its live IPAM config
-    # doesn't already match docker-compose.yml's pinned subnet.
-    - name: Ensure the compose network exists with its pinned subnet
-      community.docker.docker_network:
+    # next recreate because the "trusted" subnet had drifted.
+    #
+    # Real bug found the same day fixing this properly: docker_network's
+    # force:true recreate (disconnect running containers, delete,
+    # recreate, reconnect) failed outright against this already-running
+    # stack -- "failed to set gateway while updating gateway: network is
+    # unreachable" on reconnect, almost certainly gluetun's own
+    # WireGuard routing state getting confused by a live network
+    # detach/reattach under it. A full `docker compose down` (stops and
+    # removes containers *and* the network compose owns, but never
+    # named volumes -- config/download state is untouched) followed by
+    # a normal `up -d` recreates everything cleanly instead of trying
+    # to perform surgery on a live network. Only actually happens when
+    # the subnet genuinely doesn't match -- a no-op on every other run.
+    - name: Check the compose network's current subnet
+      community.docker.docker_network_info:
         name: "{{ stack_name }}_default"
-        ipam_config:
-          - subnet: "{{ qbittorrent_trusted_subnet }}"
-        force: true
+      register: torrent_stack_lab_network_info
       when: not ansible_check_mode
+
+    - name: Recreate the whole stack if the network's subnet has drifted from the pinned value
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ torrent_stack_lab_dir }}"
+      when:
+        - not ansible_check_mode
+        - torrent_stack_lab_network_info.exists
+        - torrent_stack_lab_network_info.network.IPAM.Config | selectattr('Subnet', 'equalto', qbittorrent_trusted_subnet) | list | length == 0
 
     - name: Start torrent-stack-lab via docker compose
       ansible.builtin.command:
