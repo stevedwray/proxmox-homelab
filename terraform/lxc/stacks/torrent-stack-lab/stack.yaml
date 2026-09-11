@@ -57,6 +57,15 @@ portainer_stacks:
     # (copied from there), never triggered because its Portainer stacks
     # already exist -- flagged, not fixed here, separate stack.
     value: "${lab_domain}"
+  # Same "invalid reference format" failure mode as the Ansible-driven
+  # deploy path's own REGISTRY_HOST gap (see deploy-torrent-stack-lab.yml)
+  # but a genuinely separate instance of it: Portainer deploys this stack
+  # via its own stacks API using ONLY the env vars listed here, so every
+  # ${REGISTRY_HOST}/... image reference in docker-compose.yml resolves
+  # blank unless it's declared here too. Found live 2026-09-12 -- same
+  # root cause pattern, different code path, needed its own fix.
+  - name: REGISTRY_HOST
+    value: "${lab_fqdn_harbor}"
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction
