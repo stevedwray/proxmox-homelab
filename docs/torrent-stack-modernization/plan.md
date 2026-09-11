@@ -254,18 +254,32 @@ portainer_stacks:
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction
-# media-stack-lab's host_bind_mounts already documents). mp0 reuses the
-# SAME host path media-stack-lab already has mounted on pve
-# (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- backup=0
-# here, same reasoning as mp1 below: media-stack-lab's own container
-# already backs up this content, a second container re-backing up the
-# identical NFS-mounted tree would be redundant. No new NFS
-# setup needed on the pve host, just a second bind-mount-point pointing
-# at the same already-mounted directory. mp1's host_path
+# media-stack-lab's host_bind_mounts already documents).
+#
+# CORRECTED 2026-09-12 after a real live mistake: these MUST be applied
+# starting at mp1, never mp0. mp0 is Terraform's OWN docker_storage_size
+# mount_point resource (the provider assigns it index 0 automatically,
+# confirmed live on media-stack-lab: mp0 is its 30G /var/lib/docker
+# volume, its own host_bind_mounts start at mp1). A first attempt here
+# used `pct set 80011 -mp0 ...` for the first bind mount, which
+# silently OVERWROTE Terraform's docker-storage mount_point instead of
+# adding a new one -- Docker's storage then ran on the container's
+# plain 8G rootfs instead of its own dedicated 20G volume, and
+# `docker compose up -d` failed partway through pulling 8 images (very
+# likely disk space exhaustion). Container was destroyed and recreated
+# clean after this was found; do not repeat the mistake.
+#
+# mp1 reuses the SAME host path media-stack-lab already has mounted on
+# pve (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) --
+# backup=0, same reasoning as mp2 below: media-stack-lab's own
+# container already backs up this content, a second container
+# re-backing up the identical NFS-mounted tree would be redundant. No
+# new NFS setup needed on the pve host, just a bind-mount-point
+# pointing at the same already-mounted directory. mp2's host_path
 # (/storage/ct-100/incoming) is legacy torrent-stack's own real
-# /incoming storage, confirmed live 2026-09-12 via
-# `pct config 100` on pve (mp2: "/storage/ct-100/incoming,mp=/incoming,
-# backup=1,size=1T") -- a plain host directory (BIND mount), not a
+# /incoming storage, confirmed live 2026-09-12 via `pct config 100` on
+# pve (mp2 there: "/storage/ct-100/incoming,mp=/incoming,backup=1,
+# size=1T") -- a plain host directory (BIND mount), not a
 # Proxmox-managed volume, so it's safe to add as a second mp elsewhere;
 # contrast VMID 100's own mp0
 # ("apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"),
@@ -277,10 +291,11 @@ portainer_stacks:
 # 100's own backup=1 on the same directory -- one backup job covering
 # it (legacy's) is enough; a second container backing up the identical
 # 1TB tree would be redundant. Apply both via direct root SSH `pct set
-# 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1
+# 80011 -mp1 /mnt/nas-media,mp=/nas-media,backup=0 -mp2
 # /storage/ct-100/incoming,mp=/incoming,backup=0` (operator-only, see
-# plan.md "Operator-only actions"), then confirm live via
-# `pvesh get /nodes/pve/lxc/80011/config`.
+# plan.md "Operator-only actions") -- NEVER -mp0 -- then confirm live
+# via `pvesh get /nodes/pve/lxc/80011/config` that mp0 is still the
+# docker-storage volume and mp1/mp2 are the two bind mounts.
 host_bind_mounts:
 - host_path: /mnt/nas-media
   lxc_path: /nas-media
@@ -914,39 +929,52 @@ them are safe or possible for an unsupervised local-model step.
    121 — correctly placed, confirmed by actual rule order, not just
    presence.
 
-4. ~~`terragrunt apply`~~ — **DONE, 2026-09-12.** Operator ran it
-   directly (this session's own attempt was blocked by the Claude Code
-   harness's auto-mode classifier, same as `torrent-lab-09`'s MikroTik
-   playbook). `Apply complete! Resources: 6 added, 0 changed, 0
-   destroyed` — matches the pre-validated plan exactly. Confirmed live:
-   `container_id = 80011`, `ip_address = "192.168.80.11/24"`,
-   `zone = "media_seg"`, `target_node = "pve"`. **`pct set 80011 -mp0
-   /mnt/nas-media,mp=/nas-media,backup=0 -mp1
-   /storage/ct-100/incoming,mp=/incoming,backup=0` (the bind mounts)
-   was NOT yet run** — the operator went straight to `provision.sh`
-   (item 5) instead, which failed before the mounts would have mattered
-   (see below). Still needed before a real deploy can succeed
-   end-to-end: `pct` isn't installed on the workstation, run via `ssh
-   root@pve pct set ...` or the equivalent Proxmox API call.
+4. ~~`terragrunt apply`~~ — **DONE once, then corrected, 2026-09-12.**
+   First run: operator ran it directly (this session's own attempt was
+   blocked by the Claude Code harness's auto-mode classifier, same as
+   `torrent-lab-09`'s MikroTik playbook). `Apply complete! Resources: 6
+   added, 0 changed, 0 destroyed` — matched the pre-validated plan
+   exactly (`container_id = 80011`, `ip_address = "192.168.80.11/24"`,
+   `zone = "media_seg"`, `target_node = "pve"`). **A real mistake then
+   corrupted this container**: the bind-mount command given for item 5
+   below used `-mp0` for the first bind mount, which silently
+   overwrote Terraform's own docker-storage `mount_point` (the provider
+   assigns it index 0 automatically — confirmed by comparing against
+   `media-stack-lab`'s live config, where `mp0` is its 30G
+   `/var/lib/docker` volume and its own bind mounts start at `mp1`).
+   Docker's storage silently ran on the container's plain 8G rootfs
+   instead of its own 20G volume, which is almost certainly why the
+   next step's `docker compose up -d` died partway through pulling 8
+   images. **Fix: destroy and recreate the container clean** (operator
+   approved — nothing of value existed on it, no deploy had ever
+   succeeded), then re-run `terragrunt apply` and set the bind mounts
+   again correctly, starting at `mp1` this time (see `stack.yaml`'s
+   corrected comment). `pct set 80011 -mp1
+   /mnt/nas-media,mp=/nas-media,backup=0 -mp2
+   /storage/ct-100/incoming,mp=/incoming,backup=0` — never `-mp0`.
 
 5. ~~`./with-secrets-prod scripts/provision.sh --stack
-   torrent-stack-lab`~~ — **ATTEMPTED 2026-09-12, FAILED, real bug
-   found and fixed, not yet re-run.** Failed at "Start torrent-stack-lab
-   via docker compose" with `invalid reference format` on every image
-   — `REGISTRY_HOST` was never written into the stack's `.env` file, so
-   every `${REGISTRY_HOST}/...` reference resolved to a blank host
-   (leading slash, no host). Root cause: Ansible's `command` module
-   doesn't inherit the control machine's environment when running over
-   SSH to a remote LXC — `docker_registry_host` was already computed as
-   a playbook variable but never actually written where Docker Compose
+   torrent-stack-lab`~~ — **ATTEMPTED twice 2026-09-12, both failed for
+   different real reasons, fixed, not yet re-run clean.** First
+   attempt failed at "Start torrent-stack-lab via docker compose" with
+   `invalid reference format` on every image — `REGISTRY_HOST` was
+   never written into the stack's `.env` file, so every
+   `${REGISTRY_HOST}/...` reference resolved to a blank host (leading
+   slash, no host). Root cause: Ansible's `command` module doesn't
+   inherit the control machine's environment when running over SSH to
+   a remote LXC — `docker_registry_host` was already computed as a
+   playbook variable but never actually written where Docker Compose
    reads it (its own project `.env`). Fixed in
    `terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml`
    (added the missing line, matching `media-stack-lab`'s immich `.env`
    task, which does this correctly — its jellyfin one has the identical
    gap, flagged to the operator separately, not fixed here, unrelated
-   stack). `terragrunt apply` (item 4) was unaffected by this failure —
-   it completed first and stayed applied. Re-run needed, after the bind
-   mounts (item 4) are actually set.
+   stack). Second attempt (after that fix) got past image resolution —
+   pulls actually started this time — but then failed again with `rc:
+   1` partway through pulling 8 images' worth of layers, almost
+   certainly the mp0 mount-point corruption from item 4 (8G rootfs
+   exhausted). Needs a clean re-run after item 4's destroy/recreate
+   and correct re-mount.
 
 6. **Generate or export a ProtonVPN WireGuard config and place it** at
    `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` on the

@@ -49,18 +49,32 @@ portainer_stacks:
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction
-# media-stack-lab's host_bind_mounts already documents). mp0 reuses the
-# SAME host path media-stack-lab already has mounted on pve
-# (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- backup=0
-# here, same reasoning as mp1 below: media-stack-lab's own container
-# already backs up this content, a second container re-backing up the
-# identical NFS-mounted tree would be redundant. No new NFS
-# setup needed on the pve host, just a second bind-mount-point pointing
-# at the same already-mounted directory. mp1's host_path
+# media-stack-lab's host_bind_mounts already documents).
+#
+# CORRECTED 2026-09-12 after a real live mistake: these MUST be applied
+# starting at mp1, never mp0. mp0 is Terraform's OWN docker_storage_size
+# mount_point resource (the provider assigns it index 0 automatically,
+# confirmed live on media-stack-lab: mp0 is its 30G /var/lib/docker
+# volume, its own host_bind_mounts start at mp1). A first attempt here
+# used `pct set 80011 -mp0 ...` for the first bind mount, which
+# silently OVERWROTE Terraform's docker-storage mount_point instead of
+# adding a new one -- Docker's storage then ran on the container's
+# plain 8G rootfs instead of its own dedicated 20G volume, and
+# `docker compose up -d` failed partway through pulling 8 images (very
+# likely disk space exhaustion). Container was destroyed and recreated
+# clean after this was found; do not repeat the mistake.
+#
+# mp1 reuses the SAME host path media-stack-lab already has mounted on
+# pve (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) --
+# backup=0, same reasoning as mp2 below: media-stack-lab's own
+# container already backs up this content, a second container
+# re-backing up the identical NFS-mounted tree would be redundant. No
+# new NFS setup needed on the pve host, just a bind-mount-point
+# pointing at the same already-mounted directory. mp2's host_path
 # (/storage/ct-100/incoming) is legacy torrent-stack's own real
-# /incoming storage, confirmed live 2026-09-12 via
-# `pct config 100` on pve (mp2: "/storage/ct-100/incoming,mp=/incoming,
-# backup=1,size=1T") -- a plain host directory (BIND mount), not a
+# /incoming storage, confirmed live 2026-09-12 via `pct config 100` on
+# pve (mp2 there: "/storage/ct-100/incoming,mp=/incoming,backup=1,
+# size=1T") -- a plain host directory (BIND mount), not a
 # Proxmox-managed volume, so it's safe to add as a second mp elsewhere;
 # contrast VMID 100's own mp0
 # ("apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"),
@@ -72,10 +86,11 @@ portainer_stacks:
 # 100's own backup=1 on the same directory -- one backup job covering
 # it (legacy's) is enough; a second container backing up the identical
 # 1TB tree would be redundant. Apply both via direct root SSH `pct set
-# 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1
+# 80011 -mp1 /mnt/nas-media,mp=/nas-media,backup=0 -mp2
 # /storage/ct-100/incoming,mp=/incoming,backup=0` (operator-only, see
-# plan.md "Operator-only actions"), then confirm live via
-# `pvesh get /nodes/pve/lxc/80011/config`.
+# plan.md "Operator-only actions") -- NEVER -mp0 -- then confirm live
+# via `pvesh get /nodes/pve/lxc/80011/config` that mp0 is still the
+# docker-storage volume and mp1/mp2 are the two bind mounts.
 host_bind_mounts:
 - host_path: /mnt/nas-media
   lxc_path: /nas-media
