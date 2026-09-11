@@ -13,6 +13,16 @@
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
 
   roles:
+    # gluetun needs /dev/net/tun, which does not exist in a fresh LXC by
+    # default -- real gap found via live deploy 2026-09-12 ("error
+    # gathering device information while adding custom device
+    # \"/dev/net/tun\": no such file or directory"). This role already
+    # existed (terraform/lxc/ansible/roles/lxc_tun_device) but was never
+    # wired into any playbook -- it adds the same two lxc.conf lines
+    # legacy torrent-stack's own live config already has
+    # (lxc.cgroup2.devices.allow, lxc.mount.entry), idempotently, with a
+    # stop/start cycle. Must run before docker_base/the compose deploy.
+    - lxc_tun_device
     - lxc_base
     - docker_base
     - portainer_agent
