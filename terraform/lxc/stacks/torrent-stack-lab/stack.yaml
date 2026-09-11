@@ -45,7 +45,18 @@ portainer_stacks:
   compose_file: docker-compose.yml
   env:
   - name: LAB_DOMAIN
-    value: "$${lab_domain}"
+    # Single dollar, not Terraform's $${...} escape -- this field is never
+    # touched by Terraform (confirmed: portainer_stacks doesn't appear
+    # anywhere in the .tf files), it's read directly by provision.sh's
+    # own resolve_placeholders() as plain YAML, which only understands
+    # ${...}. A $${...} value here leaves a stray leading "$" in the
+    # resolved output (its regex matches just the inner ${lab_domain}),
+    # producing a broken value like "$lab.gibbsgreatly.xyz" -- caught
+    # live 2026-09-12 via a real "invalid reference format" deploy
+    # failure. media-stack-lab's stack.yaml has the identical latent bug
+    # (copied from there), never triggered because its Portainer stacks
+    # already exist -- flagged, not fixed here, separate stack.
+    value: "${lab_domain}"
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction
