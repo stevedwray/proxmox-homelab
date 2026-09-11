@@ -9,9 +9,13 @@ also caught a real mount-path bug in the first compose draft), then a
 qBittorrent-vs-alternatives question answered inline. `torrent-lab-01a`
 has since run for real against `pve` (approved production read) and
 confirmed `/incoming`'s real host path — see Confirmed facts below.
-`plan.md`'s remaining file-authoring steps are ready for local-model
-execution (`.github/prompts/implement-step.prompt.md`), per
-`docs/agent-design/README.md`.
+**Execution decision (2026-09-12): this session drives the remaining
+steps directly, not via local-model handoff**
+(`implement-step.prompt.md`) — the operator judged this stack complex
+enough, with enough real ways to go wrong, to keep a frontier model on
+it end to end. The `plan.md` step shape is kept anyway for the
+discipline (literal edits, real gates), just executed here instead of
+handed off.
 
 ## Why this workspace exists
 

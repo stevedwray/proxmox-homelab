@@ -20,11 +20,17 @@ both stacks for now (operator request, 2026-09-12). The legacy stack
 otherwise keeps running untouched until an explicit, separate cutover
 decision — this plan does not schedule or assume one.
 
-Steps follow `docs/agent-design/step-packet-schema.md`. Each fenced
-YAML block is unconditionally local-model work — do exactly what
-`change` says, touch only `scope.allowed_paths`, run every gate, stop.
-Genuinely operator-only actions are plain prose below, not step
-blocks — see "Operator-only actions" at the end.
+Steps follow `docs/agent-design/step-packet-schema.md`'s shape (`id`/
+`change`/`scope`/`gates`) for the discipline it forces — a literal,
+git-diffable edit and an unambiguous pass/fail gate per step — but
+**execution here is direct, not handed off to a local model via
+`implement-step`** (operator decision, 2026-09-12: this stack is
+complex enough, with enough real ways to go wrong, to keep a frontier
+model driving it end to end). Each step still: does exactly what
+`change` says, touches only `scope.allowed_paths`, runs every gate,
+and gets a result recorded before moving to the next one. Genuinely
+operator-only actions are plain prose below, not step blocks — see
+"Operator-only actions" at the end.
 
 ---
 
