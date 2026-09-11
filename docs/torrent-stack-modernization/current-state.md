@@ -48,6 +48,23 @@ manual UI steps, or judgment calls):
    all return `302` to Authentik's `/application/o/authorize/` flow;
    jellyseerr returns `307` to its own `/setup`, no Authentik redirect
    — exactly the intended split.
+0a. ~~DNS records for the 6 new hostnames were never pushed to the
+    live Technitium server~~ — **found and fixed, 2026-09-12.** Same
+    two-step shape as item 0: `reconcile-edge.py` only renders DNS
+    records into a local file
+    (`terraform/lxc/environments/pve/.generated/technitium/zone-records.json`);
+    the live push only happens when `technitium-stack` itself is
+    (re)provisioned. Found via operator report ("qbittorrent...has no
+    DNS") + confirmed with a direct `dig` against Technitium
+    (192.168.20.15) returning authoritative NXDOMAIN. Fixed by running
+    `./with-secrets-prod scripts/provision.sh --stack
+    technitium-stack` (`ok=120, changed=5, failed=0`, smoke test
+    passed). Verified after: all 6 hostnames
+    (qbittorrent/prowlarr/radarr/sonarr/lidarr/jellyseerr) now resolve
+    to `192.168.30.10`; existing records (jellyfin, immich, etc.)
+    unaffected — no regression. Real HTTPS requests through the actual
+    hostnames (no `--resolve` override needed anymore) confirm the
+    full DNS→Traefik→Authentik path end-to-end.
 1. ~~Confirm NAS NFS allowlist covers `192.168.80.11`~~ — **DONE,
    confirmed by operator 2026-09-12**: `192.168.80.11` added to the
    NAS's media share allowlist directly on the NAS (ADM), not via any
