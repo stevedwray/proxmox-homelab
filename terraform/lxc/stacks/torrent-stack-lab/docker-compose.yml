@@ -142,3 +142,19 @@ volumes:
   sonarr-config:
   lidarr-config:
   jellyseerr-config:
+
+networks:
+  default:
+    # Pinned rather than left to Docker's auto-assigned pool -- the
+    # deploy playbook whitelists this exact subnet in qBittorrent's own
+    # WebUI (WebUI\AuthSubnetWhitelist) so radarr/sonarr/lidarr can reach
+    # its API with no password, the same "trusted internal source"
+    # pattern as Radarr's own "Disabled for Local Addresses". An
+    # auto-assigned subnet would silently drift on a future teardown/
+    # recreate (Docker picks the next free pool slot at creation time,
+    # not a fixed value) and quietly break that trust relationship --
+    # found the hard way 2026-09-12 when a hand-run fix was written
+    # against whatever subnet happened to be live at the time.
+    ipam:
+      config:
+        - subnet: 172.30.80.0/24

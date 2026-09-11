@@ -11,6 +11,13 @@
     # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
     # docs/harbor-stack/image-sourcing-enforcement.md.
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    # Must match docker-compose.yml's networks.default.ipam.config.subnet
+    # exactly -- this is what qBittorrent's own WebUI is told to trust
+    # with no login, so radarr/sonarr/lidarr can reach it as a download
+    # client without ever needing a real password (same idea as Radarr's
+    # own "Disabled for Local Addresses" setting).
+    qbittorrent_trusted_subnet: "172.30.80.0/24"
+    qbittorrent_conf_path: "/var/lib/docker/volumes/{{ stack_name }}_qbittorrent-config/_data/qBittorrent/qBittorrent.conf"
 
   roles:
     # gluetun needs /dev/net/tun, which does not exist in a fresh LXC by
@@ -85,12 +92,70 @@
       changed_when: false
       when: not ansible_check_mode
 
+    # Compose would otherwise get whatever subnet Docker's IPAM pool
+    # happens to hand out next, which is exactly what bit us 2026-09-12
+    # -- a hand-run qBittorrent auth-bypass fix silently broke on the
+    # next recreate because the "trusted" subnet had drifted. force:true
+    # only actually recreates the network if its live IPAM config
+    # doesn't already match docker-compose.yml's pinned subnet.
+    - name: Ensure the compose network exists with its pinned subnet
+      community.docker.docker_network:
+        name: "{{ stack_name }}_default"
+        ipam_config:
+          - subnet: "{{ qbittorrent_trusted_subnet }}"
+        force: true
+      when: not ansible_check_mode
+
     - name: Start torrent-stack-lab via docker compose
       ansible.builtin.command:
         cmd: docker compose up -d
         chdir: "{{ torrent_stack_lab_dir }}"
       register: torrent_stack_lab_compose_up
       changed_when: "'Started' in torrent_stack_lab_compose_up.stdout or 'Created' in torrent_stack_lab_compose_up.stdout"
+      when: not ansible_check_mode
+
+    # qBittorrent has no concept of "forwardAuth already gated this at
+    # the edge" -- without this, radarr/sonarr/lidarr would each need a
+    # real qBittorrent password wired into their own download-client
+    # config. Instead, trust requests from this stack's own internal
+    # compose network (only reachable from inside this LXC), the same
+    # "Disabled for Local Addresses" idea already used for the arr apps
+    # themselves. Must stop/start (not just edit-in-place) -- qBittorrent
+    # rewrites this file from memory on its own, so an edit made while
+    # it's running can get silently clobbered.
+    - name: Wait for qBittorrent to write its default config (first boot only)
+      ansible.builtin.wait_for:
+        path: "{{ qbittorrent_conf_path }}"
+        timeout: 60
+      when: not ansible_check_mode
+
+    - name: Stop qBittorrent before editing its WebUI trust config
+      ansible.builtin.command:
+        cmd: docker compose stop qbittorrent
+        chdir: "{{ torrent_stack_lab_dir }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Trust the compose network subnet in qBittorrent's WebUI (no password needed)
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\AuthSubnetWhitelist='
+        line: 'WebUI\AuthSubnetWhitelist={{ qbittorrent_trusted_subnet }}'
+      when: not ansible_check_mode
+
+    - name: Enable qBittorrent's subnet auth-bypass flag
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\AuthSubnetWhitelistEnabled='
+        line: 'WebUI\AuthSubnetWhitelistEnabled=true'
+        insertafter: '^\[Preferences\]$'
+      when: not ansible_check_mode
+
+    - name: Start qBittorrent back up with the trusted-subnet config applied
+      ansible.builtin.command:
+        cmd: docker compose start qbittorrent
+        chdir: "{{ torrent_stack_lab_dir }}"
+      changed_when: true
       when: not ansible_check_mode
 
     - name: Wait for qBittorrent (via gluetun) to accept TCP connections
