@@ -1,39 +1,32 @@
 # torrent-stack-modernization (planning workspace)
 
-Status: **LXC created (VMID 80011, `pve`), MikroTik rule live, compose
-deploy failed once and is now fixed, not yet redeployed.**
-`torrent-stack-lab`'s five IaC files (`stack.yaml`, `docker-compose.yml`,
-`STACK_CONTRACT.md`, `terragrunt.hcl`, `edge.yaml`) plus its Ansible
-playbook and a new MikroTik firewall playbook all exist and pass every
-gate on a clean re-run. `terragrunt apply` succeeded cleanly (6 added,
-0 changed, 0 destroyed). `provision.sh` then failed on a real bug
-(`REGISTRY_HOST` never written into the compose `.env`, every image
-reference resolved blank) — fixed in the playbook, not yet re-run. The
-`pct set` bind mounts (`/nas-media`, `/incoming`) also haven't been set
-yet — needed before a redeploy can actually work end-to-end. The
-MikroTik WireGuard egress rule IS live
-and independently verified. Research and operator decisions were made
-across several passes 2026-09-12 (network/scope/migration/image/
-client/auth decisions — see the table below); execution then found and
-fixed several more real gaps that only showed up when the plan's own
-gates were actually run, not just read — see "Real findings" below for
-the full list. **Operator-only actions #1, #2, and #3 are also done.**
-#1 (confirm media_seg's real MikroTik anchor) used this session's
-read-only MikroTik API access and caught a real bug in
-`torrent-lab-09`'s playbook before it was ever run for real. #2
-(`terragrunt plan` validation) was corrected first — `pve-test-vm` is
-deliberately kept powered down, reserved only for specific high-risk
-tests (operator correction, contradicting the Validation Tiers table's
-literal wording) — then run directly against `pve`: a clean 6-resource
-create plan for `torrent-stack-lab` itself, and a real (but confirmed
-pre-existing and unrelated) drift finding on `media-stack-lab` — see
-below. #3 (apply the MikroTik rule) — this session's own attempt was
-blocked by the Claude Code harness's own auto-mode classifier (a layer
-below this repo's approval flow), so the operator ran it directly;
-independently re-verified afterward with a fresh read-only GET, not
-just trusting the playbook's self-report — the rule is live and
-correctly ordered. Remaining work is `plan.md`'s Operator-only actions
-#4–13.
+Status: **`torrent-stack-lab` is deployed and running.** VMID 80011 on
+`pve`, all 8 containers up, `gluetun` healthy and routing through
+ProtonVPN, `qbittorrent` WebUI responding. Getting here took a real
+destroy/recreate cycle and five distinct live bugs found and fixed
+along the way (not five attempts at the same bug — five genuinely
+different root causes): a mount-index collision that silently
+corrupted Docker's storage volume, a missing `REGISTRY_HOST` env var,
+an unwired/never-tested `/dev/net/tun` device role that itself had a
+bug once actually run, Docker's file-vs-directory bind-mount behavior
+biting the WireGuard config mount, and a stale ProtonVPN peer config.
+See "Real findings" below for the full, honest account of each —
+deliberately not smoothed over, since the point of this record is that
+the *next* stack needing any of these same things (bind mounts +
+docker storage, a TUN device, a file-specific bind mount) won't hit
+them again.
+
+Operator-only actions #1–6 are now done (see below and `plan.md`).
+Remaining: #7–13 — NAS NFS allowlist, end-to-end validation (search →
+grab → download → import), Jellyseerr's setup wizard, disabling each
+app's built-in auth, watching the `/incoming`-sharing risk, and the
+arr apps' own "import existing library" pass. Also flagged, not yet
+decided: `at39.conf` (the WireGuard config currently in use) is a
+borrowed spare from legacy's own pool, not a dedicated peer for this
+stack — worth a decision, not resolved here. Separately, real
+pre-existing drift was found on `media-stack-lab` during validation
+(unrelated to this stack, not fixed here, operator's to look at
+separately) — see below.
 
 ## Why this workspace exists
 
@@ -252,6 +245,63 @@ silently worked around:
   caused by it. Real, separate finding worth flagging to the operator
   on its own — not something this task should fix or that blocks it.
 
+- **Five distinct real bugs found deploying for real, none of them
+  IaC/gate-catchable** — full blow-by-blow in `plan.md`'s Operator-only
+  actions #4–6, summarized here:
+  1. `pct set -mp0 ...` for the first bind mount silently overwrote
+     Terraform's own docker-storage `mount_point` (the provider assigns
+     it index 0 automatically — confirmed against `media-stack-lab`'s
+     live config, where `mp0` is its docker-storage volume and its own
+     bind mounts start at `mp1`). Docker's storage ran on the plain 8G
+     rootfs instead of its own 20G volume; the next pull died partway
+     through, almost certainly disk exhaustion. Fixed by destroying and
+     recreating the container clean (nothing of value existed on it)
+     and re-mounting starting at `mp1`. The destroy itself needed a
+     deliberate production safety gate overridden
+     (`network_sdn_allow_destroy` defaults `false` except for
+     `pve-test`) — verified first that the underlying playbook
+     independently checks for other LXCs on the shared bridge before
+     ever touching a VNet/zone, so overriding it was safe here.
+  2. `REGISTRY_HOST` was never written into the compose project's
+     `.env` — every `${REGISTRY_HOST}/...` image reference resolved
+     blank. Not a new mistake so much as an inherited one:
+     `media-stack-lab`'s own jellyfin deploy task has the identical
+     gap right now, live, un-triggered only because it hasn't needed a
+     from-scratch pull since gaining that compose reference.
+  3. `gluetun` needs `/dev/net/tun`, which doesn't exist in a fresh LXC
+     by default. A role for exactly this (`lxc_tun_device`) already
+     existed in this repo but had never been wired into any playbook —
+     and once actually run for the first time, had its own bug (a
+     `wait_for` task with no `delegate_to`, trying to run on the host
+     it had just stopped). Both fixed.
+  4. Docker's bind-mount behavior for a *missing file* (not directory)
+     source: it silently creates an empty directory there instead.
+     `gluetun`'s WireGuard config bind-mount hit exactly this — placing
+     the real file afterward wasn't enough, since the mount was already
+     resolved to a directory at container-create time; the two
+     containers sharing it had to be removed (not just restarted) and
+     recreated.
+  5. The first real WireGuard config tried (a spare from legacy's own
+     pool, ~1 year old) connected at the WireGuard layer but failed
+     gluetun's healthcheck in a tight retry loop; a much more recently
+     dated spare worked immediately — strongly suggesting the older
+     peer had simply gone stale on ProtonVPN's side, not a network
+     issue. **Not yet resolved**: the working config is a borrowed
+     spare, not a peer dedicated to this stack — a real decision for
+     the operator, not made here.
+
+  None of these are evidence that new-stack bring-up is unusually
+  fragile in this repo generally — `media-stack-lab`, Wazuh, and
+  Greenbone are all real, recent, successful cold-starts (an earlier
+  draft of this note wrongly implied otherwise, and was corrected).
+  What's actually true: this is the first stack needing raw LXC device
+  passthrough (`/dev/net/tun`), so `lxc_tun_device` had literally never
+  been exercised before regardless of how it looked on paper; the other
+  four were combinations of one real authoring mistake (the mount
+  index) and runtime specifics (Docker's own bind-mount semantics, a
+  VPN peer going stale) that no static gate in this repo could have
+  caught before an actual deploy attempt.
+
 ## What's still genuinely operator-only (not step blocks — see plan.md)
 
 `terragrunt apply` (creates the LXC), `scripts/provision.sh --stack
@@ -272,17 +322,29 @@ sequence.
 
 ## Next step
 
-All 9 file-authoring steps are done and committed. Operator-only
-actions #1, #2, and #3 are also done (see above) — the MikroTik rule
-is genuinely live. Everything left is `plan.md`'s Operator-only actions
-#4–13 — `terragrunt apply` + setting the two bind mounts (via API,
-`pct` isn't installed on the workstation) + `provision.sh` to actually
-stand up the LXC and deploy the stack (all production mutations
-against `pve` needing the Preflight → approval → `TASK_APPROVAL` flow,
-and likely the same harness classifier block #3 hit, so probably
-operator-run directly again), plus the manual post-deploy steps
-(WireGuard credentials, NAS allowlist, disabling built-in auth,
-Jellyseerr's setup wizard) in order. Separately, the `media-stack-lab`
-drift found during action #2 is real and worth the operator's
-attention at some point, but is unrelated to this stack and not
-blocking it.
+All 9 file-authoring steps and Operator-only actions #1–6 are done —
+`torrent-stack-lab` is deployed and running. Remaining, in
+`plan.md`'s Operator-only actions:
+
+- #7: add `192.168.80.11` to the NAS's NFS allowlist (may already be
+  covered via the shared `/mnt/nas-media` mount — confirm, don't
+  assume)
+- #8: real end-to-end validation (search → grab → download → import →
+  visible on the NAS)
+- #9: Jellyseerr's setup wizard (also where its own auth — its "Sign
+  in with Jellyfin" — actually gets configured, since it has no
+  edge-level gate)
+- #10: disable each arr app's and qBittorrent's built-in auth once
+  forwardAuth is confirmed working, plus qBittorrent's Host-header
+  allowlist
+- #11: watch for the accepted `/incoming`-sharing risk with legacy's
+  own qBittorrent
+- #12: each arr app's own "import existing library" pass
+- #13: cutover/decommission of legacy — explicitly a separate, later,
+  operator-initiated decision
+
+Also unresolved, not blocking: whether `at39.conf` (borrowed from
+legacy's spare pool) should stay as-is or be replaced with a peer
+dedicated to this stack. Separately, real pre-existing drift on
+`media-stack-lab` (found during action #2) is worth the operator's own
+attention at some point — unrelated to this stack, not fixed here.

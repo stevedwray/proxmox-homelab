@@ -989,13 +989,55 @@ them are safe or possible for an unsupervised local-model step.
    pulls actually started this time — but then failed again with `rc:
    1` partway through pulling 8 images' worth of layers, almost
    certainly the mp0 mount-point corruption from item 4 (8G rootfs
-   exhausted). Item 4's destroy/recreate and correct re-mount are now
-   done and independently verified — ready for a clean third attempt.
+   exhausted). Third attempt, after item 4's destroy/recreate: got all
+   the way to `docker compose up -d` succeeding, but failed at "Wait
+   for qBittorrent to accept TCP connections" — `gluetun` couldn't
+   start (`/dev/net/tun` missing, see the `torrent-lab-06` fix below).
+   Fourth attempt, after adding `lxc_tun_device`: succeeded. **DONE,
+   2026-09-12.** All 8 containers confirmed up, `gluetun` healthy
+   (after also resolving item 6's WireGuard issues), `qbittorrent`
+   WebUI responding (`401`, expected).
 
-6. **Generate or export a ProtonVPN WireGuard config and place it** at
-   `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` on the
-   new LXC, then restart the `gluetun` container. Never committed to
-   git or SOPS, same rule as the legacy stack's credentials.
+6. ~~Generate or export a ProtonVPN WireGuard config and place it~~ —
+   **DONE for validation, 2026-09-12, but see caveat.** Two real bugs
+   found and fixed along the way, neither an IaC/Ansible issue this
+   time — genuine runtime gotchas:
+   - **Docker's bind-mount file-vs-directory behavior**: the compose
+     file bind-mounts a specific *file*
+     (`.../wireguard/wg0.conf:/run/secrets/wg0.conf:ro`). Since that
+     file didn't exist on the host when the container was first
+     created, Docker silently created an empty *directory* there
+     instead — gluetun logged `skipping Wireguard config: ... is a
+     directory` and failed outright (`endpoint IP is not set`).
+     Simply placing the real file afterward wasn't enough — the bind
+     mount was already resolved to a directory at container-create
+     time, so `gluetun`/`qbittorrent` had to be stopped and removed
+     (not just restarted) with `docker compose rm -f`, the stray
+     directory deleted, the real file placed, then recreated with
+     `docker compose up -d` for the mount to re-resolve correctly.
+   - **A stale ProtonVPN WireGuard peer**: the first real config tried
+     (`nz58.conf`, one of legacy torrent-stack's several spare
+     per-server configs, dated 2025-09-14) connected at the WireGuard
+     layer but failed gluetun's own healthcheck in a tight ~1s retry
+     loop (`TLS handshake: EOF`) — never resolved definitively, but a
+     much more recently-dated spare config (`at39.conf`, 2026-05-05)
+     worked immediately (`Public IP address is 91.132.139.9 (Austria)`,
+     port forwarding succeeded) on the first try, strongly suggesting
+     the older peer had simply gone stale/been revoked on ProtonVPN's
+     side, not a network/MTU issue. Legacy's own *active* config
+     (`nz20.conf`) was deliberately avoided to prevent two simultaneous
+     connections on the same peer identity (see the original caveat
+     below) — `at39.conf` was an unused spare, not legacy's live one.
+   - **Caveat, not yet resolved**: `at39.conf` is currently a *borrowed*
+     spare from legacy's own config pool, placed for validation, not a
+     dedicated peer allocated to `torrent-stack-lab` specifically.
+     Whether that's fine long-term or a genuinely separate ProtonVPN
+     peer should be generated for this stack is an operator decision,
+     not made here.
+   - Full stack confirmed healthy end-to-end after this: all 8
+     containers up, `gluetun` passing its healthcheck, `qbittorrent`
+     WebUI returning `401` (expected — up and enforcing login, not a
+     failure).
 
 7. **Add `192.168.80.11` to the NAS's NFS allowlist** for whichever
    share backs `/mnt/nas-media` (same ADM-side step
