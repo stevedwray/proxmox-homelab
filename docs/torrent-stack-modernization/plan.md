@@ -858,14 +858,42 @@ them are safe or possible for an unsupervised local-model step.
    was ever run for real; `torrent-lab-09`'s file is already fixed to
    match.
 
-2. **`terragrunt plan` on `pve-test-vm`** for the `torrent-lab-08`
-   `pve.yaml` policy change, confirming it shows only the two new
-   rules and zero changes/deletions to any existing resource (the
-   additive-only network tier in `CLAUDE.md`'s Validation Tiers table)
-   — then `scripts/provision.sh --stack media-stack-lab` on
-   `pve-test-vm` as the adjacent-zone regression check the same tier
-   row calls for, since media_seg's only other real tenant is
-   `media-stack-lab` itself.
+2. ~~`terragrunt plan` on `pve-test-vm` for the `torrent-lab-08`
+   `pve.yaml` policy change~~ — **CORRECTED and DONE, 2026-09-12.**
+   `pve-test-vm` turned out to be unreachable when this was attempted
+   (100% packet loss, not a transient blip) — operator clarified it's
+   deliberately kept powered down, reserved only for specific
+   high-risk structural tests, and real validation work happens
+   directly on `pve`. This contradicts the Validation Tiers table's
+   literal wording for the additive-network-tier row (which names
+   `pve-test-vm`), but matches `CLAUDE.md`'s own overriding instruction
+   elsewhere to trust real operational practice over a tier row's
+   literal defaults. Validated directly against `pve` instead, via
+   `./with-secrets-prod terragrunt plan --working-dir` (read-only,
+   allowed without approval per the Command Classification table):
+   - `torrent-stack-lab` itself: `Plan: 6 to add, 0 to change, 0 to
+     destroy` — a clean brand-new-stack plan (LXC, its network SDN
+     attachment, ansible inventory file, cleanup hook), touching
+     nothing existing.
+   - `media-stack-lab` (the only other real `media_seg` tenant, the
+     adjacent-zone regression check this tier calls for): showed
+     `2 to add, 0 to change, 1 to destroy` — NOT clean on first look.
+     Investigated before trusting either way: reverted `pve.yaml` to
+     its pre-`torrent-lab-08` content AND removed the
+     `torrent-stack-lab` directory entirely, re-ran the same plan, got
+     the *identical* result. This proves the drift
+     (`local_file.ansible_inventory` replacement over
+     `portainer_server_ip` resolving to a real value where it was
+     previously blank, plus a `stack_cleanup` null_resource wanting
+     recreation) is 100% pre-existing and unrelated to this work — not
+     something introduced by `torrent-lab-08`. Files restored to their
+     exact committed state afterward (`git diff HEAD` confirmed clean).
+     Real, separate finding worth the operator's attention on its own
+     time, not a blocker for this stack.
+   `scripts/provision.sh --stack media-stack-lab` (the second half of
+   this tier's regression check) was not run — it would actually apply
+   the drift above rather than just show it, and that's outside this
+   task's scope to decide.
 
 3. **Preflight summary → operator approval → run the MikroTik
    playbook** (or apply the rule via the router's own Safe Mode

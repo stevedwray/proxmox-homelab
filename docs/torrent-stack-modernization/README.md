@@ -12,12 +12,17 @@ several passes 2026-09-12 (network/scope/migration/image/client/auth
 decisions — see the table below); execution then found and fixed
 several more real gaps that only showed up when the plan's own gates
 were actually run, not just read — see "Real findings" below for the
-full list. **Operator-only action #1 (confirm media_seg's real
-MikroTik anchor) is also done** — this session has read-only API
-access to the MikroTik and used it, which invalidated and fixed a real
-bug in the first draft of `torrent-lab-09`'s playbook before it was
-ever run for real (see below). Remaining work is `plan.md`'s
-Operator-only actions #2–13.
+full list. **Operator-only actions #1 and #2 are also done.** #1
+(confirm media_seg's real MikroTik anchor) used this session's
+read-only MikroTik API access and caught a real bug in
+`torrent-lab-09`'s playbook before it was ever run for real. #2
+(`terragrunt plan` validation) was corrected first — `pve-test-vm` is
+deliberately kept powered down, reserved only for specific high-risk
+tests (operator correction, contradicting the Validation Tiers table's
+literal wording) — then run directly against `pve`: a clean 6-resource
+create plan for `torrent-stack-lab` itself, and a real (but confirmed
+pre-existing and unrelated) drift finding on `media-stack-lab` — see
+below. Remaining work is `plan.md`'s Operator-only actions #3–13.
 
 ## Why this workspace exists
 
@@ -217,6 +222,24 @@ silently worked around:
   bug) before being trusted. A final order-check assertion was also
   added, since rule *presence* was never actually the risk here — rule
   *order* was.
+- **`pve-test-vm` is not actually used for routine validation.**
+  `plan.md`'s Operator-only action #2 originally said to validate the
+  network policy change on `pve-test-vm`, following the Validation
+  Tiers table's literal wording for network/SDN changes. It's
+  unreachable (confirmed by 100% ping loss, not a fluke) — operator
+  clarified it's deliberately powered down, kept only for specific
+  high-risk structural tests, and real work happens on `pve` directly.
+  Validated there instead: `terragrunt plan` for `torrent-stack-lab`
+  came back clean (`6 to add, 0 to change, 0 to destroy`). The
+  adjacent-zone regression check (`media-stack-lab`) did NOT come back
+  clean on the first try — `2 to add, 0 to change, 1 to destroy`.
+  Investigated before trusting either conclusion: reverted `pve.yaml`
+  and removed the `torrent-stack-lab` directory entirely, re-ran the
+  identical plan, got the identical result — proving this drift
+  (`portainer_server_ip` resolving where it was previously blank, plus
+  a `stack_cleanup` recreate) predates this work entirely and isn't
+  caused by it. Real, separate finding worth flagging to the operator
+  on its own — not something this task should fix or that blocks it.
 
 ## What's still genuinely operator-only (not step blocks — see plan.md)
 
@@ -239,9 +262,12 @@ sequence.
 ## Next step
 
 All 9 file-authoring steps are done and committed. Operator-only
-action #1 is also done (see above). Everything left is `plan.md`'s
-Operator-only actions #2–13 — `terragrunt plan` on `pve-test-vm` for
-the network policy change, then applying the (now-verified) MikroTik
-rule, `terragrunt apply` + `provision.sh` for the stack itself, and the
-manual post-deploy steps (WireGuard credentials, disabling built-in
-auth, Jellyseerr's setup wizard) in order.
+actions #1 and #2 are also done (see above). Everything left is
+`plan.md`'s Operator-only actions #3–13 — all production mutations
+against `pve` (the MikroTik rule, `terragrunt apply`, `provision.sh`
+for the stack itself) needing the Preflight → approval → `TASK_APPROVAL`
+flow, plus the manual post-deploy steps (WireGuard credentials, NAS
+allowlist, disabling built-in auth, Jellyseerr's setup wizard) in
+order. Separately, the `media-stack-lab` drift found during action #2
+is real and worth the operator's attention at some point, but is
+unrelated to this stack and not blocking it.
