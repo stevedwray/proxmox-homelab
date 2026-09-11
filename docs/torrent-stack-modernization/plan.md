@@ -124,6 +124,28 @@ gates:
     critical: true
 ```
 
+**DONE, 2026-09-12.** Ran via `./with-secrets-prod` (approved,
+`TASK_APPROVAL=torrent-lab-01a-confirm-incoming-mount`) from the
+operator's workstation against the read-only Proxmox API (`pct`/`pvesh`
+aren't installed locally, so this used
+`GET /nodes/pve/lxc/100/config` directly instead — same read-only
+effect). Real finding: `mp2: "/storage/ct-100/incoming,mp=/incoming,
+backup=1,size=1T"` — a **BIND mount** (plain host directory), not a
+volume mount, confirmed safe to share. Contrast VMID 100's own `mp0`
+("apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"),
+which IS a storage-pool-backed volume — the exact case this step was
+designed to catch and stop on, and did not hit here. Also incidentally
+confirmed `mp1: "/mnt/nas-media-ct100,mp=/nas,backup=0"` — legacy's own
+NAS bind mount, under a different host directory name than
+media-stack-lab's `/mnt/nas-media` (doesn't change this plan's design,
+which already reuses media-stack-lab's own mount rather than legacy's).
+See README.md's "Real findings" for the full record.
+Note for the earlier "no LAN route" caveat above: that failure was
+specific to `pve-test-vm` being unreachable when this plan was first
+drafted (`./with-secrets` defaults there) — the operator's workstation
+does have a real route to `pve` itself, confirmed by this step
+actually running.
+
 ---
 
 ### torrent-lab-02-stack-yaml
@@ -138,12 +160,10 @@ change: >
   exactly the literal content below (transcribe verbatim — this
   schema is repo-specific, not a generic pattern; model the field
   shape on terraform/lxc/stacks/media-stack-lab/stack.yaml if anything
-  is ambiguous, but the values below are exact, not illustrative), with
-  one substitution: replace the second host_bind_mounts entry's
-  placeholder host_path with the real value torrent-lab-01a recorded in
-  this workspace's README.md. Do not leave the
-  "<CONFIRM VIA torrent-lab-01a...>" placeholder text in the committed
-  file.
+  is ambiguous, but the values below are exact, not illustrative).
+  torrent-lab-01a's live finding (2026-09-12, via `pct config 100` on
+  pve) is already folded in below -- /storage/ct-100/incoming is a
+  confirmed real BIND mount, not a placeholder.
 
 scope:
   allowed_paths:
@@ -156,10 +176,6 @@ gates:
   - id: metadata-validate
     cmd: "terraform/lxc/validate-stack-metadata.sh"
     expect: "exit 0, no errors reported for torrent-stack-lab"
-    critical: true
-  - id: no-unresolved-placeholder
-    cmd: "grep -c 'CONFIRM VIA' terraform/lxc/stacks/torrent-stack-lab/stack.yaml"
-    expect: "0 (the incoming host_path placeholder was replaced with torrent-lab-01a's real finding)"
     critical: true
 ```
 
@@ -221,21 +237,30 @@ portainer_stacks:
 # SAME host path media-stack-lab already has mounted on pve
 # (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- no new NFS
 # setup needed on the pve host, just a second bind-mount-point pointing
-# at the same already-mounted directory. mp1's host_path is
-# <CONFIRM VIA torrent-lab-01a> -- legacy torrent-stack's own local
-# /incoming storage, shared (not owned) so both stacks' qBittorrent
-# instances write to the same real directory, operator request
-# 2026-09-12; only add this entry once torrent-lab-01a's README.md
-# finding confirms it is a BIND mount, not a Proxmox-managed volume
-# mount (a volume cannot safely be double-mounted onto two containers
-# at once). Apply both via direct root SSH `pct set 80011 -mp0
-# /mnt/nas-media,mp=/nas-media -mp1 <confirmed-incoming-host-path>,mp=/incoming`
-# (operator-only, see plan.md "Operator-only actions"), then confirm
-# live via `pvesh get /nodes/pve/lxc/80011/config`.
+# at the same already-mounted directory. mp1's host_path
+# (/storage/ct-100/incoming) is legacy torrent-stack's own real
+# /incoming storage, confirmed live 2026-09-12 via
+# `pct config 100` on pve (mp2: "/storage/ct-100/incoming,mp=/incoming,
+# backup=1,size=1T") -- a plain host directory (BIND mount), not a
+# Proxmox-managed volume, so it's safe to add as a second mp elsewhere;
+# contrast VMID 100's own mp0
+# ("apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"),
+# which IS a storage-pool-backed volume and could NOT be safely
+# double-mounted this way. Shared (not owned) so both stacks'
+# qBittorrent instances write to the same real directory, operator
+# request 2026-09-12 -- see plan.md's Operator-only actions for the
+# accepted concurrency risk. backup=0 here deliberately, unlike VMID
+# 100's own backup=1 on the same directory -- one backup job covering
+# it (legacy's) is enough; a second container backing up the identical
+# 1TB tree would be redundant. Apply both via direct root SSH `pct set
+# 80011 -mp0 /mnt/nas-media,mp=/nas-media -mp1
+# /storage/ct-100/incoming,mp=/incoming,backup=0` (operator-only, see
+# plan.md "Operator-only actions"), then confirm live via
+# `pvesh get /nodes/pve/lxc/80011/config`.
 host_bind_mounts:
 - host_path: /mnt/nas-media
   lxc_path: /nas-media
-- host_path: "<CONFIRM VIA torrent-lab-01a -- legacy torrent-stack's /incoming host path>"
+- host_path: /storage/ct-100/incoming
   lxc_path: /incoming
 ```
 
@@ -737,11 +762,15 @@ them are safe or possible for an unsupervised local-model step.
 
 4. **`terragrunt apply`** (creates the `torrent-stack-lab` LXC) and
    **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media -mp1
-   <torrent-lab-01a's confirmed host path>,mp=/incoming`** (both
-   root@pam-only bind mounts from `torrent-lab-02`'s `stack.yaml`
-   comment) — both against `pve` directly under the normal production
-   approval flow (`./with-secrets-prod`), per this being an
+   /storage/ct-100/incoming,mp=/incoming,backup=0`** (both root@pam-only
+   bind mounts from `torrent-lab-02`'s `stack.yaml` comment — the
+   `/incoming` path confirmed live 2026-09-12, see
+   `torrent-lab-01a`) — both against `pve` directly under the normal
+   production approval flow (`./with-secrets-prod`), per this being an
    Ansible/app-level stack, not a structural/high-blast-radius change.
+   `pct` itself isn't installed on the workstation — this needs to run
+   on `pve` (SSH) or via the equivalent Proxmox API call, the same
+   substitution `torrent-lab-01a` needed.
 
 5. **`./with-secrets-prod scripts/provision.sh --stack
    torrent-stack-lab`** to actually deploy — same approval flow.

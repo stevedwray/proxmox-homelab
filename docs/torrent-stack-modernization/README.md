@@ -1,14 +1,17 @@
 # torrent-stack-modernization (planning workspace)
 
-Status: **plan written, nothing implemented yet.** Research + operator
-decisions complete 2026-09-12 across three passes: initial research and
+Status: **plan committed (`task/torrent-stack-modernization-plan`,
+`7d71022f`), first real step executed.** Research + operator decisions
+complete 2026-09-12 across three passes: initial research and
 network/scope/migration/image decisions, then a correction after the
 operator clarified the real NAS and `/incoming` mount behavior (this
 also caught a real mount-path bug in the first compose draft), then a
-qBittorrent-vs-alternatives question answered inline. `plan.md` has
-file-authoring steps ready for local-model execution
-(`.github/prompts/implement-step.prompt.md`), per
-`docs/agent-design/README.md`. No branch cut yet.
+qBittorrent-vs-alternatives question answered inline. `torrent-lab-01a`
+has since run for real against `pve` (approved production read) and
+confirmed `/incoming`'s real host path — see Confirmed facts below.
+`plan.md`'s remaining file-authoring steps are ready for local-model
+execution (`.github/prompts/implement-step.prompt.md`), per
+`docs/agent-design/README.md`.
 
 ## Why this workspace exists
 
@@ -69,21 +72,28 @@ them silently"):
   (on a different LXC, 192.168.80.11) has to happen at the Proxmox
   bind-mount level — same mechanism as `/mnt/nas-media`, just for local
   disk instead of NFS. This only works safely if legacy's `/incoming`
-  mount is a Proxmox **bind** mount (a plain host directory); if it
-  turns out to be a **volume** mount (a dedicated Proxmox-managed disk
-  attached to VMID 100), double-mounting it onto a second container
-  risks the same kind of corruption as mounting one block device in two
-  places — `torrent-lab-01a-confirm-incoming-mount` in `plan.md` checks
-  which case it is before anything commits to the shared-mount design,
-  and this research session had no live network path to actually check
-  it (see below).
-- **This planning session has no LAN route to `pve` or `pve-test-vm`
-  at all** — confirmed by a failed read-only Proxmox API call during
-  planning (`curl` returned "No route to host"), not assumed. Any step
-  needing real infrastructure facts (the `/incoming` mount type/path
-  being the concrete case here) has to run from an environment with
-  actual connectivity — the operator's own machine, or a normal
-  `./with-secrets-prod` session — not from this planning sandbox.
+  mount is a Proxmox **bind** mount (a plain host directory), not a
+  **volume** mount (a dedicated Proxmox-managed disk) — double-mounting
+  a volume onto a second container risks the same kind of corruption as
+  mounting one block device in two places.
+- **Confirmed facts (2026-09-12, `torrent-lab-01a`, run for real
+  against `pve`)**: legacy torrent-stack's `/incoming` is
+  `mp2: "/storage/ct-100/incoming,mp=/incoming,backup=1,size=1T"` — a
+  real **BIND mount** (plain host directory), safe to share. Contrast
+  its own `mp0`
+  (`"apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"`),
+  which IS a storage-pool-backed volume — the case this check existed
+  to catch, and didn't hit here. `stack.yaml` and the operator-only
+  `pct set` command in `plan.md` now use the real path directly. Also
+  found along the way: legacy's own NAS mount is
+  `mp1: "/mnt/nas-media-ct100,mp=/nas,backup=0"` — a differently-named
+  host directory than media-stack-lab's `/mnt/nas-media`, which doesn't
+  change this plan (it already reuses media-stack-lab's mount, not
+  legacy's). This also corrected an earlier finding in this file: the
+  planning session itself had no route to `pve-test-vm` (which
+  `./with-secrets` defaults to) when first drafted, which is not the
+  same thing as the operator's workstation lacking a route to `pve` —
+  it doesn't; this check ran from there successfully.
 - **`media_seg` already has almost everything this stack needs.**
   `pve.yaml`'s existing `media_seg → 192.168.1.3 tcp+udp/2049` NFS rule,
   `media_seg → mgmt_seg tcp/9443`, `media_seg → 192.168.20.14 tcp/514`
@@ -151,7 +161,8 @@ sequence.
 
 ## Next step
 
-Nothing executed yet. Start at `torrent-lab-01-env-ip` in `plan.md`,
-then `torrent-lab-01a-confirm-incoming-mount` (needs an environment
-with real network access to `pve` — this planning session doesn't
-have one).
+`torrent-lab-01a-confirm-incoming-mount` is done (see Confirmed facts
+above). Nothing else executed. Start at `torrent-lab-01-env-ip` in
+`plan.md`, then `torrent-lab-02-stack-yaml` onward — all file-authoring
+steps, no live infrastructure facts left to confirm before they can
+run.
