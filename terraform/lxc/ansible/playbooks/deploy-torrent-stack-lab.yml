@@ -136,6 +136,19 @@
       changed_when: true
       when: not ansible_check_mode
 
+    # One-time cleanup: an earlier hand-run sed command (2026-09-12,
+    # before this was moved into the playbook) botched its own insert
+    # and left ~40 duplicate garbage lines missing the required
+    # backslash (a key qBittorrent doesn't recognize and silently
+    # ignores, but junk in tracked-equivalent state regardless). Safe to
+    # run on every deploy -- absent on a clean file, no-op.
+    - name: Remove any stray malformed auth-bypass lines from a prior manual fix
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUIAuthSubnetWhitelistEnabled=true$'
+        state: absent
+      when: not ansible_check_mode
+
     - name: Trust the compose network subnet in qBittorrent's WebUI (no password needed)
       ansible.builtin.lineinfile:
         path: "{{ qbittorrent_conf_path }}"
