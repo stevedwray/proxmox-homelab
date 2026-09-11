@@ -895,14 +895,24 @@ them are safe or possible for an unsupervised local-model step.
    the drift above rather than just show it, and that's outside this
    task's scope to decide.
 
-3. **Preflight summary → operator approval → run the MikroTik
-   playbook** (or apply the rule via the router's own Safe Mode
-   console, the actual method used for every prior live MikroTik
-   change in this repo's history — see
-   `reference_routeros_safe_mode` memory on re-verifying after an
-   unclean disconnect) for the new `media_seg → internet udp/51820`
-   rule. Re-read `/ip/firewall/filter` in order afterward to confirm
-   placement, not just that the apply succeeded.
+3. ~~Preflight summary → operator approval → run the MikroTik
+   playbook~~ — **DONE, 2026-09-12.** Operator approved and ran
+   `./with-secrets ansible-playbook
+   ansible/00-initial-setup/mikrotik-firewall-media-seg-wireguard-egress.yml`
+   directly (this session's own attempt was blocked by the Claude Code
+   harness's auto-mode classifier — a layer below this repo's own
+   approval flow, not bypassable). Result: `ok=11, failed=0, skipped=0`
+   — every task ran including both order-check assertions, none
+   failed (`changed=0` is a known `ansible.builtin.uri` reporting quirk
+   — it doesn't auto-mark POSTs as changed — not evidence nothing
+   happened). Independently re-verified afterward with a fresh
+   read-only GET (not just trusting the playbook's own self-report):
+   the new rule (`*8E`) is live at position 120, matches every expected
+   field (`chain=forward, action=accept, protocol=udp,
+   src=192.168.80.0/24, dst=!192.168.0.0/16, dst-port=51820`), and sits
+   immediately before the `media_seg` default-deny (`*8A`) at position
+   121 — correctly placed, confirmed by actual rule order, not just
+   presence.
 
 4. **`terragrunt apply`** (creates the `torrent-stack-lab` LXC) and
    **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media,backup=0 -mp1

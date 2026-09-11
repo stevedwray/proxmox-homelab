@@ -1,19 +1,20 @@
 # torrent-stack-modernization (planning workspace)
 
 Status: **all 9 plan steps executed and committed
-(`task/torrent-stack-modernization-plan`, `7c876590`).**
-`torrent-stack-lab`'s five IaC files (`stack.yaml`, `docker-compose.yml`,
-`STACK_CONTRACT.md`, `terragrunt.hcl`, `edge.yaml`) plus its Ansible
-playbook and a new MikroTik firewall playbook all exist and pass every
-gate on a clean re-run. **Nothing is deployed** — no `terragrunt
-apply`, no `provision.sh`, no MikroTik rule actually applied against
-the live router. Research and operator decisions were made across
-several passes 2026-09-12 (network/scope/migration/image/client/auth
-decisions — see the table below); execution then found and fixed
-several more real gaps that only showed up when the plan's own gates
-were actually run, not just read — see "Real findings" below for the
-full list. **Operator-only actions #1 and #2 are also done.** #1
-(confirm media_seg's real MikroTik anchor) used this session's
+(`task/torrent-stack-modernization-plan`, `7c876590`), MikroTik rule
+live.** `torrent-stack-lab`'s five IaC files (`stack.yaml`,
+`docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`,
+`edge.yaml`) plus its Ansible playbook and a new MikroTik firewall
+playbook all exist and pass every gate on a clean re-run. **The LXC
+itself is not deployed yet** — no `terragrunt apply`, no
+`provision.sh` — but the MikroTik WireGuard egress rule IS now live
+and independently verified. Research and operator decisions were made
+across several passes 2026-09-12 (network/scope/migration/image/
+client/auth decisions — see the table below); execution then found and
+fixed several more real gaps that only showed up when the plan's own
+gates were actually run, not just read — see "Real findings" below for
+the full list. **Operator-only actions #1, #2, and #3 are also done.**
+#1 (confirm media_seg's real MikroTik anchor) used this session's
 read-only MikroTik API access and caught a real bug in
 `torrent-lab-09`'s playbook before it was ever run for real. #2
 (`terragrunt plan` validation) was corrected first — `pve-test-vm` is
@@ -22,7 +23,13 @@ tests (operator correction, contradicting the Validation Tiers table's
 literal wording) — then run directly against `pve`: a clean 6-resource
 create plan for `torrent-stack-lab` itself, and a real (but confirmed
 pre-existing and unrelated) drift finding on `media-stack-lab` — see
-below. Remaining work is `plan.md`'s Operator-only actions #3–13.
+below. #3 (apply the MikroTik rule) — this session's own attempt was
+blocked by the Claude Code harness's own auto-mode classifier (a layer
+below this repo's approval flow), so the operator ran it directly;
+independently re-verified afterward with a fresh read-only GET, not
+just trusting the playbook's self-report — the rule is live and
+correctly ordered. Remaining work is `plan.md`'s Operator-only actions
+#4–13.
 
 ## Why this workspace exists
 
@@ -262,12 +269,16 @@ sequence.
 ## Next step
 
 All 9 file-authoring steps are done and committed. Operator-only
-actions #1 and #2 are also done (see above). Everything left is
-`plan.md`'s Operator-only actions #3–13 — all production mutations
-against `pve` (the MikroTik rule, `terragrunt apply`, `provision.sh`
-for the stack itself) needing the Preflight → approval → `TASK_APPROVAL`
-flow, plus the manual post-deploy steps (WireGuard credentials, NAS
-allowlist, disabling built-in auth, Jellyseerr's setup wizard) in
-order. Separately, the `media-stack-lab` drift found during action #2
-is real and worth the operator's attention at some point, but is
-unrelated to this stack and not blocking it.
+actions #1, #2, and #3 are also done (see above) — the MikroTik rule
+is genuinely live. Everything left is `plan.md`'s Operator-only actions
+#4–13 — `terragrunt apply` + setting the two bind mounts (via API,
+`pct` isn't installed on the workstation) + `provision.sh` to actually
+stand up the LXC and deploy the stack (all production mutations
+against `pve` needing the Preflight → approval → `TASK_APPROVAL` flow,
+and likely the same harness classifier block #3 hit, so probably
+operator-run directly again), plus the manual post-deploy steps
+(WireGuard credentials, NAS allowlist, disabling built-in auth,
+Jellyseerr's setup wizard) in order. Separately, the `media-stack-lab`
+drift found during action #2 is real and worth the operator's
+attention at some point, but is unrelated to this stack and not
+blocking it.
