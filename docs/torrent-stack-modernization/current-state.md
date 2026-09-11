@@ -23,18 +23,36 @@ decision — no local-model handoff for this stack).
 | Containers | All 8 up: `gluetun` (healthy), `qbittorrent`, `prowlarr`, `radarr`, `sonarr`, `lidarr`, `flaresolverr`, `jellyseerr`, plus `portainer-agent` |
 | VPN | ProtonVPN via `gluetun`, WireGuard config is `at39.conf` — **a borrowed spare from legacy torrent-stack's own config pool, not a peer dedicated to this stack** (see Open decisions below) |
 | MikroTik | `media_seg → internet udp/51820` egress rule is live, independently verified (rule `*8E`, correctly ordered before the `*8A` default-deny) |
-| Auth | 5 routes (qbittorrent/prowlarr/radarr/sonarr/lidarr) declared `forwardAuth` in `edge.yaml`; jellyseerr declared `auth.mode: none` (household-facing, gates itself). **Not yet confirmed these routes are actually live via Traefik/DNS** — that's part of the still-open end-to-end validation below. |
+| Auth | **Confirmed NOT live, 2026-09-12** (real finding, not a guess): a scoped, non-mutating `reconcile-edge.py` dry-run against `pve` (targeted at just `torrent-stack-lab/edge.yaml`) shows the 5 `forwardAuth` routes (qbittorrent/prowlarr/radarr/sonarr/lidarr) all classified `"missing"` in Authentik ("application is missing, proxy provider is missing") — `provision.sh --stack torrent-stack-lab` (what actually deployed this stack) skips the edge-reconcile phase entirely in single-stack mode; that phase only runs on a full, no-`--stack` orchestration pass. No Traefik dynamic config file exists for this stack on `pve` yet either. `jellyseerr` (`auth.mode: none`) correctly shows `"matching"` — nothing needed there. |
 
 ## What's NOT done yet — in order
 
-These are `plan.md`'s Operator-only actions #7–13, all requiring you
-directly (production mutations, manual UI steps, or judgment calls):
+Item 0 is a new finding from this session (not in the original
+`plan.md` Operator-only list); the rest are `plan.md`'s Operator-only
+actions #7–13, all requiring you directly (production mutations,
+manual UI steps, or judgment calls):
 
+0. **Wire the 5 forwardAuth routes into Authentik + push Traefik
+   config** — blocks items 2 and 4 below (nothing to validate/disable
+   built-in auth against until this exists). Exact verified commands
+   (target/objects fully resolved, nothing left as a guess) are in the
+   chat handoff from 2026-09-12; short form: `./with-secrets-prod`
+   running `reconcile-edge.py --apply` scoped to just
+   `terraform/lxc/stacks/torrent-stack-lab/edge.yaml` (creates the 5
+   Authentik proxy-provider + application objects), then
+   `deploy-proxy-stack.yml` with `traefik_generated_source_dir`
+   pointed at `terraform/lxc/environments/pve/.generated/traefik` to
+   push the rendered config to the live Traefik container. Verify
+   after with a fresh dry-run of the same `reconcile-edge.py` command
+   (no `--apply`) — all 5 routes should flip from `"missing"` to
+   `"matching"`.
 1. **Confirm NAS NFS allowlist** covers `192.168.80.11` (may already be
    covered via the shared `/mnt/nas-media` mount — check, don't assume).
 2. **Real end-to-end validation**: search → grab → download → import →
    visible on the NAS. This also implicitly tests whether the
-   `edge.yaml` routes are actually reachable via Traefik.
+   `edge.yaml` routes are actually reachable via Traefik — now a real
+   test rather than a formality, since item 0 above confirmed they
+   weren't wired up yet.
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
