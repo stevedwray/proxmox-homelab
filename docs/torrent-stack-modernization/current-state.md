@@ -69,6 +69,29 @@ manual UI steps, or judgment calls):
 7. **Cutover/decommission of legacy `torrent-stack`** — explicitly a
    separate, later, operator-initiated decision. Not scheduled here.
 
+## Noted for future — operator confirmed 2026-09-12, not in scope now
+
+- **Wazuh agent should be added to torrent-stack-lab.** Not wired
+  today — the `wazuh_agent` role is opt-in per playbook (currently only
+  `proxy-stack`, `harbor-stack`, `apt-cacher-stack`, `technitium-stack`,
+  `authentik-stack`, `wazuh-stack` itself include it), and
+  `deploy-torrent-stack-lab.yml` doesn't. `media-stack-lab` has the
+  identical gap, so this isn't unique to this stack.
+- **GVM/Greenbone vulnerability scanning should be extended to cover
+  `media_seg`.** Operator's read: this is primarily a config change
+  against GVM itself (new zone Target(s) + Task(s)), not new IaC/Ansible
+  wiring on the torrent-stack-lab side. Real gap confirmed by checking
+  `docs/greenbone-stack/network-scan-rollout-plan.md`: its 6-zone
+  rollout covers `build_seg`, `mgmt_seg`, `edge_seg`, `infra_seg`,
+  `ai_seg`, `game_seg`, plus the flat LAN — `media_seg` (VLAN 80,
+  192.168.80.0/24) is absent from that list entirely. Nothing in
+  `media_seg` is scanned today, so this also covers `media-stack-lab`,
+  not just `torrent-stack-lab`.
+
+Both are real, deliberately deferred to a separate future task — not
+part of this modernization effort's scope, and not blocking anything
+in the "What's NOT done yet" list above.
+
 ## Open decisions — not blocking, but unresolved
 
 - **WireGuard peer**: keep `at39.conf` (borrowed from legacy's spare
