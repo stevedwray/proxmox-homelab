@@ -1,0 +1,807 @@
+# torrent-stack-modernization — plan
+
+Replaces legacy `torrent-stack` (VMID 100, flat LAN `192.168.1.5`,
+unauthenticated, untracked config) with a new `torrent-stack-lab`
+stack in `media_seg` (VLAN 80) — the same zone as `media-stack-lab`
+(Jellyfin/Immich) — behind Traefik + Authentik forwardAuth, on
+Harbor-proxied, version-pinned images, with Jellyseerr added for
+request integration with Jellyfin/Radarr/Sonarr. Fresh install for
+config: no arr database, quality profile, or qBittorrent setting is
+migrated from the live LXC (operator decision, see `README.md`) — the
+indexer/VPN config there hasn't been reliable and isn't worth carrying
+forward. No content migration is needed either, but for a different
+reason: the actual downloaded movies/TV already land on the same real
+NAS content the new stack will write to (operator-confirmed,
+2026-09-12 — see `README.md`), so there's nothing to copy. Two real
+pieces of legacy's storage ARE reused directly, not migrated: the NAS
+library path (`/nas-media/...`, already shared with `media-stack-lab`)
+and legacy's own local `/incoming` staging filesystem, shared between
+both stacks for now (operator request, 2026-09-12). The legacy stack
+otherwise keeps running untouched until an explicit, separate cutover
+decision — this plan does not schedule or assume one.
+
+Steps follow `docs/agent-design/step-packet-schema.md`. Each fenced
+YAML block is unconditionally local-model work — do exactly what
+`change` says, touch only `scope.allowed_paths`, run every gate, stop.
+Genuinely operator-only actions are plain prose below, not step
+blocks — see "Operator-only actions" at the end.
+
+---
+
+### torrent-lab-01-env-ip
+
+```yaml
+id: torrent-lab-01-env-ip
+title: Reserve the new stack's IP as a non-secret env var
+depends_on: []
+
+change: >
+  Add a new line to .env, immediately after the existing
+  LAB_IP_MEDIA_STACK_LAB line (currently line 98): `export
+  LAB_IP_TORRENT_STACK_LAB='192.168.80.11'                   #
+  torrent-stack-lab (arr suite + gluetun + jellyseerr) service IPv4
+  (media_seg VLAN 80); fresh install alongside legacy torrent-stack
+  (192.168.1.5, flat LAN, unaffected), see
+  docs/torrent-stack-modernization/plan.md`. Add the matching
+  placeholder line to .env.template in the same relative position
+  (after its LAB_IP_MEDIA_STACK_LAB line): `export
+  LAB_IP_TORRENT_STACK_LAB='192.168.80.11'`. Do not add this to
+  .env.pve, .env.pve-framework, or any other per-node file — this is
+  the same non-secret-config pattern LAB_IP_MEDIA_STACK_LAB already
+  uses.
+
+scope:
+  allowed_paths:
+    - .env
+    - .env.template
+  forbidden_actions:
+    - "Any change outside these two files"
+    - "Adding this to .env.pve, .env.pve-framework, or any secrets.*.enc.yaml file"
+
+gates:
+  - id: line-present
+    cmd: "grep -c 'LAB_IP_TORRENT_STACK_LAB=.192.168.80.11.' .env .env.template"
+    expect: "1 for each file"
+    critical: true
+```
+
+---
+
+### torrent-lab-01a-confirm-incoming-mount
+
+Operator request (2026-09-12): legacy torrent-stack's `/incoming` — a
+separate, local (non-NAS) filesystem mount, not part of its rootfs or
+docker storage — should be reused, shared between legacy torrent-stack
+and torrent-stack-lab, for now. This step finds the real host-side
+fact needed before `torrent-lab-02` can write a correct
+`host_bind_mounts` entry for it.
+
+```yaml
+id: torrent-lab-01a-confirm-incoming-mount
+title: Discover and record the real host path backing legacy torrent-stack's /incoming mount
+depends_on: [torrent-lab-01-env-ip]
+
+change: >
+  From a host with real network reachability to pve (this plan's own
+  authoring session had none at all -- a read-only Proxmox API check
+  failed with "No route to host" from the sandbox used to research and
+  write this plan, so this step cannot run from an isolated
+  environment; it needs the operator's own machine or a normal
+  ./with-secrets-prod session with real LAN access), run either `ssh
+  root@pve pct config 100` or `./with-secrets-prod pvesh get
+  /nodes/pve/lxc/100/config` (both read-only, pre-approved under
+  CLAUDE.md's Production Credential Controls -- pct/pvesh config reads
+  are not mutating) and find the mpN: line whose mp= value is
+  /incoming. Record two things into a new "Confirmed facts" bullet
+  under this workspace's README.md "Real findings" section: (1) the
+  exact mpN: line, and (2) which of two cases it is -- a BIND mount
+  (the storage field is a plain host directory path) or a VOLUME mount
+  (the storage field names a Proxmox storage pool, e.g.
+  "local-zfs:vm-100-disk-1"). This distinction matters: a bind mount's
+  host directory can safely be added as a second mp on
+  torrent-stack-lab directly (same trick media-stack-lab already uses
+  for /mnt/nas-media). A volume mount cannot be safely double-mounted
+  onto two containers at once -- same risk class as mounting one block
+  device in two places simultaneously -- and would need converting to
+  a bind mount (or re-exporting from the host) before it can be
+  shared. If this step finds a volume mount, record that finding, stop,
+  and flag it back to the operator rather than proceeding into
+  torrent-lab-02's host_bind_mounts content, which assumes a bind
+  mount.
+
+scope:
+  allowed_paths:
+    - docs/torrent-stack-modernization/README.md
+  forbidden_actions:
+    - "Any mutating pct or pvesh command -- read-only inspection only"
+    - "Editing any file other than this README"
+    - "Proceeding to add a host_bind_mounts entry anywhere if the finding is a volume mount, not a bind mount"
+
+gates:
+  - id: finding-recorded
+    cmd: "grep -c 'mp.*incoming\\|/incoming' docs/torrent-stack-modernization/README.md"
+    expect: "at least 1 (the real mpN: line and its bind-vs-volume classification are now recorded, not left as TBD)"
+    critical: true
+```
+
+---
+
+### torrent-lab-02-stack-yaml
+
+```yaml
+id: torrent-lab-02-stack-yaml
+title: Author torrent-stack-lab's stack.yaml
+depends_on: [torrent-lab-01-env-ip, torrent-lab-01a-confirm-incoming-mount]
+
+change: >
+  Create terraform/lxc/stacks/torrent-stack-lab/stack.yaml with
+  exactly the literal content below (transcribe verbatim — this
+  schema is repo-specific, not a generic pattern; model the field
+  shape on terraform/lxc/stacks/media-stack-lab/stack.yaml if anything
+  is ambiguous, but the values below are exact, not illustrative), with
+  one substitution: replace the second host_bind_mounts entry's
+  placeholder host_path with the real value torrent-lab-01a recorded in
+  this workspace's README.md. Do not leave the
+  "<CONFIRM VIA torrent-lab-01a...>" placeholder text in the committed
+  file.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/torrent-stack-lab/stack.yaml
+  forbidden_actions:
+    - "Any change outside this one file"
+    - "Running terragrunt plan/apply — validation only in this step"
+
+gates:
+  - id: metadata-validate
+    cmd: "terraform/lxc/validate-stack-metadata.sh"
+    expect: "exit 0, no errors reported for torrent-stack-lab"
+    critical: true
+  - id: no-unresolved-placeholder
+    cmd: "grep -c 'CONFIRM VIA' terraform/lxc/stacks/torrent-stack-lab/stack.yaml"
+    expect: "0 (the incoming host_path placeholder was replaced with torrent-lab-01a's real finding)"
+    critical: true
+```
+
+Literal content for `terraform/lxc/stacks/torrent-stack-lab/stack.yaml`:
+
+```yaml
+hostname: torrent-stack-lab
+ip_address: 192.168.80.11/24
+gateway: 192.168.80.1
+dns_server: 192.168.80.1
+network:
+  zone: media_seg
+vmid: 80011
+cores: 2
+memory: 4096
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 20G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+- docker
+- media
+- torrent
+depends_on: []
+provides:
+- service: qbittorrent
+  port: 8080
+  protocol: tcp
+- service: prowlarr
+  port: 9696
+  protocol: tcp
+- service: radarr
+  port: 7878
+  protocol: tcp
+- service: sonarr
+  port: 8989
+  protocol: tcp
+- service: lidarr
+  port: 8686
+  protocol: tcp
+- service: jellyseerr
+  port: 5055
+  protocol: tcp
+ansible_playbook: deploy-torrent-stack-lab
+deployment_tier: apps
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
+portainer_stacks:
+- name: torrent-stack-lab
+  compose_file: docker-compose.yml
+  env:
+  - name: LAB_DOMAIN
+    value: "$${lab_domain}"
+
+# Documentation/consistency only -- NOT applied by Terraform (bind-type
+# mount points are root@pam-only on Proxmox, same restriction
+# media-stack-lab's host_bind_mounts already documents). mp0 reuses the
+# SAME host path media-stack-lab already has mounted on pve
+# (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) -- no new NFS
+# setup needed on the pve host, just a second bind-mount-point pointing
+# at the same already-mounted directory. mp1's host_path is
+# <CONFIRM VIA torrent-lab-01a> -- legacy torrent-stack's own local
+# /incoming storage, shared (not owned) so both stacks' qBittorrent
+# instances write to the same real directory, operator request
+# 2026-09-12; only add this entry once torrent-lab-01a's README.md
+# finding confirms it is a BIND mount, not a Proxmox-managed volume
+# mount (a volume cannot safely be double-mounted onto two containers
+# at once). Apply both via direct root SSH `pct set 80011 -mp0
+# /mnt/nas-media,mp=/nas-media -mp1 <confirmed-incoming-host-path>,mp=/incoming`
+# (operator-only, see plan.md "Operator-only actions"), then confirm
+# live via `pvesh get /nodes/pve/lxc/80011/config`.
+host_bind_mounts:
+- host_path: /mnt/nas-media
+  lxc_path: /nas-media
+- host_path: "<CONFIRM VIA torrent-lab-01a -- legacy torrent-stack's /incoming host path>"
+  lxc_path: /incoming
+```
+
+---
+
+### torrent-lab-03-compose
+
+```yaml
+id: torrent-lab-03-compose
+title: Author torrent-stack-lab's docker-compose.yml
+depends_on: [torrent-lab-02-stack-yaml]
+
+change: >
+  Create terraform/lxc/stacks/torrent-stack-lab/docker-compose.yml
+  with 7 services: gluetun, qbittorrent, flaresolverr, prowlarr,
+  radarr, sonarr, lidarr, jellyseerr. Follow compose_requirements
+  below exactly; nothing in compose_forbidden. Every image reference
+  must resolve through Harbor's existing proxy-cache projects
+  (${REGISTRY_HOST}/dockerhub/..., ${REGISTRY_HOST}/ghcr/...,
+  ${REGISTRY_HOST}/lscr/...) as media-stack-lab's
+  jellyfin-docker-compose.yml already does for its own image -- never
+  a bare upstream registry reference.
+
+compose_requirements: |
+  - Top-level `name: torrent-stack-lab` (must match the Portainer
+    stack.yaml "name:" exactly, same reasoning documented in
+    media-stack-lab/jellyfin-docker-compose.yml's header comment).
+  - `gluetun`: image ${REGISTRY_HOST}/dockerhub/qmcgaw/gluetun,
+    pinned to a specific vX.Y.Z release tag (v3.41.3 was current as of
+    2026-09-12 research -- verify against
+    https://hub.docker.com/v2/repositories/qmcgaw/gluetun/tags before
+    using; never :latest or a pr-* tag). cap_add: [NET_ADMIN]. devices:
+    [/dev/net/tun]. environment: VPN_TYPE=wireguard,
+    VPN_SERVICE_PROVIDER=custom, VPN_PORT_FORWARDING=on,
+    VPN_PORT_FORWARDING_PROVIDER=protonvpn,
+    HEALTH_TARGET_ADDRESS=8.8.8.8, HEALTH_VPN_DURATION_INITIAL=10s,
+    DOT=off, DNS_PLAINTEXT_ADDRESS=1.1.1.1, TZ=Pacific/Auckland. Do
+    NOT use the deprecated DNS_ADDRESS/DNS_SERVER env vars the legacy
+    compose used. volumes: a named `gluetun-config` volume at
+    /gluetun, plus a bind mount
+    /opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf (host
+    path, placed manually -- see plan.md's Operator-only actions) to
+    /run/secrets/wg0.conf:ro. ports: "8080:8888" (qbittorrent WebUI,
+    published here because qbittorrent shares this container's network
+    namespace), "6881:6881/tcp", "6881:6881/udp". restart:
+    unless-stopped.
+  - `qbittorrent`: image ${REGISTRY_HOST}/lscr/linuxserver/qbittorrent,
+    pinned to a specific X.Y.Z_vA.B.C-lsNN build tag (5.2.3_v2.0.14-ls475
+    was current as of 2026-09-12 research -- verify against
+    https://hub.docker.com/v2/repositories/linuxserver/qbittorrent/tags
+    before using). container_name: torrent-stack-lab-qbittorrent.
+    network_mode: "service:gluetun". depends_on: [gluetun]. environment:
+    PUID=1000, PGID=1000, TZ=Pacific/Auckland, WEBUI_PORT=8888. volumes:
+    named `qbittorrent-config` volume at /config, plus
+    `/incoming:/downloads` (an LXC-local bind mount, NOT a Docker
+    named volume -- see torrent-lab-01a-confirm-incoming-mount and
+    torrent-lab-02-stack-yaml's host_bind_mounts entry for it).
+    `/incoming` is the operator's real, existing local-filesystem
+    staging directory that legacy torrent-stack's qBittorrent already
+    uses -- reused/shared between both stacks "for now" (operator
+    request, 2026-09-12), not a fresh empty directory this stack owns.
+    Do NOT also mount /nas-media into qbittorrent -- it never writes to
+    the library directly; radarr/sonarr/lidarr are the ones that import
+    (move) a finished download from the shared `/incoming` directory
+    into their own /nas-media/... mount, the same completed-download-
+    handling split legacy already used. No ports: or Traefik
+    labels here -- it shares gluetun's network namespace, matching the
+    documented gluetun/qbittorrent pattern already used by legacy
+    torrent-stack and media-stack-lab's own compose conventions.
+    restart: unless-stopped.
+  - `flaresolverr`: image
+    ${REGISTRY_HOST}/ghcr/flaresolverr/flaresolverr, pinned to a
+    specific vX.Y.Z release tag (v3.5.0 was current as of 2026-09-12
+    research -- verify against
+    https://github.com/FlareSolverr/FlareSolverr/releases before
+    using). environment: LOG_LEVEL=info, TZ=Pacific/Auckland. No
+    ports: published to the host and no Traefik labels -- internal
+    only, reached by prowlarr at http://flaresolverr:8191 over the
+    Compose default bridge network. restart: unless-stopped.
+  - `prowlarr`, `radarr`, `sonarr`, `lidarr`: each image
+    ${REGISTRY_HOST}/lscr/linuxserver/<app>, each pinned to a specific
+    non-nightly/non-develop version tag (2.6.3 / 6.3.0 / 4.0.19 / 3.1.0
+    respectively were current as of 2026-09-12 research -- verify each
+    against https://hub.docker.com/v2/repositories/linuxserver/<app>/tags
+    before using). Each: environment PUID=1000, PGID=1000,
+    TZ=Pacific/Auckland. Each has its own named config volume
+    (`prowlarr-config`, `radarr-config`, `sonarr-config`,
+    `lidarr-config`) at /config. **Mount the exact same NAS subpaths
+    media-stack-lab's Jellyfin already reads -- NOT the /nas-media root**
+    (media-stack-lab/jellyfin-docker-compose.yml only ever mounts the
+    specific subdirectory, never /nas-media itself; mounting the whole
+    tree would give each app read/write access to every other app's
+    library too). radarr mounts /nas-media/video/movies:/movies and
+    /nas-media/video/movies:/media/movies (dual path, matching legacy's
+    own convention); sonarr mounts /nas-media/video/tv:/tv and
+    /nas-media/video/tv:/media/tv; lidarr mounts /nas-media/music:/music
+    and /nas-media/music:/media/music. Operator-confirmed 2026-09-12:
+    legacy torrent-stack's own downloads already land in this same real
+    movies/tv NAS content, not a separate copy -- so no data migration
+    is needed here at all (a docs/plan/pve-migration-inventory.md line
+    describing "/nas-media/... and /nas/... as different NFS export
+    paths" apparently describes each LXC's own differently-named local
+    mount point, not two different libraries on the NAS side -- trust
+    the operator's live knowledge over that doc). radarr, sonarr, and
+    lidarr each also mount /incoming:/downloads (see the `incoming`
+    bullet under qbittorrent below -- an LXC-local bind mount, not a
+    Docker-managed volume, because it is shared host-filesystem storage
+    with legacy torrent-stack, not something this stack owns). prowlarr
+    has no library or downloads mount at all -- it only talks to the
+    other arr apps' and flaresolverr's HTTP APIs. Ports:
+    9696/7878/8989/8686 respectively, host-published (needed for
+    Traefik to reach them; see torrent-lab-07-edge). restart:
+    unless-stopped for all four.
+  - `jellyseerr`: image ${REGISTRY_HOST}/ghcr/fallenbagel/jellyseerr,
+    pinned to a specific vX.Y.Z release tag (v3.4.1 was the latest
+    GitHub release as of 2026-09-12 research -- verify against
+    https://github.com/Fallenbagel/jellyseerr/releases before using;
+    do not trust the Docker Hub fallenbagel/jellyseerr tag list without
+    cross-checking, it was found stale by roughly a year during this
+    plan's research). environment: LOG_LEVEL=info, TZ=Pacific/Auckland.
+    Named `jellyseerr-config` volume at /app/config. port 5055,
+    host-published. restart: unless-stopped. Do not wire its Jellyfin
+    or Radarr/Sonarr connections into this compose file (API keys)
+    -- that's a one-time UI configuration step done after first boot,
+    not IaC.
+  - No top-level `networks:` block -- every service uses the Compose
+    default bridge network (gluetun/qbittorrent's network_mode:
+    service: override is the only exception, and needs no networks:
+    entry of its own).
+  - No `logging:` override on any service -- omit it entirely so each
+    container inherits docker_base's syslog-to-Graylog default. Do NOT
+    repeat the json-file log-driver gap already found on 6 other
+    stacks in this repo.
+
+compose_forbidden: |
+  a :latest, :nightly, :develop, or :rolling tag on any image; a
+  top-level networks: block; publishing gluetun's 6881 port pair
+  without also keeping VPN_PORT_FORWARDING=on (the tunnel handles
+  inbound P2P via the VPN provider's forwarded port, not a host-level
+  port-forward, so 6881 is best-effort/optional but must not be the
+  ONLY inbound path assumed); mounting /nas-media anywhere as
+  read-only for radarr/sonarr/lidarr (they must be able to write
+  imports); a qBittorrent BT_backup/ bind mount (fresh install, no
+  session to preserve); any Authentik/OIDC client ID or secret
+  hardcoded into an environment: block (forwardAuth handles auth at
+  the edge, not inside these containers, so none of them need OIDC
+  credentials at all); a logging: block on any service.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/torrent-stack-lab/docker-compose.yml
+  forbidden_actions:
+    - "Any change outside this one file"
+    - "Running docker compose up -- validation only in this step"
+
+gates:
+  - id: compose-validate
+    cmd: "terraform/lxc/validate-compose.sh --stack torrent-stack-lab"
+    expect: "exit 0"
+    critical: true
+  - id: no-floating-tags
+    cmd: "grep -E 'image:.*:(latest|nightly|develop|rolling)\\b' terraform/lxc/stacks/torrent-stack-lab/docker-compose.yml"
+    expect: "no match (grep exit 1)"
+    critical: true
+  - id: no-logging-override
+    cmd: "grep -c '^\\s*logging:' terraform/lxc/stacks/torrent-stack-lab/docker-compose.yml"
+    expect: "0"
+    critical: true
+```
+
+---
+
+### torrent-lab-04-contract
+
+```yaml
+id: torrent-lab-04-contract
+title: Author torrent-stack-lab's STACK_CONTRACT.md
+depends_on: [torrent-lab-03-compose]
+
+change: >
+  Create terraform/lxc/stacks/torrent-stack-lab/STACK_CONTRACT.md
+  modeled section-for-section on
+  terraform/lxc/stacks/media-stack-lab/STACK_CONTRACT.md (Purpose,
+  Network, Inputs, Provides, Dependencies, Persistent State, What May
+  Depend on This Stack, What Must Not Be Edited Casually, Playbook).
+  Populate every section from this stack's own real facts: Purpose
+  states this replaces legacy torrent-stack via a fresh config install
+  (no arr database or qBittorrent settings carried over — the
+  indexer/VPN config there hasn't been reliable) while directly reusing
+  legacy's real NAS library content and local /incoming staging
+  filesystem rather than migrating either, standing up alongside
+  legacy, additive not destructive, same as media-stack-lab's own
+  framing relative to legacy media-stack.
+  Network table: zone media_seg (VLAN 80), IP 192.168.80.11/24,
+  gateway 192.168.80.1, VMID 80011, plus the firewall rule list from
+  torrent-lab-08-network-policy. Inputs: LAB_DOMAIN (.env, existing).
+  Provides: the 6 services and ports from stack.yaml's provides: list.
+  Dependencies: none at platform level; runtime dependency on the same
+  NAS NFS export media-stack-lab already mounts (192.168.1.3, flat
+  LAN, via the shared /mnt/nas-media host bind mount) and on Authentik
+  for forwardAuth once edge.yaml is live -- plus a real, load-bearing
+  dependency on legacy torrent-stack's own local /incoming storage
+  (shared, not owned by this stack; see torrent-lab-01a). Persistent
+  State: 7 named Docker volumes owned by this stack alone
+  (gluetun-config, qbittorrent-config, prowlarr-config, radarr-config,
+  sonarr-config, lidarr-config, jellyseerr-config) plus two things this
+  stack does NOT own but writes into: /nas-media (shared with
+  media-stack-lab/Jellyfin) and /incoming (shared with legacy
+  torrent-stack -- see What Must Not Be Edited Casually). What Must Not
+  Be Edited Casually: the /nas-media path must keep matching
+  media-stack-lab's own mount so both stacks read/write the same
+  library; /incoming is shared, concurrently, with legacy
+  torrent-stack's own still-running qBittorrent -- accepted by the
+  operator as a temporary state (2026-09-12), not a long-term design;
+  revisit when legacy is decommissioned (real risk: duplicate
+  downloads, category collisions, one instance's cleanup removing a
+  file the other still references); WireGuard credentials at
+  /opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf are never
+  committed or SOPS'd; legacy torrent-stack (VMID 100) is never
+  stopped, restarted, or has its OWN config/database written to by
+  anything in this stack's deploy path -- sharing /incoming's files is
+  the one deliberate exception to "never touch legacy." Playbook:
+  deploy-torrent-stack-lab.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/torrent-stack-lab/STACK_CONTRACT.md
+  forbidden_actions:
+    - "Any change outside this one file"
+
+gates:
+  - id: contract-sections
+    cmd: "terraform/lxc/validate-stack-metadata.sh --check-contract-sections"
+    expect: "exit 0, no missing-section errors for torrent-stack-lab"
+    critical: true
+```
+
+---
+
+### torrent-lab-05-terragrunt
+
+```yaml
+id: torrent-lab-05-terragrunt
+title: Author torrent-stack-lab's terragrunt.hcl
+depends_on: [torrent-lab-02-stack-yaml]
+
+change: >
+  Create terraform/lxc/stacks/torrent-stack-lab/terragrunt.hcl with
+  exactly the literal content below -- this file is identical
+  boilerplate across every stack in terraform/lxc/stacks/, transcribed
+  verbatim from terraform/lxc/stacks/media-stack-lab/terragrunt.hcl
+  with no changes at all (it derives stack_name from the directory
+  name automatically).
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/torrent-stack-lab/terragrunt.hcl
+  forbidden_actions:
+    - "Any change outside this one file"
+    - "Running terragrunt plan/apply/validate -- authoring only in this step"
+
+gates:
+  - id: hcl-matches-precedent
+    cmd: "diff terraform/lxc/stacks/media-stack-lab/terragrunt.hcl terraform/lxc/stacks/torrent-stack-lab/terragrunt.hcl"
+    expect: "no differences (exit 0)"
+    critical: true
+```
+
+Literal content for `terraform/lxc/stacks/torrent-stack-lab/terragrunt.hcl`:
+
+```hcl
+include "root" {
+  path = find_in_parent_folders()
+}
+
+terraform {
+  source = "${get_repo_root()}/terraform/lxc//"
+}
+
+inputs = {
+  stack_name      = basename(get_terragrunt_dir())
+  stack_yaml_path = "${get_terragrunt_dir()}/stack.yaml"
+}
+```
+
+---
+
+### torrent-lab-06-playbook
+
+```yaml
+id: torrent-lab-06-playbook
+title: Author the deploy-torrent-stack-lab Ansible playbook
+depends_on: [torrent-lab-03-compose]
+
+change: >
+  Create terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml,
+  modeled on terraform/lxc/ansible/playbooks/deploy-media-stack-lab.yml's
+  structure (same lxc_base + docker_base + portainer_agent roles, same
+  daemon.json Harbor-trust-plus-Graylog-syslog task, same
+  flush_handlers-before-deploy ordering) but simplified for one
+  compose file instead of two split projects -- there is no
+  pre-split-migration guard block to carry over (torrent-stack-lab has
+  no prior combined-project history to migrate away from; this is a
+  first deploy). stack_name: torrent-stack-lab. Read the compose file
+  via lookup('file', ...) exactly as deploy-media-stack-lab.yml does,
+  write it to /opt/stacks/torrent-stack-lab/docker-compose.yml, run
+  `docker compose config` to validate, then `docker compose up -d`,
+  each guarded by `when: not ansible_check_mode` exactly as the
+  Minecraft exemplar playbook in
+  terraform/lxc/stacks/stack-request.example.yaml does. Do not
+  template any OAuth/OIDC client secret into this playbook --
+  forwardAuth needs none.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml
+  forbidden_actions:
+    - "Any change outside this one file"
+    - "Running ansible-playbook against any real host -- syntax-check only in this step"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-torrent-stack-lab.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+---
+
+### torrent-lab-07-edge
+
+```yaml
+id: torrent-lab-07-edge
+title: Author torrent-stack-lab's edge.yaml (EdgeManifest)
+depends_on: [torrent-lab-02-stack-yaml]
+
+change: >
+  Create terraform/lxc/stacks/torrent-stack-lab/edge.yaml as an
+  EdgeManifest v1alpha1 (see
+  docs/provisioning-refactor/edge-manifest-v1alpha1.md), modeled on
+  terraform/lxc/stacks/media-stack-lab/edge.yaml's structure. metadata
+  name: torrent-stack-lab-edge, stack: torrent-stack-lab. Six routes,
+  one per web-facing service (qbittorrent, prowlarr, radarr, sonarr,
+  lidarr, jellyseerr) -- flaresolverr gets no route at all, it is
+  internal-only. Every route: host <name>.${LAB_DOMAIN}, backend type
+  url pointing at http://${LAB_IP_TORRENT_STACK_LAB}:<port> (8080 for
+  qbittorrent since it's published via gluetun on that port; 9696,
+  7878, 8989, 8686, 5055 for the others), dns.enabled true with
+  target ${LAB_IP_PROXY} and ttl 5m, tls.resolver letsencrypt, and
+  auth.mode: forwardAuth (not oidc -- none of these six apps support
+  native SSO, matching the edge-manifest doc's own guidance that
+  forwardAuth is for "services that don't have their own auth but need
+  user gating"). Do not add a repo.auth.oidc.client_id_env/
+  client_secret_env annotation to metadata -- that pattern is only for
+  auth.mode: oidc routes, which none of these are.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/torrent-stack-lab/edge.yaml
+  forbidden_actions:
+    - "Any change outside this one file"
+    - "Adding an auth.mode: oidc route for any of these six services"
+
+gates:
+  - id: edge-manifest-validate
+    cmd: "terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/torrent-stack-lab/edge.yaml"
+    expect: "exit 0, no validation errors"
+    critical: true
+```
+
+---
+
+### torrent-lab-08-network-policy
+
+```yaml
+id: torrent-lab-08-network-policy
+title: Add new (not modified) firewall policy entries to pve.yaml for torrent-stack-lab
+depends_on: [torrent-lab-02-stack-yaml]
+
+change: >
+  In terraform/lxc/network/pve.yaml, add torrent-stack-lab to the
+  media_seg zone's containers: list (append
+  "torrent-stack-lab (VMID 80011) -- 192.168.80.11" as a new list item,
+  do not touch the existing media-stack-lab line above it). Then add
+  two entirely NEW entries to the top-level policies: list (append at
+  the end, immediately after the last existing media_seg policy entry
+  -- do not edit any existing policy entry's ports or hosts, including
+  the existing edge_seg -> media_seg tcp/8096,2283 rule, which stays
+  exactly as it is for Jellyfin/Immich): (1) from: edge_seg, to:
+  media_seg, protocol: tcp, ports: [9696, 7878, 8989, 8686, 8080,
+  5055], description explaining this is Traefik to
+  torrent-stack-lab's prowlarr/radarr/sonarr/lidarr/qbittorrent(via
+  gluetun)/jellyseerr web UIs, added as a new rule rather than
+  widening the existing Jellyfin/Immich rule so this stays an additive
+  change under this repo's validation tiers; (2) from: media_seg, to:
+  internet, protocol: udp, ports: [51820], description explaining this
+  is gluetun's WireGuard VPN tunnel egress, the same real gap the
+  superseded docs/application-migration/01-torrent-stack-lab.md plan
+  identified for its abandoned dl_seg zone -- media_seg needs the same
+  rule since gluetun now lives there instead.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/network/pve.yaml
+  forbidden_actions:
+    - "Editing any existing policy entry's ports, from, to, or description fields"
+    - "Editing any zone other than media_seg's containers list"
+    - "Running terragrunt plan/apply -- authoring only in this step"
+
+gates:
+  - id: existing-jellyfin-rule-untouched
+    cmd: "grep -A3 'to: media_seg' terraform/lxc/network/pve.yaml | grep -c '8096, 2283\\|\\[8096, 2283\\]'"
+    expect: "at least 1 (the original Jellyfin/Immich rule's port list is unchanged)"
+    critical: true
+  - id: new-rules-present
+    cmd: "grep -c '51820' terraform/lxc/network/pve.yaml"
+    expect: "1"
+    critical: true
+```
+
+---
+
+### torrent-lab-09-mikrotik-playbook
+
+```yaml
+id: torrent-lab-09-mikrotik-playbook
+title: Author (do not run) the MikroTik playbook for media_seg's new WireGuard egress rule
+depends_on: [torrent-lab-08-network-policy]
+
+change: >
+  Create
+  ansible/00-initial-setup/mikrotik-firewall-media-seg-wireguard-egress.yml,
+  modeled directly on the idempotent
+  read-check-insert-before-anchor-reread-assert pattern in
+  ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml
+  (same mikrotik_host/mikrotik_user/mikrotik_password env-var-lookup
+  vars, same REST base URL construction, same idempotency check before
+  inserting). This playbook's one rule: source
+  192.168.80.0/24 (media_seg subnet), destination any
+  (internet-bound), protocol udp, dst-port 51820, action accept,
+  comment "media_seg -> internet udp/51820 (torrent-stack-lab gluetun
+  WireGuard)", placed before whatever anchor rule the greenbone
+  playbook itself found and documents as the actual containment/deny
+  point for its own zone -- re-derive the correct anchor for media_seg
+  specifically by the same live-inspection method that playbook's own
+  header comment describes (do not assume the same anchor rule
+  applies to a different zone without checking). This step authors the
+  file only; running it against the live MikroTik is a production
+  network mutation and happens under the Operator-only actions section
+  of this plan, not here.
+
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/mikrotik-firewall-media-seg-wireguard-egress.yml
+  forbidden_actions:
+    - "Running this playbook against any real host, including via --check"
+    - "Any change outside this one file"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check ansible/00-initial-setup/mikrotik-firewall-media-seg-wireguard-egress.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+---
+
+## Operator-only actions (not step blocks)
+
+These are either genuinely production-mutating (require the
+Preflight/Approval/Execute/After-Action flow from `CLAUDE.md`'s
+Production Credential Controls), physically manual, or both. None of
+them are safe or possible for an unsupervised local-model step.
+
+1. **Confirm the anchor rule for media_seg on the live MikroTik**
+   before running `torrent-lab-09`'s playbook — re-run the same live
+   `/ip/firewall/filter` inspection the greenbone playbook's header
+   documents doing, specifically for media_seg's own containment rule
+   (do not assume it matches pentest_seg's `vlan70-pentest`
+   in-interface anchor).
+
+2. **`terragrunt plan` on `pve-test-vm`** for the `torrent-lab-08`
+   `pve.yaml` policy change, confirming it shows only the two new
+   rules and zero changes/deletions to any existing resource (the
+   additive-only network tier in `CLAUDE.md`'s Validation Tiers table)
+   — then `scripts/provision.sh --stack media-stack-lab` on
+   `pve-test-vm` as the adjacent-zone regression check the same tier
+   row calls for, since media_seg's only other real tenant is
+   `media-stack-lab` itself.
+
+3. **Preflight summary → operator approval → run the MikroTik
+   playbook** (or apply the rule via the router's own Safe Mode
+   console, the actual method used for every prior live MikroTik
+   change in this repo's history — see
+   `reference_routeros_safe_mode` memory on re-verifying after an
+   unclean disconnect) for the new `media_seg → internet udp/51820`
+   rule. Re-read `/ip/firewall/filter` in order afterward to confirm
+   placement, not just that the apply succeeded.
+
+4. **`terragrunt apply`** (creates the `torrent-stack-lab` LXC) and
+   **`pct set 80011 -mp0 /mnt/nas-media,mp=/nas-media -mp1
+   <torrent-lab-01a's confirmed host path>,mp=/incoming`** (both
+   root@pam-only bind mounts from `torrent-lab-02`'s `stack.yaml`
+   comment) — both against `pve` directly under the normal production
+   approval flow (`./with-secrets-prod`), per this being an
+   Ansible/app-level stack, not a structural/high-blast-radius change.
+
+5. **`./with-secrets-prod scripts/provision.sh --stack
+   torrent-stack-lab`** to actually deploy — same approval flow.
+
+6. **Generate or export a ProtonVPN WireGuard config and place it** at
+   `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` on the
+   new LXC, then restart the `gluetun` container. Never committed to
+   git or SOPS, same rule as the legacy stack's credentials.
+
+7. **Add `192.168.80.11` to the NAS's NFS allowlist** for whichever
+   share backs `/mnt/nas-media` (same ADM-side step
+   `media-stack-lab` needed) — likely already covered if the same
+   `/mnt/nas-media` host mount is shared, but confirm rather than
+   assume, since ADM allowlists can be per-client-IP. `/incoming` needs
+   no NFS allowlist change at all — it's local Proxmox-host disk, not a
+   NAS export.
+
+8. **Validate end-to-end** (search → grab → download → import →
+   visible on NAS, same checklist shape as the superseded plan's
+   Step 6) before considering this a real replacement for the legacy
+   stack.
+
+9. **Wire Jellyseerr's Jellyfin/Radarr/Sonarr connections** via its
+   own setup wizard (API keys, not IaC) — genuinely a one-time UI
+   step, matching the `STACK_CONTRACT.md`'s note that this isn't
+   templated into the compose file.
+
+10. **Disable each arr app's and qBittorrent's built-in web-UI auth**
+    (Settings → General → Authentication → None) once forwardAuth is
+    confirmed working end-to-end for that app — avoids double-login,
+    same as the superseded plan correctly called out. Leave API-key
+    auth in place for intra-stack calls. **qBittorrent specifically**
+    also needs its own Host-header allowlist updated (WebUI → Options
+    → Web UI) to accept requests arriving as
+    `qbittorrent.${LAB_DOMAIN}` — its WebUI rejects requests with an
+    unrecognized Host header by default, which otherwise looks
+    indistinguishable from a broken forwardAuth setup.
+
+11. **Watch for the real risk of sharing `/incoming` between two live
+    qBittorrent instances** (legacy's and torrent-stack-lab's,
+    operator request 2026-09-12) — duplicate downloads of the same
+    torrent, category-folder collisions, or one instance's cleanup
+    removing a file the other still references. Explicitly accepted as
+    a temporary state, not a long-term design (see `STACK_CONTRACT.md`)
+    — revisit (stop sharing, give torrent-stack-lab its own directory)
+    once legacy is decommissioned or the overlap proves actively
+    troublesome.
+
+12. **In the new Radarr/Sonarr/Lidarr, point root folders at
+    `/movies`, `/tv`, `/music` and use each app's own "Import Existing
+    Movies/Series" / unmonitored library scan** to recognize whatever
+    legacy has already deposited in `/nas-media/...`. This is expected
+    and necessary regardless of the mount design — the fresh-install
+    decision means these apps start with empty databases, so nothing
+    carries over automatically; each app has to (re)discover its own
+    library against the files that are already really there, the same
+    workflow as pointing any fresh arr install at a pre-existing
+    folder of media.
+
+13. **Cutover and decommission of legacy `torrent-stack`** (VMID 100)
+    is a separate, later, explicitly operator-initiated decision — not
+    scheduled or assumed by this plan, matching how `media-stack-lab`
+    treats legacy `media-stack`.
