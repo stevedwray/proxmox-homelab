@@ -23,7 +23,7 @@ decision — no local-model handoff for this stack).
 | Containers | All 8 up: `gluetun` (healthy), `qbittorrent`, `prowlarr`, `radarr`, `sonarr`, `lidarr`, `flaresolverr`, `jellyseerr`, plus `portainer-agent` |
 | VPN | ProtonVPN via `gluetun`, WireGuard config is `at39.conf` — **a borrowed spare from legacy torrent-stack's own config pool, not a peer dedicated to this stack** (see Open decisions below) |
 | MikroTik | `media_seg → internet udp/51820` egress rule is live, independently verified (rule `*8E`, correctly ordered before the `*8A` default-deny) |
-| Auth | **Confirmed NOT live, 2026-09-12** (real finding, not a guess): a scoped, non-mutating `reconcile-edge.py` dry-run against `pve` (targeted at just `torrent-stack-lab/edge.yaml`) shows the 5 `forwardAuth` routes (qbittorrent/prowlarr/radarr/sonarr/lidarr) all classified `"missing"` in Authentik ("application is missing, proxy provider is missing") — `provision.sh --stack torrent-stack-lab` (what actually deployed this stack) skips the edge-reconcile phase entirely in single-stack mode; that phase only runs on a full, no-`--stack` orchestration pass. No Traefik dynamic config file exists for this stack on `pve` yet either. `jellyseerr` (`auth.mode: none`) correctly shows `"matching"` — nothing needed there. |
+| Auth | **Confirmed LIVE, 2026-09-12.** All 6 routes reachable through the real edge with real HTTPS requests: qbittorrent/prowlarr/radarr/sonarr/lidarr (`forwardAuth`) each return `302` to Authentik's login/authorize flow; jellyseerr (`auth.mode: none`) returns `307` to its own `/setup`, no Authentik redirect. (This was NOT true earlier in the day — the routes were never reconciled into Authentik/Traefik by the initial deploy; see item 0 below for the fix.) |
 
 ## What's NOT done yet — in order
 
@@ -32,20 +32,22 @@ Item 0 is a new finding from this session (not in the original
 actions #7–13, all requiring you directly (production mutations,
 manual UI steps, or judgment calls):
 
-0. **Wire the 5 forwardAuth routes into Authentik + push Traefik
-   config** — blocks items 2 and 4 below (nothing to validate/disable
-   built-in auth against until this exists). Exact verified commands
-   (target/objects fully resolved, nothing left as a guess) are in the
-   chat handoff from 2026-09-12; short form: `./with-secrets-prod`
-   running `reconcile-edge.py --apply` scoped to just
-   `terraform/lxc/stacks/torrent-stack-lab/edge.yaml` (creates the 5
-   Authentik proxy-provider + application objects), then
-   `deploy-proxy-stack.yml` with `traefik_generated_source_dir`
-   pointed at `terraform/lxc/environments/pve/.generated/traefik` to
-   push the rendered config to the live Traefik container. Verify
-   after with a fresh dry-run of the same `reconcile-edge.py` command
-   (no `--apply`) — all 5 routes should flip from `"missing"` to
-   `"matching"`.
+0. ~~Wire the 5 forwardAuth routes into Authentik + push Traefik
+   config~~ — **DONE and independently verified, 2026-09-12.**
+   `reconcile-edge.py --apply` scoped to just
+   `terraform/lxc/stacks/torrent-stack-lab/edge.yaml` created the 5
+   Authentik proxy-provider + application objects (confirmed via a
+   fresh dry-run afterward: `classification_counts` went from
+   `missing: 5` to `missing: 0, matching: 6`). `deploy-proxy-stack.yml`
+   with `traefik_generated_source_dir` pointed at
+   `terraform/lxc/environments/pve/.generated/traefik` pushed the
+   rendered config to the live Traefik container (`changed=6`,
+   `failed=0`). Verified with real HTTPS requests through the actual
+   edge (`--resolve ...:443:${LAB_IP_PROXY}`, not just trusting the
+   tools' own self-report): qbittorrent/prowlarr/radarr/sonarr/lidarr
+   all return `302` to Authentik's `/application/o/authorize/` flow;
+   jellyseerr returns `307` to its own `/setup`, no Authentik redirect
+   — exactly the intended split.
 1. **Confirm NAS NFS allowlist** covers `192.168.80.11` (may already be
    covered via the shared `/mnt/nas-media` mount — check, don't assume).
 2. **Real end-to-end validation**: search → grab → download → import →
