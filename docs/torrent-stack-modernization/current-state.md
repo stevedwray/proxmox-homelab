@@ -6,7 +6,7 @@ gate, every bug) and `README.md` (research, decisions, findings) — this
 file is the fast-resume summary.
 
 **Branch**: `task/torrent-stack-modernization-plan`
-**Latest commit**: `d905cb8e` (as of this update) — clean working tree,
+**Latest commit**: `bb942ca8` (as of this update) — clean working tree,
 nothing uncommitted.
 **Execution mode**: this session drives steps directly (operator
 decision — no local-model handoff for this stack).
@@ -22,7 +22,7 @@ decision — no local-model handoff for this stack).
 | Zone | `media_seg` (VLAN 80) |
 | Mount points | `mp0` = Terraform's docker-storage volume (20G, **never** touch with `pct set`) · `mp1` = `/mnt/nas-media` (raw NFS, bind, shared with `media-stack-lab`) · `mp2` = `/storage/ct-100/incoming` (bind, shared with legacy `torrent-stack`) · `mp3`/`mp4`/`mp5` = `video/movies`/`video/tv`/`music` from `media-stack-lab`'s existing UID-remapped `bindfs` shim (`/mnt/nas-media-ct80010`), shadowing those subtrees of `mp1` so radarr/sonarr/lidarr can actually write — added 2026-09-12, see item 2 below |
 | Containers | All 8 up: `gluetun` (healthy), `qbittorrent`, `prowlarr`, `radarr`, `sonarr`, `lidarr`, `flaresolverr`, `jellyseerr`, plus `portainer-agent` |
-| VPN | ProtonVPN via `gluetun`, WireGuard config is `at39.conf` — **a borrowed spare from legacy torrent-stack's own config pool, not a peer dedicated to this stack** (see Open decisions below) |
+| VPN | ProtonVPN via `gluetun`, WireGuard config is `at39.conf` — **a borrowed spare from legacy torrent-stack's own config pool, not a peer dedicated to this stack** (see Open decisions below). Port-forwarding sync to qBittorrent fixed 2026-09-12 — see item 2's final entry |
 | MikroTik | `media_seg → internet udp/51820` egress rule is live, independently verified (rule `*8E`, correctly ordered before the `*8A` default-deny) |
 | Auth | **Confirmed LIVE, 2026-09-12.** All 6 routes reachable through the real edge with real HTTPS requests: qbittorrent/prowlarr/radarr/sonarr/lidarr (`forwardAuth`) each return `302` to Authentik's login/authorize flow; jellyseerr (`auth.mode: none`) returns `307` to its own `/setup`, no Authentik redirect. (This was NOT true earlier in the day — the routes were never reconciled into Authentik/Traefik by the initial deploy; see item 0 below for the fix.) |
 
@@ -224,6 +224,54 @@ manual UI steps, or judgment calls):
    Verified live after the fix: `categories.json` shows the correct
    three paths, qBittorrent restarted cleanly, and all three download
    client connections still test green afterward.
+
+   **Real end-to-end test: genuinely in progress, 2026-09-12.**
+   Operator searched for "Robot Chicken" in Sonarr, grabbed
+   S11E20 — confirmed live via Sonarr's own queue: title, size, indexer
+   (Knaben), downloadClient qBittorrent, `trackedDownloadStatus: ok`.
+   This is the real search → grab → download chain working end to end,
+   the first genuine proof this stack functions as a replacement, not
+   just correctly configured.
+
+   **Real bug found watching it: gluetun/qBittorrent port-forwarding
+   was never synced — fixed and verified, 2026-09-12.** Sonarr showed a
+   7-day ETA on a 707MB file; `docker stats` confirmed near-zero real
+   throughput (a few KB over 5s). Root cause: ProtonVPN forwards a
+   specific port to `gluetun` (confirmed via its logs/status file), but
+   nothing ever told qBittorrent to listen on that port — it stayed on
+   its static default (6881) forever, so inbound peer connections to
+   the actual forwarded port went nowhere. **Confirmed identical,
+   unfixed gap in legacy `torrent-stack` too** (same gluetun env vars,
+   same static port, `/tmp/gluetun/forwarded_port` doesn't even exist
+   there right now) — not a regression, a real pre-existing limitation
+   neither stack had ever solved; directly relevant to the operator's
+   original "hasn't been reliable ... especially with ... vpn" comment
+   from the very start of this project. Fixed using gluetun's own
+   documented mechanism for exactly this (qdm12/gluetun-wiki's
+   `vpn-port-forwarding.md` ships a real qBittorrent example verbatim)
+   — `VPN_PORT_FORWARDING_UP_COMMAND`/`DOWN_COMMAND` push the current
+   forwarded port into qBittorrent's `setPreferences` API on every
+   grant/renewal. Verified the wiki's exact command syntax via a real
+   fetch before writing it, adjusting only the port number (8888, our
+   real `WEBUI_PORT`, not the wiki's own 8080 example). Requires
+   `WebUI\LocalHostAuth=false` since the hook runs from true loopback
+   inside the shared network namespace — a different source address
+   than the existing trusted-subnet bypass (172.30.80.0/24 only, not
+   127.0.0.1) — added as its own `lineinfile` task, same pattern as the
+   subnet-bypass fix. Verified live after deploying: `Session\Port` in
+   qBittorrent's own config now exactly matches gluetun's real
+   forwarded port; qBittorrent's own torrent-info API (queried via true
+   loopback, now that the auth is sorted) shows real peer connections
+   (`connections_count: 5`). The Robot Chicken download's continued
+   slowness after this fix is real but separate — that specific release
+   only has 3 seeds/2 leechers in the swarm (`num_seeds`/`num_leechs`),
+   a genuine low-availability public-tracker release, not a config
+   issue; 14.3% downloaded and progressing. One honest caveat: this
+   in-flight torrent shows `save_path: "/downloads"` (flat), not the
+   new `/downloads/tv-sonarr` — it was grabbed before the category
+   save-path fix landed, and qBittorrent doesn't retroactively move
+   already-added torrents when a category's path changes later.
+   Anything grabbed from now on lands in its own subfolder correctly.
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
@@ -322,7 +370,35 @@ correct it looked on paper.
 
 ## Where to resume
 
-Read this file, then jump straight to `plan.md`'s "Operator-only
-actions" section (items 7–13) for the exact next commands/steps. No
-need to re-read the full build history unless something above doesn't
-match what you find live.
+The stack is now genuinely functional, not just deployed — a real
+grab (Robot Chicken S11E20) is actively downloading through the full
+Prowlarr → Sonarr → qBittorrent → gluetun chain as of this checkpoint,
+with real peer connections and correct port-forwarding. What's left,
+in order:
+
+1. Let the in-progress Robot Chicken download finish (or check on it —
+   `curl http://localhost:8989/api/v3/queue?apikey=...` from inside
+   `pct exec 80011`) and confirm it actually **imports** into
+   `/nas-media/video/tv` — the one part of the full chain not yet
+   directly observed completing.
+2. Jellyseerr's setup wizard (still sitting on `/setup`,
+   `initialized: false` as of last check).
+3. Disable each arr app's built-in auth now that forwardAuth is
+   confirmed reliable (not urgent, do whenever comfortable).
+4. Each arr app's own "import existing library" pass against what's
+   already on the NAS (root folders are ready and show every existing
+   folder as `unmappedFolders` — this is now just clicking through it).
+5. Ongoing: watch for `/incoming` collisions with legacy's own
+   qBittorrent (accepted, temporary risk).
+6. Later, operator-initiated only: legacy `torrent-stack`
+   cutover/decommission.
+
+Also still open (see "Open decisions" and "Noted for future" above):
+which WireGuard peer to keep long-term, `media-stack-lab`'s own
+unrelated Terraform drift, and the deferred Wazuh-agent/GVM-scanning
+work for `media_seg`.
+
+Read this file first; `plan.md`'s "Operator-only actions" section
+(items 7–13) still has the original build-time detail if needed, but
+this file is more current for anything touched in the qBittorrent/
+Prowlarr/library-migration work above.
