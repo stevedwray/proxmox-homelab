@@ -169,12 +169,39 @@ manual UI steps, or judgment calls):
    confirmed accessible** (all three via each app's own API) --
    Radarr and Sonarr both immediately show every existing movie/TV
    folder on the NAS as `unmappedFolders`, ready for item 6's library
-   import. **Still open**: Prowlarr has zero indexers configured
-   (checked live) -- yours to add (real tracker credentials); nothing
-   else blocks the real end-to-end test once that's in place.
-   `flaresolverr` needs no configuration of its own -- it's an optional
-   Indexer Proxy in Prowlarr, only relevant if a specific indexer you
-   add requires Cloudflare bypass.
+   import. Prowlarr now has 5 working public indexers (Internet
+   Archive, Knaben, LimeTorrents, The Pirate Bay, TorrentDownload),
+   synced to all three arr apps -- `kickasstorrents.to`/`.ws` were
+   tried and dropped (real finding: `.to`'s Cloudflare challenge only
+   protects the *first* FlareSolverr-proxied request, Prowlarr's actual
+   search query goes out unproxied and gets blocked -- a known,
+   inherent FlareSolverr/Cardigann limitation, not a config mistake;
+   `.ws` times out at the raw TCP level, unrelated and just dead).
+   `flaresolverr` itself needs no configuration -- it's only an
+   optional Indexer Proxy for indexers that need Cloudflare bypass.
+
+   **Legacy library migrated, 2026-09-12** (operator request, separate
+   from "don't migrate config" -- this is tracked-title *data*, not the
+   unreliable indexer/VPN config that decision was actually about):
+   pulled legacy's full Radarr/Sonarr state via its own API (read-only,
+   zero risk to the live legacy stack) and re-added by tmdbId/tvdbId to
+   the new instances with `searchForMovie`/`searchForMissingEpisodes`
+   disabled -- pure tracking-state migration, no downloads triggered.
+   Radarr: 50/51 movies (1 genuinely dead TMDB id in legacy's own data,
+   not fixable), monitored flags preserved (17, matching legacy
+   exactly). Sonarr: 61/61 series, including per-season monitoring, not
+   just the top-level flag. **Real bug caught and fixed in the same
+   pass**: the first attempt set `addOptions.monitor: "none"` on
+   series, which silently overrides the explicit per-series/per-season
+   `monitored` values also being sent -- came in as 0/61 monitored
+   instead of legacy's real 55/61. Fixed with a follow-up `PUT` per
+   series correcting `monitored` at both levels; verified live
+   afterward (55/61, matching legacy). Lidarr explicitly skipped
+   (operator: "that never worked anyway") -- also a real, independently
+   confirmed finding: legacy's own Lidarr database paths
+   (`/media/music/<artist>`) don't even match where its files actually
+   live on disk (`/media/music/ByArtist/<Letter>/<artist>`), so legacy's
+   own bookkeeping was already broken before this session touched it.
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
