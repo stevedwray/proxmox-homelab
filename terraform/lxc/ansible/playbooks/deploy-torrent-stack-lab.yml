@@ -218,6 +218,26 @@
         insertafter: '^\[Preferences\]$'
       when: not ansible_check_mode
 
+    # Required for gluetun's VPN_PORT_FORWARDING_UP_COMMAND (see
+    # docker-compose.yml) to work at all -- that command runs from true
+    # loopback (127.0.0.1) inside the container's own shared network
+    # namespace, which is a different source address than the
+    # trusted-subnet bypass above (that only covers the Docker bridge,
+    # 172.30.80.0/24, not 127.0.0.1 itself). Without this, every
+    # attempt to push the real forwarded port into qBittorrent fails
+    # silently (gluetun logs it as a plain wget non-2xx exit, easy to
+    # miss), leaving qBittorrent stuck on its static default listen
+    # port -- confirmed live 2026-09-12 this is exactly what was
+    # happening, and that legacy torrent-stack has the identical unset
+    # gap, never fixed there either.
+    - name: Trust true loopback in qBittorrent's WebUI (for gluetun's port-forward hook)
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\LocalHostAuth='
+        line: 'WebUI\LocalHostAuth=false'
+        insertafter: '^\[Preferences\]$'
+      when: not ansible_check_mode
+
     # Real gap found 2026-09-12: qBittorrent auto-created these three
     # categories (one per arr app) the first time each app's download
     # client connection was tested, but with an empty save_path -- so

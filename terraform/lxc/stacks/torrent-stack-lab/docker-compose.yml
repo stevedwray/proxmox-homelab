@@ -23,6 +23,25 @@ services:
       - VPN_SERVICE_PROVIDER=custom
       - VPN_PORT_FORWARDING=on
       - VPN_PORT_FORWARDING_PROVIDER=protonvpn
+      # Real bug found live 2026-09-12, confirmed present in legacy
+      # torrent-stack too (identical unfixed gap there): ProtonVPN's
+      # forwarded port changes on every reconnect/renewal, but nothing
+      # was telling qBittorrent about it -- it stayed on its static
+      # default listen port (6881) forever, so incoming peer
+      # connections to the actual forwarded port went nowhere and
+      # downloads crawled at a few KB/s. gluetun's own documented
+      # up/down-command hooks (see
+      # https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/vpn-port-forwarding.md)
+      # exist specifically for this qBittorrent case -- port 8888 here
+      # matches WEBUI_PORT below (that wiki's own example uses 8080,
+      # its own choice of WEBUI_PORT, not a fixed value). No
+      # authentication in these commands -- relies on qBittorrent's
+      # WebUI\LocalHostAuth bypass (see deploy-torrent-stack-lab.yml),
+      # since these run from true loopback inside the shared network
+      # namespace, not from the trusted-subnet-whitelisted Docker
+      # bridge.
+      - VPN_PORT_FORWARDING_UP_COMMAND=/bin/sh -c 'wget -O- -nv --retry-connrefused --post-data "json={\"listen_port\":{{PORT}},\"current_network_interface\":\"{{VPN_INTERFACE}}\",\"random_port\":false,\"upnp\":false}" http://127.0.0.1:8888/api/v2/app/setPreferences'
+      - VPN_PORT_FORWARDING_DOWN_COMMAND=/bin/sh -c 'wget -O- -nv --retry-connrefused --post-data "json={\"listen_port\":0,\"current_network_interface\":\"lo\"}" http://127.0.0.1:8888/api/v2/app/setPreferences'
       - HEALTH_TARGET_ADDRESS=8.8.8.8
       - HEALTH_VPN_DURATION_INITIAL=10s
       - DOT=off
