@@ -111,8 +111,33 @@ portainer_stacks:
 # plan.md "Operator-only actions") -- NEVER -mp0 -- then confirm live
 # via `pvesh get /nodes/pve/lxc/80011/config` that mp0 is still the
 # docker-storage volume and mp1/mp2 are the two bind mounts.
+#
+# mp3/mp4/mp5 added 2026-09-12, real live finding: mp1's raw NFS mount
+# shows every file owned by NFS's anonymous-squash uid 65534 at 755 --
+# radarr/sonarr/lidarr (uid 1000, non-root by design) can't write to it
+# at all. media-stack-lab already solved this for its own writable
+# subpath (immich-photos) via a `bindfs` shim on the host
+# (/mnt/nas-media-ct80010) that remaps NFS's anonymous ownership to the
+# unprivileged LXC's own uid 1000 (map=1000/101000:@100/@101000) --
+# confirmed generic to any unprivileged container on the standard
+# subuid range, not tied to VMID 80010 specifically, so reused directly
+# rather than creating a redundant third shim. Each shadows just that
+# one subtree of mp1's raw mount, same pattern media-stack-lab already
+# uses for immich-photos/pictures. Applied via `pct set 80011 -mp3
+# /mnt/nas-media-ct80010/video/movies,mp=/nas-media/video/movies,backup=0
+# -mp4 /mnt/nas-media-ct80010/video/tv,mp=/nas-media/video/tv,backup=0
+# -mp5 /mnt/nas-media-ct80010/music,mp=/nas-media/music,backup=0`, then
+# radarr/sonarr/lidarr were recreated (docker compose rm -sf + up -d)
+# so they'd pick up the new mounts -- Docker resolves bind mounts at
+# container-creation time, not on restart.
 host_bind_mounts:
 - host_path: /mnt/nas-media
   lxc_path: /nas-media
 - host_path: /storage/ct-100/incoming
   lxc_path: /incoming
+- host_path: /mnt/nas-media-ct80010/video/movies
+  lxc_path: /nas-media/video/movies
+- host_path: /mnt/nas-media-ct80010/video/tv
+  lxc_path: /nas-media/video/tv
+- host_path: /mnt/nas-media-ct80010/music
+  lxc_path: /nas-media/music

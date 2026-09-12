@@ -20,7 +20,7 @@ decision — no local-model handoff for this stack).
 | VMID | `80011` |
 | IP | `192.168.80.11/24` |
 | Zone | `media_seg` (VLAN 80) |
-| Mount points | `mp0` = Terraform's docker-storage volume (20G, **never** touch with `pct set`) · `mp1` = `/mnt/nas-media` (bind, shared with `media-stack-lab`) · `mp2` = `/storage/ct-100/incoming` (bind, shared with legacy `torrent-stack`) |
+| Mount points | `mp0` = Terraform's docker-storage volume (20G, **never** touch with `pct set`) · `mp1` = `/mnt/nas-media` (raw NFS, bind, shared with `media-stack-lab`) · `mp2` = `/storage/ct-100/incoming` (bind, shared with legacy `torrent-stack`) · `mp3`/`mp4`/`mp5` = `video/movies`/`video/tv`/`music` from `media-stack-lab`'s existing UID-remapped `bindfs` shim (`/mnt/nas-media-ct80010`), shadowing those subtrees of `mp1` so radarr/sonarr/lidarr can actually write — added 2026-09-12, see item 2 below |
 | Containers | All 8 up: `gluetun` (healthy), `qbittorrent`, `prowlarr`, `radarr`, `sonarr`, `lidarr`, `flaresolverr`, `jellyseerr`, plus `portainer-agent` |
 | VPN | ProtonVPN via `gluetun`, WireGuard config is `at39.conf` — **a borrowed spare from legacy torrent-stack's own config pool, not a peer dedicated to this stack** (see Open decisions below) |
 | MikroTik | `media_seg → internet udp/51820` egress rule is live, independently verified (rule `*8E`, correctly ordered before the `*8A` default-deny) |
@@ -134,33 +134,47 @@ manual UI steps, or judgment calls):
    torrent data. Both bind mounts are genuinely working, not just
    configured.
 2. **Real end-to-end validation**: search → grab → download → import →
-   visible on the NAS. **Blocked by a new real finding, 2026-09-12**:
-   Radarr/Sonarr/Lidarr (all non-root, uid 1000 by design) cannot write
-   to `/nas-media` at all — every file there is owned by `65534:65534`
-   ("nobody", NFS's anonymous-squash mapping) at `755`, confirmed with a
-   direct `touch` failing "Permission denied" inside the radarr
-   container, and confirmed via `POST /api/v3/rootfolder` failing
-   "Folder '/movies' is not writable by user 'abc'" for all three apps.
-   Compared directly against legacy `torrent-stack`'s own separate NAS
-   mount (`/mnt/nas-media-ct100`): its files are owned `1000:1000` and
-   a live write test there succeeds. So the two NFS exports/shares are
-   configured differently at the NAS (ADM) level -- legacy's preserves
-   or maps the client UID, the new shared `/mnt/nas-media` export
-   squashes everyone to an anonymous UID. This is why `media-stack-lab`
-   never hit it: Jellyfin only reads, and Immich (which does write, into
-   `immich-photos`) almost certainly runs as root in its own container,
-   which bypasses Unix permission bits entirely -- not evidence the
-   export itself is fine. **Needs an operator NAS-side fix** (adjust the
-   export's squash/UID-mapping settings to match legacy's, or grant
-   uid 1000 write access some other way on the NAS itself) before any
-   import can ever succeed -- not fixable from this repo or from inside
-   the container.
-   Root folders (`/movies`, `/tv`, `/music`) and Prowlarr's own
-   indexer(s) are also still unconfigured (checked live, both empty) --
-   the indexer add is yours to do (real tracker credentials); root
-   folders can be set the moment the NAS permission fix lands (blocked
-   by the same issue -- Radarr's own writability check rejects the
-   folder before it'll even save it as a root folder).
+   visible on the NAS. Was blocked by a real write-permission finding,
+   **now fixed and verified, 2026-09-12**:
+   Radarr/Sonarr/Lidarr (all non-root, uid 1000 by design) couldn't
+   write to `/nas-media` at all — every file there is owned by
+   `65534:65534` ("nobody", NFS's anonymous-squash mapping) at `755`,
+   confirmed with a direct `touch` failing "Permission denied" inside
+   the radarr container. **First diagnosis was wrong and got corrected
+   mid-investigation** (operator caught it): initially assumed this
+   needed a NAS/ADM-side export permission fix, but the NFS Privileges
+   panel on the NAS turned out to already grant `192.168.80.11`
+   Read & Write with root-mapping to `nas (1000)`, identical to every
+   other client -- the export itself was never the problem. Real cause:
+   the Proxmox *host* mounts the raw NFS share once at `/mnt/nas-media`,
+   and legacy `torrent-stack` / `media-stack-lab` don't bind that raw
+   path for anything that needs write access -- they layer a `bindfs`
+   shim on top (`/mnt/nas-media-ct100`, `/mnt/nas-media-ct80010`) that
+   remaps NFS's anonymous-squash ownership to the unprivileged LXC's
+   own uid 1000 (`map=1000/101000:@100/@101000`, generic to *any*
+   unprivileged container on the standard subuid range, not tied to a
+   specific VMID). `torrent-stack-lab`'s `stack.yaml` only ever bound
+   the raw path. Fixed by reusing the *existing* `media-stack-lab` shim
+   directly (confirmed its remap is generic, not VMID-specific, before
+   reusing it -- avoided creating a redundant third shim) --
+   `pct set 80011 -mp3 /mnt/nas-media-ct80010/video/movies,mp=/nas-media/video/movies
+   -mp4 .../video/tv,mp=/nas-media/video/tv -mp5 .../music,mp=/nas-media/music`
+   (each shadowing just that subtree over the existing raw `mp1`, same
+   pattern `media-stack-lab` already uses for `immich-photos`/`pictures`),
+   then recreating radarr/sonarr/lidarr so they picked up the new mounts
+   (Docker resolves bind mounts at container-creation time, not restart
+   -- same lesson as gluetun's WireGuard config earlier). Verified live:
+   a real `touch` now succeeds in all three containers.
+   Root folders (`/movies`, `/tv`, `/music`) are now **set and
+   confirmed accessible** (all three via each app's own API) --
+   Radarr and Sonarr both immediately show every existing movie/TV
+   folder on the NAS as `unmappedFolders`, ready for item 6's library
+   import. **Still open**: Prowlarr has zero indexers configured
+   (checked live) -- yours to add (real tracker credentials); nothing
+   else blocks the real end-to-end test once that's in place.
+   `flaresolverr` needs no configuration of its own -- it's an optional
+   Indexer Proxy in Prowlarr, only relevant if a specific indexer you
+   add requires Cloudflare bypass.
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
