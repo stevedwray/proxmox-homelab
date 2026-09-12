@@ -6,7 +6,8 @@ gate, every bug) and `README.md` (research, decisions, findings) — this
 file is the fast-resume summary.
 
 **Branch**: `task/torrent-stack-modernization-plan`
-**Latest commit**: `ffea8dfd` — clean working tree, nothing uncommitted.
+**Latest commit**: `d905cb8e` (as of this update) — clean working tree,
+nothing uncommitted.
 **Execution mode**: this session drives steps directly (operator
 decision — no local-model handoff for this stack).
 
@@ -65,6 +66,63 @@ manual UI steps, or judgment calls):
     unaffected — no regression. Real HTTPS requests through the actual
     hostnames (no `--resolve` override needed anymore) confirm the
     full DNS→Traefik→Authentik path end-to-end.
+0b. ~~qBittorrent had no way for radarr/sonarr/lidarr to reach it
+    without a shared password~~ — **DONE, 2026-09-12, but not the way
+    first attempted.** Tried a zero-password design first (qBittorrent's
+    `WebUI\AuthSubnetWhitelist` trusting the compose network's own
+    subnet, same idea as Radarr's "Disabled for Local Addresses") and
+    moved it into `deploy-torrent-stack-lab.yml` properly (Ansible
+    `lineinfile`, not hand-run `sed`) rather than leave it a one-off. Real
+    bugs found and fixed getting there:
+    - `sed`'s `a` one-liner text-escaping silently dropped the required
+      backslash AND matched almost every line instead of just the one
+      after `[Preferences]`, leaving ~40 garbage duplicate lines with no
+      working bypass. Fixed by moving to `lineinfile` (YAML's quoting
+      rules, not three shell-escaping layers) plus a one-time cleanup
+      pass for the leftover garbage.
+    - The trusted subnet was whatever Docker's IPAM pool happened to
+      auto-assign, not a fixed value — pinned it in `docker-compose.yml`
+      (`172.30.80.0/24`).
+    - `community.docker.docker_network`'s `force:true` recreate failed
+      outright against the already-running stack (`network is
+      unreachable` on reconnect, likely gluetun's own WireGuard routing
+      state getting confused by a live network detach/reattach). Fixed
+      by checking the live subnet+label first and only ever recreating
+      via a full `docker compose down` + `up -d`.
+    - That first failed force:true attempt had already deleted and
+      recreated the network via the raw Docker API before erroring, so
+      it ended up with the *correct* subnet but missing Compose's own
+      ownership label — `docker compose down` silently skipped removing
+      it, `up -d` then refused to attach at all. Fixed by checking
+      subnet OR ownership label, not subnet alone, and explicitly
+      removing the network directly when either is wrong.
+    - Two more real, repo-wide latent bugs found in
+      `portainer_stacks[].env[]` (Portainer deploys this stack via its
+      own API using *only* the env vars listed here — a separate code
+      path from the Ansible-driven `docker compose up -d` deploy):
+      `LAB_DOMAIN` used Terraform's `$${...}` escape convention, copied
+      from `media-stack-lab`, but this field is never touched by
+      Terraform (confirmed absent from every `.tf` file) — it's read by
+      `provision.sh`'s own Python `resolve_placeholders()`, which only
+      understands single-dollar `${...}` and left a stray leading `$`
+      in the output (`$lab.gibbsgreatly.xyz`). And `REGISTRY_HOST` was
+      simply never declared there at all, so every image reference
+      resolved blank under Portainer's own deploy (same failure mode as
+      the original REGISTRY_HOST bug, different code path). Both fixed
+      in `stack.yaml`. **`media-stack-lab` has both latent bugs too**
+      (jellyfin's entry is missing `REGISTRY_HOST` entirely; immich's
+      has it but with the same `$${...}` bug) — never triggered because
+      its Portainer stacks already exist and this deploy path only runs
+      for a stack not yet registered. Flagged, not fixed — separate
+      stack, someone else's call.
+    - Given all that, ended up asking the operator for the real
+      qBittorrent password anyway after the subnet-bypass mechanism
+      still returned 401/403 despite matching the verified qBittorrent
+      source behavior and correct network connectivity — a real,
+      unresolved mystery (possibly how qBittorrent sees the source IP
+      sharing gluetun's network namespace) not worth further blind
+      debugging. The bypass config is left in place (harmless either
+      way); the download clients use real credentials instead.
 1. ~~Confirm NAS NFS allowlist covers `192.168.80.11`~~ — **DONE,
    confirmed by operator 2026-09-12**: `192.168.80.11` added to the
    NAS's media share allowlist directly on the NAS (ADM), not via any
@@ -83,11 +141,22 @@ manual UI steps, or judgment calls):
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
-4. **Disable each arr app's + qBittorrent's built-in auth** once
-   forwardAuth is confirmed working, plus qBittorrent's Host-header
-   allowlist (WebUI → Options → Web UI, add `qbittorrent.${LAB_DOMAIN}`
-   or it'll reject proxied requests looking like a broken forwardAuth
-   setup).
+4. ~~qBittorrent Host-header allowlist~~ — **found already satisfied,
+   2026-09-12**: `WebUI\ServerDomains` was already `*` (wildcard) in the
+   live config, no change needed. **Radarr/Sonarr/Lidarr → qBittorrent
+   download-client wiring** — **DONE, 2026-09-12**, via each app's own
+   REST API (`POST /api/v3/downloadclient` for Radarr/Sonarr,
+   `/api/v1/downloadclient` for Lidarr — confirmed these differ before
+   assuming), host `gluetun` port `8888` (qBittorrent shares gluetun's
+   network namespace, has no hostname of its own), real qBittorrent
+   admin credentials (operator-provided). Independently verified via a
+   fresh GET on all three afterward — each shows `id: 1`, the correct
+   host/port/username, and its own category (`radarr`/`tv-sonarr`/
+   `lidarr`). **Still open**: disabling each arr app's own built-in
+   auth (Settings → General → Authentication) now that forwardAuth is
+   confirmed working — not done yet, do this once you're comfortable
+   forwardAuth is reliable day-to-day. Does NOT apply to jellyseerr
+   (its own auth is the only gate it has).
 5. **Watch `/incoming` sharing** with legacy's own qBittorrent for real
    collisions (accepted temporary risk, not a long-term design).
 6. **Each arr app's own "import existing library" pass** — fresh
