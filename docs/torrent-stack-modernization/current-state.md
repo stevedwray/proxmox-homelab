@@ -202,6 +202,28 @@ manual UI steps, or judgment calls):
    (`/media/music/<artist>`) don't even match where its files actually
    live on disk (`/media/music/ByArtist/<Letter>/<artist>`), so legacy's
    own bookkeeping was already broken before this session touched it.
+
+   **qBittorrent download-client connections and category save paths --
+   done and verified, 2026-09-12.** Live connection test (not just
+   trusting the earlier one-time setup) confirms all three
+   Radarr/Sonarr/Lidarr → qBittorrent connections are genuinely
+   healthy (`{}`, Radarr/Sonarr/Lidarr's own empty-response success
+   signal). Real gap found and fixed: qBittorrent had auto-created the
+   `radarr`/`tv-sonarr`/`lidarr` categories the first time each app's
+   connection was tested, but with an **empty save path** — every
+   download from all three apps (and legacy's own separate qBittorrent,
+   sharing this same `/incoming` directory) was landing flat in one
+   directory with no folder separation at all. Fixed via a proper
+   `deploy-torrent-stack-lab.yml` task (not a one-off) setting each
+   category's `save_path` directly in `categories.json` — the standard,
+   documented mechanism (a torrent added with a category is
+   automatically torrent-managed for that category's path); avoided
+   touching qBittorrent's global Automatic Torrent Management setting
+   or needing API credentials at all, sidestepping the class of
+   guessed-internal-setting risk that caused the earlier `sed` mistake.
+   Verified live after the fix: `categories.json` shows the correct
+   three paths, qBittorrent restarted cleanly, and all three download
+   client connections still test green afterward.
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
