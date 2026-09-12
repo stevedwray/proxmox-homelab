@@ -18,6 +18,7 @@
     # own "Disabled for Local Addresses" setting).
     qbittorrent_trusted_subnet: "172.30.80.0/24"
     qbittorrent_conf_path: "/var/lib/docker/volumes/{{ stack_name }}_qbittorrent-config/_data/qBittorrent/qBittorrent.conf"
+    qbittorrent_categories_path: "/var/lib/docker/volumes/{{ stack_name }}_qbittorrent-config/_data/qBittorrent/categories.json"
 
   roles:
     # gluetun needs /dev/net/tun, which does not exist in a fresh LXC by
@@ -215,6 +216,51 @@
         regexp: '^WebUI\\AuthSubnetWhitelistEnabled='
         line: 'WebUI\AuthSubnetWhitelistEnabled=true'
         insertafter: '^\[Preferences\]$'
+      when: not ansible_check_mode
+
+    # Real gap found 2026-09-12: qBittorrent auto-created these three
+    # categories (one per arr app) the first time each app's download
+    # client connection was tested, but with an empty save_path -- so
+    # every download from all three apps (and legacy torrent-stack's
+    # own separate qBittorrent, sharing this same /incoming directory)
+    # was landing flat in one directory with no folder separation at
+    # all. Setting a category's own save_path is the standard, well-
+    # documented fix (a category assigned on add is automatically
+    # torrent-managed for that category's path) -- no need to touch
+    # qBittorrent's global Automatic Torrent Management setting or
+    # authenticate to its API to get there, avoiding the exact class of
+    # guessed-internal-setting risk that caused the earlier sed mistake.
+    - name: Give each arr app's qBittorrent category its own save path
+      ansible.builtin.copy:
+        dest: "{{ qbittorrent_categories_path }}"
+        mode: "0644"
+        content: |
+          {
+              "lidarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/lidarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              },
+              "radarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/radarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              },
+              "tv-sonarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/tv-sonarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              }
+          }
       when: not ansible_check_mode
 
     - name: Start qBittorrent back up with the trusted-subnet config applied
