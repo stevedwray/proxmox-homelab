@@ -134,10 +134,33 @@ manual UI steps, or judgment calls):
    torrent data. Both bind mounts are genuinely working, not just
    configured.
 2. **Real end-to-end validation**: search → grab → download → import →
-   visible on the NAS. This also implicitly tests whether the
-   `edge.yaml` routes are actually reachable via Traefik — now a real
-   test rather than a formality, since item 0 above confirmed they
-   weren't wired up yet.
+   visible on the NAS. **Blocked by a new real finding, 2026-09-12**:
+   Radarr/Sonarr/Lidarr (all non-root, uid 1000 by design) cannot write
+   to `/nas-media` at all — every file there is owned by `65534:65534`
+   ("nobody", NFS's anonymous-squash mapping) at `755`, confirmed with a
+   direct `touch` failing "Permission denied" inside the radarr
+   container, and confirmed via `POST /api/v3/rootfolder` failing
+   "Folder '/movies' is not writable by user 'abc'" for all three apps.
+   Compared directly against legacy `torrent-stack`'s own separate NAS
+   mount (`/mnt/nas-media-ct100`): its files are owned `1000:1000` and
+   a live write test there succeeds. So the two NFS exports/shares are
+   configured differently at the NAS (ADM) level -- legacy's preserves
+   or maps the client UID, the new shared `/mnt/nas-media` export
+   squashes everyone to an anonymous UID. This is why `media-stack-lab`
+   never hit it: Jellyfin only reads, and Immich (which does write, into
+   `immich-photos`) almost certainly runs as root in its own container,
+   which bypasses Unix permission bits entirely -- not evidence the
+   export itself is fine. **Needs an operator NAS-side fix** (adjust the
+   export's squash/UID-mapping settings to match legacy's, or grant
+   uid 1000 write access some other way on the NAS itself) before any
+   import can ever succeed -- not fixable from this repo or from inside
+   the container.
+   Root folders (`/movies`, `/tv`, `/music`) and Prowlarr's own
+   indexer(s) are also still unconfigured (checked live, both empty) --
+   the indexer add is yours to do (real tracker credentials); root
+   folders can be set the moment the NAS permission fix lands (blocked
+   by the same issue -- Radarr's own writability check rejects the
+   folder before it'll even save it as a root folder).
 3. **Jellyseerr's setup wizard** — also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
