@@ -4,10 +4,13 @@
 # plan and docs/framework-integration/decisions.md Decision 4 for why
 # pentest_seg exists as its own contained zone in the first place.
 #
-# Sized at Greenbone's stated MINIMUM spec (2 cores / 4GB RAM), not their
-# "recommended" 4 cores / 8GB — pve-test-vm is a 16GB bare-metal box and
-# pentagi-stack alone already reserves 8192+2048MB. Feed sync and scans
-# will be slower at this tier; revisit sizing when promoting to pve.
+# Originally sized at Greenbone's stated MINIMUM spec (2 cores / 4GB RAM),
+# not their "recommended" 4 cores / 8GB. Grown 4096 -> 6144MB live on pve,
+# 2026-09-14, after a real OOM-kill storm (kernel killed gvmd 5x and
+# ospd-openvas 1x in ~90s, 2026-09-13 21:22 NZST) -- 4GB gave scan/feed-sync
+# spikes no cushion. `pve` itself has zero configured swap devices
+# (confirmed live), so the swap: value below is illustrative only, not a
+# real cushion -- set to 0 to stop implying one exists.
 hostname: greenbone-stack
 ip_address: "${lab_ip_greenbone}/24"
 gateway: "${lab_gw_pentest}"
@@ -16,18 +19,27 @@ network:
   zone: pentest_seg
 vmid: 70011
 cores: 2
-memory: 4096
-swap: 2048
+memory: 6144
+swap: 0
 rootfs_size: 20
 storage_profile: platform-security-zfs
-docker_storage_size: "40G"
+docker_storage_size: "150G"
 docker_mount:
   logical_name: docker-data
   path: /var/lib/docker
-  # Grown 20G -> 40G 2026-08-17: filled to 95%/disk-quota-exceeded after
-  # ~2 weeks live -- real usage was legitimate GVM data (postgres findings
-  # DB + SCAP/CVE feed sync), not cruft; see docs/opensearch-stack/README.md.
-  size: "40G"
+  # Grown 20G -> 40G 2026-08-17, then 40G -> 150G 2026-09-14: filled to
+  # 100%/disk-quota-exceeded both times, crashing pg-gvm and breaking GVM
+  # login each time. Real usage is legitimate, one-directional GVM growth
+  # (postgres findings DB + SCAP/CVE feed sync, which never shrinks -- see
+  # project_greenbone_unpinned_images.md and docs/opensearch-stack/README.md),
+  # not cruft, so 40G was never going to be a stable ceiling. The
+  # `security` ZFS pool has 1.5TB+ free, so 150G is real headroom against
+  # the growth trend, not overprovisioning against a spike. This value is
+  # NOT reconciled live by Terraform (mount_point is in lifecycle.ignore_
+  # changes -- see modules/lxc-docker-host/main.tf) -- it was applied live
+  # via `pct resize 70011 mp0 +110G` on pve first; this edit only keeps
+  # the manifest honest, it does not itself resize anything.
+  size: "150G"
   backup_policy: include
   resize_control_plane: operational
   mutation_policy: grow-only
