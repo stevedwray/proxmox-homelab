@@ -20,14 +20,23 @@ memory: 4096
 swap: 2048
 rootfs_size: 20
 storage_profile: platform-security-zfs
-docker_storage_size: "40G"
+docker_storage_size: "150G"
 docker_mount:
   logical_name: docker-data
   path: /var/lib/docker
-  # Grown 20G -> 40G 2026-08-17: filled to 95%/disk-quota-exceeded after
-  # ~2 weeks live -- real usage was legitimate GVM data (postgres findings
-  # DB + SCAP/CVE feed sync), not cruft; see docs/opensearch-stack/README.md.
-  size: "40G"
+  # Grown 20G -> 40G 2026-08-17, then 40G -> 150G 2026-09-14: filled to
+  # 100%/disk-quota-exceeded both times, crashing pg-gvm and breaking GVM
+  # login each time. Real usage is legitimate, one-directional GVM growth
+  # (postgres findings DB + SCAP/CVE feed sync, which never shrinks -- see
+  # project_greenbone_unpinned_images.md and docs/opensearch-stack/README.md),
+  # not cruft, so 40G was never going to be a stable ceiling. The
+  # `security` ZFS pool has 1.5TB+ free, so 150G is real headroom against
+  # the growth trend, not overprovisioning against a spike. This value is
+  # NOT reconciled live by Terraform (mount_point is in lifecycle.ignore_
+  # changes -- see modules/lxc-docker-host/main.tf) -- it was applied live
+  # via `pct resize 70011 mp0 +110G` on pve first; this edit only keeps
+  # the manifest honest, it does not itself resize anything.
+  size: "150G"
   backup_policy: include
   resize_control_plane: operational
   mutation_policy: grow-only

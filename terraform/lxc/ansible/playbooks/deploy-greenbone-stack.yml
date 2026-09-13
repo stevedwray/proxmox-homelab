@@ -538,7 +538,23 @@
         project_src: "{{ greenbone_compose_dir }}"
         build: always
         state: present
-        pull: always
+        # Was pull: always -- forced a re-pull of every image on every
+        # redeploy. Every image here floats on a rolling tag (:stable,
+        # :latest, or untagged/nightly for feed data -- Greenbone's
+        # registry has no versioned/immutable tags at all, confirmed live
+        # by probing v26.38.0-style tags for every component and getting
+        # "resource not found" on all of them; see
+        # reference_dns_stack_docker_daemon_dependency's sibling note
+        # project_greenbone_unpinned_images.md). Each forced re-pull could
+        # silently fetch a new digest under the same tag mid-redeploy, and
+        # the old digest's layers were left behind as orphaned <none>
+        # images with nothing to reclaim them -- this filled
+        # /var/lib/docker to 100% and crashed pg-gvm twice (2026-09-08,
+        # 2026-09-14). pull: missing only pulls when the tag isn't already
+        # present locally, so a redeploy no longer force-updates; picking
+        # up a real upstream update is now a deliberate action (delete the
+        # local image, or bump the compose file, then redeploy).
+        pull: missing
         remove_orphans: true
         recreate: "{{ 'always' if greenbone_compose_file.changed else 'auto' }}"
 
