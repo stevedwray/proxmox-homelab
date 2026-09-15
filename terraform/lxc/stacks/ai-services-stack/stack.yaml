@@ -10,6 +10,14 @@
 # for the full migration design, including why this is a rewrite rather than
 # a reuse of the old pve-framework-era stack.yaml (stale addressing bug: it
 # parameterized on what is now framework's own flat-LAN IP).
+#
+# Memory 4096 -> 6144 (2026-09-16): added web-search-mcp, a headless-
+# Chromium (Playwright) MCP server fronted by mcpo, replacing Brave's
+# quota-exhausted Search API/degraded SearXNG scraping as OpenWebUI's
+# real web-search path. One Chromium instance plus the Node/Python
+# processes around it is real, persistent memory pressure this LXC didn't
+# carry before (confirmed live: ~1GB used of 4GB before this change) --
+# same style of bump as greenbone-stack's 4096->6144 fix.
 
 hostname: ai-services-stack
 ip_address: "${lab_ip_ai_services}/24"
@@ -19,7 +27,7 @@ network:
   zone: ai_seg
 vmid: 50013
 cores: 2
-memory: 4096
+memory: 6144
 swap: 1024
 rootfs_size: 16
 storage_profile: platform-default

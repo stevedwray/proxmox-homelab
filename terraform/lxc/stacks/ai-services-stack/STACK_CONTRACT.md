@@ -21,6 +21,20 @@ consumer) benefits too, not just an external client. Source lives at
 `scripts/ollama-reliability-proxy/proxy.py` in this repo, copied in by
 this stack's own playbook — no separate build step.
 
+Also runs `web-search-mcp` (added 2026-09-16) — a headless-browser
+(Playwright/Chromium) web search MCP server (`mrkrsl/web-search-mcp`,
+pinned `v0.3.2`) fronted by `mcpo` so it's reachable as an OpenWebUI
+"Tool Server" over OpenAPI. Replaces Brave's Search API (Free-tier
+2000 req/month quota exhausted 2026-09-16) and SearXNG's degraded
+scraped-engine results as OpenWebUI's actual web-search path: real
+browser-driven search against Bing/Brave/DuckDuckGo, no API key/quota.
+Internal-only (no published host port) — reachable only from
+`openwebui` over this compose network. Built locally from a Dockerfile
+in this repo (`terraform/lxc/ansible/files/web-search-mcp/Dockerfile`)
+that clones the pinned upstream tag at build time — single consumer,
+so no dedicated Harbor project (same reasoning as `mcp-utility-stack`'s
+`docs-rag-mcp`).
+
 ## Network
 
 | Field        | Value                    |
@@ -60,7 +74,8 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. |
+| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. **Free-tier monthly quota (2000 req) exhausted 2026-09-16** — this is why `web-search-mcp` exists; `ENABLE_WEB_SEARCH`/`WEB_SEARCH_ENGINE` are left configured (not removed) in case the plan is upgraded later. |
+| `WEB_SEARCH_MCP_API_KEY` | SOPS, mandatory | Bearer key `mcpo` requires from callers — protects the internal-only OpenAPI bridge from anything else reachable on this LXC's compose network, not a real external-facing secret |
 
 ## Provides
 
@@ -69,6 +84,7 @@ hosts — not sufficient here):
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
 | `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. It remains available for browser search; OpenWebUI's AI search calls Brave LLM Context directly. |
 | `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
+| `web-search-mcp` | 8000 | http (OpenAPI, via `mcpo`) | **Not published on the LXC host** — internal-only, reachable at `http://web-search-mcp:8000` from other containers on this compose network only. Registered as an OpenWebUI Tool Server via `TOOL_SERVER_CONNECTIONS` (see Purpose above). |
 
 SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
 raw `:8082` service remains available for existing machine-to-machine
@@ -167,6 +183,14 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   `settings.yml` — this survives a settings file migrated in from
   `framework` (which has the same underlying default-engine problem, just
   never surfaced because nobody stress-tested web search there).
+- **`stack.yaml`'s `memory: 6144` (raised from `4096` 2026-09-16) is load-bearing for `web-search-mcp`.** One headless Chromium instance plus its Node/`mcpo` process is real, persistent memory pressure this LXC didn't carry before (confirmed live: ~1GB used of 4GB immediately before this change) — don't drop it back down without re-checking actual headroom under load.
+- **`web-search-mcp` has no `image:` — it's the only service in this
+  compose built locally (`build: context: ./web-search-mcp`).** The
+  `docker_compose_v2` deploy task therefore passes `build: always`
+  (harmless for the other, image-based services); removing that flag can
+  silently leave a stale build after a Dockerfile-only change with no
+  compose-file diff to trigger a rebuild otherwise — same failure mode
+  `mcp-utility-stack`'s `docs-rag-mcp` already needed this for.
 - **Google Custom Search is deliberately not deployed** — Google no longer
   permits new Programmable Search Engines to search the general web, so its
   curated-site results do not meet this stack's general-search requirement.

@@ -66,6 +66,35 @@
     repo_root: "{{ (playbook_dir + '/../../../..') | realpath }}"
     ai_services_reliability_proxy_source_dir: "{{ repo_root }}/scripts/ollama-reliability-proxy"
     ai_services_reliability_proxy_build_dir: "{{ ai_services_compose_dir }}/ollama-reliability-proxy"
+    # web-search-mcp + mcpo: headless-browser web search, replacing
+    # Brave's metered Search API (Free-tier quota exhausted 2026-09-16)
+    # and SearXNG's degraded scraped-engine results as OpenWebUI's real
+    # web-search path. Source (a thin Dockerfile only -- the actual
+    # server is git-cloned from upstream at build time, pinned by tag,
+    # see the Dockerfile's own header) lives in this repo, same
+    # locally-built-on-the-LXC pattern as mcp-utility-stack's
+    # docs-rag-mcp.
+    ai_services_web_search_mcp_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/web-search-mcp"
+    ai_services_web_search_mcp_build_dir: "{{ ai_services_compose_dir }}/web-search-mcp"
+    # Protects mcpo's OpenAPI bridge from anything else reachable on this
+    # LXC's internal compose network -- it publishes no host port, but
+    # the docker network itself has no other access control.
+    ai_services_web_search_mcp_api_key: >-
+      {{ lookup('env', 'WEB_SEARCH_MCP_API_KEY')
+         | mandatory('WEB_SEARCH_MCP_API_KEY env var is required') }}
+    # Registers web-search-mcp as an OpenWebUI Tool Server declaratively
+    # (OpenWebUI's own TOOL_SERVER_CONNECTIONS env var, config-as-code
+    # like every other OpenWebUI setting this playbook manages) instead
+    # of a one-off manual Admin Settings -> Tools UI step that a fresh
+    # deploy or DB restore would silently lose.
+    ai_services_web_search_mcp_tool_server_connections:
+      - url: "http://web-search-mcp:8000"
+        path: "openapi.json"
+        type: "openapi"
+        auth_type: "bearer"
+        key: "{{ ai_services_web_search_mcp_api_key }}"
+        config:
+          enable: true
     # Published on the LXC host (not just the internal compose network) so
     # an external client like VS Code Copilot on the operator's workstation
     # can reach it too -- needs its own MikroTik lan -> ai_seg:<port> rule,
@@ -127,8 +156,16 @@
     ai_services_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
     # See the DEFAULT_MODELS env var below for why this exists at all --
     # keep in sync with whichever model is actually kept loaded on
-    # framework's llama-swap, not a general "best" default.
-    ai_services_openwebui_default_model: "{{ lookup('env', 'OPENWEBUI_DEFAULT_MODEL') | default('Laguna-S-2.1-UD-Q4_K_M-00001-of-00003', true) }}"
+    # framework's llama-swap, not a general "best" default. Corrected
+    # 2026-09-16: the old default ("Laguna-S-2.1-UD-Q4_K_M-00001-of-00003")
+    # was a raw multi-part GGUF shard filename, not a valid Ollama tag --
+    # predated the framework Ollama tag-inventory cleanup entirely and was
+    # already stale/broken. Fixed live in the DB directly first (this
+    # stack's own idempotent config reconciliation task below would
+    # otherwise have silently reverted that live fix back to the stale
+    # value on the very next deploy of this playbook -- which this change
+    # is one).
+    ai_services_openwebui_default_model: "{{ lookup('env', 'OPENWEBUI_DEFAULT_MODEL') | default('qwen3.8-27b-q4kxl-ctx128k', true) }}"
     # Plaintext HTTP across a real subnet hop, not same-host -- unlike the
     # SearXNG vars below. Deliberate, not overlooked: llamacpp-router
     # enforces no auth on :8080 to any caller today (confirmed live
@@ -185,6 +222,18 @@
         dest: "{{ ai_services_reliability_proxy_build_dir }}/proxy.py"
         mode: "0640"
       register: ai_services_reliability_proxy_copy_result
+
+    - name: Create web-search-mcp build directory
+      ansible.builtin.file:
+        path: "{{ ai_services_web_search_mcp_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy web-search-mcp Dockerfile
+      ansible.builtin.copy:
+        src: "{{ ai_services_web_search_mcp_source_dir }}/Dockerfile"
+        dest: "{{ ai_services_web_search_mcp_build_dir }}/Dockerfile"
+        mode: "0640"
 
     - name: Seed SearXNG settings with JSON output enabled
       community.docker.docker_container:
@@ -399,10 +448,20 @@
                 # actually keeping warm -- it is not a statement that this
                 # specific model is somehow the "right" default in general.
                 DEFAULT_MODELS: "{{ ai_services_openwebui_default_model }}"
+                # Real headless-browser web search (Bing/Brave/DuckDuckGo
+                # via Playwright, no API key/quota) fronted by mcpo's
+                # OpenAPI bridge -- see web-search-mcp service below and
+                # its Dockerfile's header comment for why this replaces
+                # Brave's Search API here. Declared the same way OpenWebUI
+                # itself stores it (JSON list), so a fresh deploy seeds it
+                # without a manual Admin Settings -> Tools step.
+                TOOL_SERVER_CONNECTIONS: '{{ ai_services_web_search_mcp_tool_server_connections | to_json }}'
               depends_on:
                 searxng:
                   condition: service_healthy
                 ollama-reliability-proxy:
+                  condition: service_healthy
+                web-search-mcp:
                   condition: service_healthy
 
             # Centralized here so every Ollama consumer on this LXC --
@@ -445,6 +504,28 @@
                 retries: 6
                 start_period: 10s
 
+            # Headless-browser web search (mcpo + web-search-mcp) --
+            # see this stack's own Dockerfile header comment for why.
+            # Built locally from source copied in above (single
+            # consumer -- OpenWebUI on this same stack -- so no
+            # dedicated Harbor project, same reasoning as
+            # mcp-utility-stack's docs-rag-mcp). No published host
+            # port -- reachable only from openwebui over this compose
+            # network.
+            web-search-mcp:
+              build:
+                context: ./web-search-mcp
+              container_name: web-search-mcp
+              restart: unless-stopped
+              environment:
+                MCPO_API_KEY: "{{ ai_services_web_search_mcp_api_key }}"
+              healthcheck:
+                test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=10)"]
+                interval: 15s
+                timeout: 10s
+                retries: 10
+                start_period: 30s
+
             searxng:
               image: {{ ai_services_searxng_image }}
               container_name: searxng
@@ -479,6 +560,42 @@
         # elsewhere this session). Force recreation whenever the compose
         # file's own content changed.
         recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
+        # web-search-mcp has no image: -- it's built locally (see its
+        # service block's own comment). 'always' matches
+        # mcp-utility-stack's docs-rag-mcp precedent; without it a
+        # Dockerfile-only change (no compose-file diff) wouldn't
+        # necessarily trigger a rebuild.
+        build: always
+
+    # web-search-mcp publishes no host port (internal-only, see its
+    # service block comment), so this checks readiness via docker exec
+    # rather than ansible.builtin.uri against 127.0.0.1 -- same
+    # not-yet-up-on-first-build tolerance as docs-rag-mcp's wait task
+    # (first build here also installs Playwright's Chromium runtime
+    # inside the image build itself, which the mcr.microsoft.com/playwright
+    # base image already bundles, so this mainly covers mcpo + node
+    # process startup, not a slow first-run reindex like docs-rag-mcp).
+    - name: Wait for web-search-mcp to come up
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - web-search-mcp
+          - python3
+          - -c
+          - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=10)"
+      register: ai_services_web_search_mcp_health
+      retries: 20
+      delay: 5
+      until: ai_services_web_search_mcp_health.rc == 0
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if web-search-mcp never came up
+      ansible.builtin.assert:
+        that:
+          - ai_services_web_search_mcp_health.rc == 0
+        fail_msg: "web-search-mcp did not respond on :8000/docs after retries (last rc: {{ ai_services_web_search_mcp_health.rc | default('unknown') }}, stderr: {{ ai_services_web_search_mcp_health.stderr | default('') }})"
 
     - name: Determine whether ollama-reliability-proxy's source actually changed this run
       ansible.builtin.set_fact:
@@ -561,6 +678,9 @@
                 ),
                 "webui.url": json.dumps(os.environ["WEBUI_URL"]),
                 "ui.default_models": json.dumps(os.environ["DEFAULT_MODELS"]),
+                # Already a JSON string (rendered by the compose file's
+                # own `to_json` filter) -- stored as-is, not re-dumped.
+                "tool_server.connections": os.environ["TOOL_SERVER_CONNECTIONS"],
             }
             pending = []
             for key, value in desired.items():
