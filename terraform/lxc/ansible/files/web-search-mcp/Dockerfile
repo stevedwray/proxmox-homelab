@@ -56,12 +56,23 @@ RUN git clone --branch v0.3.2 --depth 1 \
     && chown -R pwuser:pwuser /opt/web-search-mcp
 USER pwuser
 
-# Single Chromium instance only -- this LXC has a 6GB memory ceiling
-# shared with OpenWebUI/SearXNG/ollama-reliability-proxy (see
-# stack.yaml's memory bump comment); Firefox/WebKit and extra concurrent
-# browser instances are not needed for one interactive assistant's search
-# volume and would multiply headless-browser memory for no real benefit
-# here.
+# BROWSER_TYPES restricts the general-purpose browser pool used for
+# Bing search and content extraction to a single Chromium instance --
+# this LXC has a 6GB memory ceiling shared with
+# OpenWebUI/SearXNG/ollama-reliability-proxy (see stack.yaml's memory
+# bump comment), and extra concurrent Chromium instances aren't needed
+# for one interactive assistant's search volume.
+#
+# NOT a full chromium-only guarantee, though: web-search-mcp's Brave
+# search path launches Firefox directly, unconditionally, regardless of
+# this setting (confirmed live 2026-09-15 debugging a workstation
+# install that had only installed Chromium -- Brave failed there with
+# "Executable doesn't exist at .../firefox", while this image's base
+# (mcr.microsoft.com/playwright) ships Firefox/WebKit binaries
+# unconditionally too, so it works here whether or not this env var
+# says so). Real memory use under a Brave-engine search is therefore
+# Chromium's pool plus one on-demand Firefox instance, not Chromium
+# alone -- factor that in before lowering the memory ceiling above.
 ENV BROWSER_TYPES=chromium \
     MAX_BROWSERS=1 \
     BROWSER_HEADLESS=true \
