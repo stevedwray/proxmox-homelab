@@ -31,6 +31,7 @@
       ansible.builtin.systemd:
         name: docker
         state: restarted
+        daemon_reload: true
 
   tasks:
     - name: Trust Harbor HTTP registry and forward Docker container logs to Graylog
@@ -50,6 +51,31 @@
           }
       notify: Restart Docker
       register: media_stack_lab_docker_daemon_config
+
+    # jellyfin's compose file requests an unlimited memlock ulimit for
+    # VAAPI hardware transcoding (radeonsi needs to mlock GPU buffers) --
+    # but Docker can't grant a container a higher hard limit than its own
+    # daemon process has. Debian's systemd default (DefaultLimitMEMLOCK)
+    # caps that at 8MB, confirmed live: ffmpeg -hwaccel vaapi failed with
+    # "Cannot allocate memory", then even docker itself refused to start
+    # the container ("error setting rlimit type 8: operation not
+    # permitted") once the compose file asked for -1/unlimited. Raising
+    # docker.service's own ceiling via a systemd drop-in fixes both.
+    - name: Ensure docker.service systemd drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Raise Docker daemon's memlock ulimit ceiling for VAAPI hardware transcoding
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker.service.d/override.conf
+        mode: "0644"
+        content: |
+          [Service]
+          LimitMEMLOCK=infinity
+      notify: Restart Docker
+      register: media_stack_lab_docker_memlock_override
 
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
@@ -114,6 +140,7 @@
         group: root
         content: |
           LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          REGISTRY_HOST={{ docker_registry_host }}
       no_log: true
 
     - name: Write immich compose env file

@@ -343,3 +343,32 @@ variable "dayz_steam_password" {
   type        = string
   default     = ""
 }
+
+# Not consumed by any real Terraform resource -- these exist only so
+# templatefile()'s strict variable-resolution (any stack.yaml
+# ${...} reference must match a key here, or `terragrunt plan` errors
+# with "vars map does not contain key ...") doesn't choke on the
+# ${lab_domain}/${lab_fqdn_harbor}/${media_stack_lab_db_password}
+# placeholders media-stack-lab's stack.yaml uses in its portainer_stacks
+# env blocks (resolved for real at deploy time by provision.sh's own,
+# separate ${VAR} substitution against the actual environment -- see
+# that file's resolve_placeholders()). Confirmed live 2026-09-16: this
+# gap has silently broken terragrunt plan for media-stack-lab since the
+# portainer_stacks split, never caught because plan wasn't re-run after.
+variable "lab_domain" {
+  description = "Lab base domain (templatefile() parse-time placeholder only, see comment above)"
+  type        = string
+  default     = ""
+}
+
+variable "lab_fqdn_harbor" {
+  description = "Harbor FQDN (templatefile() parse-time placeholder only, see comment above)"
+  type        = string
+  default     = ""
+}
+
+variable "media_stack_lab_db_password" {
+  description = "media-stack-lab DB password (templatefile() parse-time placeholder only, see comment above -- the real secret is injected at deploy time directly by Ansible via MEDIA_STACK_LAB_DB_PASSWORD, not through this variable, which is always empty in practice). Deliberately NOT marked sensitive = true: doing so taints local.stack (the whole parsed stack.yaml, used pervasively throughout this module) as sensitive by propagation, which then broke the unrelated \"stack\" output -- confirmed live 2026-09-16. Since this variable never actually carries the real secret, that protection would have been performative anyway."
+  type        = string
+  default     = ""
+}

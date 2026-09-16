@@ -21,40 +21,43 @@ provider "proxmox" {
 locals {
   stack_name = var.stack_name
   stack_template_vars = {
-    lab_ip_portainer        = var.lab_ip_portainer
-    lab_ip_authentik        = var.lab_ip_authentik
-    lab_ip_step_ca          = var.lab_ip_step_ca
-    lab_ip_monitoring       = var.lab_ip_monitoring
-    lab_ip_graylog          = var.lab_ip_graylog
-    lab_ip_dns              = var.lab_ip_dns
-    lab_ip_technitium       = var.lab_ip_technitium
-    lab_ip_proxy            = var.lab_ip_proxy
-    lab_ip_harbor           = var.lab_ip_harbor
-    lab_ip_netbox           = var.lab_ip_netbox
-    lab_ip_apt_cacher       = var.lab_ip_apt_cacher
-    lab_ip_ci_runner        = var.lab_ip_ci_runner
-    lab_ip_llm_gpu          = var.lab_ip_llm_gpu
-    lab_ip_comfyui          = var.lab_ip_comfyui
-    lab_ip_ai_services      = var.lab_ip_ai_services
-    lab_ip_pentagi          = var.lab_ip_pentagi
-    lab_ip_greenbone        = var.lab_ip_greenbone
-    lab_ip_mcp_utility      = var.lab_ip_mcp_utility
-    lab_ip_secpipe          = var.lab_ip_secpipe
-    lab_gw_mgmt             = var.lab_gw_mgmt
-    lab_gw_edge             = var.lab_gw_edge
-    lab_gw_infra            = var.lab_gw_infra
-    lab_gw_build            = var.lab_gw_build
-    lab_gw_ai               = var.lab_gw_ai
-    lab_gw_pentest          = var.lab_gw_pentest
-    lab_subnet_mgmt_cidr    = var.lab_subnet_mgmt_cidr
-    lab_subnet_edge_cidr    = var.lab_subnet_edge_cidr
-    lab_subnet_infra_cidr   = var.lab_subnet_infra_cidr
-    lab_subnet_build_cidr   = var.lab_subnet_build_cidr
-    lab_subnet_ai_cidr      = var.lab_subnet_ai_cidr
-    lab_subnet_pentest_cidr = var.lab_subnet_pentest_cidr
-    proxmox_host            = var.proxmox_host
-    dayz_steam_username     = var.dayz_steam_username
-    dayz_steam_password     = var.dayz_steam_password
+    lab_ip_portainer            = var.lab_ip_portainer
+    lab_ip_authentik            = var.lab_ip_authentik
+    lab_ip_step_ca              = var.lab_ip_step_ca
+    lab_ip_monitoring           = var.lab_ip_monitoring
+    lab_ip_graylog              = var.lab_ip_graylog
+    lab_ip_dns                  = var.lab_ip_dns
+    lab_ip_technitium           = var.lab_ip_technitium
+    lab_ip_proxy                = var.lab_ip_proxy
+    lab_ip_harbor               = var.lab_ip_harbor
+    lab_ip_netbox               = var.lab_ip_netbox
+    lab_ip_apt_cacher           = var.lab_ip_apt_cacher
+    lab_ip_ci_runner            = var.lab_ip_ci_runner
+    lab_ip_llm_gpu              = var.lab_ip_llm_gpu
+    lab_ip_comfyui              = var.lab_ip_comfyui
+    lab_ip_ai_services          = var.lab_ip_ai_services
+    lab_ip_pentagi              = var.lab_ip_pentagi
+    lab_ip_greenbone            = var.lab_ip_greenbone
+    lab_ip_mcp_utility          = var.lab_ip_mcp_utility
+    lab_ip_secpipe              = var.lab_ip_secpipe
+    lab_gw_mgmt                 = var.lab_gw_mgmt
+    lab_gw_edge                 = var.lab_gw_edge
+    lab_gw_infra                = var.lab_gw_infra
+    lab_gw_build                = var.lab_gw_build
+    lab_gw_ai                   = var.lab_gw_ai
+    lab_gw_pentest              = var.lab_gw_pentest
+    lab_subnet_mgmt_cidr        = var.lab_subnet_mgmt_cidr
+    lab_subnet_edge_cidr        = var.lab_subnet_edge_cidr
+    lab_subnet_infra_cidr       = var.lab_subnet_infra_cidr
+    lab_subnet_build_cidr       = var.lab_subnet_build_cidr
+    lab_subnet_ai_cidr          = var.lab_subnet_ai_cidr
+    lab_subnet_pentest_cidr     = var.lab_subnet_pentest_cidr
+    proxmox_host                = var.proxmox_host
+    dayz_steam_username         = var.dayz_steam_username
+    dayz_steam_password         = var.dayz_steam_password
+    lab_domain                  = var.lab_domain
+    lab_fqdn_harbor             = var.lab_fqdn_harbor
+    media_stack_lab_db_password = var.media_stack_lab_db_password
   }
   stack = yamldecode(templatefile(var.stack_yaml_path, local.stack_template_vars))
 
@@ -657,6 +660,7 @@ module "lxc" {
   extra_mount_backup_enabled = local.resolved_extra_mount_backup_enabled
 
   host_bind_mounts = try(local.stack.host_bind_mounts, [])
+  lxc_raw_config   = try(local.stack.lxc_raw_config, [])
 
   depends_on = [null_resource.configure_network_sdn_attachment]
 }
