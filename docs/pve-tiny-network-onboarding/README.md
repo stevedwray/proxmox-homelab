@@ -1,9 +1,16 @@
 # pve-tiny network onboarding
 
-Status: **plan written, not yet executed (2026-09-17).** `terraform/lxc/network/pve-tiny.yaml`
-and `terraform/lxc/storage/pve-tiny.yaml` already exist (authored directly, not
-through the step/gate loop — see plan.md's step blocks for what they contain and
-why). Everything else in `plan.md` is still to do.
+Status: **network onboarding complete (2026-09-18).** Physical switch trunk
+done by the operator, `vmbr0` made VLAN-aware, and `infra_seg`(VLAN 40)/
+`mgmt_seg`(VLAN 20) SDN zones created and verified live on pve-tiny —
+`tvinfra`/`tvmgmt` zones+vnets present via the API, both bridges `UP` on-host.
+One real bug found and fixed along the way: `proxmox-sdn-setup.yml` had a
+stale hardcoded `length == 5` assertion that didn't match any current
+network file — see plan.md for detail. Still open: real cross-node VLAN
+connectivity hasn't been proven end-to-end (no container attached yet to
+test through); and Phase 2 (actually relocating harbor-stack/graylog-stack)
+is unplanned — see plan.md's Phase 2 section for the judgment calls needed
+first.
 
 ## What this is
 

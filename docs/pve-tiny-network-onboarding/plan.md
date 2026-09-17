@@ -170,8 +170,13 @@ something is misconfigured.
 Once the bridge is VLAN-aware and the physical trunk carries VLANs 20/40 to
 pve-tiny, run the command below.
 
-No `target_hosts` override needed — this playbook's `hosts:` defaults to
-`proxmox`, matching our inventory group. Its first task
+**Correction (2026-09-18): needs `-e target_hosts=proxmox` after all** —
+this playbook's `hosts:` line is `{{ target_hosts | default('proxmox_testbed') }}`,
+not `proxmox` as originally written here; confirmed by a real failed run
+(`Could not match supplied host pattern, ignoring: proxmox_testbed` / "skipping:
+no hosts matched"), not caught by the earlier source read. Same override
+pattern as `proxmox-vlan-aware-bridge.yml` and `proxmox-initial-setup.yml`.
+Its first task
 (`Load network intent for target environment`) does
 `include_vars: file: "../../terraform/lxc/network/{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}.yaml"`
 — a Jinja `lookup('env', ...)`, which reads the actual OS process
@@ -191,7 +196,7 @@ pair added to this playbook first.
 export TASK_APPROVAL="pve-tiny-network-onboarding"
 SCRATCH=/tmp/claude-1000/-home-steve-git-proxmox-homelab/87f83cc3-14ec-4129-bf0d-c95943ff6e92/scratchpad
 PVE_ENV=pve-tiny TF_VAR_proxmox_node=pve-tiny \
-  ansible-playbook -i "${SCRATCH}/pve-tiny-inventory.yml" \
+  ansible-playbook -i "${SCRATCH}/pve-tiny-inventory.yml" -e target_hosts=proxmox \
   ansible/00-initial-setup/proxmox-sdn-setup.yml \
   > "${SCRATCH}/pve-tiny-sdn-setup.log" 2>&1
 echo "exit: $?"
@@ -199,6 +204,28 @@ echo "exit: $?"
 
 This creates the `tvinfra`/`tvmgmt` SDN zones and VNets on pve-tiny via
 `pvesh`, and verifies the resulting `tvinfra`/`tvmgmt` bridges exist on-host.
+
+**Status: done (2026-09-18).** Ran clean (25 ok / 6 changed / 0 failed) after
+fixing a real bug hit along the way: the playbook's own
+`Assert VLAN SDN source of truth matches target node` task hardcoded
+`proxmox_sdn_attachments | length == 5`, which doesn't match *any* current
+network file (`pve-test.yaml` has 4 VLAN zones, `pve.yaml`/`pve-test-vm.yaml`
+have 8 each) — stale, drifted out of sync as zones were added over time,
+not specific to pve-tiny. Fixed to `length > 0`, `--syntax-check`ed, then
+the real run succeeded. Verified live via the API (not just trusted from
+Ansible's own output): `tvinfra` (VLAN 40) and `tvmgmt` (VLAN 20) both
+present in `/cluster/sdn/zones` and `/cluster/sdn/vnets`, scoped to
+`pve-tiny`; both bridges confirmed `UP` in `ip -br link` on pve-tiny itself.
+
+**Not yet verified: real cross-node connectivity through the physical
+VLAN trunk.** `tvinfra`/`tvmgmt` are bridge interfaces with no host-side IP
+of their own — a bridge existing and being `UP` confirms Proxmox's SDN
+config applied, but doesn't prove the MikroTik/switch tagging actually
+carries VLAN 20/40 traffic to pve-tiny correctly (the `pve-framework`
+precedent needed a temporary self-VLAN sub-interface specifically to catch
+that gap for real, since a container hadn't been attached yet either).
+Confirm this either with that same temporary-sub-interface trick, or
+naturally once the first real container is attached in Phase 2.
 
 ---
 

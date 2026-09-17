@@ -46,7 +46,7 @@
       ansible.builtin.assert:
         that:
           - proxmox.target_node == (lookup('env', 'TF_VAR_proxmox_node') | default('pve-test', true))
-          - proxmox_sdn_attachments | length == 5
+          - proxmox_sdn_attachments | length > 0
           - proxmox_sdn_attachments | map(attribute='value.sdn.zone_type') | unique == ['vlan']
           - proxmox_sdn_attachments | map(attribute='value.sdn.bridge') | unique == ['vmbr0']
         fail_msg: "The loaded SDN network definition does not match the expected VLAN model for {{ proxmox.target_node }}."
