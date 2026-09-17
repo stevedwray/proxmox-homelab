@@ -1,0 +1,99 @@
+# Proxmox-only network intent for the pve-tiny production environment.
+# pve-tiny is a separate, standalone Proxmox node (not clustered with pve)
+# — see docs/pve-tiny-network-onboarding/README.md for why this file
+# exists and what it's for (relocating harbor-stack/graylog-stack off pve
+# to free memory there, joining the SAME physical VLANs pve already uses
+# so those stacks keep their existing IPs/identity when they move).
+#
+# Network model: Proxmox SDN VLAN zones — the MikroTik is the L3 gateway
+# for all zones, same as every other node's network/<env>.yaml. No routing
+# or NAT is performed on the Proxmox host.
+#
+# Physical setup (operator-configured, out of band — see
+# docs/pve-tiny-network-onboarding/plan.md for the exact prerequisite):
+#   pve-tiny NIC → MikroTik trunk port
+#     Untagged (native): LAN — 192.168.1.0/24
+#     Tagged VLAN 20: mgmt_seg  — 192.168.20.0/24, gw 192.168.20.1 (already live for pve)
+#     Tagged VLAN 40: infra_seg — 192.168.40.0/24, gw 192.168.40.1 (already live for pve)
+#
+# Only infra_seg and mgmt_seg are defined here — the two zones
+# harbor-stack and graylog-stack currently live in on pve. Other zones
+# (edge_seg, build_seg, game_seg, etc.) are not needed until something
+# else is planned for this node; add them the same way pve.yaml grew its
+# zone set incrementally (ai_seg, pentest_seg, media_seg), not all at once
+# up front.
+
+proxmox:
+  target_node: pve-tiny
+  pve_host: ${proxmox_host}
+
+attachments:
+  lan:
+    description: Default LAN bridge — used only by legacy/test stacks.
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: false
+
+  # infra_seg — Infrastructure artifact services (VLAN 40, 192.168.40.0/24)
+  # Same physical VLAN/subnet/gateway as pve's infra_seg (terraform/lxc/network/pve.yaml)
+  # — pve-tiny joins it rather than defining a new one, so a relocated
+  # harbor-stack keeps its existing IP.
+  infra_seg:
+    description: Infrastructure services — registry, artifact cache, IPAM
+    type: sdn_vnet
+    bridge: tvinfra
+    firewall: false
+    sdn:
+      zone: tvinfra
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-tiny
+      vnet: tvinfra
+      vlan_tag: 40
+      alias: pve-tiny infrastructure segment
+      subnet: "${lab_subnet_infra_cidr}"
+      gateway: "${lab_gw_infra}"
+      snat: false
+
+  # mgmt_seg — Management plane (VLAN 20, 192.168.20.0/24)
+  # Same physical VLAN/subnet/gateway as pve's mgmt_seg — pve-tiny joins
+  # it rather than defining a new one, so a relocated graylog-stack keeps
+  # its existing IP.
+  mgmt_seg:
+    description: Management plane — identity, PKI, monitoring, logging
+    type: sdn_vnet
+    bridge: tvmgmt
+    firewall: false
+    sdn:
+      zone: tvmgmt
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-tiny
+      vnet: tvmgmt
+      vlan_tag: 20
+      alias: pve-tiny management segment
+      subnet: "${lab_subnet_mgmt_cidr}"
+      gateway: "${lab_gw_mgmt}"
+      snat: false
+
+zones:
+  infra_seg:
+    description: Infrastructure services — registry, artifact cache, IPAM
+    attachment: infra_seg
+    containers: []  # empty — this pass only creates the zone; harbor-stack has not moved yet
+  mgmt_seg:
+    description: Management plane — identity, PKI, monitoring, logging
+    attachment: mgmt_seg
+    containers: []  # empty — this pass only creates the zone; graylog-stack has not moved yet
+
+inventory:
+  proxmox_nodes:
+    - host: "${proxmox_host}"
+      token_id_env: PROXMOX_READONLY_TOKEN_ID
+      token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
+  static_hosts: []
+
+policies: []  # no cross-zone rules needed yet — nothing is deployed into these zones on pve-tiny yet
