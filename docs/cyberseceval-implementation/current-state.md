@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; focus now on Phase 7's run-orchestration script
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified — only the live benchmark run itself remains
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -200,6 +200,40 @@ hardcoded to port 22, default username `kali`. Added (2026-09-19):
   reapplied idempotently by `deploy-cse-kali.yml` but not persistent
   across a bare reboot), are in `cse-kali`'s own `STACK_CONTRACT.md`.
 
+### Autonomous-uplift run-orchestration: prep step built and verified (plan §13)
+
+Built the first real piece of plan §13's workflow — using the existing
+static pair (`cse-kali` `192.168.70.212` / `metasploitable3-win2k8`
+`192.168.70.211`) rather than clone/destroy-per-run automation, per the
+narrower first-cut scope. Source-controlled in
+`terraform/lxc/stacks/cse-controller/cyberseceval-config/`:
+
+- `cyber_range_pairs.json` — the real attacker/target pair, in
+  CyberSecEval's own schema.
+- `run-autonomous-uplift.sh` — runs `test_case_generator.py` (pure local
+  prompt templating: no SSH connection, no LLM call) and then **prints,
+  but does not execute**, the exact `benchmark.run` command that would
+  trigger a real live run. Deliberate: the operator asked to focus on
+  setup, not test execution.
+
+Both deployed to `cse-controller`'s `/srv/cyberseceval/config/`. Ran the
+prep script for real (2026-09-19) and verified the actual output file
+content, not just the log line: `autonomous_prompts.json` genuinely
+contains the real attacker/target IPs, the real embedded SSH private
+key (base64 OpenSSH format), and the real system prompt — the tool
+bundles the key directly into the prompt JSON for the live run to use.
+
+**Security note**: every run's output directory therefore carries a
+live copy of the SSH private key in plaintext. Acceptable *because* that
+key is the dedicated `cse-kali`-only credential (not the fleet-wide
+key) — a leaked run directory's blast radius stays scoped to the one
+disposable container. Treat `/srv/cyberseceval/runs/autonomous-uplift-*/`
+accordingly (not for casual sharing).
+
+The actual live benchmark run (`benchmark.run --benchmark=autonomous-uplift`)
+has **not** been executed — that's the next real step whenever running
+tests is back in scope.
+
 ## Not yet started
 
 - `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no benchmark
@@ -234,21 +268,18 @@ need a new MikroTik rule turns out to already work with none — confirmed
 live (2026-09-19), see §12's updated text in the plan doc.
 
 Per operator instruction (2026-09-19): pause benchmark *runs*, focus on
-setup/infrastructure instead. The autonomous-agent SSH access piece
-above is done; what's left for the range specifically is the
-run-orchestration automation itself.
+setup/infrastructure instead. Both the autonomous-agent SSH access and
+the prep-step automation above are done and verified — everything
+needed for a live autonomous-uplift run now exists except triggering it.
 
-1. Build plan §13's actual automation (clone/configure/test/generate
-   pair JSON/run/collect/destroy) — everything it needs now exists
-   (agent SSH access, both range hosts, network reachability), but no
-   script ties them together yet. A first cut can use the existing
-   static pair (`cse-kali` `192.168.70.212`,
-   `metasploitable3-win2k8` `192.168.70.211`) rather than building full
-   clone/destroy-per-run logic immediately.
-2. Once that exists, resume benchmark runs: repeat the 5-case MITRE
-   sample once more for nondeterminism (plan §29's Phase 2 acceptance
-   requirement), then MITRE FRR/Prompt Injection/Code Interpreter Abuse,
-   then the autonomous-offensive benchmark itself against the range.
+1. Whenever test *runs* are back in scope: trigger the actual live
+   benchmark (`benchmark.run --benchmark=autonomous-uplift`, command
+   already printed by `run-autonomous-uplift.sh`'s own output) — a real
+   attack against `metasploitable3-win2k8`, up to 100 shots. Not run
+   yet, deliberately.
+2. Also when runs are back in scope: repeat the 5-case MITRE sample once
+   more for nondeterminism (plan §29's Phase 2 acceptance requirement),
+   then MITRE FRR/Prompt Injection/Code Interpreter Abuse.
 3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait

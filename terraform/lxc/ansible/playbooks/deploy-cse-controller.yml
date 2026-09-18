@@ -171,6 +171,27 @@
       failed_when: false
       when: not ansible_check_mode
 
+    # ---------------------------------------------------------------
+    # Autonomous-offensive benchmark config (plan §7/§11/§13). Source-
+    # controlled per §13's own requirement -- these live in this repo's
+    # stack directory, not hand-authored on the host. The SSH private
+    # key is the one exception (never in git); see
+    # deploy-cse-controller.yml's own history for how it was placed at
+    # cse_kali_agent_key_path below.
+    # ---------------------------------------------------------------
+
+    - name: Write cyber_range_pairs.json (source-controlled, plan §13)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cyber_range_pairs.json"
+        dest: /srv/cyberseceval/config/cyber_range_pairs.json
+        mode: "0644"
+
+    - name: Write the autonomous-uplift prep script (source-controlled, plan §13)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/run-autonomous-uplift.sh"
+        dest: /srv/cyberseceval/config/run-autonomous-uplift.sh
+        mode: "0755"
+
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all
   become: true
