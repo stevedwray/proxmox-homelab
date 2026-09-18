@@ -209,15 +209,25 @@
       register: bridge_vlan_result
       no_log: true
 
-    - name: Locate cse_seg bridge VLAN table entry
+    # Only a STATIC entry (dynamic == "false") counts as "already
+    # configured" -- creating the VLAN interface above auto-generates a
+    # dynamic bridge-vlan entry (comment "added by vlan on bridge",
+    # tagged: just the bridge itself) that RouterOS refuses to PATCH
+    # (confirmed live 2026-09-19: 400 Bad Request). The fix is a fresh
+    # static ADD with the full tagged list, which RouterOS reconciles
+    # with/supersedes the dynamic one -- not a PATCH of the dynamic entry.
+    - name: Locate cse_seg static bridge VLAN table entry
       ansible.builtin.set_fact:
         cse_bridge_vlan_obj: >-
           {{
-            (bridge_vlan_result.json | selectattr('vlan-ids', 'equalto', cse_vlan_id) | list | first)
+            (bridge_vlan_result.json
+              | selectattr('vlan-ids', 'equalto', cse_vlan_id)
+              | selectattr('dynamic', 'equalto', 'false')
+              | list | first)
             | default({})
           }}
 
-    - name: Add tagged bridge VLAN entry for cse_seg when missing (both trunk interfaces)
+    - name: Add static tagged bridge VLAN entry for cse_seg when missing (both trunk interfaces)
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan/add"
         method: POST
@@ -234,7 +244,7 @@
       when: cse_bridge_vlan_obj == {}
       no_log: true
 
-    - name: Ensure existing cse_seg bridge VLAN entry tags every trunk interface
+    - name: Ensure existing static cse_seg bridge VLAN entry tags every trunk interface
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan/{{ cse_bridge_vlan_obj['.id'] }}"
         method: PATCH
