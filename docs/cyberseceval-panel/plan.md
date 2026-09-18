@@ -9,10 +9,18 @@ production-mutation action, not an oversight.
 Real facts this plan is built on (from research, not assumed):
 `scaffold-stack.sh` is dead (exits 1 unconditionally, deprecated
 2026-09-04) — every new-stack file below is hand-authored, not
-scaffolded. `mgmt_seg` (VLAN 20, `192.168.20.0/24`) on the `pve` node is
-where every existing dashboard/ops stack lives (`monitoring-stack` VMID
-20012, `graylog-stack` VMID 20014, `portainer-stack` VMID 20020); `.30`/
-`20030` is the next free IP/VMID. Web-UI stacks route through a
+scaffolded. `mgmt_seg` (VLAN 20, `192.168.20.0/24`) is where every
+existing dashboard/ops stack lives on the `pve` node (`monitoring-stack`
+VMID 20012, `graylog-stack` VMID 20014, `portainer-stack` VMID 20020);
+`.30`/`20030` is the next free IP/VMID in that shared subnet. **This
+stack itself runs on `pve-tiny`, not `pve`** (operator's explicit choice,
+2026-09-19) — `mgmt_seg` is already defined there too
+(`terraform/lxc/network/pve-tiny.yaml`, same VLAN 20/subnet/gateway as
+`pve`'s, MikroTik trunk already tagged for it per that file's own header
+comment), currently with zero occupants, so this is the first thing to
+actually land in it — not a new zone-extension project. `pve-tiny` is
+confirmed standalone (not clustered with `pve`), so VMID `20030` has no
+collision risk regardless of node. Web-UI stacks route through a
 centralized `edge.yaml` "EdgeManifest" + reconciler (not per-stack
 Traefik labels), which also provisions the Authentik proxy-provider
 automatically — there is no separate manual Authentik-wiring step needed
@@ -25,7 +33,7 @@ every other stack — the literal fix already exists and is proven, in
 
 ---
 
-## Part A — `cse-panel-stack` (new stack, `mgmt_seg`, `pve` node)
+## Part A — `cse-panel-stack` (new stack, `mgmt_seg`, `pve-tiny` node)
 
 ### cse-panel-01-stack-yaml
 
@@ -61,6 +69,7 @@ Literal content for `terraform/lxc/stacks/cse-panel-stack/stack.yaml`:
 
 ```yaml
 # CyberSecEval control panel (Redis + Flower + panel-web) -- mgmt_seg zone
+# on pve-tiny (operator's choice 2026-09-19 -- see plan.md's header note).
 hostname: cse-panel-stack
 ip_address: "${lab_ip_cse_panel}/24"
 gateway: "${lab_gw_mgmt}"
@@ -80,11 +89,13 @@ tags:
   - control-panel
   - dashboard
   - docker
-depends_on:
-  - harbor-stack
-  - apt-cacher-stack
-  - authentik-stack
-  - proxy-stack
+# Empty, matching cse-controller/cse-code-eval's own precedent on
+# pve-tiny -- Harbor/Authentik/Traefik are real cross-node runtime
+# dependencies (see STACK_CONTRACT.md's Dependencies table) but aren't
+# listed here, since there's no existing precedent on this node for a
+# depends_on entry naming a stack on a different physical node, and
+# cse-controller/cse-code-eval both leave this empty for the same reason.
+depends_on: []
 provides:
   - service: panel-web-http
     port: 8000
@@ -231,6 +242,14 @@ actual PurpleLlama checkout/datasets/agent keys live.
 | IP | `192.168.20.30/24` |
 | Gateway | `192.168.20.1` |
 | VMID | 20030 |
+| Node | `pve-tiny` (not `pve` — see below) |
+
+`mgmt_seg` is the same physical VLAN/subnet as `pve`'s `mgmt_seg`
+(where Grafana/Graylog/Portainer actually run), already defined on
+`pve-tiny` for exactly this kind of move but with zero occupants until
+this stack — so this shares the zone's existing cross-zone firewall
+rules (e.g. `edge_seg -> mgmt_seg` forward-auth) automatically, without
+being on the same physical node as those other three stacks.
 
 Reachable from `edge_seg` (Traefik forward-auth, matching every other
 mgmt_seg web UI) and reachable *from* `cse_seg` on port 6379 only (the
@@ -309,7 +328,7 @@ other stacks build on.
 | `terraform/lxc/stacks/cse-panel-stack/docker-compose.yml` | Redis/Flower/panel-web container definitions |
 | `terraform/lxc/stacks/cse-panel-stack/app/app.py` | panel-web's FastAPI application |
 | `terraform/lxc/stacks/cse-panel-stack/edge.yaml` | Traefik/Authentik routing (EdgeManifest) |
-| `terraform/lxc/environments/pve/cse-panel-stack/terragrunt.hcl` | Terragrunt entrypoint |
+| `terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl` | Terragrunt entrypoint |
 | `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml` | Stack playbook |
 ```
 
@@ -323,7 +342,7 @@ title: Author cse-panel-stack's terragrunt.hcl entrypoint
 depends_on: [cse-panel-01-stack-yaml]
 
 change: >
-  Create terraform/lxc/environments/pve/cse-panel-stack/terragrunt.hcl
+  Create terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl
   with exactly the boilerplate content below -- this is byte-for-byte
   identical in shape to every other stack's terragrunt.hcl in this repo
   (confirmed by reading cse-controller's own), only the directory
@@ -331,19 +350,19 @@ change: >
 
 scope:
   allowed_paths:
-    - terraform/lxc/environments/pve/cse-panel-stack/terragrunt.hcl
+    - terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Any terragrunt apply / plan run -- this step only creates the file"
 
 gates:
   - id: file-exists
-    cmd: "test -f terraform/lxc/environments/pve/cse-panel-stack/terragrunt.hcl"
+    cmd: "test -f terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl"
     expect: "exit 0"
     critical: true
 ```
 
-Literal content for `terraform/lxc/environments/pve/cse-panel-stack/terragrunt.hcl`:
+Literal content for `terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl`:
 
 ```hcl
 include "root" {
@@ -470,22 +489,24 @@ title: Register cse-panel-stack in mgmt_seg's zone member list
 depends_on: [cse-panel-01-stack-yaml]
 
 change: >
-  In terraform/lxc/network/pve.yaml, under the zones.mgmt_seg.containers
-  list (the same list that already has "Portainer (VMID 20020)",
-  "Authentik (VMID 20010)", "step-ca (VMID 20011)", "Monitoring (VMID
-  20012)"), add one new line: "cse-panel-stack (VMID 20030) —
-  ${lab_ip_cse_panel}", matching the exact existing entries' format.
+  In terraform/lxc/network/pve-tiny.yaml's zones.mgmt_seg block, replace
+  the line `containers: []  # empty -- this pass only creates the zone;
+  graylog-stack has not moved yet` with a real one-entry list:
+  containers:\n  - "cse-panel-stack (VMID 20030) — ${lab_ip_cse_panel}",
+  matching the exact string format cse_seg's own containers list already
+  uses in this same file (e.g. "cse-controller (LXC, VMID 40070) —
+  192.168.100.70").
 
 scope:
   allowed_paths:
-    - terraform/lxc/network/pve.yaml
+    - terraform/lxc/network/pve-tiny.yaml
   forbidden_actions:
     - "Any change outside the zones.mgmt_seg.containers list"
     - "Any change to firewall rules in this file -- that is a separate step"
 
 gates:
   - id: entry-present
-    cmd: "grep -c 'cse-panel-stack (VMID 20030)' terraform/lxc/network/pve.yaml"
+    cmd: "grep -c 'cse-panel-stack (VMID 20030)' terraform/lxc/network/pve-tiny.yaml"
     expect: "output == 1"
     critical: true
 ```
@@ -556,7 +577,8 @@ Literal content for `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml`
               "syslog-format": "rfc5424",
               "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
             },
-            "storage-driver": "overlay2"
+            "storage-driver": "overlay2",
+            "live-restore": true
           }
       notify: Restart Docker
       register: cse_panel_daemon_config
@@ -1315,9 +1337,17 @@ change: >
   terraform/lxc/ansible/playbooks/deploy-cse-code-eval.yml: in each,
   insert the literal daemon.json task below (copied from
   deploy-netbox-stack.yml's own proven task, with the insecure-registries
-  entry kept and log-driver/log-opts/storage-driver added) as the very
-  first task in the play, before "Create stack directory", with a
-  matching "Restart Docker" handler and a flush_handlers task right after it.
+  entry kept and log-driver/log-opts/storage-driver added, plus
+  live-restore: true so a future Docker daemon restart here doesn't kill
+  an in-flight Celery-driven benchmark run) as the very first task in the
+  play, before "Create stack directory", with a matching "Restart Docker"
+  handler and a flush_handlers task right after it. Note: live-restore
+  keeps containers running across the restart, but does not reliably
+  preserve an ad hoc `docker exec` session started before the restart
+  (e.g. a manually-launched throwaway script) -- it protects the future
+  Celery worker (the container's own long-lived process) specifically,
+  not arbitrary exec sessions. Applying this task still restarts Docker
+  on the host, so only run it when nothing important is mid-run there.
 
 scope:
   allowed_paths:
@@ -1361,7 +1391,8 @@ same name in that file — use `cse_controller_daemon_config` in
               "syslog-format": "rfc5424",
               "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
             },
-            "storage-driver": "overlay2"
+            "storage-driver": "overlay2",
+            "live-restore": true
           }
       notify: Restart Docker
 

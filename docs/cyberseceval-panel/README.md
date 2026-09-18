@@ -16,12 +16,16 @@ raw log files) each run currently takes.
 
 ## Architecture, in one paragraph
 
-A new stack, `cse-panel-stack`, on `mgmt_seg` (alongside Grafana/Graylog/
-Portainer — the existing home for every ops/dashboard stack in this repo,
-confirmed via `terraform/lxc/network/pve.yaml`) runs Redis (the Celery
+A new stack, `cse-panel-stack`, on `mgmt_seg` — the existing home for
+every ops/dashboard stack in this repo (Grafana/Graylog/Portainer,
+confirmed via `terraform/lxc/network/pve.yaml`) — runs Redis (the Celery
 broker/result backend), Flower (Celery's own monitoring UI — reused as-is
 for progress display, not rebuilt), and a small bespoke FastAPI app
-(`panel-web`) that only handles job submission. A Celery **worker** process
+(`panel-web`) that only handles job submission. **Placed on `pve-tiny`,
+not `pve`** (operator's choice, 2026-09-19): `mgmt_seg` is already
+defined on `pve-tiny` too (same VLAN/subnet as `pve`'s, MikroTik trunk
+already tagged) with zero occupants so far — this is the first thing to
+land there, not a new zone-extension project. A Celery **worker** process
 is added to `cse-controller` itself (not a separate reachable service),
 because that's where the actual PurpleLlama venv, datasets, and `cse-kali`
 agent SSH key already live — the worker connects *out* to Redis in
