@@ -14,12 +14,18 @@
 # so listing allows before the drop in cse_seg_firewall_rules below is
 # sufficient; no separate ordering logic needed.
 #
-#   1. cse_seg -> infra_seg           (Harbor/apt-cacher -- matches every other zone's identical rule)
-#   2. cse_seg -> framework:8080      (llama-server -- the one LAN service this zone needs, not a blanket LAN allow)
-#   3. cse-controller -> cse-kali agent:22  (cross-zone into pve-test's pentest_seg -- genuinely new, didn't
+#   1-3. input chain: allow ping/DNS UDP/DNS TCP from cse_seg to the router
+#      itself -- missed in the first pass (2026-09-19), which broke DNS
+#      resolution inside cse-controller after its migration (routed
+#      traffic to raw IPs still worked, only router-destined DNS queries
+#      were silently dropped). Matches every other zone's identical
+#      input-chain baseline (e.g. infra_seg's *15/*16/*17).
+#   4. cse_seg -> Traefik/Harbor pull-through (edge_seg, 192.168.30.10)
+#   5. cse_seg -> framework:8080      (llama-server -- the one LAN service this zone needs, not a blanket LAN allow)
+#   6. cse-controller -> cse-kali agent:22  (cross-zone into pve-test's pentest_seg -- genuinely new, didn't
 #      exist before since infra_seg had no restrictions to need it worked around)
-#   4. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
-#   5. cse_seg -> everywhere else: DROP  (the actual isolation)
+#   7. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
+#   8. cse_seg -> everywhere else: DROP  (the actual isolation)
 
 - name: Ensure cse_seg firewall rules exist on the live MikroTik
   hosts: localhost
@@ -41,8 +47,16 @@
       }}
 
     lab_subnet_cse_cidr: "{{ lookup('env', 'lab_subnet_cse_cidr') | mandatory('lab_subnet_cse_cidr env var is required') }}"
-    lab_subnet_infra_cidr: "{{ lookup('env', 'lab_subnet_infra_cidr') | mandatory('lab_subnet_infra_cidr env var is required') }}"
     lab_ip_framework: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
+    # harbor.lab.gibbsgreatly.xyz (LAB_FQDN_HARBOR, what every stack's
+    # docker-compose.yml actually pulls through -- confirmed live
+    # 2026-09-19 via getent) resolves to Traefik's edge_seg IP, NOT a
+    # direct infra_seg address -- matches the existing "pentest_seg (pve)
+    # -> Traefik/Harbor pull-through" rule's target exactly. An earlier
+    # version of this rule targeted infra_seg directly and silently
+    # failed (HTTP:000) because nothing there actually answers on that
+    # hostname's resolved IP.
+    lab_ip_harbor_traefik: "192.168.30.10"
     # cse-controller's new cse_seg address and cse-kali's dedicated agent
     # IP (see terraform/lxc/stacks/cse-kali/STACK_CONTRACT.md) -- both
     # stable, already-established addresses, hardcoded like several
@@ -58,13 +72,30 @@
     # dst-port 80,443,3142; its "default-deny" rule has no dst-address/
     # protocol/dst-port fields at all, not empty strings for them).
     cse_seg_firewall_rules:
-      - comment: "cse_seg to infra_seg (Harbor/apt-cacher)"
+      - comment: "allow cse_seg ping to router"
+        chain: "input"
+        action: "accept"
+        protocol: "icmp"
+        in-interface: "vlan100-cse"
+      - comment: "allow cse_seg DNS UDP to router"
+        chain: "input"
+        action: "accept"
+        protocol: "udp"
+        in-interface: "vlan100-cse"
+        dst-port: "53"
+      - comment: "allow cse_seg DNS TCP to router"
+        chain: "input"
+        action: "accept"
+        protocol: "tcp"
+        in-interface: "vlan100-cse"
+        dst-port: "53"
+      - comment: "cse_seg to Traefik/Harbor pull-through (edge_seg)"
         chain: "forward"
         action: "accept"
         protocol: "tcp"
         src-address: "{{ lab_subnet_cse_cidr }}"
-        dst-address: "{{ lab_subnet_infra_cidr }}"
-        dst-port: "80,443,3142"
+        dst-address: "{{ lab_ip_harbor_traefik }}"
+        dst-port: "80,443"
       - comment: "cse_seg to framework llama-server"
         chain: "forward"
         action: "accept"
@@ -120,6 +151,15 @@
       register: firewall_filters
       no_log: true
 
+    # Two separate anchors -- an input-chain rule inserted "before" a
+    # forward-chain anchor lands wherever that forward rule happens to
+    # sit in the raw list, which is NOT necessarily before the input
+    # chain's own catch-all drop. Confirmed live 2026-09-19: the first
+    # attempt at this used one shared forward-chain anchor for every
+    # rule, landing the 3 new input-chain allows (ping/DNS to router)
+    # AFTER "Drop all other unhandled input traffic" -- dead rules,
+    # never evaluated, which is why DNS resolution kept failing even
+    # after they were "confirmed present."
     - name: Find first forward drop/reject rule for ordered insertion
       ansible.builtin.set_fact:
         forward_drop_anchor: >-
@@ -133,7 +173,20 @@
             | first | default({})
           }}
 
-    - name: Add each missing cse_seg rule before the first forward drop/reject
+    - name: Find first input drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        input_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'input')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add each missing cse_seg rule before the matching chain's first drop/reject
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
         method: POST
@@ -142,20 +195,25 @@
         force_basic_auth: true
         validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
-        body: "{{ item | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        body: >-
+          {{
+            item | combine({
+              'place-before': (item.chain == 'input') | ternary(
+                input_drop_anchor['.id'], forward_drop_anchor['.id'])
+            })
+          }}
         status_code: [200, 201]
       loop: "{{ cse_seg_firewall_rules }}"
       loop_control:
         label: "{{ item.comment }}"
       when:
-        - forward_drop_anchor != {}
+        - (item.chain == 'input' and input_drop_anchor != {}) or (item.chain == 'forward' and forward_drop_anchor != {})
         - >-
           (firewall_filters.json
             | selectattr('comment', 'defined')
             | selectattr('comment', 'equalto', item.comment)
             | selectattr('chain', 'equalto', item.chain)
             | selectattr('action', 'equalto', item.action)
-            | selectattr('src-address', 'equalto', item['src-address'])
             | list) | length == 0
       no_log: true
 
@@ -181,7 +239,6 @@
             | selectattr('comment', 'equalto', item.comment)
             | selectattr('chain', 'equalto', item.chain)
             | selectattr('action', 'equalto', item.action)
-            | selectattr('src-address', 'equalto', item['src-address'])
             | list | length > 0
         fail_msg: "Expected MikroTik cse_seg rule '{{ item.comment }}' was not found after apply."
       loop: "{{ cse_seg_firewall_rules }}"
@@ -207,4 +264,4 @@
 
     - name: Report cse_seg firewall rules are present
       ansible.builtin.debug:
-        msg: "All 5 cse_seg MikroTik firewall rules confirmed present, default-deny correctly last."
+        msg: "All 8 cse_seg MikroTik firewall rules confirmed present, default-deny correctly last."

@@ -46,12 +46,14 @@ locals {
     lab_gw_build                = var.lab_gw_build
     lab_gw_ai                   = var.lab_gw_ai
     lab_gw_pentest              = var.lab_gw_pentest
+    lab_gw_cse                  = var.lab_gw_cse
     lab_subnet_mgmt_cidr        = var.lab_subnet_mgmt_cidr
     lab_subnet_edge_cidr        = var.lab_subnet_edge_cidr
     lab_subnet_infra_cidr       = var.lab_subnet_infra_cidr
     lab_subnet_build_cidr       = var.lab_subnet_build_cidr
     lab_subnet_ai_cidr          = var.lab_subnet_ai_cidr
     lab_subnet_pentest_cidr     = var.lab_subnet_pentest_cidr
+    lab_subnet_cse_cidr         = var.lab_subnet_cse_cidr
     proxmox_host                = var.proxmox_host
     dayz_steam_username         = var.dayz_steam_username
     dayz_steam_password         = var.dayz_steam_password

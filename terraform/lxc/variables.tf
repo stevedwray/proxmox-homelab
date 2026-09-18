@@ -296,6 +296,12 @@ variable "lab_gw_pentest" {
   default     = ""
 }
 
+variable "lab_gw_cse" {
+  description = "CyberSecEval compute subnet (cse_seg) gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_subnet_mgmt_cidr" {
   description = "Management subnet CIDR"
   type        = string
@@ -328,6 +334,12 @@ variable "lab_subnet_ai_cidr" {
 
 variable "lab_subnet_pentest_cidr" {
   description = "PentAGI pentest subnet (pentest_seg) CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_cse_cidr" {
+  description = "CyberSecEval compute subnet (cse_seg) CIDR"
   type        = string
   default     = ""
 }

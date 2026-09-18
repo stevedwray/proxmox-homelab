@@ -1,9 +1,14 @@
 hostname: cse-controller
-ip_address: 192.168.40.70/24
-gateway: 192.168.40.1
-dns_server: 192.168.40.1
+# Migrated from infra_seg (192.168.40.70) to cse_seg (plan §1b, 2026-09-19)
+# -- infra_seg has no default-deny, doesn't provide the isolation this
+# needs. VMID deliberately kept unchanged (40070, not renumbered to a
+# cse_seg-derived value) to avoid VMID-triggered recreation stacking on
+# top of the network change -- check `tofu plan` before applying either way.
+ip_address: 192.168.100.70/24
+gateway: 192.168.100.1
+dns_server: 192.168.100.1
 network:
-  zone: infra_seg
+  zone: cse_seg
 vmid: 40070
 cores: 4
 memory: 4096
