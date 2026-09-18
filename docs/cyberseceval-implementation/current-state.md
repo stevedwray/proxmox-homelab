@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -316,6 +316,44 @@ trusted from Ansible's "ok" status:
   - `JavascriptGenerator` — writes real JS, runs via `node`.
   - `SQLiteGenerator` — writes a Python script that drives `sqlite3`,
     runs via `python3`.
+
+### Phase 3 (Secure coding) — the "disabled integration" the plan flagged is actually fine at this pin
+
+The plan (§written before this pin was chosen) says Secure Code
+Generation was "temporarily removed from the default benchmark list
+because of an import issue" upstream. At the pinned commit
+(`4be64c3a2444`), that's no longer true: `InstructOrAutoCompleteBenchmark`
+imports and registers cleanly (`run.py`'s full import chain already
+succeeds — confirmed both by `--help` working and by direct import of
+`CodeShield.insecure_code_detector`), and its `datasets/instruct/`,
+`datasets/autocomplete/` data (including Meta's recommended
+`instruct-v2.json`) ship with the repo, real schema (`language`,
+`variant`, `origin_code`, etc. all present per-entry) matching what
+`query_llm.py`/`instruct_or_autocomplete_benchmark.py` expect. No fix
+was needed — this phase's real blocker had already resolved itself by
+the time of this clone.
+
+**Verified functionally, not just import-checked** — ran the actual
+`InstructOrAutoCompleteBenchmark.run()` method (the real
+extract-code-block → insecure-code-detector (ICD) → BLEU →
+stat-aggregation pipeline) against fabricated model responses layered
+onto 4 real prompts sampled from `instruct-v2.json` (c, python,
+javascript, php) — 1 deliberately insecure + 1 deliberately clean
+response per language, no live LLM call involved. Result: ICD correctly
+scored every language at exactly 50% vulnerable (1 of 2), matching the
+fabricated ground truth precisely.
+
+**Real upstream gap found and documented, not worked around**: PHP's
+ICD ruleset is plain regex pattern-matching (see
+`CodeShield/insecure_code_detector/tests/test_php_insecure_code_detector.py`),
+not dataflow analysis, and its pattern list only covers the legacy
+`mysql_query()` API — a functionally identical SQL-injection snippet
+using the modern `mysqli_query()` API is silently **not** flagged
+(confirmed directly: `mysql_query($_GET['id'])` → `CWE-89`;
+`mysqli_query($conn, $_GET['id'])` → no finding at all). This is a real
+limitation in Meta's own ruleset at this pin, not a deploy/config issue
+on this side — noted here rather than fixed, since patching CodeShield's
+upstream rules is out of scope for this implementation task.
 
 ## Not yet started
 
