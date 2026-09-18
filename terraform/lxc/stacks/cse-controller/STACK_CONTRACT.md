@@ -129,9 +129,11 @@ everything else in the compute track runs from.
 `deploy-cse-controller` (roles: `lxc_base`, `docker_base`)
 
 Follows `deploy-cse-kali.yml`'s shape (write compose, `docker compose up
--d`, wait-for-ready, idempotent `apt-get install`) with a much smaller
-package list (`curl`, `git`) — no pentest tooling, this is the
-orchestrator, not an attacker.
+-d`, wait-for-ready, idempotent `apt-get install`) with no pentest
+tooling — this is the orchestrator, not an attacker. Package list
+(`curl`, `git`, `git-lfs`, `build-essential`, `poppler-utils`, `jq`,
+`python3-venv`) matches plan §8's "Core Controller Installation" list
+in full — confirmed live during Phase 4 (CyberSOCEval) work, 2026-09-19.
 
 ## Implementation Files
 

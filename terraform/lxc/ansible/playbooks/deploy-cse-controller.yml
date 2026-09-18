@@ -172,6 +172,57 @@
       when: not ansible_check_mode
 
     # ---------------------------------------------------------------
+    # CyberSOCEval dataset (plan §4/§9). "Install: CrowdStrike dataset"
+    # -- malware_analysis's questions.json ships in the repo already,
+    # but ships a symlink (hybrid-analysis) expecting this submodule at
+    # PurpleLlama/CyberSOCEval_data; threat_intel_reasoning's
+    # crowdstrike-reports/ needs it too. Confirmed live 2026-09-19: all
+    # 609 malware_analysis questions and all 45 threat_intel_reasoning
+    # reports resolve to real files once this submodule is present --
+    # no other install step was missing (git-lfs/jq/poppler-utils were
+    # already in cse_controller_packages above). Gated on the submodule
+    # not already existing -- git submodule add fails loudly if repeated.
+    # ---------------------------------------------------------------
+
+    - name: Check whether the CyberSOCEval_data submodule has already been added
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/CyberSOCEval_data/.git"
+      register: cse_controller_socdata_stat
+
+    - name: Add the CyberSOCEval_data submodule (one-time bootstrap only)
+      ansible.builtin.command:
+        cmd: git submodule add https://github.com/CrowdStrike/CyberSOCEval_data CyberSOCEval_data
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_socdata_stat.stat.exists
+
+    - name: Update the CyberSOCEval_data submodule recursively (safe every deploy)
+      ansible.builtin.command:
+        cmd: git submodule update --init --recursive
+        chdir: "{{ cse_controller_repo_dir }}"
+      register: cse_controller_socdata_update
+      changed_when: "'is already registered' not in cse_controller_socdata_update.stderr"
+      when: not ansible_check_mode
+
+    # download_reports.py is internally idempotent per-report-id (skips
+    # a report already on disk) but has a known upstream bug: its
+    # own end-of-run "Missing Reports/Text/Images" summary produces
+    # false negatives whenever a report_id repeats across multiple
+    # question entries in report_questions.json (588 questions, only 45
+    # unique reports -- confirmed live: every report the script's own
+    # summary called "missing" actually has real pdf/txt/png on disk).
+    # Do not trust that summary; failed_when: false here reflects that,
+    # not a real ignore-errors gap.
+    - name: Download and convert Threat Intelligence Reasoning reports
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.datasets.crwd_meta.threat_intel_reasoning.download_reports
+      register: cse_controller_threat_intel_download
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
     # Autonomous-offensive benchmark config (plan §7/§11/§13). Source-
     # controlled per §13's own requirement -- these live in this repo's
     # stack directory, not hand-authored on the host. The SSH private

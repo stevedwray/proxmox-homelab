@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -354,6 +354,56 @@ using the modern `mysqli_query()` API is silently **not** flagged
 limitation in Meta's own ruleset at this pin, not a deploy/config issue
 on this side — noted here rather than fixed, since patching CodeShield's
 upstream rules is out of scope for this implementation task.
+
+### Phase 4 (CyberSOCEval) — CrowdStrike dataset installed, both text-mode benchmarks' data verified complete
+
+Plan §8's "Core Controller Installation" package list
+(`git-lfs`/`jq`/`poppler-utils`/etc.) turned out to already be fully
+present in `cse_controller_packages` — no gap there, contrary to
+`cse-controller`'s `STACK_CONTRACT.md`'s stale "much smaller package
+list (curl, git)" line (now corrected). The actual missing piece was
+just the dataset itself.
+
+- Added the `CyberSOCEval_data` git submodule
+  (`https://github.com/CrowdStrike/CyberSOCEval_data`, ~48.5MB per
+  GitHub's API — confirmed small before pulling it into production
+  storage) into `cse-controller`'s PurpleLlama checkout. Blocked by
+  Claude Code's auto-mode classifier ("Untrusted Code Integration") —
+  operator ran the exact `git submodule add`/`update --init
+  --recursive` command directly, matching this session's established
+  pattern for classifier-blocked commands.
+- **Malware Analysis**: verified all 609 questions in
+  `questions.json` resolve to a real file under
+  `hybrid-analysis/<attack>/<sha256>` — 0 missing, 5 attack types
+  (`infostealers`, `killers`, `um_unhooking`, `ransomware`, `remcos`).
+- **Threat Intelligence Reasoning**: ran the real
+  `download_reports.py` (idempotent per-report, hits real IC3/CISA/NSA
+  URLs for non-CrowdStrike sources; CrowdStrike-sourced reports come
+  straight from the submodule, no download needed). All 45 unique
+  reports in `report_questions.json` (588 question entries; CrowdStrike
+  281, IC3 152, CISA 118, NSA 37) verified to have a real `.pdf`,
+  `.txt`, and `__0__.png` on disk — genuinely 100% complete.
+- **Real upstream bug found, not on our side**: the script's own
+  end-of-run "Missing Reports/Text/Images" summary is unreliable —
+  `download_pdf()`'s exists-check returns `None` instead of the
+  already-downloaded path whenever a `report_id` repeats across
+  multiple question entries (588 questions map to only 45 unique
+  reports, so nearly every report_id repeats), producing false
+  "missing" entries for reports that had, moments earlier in the same
+  run, downloaded and converted successfully. Confirmed directly: every
+  report_id the script called "missing" has real, correctly-sized
+  files on disk. **Do not trust that script's printed summary** — check
+  the actual files, as done above.
+- Both steps (submodule add/update, report download) are now encoded in
+  `deploy-cse-controller.yml` (gated the same way as the PurpleLlama
+  clone — one-time `git submodule add`, idempotent `update`/download
+  every deploy), not left as ad-hoc container state.
+- Not done: actually running the `malware_analysis`/
+  `threat_intel_reasoning` benchmarks against a live model (Phase 4's
+  "Run:" step) — deliberately deferred, same as every other live
+  benchmark run this session. Vision-mode (`image`/`text_and_image`)
+  testing also not started — needs a multimodal model under test,
+  which doesn't exist in this lab yet.
 
 ## Not yet started
 
