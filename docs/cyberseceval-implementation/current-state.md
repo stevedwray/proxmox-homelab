@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; now re-planning the compute side onto a dedicated isolation zone before Phase 5 build-out
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval ready to deploy
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -234,25 +234,51 @@ The actual live benchmark run (`benchmark.run --benchmark=autonomous-uplift`)
 has **not** been executed — that's the next real step whenever running
 tests is back in scope.
 
+### `cse_seg` (VLAN 100, plan §1b) — built and verified live
+
+Replaced `infra_seg` as `cse-controller`'s (and `cse-code-eval`'s,
+pending deploy) zone. `infra_seg` had no default-deny at all, so it
+never actually isolated anything — this is a real, dedicated,
+default-deny zone.
+
+- MikroTik: VLAN 100 (`vlan100-cse`, gateway `192.168.100.1`) tagged on
+  `bridgeLocal, ether1, ether5` — via `ansible/00-initial-setup/
+  mikrotik-cse-seg-vlan100-reconcile.yml`, idempotent, modeled on the
+  proven `mikrotik-ai-seg-vlan50-reconcile.yml` pattern. One real bug
+  fixed: creating the VLAN interface auto-generates a *dynamic*
+  bridge-vlan entry that RouterOS refuses to `PATCH` — needs a fresh
+  static `ADD` instead.
+- Firewall: 8 rules total (`ansible/00-initial-setup/
+  mikrotik-firewall-cse-seg.yml`) — input-chain ping/DNS-to-router,
+  Traefik/Harbor pull-through, Framework `llama-server`,
+  `cse-controller`→`cse-kali`-agent (the first genuinely new cross-zone
+  rule this stack needed), internet egress, and the default-deny. Three
+  real bugs found and fixed during verification (wrong chain anchor for
+  the input rules, wrong IP for Harbor, missing `docker exec -i`) — see
+  `cse-controller`'s `STACK_CONTRACT.md` for details.
+- Proxmox SDN: `cse_seg` zone/vnet added to `terraform/lxc/network/
+  pve-tiny.yaml`; required adding `lab_gw_cse`/`lab_subnet_cse_cidr` to
+  `main.tf`'s/`variables.tf`'s own variable-passing logic (not just
+  `.env`) — a real gap the first `tofu plan` attempt caught outright.
+- `cse-controller` migrated (`192.168.40.70` → `192.168.100.70`):
+  confirmed via `tofu plan` as an in-place update (same VMID `40070`,
+  no destroy/recreate) before applying. The SDN-attachment helper
+  resource still needed a `tofu state rm` first (operator ran it) to
+  avoid its replace-cycle destroy provisioner tearing down `infra_seg`'s
+  shared Proxmox SDN zone — a real safety rail in this repo's own
+  Terraform code, not overridden.
+- Full verification sweep after all fixes: Harbor (401 = reachable),
+  GitHub, Framework `llama-server`, and `cse-kali`'s agent SSH all
+  reachable from `cse-controller`; NAS and Proxmox management IPs
+  correctly blocked.
+
 ## Not yet started
 
-- **`cse_seg` (VLAN 100, plan §1b)** — planned but not built. Full plan
-  written 2026-09-19 after the operator flagged that `cse-controller`/
-  `cse-code-eval` landing on `infra_seg` was a "get moving fast" shortcut,
-  not the real design — `infra_seg` has no default-deny, so it doesn't
-  provide the isolation plan §3.2 requires. Covers: a new MikroTik VLAN
-  (zone-creation playbook, modeled on the existing `mikrotik-ai-seg-
-  vlan50-reconcile.yml` precedent), new firewall rules, Proxmox-side SDN
-  zone/vnet, migrating `cse-controller` (`192.168.40.70` →
-  `192.168.100.70`, mount-safety unchecked so far), and building
-  `cse-code-eval` directly there instead of `infra_seg`. See plan §1b
-  for the full design and an open validation-tier question still needing
-  the operator's call before the first MikroTik-side apply.
-- **`cse-code-eval`** (Phase 5, plan §3.2) — stack files written
-  (`stack.yaml`/`docker-compose.yml`/`STACK_CONTRACT.md`/deploy
-  playbook, all syntax-checked) but **not deployed** — paused mid-build
-  to redo its networking per `cse_seg` above rather than deploy to
-  `infra_seg` first and migrate later.
+- **`cse-code-eval`** (Phase 5, plan §3.2) — stack files written and
+  already targeting `cse_seg` (`stack.yaml`/`docker-compose.yml`/
+  `STACK_CONTRACT.md`/deploy playbook, all syntax-checked) but **not
+  deployed yet** — `cse_seg` itself is ready now, this is the next
+  concrete step.
 - `cse-autopatch` — no benchmark orchestration beyond Phase 1's
   infrastructure, no Harbor project, deliberately deferred to last per
   operator instruction (see below).
@@ -289,12 +315,10 @@ setup/infrastructure instead. Both the autonomous-agent SSH access and
 the prep-step automation above are done and verified — everything
 needed for a live autonomous-uplift run now exists except triggering it.
 
-0. **Immediate next**: build `cse_seg` per plan §1b — MikroTik VLAN 100
-   + firewall rules, Proxmox SDN zone/vnet, migrate `cse-controller`
-   (check `tofu plan` for mount safety first), then deploy the
-   already-written `cse-code-eval` stack there instead of `infra_seg`.
-   Has one open question for the operator (validation-tier routing)
-   before the first MikroTik-side apply — see plan §1b.
+0. **Immediate next**: deploy the already-written `cse-code-eval` stack
+   into `cse_seg` (`192.168.100.71`) — `cse_seg` itself is built and
+   verified live (see above), this is just running
+   `terragrunt apply`/`provision.sh --stack cse-code-eval`.
 1. Whenever test *runs* are back in scope: trigger the actual live
    benchmark (`benchmark.run --benchmark=autonomous-uplift`, command
    already printed by `run-autonomous-uplift.sh`'s own output) — a real

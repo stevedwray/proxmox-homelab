@@ -18,26 +18,40 @@ either — plan §1a open decision #4).
 
 | Field   | Value |
 |---|---|
-| Zone | `infra_seg` (VLAN 40) |
-| IP | `192.168.40.70/24` |
-| Gateway | `192.168.40.1` |
-| VMID | 40070 |
+| Zone | `cse_seg` (VLAN 100) |
+| IP | `192.168.100.70/24` |
+| Gateway | `192.168.100.1` |
+| VMID | 40070 (kept unchanged across the migration below — see plan §1b) |
 
-Deployed on `pve-tiny` (production node). `infra_seg` was the operator's
-explicit choice over standing up a new dedicated zone or reusing
-`mgmt_seg` — neither existing zone's stated purpose (registry/artifact
-cache/IPAM vs. identity/PKI/monitoring/logging) is a close match for a
-benchmark-orchestration workload, but `infra_seg` at least shares this
-stack's real dependency on Harbor. `cse-code-eval`/`cse-autopatch`
-(plan §1a decision #3: all three CyberSecEval LXCs on `pve-tiny`) are
-expected to join the same zone later at `192.168.40.71`/`.72`.
+**Migrated from `infra_seg` (2026-09-19, plan §1b)** — the original build
+put this on `infra_seg` to move fast, but that zone has no default-deny
+egress at all, so it never actually isolated anything. `cse_seg` is a
+genuinely new, dedicated, default-deny zone (VLAN 100,
+`192.168.100.0/24`) shared with `cse-code-eval`. Confirmed live: the
+container's network update was in-place (same VMID, no destroy/
+recreate), durable mount/repo/branch all survived untouched.
 
-No cross-zone MikroTik rule exists yet for `cse-controller` → `cse-kali`
-(on `pve-test`'s `pentest_seg`, a separate physical VLAN/SDN fabric) —
-flagged in the plan (§12) as a genuinely new rule that won't exist by
-default, deliberately deferred until the controller has something to
-reach the range for (autonomous-offensive benchmark, sequenced last per
-`current-state.md`).
+`cse_seg`'s MikroTik rules (narrow allows + default-deny, see
+`ansible/00-initial-setup/mikrotik-firewall-cse-seg.yml`) are this
+stack's actual network boundary. Three real bugs were found and fixed
+getting them right — worth knowing before touching that file:
+1. `input`-chain rules (DNS/ping to the router) must be inserted before
+   the **input** chain's own catch-all drop, not the forward chain's —
+   using the wrong anchor produced rules that "existed" but were never
+   evaluated, breaking DNS resolution silently.
+2. Harbor is reached via `192.168.30.10` (Traefik/`edge_seg`) — the
+   hostname every stack's compose file actually uses
+   (`harbor.lab.gibbsgreatly.xyz`) does **not** resolve to an `infra_seg`
+   address.
+3. `docker exec ... tee` needs `-i`; without it, stdin never reaches the
+   container and the write silently produces an empty file (same root
+   cause hit earlier in `cse-kali`'s own SSH setup).
+
+Cross-zone reachability to `cse-kali`'s agent (`pentest_seg` on
+`pve-test`, a separate physical fabric) is a real allow rule now
+(`cse-controller`'s specific IP → `192.168.70.212:22`), verified live —
+this is the first genuinely cross-zone rule this stack needed, since
+`infra_seg` never required one (nothing was restricted).
 
 ## Inputs
 
@@ -54,7 +68,7 @@ API for CI/webhook-triggered runs; update this table then.
 
 | Stack | Why |
 |---|---|
-| `infra_seg`'s Harbor (on `pve`, reached cross-node) | Docker image pull (`python:3.10-slim` via Harbor's `dockerhub` proxy-cache) |
+| Harbor, via Traefik/`edge_seg` (on `pve`, reached cross-node) | Docker image pull (`python:3.10-slim` via Harbor's `dockerhub` proxy-cache) |
 | Framework's `llama-server` (live — `qwen38-flash-next-q4`, port 8080, see `current-state.md`) | Model inference calls once CyberSecEval code lands (Phase 2+) |
 | `github.com/meta-llama/PurpleLlama` (direct outbound HTTPS, not proxied through Harbor) | One-time repo clone (plan §6) |
 

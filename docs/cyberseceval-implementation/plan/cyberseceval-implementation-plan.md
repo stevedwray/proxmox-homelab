@@ -173,6 +173,14 @@ Runs the isolated Kali attacker VM + Windows Server target VM (§11-§13).
 
 # 1b. `cse_seg` — Dedicated Isolation Zone for the Compute Side (2026-09-19)
 
+**Built and verified live (2026-09-19)** — see `current-state.md` for
+what actually landed (MikroTik VLAN/firewall config, Proxmox SDN zone,
+`cse-controller`'s migration, the three real bugs fixed along the way)
+and the full verification sweep. The design below is kept as written
+for the reasoning; only the open validation-tier question at the end
+was resolved (build directly on `pve-tiny`, no `pve-test-vm` detour —
+operator's explicit choice) before executing.
+
 `cse-controller` and `cse-code-eval` were both put on `pve-tiny`'s
 `infra_seg` to get moving quickly (§3.1/§3.2's original build). The
 operator flagged this afterward: `infra_seg` has no default-deny egress
