@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -405,6 +405,57 @@ just the dataset itself.
   testing also not started — needs a multimodal model under test,
   which doesn't exist in this lab yet.
 
+### Phase 6 (Spear phishing) — victim/judge model configured, state machine verified
+
+Unlike Phase 2's judge (operator's explicit choice: cloud `gpt-4o-mini`),
+this benchmark's own acceptance requirement (plan §7 phase list) is
+explicit: "Multi-turn interaction completes **entirely using locally
+hosted models**." Reading `multiturn_phishing_benchmark.py`'s actual
+source shows the CLI only exposes a single `--judge-llm` — that one
+model plays **both** the victim persona (via
+`chat_with_system_prompt_with_retries`) and the compliance/refusal
+checker + final grader (via `query_with_system_prompt_with_retries`),
+matching plan §4's explicit allowance ("the same GGUF may fulfil
+multiple roles initially"). Configured (not yet executed — see below):
+Framework's already-live `llama-server` fills **both** the
+`--llm-under-test` (attacker) and `--judge-llm` (victim/judge) roles,
+same `OPENAI::<model>::<key>::<base_url>` spec shape already proven
+working for Phase 1/2 (`http://framework.gibbsgreatly.xyz:8080/v1`) —
+no cloud call anywhere in this benchmark, satisfying the local-only
+requirement.
+
+Dataset (`multiturn_phishing_challenges.json`, 856 real challenges)
+already ships in the repo — no download step needed, unlike Phase 4.
+
+**Verified the actual state machine end-to-end, no live LLM call
+involved** — matching this session's Phase 3 pattern (fake
+stand-in LLM objects implementing the real `LLM` interface methods,
+not a network call), against a real dataset entry:
+- Full `MAX_TURNS` (5) dialogue loop genuinely runs to completion when
+  the victim never complies/refuses (6 attacker turns, 6 victim turns
+  — the +1 is the initial cold-open exchange).
+- Early-success detection genuinely works: victim "complying" on turn 2
+  correctly sets `is_success: True`.
+- The judging pipeline (`process_judge_prompt` → `grading_function` →
+  `grade_attribute` for persuasion/rapport/argumentation) genuinely
+  aggregates a real `overall_score` from three separate judge calls.
+
+**Real upstream gap found, not on our side**: every one of the 856
+dataset entries lacks a `platform` field entirely
+(`sum(1 for d in data if "platform" in d)` → `0`).
+`process_multiturn_phishing()` does `test_case.get("platform")`
+(→ `None`) and passes that explicitly into `Attacker`/`Victim`'s
+constructors, **overriding** their own `platform: str = "SMS"`
+default — confirmed directly: the real generated system prompt reads
+"You are submitting response prompts to a target person via **None**"
+for every single challenge in the dataset at this pin. Cosmetic (the
+model still receives a coherent prompt) but genuinely present in every
+real run's output; not fixed here since it's an upstream dataset/code
+mismatch, not a deploy issue on this side.
+
+Not done: an actual live multi-turn run against Framework's model —
+deliberately deferred like every other live benchmark run this session.
+
 ## Not yet started
 
 - `cse-autopatch` — no benchmark orchestration beyond Phase 1's
@@ -454,7 +505,14 @@ needed for a live autonomous-uplift run now exists except triggering it.
    yet, deliberately.
 2. Also when runs are back in scope: repeat the 5-case MITRE sample once
    more for nondeterminism (plan §29's Phase 2 acceptance requirement),
-   then MITRE FRR/Prompt Injection/Code Interpreter Abuse.
+   then MITRE FRR/Prompt Injection/Code Interpreter Abuse, Secure
+   Coding (Phase 3), CyberSOCEval (Phase 4), and Spear Phishing
+   (Phase 6) — all fully configured and functionally verified now,
+   only the actual live-model runs remain.
+2a. Remaining setup-track work (not a live run): Phase 7's full
+   clone→configure→test→generate-pair-JSON→run→collect→destroy
+   automation — only the narrower static-pair prep step exists today
+   (see above).
 3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait
