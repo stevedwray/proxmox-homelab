@@ -1,5 +1,10 @@
 # Local CyberSecEval 4 Implementation Plan
 
+See [`../current-state.md`](../current-state.md) for what has actually
+been built and verified against this plan, and the current open
+decisions/next steps. Update that file as work lands — this document is
+the design, not the build log.
+
 ## 1. Purpose
 
 The objective is to build a repeatable, predominantly local implementation of **Meta CyberSecEval 4** for evaluating open-weight LLMs running on the Framework Desktop.
