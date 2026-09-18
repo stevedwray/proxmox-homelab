@@ -24,6 +24,35 @@
       - whois
       - iputils-ping
       - traceroute
+      - openssh-server
+      - sudo
+    # Autonomous-offensive benchmark (plan §7/§11/§13) needs a real SSH
+    # login with tools on PATH -- CyberSecEval's test_case_generator
+    # hardcodes port 22 and defaults --ssh-username to "kali" with no
+    # override for either. This container's own sshd (not the LXC host's)
+    # serves that login, bound to a SECOND IP on the same subnet so it
+    # doesn't collide with the LXC host's own sshd on 192.168.70.210:22 --
+    # network_mode: host means both share one network namespace, so they
+    # must differ by IP since the tool leaves no room to differ by port.
+    cse_kali_agent_username: kali
+    cse_kali_agent_ip: 192.168.70.212
+    # The container's sshd can't bind port 22 itself, even on this
+    # dedicated IP: the LXC host's own sshd (systemd socket-activated)
+    # wildcard-binds 0.0.0.0:22, which blocks any other bind on that
+    # port anywhere in the shared network_mode: host namespace --
+    # confirmed live 2026-09-19 (ss showed `*:22`, not the host's own
+    # specific IP). Fix: the container's sshd listens on this different
+    # port instead, and an iptables REDIRECT on the LXC host (added
+    # below) rewrites incoming :22 traffic on cse_kali_agent_ip to this
+    # port -- transparent to any client, which still connects to :22.
+    cse_kali_agent_ssh_port: 2222
+    # Non-secret by design (this is a public key). Dedicated to this one
+    # purpose -- deliberately NOT the fleet-wide automation SSH key, so a
+    # leaked/misbehaving benchmark run's blast radius stays scoped to this
+    # disposable container. Static for now (one keypair, not yet rotated
+    # per run) until the actual run-orchestration script exists to manage
+    # that lifecycle -- see plan §13, still to be built.
+    cse_kali_agent_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFUkboH69Hw9VchcHctPwnZpF0GP0mk5d+k01JMHyHza cse-kali-autonomous-agent"
 
   roles:
     - lxc_base
@@ -89,6 +118,138 @@
         cmd: "docker exec {{ cse_kali_container }} nmap --version"
       register: nmap_check
       changed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # Autonomous-agent SSH access (plan §11/§13) -- see comment on
+    # cse_kali_agent_* vars above for why this needs its own IP.
+    # ---------------------------------------------------------------
+
+    - name: Check whether the agent's secondary IP is already on eth0
+      ansible.builtin.command:
+        cmd: ip -br addr show eth0
+      register: cse_kali_eth0_addrs
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Add the agent's secondary IP to eth0 (persists until next boot -- LXC net config isn't Terraform-managed for this extra address)
+      ansible.builtin.command:
+        cmd: "ip addr add {{ cse_kali_agent_ip }}/24 dev eth0"
+      when:
+        - not ansible_check_mode
+        - cse_kali_agent_ip not in cse_kali_eth0_addrs.stdout
+
+    - name: Create the dedicated low-privilege agent user inside the Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} useradd -m -s /bin/bash {{ cse_kali_agent_username }}"
+      register: cse_kali_agent_useradd
+      failed_when:
+        - cse_kali_agent_useradd.rc != 0
+        - "'already exists' not in cse_kali_agent_useradd.stderr"
+      changed_when: cse_kali_agent_useradd.rc == 0
+      when: not ansible_check_mode
+
+    - name: Grant the agent user passwordless sudo (standard Kali live-user convention, not root login itself)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_kali_container }}
+          bash -c "echo '{{ cse_kali_agent_username }} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{{ cse_kali_agent_username }} && chmod 0440 /etc/sudoers.d/{{ cse_kali_agent_username }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Create the agent user's .ssh directory inside the container
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_kali_container }}
+          bash -c "mkdir -p /home/{{ cse_kali_agent_username }}/.ssh && chmod 700 /home/{{ cse_kali_agent_username }}/.ssh && chown {{ cse_kali_agent_username }}:{{ cse_kali_agent_username }} /home/{{ cse_kali_agent_username }}/.ssh"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Install the agent's dedicated public key (idempotent, runs every deploy)
+      ansible.builtin.command:
+        # docker exec needs -i for stdin piping to actually reach the
+        # container process -- without it, tee gets an immediately-closed
+        # stdin and silently writes an empty file (confirmed live 2026-09-19:
+        # first attempt without -i produced a 0-byte authorized_keys).
+        cmd: "docker exec -i {{ cse_kali_container }} tee /home/{{ cse_kali_agent_username }}/.ssh/authorized_keys"
+        stdin: "{{ cse_kali_agent_public_key }}\n"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Fix ownership/permissions on authorized_keys
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_kali_container }}
+          bash -c "chmod 600 /home/{{ cse_kali_agent_username }}/.ssh/authorized_keys && chown {{ cse_kali_agent_username }}:{{ cse_kali_agent_username }} /home/{{ cse_kali_agent_username }}/.ssh/authorized_keys"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Configure the container's sshd (own port, bound only to the agent's secondary IP)
+      ansible.builtin.command:
+        cmd: "docker exec -i {{ cse_kali_container }} tee /etc/ssh/sshd_config.d/cse-kali-agent.conf"
+        stdin: |
+          Port {{ cse_kali_agent_ssh_port }}
+          ListenAddress {{ cse_kali_agent_ip }}
+          PermitRootLogin no
+          PasswordAuthentication no
+          AllowUsers {{ cse_kali_agent_username }}
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Check for an existing iptables DNAT rule for the agent's SSH port
+      ansible.builtin.command:
+        # DNAT with an explicit --to-destination, NOT REDIRECT: REDIRECT
+        # always rewrites the destination to 127.0.0.1, but sshd listens
+        # on cse_kali_agent_ip specifically, not loopback -- confirmed
+        # live 2026-09-19 (REDIRECT produced "connection refused", the
+        # rewritten packet found nothing listening on 127.0.0.1:2222).
+        cmd: >-
+          iptables -t nat -C PREROUTING -d {{ cse_kali_agent_ip }} -p tcp --dport 22
+          -j DNAT --to-destination {{ cse_kali_agent_ip }}:{{ cse_kali_agent_ssh_port }}
+      register: cse_kali_iptables_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Add iptables DNAT so external :22 on the agent IP reaches the container's real sshd port
+      ansible.builtin.command:
+        cmd: >-
+          iptables -t nat -A PREROUTING -d {{ cse_kali_agent_ip }} -p tcp --dport 22
+          -j DNAT --to-destination {{ cse_kali_agent_ip }}:{{ cse_kali_agent_ssh_port }}
+      when:
+        - not ansible_check_mode
+        - cse_kali_iptables_check.rc != 0
+
+    # Always restart (not just start-if-missing): the config file above
+    # may have changed since sshd last started, and writing it alone
+    # doesn't reload a running sshd.
+    - name: Stop any already-running sshd inside the container (idempotent -- fine if none is running)
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} pkill -x sshd"
+      register: cse_kali_sshd_stop
+      failed_when: false
+      changed_when: cse_kali_sshd_stop.rc == 0
+      when: not ansible_check_mode
+
+    - name: Start sshd inside the Kali container (daemonizes itself, not tracked as container PID1)
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} /usr/sbin/sshd"
+      register: cse_kali_sshd_start
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Confirm sshd actually started (it silently no-ops on a config test failure)
+      ansible.builtin.fail:
+        msg: "sshd failed to start: {{ cse_kali_sshd_start.stderr }}"
+      when:
+        - not ansible_check_mode
+        - cse_kali_sshd_start.rc != 0
+
+    - name: Verify the agent's SSH login actually works (not just that sshd started)
+      ansible.builtin.wait_for:
+        host: "{{ cse_kali_agent_ip }}"
+        port: 22
+        timeout: 10
       when: not ansible_check_mode
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)

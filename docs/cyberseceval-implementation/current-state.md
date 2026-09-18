@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cross-host range path confirmed already open; focus now on Phase 7 range automation
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; focus now on Phase 7's run-orchestration script
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -167,6 +167,39 @@ other three Phase 2 benchmarks); repeating a small sample twice to check
 for nondeterminism (plan §29's own Phase 2 acceptance requirement); any
 full-dataset run (this was 5 of ~1900 MITRE prompts).
 
+### cse-kali now has real autonomous-agent SSH access (plan §7/§11/§13)
+
+Building the autonomous-offensive benchmark's automation surfaced that
+`cse-kali`'s original design (host-only SSH + `docker exec`, no sshd in
+the container) doesn't fit what CyberSecEval's `test_case_generator`
+actually needs: a real login shell with tools on `PATH`, via SSH,
+hardcoded to port 22, default username `kali`. Added (2026-09-19):
+
+- The container now runs its own `sshd`, reachable at
+  `192.168.70.212:22` (a second IP on `eth0` — `network_mode: host`
+  meant the LXC host's own wildcard-bound `sshd` already owned port 22
+  on every address in that shared namespace). The container's `sshd`
+  actually listens on `.212:2222`; an `iptables` `DNAT` rule (not
+  `REDIRECT` — that rewrites to `127.0.0.1`, which has nothing on 2222,
+  confirmed live as a real "connection refused" before the fix) makes
+  the port-22-externally / port-2222-internally split transparent.
+- A dedicated `kali` user (uid 1000, passwordless `sudo`, key-only
+  auth) — **not** the fleet-wide automation SSH key, so this credential's
+  blast radius stays scoped to this one disposable container.
+- Verified genuinely end-to-end, not just port-open: `cse-controller`'s
+  own Python venv, using `paramiko` (the same library
+  `CybersecurityBenchmarks` itself uses, not a CLI shortcut), logged in
+  as `kali`, ran `sudo nmap -sn <metasploitable3 IP>` successfully.
+  (That specific scan reported the target "down" — Windows blocking
+  ICMP by default, unrelated to this setup; a real run would use `-Pn`.)
+- The private key lives only at `cse-controller`'s
+  `/srv/cyberseceval/config/cse-kali-agent-key` (never in git); the
+  public key is committed in `deploy-cse-kali.yml` (non-secret).
+- Full details, including why `REDIRECT` doesn't work here and what
+  isn't Terraform-managed (the secondary IP, the `iptables` rule — both
+  reapplied idempotently by `deploy-cse-kali.yml` but not persistent
+  across a bare reboot), are in `cse-kali`'s own `STACK_CONTRACT.md`.
+
 ## Not yet started
 
 - `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no benchmark
@@ -201,15 +234,21 @@ need a new MikroTik rule turns out to already work with none — confirmed
 live (2026-09-19), see §12's updated text in the plan doc.
 
 Per operator instruction (2026-09-19): pause benchmark *runs*, focus on
-setup/infrastructure instead.
+setup/infrastructure instead. The autonomous-agent SSH access piece
+above is done; what's left for the range specifically is the
+run-orchestration automation itself.
 
-1. Wire the controller to the range for the autonomous-offensive
-   benchmark specifically (plan §7/§12/§13) — the network path is
-   already open; what's missing is the actual automation (clone/
-   configure/test/generate pair JSON/run/collect/destroy per §13).
-2. Once that's built, resume benchmark runs: repeat the 5-case MITRE
+1. Build plan §13's actual automation (clone/configure/test/generate
+   pair JSON/run/collect/destroy) — everything it needs now exists
+   (agent SSH access, both range hosts, network reachability), but no
+   script ties them together yet. A first cut can use the existing
+   static pair (`cse-kali` `192.168.70.212`,
+   `metasploitable3-win2k8` `192.168.70.211`) rather than building full
+   clone/destroy-per-run logic immediately.
+2. Once that exists, resume benchmark runs: repeat the 5-case MITRE
    sample once more for nondeterminism (plan §29's Phase 2 acceptance
-   requirement), then MITRE FRR/Prompt Injection/Code Interpreter Abuse.
+   requirement), then MITRE FRR/Prompt Injection/Code Interpreter Abuse,
+   then the autonomous-offensive benchmark itself against the range.
 3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait
