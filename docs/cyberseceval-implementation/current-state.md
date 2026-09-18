@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-18): cyber range built and verified; open decisions resolved; cse-controller LXC live on pve-tiny; Phase 1 acceptance requirement met
+## Status (2026-09-18): cyber range built and verified; open decisions resolved; Phase 1 (core infrastructure) fully complete
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -101,18 +101,48 @@ reference (operator's choice) for a from-source rebuild scenario; it is
 explicitly marked "NOT WIRED UP" at the top and must not be run as-is,
 since it would duplicate/collide with the live container's port 8080.
 
+### PurpleLlama/CyberSecEval cloned into cse-controller (plan §6/§8)
+
+`/srv/cyberseceval/repo/PurpleLlama` — cloned, pinned to commit
+`4be64c3a2444` (main's HEAD as of 2026-09-18), remote renamed
+`origin`→`upstream`, local `cse-lab` branch created at that commit
+(confirmed live: `git branch -vv` shows `cse-lab` and `main` both at
+that SHA, `git remote -v` shows `upstream`). Python 3.10 venv at
+`/srv/cyberseceval/.venv`, `CybersecurityBenchmarks/requirements.txt`
+installed. The clone/branch-setup tasks in `deploy-cse-controller.yml`
+are gated on the repo not already existing — a deliberate one-time
+bootstrap so a routine redeploy never resets the hand-maintained
+`cse-lab` branch.
+
+Verified live, not just trusted from Ansible's "ok" status:
+- `python3 -m CybersecurityBenchmarks.benchmark.run --help` — genuinely
+  works, real argument list printed (`--benchmark`, `--llm-under-test`,
+  etc.), only cosmetic `paramiko`/`cryptography` deprecation warnings.
+- `python3 -m unittest` — **actually fails** (1 error out of 8 tests):
+  `CybersecurityBenchmarks.benchmark.llms.community_contribution` fails
+  to import (`ModuleNotFoundError: No module named 'google'` —
+  `ftgooglegenai.py` needs `google-auth`, which
+  `CybersecurityBenchmarks/requirements.txt` doesn't list). This is a
+  real upstream gap at the pinned commit, not a deploy/config problem on
+  this side — same class of issue plan §6 already flags as "initially
+  expected" (it names Secure Code Generation's import issue specifically;
+  this is a different one, in a community-contributed provider module).
+  Not fixed yet — deliberately left as a known, non-blocking gap
+  (`failed_when: false` in the playbook) rather than papering over it by
+  installing an unlisted dependency. A `local/cse-lab` commit adding
+  `google-auth` (or the affected provider's actual runtime deps) would
+  fix it if `community_contribution` benchmarks are ever needed — not
+  needed for the benchmarks this implementation actually targets (§7).
+
 ## Not yet started
 
-- `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no CyberSecEval code,
-  benchmark orchestration, Harbor project, or Framework integration
-  exists yet. `cse-controller`'s container is an empty Python shell with
-  no repo checkout.
-- Cross-host MikroTik rule: `cse-controller` (once it exists on
-  `pve-tiny`) → `cse-kali` (on `pve-test`). Flagged in the plan (§12) but
-  deliberately deferred — the operator asked to focus on `pve-test`
-  first.
-- Any actual CyberSecEval benchmark run, or the CyberSecEval/PurpleLlama
-  checkout itself.
+- `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no benchmark
+  orchestration beyond Phase 1's infrastructure, no Harbor project,
+  deliberately deferred to last per operator instruction (see below).
+- Cross-host MikroTik rule: `cse-controller` (on `pve-tiny`) →
+  `cse-kali` (on `pve-test`). Flagged in the plan (§12), not yet added —
+  next up (see below).
+- Any actual CyberSecEval benchmark run.
 - Windows Activation on `metasploitable3-win2k8` was deferred (deliberate
   — disposable pentest target, doesn't need it), and its network config
   isn't Terraform-managed (console-only, see above) — don't expect either
@@ -133,18 +163,18 @@ since it would duplicate/collide with the live container's port 8080.
 
 ## Next steps, in order
 
-1. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
-   `/srv/cyberseceval/repo/`, pin to a commit, stand up the Python 3.10
-   environment (§6, §8) — the container has Python 3.10 and `curl`/`git`
-   ready, but nothing cloned yet. Phase 1 is otherwise complete.
-2. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
+Phase 1 (plan §29) is now fully complete: `cse-controller` live,
+Framework's `llama-server` reachable, PurpleLlama/CyberSecEval cloned
+and its environment stood up.
+
+1. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
    still needed for the range side specifically (Kali is on a different
    SDN fabric on `pve-test`); Framework reachability needed no new rule.
-3. Wire the controller to the range for the autonomous-offensive
+2. Wire the controller to the range for the autonomous-offensive
    benchmark specifically — everything else in the plan's benchmark
    coverage table (§7) doesn't depend on the range at all and could be
    sequenced earlier if preferred.
-4. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
+3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait
    until every other benchmark path (everything except the

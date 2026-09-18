@@ -55,17 +55,30 @@ API for CI/webhook-triggered runs; update this table then.
 | Stack | Why |
 |---|---|
 | `infra_seg`'s Harbor (on `pve`, reached cross-node) | Docker image pull (`python:3.10-slim` via Harbor's `dockerhub` proxy-cache) |
-| Framework's `llama-server` (not yet built — dedicated Nathanw fork, plan §1a decision #4) | Model inference calls once CyberSecEval code lands (Phase 2+) |
+| Framework's `llama-server` (live — `qwen38-flash-next-q4`, port 8080, see `current-state.md`) | Model inference calls once CyberSecEval code lands (Phase 2+) |
+| `github.com/meta-llama/PurpleLlama` (direct outbound HTTPS, not proxied through Harbor) | One-time repo clone (plan §6) |
 
 ## Persistent State
 
 `/srv/cyberseceval` — a dedicated Proxmox mount point on `pve-tiny`'s
 `nvme-lvm` pool (`durable-nvme` profile), separate from the LXC root
-filesystem so the root stays small. Intended layout per the plan (§3.1):
-`repo/`, `config/`, `datasets/`, `downloads/`, `runs/`, `results/`,
-`reports/`, `manifests/`, `logs/` — none of these subdirectories are
-created yet; that's the CyberSecEval-checkout step, still pending
-(`current-state.md` next-steps #3).
+filesystem so the root stays small.
+
+- `repo/PurpleLlama/` — clone of `meta-llama/PurpleLlama`, pinned to a
+  known commit (plan §6: never track `main` implicitly for benchmark
+  runs). Remote renamed `origin` → `upstream`; a local `cse-lab` branch
+  carries only documented compatibility changes on top of the pin.
+  **One-time bootstrap only** — `deploy-cse-controller`'s clone/branch
+  tasks are gated on the repo not already existing, specifically so a
+  routine redeploy never resets or re-checks-out this repo once it's
+  been hand-maintained.
+- `.venv/` — Python 3.10 venv (matches the container's `python:3.10-slim`
+  base), `CybersecurityBenchmarks/requirements.txt` installed into it.
+  Rerunning the playbook reinstalls requirements (idempotent) but never
+  recreates the venv if it already exists.
+- `config/`, `datasets/`, `downloads/`, `runs/`, `results/`, `reports/`,
+  `manifests/`, `logs/` — remaining layout per plan §3.1; only
+  `manifests/` (Phase 1's acceptance record) exists so far.
 
 ## What May Depend on This Stack
 
@@ -83,6 +96,12 @@ everything else in the compute track runs from.
   `durable-default` (which resolves to `local-lvm`, the boot SSD); the
   whole point of this mount is to live on the 2TB NVMe pool, not compete
   with the LXC root filesystem for space.
+- The PurpleLlama clone/branch-setup tasks in `deploy-cse-controller.yml`
+  are gated on `.git` not already existing — this is deliberate
+  (one-time bootstrap, see Persistent State above). Do not remove that
+  gate; it's what stops a routine redeploy from resetting the hand-
+  maintained `cse-lab` branch or re-checking-out the pinned commit over
+  any local work in progress.
 - `extra_mount.resize_control_plane: provider`, not `operational` — every
   other stack's extra mount in this repo resolves to a ZFS-backed
   profile, where `main.tf`'s own check block requires `operational`; this

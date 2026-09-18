@@ -12,6 +12,18 @@
     cse_controller_packages:
       - curl
       - git
+      - git-lfs
+      - build-essential
+      - poppler-utils
+      - jq
+      - python3-venv
+    # PurpleLlama/CyberSecEval (plan §6/§8). Pinned to main's HEAD at the
+    # time this was written (2026-09-18) -- never track main implicitly
+    # for benchmark runs; bump this deliberately, not automatically.
+    cse_controller_repo_url: https://github.com/meta-llama/PurpleLlama.git
+    cse_controller_repo_commit: 4be64c3a24442b51c76175e6ec67722cc3f5fe38
+    cse_controller_repo_dir: /srv/cyberseceval/repo/PurpleLlama
+    cse_controller_venv_dir: /srv/cyberseceval/.venv
 
   roles:
     - lxc_base
@@ -77,6 +89,86 @@
         cmd: "docker exec {{ cse_controller_container }} curl --version"
       register: curl_check
       changed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # PurpleLlama/CyberSecEval checkout (plan §6/§8). /srv/cyberseceval
+    # is bind-mounted into the container at the identical path, so the
+    # clone/branch setup below operates on the LXC host's filesystem
+    # directly (no docker exec needed) and is visible inside the
+    # container immediately. Gated on the repo not already existing --
+    # this is a ONE-TIME bootstrap. Plan §6 explicitly wants this repo
+    # hand-maintained afterward (a local/cse-lab branch carrying only
+    # documented compatibility changes), so re-running this playbook
+    # must never reset or re-checkout it once created.
+    # ---------------------------------------------------------------
+
+    - name: Check whether PurpleLlama has already been cloned
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/.git"
+      register: cse_controller_repo_stat
+
+    - name: Clone PurpleLlama (one-time bootstrap only)
+      ansible.builtin.git:
+        repo: "{{ cse_controller_repo_url }}"
+        dest: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    - name: Rename PurpleLlama's origin remote to upstream (plan §6 naming - upstream/main)
+      ansible.builtin.command:
+        cmd: git remote rename origin upstream
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    - name: Create local cse-lab branch pinned to {{ cse_controller_repo_commit }} (plan §6 - never track main implicitly)
+      ansible.builtin.command:
+        cmd: "git checkout -b cse-lab {{ cse_controller_repo_commit }}"
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    - name: Check whether the CyberSecEval venv already exists
+      ansible.builtin.stat:
+        path: "{{ cse_controller_venv_dir }}/bin/python3"
+      register: cse_controller_venv_stat
+
+    - name: Create Python 3.10 venv for CyberSecEval
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} python3 -m venv {{ cse_controller_venv_dir }}"
+      when:
+        - not cse_controller_venv_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Install CyberSecEval's Python requirements (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/pip install -r {{ cse_controller_repo_dir }}/CybersecurityBenchmarks/requirements.txt
+      register: cse_controller_pip_install
+      changed_when: "'Successfully installed' in cse_controller_pip_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify CyberSecEval benchmark runner is importable
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.benchmark.run --help
+      register: cse_controller_benchmark_help
+      changed_when: false
+      when: not ansible_check_mode
+
+    # Plan §8 asks for this before any benchmark campaign run. Not gated
+    # on success (failed_when: false): the plan itself flags a known
+    # possible Secure Code Generation import issue at some upstream
+    # revisions as an "initially expected" fixup, so a failure here is
+    # informational, not necessarily a deploy-blocking regression.
+    - name: Run CyberSecEval's own unit test suite (informational -- see comment)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m unittest
+      register: cse_controller_unittest
+      changed_when: false
+      failed_when: false
       when: not ansible_check_mode
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
