@@ -18,6 +18,8 @@
     sdn_gw_tvgames: "192.168.60.1"
     sdn_subnet_tvpent: "{{ lookup('env', 'lab_subnet_pentest_cidr') }}"
     sdn_gw_tvpent: "{{ lookup('env', 'lab_gw_pentest') }}"
+    sdn_subnet_tvcse: "{{ lookup('env', 'lab_subnet_cse_cidr') }}"
+    sdn_gw_tvcse: "{{ lookup('env', 'lab_gw_cse') }}"
     proxmox_sdn_attachments: >-
       {{
         attachments
