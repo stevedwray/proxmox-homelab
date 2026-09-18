@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-18): cyber range built and verified; open decisions resolved; compute side not started
+## Status (2026-09-18): cyber range built and verified; open decisions resolved; cse-controller LXC live on pve-tiny
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -56,13 +56,29 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
 - 2TB NVMe provisioned as `nvme-lvm` (LVM-thin, deliberately not ZFS —
   ARC would pressure this node's 32GB RAM), wired into
   `terraform/lxc/storage/pve-tiny.yaml` (`durable-nvme` extra-mount
-  profile). Nothing CyberSecEval-specific deployed here yet.
+  profile).
+- **`cse-controller`** (LXC, `192.168.40.70`, VMID `40070`): live.
+  Joins the existing `infra_seg` zone (VLAN 40) — the operator's explicit
+  choice over a new dedicated zone or `mgmt_seg`, since it at least
+  shares this stack's real Harbor dependency. `docker-compose.yml` runs a
+  stock `python:3.10-slim` container (`sleep infinity`, Phase 1
+  placeholder — no CyberSecEval code cloned yet), with `curl`/`git`
+  installed at deploy time. `/srv/cyberseceval` is a dedicated Proxmox
+  mount point on the new `nvme-lvm` pool (`durable-nvme` profile, 100G) —
+  the **first non-ZFS-backed extra mount in this repo**; its
+  `resize_control_plane` had to be set to `provider`, not the
+  `operational` value every other (ZFS-backed) stack uses — `main.tf`'s
+  own check block only allows `operational` for a zfs-backed backend.
+  Verified live: container running, mount present (93G avail),
+  `python3 --version`/`curl --version` both confirmed by direct `docker
+  exec`, not just trusted from the Ansible run.
 
 ## Not yet started
 
-- `cse-controller`, `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no
-  CyberSecEval code, benchmark orchestration, Harbor project, or Framework
-  integration exists yet.
+- `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no CyberSecEval code,
+  benchmark orchestration, Harbor project, or Framework integration
+  exists yet. `cse-controller`'s container is an empty Python shell with
+  no repo checkout.
 - Cross-host MikroTik rule: `cse-controller` (once it exists on
   `pve-tiny`) → `cse-kali` (on `pve-test`). Flagged in the plan (§12) but
   deliberately deferred — the operator asked to focus on `pve-test`
@@ -89,14 +105,18 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
 
 ## Next steps, in order
 
-1. Build `cse-controller` on `pve-tiny` (plan Phase 1): stand up the
-   Nathanw Strix-Halo `llama.cpp` fork/build on the Framework host, reach
-   its `llama-server` from the controller, record model/server config in
-   a run manifest.
+1. Stand up the Nathanw Strix-Halo `llama.cpp` fork/build on the
+   Framework host (plan §5) — doesn't exist yet, separate from the
+   already-live `llama-router`/`llamacpp-router` (upstream
+   `ggml-org/llama.cpp`). Reach its `llama-server` from `cse-controller`,
+   record model/server config in a run manifest — completes Phase 1's
+   acceptance requirement.
 2. Harbor: create the `cyberseceval` project + scoped robot account (§18)
    — not done yet.
-3. Clone PurpleLlama/CyberSecEval, pin to a commit, stand up the Python
-   3.10 environment (§6, §8).
+3. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
+   `/srv/cyberseceval/repo/`, pin to a commit, stand up the Python 3.10
+   environment (§6, §8) — the container has Python 3.10 and `curl`/`git`
+   ready, but nothing cloned yet.
 4. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) once
    the controller exists.
 5. Wire the controller to the range for the autonomous-offensive

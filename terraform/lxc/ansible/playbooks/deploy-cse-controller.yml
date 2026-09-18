@@ -1,0 +1,87 @@
+---
+- name: Deploy cse-controller stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    cse_controller_stack_name: "{{ stack_name | default('cse-controller') }}"
+    cse_controller_compose_content: "{{ lookup('file', '../../stacks/' + cse_controller_stack_name + '/docker-compose.yml') }}"
+    cse_controller_stack_dir: "/opt/stacks/{{ cse_controller_stack_name }}"
+    cse_controller_container: "{{ cse_controller_stack_name }}"
+    cse_controller_packages:
+      - curl
+      - git
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ cse_controller_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ cse_controller_compose_content }}"
+        dest: "{{ cse_controller_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start controller container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for controller container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} {{ cse_controller_container }}"
+      register: controller_running
+      until: controller_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Update apt cache inside controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} apt-get update"
+      register: controller_apt_update
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Install base tooling inside controller container (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          apt-get install -y --no-install-recommends {{ cse_controller_packages | join(' ') }}
+      register: controller_tools_install
+      changed_when: "'0 upgraded, 0 newly installed' not in controller_tools_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify curl is usable inside the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} curl --version"
+      register: curl_check
+      changed_when: false
+      when: not ansible_check_mode
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

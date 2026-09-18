@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  controller:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller
+    volumes:
+      - /srv/cyberseceval:/srv/cyberseceval
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
