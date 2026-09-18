@@ -145,14 +145,25 @@ Runs the isolated Kali attacker VM + Windows Server target VM (§11-§13).
 4. ~~Framework inference layer~~ — **resolved (2026-09-18): a separate
    Nathanw Strix-Halo `llama.cpp` fork server**, per §3.4/§5's original
    language — not Framework's existing `llama-router`
-   (`ggml-org/llama.cpp` build), and explicitly **not** the Ollama runtime
-   that a separate, already-decided project-wide call (Laguna S 2.1,
-   see `docs/framework-integration/` history) uses for other work on this
-   same host. That Ollama decision was scoped to Laguna S 2.1's own eval
-   scores and does not bind this benchmark; CyberSecEval's controller
-   targets its own dedicated Nathanw-fork `llama-server` instance instead.
-   Standing up that fork/build is now in scope for Phase 1
-   (`cse-controller`).
+   (`ggml-org/llama.cpp` build, now actually inactive — see below), and
+   explicitly **not** the Ollama runtime that a separate, already-decided
+   project-wide call (Laguna S 2.1, see `docs/framework-integration/`
+   history) uses for other work on this same host. That Ollama decision
+   was scoped to Laguna S 2.1's own eval scores and does not bind this
+   benchmark.
+   **Turned out to already exist**: discovered live (2026-09-18) that a
+   Nathanw-fork server was already running on Framework —
+   `ghcr.io/nathanw1014/strix-halo-llamacpp:vulkan`, container
+   `qwen38-flash-next-q4`, port 8080, serving
+   `Qwen3.8-Flash-Next-UD-Q4_K_XL` — deployed by the operator directly,
+   not through this repo's Ansible. It supersedes the old `llama-router`:
+   confirmed `systemctl is-active llama-router` → `inactive`, no
+   `llamacpp-router` container running. `cse-controller` reaches it
+   directly (`infra_seg` → Framework's LAN address, no new MikroTik rule
+   needed) — verified live, HTTP 200 `{"status":"ok"}` from inside the
+   `cse-controller` container. Phase 1's acceptance requirement (§29) is
+   met using this existing service; no new build was needed or should be
+   attempted (see `current-state.md` for the exact config recorded).
 5. ~~`cse-autopatch`'s initial Podman working-volume size~~ —
    **resolved (2026-09-18): defer.** Don't pre-allocate a number now;
    size the volume only once Phase 8's nested-Podman LXC PoC actually

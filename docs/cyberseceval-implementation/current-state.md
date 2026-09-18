@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-18): cyber range built and verified; open decisions resolved; cse-controller LXC live on pve-tiny
+## Status (2026-09-18): cyber range built and verified; open decisions resolved; cse-controller LXC live on pve-tiny; Phase 1 acceptance requirement met
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -73,6 +73,34 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
   `python3 --version`/`curl --version` both confirmed by direct `docker
   exec`, not just trusted from the Ansible run.
 
+### Framework — Nathanw-fork `llama-server` already live (discovered, not built)
+
+Went looking to build this (plan §1a decision #4) and found it already
+running: container `qwen38-flash-next-q4`,
+`ghcr.io/nathanw1014/strix-halo-llamacpp:vulkan`, port 8080, serving
+`Qwen3.8-Flash-Next-UD-Q4_K_XL` (176.9B params, sharded UD-Q4_K_XL quant,
+262144 ctx). Deployed by the operator directly — not through this repo's
+Ansible. It supersedes the old upstream `llama-router`/`llamacpp-router`
+(`ggml-org/llama.cpp`) this repo's `framework-desktop-llamacpp.yml`
+deploys: confirmed `systemctl is-active llama-router` → `inactive`, no
+`llamacpp-router` container running.
+
+**Phase 1's acceptance requirement (plan §29) is met**: a real test call
+from `cse-controller` reached `http://framework.gibbsgreatly.xyz:8080/health`
+directly (HTTP 200, `{"status":"ok"}`) — `infra_seg` already egresses to
+Framework's LAN address, no new MikroTik rule was needed. The exact
+model/server config (image, command, model path, `n_ctx`, param count)
+is recorded at `/srv/cyberseceval/manifests/phase1-llama-server-test.json`
+on `cse-controller`'s durable mount, confirmed readable from inside the
+container.
+
+A speculative build-from-source playbook
+(`ansible/00-initial-setup/framework-desktop-llamacpp-nathanw.yml`) was
+written before this was discovered — kept in the repo only as an unused
+reference (operator's choice) for a from-source rebuild scenario; it is
+explicitly marked "NOT WIRED UP" at the top and must not be run as-is,
+since it would duplicate/collide with the live container's port 8080.
+
 ## Not yet started
 
 - `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no CyberSecEval code,
@@ -98,28 +126,23 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
    fork server** — not Framework's existing `llama-router`
    (`ggml-org/llama.cpp`), and not Ollama (that runtime decision was
    scoped to Laguna S 2.1's eval scores, doesn't bind this benchmark).
-   Standing up that fork/build is now part of Phase 1.
+   Turned out to already exist, live — see above.
 5. `cse-autopatch`'s Podman volume size: **deferred** — no pre-allocated
    number; size it from real `podman system df` output once Phase 8's
    PoC runs a shard.
 
 ## Next steps, in order
 
-1. Stand up the Nathanw Strix-Halo `llama.cpp` fork/build on the
-   Framework host (plan §5) — doesn't exist yet, separate from the
-   already-live `llama-router`/`llamacpp-router` (upstream
-   `ggml-org/llama.cpp`). Reach its `llama-server` from `cse-controller`,
-   record model/server config in a run manifest — completes Phase 1's
-   acceptance requirement.
-2. Harbor: create the `cyberseceval` project + scoped robot account (§18)
+1. Harbor: create the `cyberseceval` project + scoped robot account (§18)
    — not done yet.
-3. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
+2. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
    `/srv/cyberseceval/repo/`, pin to a commit, stand up the Python 3.10
    environment (§6, §8) — the container has Python 3.10 and `curl`/`git`
-   ready, but nothing cloned yet.
-4. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) once
-   the controller exists.
-5. Wire the controller to the range for the autonomous-offensive
+   ready, but nothing cloned yet. Phase 1 is otherwise complete.
+3. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
+   still needed for the range side specifically (Kali is on a different
+   SDN fabric on `pve-test`); Framework reachability needed no new rule.
+4. Wire the controller to the range for the autonomous-offensive
    benchmark specifically — everything else in the plan's benchmark
    coverage table (§7) doesn't depend on the range at all and could be
    sequenced earlier if preferred.
