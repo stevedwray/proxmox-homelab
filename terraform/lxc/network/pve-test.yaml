@@ -11,10 +11,14 @@
 # Physical setup:
 #   pve-test (laptop) NIC → MikroTik trunk port
 #     Untagged (native): LAN — 192.168.1.0/24
-#     Tagged VLAN 10: build_seg — 192.168.10.0/24, gw 192.168.10.1
-#     Tagged VLAN 20: mgmt_seg  — 192.168.20.0/24, gw 192.168.20.1
-#     Tagged VLAN 30: edge_seg  — 192.168.30.0/24, gw 192.168.30.1
-#     Tagged VLAN 40: infra_seg — 192.168.40.0/24, gw 192.168.40.1
+#     Tagged VLAN 10: build_seg   — 192.168.10.0/24, gw 192.168.10.1
+#     Tagged VLAN 20: mgmt_seg    — 192.168.20.0/24, gw 192.168.20.1
+#     Tagged VLAN 30: edge_seg    — 192.168.30.0/24, gw 192.168.30.1
+#     Tagged VLAN 40: infra_seg   — 192.168.40.0/24, gw 192.168.40.1
+#     Tagged VLAN 70: pentest_seg — 192.168.70.0/24, gw 192.168.70.1 (added
+#       2026-09-18 for the CyberSecEval cyber range — extends the existing
+#       zone already live on pve/pve-test-vm rather than a new VLAN; see
+#       docs/cyberseceval-implementation/plan/cyberseceval-implementation-plan.md §1a/§11)
 #
 # MikroTik one-time setup (run once before the first SDN stack is deployed):
 #   # Replace <trunk-iface> with the interface facing pve-test (active baseline: ether5)
@@ -22,10 +26,14 @@
 #   /interface vlan add interface=<trunk-iface> name=vlan20-mgmt  vlan-id=20
 #   /interface vlan add interface=<trunk-iface> name=vlan30-edge  vlan-id=30
 #   /interface vlan add interface=<trunk-iface> name=vlan40-infra vlan-id=40
+#   /interface vlan add interface=<trunk-iface> name=vlan70-pentest vlan-id=70
 #   /ip address add address=192.168.10.1/24 interface=vlan10-build comment="pve-test build_seg gw"
 #   /ip address add address=192.168.20.1/24 interface=vlan20-mgmt  comment="pve-test mgmt_seg gw"
 #   /ip address add address=192.168.30.1/24 interface=vlan30-edge  comment="pve-test edge_seg gw"
 #   /ip address add address=192.168.40.1/24 interface=vlan40-infra comment="pve-test infra_seg gw"
+#   # NOTE: no new gateway IP for VLAN 70 — 192.168.70.1 already exists on
+#   # the MikroTik (shared with pve/pve-test-vm's pentest_seg). Only the
+#   # VLAN interface + trunk tag above are new for this node.
 #   # Delegate lab.gibbsgreatly.xyz — baseline: static A records on MikroTik.
 #   # Apply with admin credentials (api-user is read-only by design).
 #   # For each internal platform name, add a static A record:
@@ -187,6 +195,42 @@ attachments:
       gateway: "${lab_gw_build}"
       snat: false
 
+  # -------------------------------------------------------------------------
+  # pentest_seg — CyberSecEval cyber range (VLAN 70, 192.168.70.0/24)
+  #
+  # Extends the existing pentest_seg zone already live on pve/pve-test-vm
+  # (pentagi-stack, greenbone-stack) rather than building a new zone — same
+  # category of contained, hostile-tooling workload, real containment
+  # already proven at the MikroTik for this VLAN. pve-test's role is now
+  # the cyber-range host specifically (see docs/cyberseceval-implementation/
+  # plan/cyberseceval-implementation-plan.md §1a) — the tvpent zone/vnet
+  # name is reused here without conflict, same as pve-test-vm's copy.
+  # Gateway: MikroTik VLAN 70 interface (192.168.70.1), same trunk/VLAN as
+  # pve's and pve-test-vm's instances, shared subnet.
+  # Containers/VMs: cse-kali (LXC, 192.168.70.210 — attacker),
+  #   metasploitable3-win2k8 (VM, 192.168.70.211 — target). Deliberately
+  #   distinct from pentagi-stack's .10/.110 and greenbone-stack's .11/.111
+  #   to avoid any collision if those are ever active on the same VLAN
+  #   simultaneously.
+  # -------------------------------------------------------------------------
+  pentest_seg:
+    description: CyberSecEval cyber range — dedicated, contained zone
+    type: sdn_vnet
+    bridge: tvpent
+    firewall: false
+    sdn:
+      zone: tvpent
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test
+      vnet: tvpent
+      vlan_tag: 70
+      alias: pve-test pentest segment
+      subnet: "${lab_subnet_pentest_cidr}"
+      gateway: "${lab_gw_pentest}"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -213,6 +257,12 @@ zones:
     attachment: seg_c
     containers:
       - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
+  pentest_seg:
+    description: CyberSecEval cyber range — Kali attacker + Metasploitable3 target
+    attachment: pentest_seg
+    containers:
+      - "cse-kali (LXC, VMID 70010) — 192.168.70.210"
+      - "metasploitable3-win2k8 (VM, VMID 70011) — 192.168.70.211"
 
 inventory:
   proxmox_nodes:
