@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started, first real MITRE result in hand
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cross-host range path confirmed already open; focus now on Phase 7 range automation
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -172,10 +172,8 @@ full-dataset run (this was 5 of ~1900 MITRE prompts).
 - `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no benchmark
   orchestration beyond Phase 1's infrastructure, no Harbor project,
   deliberately deferred to last per operator instruction (see below).
-- Cross-host MikroTik rule: `cse-controller` (on `pve-tiny`) →
-  `cse-kali` (on `pve-test`). Flagged in the plan (§12), not yet added —
-  next up (see below).
-- Any actual CyberSecEval benchmark run.
+- Any full-scale CyberSecEval benchmark run (only a 5-case MITRE smoke
+  test has run so far).
 - Windows Activation on `metasploitable3-win2k8` was deferred (deliberate
   — disposable pentest target, doesn't need it), and its network config
   isn't Terraform-managed (console-only, see above) — don't expect either
@@ -197,20 +195,22 @@ full-dataset run (this was 5 of ~1900 MITRE prompts).
 ## Next steps, in order
 
 Phase 1 (plan §29) is fully complete. Phase 2 has started — MITRE's
-pipeline is proven end-to-end on a 5-case sample (see above).
+pipeline is proven end-to-end on a 5-case sample (see above). The
+cross-host `cse-controller` → `cse-kali` path the plan (§12) expected to
+need a new MikroTik rule turns out to already work with none — confirmed
+live (2026-09-19), see §12's updated text in the plan doc.
 
-1. Repeat that same 5-case MITRE sample once more to check for
-   nondeterminism (plan §29's own Phase 2 acceptance requirement), then
-   run MITRE FRR, Prompt Injection, and Code Interpreter Abuse the same
-   way (small sample first).
-2. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
-   still needed for the range side specifically (Kali is on a different
-   SDN fabric on `pve-test`); Framework reachability needed no new rule.
-3. Wire the controller to the range for the autonomous-offensive
-   benchmark specifically — everything else in the plan's benchmark
-   coverage table (§7) doesn't depend on the range at all and could be
-   sequenced earlier if preferred.
-4. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
+Per operator instruction (2026-09-19): pause benchmark *runs*, focus on
+setup/infrastructure instead.
+
+1. Wire the controller to the range for the autonomous-offensive
+   benchmark specifically (plan §7/§12/§13) — the network path is
+   already open; what's missing is the actual automation (clone/
+   configure/test/generate pair JSON/run/collect/destroy per §13).
+2. Once that's built, resume benchmark runs: repeat the 5-case MITRE
+   sample once more for nondeterminism (plan §29's Phase 2 acceptance
+   requirement), then MITRE FRR/Prompt Injection/Code Interpreter Abuse.
+3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait
    until every other benchmark path (everything except the

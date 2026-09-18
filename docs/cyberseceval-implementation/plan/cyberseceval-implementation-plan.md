@@ -802,12 +802,18 @@ extending that same zone to `pve-test`'s trunk port (§1a, §11) reuses its
 existing rule shape and its VLAN 70 interface rather than standing up a
 second, LXC-local firewall layer.
 
-Note the "controller -> Kali SSH" rule above crosses physical hosts:
+Note the "controller -> Kali SSH" path above crosses physical hosts:
 `cse-controller` lives on `pve-tiny`, the range lives on `pve-test` — two
-separate SDN fabrics joined only through the MikroTik router. That one
-narrow path needs an explicit MikroTik rule between pve-tiny's `mgmt_seg`
-(or wherever the controller ends up) and pve-test's new range VLAN; it
-will not exist by default the way same-host zone-to-zone rules do.
+separate SDN fabrics joined only through the MikroTik router.
+**Turned out to need no new rule**, contrary to what this section
+originally assumed: confirmed live (2026-09-19) that `cse-controller`
+(`infra_seg`, `192.168.40.70`) already reaches `cse-kali`'s real SSH
+banner directly on `192.168.70.210:22`, with zero MikroTik changes.
+`infra_seg` carries no default-deny egress rule of its own (unlike
+`pentest_seg`/`media_seg`, the higher-risk zones that each get one), so
+its forward traffic falls through to the router's implicit accept
+policy when no explicit rule matches. Checked the live rule set via the
+MikroTik REST API (read-only) before assuming otherwise.
 
 Potential later telemetry:
 
