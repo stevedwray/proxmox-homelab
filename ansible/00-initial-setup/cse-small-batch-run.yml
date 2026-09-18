@@ -1,0 +1,199 @@
+---
+# One-shot small cross-benchmark smoke batch (operator request, 2026-09-19):
+# "run a small batch of tests" across everything built this implementation
+# pass except AutoPatch (deliberately deferred) -- tiny --num-test-cases
+# caps on every benchmark, not a full-dataset run. Mirrors Phase 2's
+# original MITRE smoke test's secure-key-handling pattern exactly: the
+# API key is templated into a script with no_log: true so it never
+# appears in any visible task output, the script runs, then it's
+# deleted immediately after.
+#
+# Run with (pve-tiny is a production node -- production approval flow):
+#   export TASK_APPROVAL="cse-controller-pve-tiny-deploy"
+#   ./with-secrets-prod-tiny ansible-playbook \
+#     -i terraform/lxc/.generated/inventory.yml \
+#     ansible/00-initial-setup/cse-small-batch-run.yml \
+#     -e stack_name=cse-controller --limit cse-controller
+#
+# Or, since this only needs docker exec into the already-running
+# cse-controller container over SSH to pve-tiny, it can also just be
+# run directly against the LXC host (see how other cse-controller ad
+# hoc commands this session connected) -- whichever inventory path is
+# already wired for cse-controller in the calling environment.
+
+- name: Run a small cross-benchmark smoke batch against the local Framework model
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    cse_batch_container: cse-controller
+    cse_batch_repo_dir: /srv/cyberseceval/repo/PurpleLlama
+    cse_batch_venv_dir: /srv/cyberseceval/.venv
+    cse_batch_config_dir: /srv/cyberseceval/config
+    # Matches the real model identifier llama-server itself reports
+    # (confirmed live from the Phase 2 smoke test's own stat file) --
+    # the OPENAI provider just forwards whatever string is given, and
+    # llama.cpp's server ignores it beyond echoing it back.
+    cse_batch_mut_spec: "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::not-needed::http://framework.gibbsgreatly.xyz:8080/v1"
+    cse_batch_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set (via ./with-secrets-prod-tiny) to run the judge-requiring benchmarks in this batch') }}"
+    cse_batch_num_cases: 2
+    cse_batch_phishing_cases: 1
+    cse_batch_uplift_shots: 3
+
+  tasks:
+    - name: Freeze a single run id for this batch
+      ansible.builtin.set_fact:
+        cse_batch_run_id: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+    - name: Set the run directory now that the run id is frozen
+      ansible.builtin.set_fact:
+        cse_batch_run_dir: "/srv/cyberseceval/runs/small-batch-{{ cse_batch_run_id }}"
+
+    - name: Create the batch run directory (host filesystem -- bind-mounted into the container)
+      ansible.builtin.file:
+        path: "{{ cse_batch_run_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write the batch driver script (contains the real OpenAI key -- never logged)
+      no_log: true
+      ansible.builtin.copy:
+        dest: "{{ cse_batch_run_dir }}/run-batch.sh"
+        mode: "0700"
+        content: |
+          #!/bin/bash
+          # Small cross-benchmark smoke batch -- generated {{ cse_batch_run_id }}.
+          # Continues past a single benchmark's failure so the rest of the
+          # sweep still runs; each benchmark's own exit code is captured
+          # into results.txt for the after-action summary.
+          set -u
+          cd {{ cse_batch_repo_dir }}
+          PY={{ cse_batch_venv_dir }}/bin/python3
+          RUN_DIR={{ cse_batch_run_dir }}
+          MUT="{{ cse_batch_mut_spec }}"
+          JUDGE="OPENAI::gpt-4o-mini::{{ cse_batch_openai_api_key }}"
+          RESULTS="${RUN_DIR}/results.txt"
+          : > "${RESULTS}"
+
+          run_one() {
+            local name="$1"; shift
+            echo "=== ${name} starting $(date -Iseconds) ===" | tee -a "${RESULTS}"
+            "$@" >"${RUN_DIR}/${name}.log" 2>&1
+            local rc=$?
+            echo "=== ${name} exited ${rc} $(date -Iseconds) ===" | tee -a "${RESULTS}"
+          }
+
+          mkdir -p "${RUN_DIR}/mitre" "${RUN_DIR}/mitre_frr" "${RUN_DIR}/prompt_injection" \
+                   "${RUN_DIR}/interpreter" "${RUN_DIR}/instruct" "${RUN_DIR}/autocomplete" \
+                   "${RUN_DIR}/malware_analysis" "${RUN_DIR}/threat_intel" "${RUN_DIR}/spear_phishing" \
+                   "${RUN_DIR}/autonomous_uplift"
+
+          run_one mitre "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=mitre \
+            --prompt-path=CybersecurityBenchmarks/datasets/mitre/mitre_benchmark_100_per_category_with_augmentation.json \
+            --response-path="${RUN_DIR}/mitre/responses.json" \
+            --judge-response-path="${RUN_DIR}/mitre/judge_responses.json" \
+            --stat-path="${RUN_DIR}/mitre/stat.json" \
+            --judge-llm="${JUDGE}" --expansion-llm="${JUDGE}" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one mitre_frr "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=mitre-frr \
+            --prompt-path=CybersecurityBenchmarks/datasets/mitre_frr/mitre_frr.json \
+            --response-path="${RUN_DIR}/mitre_frr/responses.json" \
+            --stat-path="${RUN_DIR}/mitre_frr/stat.json" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one prompt_injection "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=prompt-injection \
+            --prompt-path=CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json \
+            --response-path="${RUN_DIR}/prompt_injection/responses.json" \
+            --judge-response-path="${RUN_DIR}/prompt_injection/judge_responses.json" \
+            --stat-path="${RUN_DIR}/prompt_injection/stat.json" \
+            --judge-llm="${JUDGE}" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one interpreter "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=interpreter \
+            --prompt-path=CybersecurityBenchmarks/datasets/interpreter/interpreter.json \
+            --response-path="${RUN_DIR}/interpreter/responses.json" \
+            --judge-response-path="${RUN_DIR}/interpreter/judge_responses.json" \
+            --stat-path="${RUN_DIR}/interpreter/stat.json" \
+            --judge-llm="${JUDGE}" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one instruct "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=instruct \
+            --prompt-path=CybersecurityBenchmarks/datasets/instruct/instruct-v2.json \
+            --response-path="${RUN_DIR}/instruct/responses.json" \
+            --stat-path="${RUN_DIR}/instruct/stat.json" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one autocomplete "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=autocomplete \
+            --prompt-path=CybersecurityBenchmarks/datasets/autocomplete/autocomplete.json \
+            --response-path="${RUN_DIR}/autocomplete/responses.json" \
+            --stat-path="${RUN_DIR}/autocomplete/stat.json" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one malware_analysis "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=malware_analysis \
+            --prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/malware_analysis/questions.json \
+            --response-path="${RUN_DIR}/malware_analysis/responses.json" \
+            --judge-response-path="${RUN_DIR}/malware_analysis/judge_responses.json" \
+            --stat-path="${RUN_DIR}/malware_analysis/stats.json" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one threat_intel "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=threat_intel_reasoning \
+            --prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/report_questions.json \
+            --response-path="${RUN_DIR}/threat_intel/responses.json" \
+            --judge-response-path="${RUN_DIR}/threat_intel/judge_responses.json" \
+            --stat-path="${RUN_DIR}/threat_intel/stats.json" \
+            --input-modality=text \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_num_cases }}
+
+          run_one spear_phishing "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=multiturn-phishing \
+            --prompt-path=CybersecurityBenchmarks/datasets/spear_phishing/multiturn_phishing_challenges.json \
+            --response-path="${RUN_DIR}/spear_phishing/responses.json" \
+            --judge-response-path="${RUN_DIR}/spear_phishing/judge_responses.json" \
+            --stat-path="${RUN_DIR}/spear_phishing/stats.json" \
+            --judge-llm="${MUT}" \
+            --llm-under-test="${MUT}" --num-test-cases={{ cse_batch_phishing_cases }}
+
+          # Autonomous uplift: generate a small real prompt set against the
+          # live static pair, then the actual live attack (no judge needed).
+          run_one autonomous_uplift_generate "${PY}" -m CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator \
+            --ssh-key-file={{ cse_batch_config_dir }}/cse-kali-agent-key \
+            --ssh-username=kali \
+            --cyber-range-file={{ cse_batch_config_dir }}/cyber_range_pairs.json \
+            --system-prompt-file=CybersecurityBenchmarks/datasets/autonomous_uplift/in/system_prompt.txt \
+            --out-file="${RUN_DIR}/autonomous_uplift/prompts.json" \
+            --shots-per-run={{ cse_batch_uplift_shots }} --runs-per-range=1
+
+          run_one autonomous_uplift_attack "${PY}" -m CybersecurityBenchmarks.benchmark.run \
+            --benchmark=autonomous-uplift \
+            --prompt-path="${RUN_DIR}/autonomous_uplift/prompts.json" \
+            --response-path="${RUN_DIR}/autonomous_uplift/responses.json" \
+            --stat-path="${RUN_DIR}/autonomous_uplift/stat.json" \
+            --llm-under-test="${MUT}"
+
+          echo "=== batch complete $(date -Iseconds) ===" | tee -a "${RESULTS}"
+
+    - name: Run the batch (this genuinely takes a while -- 9 sequential live-model benchmarks)
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_batch_container }} bash {{ cse_batch_run_dir }}/run-batch.sh"
+      register: cse_batch_run
+      changed_when: true
+      no_log: true
+
+    - name: Remove the driver script (contained the real API key -- no_log above kept it out of task output, this removes it from disk too)
+      ansible.builtin.file:
+        path: "{{ cse_batch_run_dir }}/run-batch.sh"
+        state: absent
+
+    - name: Report where results landed
+      ansible.builtin.debug:
+        msg: "Batch run id {{ cse_batch_run_id }}. Results under {{ cse_batch_run_dir }} -- see results.txt for per-benchmark exit codes."
