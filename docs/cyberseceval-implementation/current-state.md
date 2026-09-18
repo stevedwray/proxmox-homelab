@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval ready to deploy
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -271,13 +271,38 @@ default-deny zone.
   reachable from `cse-controller`; NAS and Proxmox management IPs
   correctly blocked.
 
+### `cse-code-eval` (Phase 5, plan §3.2) — deployed and verified live
+
+LXC live on `cse_seg` (`192.168.100.71`, VMID `100071`) — the isolated
+generated-code-execution sandbox, per the real justification found by
+reading `canary_exploit.verify_response.py`'s actual source: the
+Vulnerability Exploitation benchmark's `compile_and_run()` is a plain
+local subprocess, so whatever host runs it needs to genuinely contain
+arbitrary LLM-generated code, not just a good password. `terragrunt
+apply` was a clean 5-resource create (no changes/destroys elsewhere).
+
+`deploy-cse-code-eval.yml` ran clean (0 failed). Verified live, not just
+trusted from Ansible's "ok" status:
+- Build toolchain genuinely installed and runnable: `gcc`/`g++` 14.2.0,
+  `cmake` 3.31.6, confirmed by direct `docker exec`.
+- PurpleLlama cloned, pinned to the same commit as `cse-controller`
+  (`4be64c3a2444`), `origin`→`upstream` renamed, local `cse-lab` branch
+  created at that SHA — confirmed via `git remote -v`/`git branch -vv`
+  inside the container, not just the playbook's changed/ok status.
+- Python 3.10 venv + `CybersecurityBenchmarks/requirements.txt`
+  installed; `python3 -m CybersecurityBenchmarks.benchmark.run --help`
+  genuinely prints the real argument list (only cosmetic
+  `paramiko`/`cryptography` deprecation warnings, same as
+  `cse-controller`).
+- Re-verified the isolation boundary from this specific container (not
+  assumed shared just because it's on the same zone as `cse-controller`):
+  Harbor via Traefik (401, real response), Framework `llama-server`
+  (415, real response), and internet egress (200) all reachable; NAS
+  and Proxmox management both genuinely blocked (raw TCP connect
+  timeout, not just "no rule found").
+
 ## Not yet started
 
-- **`cse-code-eval`** (Phase 5, plan §3.2) — stack files written and
-  already targeting `cse_seg` (`stack.yaml`/`docker-compose.yml`/
-  `STACK_CONTRACT.md`/deploy playbook, all syntax-checked) but **not
-  deployed yet** — `cse_seg` itself is ready now, this is the next
-  concrete step.
 - `cse-autopatch` — no benchmark orchestration beyond Phase 1's
   infrastructure, no Harbor project, deliberately deferred to last per
   operator instruction (see below).
@@ -314,10 +339,10 @@ setup/infrastructure instead. Both the autonomous-agent SSH access and
 the prep-step automation above are done and verified — everything
 needed for a live autonomous-uplift run now exists except triggering it.
 
-0. **Immediate next**: deploy the already-written `cse-code-eval` stack
-   into `cse_seg` (`192.168.100.71`) — `cse_seg` itself is built and
-   verified live (see above), this is just running
-   `terragrunt apply`/`provision.sh --stack cse-code-eval`.
+0. **Done** — `cse-code-eval` deployed into `cse_seg` (`192.168.100.71`)
+   and verified live (see above). Phase 5's infrastructure is complete;
+   no CyberSecEval code-execution benchmark has actually been run
+   against it yet (deliberately, per the pause-on-runs instruction).
 1. Whenever test *runs* are back in scope: trigger the actual live
    benchmark (`benchmark.run --benchmark=autonomous-uplift`, command
    already printed by `run-autonomous-uplift.sh`'s own output) — a real

@@ -1,6 +1,5 @@
 hostname: cse-code-eval
-# Targets the planned cse_seg zone (VLAN 100, plan §1b) -- NOT infra_seg.
-# cse_seg doesn't exist yet; do not deploy this stack until it does.
+# On cse_seg (VLAN 100, plan §1b) -- NOT infra_seg. Live since 2026-09-19.
 ip_address: 192.168.100.71/24
 gateway: 192.168.100.1
 dns_server: 192.168.100.1
