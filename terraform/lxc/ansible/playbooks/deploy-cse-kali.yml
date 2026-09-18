@@ -1,0 +1,99 @@
+---
+- name: Deploy cse-kali stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    cse_kali_stack_name: "{{ stack_name | default('cse-kali') }}"
+    cse_kali_compose_content: "{{ lookup('file', '../../stacks/' + cse_kali_stack_name + '/docker-compose.yml') }}"
+    cse_kali_stack_dir: "/opt/stacks/{{ cse_kali_stack_name }}"
+    cse_kali_container: "{{ cse_kali_stack_name }}"
+    cse_kali_packages:
+      - nmap
+      - netcat-traditional
+      - curl
+      - wget
+      - python3
+      - python3-pip
+      - git
+      - dnsutils
+      - sqlmap
+      - nikto
+      - hydra
+      - whois
+      - iputils-ping
+      - traceroute
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ cse_kali_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ cse_kali_compose_content }}"
+        dest: "{{ cse_kali_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ cse_kali_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Kali container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_kali_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Kali container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} {{ cse_kali_container }}"
+      register: kali_running
+      until: kali_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Update apt cache inside Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} apt-get update"
+      register: kali_apt_update
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Install pentest tooling inside Kali container (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_kali_container }}
+          apt-get install -y --no-install-recommends {{ cse_kali_packages | join(' ') }}
+      register: kali_tools_install
+      changed_when: "'0 upgraded, 0 newly installed' not in kali_tools_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify nmap is usable inside the Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} nmap --version"
+      register: nmap_check
+      changed_when: false
+      when: not ansible_check_mode
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades
