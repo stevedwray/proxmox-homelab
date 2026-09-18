@@ -57,19 +57,18 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
   ARC would pressure this node's 32GB RAM), wired into
   `terraform/lxc/storage/pve-tiny.yaml` (`durable-nvme` extra-mount
   profile).
-- **`cse-controller`** (LXC, `192.168.40.70`, VMID `40070`): live.
-  Joins the existing `infra_seg` zone (VLAN 40) — the operator's explicit
-  choice over a new dedicated zone or `mgmt_seg`, since it at least
-  shares this stack's real Harbor dependency. `docker-compose.yml` runs a
-  stock `python:3.10-slim` container (`sleep infinity`, Phase 1
-  placeholder — no CyberSecEval code cloned yet), with `curl`/`git`
-  installed at deploy time. `/srv/cyberseceval` is a dedicated Proxmox
-  mount point on the new `nvme-lvm` pool (`durable-nvme` profile, 100G) —
-  the **first non-ZFS-backed extra mount in this repo**; its
-  `resize_control_plane` had to be set to `provider`, not the
-  `operational` value every other (ZFS-backed) stack uses — `main.tf`'s
-  own check block only allows `operational` for a zfs-backed backend.
-  Verified live: container running, mount present (93G avail),
+- **`cse-controller`** (LXC, `192.168.100.70`, VMID `40070`): live, on
+  `cse_seg` (VLAN 100) — migrated from `infra_seg` 2026-09-19; see the
+  dedicated `cse_seg` section below for why and how. `docker-compose.yml`
+  runs a stock `python:3.10-slim` container (`sleep infinity` base, now
+  also carrying the cloned CyberSecEval checkout — see below), with
+  `curl`/`git` installed at deploy time. `/srv/cyberseceval` is a
+  dedicated Proxmox mount point on the `nvme-lvm` pool (`durable-nvme`
+  profile, 100G) — the **first non-ZFS-backed extra mount in this
+  repo**; its `resize_control_plane` had to be set to `provider`, not
+  the `operational` value every other (ZFS-backed) stack uses —
+  `main.tf`'s own check block only allows `operational` for a
+  zfs-backed backend. Verified live: container running, mount present,
   `python3 --version`/`curl --version` both confirmed by direct `docker
   exec`, not just trusted from the Ansible run.
 

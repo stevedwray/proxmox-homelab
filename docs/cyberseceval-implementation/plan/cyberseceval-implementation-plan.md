@@ -60,8 +60,13 @@ Runs `cse-controller`, `cse-code-eval`, `cse-autopatch` (§3).
   not just this benchmark stack.
 - Network: already joined to `infra_seg` (VLAN 40) and `mgmt_seg`
   (VLAN 20) — the same zones `pve` uses, reused for service continuity.
-  No new SDN work needed for the compute side; `cse-controller` et al.
-  deploy like any other stack via `scripts/provision.sh`.
+  **Superseded (2026-09-19, §1b)**: "no new SDN work needed" turned out
+  to be wrong for the compute side specifically — `infra_seg` has no
+  default-deny, so it didn't provide the isolation `cse-code-eval`
+  needs. `cse-controller`/`cse-code-eval` now live on `cse_seg` (VLAN
+  100), a genuinely new zone built for this purpose. `pve-tiny` itself
+  still also belongs to `infra_seg`/`mgmt_seg` (unrelated stacks could
+  still use them), just not these two.
 - Production node (`terraform/PRODUCTION_NODES`) — deployment goes through
   `./with-secrets-prod-tiny` under the normal production approval flow,
   same as any other pve-tiny/pve stack change. This is an **Ansible
@@ -237,7 +242,7 @@ files) — all scoped to `192.168.100.0/24` as source unless noted:
 | Rule | Direction | Purpose |
 |---|---|---|
 | `input` allow ping/DNS to router | from `192.168.100.0/24` | Same as every other zone's router-reachability baseline |
-| `forward` allow → `192.168.40.0/24` | to `infra_seg` | Harbor/apt-cacher — matches every other zone's identical rule |
+| `forward` allow → `192.168.30.10:80,443` tcp | to Traefik/`edge_seg` | Harbor pull-through — **corrected from the original design during implementation**: `harbor.lab.gibbsgreatly.xyz` (what every stack's compose file actually pulls through) resolves to this Traefik IP, not an `infra_seg` address; a first attempt targeting `192.168.40.0/24` directly silently failed (confirmed live, `HTTP:000`) |
 | `forward` allow → `192.168.1.8:8080` tcp | to Framework's `llama-server` | The one LAN service this zone legitimately needs — narrow, not a blanket LAN allow |
 | `forward` allow `192.168.100.70` → `192.168.70.212:22` tcp | `cse-controller` → `cse-kali`'s agent | Genuinely new cross-zone rule now (didn't need one when `infra_seg` had no restrictions) |
 | `forward` allow → internet (`!192.168.0.0/16`) | egress | `git clone` from GitHub, apt/pip installs — matches `media_seg`'s identical pattern |
@@ -937,15 +942,24 @@ second, LXC-local firewall layer.
 Note the "controller -> Kali SSH" path above crosses physical hosts:
 `cse-controller` lives on `pve-tiny`, the range lives on `pve-test` — two
 separate SDN fabrics joined only through the MikroTik router.
-**Turned out to need no new rule**, contrary to what this section
-originally assumed: confirmed live (2026-09-19) that `cse-controller`
-(`infra_seg`, `192.168.40.70`) already reaches `cse-kali`'s real SSH
+
+**As first checked (2026-09-19), while `cse-controller` was still on
+`infra_seg`**: turned out to need no new rule at all, contrary to what
+this section originally assumed — confirmed live that `cse-controller`
+(`infra_seg`, `192.168.40.70`) already reached `cse-kali`'s real SSH
 banner directly on `192.168.70.210:22`, with zero MikroTik changes.
-`infra_seg` carries no default-deny egress rule of its own (unlike
+`infra_seg` carried no default-deny egress rule of its own (unlike
 `pentest_seg`/`media_seg`, the higher-risk zones that each get one), so
-its forward traffic falls through to the router's implicit accept
-policy when no explicit rule matches. Checked the live rule set via the
-MikroTik REST API (read-only) before assuming otherwise.
+its forward traffic fell through to the router's implicit accept policy
+when no explicit rule matched.
+
+**Superseded (2026-09-19, same day): `cse-controller` migrated to
+`cse_seg`** (§1b), a genuinely default-deny zone. Under `cse_seg`, this
+path is *not* free — a real, narrow allow rule
+(`192.168.100.70` → `192.168.70.212:22`, `cse-kali`'s dedicated agent IP)
+was added and is live. The "no rule needed" finding above was correct
+for `infra_seg`'s open-egress model at the time, not a permanent
+property of this cross-host path.
 
 Potential later telemetry:
 
