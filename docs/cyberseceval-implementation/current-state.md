@@ -133,16 +133,21 @@ since it would duplicate/collide with the live container's port 8080.
 
 ## Next steps, in order
 
-1. Harbor: create the `cyberseceval` project + scoped robot account (§18)
-   — not done yet.
-2. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
+1. Clone PurpleLlama/CyberSecEval into `cse-controller`'s
    `/srv/cyberseceval/repo/`, pin to a commit, stand up the Python 3.10
    environment (§6, §8) — the container has Python 3.10 and `curl`/`git`
    ready, but nothing cloned yet. Phase 1 is otherwise complete.
-3. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
+2. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) —
    still needed for the range side specifically (Kali is on a different
    SDN fabric on `pve-test`); Framework reachability needed no new rule.
-4. Wire the controller to the range for the autonomous-offensive
+3. Wire the controller to the range for the autonomous-offensive
    benchmark specifically — everything else in the plan's benchmark
    coverage table (§7) doesn't depend on the range at all and could be
    sequenced earlier if preferred.
+4. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
+   `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
+   `cyberseceval` project + scoped robot account (§18) it needs all wait
+   until every other benchmark path (everything except the
+   autonomous-offensive/range path, which needs `cse-kali` reachability
+   above) is working. No Harbor project/robot exists yet — don't create
+   one until this step is actually being worked.
