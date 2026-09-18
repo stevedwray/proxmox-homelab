@@ -137,22 +137,26 @@ Runs the isolated Kali attacker VM + Windows Server target VM (§11-§13).
    a new zone (see above).
 2. ~~Validation tier for extending `pentest_seg` to a third node~~ —
    **resolved**: build directly on `pve-test`, no `pve-test-vm` detour.
-3. **Does `pve-tiny` host all three CyberSecEval LXCs, or just
-   `cse-controller`**, with `cse-code-eval`/`cse-autopatch` placed
-   elsewhere later if pve-tiny ends up carrying other relocated services
-   (Harbor/Graylog per the onboarding docs)? Proposed default: all three,
-   revisit only if pve-tiny's RAM gets tight.
-4. **Framework inference layer.** §3.4/§5 name "Nathanw's Strix Halo fork
-   of llama.cpp," but the framework host's actual deployed `llama-router`
-   (port 8080) builds from upstream `ggml-org/llama.cpp`
-   (`ansible/00-initial-setup/framework-desktop-llamacpp.yml`) — no
-   reference to a Nathanw fork exists anywhere else in this repo. Confirm
-   whether the plan should target the existing `llama-router` as-is, or
-   whether a separate fork-based server is genuinely wanted for this work.
-5. **`cse-autopatch`'s initial Podman working-volume size** on pve-tiny's
-   `durable-nvme` pool. Proposed: 150-250GB per §17's measure-first
-   approach (the pool has ~1.79TiB free, but there's no reason to
-   pre-allocate large before the first real measurement).
+3. ~~Does `pve-tiny` host all three CyberSecEval LXCs, or just
+   `cse-controller`~~ — **resolved (2026-09-18): all three** on
+   `pve-tiny` (plan's proposed default). Worst-case concurrent load is 16
+   vCPU-equivalent/16GB RAM, half of the node's 32GB; revisit only if that
+   turns out to be tight in practice.
+4. ~~Framework inference layer~~ — **resolved (2026-09-18): a separate
+   Nathanw Strix-Halo `llama.cpp` fork server**, per §3.4/§5's original
+   language — not Framework's existing `llama-router`
+   (`ggml-org/llama.cpp` build), and explicitly **not** the Ollama runtime
+   that a separate, already-decided project-wide call (Laguna S 2.1,
+   see `docs/framework-integration/` history) uses for other work on this
+   same host. That Ollama decision was scoped to Laguna S 2.1's own eval
+   scores and does not bind this benchmark; CyberSecEval's controller
+   targets its own dedicated Nathanw-fork `llama-server` instance instead.
+   Standing up that fork/build is now in scope for Phase 1
+   (`cse-controller`).
+5. ~~`cse-autopatch`'s initial Podman working-volume size~~ —
+   **resolved (2026-09-18): defer.** Don't pre-allocate a number now;
+   size the volume only once Phase 8's nested-Podman LXC PoC actually
+   runs a shard and `podman system df` gives a real measurement (§17).
 
 ---
 

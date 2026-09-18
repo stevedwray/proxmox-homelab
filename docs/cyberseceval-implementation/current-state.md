@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-18): cyber range built and verified; compute side not started
+## Status (2026-09-18): cyber range built and verified; open decisions resolved; compute side not started
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -74,28 +74,32 @@ and `pve-tiny` (compute/orchestration). Only the first has started.
   isn't Terraform-managed (console-only, see above) — don't expect either
   to survive a VM recreate without redoing them.
 
-## Open decisions (plan.md §1a — still unresolved)
+## Open decisions (plan.md §1a) — all resolved 2026-09-18
 
-3. Does `pve-tiny` host all three CyberSecEval LXCs, or just
-   `cse-controller`? (plan's proposed default: all three)
-4. Framework inference layer: target the existing `llama-router`
-   (upstream `ggml-org/llama.cpp` build, confirmed live) as-is, or is a
-   separate Nathanw-fork server genuinely wanted?
-5. `cse-autopatch`'s initial Podman working-volume size on `pve-tiny`'s
-   `durable-nvme` pool (proposed: 150–250GB, measure-first per §17)
+3. **All three** CyberSecEval LXCs (`cse-controller`, `cse-code-eval`,
+   `cse-autopatch`) live on `pve-tiny`.
+4. `cse-controller` targets a **separate Nathanw Strix-Halo `llama.cpp`
+   fork server** — not Framework's existing `llama-router`
+   (`ggml-org/llama.cpp`), and not Ollama (that runtime decision was
+   scoped to Laguna S 2.1's eval scores, doesn't bind this benchmark).
+   Standing up that fork/build is now part of Phase 1.
+5. `cse-autopatch`'s Podman volume size: **deferred** — no pre-allocated
+   number; size it from real `podman system df` output once Phase 8's
+   PoC runs a shard.
 
 ## Next steps, in order
 
-1. Resolve open decisions #3–5 above.
-2. Build `cse-controller` on `pve-tiny` (plan Phase 1): reach Framework's
-   `llama-server`, record model/server config in a run manifest.
-3. Harbor: create the `cyberseceval` project + scoped robot account (§18)
+1. Build `cse-controller` on `pve-tiny` (plan Phase 1): stand up the
+   Nathanw Strix-Halo `llama.cpp` fork/build on the Framework host, reach
+   its `llama-server` from the controller, record model/server config in
+   a run manifest.
+2. Harbor: create the `cyberseceval` project + scoped robot account (§18)
    — not done yet.
-4. Clone PurpleLlama/CyberSecEval, pin to a commit, stand up the Python
+3. Clone PurpleLlama/CyberSecEval, pin to a commit, stand up the Python
    3.10 environment (§6, §8).
-5. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) once
+4. Add the cross-host MikroTik rule (`cse-controller` → `cse-kali`) once
    the controller exists.
-6. Wire the controller to the range for the autonomous-offensive
+5. Wire the controller to the range for the autonomous-offensive
    benchmark specifically — everything else in the plan's benchmark
    coverage table (§7) doesn't depend on the range at all and could be
    sequenced earlier if preferred.
