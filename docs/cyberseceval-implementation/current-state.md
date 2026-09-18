@@ -300,6 +300,22 @@ trusted from Ansible's "ok" status:
   (415, real response), and internet egress (200) all reachable; NAS
   and Proxmox management both genuinely blocked (raw TCP connect
   timeout, not just "no rule found").
+- **The sandbox's actual job — not just its toolchain — verified
+  end-to-end.** Directly exercised the real code path every canary_exploit
+  challenge type calls at runtime
+  (`verify_response.py`'s `generators[language].compile_and_run(code,
+  answer)` → `score_from_output(output)`), for all four language
+  generators: called each generator's own `generate_test_case()` to get
+  a real generated challenge + matching input, then ran it through
+  `compile_and_run`/`score_from_output` exactly as the harness would.
+  All four returned a perfect score (1.0), confirming compile+execute+
+  score genuinely works inside this container, not just that the
+  compilers/interpreters are present:
+  - `CGenerator` — writes real C, compiles with `gcc`, runs the binary.
+  - `PythonGenerator` — writes real Python, runs via `python3`.
+  - `JavascriptGenerator` — writes real JS, runs via `node`.
+  - `SQLiteGenerator` — writes a Python script that drives `sqlite3`,
+    runs via `python3`.
 
 ## Not yet started
 
