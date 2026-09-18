@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; Phase 7's full clone/configure/test/generate-pair-json/destroy cycle built and run for real; cse-kali has real autonomous-agent SSH access; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -456,6 +456,75 @@ mismatch, not a deploy issue on this side.
 Not done: an actual live multi-turn run against Framework's model —
 deliberately deferred like every other live benchmark run this session.
 
+### Phase 7 (Autonomous cyber range) — full clone/configure/test/generate-pair-json/destroy cycle built and run for real
+
+Beyond the static-pair prep step (see below), built and **actually
+executed** (operator's explicit choice: "build and do one real dry-run
+clone+destroy cycle", not just design/scaffold) the full lifecycle
+automation plan §7 calls for, in
+`ansible/00-initial-setup/cse-range-clone-destroy-cycle.yml`. Run
+against `pve-test` under `PVE_ENV=pve-test ./with-secrets` — `pve-test`
+is **not** a production node (see `terraform/PRODUCTION_NODES`), so
+this used the normal dev wrapper, not the strict production approval
+flow.
+
+The cycle: snapshot the live attacker (`cse-kali`, must stay running —
+see below) → full-clone both attacker and target to fresh ephemeral
+VMIDs → give the attacker clone a distinct IP (`192.168.70.220`) →
+start both → verify the attacker clone's Kali/docker setup survived
+the clone intact (`nmap --version` via `pct exec`) → verify the target
+clone stays running through a 60s grace period (not crash-looped) →
+generate a pair JSON (same schema as the static
+`cyber_range_pairs.json`) → destroy both clones → verify they're
+genuinely gone → clean up the snapshot.
+
+**Ran for real, verified independently, not just trusted from the
+"ok" playbook status**:
+- Fetched pair JSON back to the control node — real content, correct
+  schema, both ephemeral names/IPs present.
+- `pct list`/`qm list` on `pve-test` afterward show only the original
+  `70010`/`70011`/`910` — both ephemeral VMIDs (`70020`, `70021`)
+  genuinely gone, no leftover state.
+- `pct listsnapshot 70010` shows only `current` — the cleanup snapshot
+  delete genuinely worked, no leftover snapshot on the live attacker.
+- The live `cse-kali` (original, never stopped) confirmed undisturbed
+  afterward: `docker ps` inside it still shows both containers with
+  17h uptime, unaffected by being snapshotted while running.
+
+**Two real bugs found and fixed while building this, not assumed
+away**:
+1. Proxmox refuses a full clone of a *running* LXC except from a
+   snapshot ("Full clone of a running container is only possible from
+   a snapshot") — `cse-kali` is the live static-pair attacker and must
+   not be stopped to clone it, so the playbook snapshots it first and
+   clones `--snapname`-scoped, then deletes the snapshot during the
+   destroy phase.
+2. `lookup('pipe', 'date +%s')` used directly in a play's `vars:` is
+   **not memoized** — it re-executes on every Jinja reference, so the
+   snapshot name and the clone's `--snapname` argument landed on two
+   different timestamps a few seconds apart on the first real attempt,
+   and the clone failed looking for a snapshot that was never actually
+   created under that exact name. Fixed with an explicit `set_fact`
+   task at the top of the play to freeze one real run id, used
+   consistently everywhere after.
+
+**Deliberately out of scope for this cycle** (see the playbook's own
+header comment):
+- No actual benchmark ran against the ephemeral pair — "collect" is a
+  documented stub (nothing to pull back yet), matching every other
+  live-run deferral this session.
+- The target VM's IP (`192.168.70.211`) is baked into the Windows
+  guest itself (console-only `netsh`, not Proxmox-managed — same
+  limitation noted for the original VM) — the clone boots with the
+  **identical** IP, which is only safe because the playbook asserts
+  the static-pair source VM is stopped first. True concurrent
+  ephemeral+static operation would need a real in-guest re-IP
+  mechanism, which doesn't exist yet.
+- The generated pair JSON is fetched back for inspection only — wiring
+  it into `cse-controller`'s own run-orchestration (which currently
+  reads the static `cyber_range_pairs.json`) is a separate integration
+  step, not yet built.
+
 ## Not yet started
 
 - `cse-autopatch` — no benchmark orchestration beyond Phase 1's
@@ -509,10 +578,12 @@ needed for a live autonomous-uplift run now exists except triggering it.
    Coding (Phase 3), CyberSOCEval (Phase 4), and Spear Phishing
    (Phase 6) — all fully configured and functionally verified now,
    only the actual live-model runs remain.
-2a. Remaining setup-track work (not a live run): Phase 7's full
-   clone→configure→test→generate-pair-JSON→run→collect→destroy
-   automation — only the narrower static-pair prep step exists today
-   (see above).
+2a. **Done** — Phase 7's full clone→configure→test→generate-pair-
+   JSON→collect(stub)→destroy cycle built and actually run once for
+   real on `pve-test` (see above). Remaining gap, not a live run: wiring
+   the generated ephemeral pair JSON into `cse-controller`'s own
+   run-orchestration, which still reads the static
+   `cyber_range_pairs.json` — not yet built.
 3. **AutoPatch, last, deliberately** (operator instruction, 2026-09-18):
    `cse-autopatch` LXC, its nested-Podman setup, and the Harbor
    `cyberseceval` project + scoped robot account (§18) it needs all wait
