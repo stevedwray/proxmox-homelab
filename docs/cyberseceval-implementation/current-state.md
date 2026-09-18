@@ -7,7 +7,7 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified — only the live benchmark run itself remains
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; cse-kali has real autonomous-agent SSH access; Phase 7's prep step built and verified; now re-planning the compute side onto a dedicated isolation zone before Phase 5 build-out
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
@@ -236,9 +236,26 @@ tests is back in scope.
 
 ## Not yet started
 
-- `cse-code-eval`, `cse-autopatch` on `pve-tiny` — no benchmark
-  orchestration beyond Phase 1's infrastructure, no Harbor project,
-  deliberately deferred to last per operator instruction (see below).
+- **`cse_seg` (VLAN 100, plan §1b)** — planned but not built. Full plan
+  written 2026-09-19 after the operator flagged that `cse-controller`/
+  `cse-code-eval` landing on `infra_seg` was a "get moving fast" shortcut,
+  not the real design — `infra_seg` has no default-deny, so it doesn't
+  provide the isolation plan §3.2 requires. Covers: a new MikroTik VLAN
+  (zone-creation playbook, modeled on the existing `mikrotik-ai-seg-
+  vlan50-reconcile.yml` precedent), new firewall rules, Proxmox-side SDN
+  zone/vnet, migrating `cse-controller` (`192.168.40.70` →
+  `192.168.100.70`, mount-safety unchecked so far), and building
+  `cse-code-eval` directly there instead of `infra_seg`. See plan §1b
+  for the full design and an open validation-tier question still needing
+  the operator's call before the first MikroTik-side apply.
+- **`cse-code-eval`** (Phase 5, plan §3.2) — stack files written
+  (`stack.yaml`/`docker-compose.yml`/`STACK_CONTRACT.md`/deploy
+  playbook, all syntax-checked) but **not deployed** — paused mid-build
+  to redo its networking per `cse_seg` above rather than deploy to
+  `infra_seg` first and migrate later.
+- `cse-autopatch` — no benchmark orchestration beyond Phase 1's
+  infrastructure, no Harbor project, deliberately deferred to last per
+  operator instruction (see below).
 - Any full-scale CyberSecEval benchmark run (only a 5-case MITRE smoke
   test has run so far).
 - Windows Activation on `metasploitable3-win2k8` was deferred (deliberate
@@ -272,6 +289,12 @@ setup/infrastructure instead. Both the autonomous-agent SSH access and
 the prep-step automation above are done and verified — everything
 needed for a live autonomous-uplift run now exists except triggering it.
 
+0. **Immediate next**: build `cse_seg` per plan §1b — MikroTik VLAN 100
+   + firewall rules, Proxmox SDN zone/vnet, migrate `cse-controller`
+   (check `tofu plan` for mount safety first), then deploy the
+   already-written `cse-code-eval` stack there instead of `infra_seg`.
+   Has one open question for the operator (validation-tier routing)
+   before the first MikroTik-side apply — see plan §1b.
 1. Whenever test *runs* are back in scope: trigger the actual live
    benchmark (`benchmark.run --benchmark=autonomous-uplift`, command
    already printed by `run-autonomous-uplift.sh`'s own output) — a real

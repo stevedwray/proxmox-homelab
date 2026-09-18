@@ -171,6 +171,130 @@ Runs the isolated Kali attacker VM + Windows Server target VM (§11-§13).
 
 ---
 
+# 1b. `cse_seg` — Dedicated Isolation Zone for the Compute Side (2026-09-19)
+
+`cse-controller` and `cse-code-eval` were both put on `pve-tiny`'s
+`infra_seg` to get moving quickly (§3.1/§3.2's original build). The
+operator flagged this afterward: `infra_seg` has no default-deny egress
+at all (confirmed live), so it doesn't actually provide the isolation
+plan §3.2 requires for `cse-code-eval` specifically (no access to
+Proxmox management, NAS, ordinary LAN, or Framework's management
+interface) — a per-host MikroTik rule bolted onto an open zone was
+floated as a stopgap, then explicitly rejected in favor of doing this
+properly: a real dedicated zone, planned before executing.
+
+## Design
+
+- **Zone name**: `cse_seg`, VLAN **100** — the next free VLAN ID
+  following this environment's round-number convention. Checked the
+  MikroTik directly (`/rest/interface/vlan`, read-only) for ground
+  truth rather than trusting the repo's YAML: VLANs 10, 20, 30, 40, 50,
+  60, 70, 80, 81, 90 are all in use; 100 is free.
+- **Subnet**: `192.168.100.0/24`, gateway `192.168.100.1` — matches the
+  existing convention of third-octet == VLAN ID.
+- **Members**: `cse-controller` (re-homed from `192.168.40.70` →
+  `192.168.100.70`) and `cse-code-eval` (built directly here from the
+  start, `192.168.100.71` — never touches `infra_seg`). `cse-autopatch`
+  joins later, still deferred.
+
+## MikroTik work (real network config, not Proxmox-side)
+
+Checked the bridge VLAN table directly: every existing VLAN (10 through
+90) is tagged identically on `bridgeLocal, ether1, ether5` — a uniform
+pattern, not per-node ether-port assignment. `pve-tiny` already receives
+VLAN 40/20 traffic today (that's how `cse-controller` is reachable now)
+under this exact same tagged set, so VLAN 100 should need no additional
+physical/switch-level step beyond adding it to that same set — but this
+is a genuine "should," not yet confirmed live, and the precedent
+playbooks below explicitly flag physical/downstream-switch config as
+something *outside what this repo can reach* if it turns out to be
+needed.
+
+Precedent found and to be followed: `ansible/00-initial-setup/
+mikrotik-ai-seg-vlan50-reconcile.yml` (and the sibling `mikrotik-game-seg.yml`,
+`mikrotik-build-seg-*-reconcile.yml`) are exactly this kind of
+zone-creation automation — fully idempotent (read-current-state,
+create-only-if-missing), not manual WebFig steps. A new
+`mikrotik-cse-seg-vlan100-reconcile.yml` should mirror that shape:
+
+1. Create VLAN interface `vlan100-cse` on `bridgeLocal`
+2. Add gateway IP `192.168.100.1/24` to that interface
+3. Tag VLAN 100 on the bridge VLAN table for `bridgeLocal, ether1, ether5`
+4. Assert the final state (interface exists, IP attached, bridge tagging complete)
+
+Firewall rules (separate from the zone-creation playbook, matching this
+repo's own convention of narrow per-consumer `mikrotik-firewall-*.yml`
+files) — all scoped to `192.168.100.0/24` as source unless noted:
+
+| Rule | Direction | Purpose |
+|---|---|---|
+| `input` allow ping/DNS to router | from `192.168.100.0/24` | Same as every other zone's router-reachability baseline |
+| `forward` allow → `192.168.40.0/24` | to `infra_seg` | Harbor/apt-cacher — matches every other zone's identical rule |
+| `forward` allow → `192.168.1.8:8080` tcp | to Framework's `llama-server` | The one LAN service this zone legitimately needs — narrow, not a blanket LAN allow |
+| `forward` allow `192.168.100.70` → `192.168.70.212:22` tcp | `cse-controller` → `cse-kali`'s agent | Genuinely new cross-zone rule now (didn't need one when `infra_seg` had no restrictions) |
+| `forward` allow → internet (`!192.168.0.0/16`) | egress | `git clone` from GitHub, apt/pip installs — matches `media_seg`'s identical pattern |
+| `forward` drop → everywhere else | default-deny | The actual isolation — covers LAN (Proxmox mgmt `192.168.1.2`/`.250`, NAS, workstations, Framework's own mgmt interface — all confirmed via `dig` to be on this one `/24`), `mgmt_seg`, and anything not explicitly allowed above |
+
+## Proxmox-side SDN work (already-proven automation, different from the MikroTik work above)
+
+Distinct from the MikroTik changes: Terraform's `null_resource.configure_network_sdn_attachment`
+(via `configure-network-sdn-vnet.yml`) already handles creating the
+Proxmox-side SDN zone/vnet/subnet automatically on every `terragrunt
+apply` — this is what already worked cleanly for both `cse-controller`'s
+and (would-have-been) `cse-code-eval`'s `infra_seg` attachment. It does
+**not** touch the MikroTik at all (confirmed by reading the actual
+playbook — every mutating step is a `pvesh` call delegated to the
+Proxmox node itself). For `cse_seg` to exist as an attachable zone, this
+repo-side work is still needed:
+
+1. Add a `cse_seg` zone/vnet entry to `terraform/lxc/network/pve-tiny.yaml`
+   (attachment block + zone block, matching `infra_seg`'s/`mgmt_seg`'s
+   existing shape exactly).
+2. Add `lab_gw_cse='192.168.100.1'` / `lab_subnet_cse_cidr='192.168.100.0/24'`
+   (plus `TF_VAR_` mirrors) to `.env`, matching every other zone's pair.
+3. Add `sdn_subnet_tvcse`/`sdn_gw_tvcse` lookups to
+   `ansible/00-initial-setup/proxmox-sdn-setup.yml`'s `vars:` — required
+   because that playbook's "inject resolved subnet/gateway" task does
+   `lookup('vars', 'sdn_subnet_' + vnet)` per vnet name and would fail
+   for `tvcse` otherwise (same fix already made for `tvpent` when
+   `pentest_seg` was extended to `pve-test`).
+
+## Migration path for `cse-controller`
+
+Not yet checked live: whether changing `cse-controller`'s
+`network.zone`/`ip_address` in its `stack.yaml` is an in-place
+`tofu apply` or forces destroy/recreate of the
+`proxmox_virtual_environment_container` resource. This matters because
+the durable mount (`/srv/cyberseceval`, the pinned PurpleLlama checkout
++ `cse-lab` branch + manifests) must survive the move — **the first real
+step of executing this plan should be a read-only `tofu plan` after
+editing the stack.yaml, checked before any apply**, to confirm the
+extra-mount volume isn't touched. If it forces recreation and the
+provider doesn't cleanly preserve the mountpoint volume across that,
+the safer path is: detach/note the extra_mount's actual Proxmox volume
+ID first, apply the network change, then re-attach/verify rather than
+trusting an assumed-safe recreate.
+
+`cse-code-eval` needs no migration — build it directly in `cse_seg` from
+the start, `192.168.100.71`.
+
+## Open question — validation tier
+
+CLAUDE.md's Validation Tiers table routes "Terraform / network / SDN /
+firewall — additive only (new zone/vnet/subnet...)" through `pve-test-vm`
+first, not directly against a production node. `pve-tiny` is production
+(`terraform/PRODUCTION_NODES`), so a strict reading says this whole
+`cse_seg` build should validate on `pve-test-vm` before landing here —
+but `pve-test-vm` is a different physical node; testing a
+`pve-tiny`-specific VLAN/trunk-tagging change there wouldn't actually
+validate the one genuinely uncertain part (whether `pve-tiny`'s real
+downstream trunk passes VLAN 100). This mirrors the same tension
+resolved for `pentest_seg`→`pve-test` (§1a: built directly on the target
+node, no `pve-test-vm` detour) — but that node wasn't production. Not
+resolved here; ask the operator before the first MikroTik-side apply.
+
+---
+
 # 2. Target Architecture
 
 ```text
