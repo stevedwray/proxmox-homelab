@@ -205,6 +205,37 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: not cse_controller_repo_stat.stat.exists
 
+    # Real root cause found live 2026-09-19: a single mitre-frr request ran
+    # unbounded for 14.5+ hours against Framework's local llama-server.
+    # Upstream's OPENAI provider only sends a max_completion_tokens cap for
+    # OpenAI's own hardcoded reasoning-model names (o1/o3/gpt-5-mini/etc);
+    # any locally-served model (ours is a bare GGUF path) gets NOT_GIVEN,
+    # so no cap is ever sent. Framework's llama-server has no server-side
+    # default either (n_predict=-1, confirmed via its own /props endpoint),
+    # and this specific model doesn't reliably emit a stop token for
+    # mitre-frr's prompts -- so generation just runs until the full 256K
+    # context is exhausted (or beyond, if context-shifting is active).
+    # Idempotent (ansible.builtin.replace no-ops once already patched) and
+    # applied unconditionally, not gated to first-bootstrap-only, since it
+    # must land on the already-cloned checkout too, not just a fresh one.
+    - name: Patch PurpleLlama's OPENAI provider to always cap max_completion_tokens (cse-lab compatibility fix, plan §6)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'DEFAULT_MAX_TOKENS\n                if \(self\.model in self\._reasoning_models\)\n                else NOT_GIVEN'
+        replace: 'DEFAULT_MAX_TOKENS  # cse-lab patch: always cap, not just OpenAI reasoning models'
+      register: cse_controller_openai_patch
+
+    - name: Commit the OPENAI provider patch on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: always cap max_completion_tokens, not just OpenAI reasoning models --
+          Framework's local llama-server has no server-side default (n_predict=-1); a
+          mitre-frr request ran unbounded for 14.5+ hours before this fix, confirmed live
+          2026-09-19"
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"

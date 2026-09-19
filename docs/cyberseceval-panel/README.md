@@ -5,16 +5,24 @@ step-by-step plan (`docs/agent-design/step-packet-schema.md` shape); this
 file is the durable status record and where each step's hand-back gets
 written (see `docs/agent-design/README.md`'s process).
 
-## Read this first: current state (2026-09-19, end of day)
+## Read this first: current state (2026-09-19, end of day, updated same evening)
 
 **Live, deployed, browser-reachable, SSO-enforced, and now genuinely
 usable by a non-technical operator.** Everything in "What this
 is"/"Architecture" below is built and running for real. Backend
 selection, test suites, real results surfacing, a human-readable
-homepage UI, and a real reliability fix for lost in-flight jobs have
-all landed and been verified live against real submitted jobs (not
-just read the code and assumed) -- see "Frontend redesign + reliability
-fixes" at the bottom for the fullest detail.
+homepage UI, a real reliability fix for lost in-flight jobs, and the
+actual root cause of the "hangs" (they were never hangs -- see below)
+have all landed and been verified live against real submitted jobs (not
+just read the code and assumed).
+
+**The multi-hour "hangs" are fixed.** They were never hangs -- Meta's
+own PurpleLlama client never sent a token limit for locally-served
+models, so a model that didn't cleanly stop just kept generating until
+it exhausted the full 256K context. Patched on PurpleLlama's `cse-lab`
+branch (commit `3ee7d56`); every benchmark run since completes in
+bounded time. See "Root cause found and fixed" near the bottom for the
+full investigation and evidence.
 
 **How to use it right now:**
 - Browser: `https://cse-panel.lab.gibbsgreatly.xyz` (Authentik SSO) --
@@ -36,15 +44,14 @@ fixes" at the bottom for the fullest detail.
 - No Ollama/llama.cpp presets in `GET /backends` -- no confirmed real
   endpoint for either in this lab yet to encode; `custom` fully works,
   just isn't a one-click preset.
-- Result-summary formatting (`_flatten_stats` in `app.py`) is only
-  tuned against the two real `stat.json`/`stats.json` shapes actually
-  seen so far (`mitre`'s model->category->count-cluster nesting,
-  `mitre-frr`'s flat rate/count fields). The other 8 benchmarks
-  (`prompt-injection`, `interpreter`, `instruct`, `autocomplete`,
+- Result-summary formatting (`_flatten_stats` in `app.py`) was tuned
+  against `mitre`/`mitre-frr` and has since generalized cleanly to
+  `prompt-injection` too (a 4-level-deep breakdown, no extra tuning
+  needed) without issue. `interpreter`, `instruct`, `autocomplete`,
   `malware_analysis`, `threat_intel_reasoning`, `multiturn-phishing`,
-  `autonomous-uplift`) fall back to generic label-cleanup formatting
-  and may look rawer than mitre's until their real output is seen and
-  the formatting is tuned the same way.
+  `autonomous-uplift` have all now run successfully post-fix but their
+  result formatting hasn't been eyeballed for quality yet -- likely
+  fine given the pattern so far, just not specifically checked.
 - No automated test coverage -- every check in this doc was a real,
   hands-on, one-off verification (including a throwaway local
   Redis+uvicorn sandbox used once to verify `app.py`'s new endpoints
@@ -314,6 +321,19 @@ stat file before deploying, then redeployed `cse-controller` for real.
 
 ## Framework `llama-server` failure modes -- two distinct kinds, found for real (2026-09-19)
 
+**Correction (2026-09-19, later the same day)**: the "hang" described
+below was wrong. It was never actually hung -- the requesting subprocess
+sitting at `00:00:00` CPU time was a red herring (`docker top` shows the
+*parent* shell process's own CPU time, not the CPU the GPU itself is
+burning), and so was `rocm-smi` reading `0%` GPU (it's ROCm/HIP tooling
+and can't see this build's Vulkan-backend workload at all). The model
+was **genuinely, continuously generating tokens the entire time** --
+confirmed directly from `llama-server`'s own logs, which is the one
+place this investigation hadn't looked yet. See "Root cause found and
+fixed" below for the real explanation and the actual fix. The segfault
+finding two paragraphs down is unaffected by this correction -- that
+one really is a separate, still-unexplained issue.
+
 The verification job left running above (`job_id
 9d682665-f76b-4f48-bbfc-c6d2b554368f`) never resolved -- it, and three
 other queued jobs behind it, sat stuck for 50+ minutes. Investigating
@@ -435,3 +455,82 @@ Honest scope limit: this is tuned against the two shapes actually seen
 informatively until their real `stat.json`/`stats.json` shapes are seen
 and the same tuning is applied -- see "Known non-blocking gaps" at the
 top of this file.
+
+**Update, same evening**: `prompt-injection` also ran and its
+4-level-deep per-variant/per-type/per-category/per-language breakdown
+rendered cleanly with no extra tuning needed (`_flatten_stats`'s
+recursion + count-cluster detection generalized past the two shapes it
+was built against). Narrowing, not widening, the "unverified" list above
+as more benchmarks get real runs.
+
+## Root cause found and fixed: the "hang" was never a hang (2026-09-19, same evening)
+
+Operator instruction: stop all other panel work and root-cause this
+properly rather than keep restarting around it. Real chain of evidence,
+in order:
+
+1. **`llama-server`'s own logs** (never checked before this point --
+   everything prior only looked at the requesting side and `dmesg`)
+   showed the model steadily generating tokens at ~24 tok/s the entire
+   "hang" window, for a single request that had already produced over
+   9,000 tokens and was still climbing. Not stuck -- just extremely,
+   abnormally long.
+2. `curl .../props` and `.../slots` on Framework confirmed why nothing
+   stops it: `"max_tokens": -1, "n_predict": -1` (genuinely unbounded)
+   and `"n_ctx": 262144` per slot (256K context) -- so a request with no
+   cap runs until either the model emits a stop token on its own, or the
+   full 256K context is exhausted.
+3. Restarting `llama-server` to clear it and immediately re-checking
+   `/slots` showed a **new** task already generating on a different
+   slot within seconds -- the OpenAI SDK's own automatic retry had
+   resent the *exact same uncapped request* the instant the connection
+   dropped. Restarting alone would have looped forever.
+4. Reading PurpleLlama's actual vendored source
+   (`CybersecurityBenchmarks/benchmark/llms/openai.py`, pinned commit
+   `4be64c3a`) found the real bug: every request path in the `OPENAI`
+   provider class sends `max_completion_tokens=NOT_GIVEN` unless
+   `self.model` is one of OpenAI's own hardcoded reasoning-model names
+   (`o1`, `o3`, `gpt-5-mini`, etc). A local GGUF path never matches that
+   list, so **no cap is ever sent for any locally-served model** --
+   this affects every benchmark run against Framework (or any other
+   local backend), not just `mitre-frr`; that benchmark just happened to
+   be the one whose prompt style triggered it first.
+
+The real reason nothing crashed and `/health` stayed green the whole
+14.5 hours: there was nothing wrong to detect. The server was doing
+exactly what it was told -- generate without limit -- against a model
+that, for this benchmark's prompts, doesn't reliably produce a natural
+stop token.
+
+**Fix**: patched `llms/openai.py` on PurpleLlama's own `cse-lab` branch
+(commit `3ee7d56`, on top of the pinned `4be64c3a`, per plan §6's
+"documented compatibility changes" convention) so `max_completion_tokens`
+is always `DEFAULT_MAX_TOKENS` (2048 -- a constant Meta's own code
+already defined but never applied to non-reasoning models), for every
+model, not just OpenAI's own. Applied via a new, idempotent
+`ansible.builtin.replace` task in `deploy-cse-controller.yml` (runs
+unconditionally, not gated to first-bootstrap, since it has to land on
+the already-cloned checkout too) plus a `git commit` on `cse-lab` so the
+change is durable and documented, not a silent live edit.
+
+**Verified for real, not just deployed and assumed**: every benchmark
+run since the patch landed completed in bounded time --
+`prompt-injection` (~70s), `interpreter`, `instruct` (~85s),
+`autocomplete` (~86s), `threat_intel_reasoning` (~70s),
+`multiturn-phishing`, `autonomous-uplift` (its own two-stage
+generate-then-attack path), and a fresh `mitre-frr` retest submitted
+specifically to close the loop on the exact benchmark that started this
+investigation -- completed cleanly (`accept_count: 1, refusal_count: 0,
+refusal_rate: 0.0%`). (`malware_analysis` hit a real but unrelated
+failure, `rc=1`/no stat file produced -- a separate bug, not a hang,
+not yet investigated.)
+
+**What this does and doesn't fix**: this closes the actual root cause of
+the multi-hour stalls. It does not touch the separate, still-real
+segfault-crash finding from earlier the same day (two `general
+protection fault`s in `libc.so.6` on 2026-09-17) -- that one is
+unrelated and remains unexplained. The `task_acks_late` reliability fix
+from earlier is still correct and still needed -- it's what stops a
+*future* problem (this one or a new one) from silently losing in-flight
+work; it was never the fix for the hang itself, just damage control
+around it.
