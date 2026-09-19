@@ -27,6 +27,14 @@ BROKER_URL = os.environ["CELERY_BROKER_URL"]
 RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
 
 app = Celery("cse_tasks", broker=BROKER_URL, backend=RESULT_BACKEND)
+# Default acks-on-dispatch would silently drop whatever job was actually
+# executing if the worker is killed/restarted mid-run (confirmed live
+# 2026-09-19 -- two jobs stuck behind a hung Framework llama-server request
+# vanished with no error when the worker was restarted to clear the hang).
+# acks_late + prefetch=1 makes a killed/restarted worker redeliver the
+# in-flight job instead of losing it.
+app.conf.task_acks_late = True
+app.conf.worker_prefetch_multiplier = 1
 
 REPO_DIR = Path("/srv/cyberseceval/repo/PurpleLlama")
 VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")

@@ -122,21 +122,46 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Update apt cache inside controller container
+    # Package installs land in the container's own writable layer, not the
+    # /srv/cyberseceval bind mount -- a host-side stat can't see them, so
+    # this checks inside the container itself. Confirmed real overreach
+    # 2026-09-19: apt-get update + install were running on every single
+    # code-only deploy, for no benefit once the tooling is already there.
+    - name: Check whether base tooling has already been installed in the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} test -f /root/.cse-controller-bootstrap-done"
+      register: cse_controller_bootstrap_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Update apt cache inside controller container (first bootstrap only)
       ansible.builtin.command:
         cmd: "docker exec {{ cse_controller_container }} apt-get update"
       register: controller_apt_update
       changed_when: true
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
 
-    - name: Install base tooling inside controller container (idempotent, runs every deploy)
+    - name: Install base tooling inside controller container (first bootstrap only)
       ansible.builtin.command:
         cmd: >-
           docker exec {{ cse_controller_container }}
           apt-get install -y --no-install-recommends {{ cse_controller_packages | join(' ') }}
       register: controller_tools_install
       changed_when: "'0 upgraded, 0 newly installed' not in controller_tools_install.stdout"
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
+
+    - name: Mark base tooling bootstrap as complete inside the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} touch /root/.cse-controller-bootstrap-done"
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
 
     - name: Verify curl is usable inside the controller container
       ansible.builtin.command:
@@ -219,12 +244,14 @@
       changed_when: false
       when: not ansible_check_mode
 
-    # Plan §8 asks for this before any benchmark campaign run. Not gated
-    # on success (failed_when: false): the plan itself flags a known
+    # Plan §8 asks for this once, right after the checkout, not on every
+    # code-only deploy afterward -- it verifies the pinned PurpleLlama
+    # commit itself, which doesn't change between deploys. Not gated on
+    # success (failed_when: false): the plan itself flags a known
     # possible Secure Code Generation import issue at some upstream
     # revisions as an "initially expected" fixup, so a failure here is
     # informational, not necessarily a deploy-blocking regression.
-    - name: Run CyberSecEval's own unit test suite (informational -- see comment)
+    - name: Run CyberSecEval's own unit test suite (informational, first bootstrap only)
       ansible.builtin.command:
         cmd: >-
           docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
@@ -232,7 +259,9 @@
       register: cse_controller_unittest
       changed_when: false
       failed_when: false
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - not cse_controller_repo_stat.stat.exists
 
     # ---------------------------------------------------------------
     # CyberSOCEval dataset (plan §4/§9). "Install: CrowdStrike dataset"
@@ -258,13 +287,15 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: not cse_controller_socdata_stat.stat.exists
 
-    - name: Update the CyberSOCEval_data submodule recursively (safe every deploy)
+    - name: Update the CyberSOCEval_data submodule recursively (first bootstrap only)
       ansible.builtin.command:
         cmd: git submodule update --init --recursive
         chdir: "{{ cse_controller_repo_dir }}"
       register: cse_controller_socdata_update
       changed_when: "'is already registered' not in cse_controller_socdata_update.stderr"
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - not cse_controller_socdata_stat.stat.exists
 
     # download_reports.py is internally idempotent per-report-id (skips
     # a report already on disk) but has a known upstream bug: its
@@ -275,15 +306,44 @@
     # summary called "missing" actually has real pdf/txt/png on disk).
     # Do not trust that summary; failed_when: false here reflects that,
     # not a real ignore-errors gap.
-    - name: Download and convert Threat Intelligence Reasoning reports
+    #
+    # First bootstrap only (gated on the marker file below) -- these
+    # reports don't change once downloaded, so there's no reason to
+    # revisit this on every code-only deploy. Also confirmed real
+    # 2026-09-19: download_pdf() in the upstream script calls
+    # requests.get() with no timeout at all, so a single slow/
+    # unresponsive report host can hang this step (and therefore the
+    # whole deploy) indefinitely -- `timeout` bounds that even on the
+    # one run where this does execute. To force a re-run (e.g. to
+    # pick up a report that failed last time), delete the marker file
+    # at {{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/
+    # crwd_meta/threat_intel_reasoning/.download-complete.
+    - name: Check whether threat intel reports have already been downloaded
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/.download-complete"
+      register: cse_controller_threat_intel_stat
+
+    - name: Download and convert Threat Intelligence Reasoning reports (first bootstrap only, bounded)
       ansible.builtin.command:
         cmd: >-
+          timeout 300
           docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
           {{ cse_controller_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.datasets.crwd_meta.threat_intel_reasoning.download_reports
       register: cse_controller_threat_intel_download
       changed_when: false
       failed_when: false
-      when: not ansible_check_mode
+      when:
+        - not ansible_check_mode
+        - not cse_controller_threat_intel_stat.stat.exists
+
+    - name: Mark threat intel reports as downloaded (first bootstrap only)
+      ansible.builtin.file:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/.download-complete"
+        state: touch
+        mode: "0644"
+      when:
+        - not ansible_check_mode
+        - not cse_controller_threat_intel_stat.stat.exists
 
     # ---------------------------------------------------------------
     # Autonomous-offensive benchmark config (plan §7/§11/§13). Source-
