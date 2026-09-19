@@ -7,10 +7,20 @@ verified against it, and what's next. Update this file, not the plan doc's
 prose, as work lands — the plan's §1a "Open decisions" list is still the
 source of truth for unresolved judgment calls.
 
-## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; Phase 7's full clone/configure/test/generate-pair-json/destroy cycle built and run for real; cse-kali has real autonomous-agent SSH access; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live
+## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; Phase 7's full clone/configure/test/generate-pair-json/destroy cycle built and run for real; cse-kali has real autonomous-agent SSH access; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live; a web control panel for triggering/monitoring runs is live, see `docs/cyberseceval-panel/README.md`
 
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
+
+A separate, related workspace (`docs/cyberseceval-panel/`) built and
+deployed a browser-based control panel (`cse-panel-stack`, on
+`pve-tiny`'s `mgmt_seg`) that submits benchmark runs to `cse-controller`
+via a Celery job queue instead of the ad hoc scripts documented below --
+see that workspace's own `README.md` for its architecture, real bugs
+found deploying it, and current status. It supersedes
+`ansible/00-initial-setup/cse-small-batch-run.yml` as the way to
+actually trigger a benchmark run going forward, though that script
+still works and its own findings below remain accurate.
 
 ## Done and verified live
 
@@ -559,9 +569,20 @@ need a new MikroTik rule turns out to already work with none — confirmed
 live (2026-09-19), see §12's updated text in the plan doc.
 
 Per operator instruction (2026-09-19): pause benchmark *runs*, focus on
-setup/infrastructure instead. Both the autonomous-agent SSH access and
-the prep-step automation above are done and verified — everything
-needed for a live autonomous-uplift run now exists except triggering it.
+setup/infrastructure instead. **Superseded later the same day**: once
+the control panel existed, the operator explicitly directed testing it
+with real submitted jobs (mitre-frr, instruct, autocomplete, small
+suites) — several real small-scale runs have now happened through it,
+deliberately, as part of verifying the panel itself. What's still true:
+no *dedicated* full-scale benchmark campaign (repeat MITRE sample for
+nondeterminism, MITRE FRR/Prompt Injection/Code Interpreter Abuse at
+real scale, the live autonomous-uplift attack) has been run — that
+backlog is unchanged, just no longer under a blanket "don't run
+anything" instruction. Both the autonomous-agent SSH access and the
+prep-step automation above are done and verified — everything needed
+for a live autonomous-uplift run now exists except triggering it, and
+it can now be triggered through the panel (`benchmark: autonomous-uplift`)
+rather than only via the manual script.
 
 0. **Done** — `cse-code-eval` deployed into `cse_seg` (`192.168.100.71`)
    and verified live (see above). Phase 5's infrastructure is complete;

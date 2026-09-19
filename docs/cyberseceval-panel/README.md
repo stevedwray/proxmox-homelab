@@ -5,6 +5,54 @@ step-by-step plan (`docs/agent-design/step-packet-schema.md` shape); this
 file is the durable status record and where each step's hand-back gets
 written (see `docs/agent-design/README.md`'s process).
 
+## Read this first: current state (2026-09-19)
+
+**Live, deployed, browser-reachable, SSO-enforced.** Everything in
+"What this is"/"Architecture" below is built and running for real, not
+planned. Two feature requests (backend selection, test suites) landed
+after the initial deploy and are also live. A results-visibility gap
+(the panel wasn't surfacing actual benchmark numbers) was found and
+fixed; end-to-end confirmation of that specific fix was **still in
+progress** when this was last updated — see "Open thread" below before
+trusting that it works.
+
+**How to use it right now:**
+- Browser: `https://cse-panel.lab.gibbsgreatly.xyz` (Authentik SSO) —
+  single-test form + a suite-submission textarea.
+- API directly: `http://192.168.20.30:8000` (from inside the lab
+  network) — `POST /jobs`, `POST /suites`, `GET /jobs/{id}`,
+  `GET /suites/{id}`, `GET /benchmarks`, `GET /backends`.
+- Live task detail: `https://cse-panel-flower.lab.gibbsgreatly.xyz`.
+- To point a run at a different backend (Ollama, llama.cpp server,
+  etc.), pass `backend_base_url`/`backend_model` on the job/suite --
+  the target engine must already have a model loaded, this does not
+  manage model loading.
+
+**Open thread (check before relying on this)**: after the results-
+visibility fix (`run_benchmark` now reads `stat.json`/`stats.json` and
+inlines it into the Celery result), a real `mitre-frr` verification job
+was submitted (`job_id 9d682665-f76b-4f48-bbfc-c6d2b554368f`) to confirm
+real numbers actually come through end-to-end. It was still `PENDING`
+after ~15+ minutes when this was last checked -- may be genuine slow
+inference, or may be another instance of the unexplained hang noted
+below ("first real end-to-end job... genuinely hung"). **Next action**:
+check `GET /jobs/9d682665-f76b-4f48-bbfc-c6d2b554368f` -- if it's still
+`PENDING` after a long wait, treat that as a real, still-unresolved
+problem with Framework's `llama-server` under real request load (not a
+panel bug), worth investigating directly on Framework rather than
+assuming the panel's own code has an issue.
+
+**Known non-blocking gaps, not yet done:**
+- No Ollama/llama.cpp presets in `GET /backends` -- no confirmed real
+  endpoint for either in this lab yet to encode; `custom` (explicit
+  `backend_base_url`/`backend_model`) is the only way to use them right
+  now, which fully works, just isn't a one-click preset.
+- The homepage UI shows job/suite results via a raw `alert(JSON...)`
+  popup, not a formatted view -- functional, not polished.
+- No automated test coverage beyond the manual verification described
+  below -- every check in this doc was a real, one-off, hands-on
+  verification, not a repeatable test suite.
+
 ## What this is
 
 A web-based control panel for triggering CyberSecEval benchmark runs against
