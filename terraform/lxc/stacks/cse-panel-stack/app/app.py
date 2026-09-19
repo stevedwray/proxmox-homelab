@@ -446,10 +446,8 @@ def index():
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
       #custom-backend-fields {{ display: none; }}
       .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
-      #detail {{ margin-top: 0.5rem; }}
-      #detail:empty {{ display: none; }}
-      .detail-box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-top: 0.5rem; }}
-      .detail-box .close {{ float: right; cursor: pointer; color: #888; }}
+      tr.detail-row td {{ background: #fafafa; padding: 0; }}
+      .detail-box {{ padding: 0.8rem 1rem; }}
       .transcript-entry {{ border-top: 1px solid #eee; padding: 0.6rem 0; }}
       .transcript-entry:first-child {{ border-top: none; }}
       .transcript-label {{ font-weight: 600; font-size: 0.8rem; color: #555; margin-top: 0.4rem; }}
@@ -481,7 +479,6 @@ def index():
 
       <h2>Status</h2>
       <div id="status"><p class="muted">Loading...</p></div>
-      <div id="detail"></div>
 
       <details class="advanced">
         <summary>Advanced / API</summary>
@@ -556,31 +553,47 @@ def index():
           return '<span class="muted">-</span>';
         }}
 
+        // Tracks which jobs' transcripts are expanded and caches fetched
+        // results, so the accordion survives the 4s poll rebuild instead
+        // of getting wiped every refresh.
+        const expandedJobs = new Set();
+        const transcriptCache = {{}};
+        let lastJobsBody = {{jobs: []}};
+        let lastSuitesBody = {{suites: []}};
+
         function renderJobRow(job) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
+          const isOpen = expandedJobs.has(job.job_id);
           const viewLink = (job.state_label === 'Done' || job.state_label === 'Failed')
-            ? `<a href="#" class="view-link" onclick="viewJob('${{job.job_id}}'); return false;">view prompts &amp; responses</a>`
+            ? `<a href="#" class="view-link" onclick="toggleJob('${{job.job_id}}'); return false;">${{isOpen ? 'hide' : 'view'}} prompts &amp; responses</a>`
             : '';
-          return `<tr>
+          let html = `<tr>
             <td>${{when}}</td>
             <td>${{job.benchmark}}</td>
             <td>${{job.backend}}</td>
             <td class="${{stateClass(job.state_label)}}">${{job.state_label}}</td>
             <td>${{renderStats(job)}}${{viewLink}}</td>
           </tr>`;
+          if (isOpen) {{
+            html += `<tr class="detail-row"><td colspan="5">${{renderJobDetail(job.job_id)}}</td></tr>`;
+          }}
+          return html;
         }}
 
         // A benchmark's transcript entries don't share one exact schema --
         // pick whichever of these fields is actually present rather than
-        // assuming one fixed shape.
+        // assuming one fixed shape. "Present" means the key exists at
+        // all, even if its value is an empty string -- an empty response
+        // is a real (if uninteresting) result and should say so, not
+        // silently vanish as if that field didn't exist.
         const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt'];
         const RESPONSE_KEYS = ['response', 'model_output'];
         const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment'];
         const SKIP_KEYS = new Set([...PROMPT_KEYS, ...RESPONSE_KEYS, ...VERDICT_KEYS,
-          'model', 'prompt_id', 'pass_id', 'judge_question']);
+          'model', 'prompt_id', 'pass_id', 'judge_question', 'user_input']);
 
-        function firstPresent(entry, keys) {{
-          for (const k of keys) {{ if (entry[k] !== undefined && entry[k] !== '') return entry[k]; }}
+        function firstPresentKey(entry, keys) {{
+          for (const k of keys) {{ if (entry[k] !== undefined) return k; }}
           return null;
         }}
 
@@ -590,67 +603,80 @@ def index():
           return d.innerHTML;
         }}
 
+        function textOrEmpty(v) {{
+          return esc(v) || '<span class="muted">(empty)</span>';
+        }}
+
         function renderTranscriptEntry(entry, i) {{
-          const prompt = firstPresent(entry, PROMPT_KEYS);
-          const userInput = entry.user_input;
-          const response = firstPresent(entry, RESPONSE_KEYS);
-          const verdict = firstPresent(entry, VERDICT_KEYS);
+          const promptKey = firstPresentKey(entry, PROMPT_KEYS);
+          const responseKey = firstPresentKey(entry, RESPONSE_KEYS);
+          const verdictKey = firstPresentKey(entry, VERDICT_KEYS);
           const metaParts = Object.keys(entry)
-            .filter(k => !SKIP_KEYS.has(k) && k !== 'user_input' && entry[k] !== '' && entry[k] !== null)
+            .filter(k => !SKIP_KEYS.has(k) && entry[k] !== null && entry[k] !== undefined && entry[k] !== '')
             .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
           let html = `<div class="transcript-entry"><b>Test case ${{i + 1}}</b>`;
-          if (prompt) html += `<div class="transcript-label">Prompt</div><p class="transcript-text">${{esc(prompt)}}</p>`;
-          if (userInput) html += `<div class="transcript-label">User input</div><p class="transcript-text">${{esc(userInput)}}</p>`;
-          if (response !== null) html += `<div class="transcript-label">Response</div><p class="transcript-text">${{esc(response) || '<span class=\"muted\">(empty)</span>'}}</p>`;
-          if (verdict !== null) html += `<div class="transcript-label">Judge verdict</div><span class="transcript-verdict">${{esc(verdict)}}</span>`;
+          if (promptKey) html += `<div class="transcript-label">Prompt</div><p class="transcript-text">${{textOrEmpty(entry[promptKey])}}</p>`;
+          if (entry.user_input !== undefined) html += `<div class="transcript-label">User input</div><p class="transcript-text">${{textOrEmpty(entry.user_input)}}</p>`;
+          if (responseKey) html += `<div class="transcript-label">Response</div><p class="transcript-text">${{textOrEmpty(entry[responseKey])}}</p>`;
+          if (verdictKey) html += `<div class="transcript-label">Judge verdict</div><span class="transcript-verdict">${{textOrEmpty(entry[verdictKey])}}</span>`;
           if (entry.judge_question) html += `<div class="transcript-meta">Judge question: ${{esc(entry.judge_question)}}</div>`;
           if (metaParts.length) html += `<div class="transcript-meta">${{metaParts.join(' &middot; ')}}</div>`;
           html += '</div>';
           return html;
         }}
 
-        async function viewJob(jobId) {{
-          const detail = document.getElementById('detail');
-          detail.innerHTML = '<div class="detail-box">Loading...</div>';
-          const res = await fetch(`/jobs/${{jobId}}`);
-          const job = await res.json();
-          const result = job.result || {{}};
-          let body;
-          if (result.transcript_error) {{
-            body = `<p class="muted">${{esc(result.transcript_error)}}</p>`;
-          }} else if (result.transcript && result.transcript.length) {{
-            body = result.transcript.map(renderTranscriptEntry).join('');
-          }} else {{
-            body = '<p class="muted">No transcript available for this job.</p>';
-          }}
-          detail.innerHTML = `<div class="detail-box">
-            <span class="close" onclick="document.getElementById('detail').innerHTML='';">&times; close</span>
-            <h3 style="margin-top:0">${{esc(job.benchmark)}} -- prompts &amp; responses</h3>
-            ${{body}}
-          </div>`;
+        function renderJobDetail(jobId) {{
+          const cached = transcriptCache[jobId];
+          if (!cached) return '<div class="detail-box muted">Loading...</div>';
+          if (cached.error) return `<div class="detail-box"><p class="muted">${{esc(cached.error)}}</p></div>`;
+          if (!cached.transcript.length) return '<div class="detail-box"><p class="muted">No transcript available for this job.</p></div>';
+          return `<div class="detail-box">${{cached.transcript.map(renderTranscriptEntry).join('')}}</div>`;
         }}
 
-        async function refreshStatus() {{
-          const [jobsRes, suitesRes] = await Promise.all([fetch('/jobs'), fetch('/suites')]);
-          const jobsBody = await jobsRes.json();
-          const suitesBody = await suitesRes.json();
+        function renderTable() {{
           const shown = new Set();
           let rows = '';
-          for (const suite of suitesBody.suites) {{
+          for (const suite of lastSuitesBody.suites) {{
             for (const job of suite.jobs) {{ shown.add(job.job_id); }}
           }}
-          for (const suite of suitesBody.suites.slice().reverse()) {{
+          for (const suite of lastSuitesBody.suites.slice().reverse()) {{
             const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
             rows += `<tr style="background:#f7f7fb"><td colspan="5"><b>Suite ${{suite.suite_id.slice(0, 8)}}</b>
               <span class="muted">${{when}} &middot; ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}</span></td></tr>`;
             for (const job of suite.jobs) {{ rows += renderJobRow(job); }}
           }}
-          for (const job of jobsBody.jobs.slice().reverse()) {{
+          for (const job of lastJobsBody.jobs.slice().reverse()) {{
             if (!shown.has(job.job_id)) {{ rows += renderJobRow(job); }}
           }}
           document.getElementById('status').innerHTML = rows
             ? `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th></tr></thead><tbody>${{rows}}</tbody></table>`
             : '<p class="muted">No tests run yet.</p>';
+        }}
+
+        async function toggleJob(jobId) {{
+          if (expandedJobs.has(jobId)) {{
+            expandedJobs.delete(jobId);
+            renderTable();
+            return;
+          }}
+          expandedJobs.add(jobId);
+          renderTable();
+          if (!transcriptCache[jobId]) {{
+            const res = await fetch(`/jobs/${{jobId}}`);
+            const job = await res.json();
+            const result = job.result || {{}};
+            transcriptCache[jobId] = result.transcript_error
+              ? {{error: result.transcript_error}}
+              : {{transcript: result.transcript || []}};
+            renderTable();
+          }}
+        }}
+
+        async function refreshStatus() {{
+          const [jobsRes, suitesRes] = await Promise.all([fetch('/jobs'), fetch('/suites')]);
+          lastJobsBody = await jobsRes.json();
+          lastSuitesBody = await suitesRes.json();
+          renderTable();
         }}
 
         refreshStatus();
