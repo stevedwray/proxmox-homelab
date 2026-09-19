@@ -486,6 +486,10 @@ def index():
       body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #1a1a1a; }}
       h1 {{ font-size: 1.4rem; }}
       h2 {{ font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
+      .tabs {{ display: flex; gap: 0.3rem; margin-top: 1.2rem; border-bottom: 2px solid #eee; }}
+      .tab-btn {{ background: none; border: none; padding: 0.6rem 1.1rem; font-size: 1rem; font-family: inherit; cursor: pointer; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }}
+      .tab-btn.active {{ color: #1a1a1a; font-weight: 600; border-bottom-color: #1a7f37; }}
+      .tab-pane {{ margin-top: 1.2rem; }}
       .benchmark-list {{ border: 1px solid #eee; border-radius: 6px; }}
       .benchmark-row {{ display: flex; align-items: baseline; gap: 0.6rem; padding: 0.45rem 0.7rem; border-bottom: 1px solid #f2f2f2; cursor: pointer; }}
       .benchmark-row:last-child {{ border-bottom: none; }}
@@ -522,37 +526,44 @@ def index():
     <body>
       <h1>CyberSecEval Control Panel</h1>
 
-      <h2>Run tests</h2>
-      <form id="run-form">
-        <div class="benchmark-list">{benchmark_checkboxes}</div>
-        <label class="field">Test cases per benchmark:
-          <input name="num_test_cases" type="number" value="2" min="1" max="50">
-        </label>
-        <label class="field">Backend:
-          <select name="backend" id="backend-select">{backend_options}</select>
-        </label>
-        <div id="custom-backend-fields">
-          <label class="field">Backend base URL: <input name="backend_base_url" type="text" placeholder="http://host:port/v1" size="40"></label>
-          <label class="field">Backend model: <input name="backend_model" type="text" size="40"></label>
-          <label class="field">API key (optional): <input name="backend_api_key" type="text" size="30"></label>
-        </div>
-        <button type="submit">Run</button>
-      </form>
+      <div class="tabs">
+        <button type="button" class="tab-btn active" id="tab-btn-run" onclick="showTab('run')">Run tests</button>
+        <button type="button" class="tab-btn" id="tab-btn-status" onclick="showTab('status')">Status</button>
+      </div>
       <div class="toast" id="toast"></div>
 
-      <h2>Status</h2>
-      <div id="status"><p class="muted">Loading...</p></div>
+      <div id="tab-run" class="tab-pane">
+        <form id="run-form">
+          <div class="benchmark-list">{benchmark_checkboxes}</div>
+          <label class="field">Test cases per benchmark:
+            <input name="num_test_cases" type="number" value="2" min="1" max="50">
+          </label>
+          <label class="field">Backend:
+            <select name="backend" id="backend-select">{backend_options}</select>
+          </label>
+          <div id="custom-backend-fields">
+            <label class="field">Backend base URL: <input name="backend_base_url" type="text" placeholder="http://host:port/v1" size="40"></label>
+            <label class="field">Backend model: <input name="backend_model" type="text" size="40"></label>
+            <label class="field">API key (optional): <input name="backend_api_key" type="text" size="30"></label>
+          </div>
+          <button type="submit">Run</button>
+        </form>
+      </div>
 
-      <details class="advanced">
-        <summary>Advanced / API</summary>
-        <p>
-          <a href="/jobs">Recent jobs (raw)</a> &middot;
-          <a href="/suites">Recent suites (raw)</a> &middot;
-          <a href="/backends">Known backends (raw)</a> &middot;
-          <a href="/docs">API docs</a> &middot;
-          <a href="{flower_url}">Flower (task/queue internals)</a>
-        </p>
-      </details>
+      <div id="tab-status" class="tab-pane" style="display:none">
+        <div id="status"><p class="muted">Loading...</p></div>
+
+        <details class="advanced">
+          <summary>Advanced / API</summary>
+          <p>
+            <a href="/jobs">Recent jobs (raw)</a> &middot;
+            <a href="/suites">Recent suites (raw)</a> &middot;
+            <a href="/backends">Known backends (raw)</a> &middot;
+            <a href="/docs">API docs</a> &middot;
+            <a href="{flower_url}">Flower (task/queue internals)</a>
+          </p>
+        </details>
+      </div>
 
       <script>
         const KNOWN_BACKENDS = {json.dumps([[name, b["base_url"], b["model"]] for name, b in KNOWN_BACKENDS.items()])};
@@ -562,6 +573,13 @@ def index():
           document.getElementById('custom-backend-fields').style.display =
             e.target.value === 'custom' ? 'block' : 'none';
         }});
+
+        function showTab(name) {{
+          document.getElementById('tab-run').style.display = name === 'run' ? 'block' : 'none';
+          document.getElementById('tab-status').style.display = name === 'status' ? 'block' : 'none';
+          document.getElementById('tab-btn-run').classList.toggle('active', name === 'run');
+          document.getElementById('tab-btn-status').classList.toggle('active', name === 'status');
+        }}
 
         function showToast(msg) {{
           const t = document.getElementById('toast');
@@ -597,7 +615,7 @@ def index():
           }});
           const body = await res.json();
           if (body.error) {{ showToast('Error: ' + body.error); }}
-          else {{ showToast(`Submitted ${{tests.length}} test(s).`); refreshStatus(); }}
+          else {{ showToast(`Submitted ${{tests.length}} test(s).`); showTab('status'); refreshStatus(); }}
         }});
 
         function stateClass(label) {{ return 'state-' + label.replace(/[^A-Za-z]/g, ''); }}
