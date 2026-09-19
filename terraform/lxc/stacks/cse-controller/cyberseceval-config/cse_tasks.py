@@ -204,4 +204,23 @@ def run_benchmark(
     result["run_dir"] = str(run_dir)
     result["backend_base_url"] = backend_base_url or DEFAULT_BACKEND_BASE_URL
     result["backend_model"] = backend_model or DEFAULT_BACKEND_MODEL
+
+    # The actual substantive result -- refusal/malicious/vulnerable
+    # percentages, per-category breakdowns, etc. -- lives in whichever
+    # stat file the benchmark wrote (most use stat.json; malware_analysis/
+    # threat_intel_reasoning/multiturn-phishing use stats.json). Without
+    # this, the Celery result was just a return code and a log path on a
+    # filesystem the caller can't reach -- not the thing anyone actually
+    # wants to see after running a benchmark.
+    for stat_name in ("stat.json", "stats.json"):
+        stat_path = run_dir / stat_name
+        if stat_path.exists():
+            try:
+                result["stats"] = json.loads(stat_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                result["stats_error"] = f"failed to read {stat_name}: {e}"
+            break
+    else:
+        result["stats_error"] = "no stat.json/stats.json found -- benchmark may have failed before producing one"
+
     return result

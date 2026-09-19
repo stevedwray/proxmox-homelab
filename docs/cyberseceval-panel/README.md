@@ -237,3 +237,23 @@ carries the exact overridden `--llm-under-test=...` value, and via
     `LAB_DOMAIN` in its own environment, and Compose only auto-reads a
     `.env` file in the same directory as the compose file. Fixed the
     same way -- wrote that `.env` file explicitly.
+
+## Results weren't actually visible through the panel (2026-09-19)
+
+Operator question that surfaced a real gap: a completed job's result
+only ever contained a return code, a `log_path` on `cse-controller`'s
+own filesystem (unreachable from the panel or the browser), and which
+backend ran -- never the actual benchmark outcome (MITRE's refusal/
+malicious/benign breakdown, `instruct`'s vulnerable-code percentage,
+etc.). Those numbers were sitting in `stat.json`/`stats.json` on disk
+the whole time, just never read back.
+
+Fixed: `run_benchmark` now reads whichever stat file the benchmark
+actually wrote (`stat.json` for most; `stats.json` for
+`malware_analysis`/`threat_intel_reasoning`/`multiturn-phishing`) and
+inlines its parsed content into the Celery result under `"stats"` --
+so `GET /jobs/{id}`'s `result` field now carries the real numbers, not
+just metadata. Verified the read/parse logic against a realistic fake
+stat file before deploying, then redeployed `cse-controller` for real.
+End-to-end confirmation (a real `mitre-frr` job showing real stats in
+its result) in progress as of this write-up.
