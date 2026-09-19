@@ -152,6 +152,15 @@ services:
     volumes:
       - /srv/cse-panel/redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
+    # Without this, 6379 is only reachable inside this compose project's
+    # own Docker network -- cse-controller's worker (a different LXC on
+    # a different node) can never reach it. Confirmed live 2026-09-19:
+    # the worker's startup banner printing "transport: redis://..." is
+    # NOT proof of a working connection -- Celery prints the configured
+    # URL unconditionally; the real first connection attempt came later
+    # and failed outright ("Connection refused") until this was added.
+    ports:
+      - "6379:6379"
     restart: unless-stopped
 
   flower:
@@ -564,6 +573,10 @@ Literal content for `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml`
     cse_panel_compose_content: "{{ lookup('file', '../../stacks/' + cse_panel_stack_name + '/docker-compose.yml') }}"
     cse_panel_stack_dir: "/opt/stacks/{{ cse_panel_stack_name }}"
     cse_panel_app_dir: /srv/cse-panel/app
+    # Every stack's own daemon.json task defines this itself (confirmed
+    # live 2026-09-19: it is not a role default) -- same expression used
+    # by deploy-netbox-stack.yml/deploy-ci-runner.yml/etc.
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   roles:
     - lxc_base
@@ -1140,11 +1153,31 @@ change: >
   the same play -- without this, PYTHONPATH=/srv/cyberseceval/config on
   the worker service has nothing to actually import.
 
+  Two more real fixes to the EXISTING "Start controller container via
+  docker compose" task, confirmed live (2026-09-19) by actually running
+  the deploy, not assumed: (a) change its `cmd` from `docker compose up
+  -d` to `docker compose up -d controller` -- at that point in the play
+  the venv (and celery inside it) don't exist yet, so letting this
+  early command also try to start `worker` fails outright ("no such
+  file or directory" execing celery). Add a second, later task
+  ("Start worker container via docker compose", plain `docker compose
+  up -d` for the whole file -- idempotent, leaves the already-running
+  controller alone) plus a "Wait for worker container to be running"
+  task, both placed immediately after the cse_tasks.py copy task at the
+  very end of the play. (b) Add a task writing
+  {{ cse_controller_stack_dir }}/.env containing
+  LAB_IP_CSE_PANEL=<value looked up from the LAB_IP_CSE_PANEL env var>,
+  placed right before "Write docker-compose.yml to stack directory" --
+  Compose auto-reads a .env file in the same directory as the compose
+  file for `${VAR}` substitution, and without it `docker compose up -d`
+  silently defaults LAB_IP_CSE_PANEL to a blank string, breaking the
+  worker's CELERY_BROKER_URL/RESULT_BACKEND (no host in the URL at all).
+
 scope:
   allowed_paths:
     - terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
   forbidden_actions:
-    - "Any change to tasks unrelated to the worker/celery/worker.env/cse_tasks.py"
+    - "Any change to tasks unrelated to the worker/celery/worker.env/cse_tasks.py/compose-up ordering"
     - "Any ansible-playbook run against a real host -- syntax-check only"
 
 gates:
@@ -1483,3 +1516,14 @@ here, not fenced YAML:
    `/srv/cyberseceval/runs/panel-<job-id>/`, and confirm the container
    logs for `cse-panel-web`/`cse-controller`/`cse-code-eval` are now
    actually showing up in Graylog — not just trusting each step's gate.
+6. **Found only by actually doing step 1, not anticipated when this
+   list was written**: the new hostnames don't resolve until
+   `technitium-stack` is also redeployed (`scripts/provision.sh
+   --stack technitium-stack`) — it's the live DNS authority, and
+   `reconcile-edge.py --apply` only regenerates the zone-records file
+   on disk; nothing pushes it live except redeploying that specific
+   stack. Run this after step 1's `proxy-stack` redeploy, before
+   expecting either new route to actually be reachable by hostname.
+   Also re-check 1-2 existing hostnames (e.g. `grafana`, `netbox`)
+   still resolve/route correctly afterward — this redeploys the live
+   DNS authority for the whole lab, not just this stack's own records.

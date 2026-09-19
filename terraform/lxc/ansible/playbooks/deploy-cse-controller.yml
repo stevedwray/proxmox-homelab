@@ -70,6 +70,18 @@
         mode: "0600"
         content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
 
+    # docker-compose.yml resolves ${LAB_IP_CSE_PANEL} itself (Compose
+    # auto-reads a .env file in the same directory as the compose file --
+    # this is not for secrets, just variable substitution). Without this,
+    # `docker compose up -d` warns "variable is not set, defaulting to a
+    # blank string" and the worker's CELERY_BROKER_URL/RESULT_BACKEND
+    # become redis://:6379/... with no host -- confirmed live 2026-09-19.
+    - name: Write compose variable substitution file
+      ansible.builtin.copy:
+        dest: "{{ cse_controller_stack_dir }}/.env"
+        mode: "0644"
+        content: "LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}\n"
+
     - name: Write docker-compose.yml to stack directory
       ansible.builtin.copy:
         content: "{{ cse_controller_compose_content }}"
@@ -84,9 +96,17 @@
       changed_when: false
       when: not ansible_check_mode
 
+    # controller only, not the whole stack -- the worker service's
+    # command execs {{ cse_controller_venv_dir }}/bin/celery, which
+    # doesn't exist yet (the venv itself isn't created until further
+    # down this play). Confirmed live 2026-09-19: `docker compose up -d`
+    # for the whole file at this point fails outright ("no such file or
+    # directory: unknown") trying to start worker before its own
+    # dependencies exist. Worker gets its own "docker compose up -d"
+    # much later, once celery is actually installed into the venv.
     - name: Start controller container via docker compose
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose up -d controller
         chdir: "{{ cse_controller_stack_dir }}"
       register: compose_up
       changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
@@ -291,6 +311,28 @@
         src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cse_tasks.py"
         dest: /srv/cyberseceval/config/cse_tasks.py
         mode: "0644"
+
+    # Now that celery is installed into the venv and cse_tasks.py exists,
+    # start the worker service. Idempotent whole-file "up -d": leaves the
+    # already-running controller service untouched, only creates/starts
+    # whatever isn't running yet (worker, on a fresh deploy).
+    - name: Start worker container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: cse_controller_worker_up
+      changed_when: "'Started' in cse_controller_worker_up.stdout or 'Created' in cse_controller_worker_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for worker container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} cse-controller-worker"
+      register: cse_controller_worker_running
+      until: cse_controller_worker_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
 
   handlers:
     - name: Restart Docker

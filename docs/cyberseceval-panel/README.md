@@ -47,12 +47,14 @@ log driver, not `syslog` like every other stack).
 
 ## Status
 
-**All 14 file-authoring steps (Parts A/B/C) executed 2026-09-19.**
-Everything up to the operator-only deploy actions is done and gated —
-no `terragrunt apply`, `provision.sh`, or real MikroTik mutation has
-happened yet. Executed directly (not via a local model's
-`implement-step` loop), but every step's own gates were actually run,
-not assumed.
+**Deployed, live, and browser-reachable with SSO enforced (2026-09-19).**
+All 5 operator-only actions have now run for real: `terragrunt apply`,
+`provision.sh` redeploys for `cse-panel-stack`/`cse-controller`/
+`cse-code-eval`, the real MikroTik firewall rule, Authentik/Traefik edge
+reconcile + `proxy-stack` redeploy, and a Technitium DNS redeploy (a
+real sixth action the plan's "5 operator actions" list missed — see
+below). An actual end-to-end job (real live inference against
+Framework's model) is in flight as the final verification.
 
 ## Step hand-backs
 
@@ -107,8 +109,64 @@ IP (`192.168.20.30/24`), VMID (`20030`), zone (`mgmt_seg`), and node
 to `variables.tf`/`main.tf`'s hardcoded template-vars list, not just
 `.env` (same class of gap as the earlier `cse_seg` lesson).
 
-**Not done yet** (the 5 operator-only prose actions at the end of
-`plan.md`): `terragrunt apply`, `provision.sh` redeploys for both
-`cse-panel-stack` and `cse-controller`, the real MikroTik firewall run,
-and end-to-end verification with a real submitted job. All still need
-the normal production approval flow before running.
+## Deploy pass (2026-09-19) — 5 more real bugs found, all fixed live
+
+Executing the 5 operator-only actions surfaced 5 further real bugs,
+none of which the file-authoring pass caught (they only show up when
+actually running against live infrastructure):
+
+5. `docker_registry_host` used in `deploy-cse-panel-stack.yml`'s
+   daemon.json task but never defined anywhere in that playbook (every
+   other stack's playbook defines it itself — it's not a role
+   default). First real deploy attempt failed outright ("undefined").
+6. `deploy-cse-controller.yml`'s early `docker compose up -d` tried to
+   start **both** `controller` and `worker` before the venv (and
+   celery inside it) existed — `worker`'s command execs a binary that
+   isn't there yet on a fresh apply. Fixed: early start targets
+   `controller` only; a new, later task starts `worker` after celery
+   is actually installed.
+7. `LAB_IP_CSE_PANEL` never reached Docker Compose's `${VAR}`
+   substitution for `cse-controller`'s own compose file — Compose
+   silently defaulted it to a blank string, breaking the worker's
+   Redis URLs. Fixed with a `.env` file written into the stack
+   directory (Compose auto-reads one there for substitution).
+8. **The big one**: `cse-panel-stack`'s `redis` service had no
+   `ports:` mapping at all, so port 6379 was reachable only inside
+   that host's own Docker network — never from `cse-controller`, a
+   different LXC on a different node. The worker's startup banner
+   printing `transport: redis://192.168.20.30:6379/0` was **not**
+   proof of a working connection (Celery prints the configured URL
+   unconditionally at startup); the real first connection attempt
+   came seconds later and failed with "Connection refused" for over
+   two minutes until this was fixed and `cse-panel-stack` redeployed.
+   Confirmed fixed by watching the worker's own logs reconnect for
+   real (`Connected to redis://192.168.20.30:6379/0`) and pick up the
+   already-queued test job (`Task cse_tasks.run_benchmark[...]
+   received`).
+9. The new hostnames (`cse-panel.lab.gibbsgreatly.xyz`,
+   `cse-panel-flower.lab.gibbsgreatly.xyz`) didn't resolve at all
+   after the Authentik/Traefik edge reconcile + `proxy-stack` redeploy
+   -- DNS records only get regenerated and pushed to the live
+   Technitium server (the actual DNS authority) when `technitium-stack`
+   itself is redeployed, a separate step the plan's "5 operator
+   actions" list didn't account for. Fixed by redeploying
+   `technitium-stack` too; confirmed both hostnames resolve
+   afterward.
+
+**Verified independently after every fix, not just trusted from "ok"
+status**: `terragrunt plan` clean (5 add/0 change/0 destroy, correct
+IP/VMID/zone/node); all three `cse-panel-stack` containers up and its
+`/healthz`/`/benchmarks` endpoints returning real data; the MikroTik
+rule confirmed present with real non-zero packet/byte counters through
+it; both new routes returning real, distinct Authentik OAuth redirects
+(proof the proxy-provider objects were genuinely created per-route,
+not stale/shared config); two existing consumers (Grafana, NetBox)
+re-checked afterward and still returning their normal 302s -- no
+regression from the `proxy-stack`/`technitium-stack` redeploys.
+
+A real end-to-end job (submitted through `panel-web`: `mitre-frr`, 1
+test case) is in flight as the final check -- genuinely running
+(confirmed via `docker top` inside the worker container, matching the
+exact `benchmark.run` command expected), just slow real inference
+against Framework's model on this hardware, not stuck or crashed.
+Result to be recorded here once it lands.

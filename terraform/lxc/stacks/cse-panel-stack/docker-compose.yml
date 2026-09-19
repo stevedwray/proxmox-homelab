@@ -6,6 +6,8 @@ services:
     volumes:
       - /srv/cse-panel/redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
     restart: unless-stopped
 
   flower:
