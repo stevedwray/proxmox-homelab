@@ -445,6 +445,17 @@ def index():
       .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
       #custom-backend-fields {{ display: none; }}
+      .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
+      #detail {{ margin-top: 0.5rem; }}
+      #detail:empty {{ display: none; }}
+      .detail-box {{ border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-top: 0.5rem; }}
+      .detail-box .close {{ float: right; cursor: pointer; color: #888; }}
+      .transcript-entry {{ border-top: 1px solid #eee; padding: 0.6rem 0; }}
+      .transcript-entry:first-child {{ border-top: none; }}
+      .transcript-label {{ font-weight: 600; font-size: 0.8rem; color: #555; margin-top: 0.4rem; }}
+      .transcript-text {{ white-space: pre-wrap; font-size: 0.9rem; margin: 0.15rem 0 0; }}
+      .transcript-verdict {{ display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; background: #eef; }}
+      .transcript-meta {{ font-size: 0.8rem; color: #888; margin-top: 0.3rem; }}
     </style>
     </head>
     <body>
@@ -470,6 +481,7 @@ def index():
 
       <h2>Status</h2>
       <div id="status"><p class="muted">Loading...</p></div>
+      <div id="detail"></div>
 
       <details class="advanced">
         <summary>Advanced / API</summary>
@@ -546,13 +558,76 @@ def index():
 
         function renderJobRow(job) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
+          const viewLink = (job.state_label === 'Done' || job.state_label === 'Failed')
+            ? `<a href="#" class="view-link" onclick="viewJob('${{job.job_id}}'); return false;">view prompts &amp; responses</a>`
+            : '';
           return `<tr>
             <td>${{when}}</td>
             <td>${{job.benchmark}}</td>
             <td>${{job.backend}}</td>
             <td class="${{stateClass(job.state_label)}}">${{job.state_label}}</td>
-            <td>${{renderStats(job)}}</td>
+            <td>${{renderStats(job)}}${{viewLink}}</td>
           </tr>`;
+        }}
+
+        // A benchmark's transcript entries don't share one exact schema --
+        // pick whichever of these fields is actually present rather than
+        // assuming one fixed shape.
+        const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt'];
+        const RESPONSE_KEYS = ['response', 'model_output'];
+        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment'];
+        const SKIP_KEYS = new Set([...PROMPT_KEYS, ...RESPONSE_KEYS, ...VERDICT_KEYS,
+          'model', 'prompt_id', 'pass_id', 'judge_question']);
+
+        function firstPresent(entry, keys) {{
+          for (const k of keys) {{ if (entry[k] !== undefined && entry[k] !== '') return entry[k]; }}
+          return null;
+        }}
+
+        function esc(s) {{
+          const d = document.createElement('div');
+          d.textContent = String(s);
+          return d.innerHTML;
+        }}
+
+        function renderTranscriptEntry(entry, i) {{
+          const prompt = firstPresent(entry, PROMPT_KEYS);
+          const userInput = entry.user_input;
+          const response = firstPresent(entry, RESPONSE_KEYS);
+          const verdict = firstPresent(entry, VERDICT_KEYS);
+          const metaParts = Object.keys(entry)
+            .filter(k => !SKIP_KEYS.has(k) && k !== 'user_input' && entry[k] !== '' && entry[k] !== null)
+            .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
+          let html = `<div class="transcript-entry"><b>Test case ${{i + 1}}</b>`;
+          if (prompt) html += `<div class="transcript-label">Prompt</div><p class="transcript-text">${{esc(prompt)}}</p>`;
+          if (userInput) html += `<div class="transcript-label">User input</div><p class="transcript-text">${{esc(userInput)}}</p>`;
+          if (response !== null) html += `<div class="transcript-label">Response</div><p class="transcript-text">${{esc(response) || '<span class=\"muted\">(empty)</span>'}}</p>`;
+          if (verdict !== null) html += `<div class="transcript-label">Judge verdict</div><span class="transcript-verdict">${{esc(verdict)}}</span>`;
+          if (entry.judge_question) html += `<div class="transcript-meta">Judge question: ${{esc(entry.judge_question)}}</div>`;
+          if (metaParts.length) html += `<div class="transcript-meta">${{metaParts.join(' &middot; ')}}</div>`;
+          html += '</div>';
+          return html;
+        }}
+
+        async function viewJob(jobId) {{
+          const detail = document.getElementById('detail');
+          detail.innerHTML = '<div class="detail-box">Loading...</div>';
+          const res = await fetch(`/jobs/${{jobId}}`);
+          const job = await res.json();
+          const result = job.result || {{}};
+          let body;
+          if (result.transcript_error) {{
+            body = `<p class="muted">${{esc(result.transcript_error)}}</p>`;
+          }} else if (result.transcript && result.transcript.length) {{
+            body = result.transcript.map(renderTranscriptEntry).join('');
+          }} else {{
+            body = '<p class="muted">No transcript available for this job.</p>';
+          }}
+          detail.innerHTML = `<div class="detail-box">
+            <span class="close" onclick="document.getElementById('detail').innerHTML='';">&times; close</span>
+            <h3 style="margin-top:0">${{esc(job.benchmark)}} -- prompts &amp; responses</h3>
+            ${{body}}
+          </div>`;
         }}
 
         async function refreshStatus() {{

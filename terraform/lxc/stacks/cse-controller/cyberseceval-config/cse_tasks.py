@@ -231,4 +231,22 @@ def run_benchmark(
     else:
         result["stats_error"] = "no stat.json/stats.json found -- benchmark may have failed before producing one"
 
+    # Per-test-case transcripts (the actual prompt text, the model's real
+    # response, and the judgment) -- genuinely useful for research, not
+    # just the aggregate stats above. judge_responses.json (when a judge
+    # was used) is a superset of responses.json with the verdict added,
+    # so prefer it; fall back to responses.json for benchmarks with no
+    # judge (e.g. mitre-frr, which self-classifies via its own
+    # judge_response field already inline).
+    for transcript_name in ("judge_responses.json", "responses.json"):
+        transcript_path = run_dir / transcript_name
+        if transcript_path.exists():
+            try:
+                result["transcript"] = json.loads(transcript_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                result["transcript_error"] = f"failed to read {transcript_name}: {e}"
+            break
+    else:
+        result["transcript_error"] = "no responses.json/judge_responses.json found"
+
     return result
