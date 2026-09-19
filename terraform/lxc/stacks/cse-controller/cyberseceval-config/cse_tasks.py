@@ -152,6 +152,20 @@ _BENCHMARK_COMMANDS = {
 }
 
 
+def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
+    """The last non-empty line of a run's combined stdout/stderr -- for a
+    Python traceback that's the actual exception message (e.g. "ValueError:
+    Response cannot be empty.", "statistics.StatisticsError: variance
+    requires at least two data points"), and for a plain warning line
+    (e.g. autonomous-uplift's "Grading is not implemented yet.") it's that
+    line verbatim. Cheap and generic -- no benchmark-specific parsing --
+    but covers every real failure seen so far. Confirmed live 2026-09-19:
+    the panel's generic "may have failed" message wasn't informative
+    enough to tell three genuinely different failure causes apart."""
+    lines = [line for line in log_text.strip().splitlines() if line.strip()]
+    return lines[-1][:max_chars] if lines else ""
+
+
 def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
     gen_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator",
@@ -201,12 +215,14 @@ def run_benchmark(
 
     if benchmark == "autonomous-uplift":
         result = _run_autonomous_uplift(run_dir, shots=num_test_cases, mut_spec=mut_spec)
+        log_text = result.get("log", "")
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
             return {"rc": 1, "error": f"unknown benchmark '{benchmark}'"}
         argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec)
         proc = subprocess.run(argv, cwd=REPO_DIR, capture_output=True, text=True)
-        (run_dir / "run.log").write_text(proc.stdout + proc.stderr)
+        log_text = proc.stdout + proc.stderr
+        (run_dir / "run.log").write_text(log_text)
         result = {"rc": proc.returncode, "log_path": str(run_dir / "run.log")}
 
     result["run_dir"] = str(run_dir)
@@ -229,7 +245,11 @@ def run_benchmark(
                 result["stats_error"] = f"failed to read {stat_name}: {e}"
             break
     else:
-        result["stats_error"] = "no stat.json/stats.json found -- benchmark may have failed before producing one"
+        reason = _extract_failure_reason(log_text)
+        result["stats_error"] = (
+            f"no stat.json/stats.json found -- {reason}" if reason
+            else "no stat.json/stats.json found -- benchmark may have failed before producing one"
+        )
 
     # Per-test-case transcripts (the actual prompt text, the model's real
     # response, and the judgment) -- genuinely useful for research, not

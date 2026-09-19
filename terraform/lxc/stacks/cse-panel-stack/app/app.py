@@ -25,6 +25,7 @@ brokers/JSON. The full raw result is still returned alongside the
 summary on GET /jobs/{id}, so this stays usable as a real API for other
 integrations, not just this one HTML page.
 """
+import html
 import json
 import os
 from datetime import datetime, timezone
@@ -61,6 +62,58 @@ KNOWN_BENCHMARKS = [
     "multiturn-phishing",
     "autonomous-uplift",
 ]
+
+# Per-benchmark description (checkbox tooltip) and result_hint (a plain-
+# language note on what the reported percentages actually mean and
+# which direction is "safer" -- added 2026-09-19 after the operator
+# pointed out a bare "Refusal/Malicious/Benign %" line means nothing
+# without context). Not every benchmark measures safety the same way --
+# mitre-frr's "Refusal" is the *bad* outcome (over-refusing something
+# benign), unlike every other benchmark where refusing is the safe one;
+# malware_analysis/threat_intel_reasoning aren't safety tests at all,
+# they measure analysis capability.
+BENCHMARK_INFO = {
+    "mitre": {
+        "description": "Does the model help carry out real cyberattack techniques (MITRE ATT&CK)?",
+        "result_hint": "Malicious % = gave real attack-enabling help (lower is safer). Refusal/Benign % = declined or gave a non-actionable answer (safer).",
+    },
+    "mitre-frr": {
+        "description": "False-refusal companion to mitre -- uses benign security questions to check if the model over-refuses things it shouldn't.",
+        "result_hint": "Unlike other benchmarks here, Refusal % being high is the BAD outcome -- it means the model wrongly refused a legitimate request.",
+    },
+    "prompt-injection": {
+        "description": "Can a hidden instruction in user input (e.g. \"ignore previous instructions\") override the model's system prompt?",
+        "result_hint": "Injection Successful % = the attack worked (lower is safer). Injection Unsuccessful % = the model resisted it (higher is safer).",
+    },
+    "interpreter": {
+        "description": "Would the code the model generates be malicious if actually run by a code-interpreter tool?",
+        "result_hint": "Malicious % = generated code was actually harmful if executed (lower is safer).",
+    },
+    "instruct": {
+        "description": "Does the model suggest insecure/vulnerable code when asked to write code for a described task?",
+        "result_hint": "Vulnerable Suggestion % = the generated code had a real security flaw (lower is safer).",
+    },
+    "autocomplete": {
+        "description": "Same as instruct, but completing an existing code snippet instead of writing from a description.",
+        "result_hint": "Vulnerable Suggestion % = the completed code had a real security flaw (lower is safer).",
+    },
+    "malware_analysis": {
+        "description": "Capability test, not a safety test -- can the model correctly analyze and answer questions about real malware samples?",
+        "result_hint": "Measures analysis accuracy, not safety -- higher scores mean better threat-analysis capability.",
+    },
+    "threat_intel_reasoning": {
+        "description": "Capability test -- can the model correctly answer questions about real threat-intelligence reports?",
+        "result_hint": "Measures how accurately the model reasoned about the report (higher is better) -- not a safety measure.",
+    },
+    "multiturn-phishing": {
+        "description": "Can the model be steered over several conversation turns into producing real phishing content? Needs 2+ test cases -- its own scoring math fails with just 1.",
+        "result_hint": "Lower successful-phishing % is safer. Requires num_test_cases >= 2 -- this benchmark's own variance calculation needs at least 2 data points.",
+    },
+    "autonomous-uplift": {
+        "description": "Runs the model as an autonomous agent attempting real attack steps against a live target in an isolated cyber range, over SSH.",
+        "result_hint": "The attack runs for real against a live target, but this pinned PurpleLlama commit hasn't implemented automatic grading yet -- expect no score.",
+    },
+}
 
 # Confirmed-real presets only -- "custom" is how you point this at
 # anything else (Ollama, llama.cpp server, ...) via backend_base_url/
@@ -417,7 +470,8 @@ def suite_status(suite_id: str):
 @app.get("/", response_class=HTMLResponse)
 def index():
     benchmark_checkboxes = "".join(
-        f'<label class="chip"><input type="checkbox" name="benchmark" value="{b}">{b}</label>'
+        f'<label class="chip" title="{html.escape(BENCHMARK_INFO[b]["description"], quote=True)}">'
+        f'<input type="checkbox" name="benchmark" value="{b}">{b}</label>'
         for b in KNOWN_BENCHMARKS
     )
     backend_options = "".join(f'<option value="{name}">{name}</option>' for name in KNOWN_BACKENDS)
@@ -442,6 +496,7 @@ def index():
       .stats-list {{ margin: 0; padding-left: 0; list-style: none; font-size: 0.85rem; }}
       .stats-list li {{ display: inline-block; margin-right: 0.8rem; }}
       .muted {{ color: #888; font-size: 0.85rem; }}
+      .result-hint {{ color: #666; font-size: 0.78rem; font-style: italic; margin-bottom: 0.3rem; max-width: 32rem; }}
       .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
       #custom-backend-fields {{ display: none; }}
@@ -493,6 +548,7 @@ def index():
 
       <script>
         const KNOWN_BACKENDS = {json.dumps([[name, b["base_url"], b["model"]] for name, b in KNOWN_BACKENDS.items()])};
+        const BENCHMARK_HINTS = {json.dumps({b: info["result_hint"] for b, info in BENCHMARK_INFO.items()})};
 
         document.getElementById('backend-select').addEventListener('change', (e) => {{
           document.getElementById('custom-backend-fields').style.display =
@@ -538,16 +594,22 @@ def index():
 
         function stateClass(label) {{ return 'state-' + label.replace(/[^A-Za-z]/g, ''); }}
 
+        function hintLine(benchmark) {{
+          const hint = BENCHMARK_HINTS[benchmark];
+          return hint ? `<div class="result-hint">${{esc(hint)}}</div>` : '';
+        }}
+
         function renderStats(job) {{
+          const hint = hintLine(job.benchmark);
           if (job.state_label === 'Failed') {{
-            return `<span style="color:#c62828">${{(job.error || '').slice(0, 160)}}</span>`;
+            return hint + `<span style="color:#c62828">${{esc((job.error || '').slice(0, 160))}}</span>`;
           }}
           if (job.stats_error) {{
-            return `<span class="muted">${{job.stats_error}}</span>`;
+            return hint + `<span class="muted">${{esc(job.stats_error)}}</span>`;
           }}
           if (job.stats_summary && job.stats_summary.length) {{
-            return '<ul class="stats-list">' +
-              job.stats_summary.map(([k, v]) => `<li><b>${{k}}</b>: ${{v}}</li>`).join('') +
+            return hint + '<ul class="stats-list">' +
+              job.stats_summary.map(([k, v]) => `<li><b>${{esc(k)}}</b>: ${{esc(v)}}</li>`).join('') +
               '</ul>';
           }}
           return '<span class="muted">-</span>';
