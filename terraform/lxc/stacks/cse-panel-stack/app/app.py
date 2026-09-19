@@ -511,6 +511,13 @@ def index():
       .result-hint {{ color: #666; font-size: 0.78rem; font-style: italic; margin-bottom: 0.3rem; max-width: 32rem; }}
       .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
+      details.run-card {{ border: 1px solid #ddd; border-radius: 6px; margin-bottom: 0.7rem; }}
+      details.run-card summary {{ padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.95rem; list-style: none; }}
+      details.run-card summary::-webkit-details-marker {{ display: none; }}
+      details.run-card summary::before {{ content: "▸ "; color: #888; }}
+      details.run-card[open] summary::before {{ content: "▾ "; }}
+      details.run-card table {{ margin: 0; }}
+      details.run-card th:first-child, details.run-card td:first-child {{ padding-left: 0.9rem; }}
       #custom-backend-fields {{ display: none; }}
       .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
       tr.detail-row td {{ background: #fafafa; padding: 0; }}
@@ -649,6 +656,17 @@ def index():
         let lastJobsBody = {{jobs: []}};
         let lastSuitesBody = {{suites: []}};
 
+        // Each run (suite) gets its own collapsible card instead of
+        // everything sharing one continuous table -- the operator asked
+        // for runs to be visually separated, not just marked with a
+        // header row in the middle of one long scroll. openSuites tracks
+        // the operator's own manual expand/collapse choices so they
+        // survive the 4s poll rebuild; the most recent run is auto-
+        // expanded exactly once, on first load, not on every rebuild
+        // (otherwise collapsing it would never stick).
+        const openSuites = new Set();
+        let autoOpenedNewest = false;
+
         function renderJobRow(job) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
           const isOpen = expandedJobs.has(job.job_id);
@@ -721,24 +739,43 @@ def index():
           return `<div class="detail-box">${{cached.transcript.map(renderTranscriptEntry).join('')}}</div>`;
         }}
 
+        function jobsTable(jobs) {{
+          const rows = jobs.map(renderJobRow).join('');
+          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th></tr></thead><tbody>${{rows}}</tbody></table>`;
+        }}
+
+        function onSuiteToggle(suiteId, isOpen) {{
+          if (isOpen) openSuites.add(suiteId); else openSuites.delete(suiteId);
+        }}
+
+        function renderSuiteCard(suite, isOpen) {{
+          const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
+          return `<details class="run-card" ${{isOpen ? 'open' : ''}} ontoggle="onSuiteToggle('${{suite.suite_id}}', this.open)">
+            <summary><b>${{when}}</b> &middot; ${{suite.jobs.length}} benchmark(s) &middot;
+              ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}
+              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span></summary>
+            ${{jobsTable(suite.jobs)}}
+          </details>`;
+        }}
+
         function renderTable() {{
           const shown = new Set();
-          let rows = '';
           for (const suite of lastSuitesBody.suites) {{
             for (const job of suite.jobs) {{ shown.add(job.job_id); }}
           }}
-          for (const suite of lastSuitesBody.suites.slice().reverse()) {{
-            const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
-            rows += `<tr style="background:#f7f7fb"><td colspan="5"><b>Suite ${{suite.suite_id.slice(0, 8)}}</b>
-              <span class="muted">${{when}} &middot; ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}</span></td></tr>`;
-            for (const job of suite.jobs) {{ rows += renderJobRow(job); }}
+          const suitesNewestFirst = lastSuitesBody.suites.slice().reverse();
+          if (!autoOpenedNewest && suitesNewestFirst.length) {{
+            openSuites.add(suitesNewestFirst[0].suite_id);
+            autoOpenedNewest = true;
           }}
-          for (const job of lastJobsBody.jobs.slice().reverse()) {{
-            if (!shown.has(job.job_id)) {{ rows += renderJobRow(job); }}
+          let html = suitesNewestFirst
+            .map(suite => renderSuiteCard(suite, openSuites.has(suite.suite_id)))
+            .join('');
+          const individualJobs = lastJobsBody.jobs.slice().reverse().filter(j => !shown.has(j.job_id));
+          if (individualJobs.length) {{
+            html += `<details class="run-card" open><summary><b>Individual jobs</b> (not part of a run)</summary>${{jobsTable(individualJobs)}}</details>`;
           }}
-          document.getElementById('status').innerHTML = rows
-            ? `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th></tr></thead><tbody>${{rows}}</tbody></table>`
-            : '<p class="muted">No tests run yet.</p>';
+          document.getElementById('status').innerHTML = html || '<p class="muted">No tests run yet.</p>';
         }}
 
         async function toggleJob(jobId) {{
