@@ -30,11 +30,45 @@
     - docker_base
 
   tasks:
+    - name: Forward container logs to Graylog (log-driver gap fix, docs/cyberseceval-panel/plan.md §cse-panel-14)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+      notify: Restart Docker
+      register: cse_controller_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
     - name: Create stack directory
       ansible.builtin.file:
         path: "{{ cse_controller_stack_dir }}"
         state: directory
         mode: "0755"
+
+    # Must exist before "Validate docker compose configuration" below --
+    # the worker service's env_file references this path, and `docker
+    # compose config`/`up -d` fail outright ("env file not found") on a
+    # fresh deploy if it's missing. Confirmed live (2026-09-19): moving
+    # this here from later in the play (after the venv/pip-install
+    # section) was a real ordering bug, not just tidiness.
+    - name: Write the worker's OpenAI API key env file (never logged)
+      no_log: true
+      ansible.builtin.copy:
+        dest: /srv/cyberseceval/config/worker.env
+        mode: "0600"
+        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
 
     - name: Write docker-compose.yml to stack directory
       ansible.builtin.copy:
@@ -147,6 +181,15 @@
       changed_when: "'Successfully installed' in cse_controller_pip_install.stdout"
       when: not ansible_check_mode
 
+    - name: Install Celery/Redis client into the CyberSecEval venv (for the worker service)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/pip install celery==5.4.0 redis==5.2.1
+      register: cse_controller_celery_install
+      changed_when: "'Successfully installed' in cse_controller_celery_install.stdout"
+      when: not ansible_check_mode
+
     - name: Verify CyberSecEval benchmark runner is importable
       ansible.builtin.command:
         cmd: >-
@@ -242,6 +285,18 @@
         src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/run-autonomous-uplift.sh"
         dest: /srv/cyberseceval/config/run-autonomous-uplift.sh
         mode: "0755"
+
+    - name: Write the Celery worker's task module (source-controlled, docs/cyberseceval-panel)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cse_tasks.py"
+        dest: /srv/cyberseceval/config/cse_tasks.py
+        mode: "0644"
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

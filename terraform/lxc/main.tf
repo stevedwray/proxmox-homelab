@@ -22,6 +22,7 @@ locals {
   stack_name = var.stack_name
   stack_template_vars = {
     lab_ip_portainer            = var.lab_ip_portainer
+    lab_ip_cse_panel            = var.lab_ip_cse_panel
     lab_ip_authentik            = var.lab_ip_authentik
     lab_ip_step_ca              = var.lab_ip_step_ca
     lab_ip_monitoring           = var.lab_ip_monitoring

@@ -212,8 +212,14 @@ gates:
     cmd: "grep -c '^## ' terraform/lxc/stacks/cse-panel-stack/STACK_CONTRACT.md"
     expect: "output >= 8"
     critical: true
-  - id: contract-validator
-    cmd: "./with-secrets terraform/lxc/scripts/validate-stack-metadata.sh --check-contract-sections cse-panel-stack"
+  - id: contract-validator-no-regression
+    # terraform/lxc/validate-stack-metadata.sh (confirmed live: no
+    # scripts/ subdirectory) only checks a fixed list of already-active
+    # platform stacks -- it can't see cse-panel-stack until it's
+    # deployed, so this only guards against breaking an existing
+    # stack's contract, not validating this new one. Real coverage for
+    # this file is the has-required-sections gate above.
+    cmd: "./with-secrets terraform/lxc/validate-stack-metadata.sh --check-contract-sections"
     expect: "exit 0"
     critical: false
 ```
@@ -1113,18 +1119,32 @@ depends_on: [cse-panel-11-worker-compose]
 
 change: >
   Edit terraform/lxc/ansible/playbooks/deploy-cse-controller.yml: add a
+  no_log task writing /srv/cyberseceval/config/worker.env (containing
+  OPENAI_API_KEY, templated from the OPENAI_API_KEY environment variable,
+  mandatory) immediately after the existing "Create stack directory"
+  task -- **before** "Write docker-compose.yml to stack directory" and
+  "Validate docker compose configuration**, not later in the play.
+  Confirmed live (2026-09-19): placing it any later (e.g. near the venv/
+  pip-install section) breaks the deploy outright on a fresh apply --
+  `docker compose config`/`up -d` fail with "env file not found" the
+  moment they run, since the worker service's `env_file` entry points
+  at this exact path and nothing else creates it earlier. Also add a
   task installing celery and redis into the existing venv (pip install,
-  same pattern as the existing CyberSecEval requirements install task),
-  and a no_log task writing /srv/cyberseceval/config/worker.env containing
-  OPENAI_API_KEY (templated from the OPENAI_API_KEY environment variable,
-  mandatory), placed immediately after the existing "Install CyberSecEval's
-  Python requirements" task.
+  same pattern as the existing CyberSecEval requirements install task)
+  immediately after the existing "Install CyberSecEval's Python
+  requirements" task, and a copy task writing cse_tasks.py itself to
+  /srv/cyberseceval/config/cse_tasks.py (source-controlled at
+  terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py,
+  Part B's cse-panel-10 step), placed alongside the existing
+  cyber_range_pairs.json/run-autonomous-uplift.sh copy tasks later in
+  the same play -- without this, PYTHONPATH=/srv/cyberseceval/config on
+  the worker service has nothing to actually import.
 
 scope:
   allowed_paths:
     - terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
   forbidden_actions:
-    - "Any change to tasks unrelated to the worker/celery/worker.env"
+    - "Any change to tasks unrelated to the worker/celery/worker.env/cse_tasks.py"
     - "Any ansible-playbook run against a real host -- syntax-check only"
 
 gates:
@@ -1136,12 +1156,30 @@ gates:
     cmd: "grep -B2 'worker.env' terraform/lxc/ansible/playbooks/deploy-cse-controller.yml | grep -c no_log"
     expect: "output >= 1"
     critical: true
+  - id: cse_tasks_copy_present
+    cmd: "grep -c 'dest: /srv/cyberseceval/config/cse_tasks.py' terraform/lxc/ansible/playbooks/deploy-cse-controller.yml"
+    expect: "output == 1"
+    critical: true
 ```
 
-Literal new tasks to insert into
+Literal task to insert into
 `terraform/lxc/ansible/playbooks/deploy-cse-controller.yml` immediately
-after the existing `- name: Install CyberSecEval's Python requirements
-(idempotent, runs every deploy)` task:
+after the existing `- name: Create stack directory` task -- **before**
+`- name: Write docker-compose.yml to stack directory` (see the ordering
+note in `change` above):
+
+```yaml
+    - name: Write the worker's OpenAI API key env file (never logged)
+      no_log: true
+      ansible.builtin.copy:
+        dest: /srv/cyberseceval/config/worker.env
+        mode: "0600"
+        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
+```
+
+And, separately, immediately after the existing
+`- name: Install CyberSecEval's Python requirements (idempotent, runs
+every deploy)` task:
 
 ```yaml
     - name: Install Celery/Redis client into the CyberSecEval venv (for the worker service)
@@ -1152,13 +1190,18 @@ after the existing `- name: Install CyberSecEval's Python requirements
       register: cse_controller_celery_install
       changed_when: "'Successfully installed' in cse_controller_celery_install.stdout"
       when: not ansible_check_mode
+```
 
-    - name: Write the worker's OpenAI API key env file (never logged)
-      no_log: true
+And, alongside the existing `cyber_range_pairs.json`/`run-autonomous-uplift.sh`
+copy tasks later in the same play (immediately after the
+`run-autonomous-uplift.sh` copy task):
+
+```yaml
+    - name: Write the Celery worker's task module (source-controlled, docs/cyberseceval-panel)
       ansible.builtin.copy:
-        dest: /srv/cyberseceval/config/worker.env
-        mode: "0600"
-        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cse_tasks.py"
+        dest: /srv/cyberseceval/config/cse_tasks.py
+        mode: "0644"
 ```
 
 ---

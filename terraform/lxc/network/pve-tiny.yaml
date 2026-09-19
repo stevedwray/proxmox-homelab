@@ -120,7 +120,8 @@ zones:
   mgmt_seg:
     description: Management plane — identity, PKI, monitoring, logging
     attachment: mgmt_seg
-    containers: []  # empty — this pass only creates the zone; graylog-stack has not moved yet
+    containers:
+      - "cse-panel-stack (VMID 20030) — 192.168.20.30"
   cse_seg:
     description: CyberSecEval compute/orchestration — isolated by design
     attachment: cse_seg

@@ -41,6 +41,27 @@
     - docker_base
 
   tasks:
+    - name: Forward container logs to Graylog (log-driver gap fix, docs/cyberseceval-panel/plan.md §cse-panel-14)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+      notify: Restart Docker
+      register: cse_code_eval_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
     - name: Create stack directory
       ansible.builtin.file:
         path: "{{ cse_code_eval_stack_dir }}"
@@ -164,6 +185,12 @@
       register: cse_code_eval_benchmark_help
       changed_when: false
       when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

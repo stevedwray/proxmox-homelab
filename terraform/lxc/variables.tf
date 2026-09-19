@@ -152,6 +152,12 @@ variable "lab_ip_portainer" {
   default     = ""
 }
 
+variable "lab_ip_cse_panel" {
+  description = "CyberSecEval control panel service IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_ip_authentik" {
   description = "Authentik service IPv4 address"
   type        = string
