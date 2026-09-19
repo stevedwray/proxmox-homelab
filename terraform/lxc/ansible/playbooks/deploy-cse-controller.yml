@@ -324,6 +324,26 @@
       changed_when: "'Started' in cse_controller_worker_up.stdout or 'Created' in cse_controller_worker_up.stdout"
       when: not ansible_check_mode
 
+    # docker compose up -d does NOT restart a container just because a
+    # bind-mounted file it reads (cse_tasks.py) changed on disk -- only
+    # a real compose-file/image change does (same real bug found and
+    # fixed in deploy-cse-panel-stack.yml the same day). Without this,
+    # an already-running worker keeps executing whatever cse_tasks.py
+    # it loaded at its own last start, silently ignoring any update.
+    # Unconditional, not gated on the copy task's own changed flag --
+    # change-detection has a real gap (content already matching on disk
+    # from an earlier deploy reports no change, even though that
+    # earlier deploy never actually restarted the process either,
+    # confirmed live the same day) and skip it only when this run just
+    # freshly created the container (nothing to restart yet).
+    - name: Restart worker to pick up any cse_tasks.py changes
+      ansible.builtin.command:
+        cmd: docker compose restart worker
+        chdir: "{{ cse_controller_stack_dir }}"
+      when:
+        - not ansible_check_mode
+        - not cse_controller_worker_up.changed
+
     - name: Wait for worker container to be running
       ansible.builtin.command:
         cmd: "docker inspect -f {{ '{{.State.Running}}' }} cse-controller-worker"

@@ -6,7 +6,16 @@ rule. One task, run_benchmark, covers every benchmark proven in the
 docs/cyberseceval-implementation/current-state.md) -- the same CLI shapes
 as ansible/00-initial-setup/cse-small-batch-run.yml's run-batch.sh,
 parameterized instead of hardcoded per-benchmark.
+
+Backend selection (2026-09-19): the model-under-test endpoint is no
+longer a fixed constant -- the caller can point this at any
+OpenAI-compatible server (Ollama's /v1, llama.cpp server's /v1, or
+anything else) by passing backend_base_url/backend_model. Assumes the
+engine already has a model loaded; this does not manage model loading.
+Framework's llama-server remains the default when nothing is specified,
+matching every benchmark run proven so far.
 """
+import json
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -23,102 +32,119 @@ REPO_DIR = Path("/srv/cyberseceval/repo/PurpleLlama")
 VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")
 RUNS_DIR = Path("/srv/cyberseceval/runs")
 
-# Framework's llama-server, matching the exact spec proven in Phase 2
-# (docs/cyberseceval-implementation/current-state.md) and reused by
-# cse-small-batch-run.yml.
-MUT_SPEC = (
-    "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/"
-    "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::not-needed::"
-    "http://framework.gibbsgreatly.xyz:8080/v1"
+# Framework's llama-server -- the default when no backend override is
+# given, matching the exact spec proven in Phase 2
+# (docs/cyberseceval-implementation/current-state.md).
+DEFAULT_BACKEND_BASE_URL = "http://framework.gibbsgreatly.xyz:8080/v1"
+DEFAULT_BACKEND_MODEL = (
+    "/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/"
+    "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"
 )
 
 
+def _build_mut_spec(
+    backend_base_url: str | None, backend_model: str | None, backend_api_key: str | None
+) -> str:
+    """Builds the OPENAI::<model>::<key>::<base_url> spec run.py expects.
+    Ollama and llama.cpp server both expose an OpenAI-compatible /v1 API,
+    so the same OPENAI provider works for any of them -- only the model
+    name and base_url actually change."""
+    base_url = backend_base_url or DEFAULT_BACKEND_BASE_URL
+    model = backend_model or DEFAULT_BACKEND_MODEL
+    key = backend_api_key or "not-needed"
+    return f"OPENAI::{model}::{key}::{base_url}"
+
+
 def _judge_spec() -> str:
+    # Cloud judge (gpt-4o-mini), independent of the model-under-test
+    # backend -- operator's explicit choice for Phase 2, unrelated to
+    # backend selection above.
     key = os.environ["OPENAI_API_KEY"]
     return f"OPENAI::gpt-4o-mini::{key}"
 
 
 # Each entry: the exact argv (minus python3/module prefix) run.py needs,
-# using {run_dir} as the per-job output directory placeholder.
+# using {run_dir} as the per-job output directory placeholder and
+# {mut_spec} as the selected backend's LLM spec.
 _BENCHMARK_COMMANDS = {
-    "mitre": lambda run_dir, n: [
+    "mitre": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=mitre",
         "--prompt-path=CybersecurityBenchmarks/datasets/mitre/mitre_benchmark_100_per_category_with_augmentation.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}", f"--expansion-llm={_judge_spec()}",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "mitre-frr": lambda run_dir, n: [
+    "mitre-frr": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=mitre-frr",
         "--prompt-path=CybersecurityBenchmarks/datasets/mitre_frr/mitre_frr.json",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "prompt-injection": lambda run_dir, n: [
+    "prompt-injection": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=prompt-injection",
         "--prompt-path=CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "interpreter": lambda run_dir, n: [
+    "interpreter": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=interpreter",
         "--prompt-path=CybersecurityBenchmarks/datasets/interpreter/interpreter.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "instruct": lambda run_dir, n: [
+    "instruct": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=instruct",
         "--prompt-path=CybersecurityBenchmarks/datasets/instruct/instruct-v2.json",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "autocomplete": lambda run_dir, n: [
+    "autocomplete": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=autocomplete",
         "--prompt-path=CybersecurityBenchmarks/datasets/autocomplete/autocomplete.json",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "malware_analysis": lambda run_dir, n: [
+    "malware_analysis": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=malware_analysis",
         "--prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/malware_analysis/questions.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "threat_intel_reasoning": lambda run_dir, n: [
+    "threat_intel_reasoning": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=threat_intel_reasoning",
         "--prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/report_questions.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
         "--input-modality=text",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "multiturn-phishing": lambda run_dir, n: [
+    "multiturn-phishing": lambda run_dir, n, mut_spec: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=multiturn-phishing",
         "--prompt-path=CybersecurityBenchmarks/datasets/spear_phishing/multiturn_phishing_challenges.json",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
-        f"--judge-llm={MUT_SPEC}",
-        f"--llm-under-test={MUT_SPEC}", f"--num-test-cases={n}",
+        f"--judge-llm={mut_spec}",
+        f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
 }
 
 
-def _run_autonomous_uplift(run_dir: Path, shots: int) -> dict:
+def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
     gen_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator",
         "--ssh-key-file=/srv/cyberseceval/config/cse-kali-agent-key",
@@ -137,31 +163,45 @@ def _run_autonomous_uplift(run_dir: Path, shots: int) -> dict:
         f"--prompt-path={run_dir}/prompts.json",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
-        f"--llm-under-test={MUT_SPEC}",
+        f"--llm-under-test={mut_spec}",
     ]
     attack = subprocess.run(attack_cmd, cwd=REPO_DIR, capture_output=True, text=True)
     return {"rc": attack.returncode, "stage": "attack", "log": attack.stdout + attack.stderr}
 
 
 @app.task(name="cse_tasks.run_benchmark")
-def run_benchmark(benchmark: str, num_test_cases: int = 2, submitted_by: str = "unknown") -> dict:
+def run_benchmark(
+    benchmark: str,
+    num_test_cases: int = 2,
+    submitted_by: str = "unknown",
+    backend_base_url: str | None = None,
+    backend_model: str | None = None,
+    backend_api_key: str | None = None,
+) -> dict:
     job_id = run_benchmark.request.id
     run_dir = RUNS_DIR / f"panel-{job_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "meta.json").write_text(
-        f'{{"benchmark": "{benchmark}", "num_test_cases": {num_test_cases}, '
-        f'"submitted_by": "{submitted_by}", "started_at": "{datetime.now(timezone.utc).isoformat()}"}}'
-    )
+    mut_spec = _build_mut_spec(backend_base_url, backend_model, backend_api_key)
+    (run_dir / "meta.json").write_text(json.dumps({
+        "benchmark": benchmark,
+        "num_test_cases": num_test_cases,
+        "submitted_by": submitted_by,
+        "backend_base_url": backend_base_url or DEFAULT_BACKEND_BASE_URL,
+        "backend_model": backend_model or DEFAULT_BACKEND_MODEL,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }))
 
     if benchmark == "autonomous-uplift":
-        result = _run_autonomous_uplift(run_dir, shots=num_test_cases)
+        result = _run_autonomous_uplift(run_dir, shots=num_test_cases, mut_spec=mut_spec)
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
             return {"rc": 1, "error": f"unknown benchmark '{benchmark}'"}
-        argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases)
+        argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec)
         proc = subprocess.run(argv, cwd=REPO_DIR, capture_output=True, text=True)
         (run_dir / "run.log").write_text(proc.stdout + proc.stderr)
         result = {"rc": proc.returncode, "log_path": str(run_dir / "run.log")}
 
     result["run_dir"] = str(run_dir)
+    result["backend_base_url"] = backend_base_url or DEFAULT_BACKEND_BASE_URL
+    result["backend_model"] = backend_model or DEFAULT_BACKEND_MODEL
     return result

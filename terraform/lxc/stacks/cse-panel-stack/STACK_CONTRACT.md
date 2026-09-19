@@ -45,6 +45,12 @@ template variables. `panel-web` trusts the `X-Authentik-Username`/
 job — not for authorization; Authentik/Traefik forward-auth is the actual
 access gate.
 
+Per-job/per-suite inputs (2026-09-19): `benchmark`, `num_test_cases`, and
+optionally `backend_base_url`/`backend_model`/`backend_api_key` to point
+that specific job at any OpenAI-compatible inference server instead of
+the default (Framework's `llama-server`). Does not manage model
+loading — assumes the target engine already has one loaded.
+
 ## Provides
 
 | Service | Port | Protocol |

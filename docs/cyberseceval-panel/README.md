@@ -164,9 +164,76 @@ not stale/shared config); two existing consumers (Grafana, NetBox)
 re-checked afterward and still returning their normal 302s -- no
 regression from the `proxy-stack`/`technitium-stack` redeploys.
 
-A real end-to-end job (submitted through `panel-web`: `mitre-frr`, 1
-test case) is in flight as the final check -- genuinely running
-(confirmed via `docker top` inside the worker container, matching the
-exact `benchmark.run` command expected), just slow real inference
-against Framework's model on this hardware, not stuck or crashed.
-Result to be recorded here once it lands.
+The first real end-to-end job (`mitre-frr`, 1 test case) ended up stuck
+for 40+ minutes with near-zero CPU time -- genuinely hung, not just
+slow (Framework's `/health` endpoint kept responding fine throughout,
+so the server itself wasn't down). Superseded by the feature work
+below, which needed a `cse-controller` redeploy anyway; the stuck job
+was cleared by that restart. Root cause not investigated further --
+noted here as a real, unresolved observation about Framework's
+`llama-server` under this specific request, not a bug in the panel
+itself.
+
+## Backend selection + test suites (2026-09-19)
+
+Two feature requests, both now live:
+
+- **Backend selection**: `cse_tasks.run_benchmark` no longer hardcodes
+  Framework's `llama-server` -- callers pass `backend_base_url`/
+  `backend_model`/`backend_api_key` (all optional; default is still
+  Framework's server, matching every benchmark proven so far). Works
+  for any OpenAI-compatible server (Ollama's `/v1`, llama.cpp server's
+  `/v1`, etc.) since CyberSecEval's own `OPENAI` provider class just
+  points the `openai` SDK's `base_url` wherever it's told -- no new
+  provider code needed. Deliberately does not manage model loading
+  (assumes the engine already has one loaded, per the request).
+  `panel-web` exposes a `GET /backends` preset list (currently just the
+  one confirmed-real entry, `framework-llama-server`, plus `custom` for
+  anything else -- no Ollama/llama.cpp presets added since there's no
+  confirmed real endpoint for either in this lab yet to encode).
+- **Test suites**: `POST /suites` submits a list of tests as one Celery
+  `group` -- each test is still an independently trackable task (its
+  own id, its own row in Flower), not one opaque long-running job,
+  since the worker's concurrency is 1 anyway (one inference backend can
+  only do one thing at a time regardless). `GroupResult.save()`/
+  `.restore()` makes the group re-lookupable by id from a later,
+  separate request (`GET /suites/{id}`).
+
+**Verified for real, not just by reading the code**: `_build_mut_spec`
+tested directly (default backend, and an explicit override matching
+what a real Ollama endpoint would look like); the group
+save/restore round-trip tested against the real Redis backend before
+touching the actual worker; `index()` actually executed (not just
+`py_compile`d) after adding the suite-submission form, same lesson as
+before. After redeploying, submitted one job with an explicit backend
+override and one 2-test suite for real -- confirmed via `docker top`
+inside the worker container that the executed subprocess command line
+carries the exact overridden `--llm-under-test=...` value, and via
+`GET /suites/{id}` that both suite jobs are independently tracked.
+
+**3 more real bugs found deploying this, all fixed live**:
+
+10. `docker compose up -d`/`restart` does **not** restart a container
+    just because a bind-mounted file it reads (`app.py`, `cse_tasks.py`)
+    changed on disk -- only a real compose-file/image change does.
+    Confirmed live: after redeploying with the new code, `/backends`/
+    `/suites` still 404'd, and the container's own `StartedAt`
+    predated the deploy. Fixed with an explicit
+    `docker compose restart <service>` task in both
+    `deploy-cse-panel-stack.yml` and `deploy-cse-controller.yml`.
+11. That fix's first version gated the restart on the copy task's own
+    `changed` flag -- which has a real gap: if the file already
+    matched on disk from an *earlier* deploy that itself never
+    restarted anything (exactly the state left by bug 10 before it was
+    fixed), the flag reports no change and the restart never fires,
+    even though the running process is still stale. Fixed by making
+    both restarts unconditional (cheap, and simpler than getting
+    change-detection right across this transition).
+12. Once panel-web was actually restarted, its Flower link broke --
+    `LAB_DOMAIN` resolved to a genuinely empty string inside the
+    container (confirmed via `docker exec ... env`, not assumed), same
+    root cause as the earlier `LAB_IP_CSE_PANEL` bug: the remote shell
+    `ansible.builtin.command` runs in doesn't have the operator's local
+    `LAB_DOMAIN` in its own environment, and Compose only auto-reads a
+    `.env` file in the same directory as the compose file. Fixed the
+    same way -- wrote that `.env` file explicitly.
