@@ -470,8 +470,11 @@ def suite_status(suite_id: str):
 @app.get("/", response_class=HTMLResponse)
 def index():
     benchmark_checkboxes = "".join(
-        f'<label class="chip" title="{html.escape(BENCHMARK_INFO[b]["description"], quote=True)}">'
-        f'<input type="checkbox" name="benchmark" value="{b}">{b}</label>'
+        f'<label class="benchmark-row">'
+        f'<input type="checkbox" name="benchmark" value="{b}">'
+        f'<span class="benchmark-name">{b}</span>'
+        f'<span class="benchmark-desc">{html.escape(BENCHMARK_INFO[b]["description"])}</span>'
+        f'</label>'
         for b in KNOWN_BENCHMARKS
     )
     backend_options = "".join(f'<option value="{name}">{name}</option>' for name in KNOWN_BACKENDS)
@@ -483,7 +486,12 @@ def index():
       body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #1a1a1a; }}
       h1 {{ font-size: 1.4rem; }}
       h2 {{ font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
-      .chip {{ display: inline-block; margin: 0.15rem 0.6rem 0.15rem 0; }}
+      .benchmark-list {{ border: 1px solid #eee; border-radius: 6px; }}
+      .benchmark-row {{ display: flex; align-items: baseline; gap: 0.6rem; padding: 0.45rem 0.7rem; border-bottom: 1px solid #f2f2f2; cursor: pointer; }}
+      .benchmark-row:last-child {{ border-bottom: none; }}
+      .benchmark-row:hover {{ background: #f7f9fc; }}
+      .benchmark-name {{ font-weight: 600; min-width: 9.5rem; flex-shrink: 0; }}
+      .benchmark-desc {{ color: #666; font-size: 0.85rem; }}
       #run-form label.field {{ display: block; margin: 0.5rem 0; }}
       #run-form input[type=text], #run-form input[type=number] {{ padding: 0.3rem; }}
       button {{ padding: 0.4rem 1rem; cursor: pointer; }}
@@ -516,7 +524,7 @@ def index():
 
       <h2>Run tests</h2>
       <form id="run-form">
-        <div>{benchmark_checkboxes}</div>
+        <div class="benchmark-list">{benchmark_checkboxes}</div>
         <label class="field">Test cases per benchmark:
           <input name="num_test_cases" type="number" value="2" min="1" max="50">
         </label>
