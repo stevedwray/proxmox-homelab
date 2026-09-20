@@ -692,9 +692,9 @@ def index():
         // all, even if its value is an empty string -- an empty response
         // is a real (if uninteresting) result and should say so, not
         // silently vanish as if that field didn't exist.
-        const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt'];
-        const RESPONSE_KEYS = ['response', 'model_output'];
-        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment'];
+        const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt', 'question'];
+        const RESPONSE_KEYS = ['response', 'model_output', 'model_response'];
+        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment', 'answered_correctly'];
         const SKIP_KEYS = new Set([...PROMPT_KEYS, ...RESPONSE_KEYS, ...VERDICT_KEYS,
           'model', 'prompt_id', 'pass_id', 'judge_question', 'user_input']);
 
