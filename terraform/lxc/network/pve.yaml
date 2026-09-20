@@ -375,6 +375,19 @@ policies:
     protocol: tcp
     ports: [9001]
     description: Lab Portainer management plane to the gaming-stack-lab agent
+  - from: game_seg
+    to: "192.168.30.10"
+    protocol: tcp
+    ports: [443]
+    description: >-
+      game_seg to Harbor through Traefik (the correct FQDN-routed path,
+      distinct from the direct-Harbor infra_seg rule elsewhere). Live-only
+      until 2026-09-20, undocumented until pterodactyl-lab's first deploy
+      hit it: this rule existed scoped to gaming-stack-lab's single IP
+      (192.168.60.10) only, not the whole zone, blocking the second host
+      added to game_seg from pulling any image at all. Widened live via
+      RouterOS CLI to the zone-wide 192.168.60.0/24 shown here and
+      mirrored back into this file for the first time.
   - from: edge_seg
     to: pentest_seg
     protocol: tcp

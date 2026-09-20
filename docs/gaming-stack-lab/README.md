@@ -176,6 +176,45 @@ operator asked mid-session to make certain nothing in this work risked
 `foreverworld`'s world/modpack data. Nothing in this step reads, writes,
 or otherwise touches that directory.
 
+## Deployment status (real infrastructure, beyond the plan's steps)
+
+**pterodactyl-lab: LIVE 2026-09-20, verified.** `terragrunt apply`
+(6 added, 0 changed, 0 destroyed — LXC `60020`, `192.168.60.20/24`,
+`game_seg`/`tvgames`, confirmed via output) then
+`provision.sh --stack pterodactyl-lab` (Docker/Portainer-agent base,
+Panel+MariaDB+Redis compose, Portainer registration as endpoint ID 15) —
+both run by the operator directly under the production approval flow
+after the harness blocked my own attempt at the `terragrunt apply`
+("blind apply", correctly — a plan was shown first instead).
+
+**Real bug hit and fixed live, not caught by any gate in this plan**:
+first `provision.sh` run failed at the Portainer Agent step —
+`context deadline exceeded` pulling through `harbor.lab.gibbsgreatly.xyz`.
+Root-caused via a live, read-only MikroTik firewall-rule query
+(`mikrotik_client.py`'s `get_firewall_rules()`, same tool
+`media-stack-lab` used for its own network discovery): `game_seg` has
+two separate Harbor-access rules — one correctly zone-wide
+(`192.168.60.0/24` → `192.168.40.0/24`, direct HTTP-only Harbor), and one
+for the actual FQDN/Traefik path (`→ 192.168.30.10:443`) that was scoped
+to `192.168.60.10` only (`gaming-stack-lab`'s own IP) instead of the
+whole zone — almost certainly because it was written when
+`gaming-stack-lab` was the only host in `game_seg` and nobody anticipated
+a second one joining. `pterodactyl-lab` at `.20` fell outside it.
+Fixed by the operator directly via RouterOS CLI (the API's automation
+credential turned out to lack write permission on the firewall resource
+— separate, smaller gap, not yet fixed, flagged for later) — widened
+`src-address` to `192.168.60.0/24`, confirmed live via a rule `print`,
+then `provision.sh` re-run cleanly, `failed=0`.
+
+**Verified live, not just "the playbook said ok"**: `curl http://192.168.60.20/`
+returns `HTTP 200`.
+
+**Not yet done**: no admin user exists in Panel yet — first login at
+`http://192.168.60.20/` creates it. `edge.yaml`/Traefik routing for
+`pterodactyl.<domain>` doesn't exist yet either (not part of this plan's
+steps so far). `PTERODACTYL_LAB_API_KEY` still blocked on that first
+admin-user bootstrap.
+
 **Correction 2026-09-20, found while researching the ARK egg itself (see
 plan.md's Open questions): the allocation ports this step created were
 wrong.** Hardcoded `7790`/`32330` from the smoketest's own `azixus`
