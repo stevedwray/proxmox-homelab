@@ -80,10 +80,13 @@ executable step content rather than a decision left for later.
   (VLAN 60) has exactly one member in both the live resource list and
   `pve.yaml`, so `192.168.60.20` is unused too. `gaming-lab-01` is no
   longer blocked on this.
-- **Panel DB/session secrets**: `MEDIA_STACK_LAB_DB_PASSWORD`-style
-  per-stack secret naming applies here too (`PTERODACTYL_LAB_DB_PASSWORD`,
-  `PTERODACTYL_LAB_APP_KEY`) — not yet added to
-  `terraform/secrets.common.enc.yaml`.
+- ~~**Panel DB secrets**~~ — **resolved 2026-09-20.**
+  `PTERODACTYL_LAB_DB_PASSWORD` / `PTERODACTYL_LAB_DB_ROOT_PASSWORD`
+  generated (`openssl rand -base64 24`) and added to
+  `terraform/secrets.common.enc.yaml` by the operator, confirmed present
+  via `./with-secrets env | grep PTERODACTYL`. `PTERODACTYL_LAB_API_KEY`
+  still open — can't be created until Panel itself is deployed and
+  bootstrapped (see the Wings↔Panel pairing entry below).
 - ~~**Wings↔Panel pairing**~~ — **resolved 2026-09-20.** Mostly
   API-scriptable, not UI-only — same lesson `media-lab-06` learned the
   hard way (initially assumed UI-only, turned out to have a real API

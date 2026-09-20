@@ -135,9 +135,15 @@ Validators run, all pass:
 
 Not yet applied — `terragrunt apply` and `provision.sh --stack
 pterodactyl-lab` are real infrastructure steps, stay manual/operator-run.
-Secrets (`PTERODACTYL_LAB_DB_PASSWORD`, `PTERODACTYL_LAB_DB_ROOT_PASSWORD`)
-still need adding to `terraform/secrets.common.enc.yaml` before any real
-deploy — required, not yet done.
+
+**Secrets: `PTERODACTYL_LAB_DB_PASSWORD` / `PTERODACTYL_LAB_DB_ROOT_PASSWORD`
+added 2026-09-20** — operator generated both via `openssl rand -base64 24`
+and added to `terraform/secrets.common.enc.yaml` directly (SOPS edit, not
+run through this session). Confirmed present via
+`./with-secrets env | grep PTERODACTYL`. `PTERODACTYL_LAB_API_KEY` still
+cannot be added — it's generated inside Panel's own admin UI, which
+doesn't exist until Panel is actually deployed (circular, same as
+`JELLYFIN_API_KEY`/`IMMICH_API_KEY` were in `media-stack-lab`'s work).
 
 ## Step: gaming-lab-03-wings-install
 
