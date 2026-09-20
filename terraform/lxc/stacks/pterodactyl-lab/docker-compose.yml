@@ -1,0 +1,51 @@
+services:
+  database:
+    container_name: pterodactyl-lab-database
+    image: mariadb:11
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - pterodactyl-db:/var/lib/mysql
+    environment:
+      - MYSQL_DATABASE=panel
+      - MYSQL_USER=pterodactyl
+      - MYSQL_PASSWORD=${PTERODACTYL_LAB_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${PTERODACTYL_LAB_DB_ROOT_PASSWORD}
+
+  cache:
+    container_name: pterodactyl-lab-cache
+    image: redis:alpine
+    restart: unless-stopped
+
+  panel:
+    container_name: pterodactyl-lab-panel
+    image: ghcr.io/pterodactyl/panel:v1.15.1
+    restart: unless-stopped
+    depends_on:
+      - database
+      - cache
+    volumes:
+      - pterodactyl-var:/app/var
+      - pterodactyl-nginx:/etc/nginx/http.d
+      - pterodactyl-logs:/app/storage/logs
+    ports:
+      - "80:80"
+    environment:
+      - APP_URL=https://pterodactyl.${LAB_DOMAIN}
+      - APP_TIMEZONE=Pacific/Auckland
+      - APP_ENV=production
+      - APP_ENVIRONMENT_ONLY=false
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+      - QUEUE_DRIVER=redis
+      - REDIS_HOST=cache
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_PASSWORD=${PTERODACTYL_LAB_DB_PASSWORD}
+      - HASHIDS_LENGTH=8
+
+volumes:
+  pterodactyl-db:
+  pterodactyl-var:
+  pterodactyl-nginx:
+  pterodactyl-logs:
