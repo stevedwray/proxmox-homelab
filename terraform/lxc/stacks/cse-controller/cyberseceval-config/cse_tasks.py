@@ -18,6 +18,8 @@ matching every benchmark run proven so far.
 import json
 import os
 import random
+import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -315,3 +317,25 @@ def run_benchmark(
         result["transcript_error"] = "no responses.json/judge_responses.json found"
 
     return result
+
+
+_JOB_ID_RE = re.compile(r"^[0-9a-f-]{8,64}$")
+
+
+@app.task(name="cse_tasks.delete_run_dirs")
+def delete_run_dirs(job_ids: list[str]) -> dict:
+    """Removes each job's run_dir (responses/transcripts/logs) from disk --
+    dispatched by the panel's DELETE /suites/{id} once it's already cleared
+    the job/suite out of Redis. job_ids only ever comes from real Celery
+    task ids the panel read back from its own GroupResult, but a
+    UUID-shaped sanity check costs nothing for a delete-by-path-join."""
+    removed, skipped = [], []
+    for job_id in job_ids:
+        if not _JOB_ID_RE.match(job_id):
+            skipped.append(job_id)
+            continue
+        run_dir = RUNS_DIR / f"panel-{job_id}"
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir)
+            removed.append(job_id)
+    return {"removed": removed, "skipped": skipped}

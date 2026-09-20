@@ -41,10 +41,18 @@ RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
 
 celery_app = Celery("cse_panel", broker=BROKER_URL, backend=RESULT_BACKEND)
 
-# Must match the task name registered by cse_tasks.py's worker exactly --
+# Must match the task names registered by cse_tasks.py's worker exactly --
 # Celery routes by string name, not by import, since the worker and this
 # submitter are different processes on different hosts.
 TASK_NAME = "cse_tasks.run_benchmark"
+DELETE_TASK_NAME = "cse_tasks.delete_run_dirs"
+
+# States a job can still change from -- deleting a suite while any of its
+# jobs is in one of these would either orphan a task still writing to a
+# run_dir about to be deleted out from under it, or (worse, given
+# task_acks_late) let a killed-but-redelivered task resurrect a "deleted"
+# run. Simpler and safer to just require every job be finished first.
+NON_TERMINAL_STATES = {"PENDING", "STARTED", "RETRY"}
 
 # The set of benchmarks proven to work in the 2026-09-19 small-batch run
 # (docs/cyberseceval-implementation/current-state.md) -- deliberately not
@@ -471,6 +479,34 @@ def suite_status(suite_id: str):
     }
 
 
+@app.delete("/suites/{suite_id}")
+def delete_suite(suite_id: str):
+    result = GroupResult.restore(suite_id, app=celery_app)
+    if result is None:
+        return {"error": f"suite '{suite_id}' not found"}
+    job_ids = [r.id for r in result.results]
+    in_progress = [j for j, r in zip(job_ids, result.results) if r.state in NON_TERMINAL_STATES]
+    if in_progress:
+        return {"error": f"can't delete -- {len(in_progress)} job(s) still running/queued, wait for the run to finish first"}
+
+    client = celery_app.backend.client
+    for r in result.results:
+        r.forget()
+    result.delete()
+    for job_id in job_ids:
+        client.delete(f"cse_panel:job_meta:{job_id}")
+    client.delete(f"cse_panel:suite_meta:{suite_id}")
+    client.lrem(RECENT_SUITES_KEY, 0, suite_id)
+
+    # The actual run_dir (responses.json, transcripts, logs) lives on
+    # cse-controller's own filesystem, not reachable from this container --
+    # dispatched as a task so the worker (which does have that filesystem)
+    # does the real deletion. Fire-and-forget: the UI-visible cleanup above
+    # is already done, no need to block the response on it.
+    celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": job_ids})
+    return {"deleted": suite_id, "jobs": job_ids}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     benchmark_checkboxes = "".join(
@@ -522,6 +558,8 @@ def index():
       details.run-card[open] summary::before {{ content: "▾ "; }}
       details.run-card table {{ margin: 0; }}
       details.run-card th:first-child, details.run-card td:first-child {{ padding-left: 0.9rem; }}
+      .delete-run-btn {{ float: right; font-size: 0.8rem; padding: 0.15rem 0.6rem; color: #b71c1c; background: none; border: 1px solid #b71c1c; border-radius: 4px; cursor: pointer; }}
+      .delete-run-btn:disabled {{ color: #999; border-color: #ccc; cursor: not-allowed; }}
       #custom-backend-fields {{ display: none; }}
       .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
       tr.detail-row td {{ background: #fafafa; padding: 0; }}
@@ -756,12 +794,34 @@ def index():
 
         function renderSuiteCard(suite, isOpen) {{
           const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
+          const stillRunning = suite.done < suite.total;
+          const deleteBtn = stillRunning
+            ? `<button type="button" class="delete-run-btn" disabled title="Wait for the run to finish before deleting">Delete</button>`
+            : `<button type="button" class="delete-run-btn" onclick="deleteSuite(event, '${{suite.suite_id}}')">Delete</button>`;
           return `<details class="run-card" ${{isOpen ? 'open' : ''}} ontoggle="onSuiteToggle('${{suite.suite_id}}', this.open)">
             <summary><b>${{when}}</b> &middot; ${{suite.jobs.length}} benchmark(s) &middot;
               ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}
-              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span></summary>
+              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span>
+              ${{deleteBtn}}</summary>
             ${{jobsTable(suite.jobs)}}
           </details>`;
+        }}
+
+        async function deleteSuite(event, suiteId) {{
+          event.preventDefault();
+          event.stopPropagation();
+          if (!confirm('Delete this run and all its results? This cannot be undone.')) return;
+          try {{
+            const res = await fetch(`/suites/${{suiteId}}`, {{method: 'DELETE'}});
+            const body = await res.json();
+            if (body.error) {{ showToast('Error: ' + body.error); return; }}
+            lastSuitesBody.suites = lastSuitesBody.suites.filter(s => s.suite_id !== suiteId);
+            openSuites.delete(suiteId);
+            renderTable();
+            showToast('Run deleted.');
+          }} catch (err) {{
+            showToast(`Failed to delete (${{err.message}}).`);
+          }}
         }}
 
         function renderTable() {{
