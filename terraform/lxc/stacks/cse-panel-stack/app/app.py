@@ -785,23 +785,46 @@ def index():
             return;
           }}
           expandedJobs.add(jobId);
+          // A retryable failure (network hiccup, or an expired Authentik
+          // session redirecting this background fetch to an HTML login
+          // page instead of JSON) shouldn't get stuck cached forever --
+          // closing and reopening should try again. A genuine "this job
+          // has no transcript" result from the server is fine to cache
+          // permanently, since refetching it would just say the same thing.
+          if (transcriptCache[jobId] && transcriptCache[jobId].retryable) {{
+            delete transcriptCache[jobId];
+          }}
           renderTable();
           if (!transcriptCache[jobId]) {{
-            const res = await fetch(`/jobs/${{jobId}}`);
-            const job = await res.json();
-            const result = job.result || {{}};
-            transcriptCache[jobId] = result.transcript_error
-              ? {{error: result.transcript_error}}
-              : {{transcript: result.transcript || []}};
+            try {{
+              const res = await fetch(`/jobs/${{jobId}}`);
+              if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
+              const job = await res.json();
+              const result = job.result || {{}};
+              transcriptCache[jobId] = result.transcript_error
+                ? {{error: result.transcript_error}}
+                : {{transcript: result.transcript || []}};
+            }} catch (err) {{
+              transcriptCache[jobId] = {{
+                error: `Failed to load (${{err.message}}). Your session may have expired -- try reloading the page, then click again.`,
+                retryable: true,
+              }};
+            }}
             renderTable();
           }}
         }}
 
         async function refreshStatus() {{
-          const [jobsRes, suitesRes] = await Promise.all([fetch('/jobs'), fetch('/suites')]);
-          lastJobsBody = await jobsRes.json();
-          lastSuitesBody = await suitesRes.json();
-          renderTable();
+          try {{
+            const [jobsRes, suitesRes] = await Promise.all([fetch('/jobs'), fetch('/suites')]);
+            if (!jobsRes.ok || !suitesRes.ok) throw new Error(`HTTP ${{jobsRes.status}}/${{suitesRes.status}}`);
+            lastJobsBody = await jobsRes.json();
+            lastSuitesBody = await suitesRes.json();
+            renderTable();
+          }} catch (err) {{
+            document.getElementById('status').innerHTML =
+              `<p class="muted" style="color:#c62828">Couldn't load status (${{esc(err.message)}}). Your session may have expired -- try reloading the page.</p>`;
+          }}
         }}
 
         refreshStatus();
