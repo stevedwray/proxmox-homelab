@@ -1,0 +1,163 @@
+---
+# NOT WIRED UP -- kept as reference only, do not run as-is.
+#
+# Written before discovering (2026-09-18) that a Nathanw-fork server was
+# ALREADY running live on Framework -- container `qwen38-flash-next-q4`,
+# image `ghcr.io/nathanw1014/strix-halo-llamacpp:vulkan`, port 8080,
+# serving Qwen3.8-Flash-Next-UD-Q4_K_XL -- deployed by the operator
+# directly, not through this repo's Ansible. Running this playbook as
+# written would build a from-source duplicate and collide with that
+# live container's port 8080. See
+# docs/cyberseceval-implementation/current-state.md for the real state
+# and docs/cyberseceval-implementation/plan/cyberseceval-implementation-plan.md
+# §1a decision #4.
+#
+# Kept only in case this ever needs rebuilding FROM SOURCE (this file's
+# approach) instead of the prebuilt ghcr.io image the live deployment
+# actually uses -- would need at minimum a different container
+# name/port before it could run alongside or replace the live one.
+#
+# Deploys a SECOND, separate llama.cpp server on the Framework Desktop:
+# Nathanw1014's Strix Halo fork (https://github.com/Nathanw1014/strix-halo-llamacpp),
+# not the existing upstream ggml-org/llama.cpp router deployed by
+# framework-desktop-llamacpp.yml (which keeps running unchanged, on its
+# own port 8080). Two separate services because CyberSecEval's plan
+# (docs/cyberseceval-implementation/plan/cyberseceval-implementation-plan.md
+# §1a open decision #4, resolved 2026-09-18) explicitly wants a dedicated
+# Nathanw-fork server for cse-controller, not the existing router.
+#
+# This fork is not upstream llama.cpp with a different build flag — it
+# carries its own performance fixes (flash-attention + MoE-prefill fixes,
+# a bundled current Mesa driver) that only exist on its own branch/repo,
+# confirmed live via the project's README and release notes
+# (github.com/Nathanw1014/strix-halo-llamacpp, retrieved 2026-09-18).
+# Pinned to v0.7.6.1 -- the latest STABLE, benchmark-validated release at
+# that time; the repo also publishes unvalidated "dev-*" snapshot tags
+# which this deliberately avoids.
+#
+# Vulkan, not HIP: the plan's own §2 diagram and repo README both name
+# Vulkan as the general-default backend for this fork (simpler device
+# requirements too -- only /dev/dri, no /dev/kfd/video/render groups).
+#
+# Model: Qwen3.8-27B-Q4_K_M.gguf, matching the plan §5 example
+# ("cse-model start qwen3.8-27b") and confirmed present on this host's
+# /storage/models/llm (read-only `ls` check, 2026-09-18).
+#
+# Deliberate deviation from framework-desktop-llamacpp.yml's convention:
+# that playbook rewrites its own Dockerfile using a Harbor-mirrored base
+# image. This one builds directly from the upstream repo's own
+# Dockerfile.vulkan instead -- it bundles a specific bundled Mesa
+# build/driver combination that's part of what makes this fork worth
+# using, and reimplementing that by hand would be fragile and diverge
+# from an actively maintained, tested build script. Its own FROM base
+# therefore pulls directly from its normal registry, not through
+# Harbor's proxy-cache.
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-llamacpp-nathanw.yml
+
+- name: Deploy Nathanw Strix-Halo llama.cpp fork (Vulkan) as a second, separate server
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_llamacpp_nathanw_user: steve
+    framework_llamacpp_nathanw_dir: /opt/llamacpp-nathanw-docker
+    framework_llamacpp_nathanw_repo: https://github.com/Nathanw1014/strix-halo-llamacpp.git
+    framework_llamacpp_nathanw_version: v0.7.6.1
+    framework_llamacpp_nathanw_models_dir: /storage/models/llm
+    framework_llamacpp_nathanw_model: Qwen3.8-27B-Q4_K_M.gguf
+    framework_llamacpp_nathanw_port: 8081
+
+  tasks:
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+          - git
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add {{ framework_llamacpp_nathanw_user }} to the docker group # noqa: name[template]
+      ansible.builtin.user:
+        name: "{{ framework_llamacpp_nathanw_user }}"
+        groups: docker
+        append: true
+
+    - name: Clone/update Nathanw strix-halo-llamacpp fork, pinned to {{ framework_llamacpp_nathanw_version }} # noqa: name[template]
+      ansible.builtin.git:
+        repo: "{{ framework_llamacpp_nathanw_repo }}"
+        dest: "{{ framework_llamacpp_nathanw_dir }}"
+        version: "{{ framework_llamacpp_nathanw_version }}"
+        force: true
+      register: framework_llamacpp_nathanw_checkout
+
+    - name: Set ownership of the cloned repo
+      ansible.builtin.file:
+        path: "{{ framework_llamacpp_nathanw_dir }}"
+        owner: "{{ framework_llamacpp_nathanw_user }}"
+        group: "{{ framework_llamacpp_nathanw_user }}"
+        recurse: true
+
+    - name: Install docker-compose.yml for the Nathanw fork server
+      ansible.builtin.copy:
+        dest: "{{ framework_llamacpp_nathanw_dir }}/docker-compose.yml"
+        mode: '0644'  # nosonar: ansible:S2612 — no secrets in this file, docker compose needs to read it
+        owner: "{{ framework_llamacpp_nathanw_user }}"
+        group: "{{ framework_llamacpp_nathanw_user }}"
+        content: |
+          services:
+            llamacpp-nathanw:
+              build:
+                context: .
+                dockerfile: Dockerfile.vulkan
+              image: llamacpp-nathanw:vulkan
+              container_name: llamacpp-nathanw
+              restart: unless-stopped
+              devices:
+                - /dev/dri
+              ports:
+                - "{{ framework_llamacpp_nathanw_port }}:{{ framework_llamacpp_nathanw_port }}"
+              volumes:
+                - {{ framework_llamacpp_nathanw_models_dir }}:/models
+              command:
+                - llama-server
+                - -m
+                - /models/{{ framework_llamacpp_nathanw_model }}
+                - -ngl
+                - "99"
+                - -fa
+                - "1"
+                - -ctk
+                - q4_0
+                - -ctv
+                - q4_0
+                - --host
+                - "0.0.0.0"
+                - --port
+                - "{{ framework_llamacpp_nathanw_port }}"
+      register: framework_llamacpp_nathanw_compose
+
+    - name: Build and bring up the Nathanw fork server via docker compose (build can take several minutes)
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ framework_llamacpp_nathanw_dir }}"
+      register: framework_llamacpp_nathanw_up
+      changed_when: "'Started' in framework_llamacpp_nathanw_up.stderr or 'Created' in framework_llamacpp_nathanw_up.stderr"
+
+    - name: Wait for the Nathanw fork server's health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llamacpp_nathanw_port }}/health"
+        method: GET
+        status_code: 200
+      register: framework_llamacpp_nathanw_health
+      retries: 60
+      delay: 10
+      until: framework_llamacpp_nathanw_health.status == 200

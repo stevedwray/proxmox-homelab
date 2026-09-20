@@ -41,24 +41,31 @@ portainer_server_ip: "${lab_ip_portainer}"
 # env: Portainer's own stack-create API does NOT read the .env file
 # Ansible writes alongside each compose file -- it only ever sees the Env
 # list passed explicitly here (confirmed live: omitting it made immich's
-# $${REGISTRY_HOST} resolve empty, producing an "invalid reference format"
-# 500 on cadvisor's image). Values use the same $${VAR} placeholder
-# resolution as portainer_server_ip above -- provision.sh substitutes
-# from the real environment (SOPS-backed for the DB password), nothing
-# here is a literal secret.
+# REGISTRY_HOST env var resolve empty, producing an "invalid reference
+# format" 500 on cadvisor's image). Values below use the same $${VAR}
+# placeholder resolution as portainer_server_ip above -- provision.sh
+# substitutes from the real environment (SOPS-backed for the DB
+# password), nothing here is a literal secret. NOTE: this whole file is
+# rendered through Terraform's templatefile() (see main.tf), which
+# means dollar-brace syntax ANYWHERE in this file -- including plain
+# prose comments -- is interpreted as a template variable reference and
+# fails terragrunt plan with "vars map does not contain key ..." unless
+# doubled up (as done just above). Confirmed live 2026-09-16.
 portainer_stacks:
 - name: media-stack-lab-jellyfin
   compose_file: jellyfin-docker-compose.yml
   env:
   - name: LAB_DOMAIN
-    value: "$${lab_domain}"
+    value: "${lab_domain}"
+  - name: REGISTRY_HOST
+    value: "${lab_fqdn_harbor}"
 - name: media-stack-lab-immich
   compose_file: immich-docker-compose.yml
   env:
   - name: MEDIA_STACK_LAB_DB_PASSWORD
-    value: "$${media_stack_lab_db_password}"
+    value: "${media_stack_lab_db_password}"
   - name: REGISTRY_HOST
-    value: "$${lab_fqdn_harbor}"
+    value: "${lab_fqdn_harbor}"
 
 # Documentation/consistency only -- NOT applied by Terraform (bind-type
 # mount points are root@pam-only on Proxmox, same restriction as
@@ -74,3 +81,56 @@ host_bind_mounts:
   lxc_path: /nas-media/immich-photos
 - host_path: /mnt/nas-media-ct80010/pictures
   lxc_path: /nas-media/pictures
+
+# Documentation/consistency only -- NOT applied by Terraform, same
+# root@pam-only restriction (see host_bind_mounts above). Applied
+# out-of-band 2026-09-16 via direct root SSH `pct set` +
+# `ansible/playbooks/configure-device-passthrough.yml` for Jellyfin
+# hardware transcoding. pve's real GPU (confirmed live via the Proxmox
+# API, not assumed): AMD Radeon RX 6600 (Navi 23) at PCI 0000:06:00.0.
+# Both nodes confirmed needed live: renderD128 alone got VAAPI device
+# init working (correctly identifies the GPU) but real hardware
+# decode+encode transcoding needed card0 too -- confirmed by testing a
+# real movie file end-to-end (decode+encode both vaapi, ~3x realtime,
+# zero errors) only after adding it. mode 0666 (not a gid match)
+# matches comfyui-stack/llm-gpu-stack's established convention --
+# avoids depending on whatever numeric GID "render" resolves to inside
+# this particular container image.
+device_passthrough:
+- path: /dev/dri/renderD128
+  uid: 0
+  gid: 0
+  mode: "0666"
+- path: /dev/dri/card0
+  uid: 0
+  gid: 0
+  mode: "0666"
+
+# Documentation/consistency only -- NOT applied by Terraform, same
+# root@pam-only restriction (see host_bind_mounts above); `pct set`
+# itself has no CLI flag for raw lxc.* keys at all (confirmed live:
+# `pct set 80010 -lxc.prlimit.memlock unlimited` -> "Unknown option"),
+# so these were appended directly to /etc/pve/lxc/80010.conf via
+# configure-device-passthrough.yml's lxc_raw_config, then the container
+# was rebooted. Both found live and necessary to get from "device
+# passthrough visible" to "actual hardware transcoding works":
+#  - prlimit.memlock: Docker refused to start the jellyfin container at
+#    all once its compose file requested an unlimited memlock ulimit
+#    (needed for radeonsi's VAAPI buffer pinning) while this ceiling
+#    was still Debian's systemd default of 8MB -- a container can never
+#    be granted a higher hard rlimit than the LXC's own init process
+#    already has, so this can't be fixed from inside the guest alone.
+#  - apparmor.profile: real security-posture change (drops AppArmor
+#    confinement for the whole container, not just GPU access) --
+#    tested narrowly per the operator's explicit direction before
+#    accepting it. Note in Ansible's own testing this alone did NOT fix
+#    the remaining VAAPI buffer-allocation failure (same error before
+#    and after) -- what actually resolved it was adding card0 above.
+#    Left in place since the operator chose not to spend an additional
+#    reboot re-testing without it once the real pipeline was confirmed
+#    working; worth revisiting to confirm whether it's still required.
+lxc_raw_config:
+- key: prlimit.memlock
+  value: unlimited
+- key: apparmor.profile
+  value: unconfined

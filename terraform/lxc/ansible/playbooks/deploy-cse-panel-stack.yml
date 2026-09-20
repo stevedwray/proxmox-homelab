@@ -1,0 +1,146 @@
+---
+- name: Deploy cse-panel-stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    cse_panel_stack_name: "{{ stack_name | default('cse-panel-stack') }}"
+    cse_panel_compose_content: "{{ lookup('file', '../../stacks/' + cse_panel_stack_name + '/docker-compose.yml') }}"
+    cse_panel_stack_dir: "/opt/stacks/{{ cse_panel_stack_name }}"
+    cse_panel_app_dir: /srv/cse-panel/app
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry and forward container logs to Graylog
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+      notify: Restart Docker
+      register: cse_panel_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create Redis persistence directory
+      ansible.builtin.file:
+        path: /srv/cse-panel/redis-data
+        state: directory
+        mode: "0755"
+
+    - name: Create panel-web app directory
+      ansible.builtin.file:
+        path: "{{ cse_panel_app_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write panel-web's app.py (source-controlled, see Part B for the matching Celery task)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app/app.py"
+        dest: "{{ cse_panel_app_dir }}/app.py"
+        mode: "0644"
+
+    - name: Write panel-web's requirements.txt
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app/requirements.txt"
+        dest: "{{ cse_panel_app_dir }}/requirements.txt"
+        mode: "0644"
+
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ cse_panel_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    # docker-compose.yml resolves ${LAB_DOMAIN} itself (panel-web's own
+    # link to Flower); Compose auto-reads a .env file in the same
+    # directory as the compose file, but nothing else sources it into
+    # the remote shell these ansible.builtin.command tasks run in --
+    # confirmed live 2026-09-19: without this, LAB_DOMAIN resolves to a
+    # genuinely empty string inside the running container (not merely
+    # "not proven", checked via docker exec ... env directly), same
+    # class of gap as cse-controller's own LAB_IP_CSE_PANEL fix.
+    - name: Write compose variable substitution file
+      ansible.builtin.copy:
+        dest: "{{ cse_panel_stack_dir }}/.env"
+        mode: "0644"
+        content: "LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}\n"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ cse_panel_compose_content }}"
+        dest: "{{ cse_panel_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ cse_panel_stack_dir }}"
+      register: cse_panel_compose_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start cse-panel-stack via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_panel_stack_dir }}"
+      register: cse_panel_compose_up
+      changed_when: "'Started' in cse_panel_compose_up.stdout or 'Created' in cse_panel_compose_up.stdout"
+      when: not ansible_check_mode
+
+    # docker compose up -d does NOT restart a container just because a
+    # bind-mounted file it reads changed on disk -- only a real
+    # compose-file/image change does. panel-web's code lives in
+    # app.py, so an ansible-side edit to it was silently ignored by a
+    # running container until this was added (confirmed live
+    # 2026-09-19: the container's own StartedAt predated the deploy
+    # that had just written new app.py content, and new endpoints
+    # 404'd). Unconditional, not gated on the copy tasks' own changed
+    # flag -- change-detection has a real gap (content already matching
+    # on disk from an earlier deploy reports no change, even though
+    # that earlier deploy never actually restarted the process either,
+    # confirmed live the same day) and a restart here is cheap regardless.
+    - name: Restart panel-web to pick up any app.py/requirements.txt changes
+      ansible.builtin.command:
+        cmd: docker compose restart panel-web
+        chdir: "{{ cse_panel_stack_dir }}"
+      when: not ansible_check_mode
+
+    - name: Wait for panel-web to respond
+      ansible.builtin.uri:
+        url: "http://localhost:8000/healthz"
+        status_code: 200
+      register: cse_panel_web_health
+      until: cse_panel_web_health.status == 200
+      retries: 10
+      delay: 3
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

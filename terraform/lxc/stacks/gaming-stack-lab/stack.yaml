@@ -46,18 +46,22 @@ tags:
   - game-seg
   - docker
   - portainer
+  - pterodactyl-wings
 
 depends_on:
   - portainer-stack
+  - pterodactyl-lab
 provides:
   - service: minecraft-primary
     port: 25565
     protocol: tcp
 
-# This playbook establishes Docker and the Portainer agent only. Minecraft is
-# not deployed until its supplied server tarball has been inspected and its
-# NeoForge compose contract has been reviewed.
-ansible_playbook: "deploy-portainer-agent"
+# Docker/Portainer-agent base, plus Wings (Pterodactyl's per-host daemon --
+# see docs/gaming-stack-lab/plan.md, step gaming-lab-03-wings-install).
+# Minecraft/ARK's own game content is still hand-curated, not driven by
+# this playbook -- Wings only gets Panel-paired and running here; creating
+# the actual Minecraft/ARK servers under Wings is separate, reviewed work.
+ansible_playbook: "deploy-gaming-stack-lab"
 deployment_tier: application
 portainer_agent: true
 portainer_server_ip: "${lab_ip_portainer}"

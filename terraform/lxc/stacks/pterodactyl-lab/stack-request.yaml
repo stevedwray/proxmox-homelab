@@ -1,0 +1,113 @@
+# Scaffolding input for terraform/lxc/scaffold-stack.sh pterodactyl-lab.
+# Written per docs/gaming-stack-lab/plan.md, step gaming-lab-01-panel-stack-request.
+# IP 192.168.60.20 / VMID 60020 confirmed free 2026-09-20 via a live
+# read-only Proxmox API check against pve (see plan.md's "Open questions").
+
+stack_yaml:
+  hostname: pterodactyl-lab
+  ip_address: "192.168.60.20/24"
+  gateway: "192.168.60.1"
+  dns_server: "192.168.60.1"
+  network:
+    zone: game_seg
+  vmid: 60020
+  cores: 2
+  memory: 4096
+  swap: 512
+  rootfs_size: 8
+  storage_profile: platform-default
+  docker_storage_size: "10G"
+  template_name: "debian-13.1-2-docker-template.tar.gz"
+  tags:
+    - docker
+    - gaming
+    - pterodactyl
+    - control-panel
+  depends_on: []
+  provides:
+    - service: pterodactyl-panel
+      port: 80
+      protocol: tcp
+  ansible_playbook: deploy-pterodactyl-lab
+  deployment_tier: apps
+  portainer_agent: true
+
+compose_requirements: |
+  Three services, container_name prefixed pterodactyl-lab-<service>,
+  restart: unless-stopped on all three. Adapted from the real, official
+  pterodactyl/panel docker-compose.example.yml (fetched 2026-09-20), not
+  reconstructed from memory — only the parts genuinely specific to this
+  repo change (secrets via SOPS/env, no direct 80/443 host port bind
+  since Traefik fronts this like every other stack, image tag pinned
+  instead of :latest).
+
+  database:
+    image: mariadb:11
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - pterodactyl-db:/var/lib/mysql
+    environment:
+      - MYSQL_DATABASE=panel
+      - MYSQL_USER=pterodactyl
+      - MYSQL_PASSWORD=${PTERODACTYL_LAB_DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${PTERODACTYL_LAB_DB_ROOT_PASSWORD}
+
+  cache:
+    image: redis:alpine
+
+  panel:
+    image: ghcr.io/pterodactyl/panel:v1.15.1
+    volumes:
+      - pterodactyl-var:/app/var
+      - pterodactyl-nginx:/etc/nginx/http.d
+      - pterodactyl-logs:/app/storage/logs
+    ports: ["80:80"]
+    depends_on: [database, cache]
+    environment:
+      - APP_URL=https://pterodactyl.${LAB_DOMAIN}
+      - APP_TIMEZONE=Pacific/Auckland
+      - APP_ENV=production
+      - APP_ENVIRONMENT_ONLY=false
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+      - QUEUE_DRIVER=redis
+      - REDIS_HOST=cache
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_PASSWORD=${PTERODACTYL_LAB_DB_PASSWORD}
+      - HASHIDS_LENGTH=8
+
+  top-level volumes: block declaring pterodactyl-db, pterodactyl-var,
+  pterodactyl-nginx, pterodactyl-logs as named Docker volumes.
+
+  The official example maps host ports 80 and 443 directly and
+  terminates its own TLS — do not do that here. This stack follows
+  every other stack's pattern instead: expose only port 80 internally,
+  no host TLS cert handling in this container, and let Traefik
+  (edge.yaml, forwardAuth mode) do TLS termination and the Authentik
+  access gate, matching how every other admin panel in this repo
+  (Portainer, NetBox, ...) is fronted.
+
+compose_forbidden: |
+  binding host ports 80/443 directly (Traefik fronts this), LE_EMAIL /
+  any in-container Let's-Encrypt handling, :latest or any unpinned
+  image tag, a literal database password anywhere in this file,
+  removing the Redis cache/session/queue drivers in favor of
+  file-based (every other stack in this repo that has a choice uses
+  the shared-service backend, not file-local state).
+
+contract_facts: |
+  - Zone: game_seg (VLAN 60) — confirmed with operator 2026-09-20
+  - Nothing depends on this stack yet; Wings on gaming-stack-lab will
+    depend on it once paired (not yet a step — see
+    docs/gaming-stack-lab/plan.md's open questions on Wings<->Panel
+    pairing)
+  - Fronted by Traefik/Authentik forwardAuth, not native OIDC —
+    Pterodactyl has no built-in OIDC support
+  - IP 192.168.60.20 / VMID 60020 confirmed free 2026-09-20 via a live
+    read-only Proxmox API check against pve
+  - Implementation files: terraform/lxc/stacks/pterodactyl-lab/
+    stack.yaml, terragrunt.hcl, docker-compose.yml, STACK_CONTRACT.md
+    (all new), plus
+    terraform/lxc/ansible/playbooks/deploy-pterodactyl-lab.yml (new) —
+    none of these exist yet.

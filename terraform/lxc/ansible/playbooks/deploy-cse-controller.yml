@@ -1,0 +1,492 @@
+---
+- name: Deploy cse-controller stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    cse_controller_stack_name: "{{ stack_name | default('cse-controller') }}"
+    cse_controller_compose_content: "{{ lookup('file', '../../stacks/' + cse_controller_stack_name + '/docker-compose.yml') }}"
+    cse_controller_stack_dir: "/opt/stacks/{{ cse_controller_stack_name }}"
+    cse_controller_container: "{{ cse_controller_stack_name }}"
+    cse_controller_packages:
+      - curl
+      - git
+      - git-lfs
+      - build-essential
+      - poppler-utils
+      - jq
+      - python3-venv
+    # PurpleLlama/CyberSecEval (plan §6/§8). Pinned to main's HEAD at the
+    # time this was written (2026-09-18) -- never track main implicitly
+    # for benchmark runs; bump this deliberately, not automatically.
+    cse_controller_repo_url: https://github.com/meta-llama/PurpleLlama.git
+    cse_controller_repo_commit: 4be64c3a24442b51c76175e6ec67722cc3f5fe38
+    cse_controller_repo_dir: /srv/cyberseceval/repo/PurpleLlama
+    cse_controller_venv_dir: /srv/cyberseceval/.venv
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Forward container logs to Graylog (log-driver gap fix, docs/cyberseceval-panel/plan.md §cse-panel-14)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+      notify: Restart Docker
+      register: cse_controller_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ cse_controller_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    # Must exist before "Validate docker compose configuration" below --
+    # the worker service's env_file references this path, and `docker
+    # compose config`/`up -d` fail outright ("env file not found") on a
+    # fresh deploy if it's missing. Confirmed live (2026-09-19): moving
+    # this here from later in the play (after the venv/pip-install
+    # section) was a real ordering bug, not just tidiness.
+    - name: Write the worker's OpenAI API key env file (never logged)
+      no_log: true
+      ansible.builtin.copy:
+        dest: /srv/cyberseceval/config/worker.env
+        mode: "0600"
+        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
+
+    # docker-compose.yml resolves ${LAB_IP_CSE_PANEL} itself (Compose
+    # auto-reads a .env file in the same directory as the compose file --
+    # this is not for secrets, just variable substitution). Without this,
+    # `docker compose up -d` warns "variable is not set, defaulting to a
+    # blank string" and the worker's CELERY_BROKER_URL/RESULT_BACKEND
+    # become redis://:6379/... with no host -- confirmed live 2026-09-19.
+    - name: Write compose variable substitution file
+      ansible.builtin.copy:
+        dest: "{{ cse_controller_stack_dir }}/.env"
+        mode: "0644"
+        content: "LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}\n"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ cse_controller_compose_content }}"
+        dest: "{{ cse_controller_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    # controller only, not the whole stack -- the worker service's
+    # command execs {{ cse_controller_venv_dir }}/bin/celery, which
+    # doesn't exist yet (the venv itself isn't created until further
+    # down this play). Confirmed live 2026-09-19: `docker compose up -d`
+    # for the whole file at this point fails outright ("no such file or
+    # directory: unknown") trying to start worker before its own
+    # dependencies exist. Worker gets its own "docker compose up -d"
+    # much later, once celery is actually installed into the venv.
+    - name: Start controller container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d controller
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for controller container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} {{ cse_controller_container }}"
+      register: controller_running
+      until: controller_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+    # Package installs land in the container's own writable layer, not the
+    # /srv/cyberseceval bind mount -- a host-side stat can't see them, so
+    # this checks inside the container itself. Confirmed real overreach
+    # 2026-09-19: apt-get update + install were running on every single
+    # code-only deploy, for no benefit once the tooling is already there.
+    - name: Check whether base tooling has already been installed in the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} test -f /root/.cse-controller-bootstrap-done"
+      register: cse_controller_bootstrap_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Update apt cache inside controller container (first bootstrap only)
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} apt-get update"
+      register: controller_apt_update
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
+
+    - name: Install base tooling inside controller container (first bootstrap only)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          apt-get install -y --no-install-recommends {{ cse_controller_packages | join(' ') }}
+      register: controller_tools_install
+      changed_when: "'0 upgraded, 0 newly installed' not in controller_tools_install.stdout"
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
+
+    - name: Mark base tooling bootstrap as complete inside the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} touch /root/.cse-controller-bootstrap-done"
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - cse_controller_bootstrap_check.rc != 0
+
+    - name: Verify curl is usable inside the controller container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} curl --version"
+      register: curl_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # PurpleLlama/CyberSecEval checkout (plan §6/§8). /srv/cyberseceval
+    # is bind-mounted into the container at the identical path, so the
+    # clone/branch setup below operates on the LXC host's filesystem
+    # directly (no docker exec needed) and is visible inside the
+    # container immediately. Gated on the repo not already existing --
+    # this is a ONE-TIME bootstrap. Plan §6 explicitly wants this repo
+    # hand-maintained afterward (a local/cse-lab branch carrying only
+    # documented compatibility changes), so re-running this playbook
+    # must never reset or re-checkout it once created.
+    # ---------------------------------------------------------------
+
+    - name: Check whether PurpleLlama has already been cloned
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/.git"
+      register: cse_controller_repo_stat
+
+    - name: Clone PurpleLlama (one-time bootstrap only)
+      ansible.builtin.git:
+        repo: "{{ cse_controller_repo_url }}"
+        dest: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    - name: Rename PurpleLlama's origin remote to upstream (plan §6 naming - upstream/main)
+      ansible.builtin.command:
+        cmd: git remote rename origin upstream
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    - name: Create local cse-lab branch pinned to {{ cse_controller_repo_commit }} (plan §6 - never track main implicitly)
+      ansible.builtin.command:
+        cmd: "git checkout -b cse-lab {{ cse_controller_repo_commit }}"
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_repo_stat.stat.exists
+
+    # Real root cause found live 2026-09-19: a single mitre-frr request ran
+    # unbounded for 14.5+ hours against Framework's local llama-server.
+    # Upstream's OPENAI provider only sends a max_completion_tokens cap for
+    # OpenAI's own hardcoded reasoning-model names (o1/o3/gpt-5-mini/etc);
+    # any locally-served model (ours is a bare GGUF path) gets NOT_GIVEN,
+    # so no cap is ever sent. Framework's llama-server has no server-side
+    # default either (n_predict=-1, confirmed via its own /props endpoint),
+    # and this specific model doesn't reliably emit a stop token for
+    # mitre-frr's prompts -- so generation just runs until the full 256K
+    # context is exhausted (or beyond, if context-shifting is active).
+    # Idempotent (ansible.builtin.replace no-ops once already patched) and
+    # applied unconditionally, not gated to first-bootstrap-only, since it
+    # must land on the already-cloned checkout too, not just a fresh one.
+    - name: Patch PurpleLlama's OPENAI provider to always cap max_completion_tokens (cse-lab compatibility fix, plan §6)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'DEFAULT_MAX_TOKENS\n                if \(self\.model in self\._reasoning_models\)\n                else NOT_GIVEN'
+        replace: 'DEFAULT_MAX_TOKENS  # cse-lab patch: always cap, not just OpenAI reasoning models'
+      register: cse_controller_openai_patch
+
+    - name: Commit the OPENAI provider patch on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: always cap max_completion_tokens, not just OpenAI reasoning models --
+          Framework's local llama-server has no server-side default (n_predict=-1); a
+          mitre-frr request ran unbounded for 14.5+ hours before this fix, confirmed live
+          2026-09-19"
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch.changed
+
+    # Real follow-up gap found live the same day: 2048 was too conservative
+    # for this model specifically. Confirmed directly against Framework's
+    # /v1/chat/completions -- this model always answers via a separate
+    # reasoning_content field (llama-server's own extension, not part of
+    # the OpenAI schema PurpleLlama's client reads), finishing its
+    # "thinking" in *content* only once reasoning is done. malware_analysis's
+    # detonation-report prompts run to 116,923 tokens; the model was still
+    # mid-thought at the 2048-token cutoff, so `content` came back empty
+    # even though generation was working correctly -- not a hang, just not
+    # enough headroom. Raised to 8192 (bounds worst-case pure generation to
+    # roughly 6-7 minutes at this model's ~20 tok/s, nowhere near the
+    # original multi-hour problem) -- still an idempotent, unconditional
+    # replace, not gated to first-bootstrap.
+    - name: Raise the cse-lab max_completion_tokens cap for reasoning headroom (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'DEFAULT_MAX_TOKENS  # cse-lab patch: always cap, not just OpenAI reasoning models'
+        replace: '8192  # cse-lab patch: raised from 2048 -- this model answers via a separate reasoning_content field and can exhaust a small cap mid-thought on long-context prompts, leaving an empty final answer (confirmed live 2026-09-19)'
+      register: cse_controller_openai_patch2
+
+    - name: Commit the raised max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise max_completion_tokens 2048 -> 8192 --
+          this model answers via a separate reasoning_content field llama-server
+          exposes but PurpleLlama's client doesn't read; malware_analysis's
+          116,923-token detonation-report prompts left the model still mid-thought
+          at 2048 tokens, so the final content came back empty. Confirmed live
+          2026-09-19."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch2.changed
+
+    - name: Check whether the CyberSecEval venv already exists
+      ansible.builtin.stat:
+        path: "{{ cse_controller_venv_dir }}/bin/python3"
+      register: cse_controller_venv_stat
+
+    - name: Create Python 3.10 venv for CyberSecEval
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_controller_container }} python3 -m venv {{ cse_controller_venv_dir }}"
+      when:
+        - not cse_controller_venv_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Install CyberSecEval's Python requirements (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/pip install -r {{ cse_controller_repo_dir }}/CybersecurityBenchmarks/requirements.txt
+      register: cse_controller_pip_install
+      changed_when: "'Successfully installed' in cse_controller_pip_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Install Celery/Redis client into the CyberSecEval venv (for the worker service)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/pip install celery==5.4.0 redis==5.2.1
+      register: cse_controller_celery_install
+      changed_when: "'Successfully installed' in cse_controller_celery_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify CyberSecEval benchmark runner is importable
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.benchmark.run --help
+      register: cse_controller_benchmark_help
+      changed_when: false
+      when: not ansible_check_mode
+
+    # Plan §8 asks for this once, right after the checkout, not on every
+    # code-only deploy afterward -- it verifies the pinned PurpleLlama
+    # commit itself, which doesn't change between deploys. Not gated on
+    # success (failed_when: false): the plan itself flags a known
+    # possible Secure Code Generation import issue at some upstream
+    # revisions as an "initially expected" fixup, so a failure here is
+    # informational, not necessarily a deploy-blocking regression.
+    - name: Run CyberSecEval's own unit test suite (informational, first bootstrap only)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m unittest
+      register: cse_controller_unittest
+      changed_when: false
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - not cse_controller_repo_stat.stat.exists
+
+    # ---------------------------------------------------------------
+    # CyberSOCEval dataset (plan §4/§9). "Install: CrowdStrike dataset"
+    # -- malware_analysis's questions.json ships in the repo already,
+    # but ships a symlink (hybrid-analysis) expecting this submodule at
+    # PurpleLlama/CyberSOCEval_data; threat_intel_reasoning's
+    # crowdstrike-reports/ needs it too. Confirmed live 2026-09-19: all
+    # 609 malware_analysis questions and all 45 threat_intel_reasoning
+    # reports resolve to real files once this submodule is present --
+    # no other install step was missing (git-lfs/jq/poppler-utils were
+    # already in cse_controller_packages above). Gated on the submodule
+    # not already existing -- git submodule add fails loudly if repeated.
+    # ---------------------------------------------------------------
+
+    - name: Check whether the CyberSOCEval_data submodule has already been added
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/CyberSOCEval_data/.git"
+      register: cse_controller_socdata_stat
+
+    - name: Add the CyberSOCEval_data submodule (one-time bootstrap only)
+      ansible.builtin.command:
+        cmd: git submodule add https://github.com/CrowdStrike/CyberSOCEval_data CyberSOCEval_data
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: not cse_controller_socdata_stat.stat.exists
+
+    - name: Update the CyberSOCEval_data submodule recursively (first bootstrap only)
+      ansible.builtin.command:
+        cmd: git submodule update --init --recursive
+        chdir: "{{ cse_controller_repo_dir }}"
+      register: cse_controller_socdata_update
+      changed_when: "'is already registered' not in cse_controller_socdata_update.stderr"
+      when:
+        - not ansible_check_mode
+        - not cse_controller_socdata_stat.stat.exists
+
+    # download_reports.py is internally idempotent per-report-id (skips
+    # a report already on disk) but has a known upstream bug: its
+    # own end-of-run "Missing Reports/Text/Images" summary produces
+    # false negatives whenever a report_id repeats across multiple
+    # question entries in report_questions.json (588 questions, only 45
+    # unique reports -- confirmed live: every report the script's own
+    # summary called "missing" actually has real pdf/txt/png on disk).
+    # Do not trust that summary; failed_when: false here reflects that,
+    # not a real ignore-errors gap.
+    #
+    # First bootstrap only (gated on the marker file below) -- these
+    # reports don't change once downloaded, so there's no reason to
+    # revisit this on every code-only deploy. Also confirmed real
+    # 2026-09-19: download_pdf() in the upstream script calls
+    # requests.get() with no timeout at all, so a single slow/
+    # unresponsive report host can hang this step (and therefore the
+    # whole deploy) indefinitely -- `timeout` bounds that even on the
+    # one run where this does execute. To force a re-run (e.g. to
+    # pick up a report that failed last time), delete the marker file
+    # at {{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/
+    # crwd_meta/threat_intel_reasoning/.download-complete.
+    - name: Check whether threat intel reports have already been downloaded
+      ansible.builtin.stat:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/.download-complete"
+      register: cse_controller_threat_intel_stat
+
+    - name: Download and convert Threat Intelligence Reasoning reports (first bootstrap only, bounded)
+      ansible.builtin.command:
+        cmd: >-
+          timeout 300
+          docker exec -w {{ cse_controller_repo_dir }} {{ cse_controller_container }}
+          {{ cse_controller_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.datasets.crwd_meta.threat_intel_reasoning.download_reports
+      register: cse_controller_threat_intel_download
+      changed_when: false
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - not cse_controller_threat_intel_stat.stat.exists
+
+    - name: Mark threat intel reports as downloaded (first bootstrap only)
+      ansible.builtin.file:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/.download-complete"
+        state: touch
+        mode: "0644"
+      when:
+        - not ansible_check_mode
+        - not cse_controller_threat_intel_stat.stat.exists
+
+    # ---------------------------------------------------------------
+    # Autonomous-offensive benchmark config (plan §7/§11/§13). Source-
+    # controlled per §13's own requirement -- these live in this repo's
+    # stack directory, not hand-authored on the host. The SSH private
+    # key is the one exception (never in git); see
+    # deploy-cse-controller.yml's own history for how it was placed at
+    # cse_kali_agent_key_path below.
+    # ---------------------------------------------------------------
+
+    - name: Write cyber_range_pairs.json (source-controlled, plan §13)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cyber_range_pairs.json"
+        dest: /srv/cyberseceval/config/cyber_range_pairs.json
+        mode: "0644"
+
+    - name: Write the autonomous-uplift prep script (source-controlled, plan §13)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/run-autonomous-uplift.sh"
+        dest: /srv/cyberseceval/config/run-autonomous-uplift.sh
+        mode: "0755"
+
+    - name: Write the Celery worker's task module (source-controlled, docs/cyberseceval-panel)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_controller_stack_name }}/cyberseceval-config/cse_tasks.py"
+        dest: /srv/cyberseceval/config/cse_tasks.py
+        mode: "0644"
+
+    # Now that celery is installed into the venv and cse_tasks.py exists,
+    # start the worker service. Idempotent whole-file "up -d": leaves the
+    # already-running controller service untouched, only creates/starts
+    # whatever isn't running yet (worker, on a fresh deploy).
+    - name: Start worker container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_controller_stack_dir }}"
+      register: cse_controller_worker_up
+      changed_when: "'Started' in cse_controller_worker_up.stdout or 'Created' in cse_controller_worker_up.stdout"
+      when: not ansible_check_mode
+
+    # docker compose up -d does NOT restart a container just because a
+    # bind-mounted file it reads (cse_tasks.py) changed on disk -- only
+    # a real compose-file/image change does (same real bug found and
+    # fixed in deploy-cse-panel-stack.yml the same day). Without this,
+    # an already-running worker keeps executing whatever cse_tasks.py
+    # it loaded at its own last start, silently ignoring any update.
+    # Unconditional, not gated on the copy task's own changed flag --
+    # change-detection has a real gap (content already matching on disk
+    # from an earlier deploy reports no change, even though that
+    # earlier deploy never actually restarted the process either,
+    # confirmed live the same day) and skip it only when this run just
+    # freshly created the container (nothing to restart yet).
+    - name: Restart worker to pick up any cse_tasks.py changes
+      ansible.builtin.command:
+        cmd: docker compose restart worker
+        chdir: "{{ cse_controller_stack_dir }}"
+      when:
+        - not ansible_check_mode
+        - not cse_controller_worker_up.changed
+
+    - name: Wait for worker container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} cse-controller-worker"
+      register: cse_controller_worker_running
+      until: cse_controller_worker_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

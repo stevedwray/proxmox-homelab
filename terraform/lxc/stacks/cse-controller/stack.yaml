@@ -1,0 +1,35 @@
+hostname: cse-controller
+# Migrated from infra_seg (192.168.40.70) to cse_seg (plan §1b, 2026-09-19)
+# -- infra_seg has no default-deny, doesn't provide the isolation this
+# needs. VMID deliberately kept unchanged (40070, not renumbered to a
+# cse_seg-derived value) to avoid VMID-triggered recreation stacking on
+# top of the network change -- check `tofu plan` before applying either way.
+ip_address: 192.168.100.70/24
+gateway: 192.168.100.1
+dns_server: 192.168.100.1
+network:
+  zone: cse_seg
+vmid: 40070
+cores: 4
+memory: 4096
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 20G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags: [docker, cyberseceval, controller, orchestration]
+depends_on: []
+provides: []
+extra_mount_path: "/srv/cyberseceval"
+extra_mount_size: "100G"
+extra_mount_profile: durable-nvme
+extra_mount:
+  logical_name: cse-controller-data
+  path: /srv/cyberseceval
+  size: "100G"
+  profile: durable-nvme
+  backup_policy: include
+  resize_control_plane: provider
+ansible_playbook: deploy-cse-controller
+deployment_tier: apps
+portainer_agent: false

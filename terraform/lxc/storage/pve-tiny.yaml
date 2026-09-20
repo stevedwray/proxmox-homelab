@@ -1,0 +1,73 @@
+version: 1
+
+# pve-tiny started as a stock Proxmox install with one small disk: local
+# (dir) + local-lvm (lvm-thin) only, no ZFS pool, no custom infrastructure-*
+# storage pools. Confirmed live via /nodes/pve-tiny/storage (2026-09-17).
+# A second disk — a 2TB NVMe — was added afterward (confirmed live via
+# /nodes/pve-tiny/disks/list, still unpartitioned at that point) and is
+# provisioned below as a second LVM-thin pool (nvme-lvm), not ZFS, for the
+# same reason the node avoided ZFS originally: uncapped ARC could burn a
+# large fraction of this node's 32GB RAM. This still avoids ZFS entirely,
+# so the node continues to mirror terraform/lxc/storage/pve-test.yaml's
+# non-ZFS profile shape — pve-test is the existing precedent for a
+# standalone node without the ZFS-backed infrastructure-containers pool
+# pve/pve-test-vm have.
+
+defaults:
+  storage_profile: platform-default
+  extra_mount_profile: durable-default
+  template_profile: local-template
+
+templates:
+  default:
+    name: debian-13.1-2-docker-template.tar.gz
+
+storage_backends:
+  local-lvm:
+    content_types: [images, rootdir]
+    backend_type: lvm-thin
+  local:
+    content_types: [backup, iso, vztmpl]
+    backend_type: dir
+  # 2TB Kingston NVMe (/dev/nvme0n1), added 2026-09. Deliberately kept as a
+  # second LVM-thin pool rather than ZFS: uncapped ARC could reserve up to
+  # ~50% of this node's 32GB RAM (see ansible/00-initial-setup/
+  # StoragePlaybook.md's zfs_arc_max guidance for 64GB+ hosts, which does
+  # not apply favorably down at 32GB), and this node is expected to also
+  # carry production LXC workloads, not just bulk/disposable data.
+  nvme-lvm:
+    content_types: [images, rootdir]
+    backend_type: lvm-thin
+
+profiles:
+  platform-default:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
+extra_mount_profiles:
+  durable-default:
+    storage: local-lvm
+    required_content_type: rootdir
+  # Bulk/data mounts on the NVMe pool; rootfs stays on the boot SSD
+  # (local-lvm) regardless of which extra_mount_profile a stack picks.
+  durable-nvme:
+    storage: nvme-lvm
+    required_content_type: rootdir
+
+template_profiles:
+  local-template:
+    storage: local
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+
+legacy_rootfs_storage_profiles:
+  local-lvm: platform-default
+
+legacy_extra_mount_storage_profiles:
+  local-lvm: durable-default
+
+legacy_template_storage_profiles:
+  local: local-template

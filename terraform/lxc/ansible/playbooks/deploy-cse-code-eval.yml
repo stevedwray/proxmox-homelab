@@ -1,0 +1,200 @@
+---
+- name: Deploy cse-code-eval stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    cse_code_eval_stack_name: "{{ stack_name | default('cse-code-eval') }}"
+    cse_code_eval_compose_content: "{{ lookup('file', '../../stacks/' + cse_code_eval_stack_name + '/docker-compose.yml') }}"
+    cse_code_eval_stack_dir: "/opt/stacks/{{ cse_code_eval_stack_name }}"
+    cse_code_eval_container: "{{ cse_code_eval_stack_name }}"
+    # Language runtimes/build tooling per plan §3.2 -- this LXC compiles
+    # and runs model-generated exploit code directly (confirmed live by
+    # reading canary_exploit's verify_response.py: it calls
+    # compile_and_run(code, answer) as a plain local subprocess, no
+    # remote-execution abstraction in the tool itself).
+    cse_code_eval_packages:
+      - build-essential
+      - gcc
+      - g++
+      - make
+      - cmake
+      - gdb
+      - binutils
+      - sqlite3
+      - libsqlite3-dev
+      - nodejs
+      - npm
+      - git
+      - curl
+      - python3-venv
+    # Same pin as cse-controller (plan §6) -- consistency across every
+    # CyberSecEval environment in this platform.
+    cse_code_eval_repo_url: https://github.com/meta-llama/PurpleLlama.git
+    cse_code_eval_repo_commit: 4be64c3a24442b51c76175e6ec67722cc3f5fe38
+    cse_code_eval_repo_dir: /srv/cyberseceval/repo/PurpleLlama
+    cse_code_eval_venv_dir: /srv/cyberseceval/.venv
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Forward container logs to Graylog (log-driver gap fix, docs/cyberseceval-panel/plan.md §cse-panel-14)
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2",
+            "live-restore": true
+          }
+      notify: Restart Docker
+      register: cse_code_eval_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ cse_code_eval_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ cse_code_eval_compose_content }}"
+        dest: "{{ cse_code_eval_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ cse_code_eval_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start code-eval container via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ cse_code_eval_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for code-eval container to be running
+      ansible.builtin.command:
+        cmd: "docker inspect -f {{ '{{.State.Running}}' }} {{ cse_code_eval_container }}"
+      register: code_eval_running
+      until: code_eval_running.stdout == "true"
+      retries: 10
+      delay: 3
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Update apt cache inside code-eval container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_code_eval_container }} apt-get update"
+      register: code_eval_apt_update
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Install build toolchain inside code-eval container (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_code_eval_container }}
+          apt-get install -y --no-install-recommends {{ cse_code_eval_packages | join(' ') }}
+      register: code_eval_tools_install
+      changed_when: "'0 upgraded, 0 newly installed' not in code_eval_tools_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify gcc/g++/cmake are usable inside the container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_code_eval_container }} bash -c 'gcc --version && g++ --version && cmake --version'"
+      register: toolchain_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # PurpleLlama/CyberSecEval checkout -- mirrors cse-controller's own
+    # setup exactly (same pin, same one-time-bootstrap gating). This LXC
+    # needs its own full copy: CyberSecEval's canary-exploit benchmark
+    # has no built-in remote-execution split, so isolating the actual
+    # compile-and-run step means running the WHOLE benchmark.run
+    # invocation here, not just dispatching a sub-step from
+    # cse-controller.
+    # ---------------------------------------------------------------
+
+    - name: Check whether PurpleLlama has already been cloned
+      ansible.builtin.stat:
+        path: "{{ cse_code_eval_repo_dir }}/.git"
+      register: cse_code_eval_repo_stat
+
+    - name: Clone PurpleLlama (one-time bootstrap only)
+      ansible.builtin.git:
+        repo: "{{ cse_code_eval_repo_url }}"
+        dest: "{{ cse_code_eval_repo_dir }}"
+      when: not cse_code_eval_repo_stat.stat.exists
+
+    - name: Rename PurpleLlama's origin remote to upstream (plan §6 naming - upstream/main)
+      ansible.builtin.command:
+        cmd: git remote rename origin upstream
+        chdir: "{{ cse_code_eval_repo_dir }}"
+      when: not cse_code_eval_repo_stat.stat.exists
+
+    - name: Create local cse-lab branch pinned to {{ cse_code_eval_repo_commit }} (plan §6 - never track main implicitly)
+      ansible.builtin.command:
+        cmd: "git checkout -b cse-lab {{ cse_code_eval_repo_commit }}"
+        chdir: "{{ cse_code_eval_repo_dir }}"
+      when: not cse_code_eval_repo_stat.stat.exists
+
+    - name: Check whether the CyberSecEval venv already exists
+      ansible.builtin.stat:
+        path: "{{ cse_code_eval_venv_dir }}/bin/python3"
+      register: cse_code_eval_venv_stat
+
+    - name: Create Python 3.10 venv for CyberSecEval
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_code_eval_container }} python3 -m venv {{ cse_code_eval_venv_dir }}"
+      when:
+        - not cse_code_eval_venv_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Install CyberSecEval's Python requirements (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_code_eval_container }}
+          {{ cse_code_eval_venv_dir }}/bin/pip install -r {{ cse_code_eval_repo_dir }}/CybersecurityBenchmarks/requirements.txt
+      register: cse_code_eval_pip_install
+      changed_when: "'Successfully installed' in cse_code_eval_pip_install.stdout"
+      when: not ansible_check_mode
+
+    - name: Verify CyberSecEval benchmark runner is importable
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -w {{ cse_code_eval_repo_dir }} {{ cse_code_eval_container }}
+          {{ cse_code_eval_venv_dir }}/bin/python3 -m CybersecurityBenchmarks.benchmark.run --help
+      register: cse_code_eval_benchmark_help
+      changed_when: false
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

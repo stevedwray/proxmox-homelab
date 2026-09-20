@@ -1,0 +1,37 @@
+# Control-panel LXC for gaming-stack-lab's game servers (Minecraft, ARK,
+# future AzerothCore). Panel only -- Wings (the daemon that actually
+# starts/stops the game containers) runs on gaming-stack-lab itself, not
+# here, since Wings requires local access to the Docker daemon it manages.
+# See docs/gaming-stack-lab/plan.md for the full research and decisions.
+hostname: pterodactyl-lab
+ip_address: "192.168.60.20/24"
+gateway: "192.168.60.1"
+dns_server: "192.168.60.1"
+network:
+  zone: game_seg
+vmid: 60020
+cores: 2
+memory: 4096
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: "10G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - docker
+  - gaming
+  - pterodactyl
+  - control-panel
+
+depends_on: []
+provides:
+  - service: pterodactyl-panel
+    port: 80
+    protocol: tcp
+
+ansible_playbook: "deploy-pterodactyl-lab"
+deployment_tier: apps
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "${lab_ip_harbor}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
