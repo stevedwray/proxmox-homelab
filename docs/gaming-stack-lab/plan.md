@@ -80,10 +80,13 @@ executable step content rather than a decision left for later.
   (VLAN 60) has exactly one member in both the live resource list and
   `pve.yaml`, so `192.168.60.20` is unused too. `gaming-lab-01` is no
   longer blocked on this.
-- **Panel DB/session secrets**: `MEDIA_STACK_LAB_DB_PASSWORD`-style
-  per-stack secret naming applies here too (`PTERODACTYL_LAB_DB_PASSWORD`,
-  `PTERODACTYL_LAB_APP_KEY`) — not yet added to
-  `terraform/secrets.common.enc.yaml`.
+- ~~**Panel DB secrets**~~ — **resolved 2026-09-20.**
+  `PTERODACTYL_LAB_DB_PASSWORD` / `PTERODACTYL_LAB_DB_ROOT_PASSWORD`
+  generated (`openssl rand -base64 24`) and added to
+  `terraform/secrets.common.enc.yaml` by the operator, confirmed present
+  via `./with-secrets env | grep PTERODACTYL`. `PTERODACTYL_LAB_API_KEY`
+  still open — can't be created until Panel itself is deployed and
+  bootstrapped (see the Wings↔Panel pairing entry below).
 - ~~**Wings↔Panel pairing**~~ — **resolved 2026-09-20.** Mostly
   API-scriptable, not UI-only — same lesson `media-lab-06` learned the
   hard way (initially assumed UI-only, turned out to have a real API
@@ -104,28 +107,24 @@ executable step content rather than a decision left for later.
   Minecraft's own content — Wings itself is infrastructure, the per-game
   content (modpack, ARK egg) stays hand-curated regardless. See
   `gaming-lab-03-wings-install` below.
-- **NEW, genuinely unresolved: does ARK survive Wings' hardcoded container
-  constraints at all?** Confirmed directly from `pterodactyl/wings`'
-  `environment/docker/container.go` (2026-09-20): every Wings-managed
-  server container gets `ReadonlyRootfs: true` and a fixed `CapDrop` list
-  with **no `CapAdd` field anywhere** — there is no supported way for an
-  egg or node to grant `SYS_PTRACE`, the exact fix the ARK smoketest
-  needed for crashpad to stop dying silently. This should mean the
-  official `pelican-eggs/eggs` ARK egg hits the identical crash under
-  real Wings — but a real user report (issue #2536 on that repo) shows it
-  reaching full startup successfully under real Wings, no `cap_add`, no
-  custom image. Likely explanation: that report predates ARK's Sentry
-  crash-reporter integration (our smoketest's `LogSentrySdk` lines) by
-  roughly two years, so the egg may simply never have needed the fix
-  because the ptrace-dependent code path didn't exist yet in the version
-  it was tested against. **Not resolved by more research — needs an
-  actual live test once Wings exists** (create a real ARK server under
-  Wings, watch whether it dies at crashpad init the same way the raw
-  smoketest first did). If it does, the fix isn't a compose `cap_add` —
-  it'd mean either patching Wings' own hardcoded `HostConfig` (a fork,
-  real maintenance burden) or finding an ARK-side way to disable Sentry
-  crash reporting entirely (not found in this research pass either).
-- **Egg image/version correction, 2026-09-20**: the official
+- ~~**Does ARK survive Wings' hardcoded container constraints at all?**~~
+  — **RESOLVED 2026-09-20, live test, not just research.** Yes. Created a
+  real ARK server under real Wings (`pelican-eggs` official egg,
+  `steamcmd:proton_8`, `-nosteam` baked in) and watched it reach
+  `Server: "..." has successfully started!` / `Full Startup: 21.15
+  seconds`, confirmed operational via a live RCON connection (not just
+  log-watching). Crashpad initialized fine with zero capability grant —
+  Wings really does have no `CapAdd` support (confirmed from
+  `container.go`), but it turned out not to matter here. The original
+  `SYS_PTRACE` requirement from the raw smoketest was specific to that
+  setup (the `azixus` image/Proton build), not a universal ARK/Proton
+  need. Three more real bugs found and fixed getting here (DNS egress,
+  install-time ownership, Panel API routing) — full detail in
+  `README.md`'s "RESOLVED: ARK survives Wings' hardcoded constraints"
+  section. No Wings fork or capability workaround needed after all.
+
+- **Egg image/version correction, 2026-09-20 (confirmed correct by the
+  live test above)**: the official
   `pelican-eggs/eggs` ARK egg (the one to actually use under Wings, not
   the smoketest's standalone `azixus` image) defaults to
   `ghcr.io/parkervcp/steamcmd:proton` — real community reports say

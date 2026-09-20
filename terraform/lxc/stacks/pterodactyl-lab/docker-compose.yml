@@ -32,6 +32,16 @@ services:
       - "80:80"
     environment:
       - APP_URL=https://pterodactyl.${LAB_DOMAIN}
+      # Traefik terminates TLS and forwards to this container over plain
+      # HTTP -- without trusting it as a proxy, Panel can't see
+      # X-Forwarded-Proto and falls back to the raw (HTTP) connection
+      # scheme for some generated URLs, breaking actions like API key
+      # creation even though the browser session itself is HTTPS. "*"
+      # is safe here: only Traefik can reach this container's port 80 at
+      # all (game_seg firewall), so "any directly-connecting proxy" is
+      # effectively "only Traefik". Real mechanism confirmed from Panel's
+      # own config/trustedproxy.php, not guessed.
+      - TRUSTED_PROXIES=*
       - APP_TIMEZONE=Pacific/Auckland
       - APP_ENV=production
       - APP_ENVIRONMENT_ONLY=false

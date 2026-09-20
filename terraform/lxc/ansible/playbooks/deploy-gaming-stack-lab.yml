@@ -73,7 +73,15 @@
   become: true
   gather_facts: false
   vars:
-    pterodactyl_panel_url: "https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}"
+    # Direct internal address, not the public HTTPS FQDN -- that route now
+    # sits behind Authentik's forwardAuth gate (added when this stack got
+    # wired up to Traefik), which intercepts unauthenticated API calls and
+    # redirects to a login page instead of serving JSON. Found live
+    # 2026-09-20 ("invalid JSON" turned out to be an HTML login page, not
+    # a real parsing bug). Server-to-server Application API calls (this
+    # playbook's, and Wings' own `configure` fetch) go direct instead --
+    # same game_seg zone, no need to route through the public gate at all.
+    pterodactyl_panel_url: "http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') | mandatory('LAB_IP_PTERODACTYL_LAB env var is required') }}" # nosonar: ansible:S5332 -- Panel's Application API, private game_seg only
     pterodactyl_api_key: "{{ lookup('env', 'PTERODACTYL_LAB_API_KEY') | mandatory('PTERODACTYL_LAB_API_KEY env var is not set -- create an Application API key in Panel first (one-time manual bootstrap, cannot be API-driven)') }}"
     pterodactyl_api_headers:
       Authorization: "Bearer {{ pterodactyl_api_key }}"
@@ -90,6 +98,7 @@
         headers: "{{ pterodactyl_api_headers }}"
         method: GET
         status_code: 200
+        return_content: true
       register: pterodactyl_location_lookup
 
     - name: Create Location if it doesn't already exist
@@ -98,19 +107,26 @@
         headers: "{{ pterodactyl_api_headers }}"
         method: POST
         status_code: 201
+        return_content: true
         body_format: json
         body:
           short: "{{ pterodactyl_location_short }}"
           long: "gaming-stack-lab game servers"
       register: pterodactyl_location_create
-      when: pterodactyl_location_lookup.json.data | length == 0
+      when: (pterodactyl_location_lookup.content | from_json).data | length == 0
 
+    # ansible.builtin.uri does not populate .content or .json at all
+    # unless return_content: true is set -- found live 2026-09-20 running
+    # this for real (two separate failures, one per missing attribute,
+    # before catching the actual cause). Parsed from .content, matching
+    # the pattern already used in configure-gaming-stack-dns-records.yml
+    # ((technitium_login.content | from_json).token).
     - name: Determine Location id (existing or just-created)
       ansible.builtin.set_fact:
         pterodactyl_location_id: >-
-          {{ pterodactyl_location_lookup.json.data[0].attributes.id
-             if pterodactyl_location_lookup.json.data | length > 0
-             else pterodactyl_location_create.json.attributes.id }}
+          {{ (pterodactyl_location_lookup.content | from_json).data[0].attributes.id
+             if (pterodactyl_location_lookup.content | from_json).data | length > 0
+             else (pterodactyl_location_create.content | from_json).attributes.id }}
 
     - name: Look up existing Node by FQDN
       ansible.builtin.uri:
@@ -118,6 +134,7 @@
         headers: "{{ pterodactyl_api_headers }}"
         method: GET
         status_code: 200
+        return_content: true
       register: pterodactyl_node_lookup
 
     - name: Create Node if it doesn't already exist
@@ -126,6 +143,7 @@
         headers: "{{ pterodactyl_api_headers }}"
         method: POST
         status_code: 201
+        return_content: true
         body_format: json
         body:
           name: "{{ pterodactyl_node_name }}"
@@ -144,14 +162,14 @@
           daemon_sftp: 2022
           daemon_base: "/srv/docker/pterodactyl-volumes"
       register: pterodactyl_node_create
-      when: pterodactyl_node_lookup.json.data | length == 0
+      when: (pterodactyl_node_lookup.content | from_json).data | length == 0
 
     - name: Determine Node id (existing or just-created)
       ansible.builtin.set_fact:
         pterodactyl_node_id: >-
-          {{ pterodactyl_node_lookup.json.data[0].attributes.id
-             if pterodactyl_node_lookup.json.data | length > 0
-             else pterodactyl_node_create.json.attributes.id }}
+          {{ (pterodactyl_node_lookup.content | from_json).data[0].attributes.id
+             if (pterodactyl_node_lookup.content | from_json).data | length > 0
+             else (pterodactyl_node_create.content | from_json).attributes.id }}
 
     - name: Look up this node's existing allocations
       ansible.builtin.uri:
@@ -159,6 +177,7 @@
         headers: "{{ pterodactyl_api_headers }}"
         method: GET
         status_code: 200
+        return_content: true
       register: pterodactyl_allocation_lookup
 
     # Port ranges cover both known games so far: Minecraft (25565) and ARK.
@@ -180,7 +199,7 @@
         body:
           ip: "{{ ansible_host }}"
           ports: ["25565", "7777", "7778", "27015", "37015"]
-      when: pterodactyl_allocation_lookup.json.data | length == 0
+      when: (pterodactyl_allocation_lookup.content | from_json).data | length == 0
 
     - name: Check whether Wings binary is already installed
       ansible.builtin.stat:
@@ -223,6 +242,75 @@
           --node {{ pterodactyl_node_id }}
       when: not pterodactyl_wings_config.stat.exists
       no_log: true
+
+    # Three real, live-found fixes to Wings' own generated config.yml,
+    # applied unconditionally (not gated on first-configure) so they
+    # self-heal even against an already-existing file:
+    #
+    # 1. allowed_origins defaults to [] -- Wings rejects every browser
+    #    websocket connection (console/power controls) with 403
+    #    "request origin not allowed by Upgrader.CheckOrigin" until the
+    #    Panel's own origins are explicitly allowed. Found live
+    #    2026-09-20: no error banner in Panel's UI, just a permanently
+    #    disabled Start button -- the real cause was only visible in
+    #    Wings' own systemd journal.
+    - name: Fix Wings config -- allow the Panel's origins for websocket connections
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^allowed_origins:"
+        line: "allowed_origins: ['http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') }}', 'https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}']" # nosonar: ansible:S5332 -- Panel's own internal fallback origin, not a real cross-origin exposure
+      register: pterodactyl_wings_origins_fix
+
+    # 2. docker.network.dns defaults to 1.1.1.1/1.0.0.1 (public resolvers),
+    #    but game_seg's firewall only permits DNS to the router itself --
+    #    install containers couldn't resolve steamcdn-a.akamaihd.net at
+    #    all. Point Wings at the same resolver every container in this
+    #    zone already uses instead of opening new egress for a
+    #    Cloudflare-specific IP.
+    - name: Fix Wings config -- point Docker network DNS at the in-zone resolver
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^(\s+- )1\.1\.1\.1\s*$'
+        replace: '\1{{ dns_server }}'
+      register: pterodactyl_wings_dns_fix
+
+    - name: Fix Wings config -- drop the now-redundant secondary public DNS entry
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^\s+- 1\.0\.0\.1\s*$'
+        state: absent
+      register: pterodactyl_wings_dns_fix2
+
+    # 3. docker.network's default subnet (172.18.0.0/16) collided with
+    #    gaming-stack-lab's existing portainer_portainer-agent network on
+    #    this exact host, crash-looping Wings on every boot ("Pool
+    #    overlaps with other one on this address space"). 172.20.0.0/16
+    #    confirmed clear of every network already on this host.
+    - name: Fix Wings config -- avoid Docker subnet collision with existing networks
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '172\.18\.0\.(1|0/16)'
+        replace: '172.20.0.\1'
+      register: pterodactyl_wings_subnet_fix
+
+    - name: Remove the Docker network so Wings recreates it with corrected settings
+      community.docker.docker_network:
+        name: pterodactyl_nw
+        state: absent
+      when: >-
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed
+
+    - name: Restart Wings if any config fix actually changed something
+      ansible.builtin.systemd:
+        name: wings
+        state: restarted
+      when: >-
+        pterodactyl_wings_origins_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed or
+        pterodactyl_wings_subnet_fix.changed
 
     - name: Install Wings systemd unit
       ansible.builtin.copy:
