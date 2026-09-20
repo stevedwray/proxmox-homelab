@@ -155,6 +155,7 @@ class TestSpec(BaseModel):
     backend_base_url: str | None = None
     backend_model: str | None = None
     backend_api_key: str | None = None
+    random_sample: bool = False
 
 
 class SuiteRequest(BaseModel):
@@ -191,6 +192,7 @@ def _job_kwargs(spec: TestSpec, submitted_by: str) -> dict:
         "backend_base_url": spec.backend_base_url,
         "backend_model": spec.backend_model,
         "backend_api_key": spec.backend_api_key,
+        "random_sample": spec.random_sample,
     }
 
 
@@ -356,6 +358,7 @@ def submit_job(
     backend_base_url: str | None = None,
     backend_model: str | None = None,
     backend_api_key: str | None = None,
+    random_sample: bool = False,
     x_authentik_username: str | None = Header(default=None),
 ):
     if benchmark not in KNOWN_BENCHMARKS:
@@ -367,6 +370,7 @@ def submit_job(
         backend_base_url=backend_base_url,
         backend_model=backend_model,
         backend_api_key=backend_api_key,
+        random_sample=random_sample,
     )
     result = celery_app.send_task(TASK_NAME, kwargs=_job_kwargs(spec, submitted_by))
     celery_app.backend.client.lpush(RECENT_JOBS_KEY, result.id)
@@ -545,6 +549,10 @@ def index():
           <label class="field">Test cases per benchmark:
             <input name="num_test_cases" type="number" value="2" min="1" max="50">
           </label>
+          <label class="field checkbox-field">
+            <input name="random_sample" type="checkbox">
+            Pick a random subset each run (otherwise the same N test cases run every time)
+          </label>
           <label class="field">Backend:
             <select name="backend" id="backend-select">{backend_options}</select>
           </label>
@@ -601,6 +609,7 @@ def index():
           const benchmarks = form.getAll('benchmark');
           if (benchmarks.length === 0) {{ showToast('Pick at least one benchmark.'); return; }}
           const numTestCases = parseInt(form.get('num_test_cases') || '2', 10);
+          const randomSample = form.get('random_sample') === 'on';
           const backendName = form.get('backend');
           let baseUrl = null, model = null, apiKey = null;
           if (backendName === 'custom') {{
@@ -612,7 +621,7 @@ def index():
             if (preset) {{ baseUrl = preset[1]; model = preset[2]; }}
           }}
           const tests = benchmarks.map(b => ({{
-            benchmark: b, num_test_cases: numTestCases,
+            benchmark: b, num_test_cases: numTestCases, random_sample: randomSample,
             backend_base_url: baseUrl, backend_model: model, backend_api_key: apiKey,
           }}));
           const res = await fetch('/suites', {{
@@ -653,7 +662,6 @@ def index():
         // of getting wiped every refresh.
         const expandedJobs = new Set();
         const transcriptCache = {{}};
-        let lastJobsBody = {{jobs: []}};
         let lastSuitesBody = {{suites: []}};
 
         // Each run (suite) gets its own collapsible card instead of
@@ -661,11 +669,9 @@ def index():
         // for runs to be visually separated, not just marked with a
         // header row in the middle of one long scroll. openSuites tracks
         // the operator's own manual expand/collapse choices so they
-        // survive the 4s poll rebuild; the most recent run is auto-
-        // expanded exactly once, on first load, not on every rebuild
-        // (otherwise collapsing it would never stick).
+        // survive the 4s poll rebuild; every run starts folded, operator
+        // opens whichever ones they actually want to look at.
         const openSuites = new Set();
-        let autoOpenedNewest = false;
 
         function renderJobRow(job) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
@@ -759,22 +765,10 @@ def index():
         }}
 
         function renderTable() {{
-          const shown = new Set();
-          for (const suite of lastSuitesBody.suites) {{
-            for (const job of suite.jobs) {{ shown.add(job.job_id); }}
-          }}
           const suitesNewestFirst = lastSuitesBody.suites.slice().reverse();
-          if (!autoOpenedNewest && suitesNewestFirst.length) {{
-            openSuites.add(suitesNewestFirst[0].suite_id);
-            autoOpenedNewest = true;
-          }}
-          let html = suitesNewestFirst
+          const html = suitesNewestFirst
             .map(suite => renderSuiteCard(suite, openSuites.has(suite.suite_id)))
             .join('');
-          const individualJobs = lastJobsBody.jobs.slice().reverse().filter(j => !shown.has(j.job_id));
-          if (individualJobs.length) {{
-            html += `<details class="run-card" open><summary><b>Individual jobs</b> (not part of a run)</summary>${{jobsTable(individualJobs)}}</details>`;
-          }}
           document.getElementById('status').innerHTML = html || '<p class="muted">No tests run yet.</p>';
         }}
 
@@ -816,9 +810,8 @@ def index():
 
         async function refreshStatus() {{
           try {{
-            const [jobsRes, suitesRes] = await Promise.all([fetch('/jobs'), fetch('/suites')]);
-            if (!jobsRes.ok || !suitesRes.ok) throw new Error(`HTTP ${{jobsRes.status}}/${{suitesRes.status}}`);
-            lastJobsBody = await jobsRes.json();
+            const suitesRes = await fetch('/suites');
+            if (!suitesRes.ok) throw new Error(`HTTP ${{suitesRes.status}}`);
             lastSuitesBody = await suitesRes.json();
             renderTable();
           }} catch (err) {{

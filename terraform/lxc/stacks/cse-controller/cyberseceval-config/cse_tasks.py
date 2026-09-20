@@ -17,6 +17,7 @@ matching every benchmark run proven so far.
 """
 import json
 import os
+import random
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,78 +72,95 @@ def _judge_spec() -> str:
     return f"OPENAI::gpt-4o-mini::{key}"
 
 
+# Default dataset path for each benchmark, relative to REPO_DIR -- the
+# full, unfiltered test-case pool. Used both as the default --prompt-path
+# and, when random sampling is requested, as the source _sample_prompts
+# reads from before writing a per-job subset.
+_DATASET_PATHS = {
+    "mitre": "CybersecurityBenchmarks/datasets/mitre/mitre_benchmark_100_per_category_with_augmentation.json",
+    "mitre-frr": "CybersecurityBenchmarks/datasets/mitre_frr/mitre_frr.json",
+    "prompt-injection": "CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json",
+    "interpreter": "CybersecurityBenchmarks/datasets/interpreter/interpreter.json",
+    "instruct": "CybersecurityBenchmarks/datasets/instruct/instruct-v2.json",
+    "autocomplete": "CybersecurityBenchmarks/datasets/autocomplete/autocomplete.json",
+    "malware_analysis": "CybersecurityBenchmarks/datasets/crwd_meta/malware_analysis/questions.json",
+    "threat_intel_reasoning": "CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/report_questions.json",
+    "multiturn-phishing": "CybersecurityBenchmarks/datasets/spear_phishing/multiturn_phishing_challenges.json",
+}
+
 # Each entry: the exact argv (minus python3/module prefix) run.py needs,
-# using {run_dir} as the per-job output directory placeholder and
-# {mut_spec} as the selected backend's LLM spec.
+# using {run_dir} as the per-job output directory placeholder, {mut_spec}
+# as the selected backend's LLM spec, and {prompt_path} as either the
+# default dataset above or a per-job random-sampled subset of it.
 _BENCHMARK_COMMANDS = {
-    "mitre": lambda run_dir, n, mut_spec: [
+    "mitre": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=mitre",
-        "--prompt-path=CybersecurityBenchmarks/datasets/mitre/mitre_benchmark_100_per_category_with_augmentation.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}", f"--expansion-llm={_judge_spec()}",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "mitre-frr": lambda run_dir, n, mut_spec: [
+    "mitre-frr": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=mitre-frr",
-        "--prompt-path=CybersecurityBenchmarks/datasets/mitre_frr/mitre_frr.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "prompt-injection": lambda run_dir, n, mut_spec: [
+    "prompt-injection": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=prompt-injection",
-        "--prompt-path=CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "interpreter": lambda run_dir, n, mut_spec: [
+    "interpreter": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=interpreter",
-        "--prompt-path=CybersecurityBenchmarks/datasets/interpreter/interpreter.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--judge-llm={_judge_spec()}",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "instruct": lambda run_dir, n, mut_spec: [
+    "instruct": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=instruct",
-        "--prompt-path=CybersecurityBenchmarks/datasets/instruct/instruct-v2.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "autocomplete": lambda run_dir, n, mut_spec: [
+    "autocomplete": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=autocomplete",
-        "--prompt-path=CybersecurityBenchmarks/datasets/autocomplete/autocomplete.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "malware_analysis": lambda run_dir, n, mut_spec: [
+    "malware_analysis": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=malware_analysis",
-        "--prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/malware_analysis/questions.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "threat_intel_reasoning": lambda run_dir, n, mut_spec: [
+    "threat_intel_reasoning": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=threat_intel_reasoning",
-        "--prompt-path=CybersecurityBenchmarks/datasets/crwd_meta/threat_intel_reasoning/report_questions.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
         "--input-modality=text",
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
-    "multiturn-phishing": lambda run_dir, n, mut_spec: [
+    "multiturn-phishing": lambda run_dir, n, mut_spec, prompt_path: [
         "-m", "CybersecurityBenchmarks.benchmark.run", "--benchmark=multiturn-phishing",
-        "--prompt-path=CybersecurityBenchmarks/datasets/spear_phishing/multiturn_phishing_challenges.json",
+        f"--prompt-path={prompt_path}",
         f"--response-path={run_dir}/responses.json",
         f"--judge-response-path={run_dir}/judge_responses.json",
         f"--stat-path={run_dir}/stats.json",
@@ -150,6 +168,23 @@ _BENCHMARK_COMMANDS = {
         f"--llm-under-test={mut_spec}", f"--num-test-cases={n}",
     ],
 }
+
+
+def _sample_prompts(benchmark: str, run_dir: Path, n: int) -> str:
+    """Writes a random subset of n test cases from the benchmark's full
+    dataset into the job's own run_dir and returns that path. Without
+    this, --num-test-cases picks a fixed, evenly-strided slice of the
+    dataset every time (see PurpleLlama's query_llm.py) -- same benchmark
+    plus same count always ran the identical prompts, run after run.
+    Dataset is read relative to REPO_DIR since --prompt-path is resolved
+    against the benchmark CLI's own cwd."""
+    dataset_path = REPO_DIR / _DATASET_PATHS[benchmark]
+    dataset = json.loads(dataset_path.read_text())
+    sample_size = min(n, len(dataset)) if n > 0 else len(dataset)
+    sampled = random.sample(dataset, sample_size)  # nosonar: benchmark selection, not security-sensitive
+    sample_path = run_dir / "sampled_prompts.json"
+    sample_path.write_text(json.dumps(sampled))
+    return str(sample_path)
 
 
 def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
@@ -199,6 +234,7 @@ def run_benchmark(
     backend_base_url: str | None = None,
     backend_model: str | None = None,
     backend_api_key: str | None = None,
+    random_sample: bool = False,
 ) -> dict:
     job_id = run_benchmark.request.id
     run_dir = RUNS_DIR / f"panel-{job_id}"
@@ -210,16 +246,25 @@ def run_benchmark(
         "submitted_by": submitted_by,
         "backend_base_url": backend_base_url or DEFAULT_BACKEND_BASE_URL,
         "backend_model": backend_model or DEFAULT_BACKEND_MODEL,
+        "random_sample": random_sample,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }))
 
     if benchmark == "autonomous-uplift":
+        # No static dataset to sample from -- each run already generates
+        # fresh attack shots live against the cyber range, so random_sample
+        # doesn't apply here.
         result = _run_autonomous_uplift(run_dir, shots=num_test_cases, mut_spec=mut_spec)
         log_text = result.get("log", "")
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
             return {"rc": 1, "error": f"unknown benchmark '{benchmark}'"}
-        argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec)
+        prompt_path = (
+            _sample_prompts(benchmark, run_dir, num_test_cases)
+            if random_sample
+            else _DATASET_PATHS[benchmark]
+        )
+        argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec, prompt_path)
         proc = subprocess.run(argv, cwd=REPO_DIR, capture_output=True, text=True)
         log_text = proc.stdout + proc.stderr
         (run_dir / "run.log").write_text(log_text)
