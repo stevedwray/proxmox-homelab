@@ -236,6 +236,39 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch.changed
 
+    # Real follow-up gap found live the same day: 2048 was too conservative
+    # for this model specifically. Confirmed directly against Framework's
+    # /v1/chat/completions -- this model always answers via a separate
+    # reasoning_content field (llama-server's own extension, not part of
+    # the OpenAI schema PurpleLlama's client reads), finishing its
+    # "thinking" in *content* only once reasoning is done. malware_analysis's
+    # detonation-report prompts run to 116,923 tokens; the model was still
+    # mid-thought at the 2048-token cutoff, so `content` came back empty
+    # even though generation was working correctly -- not a hang, just not
+    # enough headroom. Raised to 8192 (bounds worst-case pure generation to
+    # roughly 6-7 minutes at this model's ~20 tok/s, nowhere near the
+    # original multi-hour problem) -- still an idempotent, unconditional
+    # replace, not gated to first-bootstrap.
+    - name: Raise the cse-lab max_completion_tokens cap for reasoning headroom (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'DEFAULT_MAX_TOKENS  # cse-lab patch: always cap, not just OpenAI reasoning models'
+        replace: '8192  # cse-lab patch: raised from 2048 -- this model answers via a separate reasoning_content field and can exhaust a small cap mid-thought on long-context prompts, leaving an empty final answer (confirmed live 2026-09-19)'
+      register: cse_controller_openai_patch2
+
+    - name: Commit the raised max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise max_completion_tokens 2048 -> 8192 --
+          this model answers via a separate reasoning_content field llama-server
+          exposes but PurpleLlama's client doesn't read; malware_analysis's
+          116,923-token detonation-report prompts left the model still mid-thought
+          at 2048 tokens, so the final content came back empty. Confirmed live
+          2026-09-19."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch2.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"
