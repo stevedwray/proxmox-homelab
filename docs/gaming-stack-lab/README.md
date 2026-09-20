@@ -262,6 +262,103 @@ before the underlying state problem is diagnosed. **Flagging, not
 fixing** — worth its own investigation before any future Terraform
 operation against `gaming-stack-lab`.
 
+## ARK server creation through Wings — live test in progress (2026-09-20)
+
+Testing the one genuinely unresolved risk from the smoketest: does ARK
+survive Wings' hardcoded container constraints. Progress so far:
+
+- **Egg import is genuinely UI-only** (confirmed from Panel's own
+  `routes/admin.php` vs `routes/api-application.php` — Nest/Egg
+  management has zero Application API surface, only session-authenticated
+  `/admin/*` routes; deliberate, since install scripts run arbitrary code).
+  Server *creation* from an existing egg is API-scriptable
+  (`POST /api/application/servers`), confirmed and used.
+- Imported the official `pelican-eggs/eggs` ARK egg (`docs/gaming-stack-lab/ark-survival-ascended-egg.json`,
+  saved as a durable record), with `docker_images` narrowed to just
+  `Proton 8`/`Proton Latest` (Proton 9 reported broken for ARK by the
+  community). Real gate hit importing it: Panel's actual `docker_images`
+  validation is a strict regex (`^[\w#\.\/\- ]*\|?~?[\w\.\/\-:@ ]*$`,
+  from `EggFormRequest.php`) that rejects parentheses/punctuation in
+  labels — my first attempt with descriptive labels failed with "docker
+  images format is invalid"; fixed by using plain labels.
+- Created a real server (`id: 1`, egg 15, node 1, `docker_image:
+  ghcr.io/parkervcp/steamcmd:proton_8`, `ARGS_FLAGS=-nosteam` baked in
+  from the start) via the Application API. 16GB memory, matching the
+  smoketest's known minimum. Confirmed nothing else was running on the
+  host at the time (23GB free) so this test doesn't contend with
+  anything real.
+- **Real bug #1, install trigger delay**: worried install never started
+  (no activity for ~1 minute) — false alarm. Panel's server-creation call
+  to Wings is synchronous (confirmed from `ServerCreationService.php` --
+  a failure there would force-delete the server and return an error,
+  which didn't happen), Wings just has an internal debounce before
+  actually starting. Not a bug, just slower than expected.
+- **Real bug #2, DNS resolution completely broken inside install
+  containers**: `curl: (6) Could not resolve host: steamcdn-a.akamaihd.net`
+  — install failed in under 20 seconds, twice. Root cause: Wings'
+  `docker.network.dns` config defaults to `1.1.1.1`/`1.0.0.1` (public
+  resolvers), but `game_seg`'s firewall only permits DNS (port 53) *to
+  the router itself* (`192.168.60.1`), not forwarded to arbitrary
+  external IPs — confirmed via a live, read-only MikroTik rule query
+  before assuming. Fixed by pointing Wings' Docker network DNS at
+  `192.168.60.1` instead (the same resolver every container in this zone
+  already uses per its own `stack.yaml`) — avoids needing a new firewall
+  rule entirely, more consistent than opening egress to a
+  Cloudflare-specific IP. Required removing the already-created
+  `pterodactyl_nw` Docker network and restarting Wings for the new DNS
+  setting to actually apply (Docker doesn't hot-reload a network's DNS
+  config). **Live-only fix, not yet folded into the playbook** — same
+  class of gap as the Docker-subnet fix already flagged above.
+- **Confirmed working after the fix**: SteamCMD is actively downloading
+  (reached 63%+ of a ~12GB depot before this note was written) — proves
+  the DNS root-cause diagnosis was correct, not a lucky retry.
+
+## RESOLVED: ARK survives Wings' hardcoded constraints (2026-09-20)
+
+**Install completed** (`Success! App '2430930' fully installed`, 9.8GB on
+disk — a single-map install is much smaller than the ~100GB "all maps"
+figure quoted in earlier research). Starting the server surfaced one more
+real bug, then a conclusive result:
+
+- **Real bug #3, install produced root-owned files, server runs as a
+  different uid.** `mkdir: cannot create directory
+  '/home/container/.steam/steam': Permission denied` on first start,
+  cascading into Proton's own prefix-lock setup failing
+  (`FileNotFoundError`). Root cause: the imported community egg's install
+  script (unlike some other Pterodactyl eggs) never `chown`s the files it
+  installs, and Wings didn't fix ownership afterward either — the whole
+  volume ended up `root:root` while the container runs as `uid=999
+  gid=991` (confirmed correct in `config.yml`'s `system.user`, so not a
+  Wings misconfiguration, a gap in this specific egg). Fixed live via
+  `chown -R 999:991` on the volume; a real production egg should add a
+  `chown` step at the end of its own install script rather than rely on
+  this being done for it.
+- **The actual question this whole plan exists to answer**: does ARK
+  survive Wings' hardcoded `ReadonlyRootfs: true` and fixed `CapDrop`
+  list (confirmed from `container.go` — no `CapAdd` support at all,
+  meaning `SYS_PTRACE` can never be granted to a Wings-managed server)?
+  **Yes.** Crashpad initialized successfully (`started crashpad client
+  handler`) with zero capability grant, `Steam Subsystem initialized:
+  FAILED` occurred exactly as expected (harmless, `-nosteam` already
+  baked into `ARGS_FLAGS`), and the server reached
+  `Server: "gaming-stack-lab ARK smoketest" has successfully started!`,
+  `Full Startup: 21.15 seconds`. **Confirmed operational, not just
+  "logs looked fine"**: RCON connected live
+  (`docker exec ... rcon -a 127.0.0.1:37015 ...` returned an interactive
+  prompt, not "connection refused").
+- **This means the original `SYS_PTRACE` requirement found in the raw
+  smoketest was specific to that setup** (the `azixus/ARK_Ascended_Docker`
+  image and/or its particular Proton build), not a universal ARK/Proton
+  requirement — the official `pelican-eggs` egg on `steamcmd:proton_8`
+  needs no such capability. Good news for the whole plan: no Wings fork,
+  no capability workaround needed at all.
+
+**Test server cleanup**: this was a throwaway validation server
+(`ark-smoketest`, id 1) — to be deleted once this finding is recorded,
+not kept running long-term or treated as `gaming-stack-lab`'s real ARK
+instance. A real deployment should start from a fresh server creation
+with reviewed settings, not reuse this test's admin password/config.
+
 **Update, superseded by later work this same session**: Panel's admin
 user was created, `edge.yaml`/Traefik/Authentik/DNS hookup was done (see
 its own section above), `TRUSTED_PROXIES` was fixed, and
