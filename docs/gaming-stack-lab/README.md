@@ -399,6 +399,34 @@ via `docker ps` (`Up`) and the game's own log
 `Full Startup: 18.69 seconds`). This is now a real, permanent,
 browser-controllable ARK server — the actual point of this whole plan.
 
+### Connecting to the server — confirmed working methods
+
+ARK: Survival Ascended has no Steam server-browser support at all (moved
+to Epic Online Services) and the in-game "Unofficial" browser only shows
+servers that successfully announce themselves to ARK's public master
+server over the internet — a LAN-only server with nothing port-forwarded
+(deliberately, for a private family server) structurally won't appear
+there, confirmed live 2026-09-20 (checked the "Unofficial" list directly
+with "Show Player Servers" on — not present, as expected). Steam's own
+external Favorites ("Add server by IP") also doesn't work for ASA
+specifically — its "Did not find any servers" check relies on the same
+legacy Steam query protocol ASA no longer responds to, confirmed live.
+
+**What actually works, confirmed live**:
+1. Console direct-connect, always reliable: press `~`, `open 192.168.60.10:7777`.
+2. `Ark.UseServerList 0` (console, from the main menu) then search the
+   exact session name (`gaming-stack-lab ARK`) in the UNOFFICIAL tab's
+   search box — **confirmed working 2026-09-20**, a genuinely different
+   mechanism from the passive browser list (client-side search behavior,
+   not server announcement), despite the server never registering
+   publicly.
+
+Deliberately did not pursue port-forwarding + NAT loopback to get the
+server into the public "Unofficial" list for real, despite it being
+offered as advice from elsewhere — that trades a private family server's
+LAN-only footprint for public internet exposure to solve a menu
+convenience problem that already has a working, no-exposure answer.
+
 **Update, superseded by later work this same session**: Panel's admin
 user was created, `edge.yaml`/Traefik/Authentik/DNS hookup was done (see
 its own section above), `TRUSTED_PROXIES` was fixed, and
