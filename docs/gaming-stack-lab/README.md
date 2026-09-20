@@ -209,11 +209,64 @@ then `provision.sh` re-run cleanly, `failed=0`.
 **Verified live, not just "the playbook said ok"**: `curl http://192.168.60.20/`
 returns `HTTP 200`.
 
-**Not yet done**: no admin user exists in Panel yet — first login at
-`http://192.168.60.20/` creates it. `edge.yaml`/Traefik routing for
-`pterodactyl.<domain>` doesn't exist yet either (not part of this plan's
-steps so far). `PTERODACTYL_LAB_API_KEY` still blocked on that first
-admin-user bootstrap.
+**`gaming-lab-03-wings-install`: LIVE 2026-09-20, verified end-to-end.**
+Wings installed and paired with `pterodactyl-lab`'s Panel — confirmed via
+Wings' own local API (`401`, alive and enforcing its own token auth, not
+broken) and Panel's Node record (`id: 1, name: "gaming-stack-lab"`).
+Real bugs found and fixed along the way, none caught by any gate written
+in advance:
+
+1. **`ansible.builtin.uri` needs `return_content: true`.** Without it,
+   neither `.content` nor `.json` populate on the registered result at
+   all — two separate failures (first assuming `.json` would work, then
+   `.content` without the flag) before finding the actual cause. Fixed
+   in `deploy-gaming-stack-lab.yml`; this is a good, transcribable lesson
+   for any future Pterodactyl-API automation task in this repo.
+2. **API calls must go direct, not through the public FQDN.** The
+   playbook originally pointed `pterodactyl_panel_url` at
+   `https://pterodactyl.${LAB_DOMAIN}` — but that route now sits behind
+   Authentik's `forwardAuth` gate (added earlier this session), which
+   intercepted the unauthenticated Bearer-token API calls and redirected
+   to an HTML login page. Showed up as a confusing "invalid JSON" error,
+   not an auth error, since the redirect target was 200 not 401/302 by
+   the time the client followed it. Fixed by pointing Ansible's (and
+   Wings' own `configure`) API calls at the direct internal address
+   (`http://${LAB_IP_PTERODACTYL_LAB}`) instead — same `game_seg` zone,
+   no need to route through the public gate for server-to-server calls.
+3. **Wings' own Docker network default collided with an existing one.**
+   `wings configure` defaults its `pterodactyl0` bridge network to
+   `172.18.0.0/16` unconditionally, without checking the host's existing
+   Docker networks — `gaming-stack-lab` already had
+   `portainer_portainer-agent` on that exact subnet, so Wings
+   crash-looped on startup (`Pool overlaps with other one on this
+   address space`). Fixed by live-patching `/etc/pterodactyl/config.yml`
+   to `172.20.0.0/16` (confirmed clear of `172.17.0.0/16` bridge,
+   `172.18.0.0/16` portainer-agent, `172.31.250.0/24` portainer_default)
+   and restarting — came up clean. **Live-only fix, not yet reflected in
+   the playbook** — if `config.yml` is ever deleted and Wings
+   re-`configure`d fresh, this would recur; worth adding a post-configure
+   patch task to `deploy-gaming-stack-lab.yml` in a future pass rather
+   than leaving it as a one-off.
+
+**Separate, deliberately unresolved gap found getting here**: `gaming-stack-lab`'s
+own Terraform state doesn't resolve from this working directory
+(`terragrunt state list` returns "no state file was found" despite a real
+`.tfstate` existing on disk under `environments/pve/gaming-stack-lab/`) —
+almost certainly a workspace-selection mismatch, not genuinely empty
+state. Rather than risk `terragrunt apply` against a live, data-bearing
+container under an unclear state condition, the `ansible_playbook` field
+change was applied by hand-editing the generated (gitignored)
+`inventory.yml` directly instead — zero Terraform risk, but this fix will
+be silently lost if `terragrunt apply` for this stack ever succeeds again
+before the underlying state problem is diagnosed. **Flagging, not
+fixing** — worth its own investigation before any future Terraform
+operation against `gaming-stack-lab`.
+
+**Update, superseded by later work this same session**: Panel's admin
+user was created, `edge.yaml`/Traefik/Authentik/DNS hookup was done (see
+its own section above), `TRUSTED_PROXIES` was fixed, and
+`PTERODACTYL_LAB_API_KEY` is in SOPS — all of which unblocked
+`gaming-lab-03`, now live and verified (see above).
 
 **Correction 2026-09-20, found while researching the ARK egg itself (see
 plan.md's Open questions): the allocation ports this step created were
