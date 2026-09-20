@@ -354,10 +354,50 @@ real bug, then a conclusive result:
   no capability workaround needed at all.
 
 **Test server cleanup**: this was a throwaway validation server
-(`ark-smoketest`, id 1) — to be deleted once this finding is recorded,
-not kept running long-term or treated as `gaming-stack-lab`'s real ARK
-instance. A real deployment should start from a fresh server creation
-with reviewed settings, not reuse this test's admin password/config.
+(`ark-smoketest`, id 1) — deleted once this finding was recorded, not
+kept running long-term or treated as `gaming-stack-lab`'s real ARK
+instance.
+
+## A real, permanent ARK server — live 2026-09-20
+
+Created a second, real server (`ARK Survival Ascended`, id 2) with proper
+settings and a freshly generated admin password (not the throwaway
+smoketest one). Hit the exact same SteamCMD cold-cache "Missing
+configuration" quirk found earlier in this session on the very first
+install attempt — resolved the same way, by retrying. Also pre-applied
+the known ownership fix (`chown -R 999:991`) before ever trying to start
+it, avoiding re-discovering that bug a second time.
+
+**Real bug #4, found getting this server actually startable from the
+browser**: Panel's UI showed either "we're having trouble connecting to
+your server" or (after a first partial fix) a permanently disabled Start
+button, with no error banner. Root cause, found only in Wings' own
+systemd journal, not anywhere in Panel's UI: `websocket: request origin
+not allowed by Upgrader.CheckOrigin` (HTTP 403). The server console and
+power controls connect via a **websocket straight from the browser to
+Wings** (`ws://<node>:8080/...`), not proxied through Panel, and Wings
+validates the request's `Origin` header against `config.yml`'s
+`allowed_origins`, which defaults to `[]` — rejecting every browser,
+always, with no visible error anywhere in Panel itself. Fixed by setting
+`allowed_origins` to both addresses the operator might view Panel from
+(`http://192.168.60.20`, `https://pterodactyl.lab.gibbsgreatly.xyz`) and
+restarting Wings.
+
+**This fix (and the two earlier live-only Wings config fixes — Docker
+subnet collision, DNS egress) are now folded into
+`deploy-gaming-stack-lab.yml` itself**, applied unconditionally so they
+self-heal even against an already-existing `config.yml`, not just
+left as live-only fixes for future re-reads of this doc to rediscover.
+Verified the regex logic against the original pre-fix config content
+(not the already-fixed live host, to avoid disrupting the real running
+server) — produces the exact intended result.
+
+**Confirmed working end-to-end after the origin fix**: server started
+from Panel's own UI (not a raw `docker start`), independently verified
+via `docker ps` (`Up`) and the game's own log
+(`Server: "gaming-stack-lab ARK" has successfully started!`,
+`Full Startup: 18.69 seconds`). This is now a real, permanent,
+browser-controllable ARK server — the actual point of this whole plan.
 
 **Update, superseded by later work this same session**: Panel's admin
 user was created, `edge.yaml`/Traefik/Authentik/DNS hookup was done (see

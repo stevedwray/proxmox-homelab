@@ -243,6 +243,75 @@
       when: not pterodactyl_wings_config.stat.exists
       no_log: true
 
+    # Three real, live-found fixes to Wings' own generated config.yml,
+    # applied unconditionally (not gated on first-configure) so they
+    # self-heal even against an already-existing file:
+    #
+    # 1. allowed_origins defaults to [] -- Wings rejects every browser
+    #    websocket connection (console/power controls) with 403
+    #    "request origin not allowed by Upgrader.CheckOrigin" until the
+    #    Panel's own origins are explicitly allowed. Found live
+    #    2026-09-20: no error banner in Panel's UI, just a permanently
+    #    disabled Start button -- the real cause was only visible in
+    #    Wings' own systemd journal.
+    - name: Fix Wings config -- allow the Panel's origins for websocket connections
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^allowed_origins:"
+        line: "allowed_origins: ['http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') }}', 'https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}']" # nosonar: ansible:S5332 -- Panel's own internal fallback origin, not a real cross-origin exposure
+      register: pterodactyl_wings_origins_fix
+
+    # 2. docker.network.dns defaults to 1.1.1.1/1.0.0.1 (public resolvers),
+    #    but game_seg's firewall only permits DNS to the router itself --
+    #    install containers couldn't resolve steamcdn-a.akamaihd.net at
+    #    all. Point Wings at the same resolver every container in this
+    #    zone already uses instead of opening new egress for a
+    #    Cloudflare-specific IP.
+    - name: Fix Wings config -- point Docker network DNS at the in-zone resolver
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^(\s+- )1\.1\.1\.1\s*$'
+        replace: '\1{{ dns_server }}'
+      register: pterodactyl_wings_dns_fix
+
+    - name: Fix Wings config -- drop the now-redundant secondary public DNS entry
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^\s+- 1\.0\.0\.1\s*$'
+        state: absent
+      register: pterodactyl_wings_dns_fix2
+
+    # 3. docker.network's default subnet (172.18.0.0/16) collided with
+    #    gaming-stack-lab's existing portainer_portainer-agent network on
+    #    this exact host, crash-looping Wings on every boot ("Pool
+    #    overlaps with other one on this address space"). 172.20.0.0/16
+    #    confirmed clear of every network already on this host.
+    - name: Fix Wings config -- avoid Docker subnet collision with existing networks
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '172\.18\.0\.(1|0/16)'
+        replace: '172.20.0.\1'
+      register: pterodactyl_wings_subnet_fix
+
+    - name: Remove the Docker network so Wings recreates it with corrected settings
+      community.docker.docker_network:
+        name: pterodactyl_nw
+        state: absent
+      when: >-
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed
+
+    - name: Restart Wings if any config fix actually changed something
+      ansible.builtin.systemd:
+        name: wings
+        state: restarted
+      when: >-
+        pterodactyl_wings_origins_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed or
+        pterodactyl_wings_subnet_fix.changed
+
     - name: Install Wings systemd unit
       ansible.builtin.copy:
         dest: /etc/systemd/system/wings.service
