@@ -69,37 +69,14 @@ a single project in isolation; it stops being reasonable once a second,
 differently-shaped project hits the identical need and a third is
 expected.
 
-## 3. Storage convention
+## 3. Storage convention — Phase 0 complete, see `CONVENTION.md`
 
-A shared directory layout every project's own tooling writes to at the
-end of a run, independent of what storage backend eventually serves it:
-
-```text
-reports/<project>/<run-id>/
-  report.md              # required — every project must produce one,
-                          # even if it's a generated summary of
-                          # otherwise-structured data (CyberSecEval's
-                          # stats/pass-fail counts rendered as a markdown
-                          # table, for example)
-  manifest.json           # required — project name, run-id, started_at,
-                          # finished_at, and a free-form `summary` field
-                          # a listing view can show without opening the
-                          # report
-  <anything else>         # optional raw artifacts: JSON, transcripts,
-                          # logs, fetched sources -- whatever the project
-                          # already produces, kept as-is
-```
-
-`run-id` format is each project's own choice (deep-research already uses
-`run_<epoch>`; CyberSecEval would likely use its existing Celery task ID)
-— the convention only fixes the directory shape, not the ID scheme.
-
-`report.md` is the one hard requirement, because it's what makes this a
-**reporting** platform rather than a generic artifact dump: whatever a
-project's native output shape is (narrative markdown, structured JSON,
-pass/fail matrices), it's each project's own responsibility to render a
-human-readable summary of it, not the shared viewer's job to guess how to
-present arbitrary JSON meaningfully.
+The shared directory layout every project's own tooling writes to at the
+end of a run (`reports/<project>/<run-id>/`, a required `report.md` +
+`manifest.json`, optional raw artifacts) is now written down as the
+stable reference: **[`CONVENTION.md`](CONVENTION.md)**. Link to that file
+from other projects' docs rather than re-deriving or duplicating this
+section — it exists precisely so the convention is defined once.
 
 ## 4. The viewer service
 
@@ -196,12 +173,10 @@ that.
 
 ## 7. Implementation phases
 
-### Phase 0: document the convention, no code
+### Phase 0: document the convention, no code — COMPLETE 2026-09-22
 
-Write the storage convention (§3) into a short, stable reference doc
-both `deep-research` and CyberSecEval's own docs can point to, so it's
-defined once, not re-derived per adopter. Exit: convention documented,
-not yet adopted by either project.
+Written as `CONVENTION.md`. Not yet adopted by either project — that's
+Phase 1 (`deep-research`) and Phase 2 (CyberSecEval).
 
 ### Phase 1: generalize the viewer, `deep-research` as first adopter
 
