@@ -731,7 +731,9 @@ questions:
    was added 2026-09-21 purely so the operator could download a report from
    a browser; this is explicitly **not** the Stage B design — see Phase 4's
    `deep-research-files` service for the real replacement (non-root,
-   restart-managed, behind `forwardAuth`).
+   restart-managed, behind `forwardAuth`). Longer-term, this same gap
+   generalizes across projects — see `docs/reporting-platform/CONVENTION.md`
+   and its plan, which names `deep-research` as its Phase 1 first adopter.
 
 4. **`cve-mcp` is confirmed as the right specialist tool for CVE/vuln-class
    queries, validated by a live run, not just planned.** A real CVE lookup

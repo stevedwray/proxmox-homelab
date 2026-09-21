@@ -418,6 +418,15 @@ sit at `PENDING` forever with nothing left to process them (harmless --
 they'll just expire out of Redis on their own). Jobs that were merely
 *queued but not yet started* did correctly get redelivered on restart.
 
+**This TTL-only storage is a real gap, not just an edge case.** Results
+and transcripts here live *only* in Redis with an expiry -- nothing
+survives past that TTL or a `FLUSHDB`, and the `task_acks_late` bug
+above shows a worker restart can lose a job outright. See
+`docs/reporting-platform/plan.md` Phase 2 for the planned fix (write
+`report.md`/`manifest.json` to durable disk storage per
+`docs/reporting-platform/CONVENTION.md`, independent of whatever renders
+it) -- not yet implemented.
+
 Fixed: added `task_acks_late = True` and `worker_prefetch_multiplier =
 1` to the Celery app config in `cse_tasks.py`, so a future killed/
 restarted worker redelivers an in-flight job instead of dropping it
