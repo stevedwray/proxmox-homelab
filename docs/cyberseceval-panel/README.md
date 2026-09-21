@@ -418,14 +418,21 @@ sit at `PENDING` forever with nothing left to process them (harmless --
 they'll just expire out of Redis on their own). Jobs that were merely
 *queued but not yet started* did correctly get redelivered on restart.
 
-**This TTL-only storage is a real gap, not just an edge case.** Results
-and transcripts here live *only* in Redis with an expiry -- nothing
-survives past that TTL or a `FLUSHDB`, and the `task_acks_late` bug
-above shows a worker restart can lose a job outright. See
-`docs/reporting-platform/plan.md` Phase 2 for the planned fix (write
-`report.md`/`manifest.json` to durable disk storage per
-`docs/reporting-platform/CONVENTION.md`, independent of whatever renders
-it) -- not yet implemented.
+**Correction, 2026-09-22:** the raw benchmark output
+(`responses.json`/`run.log`/`stat.json`) was actually already durable on
+`cse-controller`'s own disk at `/srv/cyberseceval/runs/panel-<job_id>/`
+the whole time -- never truly Redis-only. What genuinely only lived in
+Redis (Celery's task-result TTL, plus this panel's own separate 24h
+`job_meta` TTL) was the panel's *ability to discover* a run ever
+happened, and any human-readable summary of it -- once those keys
+expired, the files on disk became undiscoverable orphans, which has the
+same practical effect as data loss even though the bytes technically
+survive. **Fixed 2026-09-22**: `cse_tasks.py`'s `run_benchmark` now
+writes `report.md` + `manifest.json` into the same already-durable
+`run_dir`, per `docs/reporting-platform/CONVENTION.md` (Phase 2 of
+`docs/reporting-platform/plan.md`) -- verified live against a real
+benchmark run, and against a pre-existing run confirmed to lack both
+files beforehand.
 
 Fixed: added `task_acks_late = True` and `worker_prefetch_multiplier =
 1` to the Celery app config in `cse_tasks.py`, so a future killed/

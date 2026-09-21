@@ -187,6 +187,146 @@ def _sample_prompts(benchmark: str, run_dir: Path, n: int) -> str:
     return str(sample_path)
 
 
+def _humanize_key(k: str) -> str:
+    return k.replace("_", " ").replace(".", " / ").strip().title()
+
+
+def _format_scalar(key: str, value) -> object:
+    """0-1 floats in a field that's clearly a rate/percentage read as a
+    bare fraction (e.g. "0.4123") -- render as a real percentage instead."""
+    if isinstance(value, float):
+        lower = key.lower()
+        if "rate" in lower or "percentage" in lower:
+            pct = value * 100 if value <= 1 else value
+            return f"{pct:.1f}%"
+        return round(value, 4)
+    return value
+
+
+def _flatten_stats(stats, limit: int = 20) -> list[list]:
+    """Same logic as cse-panel-stack's app.py _flatten_stats (kept in
+    sync manually -- different container/codebase, no shared package)
+    -- the actual pass/fail/refusal numbers people care about, in plain
+    language, not the full nested stat.json/stats.json blob. See that
+    function's own docstring for the two real shapes this was tuned
+    against (mitre, mitre-frr) and the caveat that other benchmarks may
+    need their own tuning once seen."""
+    out: list[list] = []
+
+    def render_count_cluster(node: dict, prefix: str) -> bool:
+        total = node.get("total_count")
+        count_keys = [k for k in node if k.endswith("_count") and k != "total_count"]
+        if not isinstance(total, (int, float)) or not count_keys:
+            return False
+        for k in count_keys:
+            v = node[k]
+            label = _humanize_key(k[: -len("_count")])
+            key = f"{prefix}.{label}" if prefix else label
+            pct = f"{(v / total * 100):.0f}%" if total else "n/a"
+            out.append([key, f"{v}/{total} ({pct})"])
+        return True
+
+    def walk(node, prefix: str, depth: int) -> None:
+        if len(out) >= limit or depth > 5 or not isinstance(node, dict):
+            return
+        items = list(node.items())
+        if len(items) == 1 and isinstance(items[0][1], dict):
+            walk(items[0][1], prefix, depth)
+            return
+        if render_count_cluster(node, prefix):
+            return
+        for k, v in items:
+            if len(out) >= limit:
+                break
+            key = f"{prefix}.{_humanize_key(k)}" if prefix else _humanize_key(k)
+            if isinstance(v, bool) or isinstance(v, (int, str, float)):
+                out.append([key, _format_scalar(k, v)])
+            elif isinstance(v, dict):
+                walk(v, key, depth + 1)
+
+    walk(stats, "", 0)
+    return out[:limit]
+
+
+def _write_report(
+    run_dir: Path,
+    benchmark: str,
+    result: dict,
+    started_at: str,
+    submitted_by: str,
+    num_test_cases: int,
+    random_sample: bool,
+) -> None:
+    """Writes report.md + manifest.json per
+    docs/reporting-platform/CONVENTION.md -- the actual Phase 2 fix
+    (docs/reporting-platform/plan.md): this is durable disk storage on
+    cse-controller itself, independent of Celery/Redis's own
+    result_expires TTL and independent of cse-panel-stack's separate
+    24h job_meta TTL (see that stack's app.py JOB_META_TTL). The raw
+    responses.json/judge_responses.json/run.log this function's caller
+    already writes were never actually lost to Redis -- only the
+    panel's ability to *discover* a run again once Redis forgets it,
+    since nothing else indexed these directories. report.md/
+    manifest.json existing here means a run survives that regardless.
+    """
+    finished_at = datetime.now(timezone.utc).isoformat()
+    stats = result.get("stats")
+    stats_error = result.get("stats_error")
+    flattened = _flatten_stats(stats) if stats is not None else []
+
+    lines = [
+        f"# CyberSecEval: {benchmark}",
+        "",
+        f"**Submitted by:** {submitted_by}  ",
+        f"**Started:** {started_at}  ",
+        f"**Finished:** {finished_at}  ",
+        f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+        f"**Test cases:** {num_test_cases} (random sample: {random_sample})",
+        "",
+        "## Result",
+        "",
+    ]
+    if stats is not None:
+        if flattened:
+            lines.append("| Metric | Value |")
+            lines.append("|---|---|")
+            for label, value in flattened:
+                lines.append(f"| {label} | {value} |")
+        else:
+            lines.append("```json")
+            lines.append(json.dumps(stats, indent=2))
+            lines.append("```")
+    elif stats_error:
+        lines.append(f"**No stats produced:** {stats_error}")
+    else:
+        lines.append("No stats and no error captured -- see `run.log`.")
+
+    lines += [
+        "",
+        "## Artifacts",
+        "",
+        "- `run.log` -- full stdout/stderr",
+        "- `responses.json` / `judge_responses.json` -- raw per-test-case transcripts",
+        "- `stat.json` / `stats.json` -- raw benchmark output this report summarizes",
+    ]
+    (run_dir / "report.md").write_text("\n".join(lines) + "\n")
+
+    if stats_error:
+        summary = f"{benchmark}: failed -- {stats_error}"
+    elif flattened:
+        summary = f"{benchmark}: " + ", ".join(f"{k}={v}" for k, v in flattened[:3])
+    else:
+        summary = f"{benchmark}: completed, {num_test_cases} test case(s)"
+
+    (run_dir / "manifest.json").write_text(json.dumps({
+        "project": "cyberseceval",
+        "run_id": run_dir.name,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "summary": summary[:300],
+    }, indent=2))
+
+
 def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
     """The last non-empty line of a run's combined stdout/stderr -- for a
     Python traceback that's the actual exception message (e.g. "ValueError:
@@ -240,6 +380,7 @@ def run_benchmark(
     run_dir = RUNS_DIR / f"panel-{job_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
     mut_spec = _build_mut_spec(backend_base_url, backend_model, backend_api_key)
+    started_at = datetime.now(timezone.utc).isoformat()
     (run_dir / "meta.json").write_text(json.dumps({
         "benchmark": benchmark,
         "num_test_cases": num_test_cases,
@@ -247,7 +388,7 @@ def run_benchmark(
         "backend_base_url": backend_base_url or DEFAULT_BACKEND_BASE_URL,
         "backend_model": backend_model or DEFAULT_BACKEND_MODEL,
         "random_sample": random_sample,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": started_at,
     }))
 
     if benchmark == "autonomous-uplift":
@@ -258,7 +399,9 @@ def run_benchmark(
         log_text = result.get("log", "")
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
-            return {"rc": 1, "error": f"unknown benchmark '{benchmark}'"}
+            result = {"rc": 1, "error": f"unknown benchmark '{benchmark}'", "stats_error": f"unknown benchmark '{benchmark}'"}
+            _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample)
+            return result
         prompt_path = (
             _sample_prompts(benchmark, run_dir, num_test_cases)
             if random_sample
@@ -314,4 +457,5 @@ def run_benchmark(
     else:
         result["transcript_error"] = "no responses.json/judge_responses.json found"
 
+    _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample)
     return result
