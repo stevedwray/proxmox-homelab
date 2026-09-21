@@ -152,7 +152,12 @@
     # code, not a published upstream image.
     ai_services_deep_research_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/deep-research-agent"
     ai_services_deep_research_build_dir: "{{ ai_services_compose_dir }}/deep-research-agent"
-    ai_services_deep_research_files_source_dir: "{{ repo_root }}/scripts/deep-research-files"
+    # deep-research-files: Phase 1 of docs/reporting-platform/plan.md --
+    # the shared reports viewer, generalized from a deep-research-only
+    # file server. Now built from its own source (real markdown rendering
+    # needs the `markdown` package, not stdlib), same pattern as
+    # deep-research's own image above -- no more bind-mounted script.
+    ai_services_deep_research_files_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/deep-research-files"
     ai_services_deep_research_files_build_dir: "{{ ai_services_compose_dir }}/deep-research-files"
     ai_services_deep_research_port: 8090
     ai_services_deep_research_files_port: 8091
@@ -315,17 +320,11 @@
         state: directory
         mode: "0750"
 
-    - name: Copy deep-research-files source
+    - name: Copy deep-research-files source (Dockerfile, serve.py)
       ansible.builtin.copy:
-        src: "{{ ai_services_deep_research_files_source_dir }}/serve.py"
-        dest: "{{ ai_services_deep_research_files_build_dir }}/serve.py"
-        # World-readable, not 0640: this bind-mounts into a container
-        # running as uid 1000 (deep-research-files has no matching
-        # /etc/passwd entry of its own), which can't read a root-owned
-        # 0640 file. Confirmed live 2026-09-21: "Permission denied"
-        # crash-looping until this was widened. Not sensitive content
-        # either way -- it's the file server's own source, not a secret.
-        mode: "0644"
+        src: "{{ ai_services_deep_research_files_source_dir }}/"
+        dest: "{{ ai_services_deep_research_files_build_dir }}/"
+        mode: preserve
       register: ai_services_deep_research_files_copy_result
 
     - name: Install OpenWebUI docker-compose.yml
@@ -488,30 +487,34 @@
                 retries: 10
                 start_period: 20s
 
-            # Read-only file server over deep-research's own workspace data
-            # -- replaces the Stage A stopgap (python3 -m http.server, run
-            # by hand as root). Stdlib-only script, no build step -- a
-            # plain image plus a bind-mounted script, same pattern
-            # scripts/ollama-reliability-proxy/proxy.py used before it was
-            # removed (2026-09-22, Ollama no longer in active use).
+            # Shared reports viewer -- Phase 1 of
+            # docs/reporting-platform/plan.md. Generalized from a
+            # deep-research-only file server (replaced the Stage A
+            # stopgap, python3 -m http.server run by hand as root) into
+            # the shared convention's viewer: real markdown rendering
+            # (needs the `markdown` package, hence a real build now, not
+            # a bind-mounted stdlib script) and JSON pretty-printing.
+            # deep-research is wrapped as this viewer's one project via a
+            # symlink the container creates at startup (see serve.py) --
+            # no change to deep-research's own output location.
             deep-research-files:
-              image: "{{ ai_services_registry_host }}/dockerhub/library/python:3.12-slim"
+              build:
+                context: ./deep-research-files
               container_name: deep-research-files
               restart: unless-stopped
-              command: ["python3", "/serve.py"]
-              # Matches the named volume's owning uid (1000, from
-              # deep-research's Dockerfile `useradd --uid 1000`) -- this
-              # image has no matching /etc/passwd entry, but a numeric
-              # uid:gid needs none for a stdlib script with no $HOME use.
-              user: "1000:1000"
               ports:
                 - "{{ ai_services_deep_research_files_port }}:{{ ai_services_deep_research_files_port }}"
               environment:
                 SERVE_HOST: "0.0.0.0"
                 SERVE_PORT: "{{ ai_services_deep_research_files_port }}"
                 WORKSPACE_DIR: /home/app/.deep-research-agent/workspace
+                REPORT_PROJECT_NAME: deep-research
+              # Mounted at /home/app (not a /data subdir) deliberately,
+              # same reasoning as deep-research's own volume above: this
+              # image's Dockerfile also runs `useradd --create-home --uid
+              # 1000 app`, so the already-uid-1000-owned named volume is
+              # readable without a numeric user: override.
               volumes:
-                - "{{ ai_services_deep_research_files_build_dir }}/serve.py:/serve.py:ro"
                 - ai-services-deep-research-data:/home/app:ro
               depends_on:
                 deep-research:
@@ -563,50 +566,21 @@
         # elsewhere this session). Force recreation whenever the compose
         # file's own content changed.
         recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
-        # deep-research is the only service here with a build: section --
-        # same 'build: always' used by mcp-utility-stack's cve-mcp-server/
-        # docs-rag-mcp, its own build-from-source precedent. openwebui/
-        # searxng/deep-research-files all use plain image: references, so
+        # deep-research and deep-research-files both have a build:
+        # section now -- same 'build: always' used by mcp-utility-stack's
+        # cve-mcp-server/docs-rag-mcp, its own build-from-source
+        # precedent. openwebui/searxng use plain image: references, so
         # this is a no-op for them.
         build: always
 
-    - name: Determine whether deep-research-files' source actually changed this run
-      ansible.builtin.set_fact:
-        ai_services_deep_research_files_changed: "{{ ai_services_deep_research_files_copy_result.changed and not ai_services_compose_definition.changed }}"
-        # A compose-file change already forced 'recreate: always' above,
-        # which picks up the new bind-mounted script for free. This only
-        # needs to fire for the source-only-changed case, which 'auto'
-        # silently misses (bind-mount content diffs don't trigger a
-        # compose recreate -- same bug class as docs-rag-mcp's corpus,
-        # found live 2026-08-25 when a real Copilot session kept dropping
-        # tool calls after a fix that had been "deployed" but never
-        # actually loaded).
-
-    - name: Restart deep-research-files to pick up a source-only change
-      community.docker.docker_container:
-        name: deep-research-files
-        state: started
-        restart: true
-      when: ai_services_deep_research_files_changed | bool
-
-    - name: Wait for deep-research-files to come back up after a source-change restart
+    - name: Wait for deep-research-files to come up
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ ai_services_deep_research_files_port }}/"
         status_code: [200, 404]
-      register: ai_services_deep_research_files_health_after_restart
-      retries: 20
+      register: ai_services_deep_research_files_health
+      retries: 30
       delay: 3
-      until: ai_services_deep_research_files_health_after_restart.status is defined
-      failed_when: false
-      when: ai_services_deep_research_files_changed | bool
-
-    - name: Fail if deep-research-files never came back up after restart
-      ansible.builtin.assert:
-        that:
-          - ai_services_deep_research_files_health_after_restart.status is defined
-          - ai_services_deep_research_files_health_after_restart.status in [200, 404]
-        fail_msg: "deep-research-files did not come back up after a source-change restart"
-      when: ai_services_deep_research_files_changed | bool
+      until: ai_services_deep_research_files_health.status is defined and ai_services_deep_research_files_health.status in [200, 404]
 
     - name: Wait for deep-research to come up
       ansible.builtin.uri:

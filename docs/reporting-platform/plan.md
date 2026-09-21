@@ -178,17 +178,47 @@ that.
 Written as `CONVENTION.md`. Not yet adopted by either project — that's
 Phase 1 (`deep-research`) and Phase 2 (CyberSecEval).
 
-### Phase 1: generalize the viewer, `deep-research` as first adopter
+### Phase 1: generalize the viewer, `deep-research` as first adopter — COMPLETE 2026-09-22
 
-`deep-research` already writes compatible output today (a `report.md`
-equivalent exists as `final_report.md` — decide whether to rename it to
-match the convention exactly, or teach the viewer both names). Lowest-risk
-adopter because it requires no new ingestion mechanism — same
-same-node, same-volume relationship `deep-research-files` already has.
-Generalize the viewer per §4 (markdown rendering, JSON pretty-printing,
-project→run hierarchy instead of a flat run list). Exit: `deep-research`'s
-reports render properly through the generalized viewer; no regression to
-existing functionality (parent-directory link, last-modified column).
+Shipped without touching `deep-research`'s own code: rather than renaming
+`final_report.md` to `report.md` or teaching the viewer both names, the
+viewer wraps `deep-research`'s existing output directory as the
+`deep-research` project via a symlink it creates at its own startup
+(`WORKSPACE_DIR` → `REPORTS_ROOT/deep-research`) — the convention's
+`project/run-id/` URL shape exists without deep-research itself needing
+to know about it. `manifest.json` isn't written by `deep-research` yet
+either; the viewer degrades gracefully (falls back to filesystem
+mtime for the run listing) rather than requiring it.
+
+`deep-research-files` graduated from a bind-mounted stdlib script to a
+real built image (own `Dockerfile`, `markdown==3.7` dependency) — real
+table rendering needs a real parser, the earlier from-scratch approach
+wasn't going to get there. Renders `.md` to styled HTML and `.json`
+pretty-printed; everything else still downloads as raw bytes.
+
+Two real bugs found deploying this, neither caught by local testing
+alone:
+
+- The named volume mounts at `/home/app` read-only, which shadows
+  *anything* the image put there — including `serve.py` itself when it
+  was first copied to `/home/app/serve.py` (`Dockerfile`'s `WORKDIR`).
+  Confirmed live: "can't open file '/home/app/serve.py'", crash-looping.
+  Fixed by moving the script to `/opt/app/serve.py`, outside the mounted
+  path — the same failure class `mcp-utility-stack`'s own
+  `cve-mcp-server` volume-mount comment already warns about.
+- Local render tests all used well-formed synthetic markdown. Against a
+  real, pre-existing report, one of its own tables (header row: 4
+  columns, separator row: 2) failed to render as an HTML table —
+  `markdown`'s `tables` extension is strict about matching column
+  counts and correctly falls back to a plain paragraph rather than
+  guessing. Not a viewer bug; a genuine pre-existing malformation in
+  that specific LLM-generated report's own markdown, surfaced only by
+  testing against real production data instead of a hand-written
+  fixture.
+
+Regression-checked live: `openwebui`/`searxng` still `200`, both
+`deep-research`/`deep-research-files` routes still challenge through
+Authentik correctly (`302` to the real login page).
 
 ### Phase 2: retrofit CyberSecEval onto the convention
 
