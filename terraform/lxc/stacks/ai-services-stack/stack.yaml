@@ -1,4 +1,4 @@
-# OpenWebUI + SearXNG — ai_seg zone (pve / pve-test-vm).
+# OpenWebUI + SearXNG + deep-research-agent — ai_seg zone (pve / pve-test-vm).
 # Standard Docker-based stack (matches monitoring-stack's shape: one
 # container, multiple related Docker services in one compose file) --
 # unlike llm-gpu-stack/comfyui-stack, this needs no GPU passthrough.
@@ -10,6 +10,14 @@
 # for the full migration design, including why this is a rewrite rather than
 # a reuse of the old pve-framework-era stack.yaml (stale addressing bug: it
 # parameterized on what is now framework's own flat-LAN IP).
+#
+# deep-research (+ its deep-research-files sidecar) added 2026-09-21,
+# folded in here rather than a new dedicated stack/LXC: same reasoning as
+# above (thin network client of Framework, no local GPU/compute of its
+# own), plus this zone already reaches both Framework and cve-mcp-server
+# (mcp-utility-stack, also ai_seg). Replaces the Stage A throwaway LXC
+# (VMID 50014), which is disposed of, not migrated. See
+# docs/deep-research/plan.md Phase 4 for the full design.
 
 hostname: ai-services-stack
 ip_address: "${lab_ip_ai_services}/24"
@@ -37,12 +45,19 @@ tags:
   - ai
   - openwebui
   - searxng
+  - deep-research
   - docker
 depends_on:
   - apt-cacher-stack
 provides:
   - service: openwebui-http
     port: 8081
+    protocol: tcp
+  - service: deep-research-http
+    port: 8090
+    protocol: tcp
+  - service: deep-research-files-http
+    port: 8091
     protocol: tcp
 ansible_playbook: "deploy-ai-services-stack"
 deployment_tier: ai

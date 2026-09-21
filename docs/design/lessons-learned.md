@@ -103,6 +103,36 @@ fields in `stack.yaml` so `/opt/proxy-stack/certs` is persisted.
 
 ## Authentik
 
+**`reconcile-edge.py --apply` only renders generated config; it does not
+publish it.** Confirmed live 2026-09-21 while adding a new route to
+`ai-services-stack`'s `edge.yaml`: `--apply` writes
+`terraform/lxc/environments/<env>/.generated/traefik/*.yml` and
+`.../.generated/technitium/zone-records.json`, and reconciles Authentik
+objects directly via its API — but it does **not** push the generated
+Traefik config or DNS records to the live containers. Two further, separate
+steps are required and are easy to miss from `STACK_CONTRACT.md` wording
+alone:
+
+1. `ansible-playbook -i terraform/lxc/environments/<env>/proxy-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir=<repo>/terraform/lxc/environments/<env>/.generated/traefik`
+   — pushes the rendered Traefik dynamic config live and restarts Traefik via
+   compose. `scripts/provision.sh --stack proxy-stack` run alone in
+   single-stack mode does **not** do this — it explicitly logs `SKIP edge
+   reconcile: single-stack mode (activate-edge phase handles this)`. The
+   inventory and generated-dir paths must be the per-environment ones under
+   `terraform/lxc/environments/<env>/...`, not `terraform/lxc/stacks/...`.
+2. `scripts/provision.sh --stack technitium-stack` — separately required to
+   publish the new DNS record(s) to the live authoritative Technitium
+   server. Unlike step 1, this one *is* self-contained: it regenerates zone
+   records from all `EdgeManifest`s and pushes them as part of its own
+   normal per-stack apply, no extra flags needed.
+
+The multi-stack `activate-edge` phase in `scripts/teardown-deploy-test.sh`
+(pve-test-vm-only) already does both of these steps automatically as part
+of its own sequence — its `phase_activate_edge()` function is the reference
+implementation for the exact commands, even though that script itself must
+not be run against production. See `docs/deep-research/plan.md`'s Phase 5
+section for a full worked example (adding `deep-research.${LAB_DOMAIN}`).
+
 **Authentik must be in `mgmt_seg` with explicit allow rules from `edge_seg` and any app zone.**
 Traefik (edge_seg) reaches the Authentik forward-auth endpoint at `192.168.20.10:9000`.
 Any service that delegates auth to Authentik must also be able to reach it. Verify zone

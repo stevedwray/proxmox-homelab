@@ -1,0 +1,52 @@
+api:
+  # Framework's Nathanw llama.cpp endpoint, brought back up and IaC-backed
+  # by docs/deep-research/plan.md Phase 0 (2026-09-21). Do not hard-code a
+  # model ID beyond what's actually loaded there. Overridden at container
+  # runtime via OPENAI_API_BASE (config.py always prefers the env var) --
+  # this value is only the fallback if that's ever unset.
+  openai_base_url: http://framework.gibbsgreatly.xyz:8080/v1
+  openai_model: local-model
+settings:
+  enable_thinking: false
+  concurrency:
+    # Start at 1 for the first Stage A runs (plan.md 2.3: "start with one
+    # searcher at a time, then test two concurrent searchers"). Raise only
+    # after measuring throughput/quality, not by default.
+    max_concurrent_tasks: 1
+  quotas:
+    # IMPORTANT (scaffold behavior, not a plan.md assumption): these quotas
+    # are GLOBAL, shared across every agent instance using that tool name --
+    # NOT per-agent-instance. plan.md's original quota table described
+    # "max_searches: 5 # per searcher instance", which does not match how
+    # this scaffold's tools/core.py check_quota() actually works (a single
+    # shared counter keyed by tool name). Numbers below are sized as pools
+    # covering up to ~4 concurrent Searchers, not 5-per-searcher literally --
+    # see docs/deep-research/current-state.md for this finding, captured
+    # during Stage A implementation.
+    delegate_tasks: 20        # shared by Orchestrator's angle delegations AND every Searcher's Analyzer delegations
+    web_search: 20            # shared across all Searcher instances
+    fetch_url_to_workspace: 16
+    write_workspace_file: 5   # Orchestrator only writes final_report.md (and maybe todos state)
+    read_workspace_file:
+      limit: 40
+      rules:
+        max_lines: 300
+    grep_workspace_file:
+      limit: 40
+      rules:
+        max_matches: 10
+  enable_conversational_memory: false
+  # Enabled for Stage B (2026-09-21): /new, /sessions, /resume let an
+  # overnight headless run be inspected afterward without keeping a
+  # browser tab open the whole time -- see docs/deep-research/plan.md
+  # Phase 5, point 2.
+  enable_session_persistence: true
+  workspace:
+    # Disk, not memory: Stage A needs to inspect fetched pages and the final
+    # report after a run, per plan.md's workspace/source model (runs/<run-id>/).
+    type: disk
+    dir: "~/.{APP_NAME}/workspace"
+    session_isolation: true
+    required_artifact: "final_report.md"
+  permissions:
+    remove_workspace_file: require_approval
