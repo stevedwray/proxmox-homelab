@@ -69,3 +69,25 @@ spec:
         # leave this as the final state -- see plan.md for the Authentik
         # follow-up.
         mode: none
+    - name: deep-research-files
+      host: deep-research-files.${LAB_DOMAIN}
+      backend:
+        type: url
+        # Read-only `python3 -m http.server` over the Stage A LXC's workspace
+        # dir (VMID 50014, port 8091), so final_report.md and run artifacts
+        # are downloadable from a browser instead of only readable by an
+        # operator with pct exec access. Same throwaway-prototype posture as
+        # the `deep-research` route above -- see docs/deep-research/plan.md.
+        url: http://192.168.50.13:8091
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Same deliberate step-1-of-2 posture as the `deep-research` route:
+        # unauthenticated for now, Authentik OIDC deferred to the same
+        # follow-up step covering both routes. Directory listing exposes
+        # only research-report artifacts, not credentials or infra config.
+        mode: none

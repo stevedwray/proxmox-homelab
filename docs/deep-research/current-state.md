@@ -16,14 +16,39 @@ tracks current live state.
 - Browser access: **`https://deep-research.lab.gibbsgreatly.xyz` is live**,
   unauthenticated (`auth.mode: none` — Authentik step 2 not yet done),
   routed through the production Traefik/Technitium DNS.
-- An operator-driven research query (CVE/KEV lookup) was in progress via
-  the browser UI as of this update; see `plan.md`'s Phase 5 section for
-  what it revealed about DDGS behavior under sustained use and quota
-  handling. Outcome not yet recorded — check `plan.md` for the latest.
+- A follow-up read-only file server (`python3 -m http.server 8091` over the
+  workspace dir) is being added at `deep-research-files.lab.gibbsgreatly.xyz`
+  so reports are downloadable from a browser — **explicitly a stopgap**, not
+  the Stage B design; see `plan.md` Phase 5, point 3.
+- **Session persistence found already built into the vendored scaffold, just
+  defaulted off** — `/new`, `/sessions`, `/resume`, `--list-sessions`,
+  `--resume <id>` all exist in `engine/tui.py`/`app.py`. Flipped on
+  (`enable_session_persistence: true`) in the live LXC config 2026-09-21.
+- **Real bug found and fixed**: `web_search`/`fetch_url_to_workspace` calls
+  hung for 1190-1260s (not just "slow DDGS") during a real operator-driven
+  CVE/KEV query — `httpx`'s own `timeout=30` only bounds individual network
+  I/O, not the whole `asyncio.to_thread()`-wrapped call, so a stuck DDGS
+  backend or pathological-page parse (`BeautifulSoup`/`markitdown`) could
+  hang indefinitely. Confirmed live via `ss -tnp` showing the query process
+  at 40% CPU with every socket stuck in `CLOSE-WAIT` holding unread bytes —
+  real CPU burn, zero forward progress. Fixed by wrapping both calls in
+  `asyncio.wait_for()` (45s fetch / 30s search ceiling) in
+  `tools/web.py` — a stuck call now fails gracefully instead of hanging the
+  agent. Caveat: Python cannot forcibly kill the underlying OS thread, so a
+  genuinely stuck thread may keep running in the background after the
+  `wait_for` gives up; this stops the *agent* from hanging, it doesn't
+  guarantee instant thread death.
+- A real CVE/KEV query (CVE-2026-93957) completed successfully after the
+  timeout fix — correct, well-cited, cross-referenced answer with gaps
+  explicitly flagged; see `plan.md` Phase 5, point 4 for what it revealed
+  about `cve-mcp` being a better-fitting tool for this query class than
+  generic web search.
 - **Known limitation**: the browser TUI session is not resilient to
   disconnection (closing the tab kills the in-progress query) — see
   `plan.md` Phase 5 for why. Use headless `--prompt --auto-approve` for
-  anything that must survive a client disconnecting.
+  anything that must survive a client disconnecting. Confirmed as a
+  required Stage B design point (job model decoupled from the browser
+  connection), not just a known quirk — see `plan.md` Phase 5, point 2.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 

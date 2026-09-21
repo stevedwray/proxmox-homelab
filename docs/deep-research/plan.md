@@ -337,6 +337,27 @@ specific run outcome rather than disguised as “no information found.”
 Agents must stop when they have enough independent evidence to satisfy the
 task, not when every quota has been consumed.
 
+**Concurrency gap found in Stage A, relevant to Stage B's job model (2.0/Phase
+5):** the vendored scaffold's `tools/core.py` `check_quota()` enforces quotas
+as a single counter keyed by tool name, shared globally across every agent
+instance in the process — not per-run and not per-searcher-instance, despite
+`plan.md`'s original quota table reading as "per searcher instance" (see
+`current-state.md` for the full finding). This is survivable for Stage A's
+one-run-at-a-time usage. It actively breaks under Stage B's confirmed
+job-model direction (Phase 5, point 2), where multiple overnight runs may be
+in flight together: two concurrent jobs would silently share and starve
+each other's `web_search`/`fetch_url_to_workspace` budget. Stage B's job
+layer must scope quotas per run, not rely on the scaffold's global counters
+as-is.
+
+**Related: the shared Framework endpoint has no request-concurrency limiter.**
+Framework's llama.cpp instance is a single, memory-fragile shared resource
+(see Phase 0's incident notes — a prior uncoordinated double-load already
+caused a full host hang). Stage B's job model should place a concurrency
+limiter between the agent runtime and that endpoint before allowing multiple
+jobs to run in parallel, rather than assuming the endpoint can absorb
+arbitrary concurrent load.
+
 ## 5. Security requirements
 
 Public pages and search snippets are untrusted input. They may contain prompt
@@ -577,17 +598,77 @@ modifies zones/firewall topology.
 Exit: a private production service completes the evaluation smoke set without
 regressing OpenWebUI or SearXNG.
 
-### Phase 5 (Stage B): optional UI and specialist tools
+### Phase 5 (Stage B): UI, auth, artifacts, and specialist tools — decisions confirmed 2026-09-21
 
-- Decide whether the Textual UI is sufficient or a small authenticated web UI
-  is warranted.
-- If externally routed, add Traefik and Authentik deliberately and validate
-  the actual login path.
-- Add `docs-rag` and `cve-mcp` as scoped tools with task-dependent exposure.
-- Add result browsing, retention, cancellation, and observability.
+The Stage A `--web` prototype (Textual UI over `textual-serve`, Traefik route
+live at `deep-research.lab.gibbsgreatly.xyz`) answered the "is a browser UI
+warranted" question empirically: yes, it works and the operator used it for
+real queries, but three real gaps surfaced from that actual use, not
+speculation, and are now confirmed requirements for Stage B rather than open
+questions:
 
-Exit: the operator-facing workflow is usable without widening tool or network
-access unnecessarily.
+1. **Authentik OIDC is required, not optional.** Both the `deep-research` and
+   `deep-research-files` (see point 3) routes currently run `auth.mode: none`
+   — deliberately, as Stage A's own step 1 of 2 rollout, but explicitly not
+   acceptable as a long-term state (see `current-state.md`). Stage B adds a
+   real Authentik application/provider and validates the actual login path
+   for both routes before they're considered production, per the Authentik
+   row in `CLAUDE.md`'s Validation Tiers.
+
+2. **Session/job lifecycle must not depend on the browser connection staying
+   open.** `textual-serve`'s `AppService.stop()` sends a `quit` message on
+   WebSocket disconnect, which kills the underlying agent process — closing
+   the tab (or a workstation reboot) kills an in-progress run. This is fine
+   for short interactive queries but wrong for anything expected to run
+   unattended overnight, which this project explicitly needs to support.
+   Stage A's workaround is real but manual: launch headless
+   (`app.py --prompt "<topic>" --auto-approve`, detached via `setsid`/`nohup`
+   from any SSH/browser session) instead of via `--web` for any run that
+   must survive a disconnect, then inspect it afterward via the scaffold's
+   already-built-in `--list-sessions`/`--resume <id>` (session persistence
+   was found already implemented in the vendored scaffold, just defaulted
+   off — `enable_session_persistence: true` was flipped on in Stage A's live
+   config 2026-09-21). **Stage B should make this a first-class job model**:
+   submitting a topic returns a job identifier immediately, independent of
+   any browser tab; the browser becomes a viewer/poller of jobs, not the
+   process that keeps them alive. Do not solve this by patching
+   `textual-serve`'s socket-lifecycle behavior directly — build the
+   decoupled job layer instead.
+
+3. **Result/artifact access needs real endpoints, not a bare file server.**
+   `final_report.md` and a run's intermediate fetched sources currently only
+   exist inside the Stage A LXC's filesystem, reachable only via `pct exec`/
+   `scp`. A stopgap read-only `python3 -m http.server` over the workspace
+   directory (route: `deep-research-files.${LAB_DOMAIN}`) was added
+   2026-09-21 purely so the operator can download a report from a browser;
+   this is explicitly **not** the Stage B design. Stage B needs real
+   endpoints (list runs, fetch a given run's report, list its sources)
+   behind the same Authentik auth as the main UI, backed by storage that
+   isn't a throwaway LXC's root disk.
+
+4. **`cve-mcp` is confirmed as the right specialist tool for CVE/vuln-class
+   queries, validated by a live run, not just planned.** A real CVE lookup
+   query run through Stage A on 2026-09-21 (`CVE-2026-93957`, see
+   `current-state.md`) manually re-fetched NVD, EPSS, CISA KEV, OSV.dev,
+   GitHub Advisories, and MITRE/Red Hat/Ubuntu security pages one at a time
+   via generic `web_search`/`fetch_url_to_workspace` — exactly the source
+   set `cve-mcp-server` (already live at `192.168.50.10:8000/mcp`,
+   `mcp-utility-stack`, per `docs/mcp-stack/plan.md`) already integrates as
+   structured API calls. Routing CVE-class queries to `cve-mcp` instead of
+   generic web search should be both faster and more reliable than the DDGS
+   path this query class currently takes; it does not replace general web
+   search for non-CVE topics. Confirms and sharpens §2.6's existing "offer
+   `cve-mcp` only to security-related searchers" line — this is no longer a
+   hypothetical option, it's a scoped Stage B tool decision backed by a real
+   before/after comparison of what the generic path actually did.
+- Add `docs-rag` as a scoped tool for searchers working on homelab/repository
+  questions, per §2.6, task-dependent exposure (unchanged from the original
+  plan).
+
+Exit: the operator-facing workflow survives a browser/client disconnect for
+long-running jobs, both edge routes are authenticated, report artifacts are
+reachable through real endpoints rather than filesystem access, and
+CVE/vuln-class queries are routed to `cve-mcp` rather than generic web search.
 
 ## 7. Evaluation plan
 
