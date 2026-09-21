@@ -8,18 +8,29 @@ day (a new Traefik/DNS route) once the plan called for prototyping a
 browser-based interface. See `plan.md` for the full narrative; this file
 tracks current live state.
 
-## Live state summary (end of day, 2026-09-21)
+## Live state summary (2026-09-22, current)
 
+- **Stage A LXC (VMID 50014) is decommissioned** — stopped and `pct
+  destroy`ed 2026-09-22, once Stage B was live, healthy, and had run a
+  real end-to-end query successfully. No data was migrated (operator's
+  own call: nothing from Stage A's test sessions needed preserving).
+  `192.168.50.13` no longer exists; do not reference it in new work.
+- **Stage B is the only deployment now** — `deep-research`/
+  `deep-research-files`, real Docker Compose services inside
+  `ai-services-stack` (VMID 50013), non-root, Authentik `forwardAuth` on
+  both routes, Graylog-bound logging. See Phase 4 in `plan.md` for the
+  full design and the three real bugs found deploying it.
 - Framework Nathanw endpoint: **up**, IaC-backed (Phase 0 complete).
-- Stage A LXC: **VMID 50014**, `deep-research-agent` app at
-  `/opt/deep-research-agent`, three-tier scaffold working.
-- Browser access: **`https://deep-research.lab.gibbsgreatly.xyz` is live**,
-  unauthenticated (`auth.mode: none` — Authentik step 2 not yet done),
-  routed through the production Traefik/Technitium DNS.
-- A follow-up read-only file server (`python3 -m http.server 8091` over the
-  workspace dir) is being added at `deep-research-files.lab.gibbsgreatly.xyz`
-  so reports are downloadable from a browser — **explicitly a stopgap**, not
-  the Stage B design; see `plan.md` Phase 5, point 3.
+- `ollama-reliability-proxy` **removed from `ai-services-stack` entirely**
+  2026-09-22 — Ollama/Laguna isn't in active use on this platform anymore
+  (Nathanw/llama.cpp has proven better performance/reliability here). Its
+  broken healthcheck (dead Framework Ollama upstream) had been causing
+  `openwebui` to need a manual restart after every redeploy touching the
+  shared compose file; removing it fixed that at the root.
+- Browser access: **`https://deep-research.lab.gibbsgreatly.xyz` and
+  `https://deep-research-files.lab.gibbsgreatly.xyz` are both live**,
+  behind real Authentik `forwardAuth` (confirmed live login round-trip,
+  distinct OAuth `client_id` per route).
 - **Session persistence found already built into the vendored scaffold, just
   defaulted off** — `/new`, `/sessions`, `/resume`, `--list-sessions`,
   `--resume <id>` all exist in `engine/tui.py`/`app.py`. Flipped on
