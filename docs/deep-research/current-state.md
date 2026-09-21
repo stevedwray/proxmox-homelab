@@ -1,7 +1,94 @@
 # Deep research: current state
 
-Checked 2026-09-21. This is an inventory, not a deployment record. No service
-or infrastructure changes were made while gathering it.
+Checked 2026-09-21. Originally gathered as a read-only inventory with no
+service or infrastructure changes. That is no longer true as of the
+incident below — this document now also records an actual outage caused by
+Phase 0 validation work, plus real production changes made later the same
+day (a new Traefik/DNS route) once the plan called for prototyping a
+browser-based interface. See `plan.md` for the full narrative; this file
+tracks current live state.
+
+## Live state summary (end of day, 2026-09-21)
+
+- Framework Nathanw endpoint: **up**, IaC-backed (Phase 0 complete).
+- Stage A LXC: **VMID 50014**, `deep-research-agent` app at
+  `/opt/deep-research-agent`, three-tier scaffold working.
+- Browser access: **`https://deep-research.lab.gibbsgreatly.xyz` is live**,
+  unauthenticated (`auth.mode: none` — Authentik step 2 not yet done),
+  routed through the production Traefik/Technitium DNS.
+- An operator-driven research query (CVE/KEV lookup) was in progress via
+  the browser UI as of this update; see `plan.md`'s Phase 5 section for
+  what it revealed about DDGS behavior under sustained use and quota
+  handling. Outcome not yet recorded — check `plan.md` for the latest.
+- **Known limitation**: the browser TUI session is not resilient to
+  disconnection (closing the tab kills the in-progress query) — see
+  `plan.md` Phase 5 for why. Use headless `--prompt --auto-approve` for
+  anything that must survive a client disconnecting.
+
+## Incident, 2026-09-21: Framework host hang during Phase 0 validation
+
+While validating the Phase 0 Ansible playbook
+(`ansible/00-initial-setup/framework-desktop-llamacpp-nathanw-vulkan.yml`),
+a "shadow" container was started on a different port to avoid colliding
+with the live `qwen38-flash-next-q4` container's name/port. It loaded a
+second full ~111GB copy of `Qwen3.8-Flash-Next-UD-Q4_K_XL` with `-ngl 99`
+(all layers GPU-resident) while the live container — already holding its
+own ~111GB resident copy — kept running. Combined demand (~222GB) exceeded
+the host's 122GB total unified memory. The host hung (SSH timed out during
+banner exchange) and required a hard reset by the operator.
+
+**Post-reset state:** the host is back up with memory clear, but **neither
+the shadow container nor the original live `qwen38-flash-next-q4` container
+is running.** Both had `restart_policy: "no"`/`auto_remove: true` (an exact
+reproduction of the live container's own pre-existing lack of supervision,
+captured before this incident — see below), so neither came back
+automatically after the reboot. The Framework inference endpoint this
+entire deep-research plan depends on is therefore **currently down** and
+needs to be manually brought back up before any further Stage A work.
+Do not assume it is available without checking `/health` first.
+
+The playbook has since been corrected with two pre-flight guards it should
+have had from the start: it now refuses to start if the live container is
+already running (unless doing a deliberate stop-first promote cutover), and
+refuses to start unless `/proc/meminfo`'s `MemAvailable` clears a threshold
+sized for this model's full resident footprint. Neither guard existed in
+the version that caused the incident.
+
+**Stage A scaffold built and first runs succeeded, 2026-09-21:** the Local
+Agent Builder scaffold was vendored and customized into a three-tier
+orchestrator/searcher/analyzer app at `/opt/deep-research-agent` inside the
+LXC below. Cross-checking the skill's own `CHECKLIST.md` after the first
+pass caught several real gaps (missing `agent_id` routing instructions in
+prompts, missing concrete `delegate_tasks` JSON examples, missing the
+fetch→capture→forward filename handoff from Searcher to Analyzer, an
+unpruned RAG/shell tool surface) — all fixed before running anything.
+`ddgs` was pinned to `9.16.0` rather than left unpinned as in the source
+example. Two real end-to-end runs against the (now IaC-backed) Framework
+endpoint both succeeded — see `plan.md` Phase 1 for the details and two
+findings worth carrying into Phase 2: quotas in this scaffold are global
+per tool name, not per-agent-instance as originally assumed, and the
+DuckDuckGo bot-detection flakiness seen via raw `curl` earlier in this
+document did not block the real `ddgs` client's actual queries.
+
+**Stage A LXC created 2026-09-21:** VMID `50014`, hostname
+`deep-research-stage-a`, `192.168.50.13` in `ai_seg`, unprivileged, 2
+cores/2GB RAM/512MB swap/12GB rootfs, throwaway (not Terraform-managed, no
+stack contract). Created manually per `plan.md` §2.1 since `pve-test-vm` is
+not used. No firewall changes were needed — confirmed live: reaches
+`framework.gibbsgreatly.xyz:8080/health` (200) and the public internet
+(tested against `1.1.1.1`, 301) using `ai_seg`'s existing egress rules.
+
+**Resolved, same day:** the corrected playbook was run in promote mode
+(`framework_llamacpp_nathanw_container_name=qwen38-flash-next-q4`,
+`..._port=8080`, `..._promote=true`), with the live container correctly
+absent so no stop-first step was needed and the memory guard passing
+against ~124GB available. It brought the endpoint back up and was
+independently re-verified afterward: `curl /health` returned `{"status":
+"ok"}`, and `/props` reported `n_ctx=262144`/`total_slots=4`, matching the
+pre-incident recorded values exactly. `docker ps` on Framework confirmed
+exactly one `qwen38-flash-next-q4` container running, no duplicates.
+**Phase 0 of `plan.md` is complete** — the endpoint is up and now has a
+reproducing, guarded Ansible playbook.
 
 ## Executive summary
 
@@ -23,7 +110,12 @@ either Proxmox stack.
 
 ## Framework Desktop inference
 
-The live endpoint at `framework.gibbsgreatly.xyz:8080` reported:
+**Status as of 2026-09-21: back up, IaC-backed.** The table below was
+originally captured before the incident above, and was independently
+re-confirmed unchanged after the Phase 0 playbook brought the endpoint
+back up (same `/health`/`/props` values).
+
+The endpoint at `framework.gibbsgreatly.xyz:8080` reports:
 
 | Property | Observed state |
 |---|---|
@@ -45,6 +137,52 @@ The live Nathanw deployment was performed directly by the operator. The older
 repository playbook at
 `ansible/00-initial-setup/framework-desktop-llamacpp-nathanw.yml` is explicitly
 documentation/reference and must not be assumed to reproduce the live model.
+
+### Live container configuration (captured 2026-09-21, read-only `docker inspect`)
+
+This is the exact configuration Phase 0's Ansible playbook must reproduce.
+Captured directly from the running container on `framework.gibbsgreatly.xyz`
+via `docker ps`/`docker inspect qwen38-flash-next-q4` — no changes made.
+
+| Field | Value |
+|---|---|
+| Container name | `qwen38-flash-next-q4` |
+| Image | `ghcr.io/nathanw1014/strix-halo-llamacpp:vulkan` |
+| Image digest (pin target) | `sha256:2fe2c66f712d23ff51cc99227ea6ef65d06979ff8381860fead494ea00d350cb` |
+| Image label `org.opencontainers.image.version` | `24.04` (this is the bundled Mesa/Ubuntu base label, not a fork release tag — do not confuse with the `v0.7.6.1` fork version cited in the old reference playbook; the live image was never confirmed to be that version) |
+| Command | `llama-server -m /models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf -ngl 99 -fa 1 --host 0.0.0.0 --port 8080 --load-mode mmap --no-host --no-repack --fit off` |
+| Bind mount | `/mnt/nvme2/models-gguf` (host) → `/models` (container), rw |
+| Model files present | 4-shard GGUF under `/mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/`, confirmed on disk (~111 GB total across shards) |
+| Devices | `/dev/dri` only, `rwm` — no `/dev/kfd`/video/render groups. Confirms the old reference playbook's Vulkan-not-HIP comment. |
+| Port | `8080/tcp` → host `8080`, bridge network |
+| Log driver | `syslog`, `syslog-address: tcp://127.0.0.1:10514`, `syslog-format: rfc5424`, tag `docker-{{.Name}}` — **not** the `json-file` driver other stacks in this repo default to; a rebuild that silently reverts to `json-file` changes where these logs land |
+| Restart policy | `"no"`, `AutoRemove: true` |
+| Env | Only `PATH=/opt/strix-halo-llamacpp/vulkan:...` — no other env vars set |
+| Created / last (re)started | Created 2026-09-17T19:55:31Z; last started 2026-09-19T20:26:34Z (a gap between these — it was manually restarted at least once) |
+
+Two things this capture leaves unresolved and Phase 0 must not guess at:
+
+1. **No `--ctx-size`/`-c` or `--parallel`/`-np` flag appears in the running
+   command**, yet the live `/props` endpoint reports `n_ctx: 262144` and
+   `total_slots: 4`. These are therefore either compiled-in defaults of this
+   specific fork/build, or defaults derived from the model's own GGUF
+   metadata (`n_ctx_train` is also 262144, matching) — not something visible
+   in the container's own invocation. A reproduction that adds explicit
+   `-c 262144 -np 4` flags is not proven equivalent to the live behavior
+   until the rebuilt container is confirmed to report the same `/props`
+   output; do not assume the flags are redundant just because the numbers
+   match today.
+2. **No systemd unit, cron job, or user-service was found supervising this
+   container** (`systemctl list-units --all`, `crontab -l`, and
+   `systemctl --user` all came back empty for anything llama/qwen/nathanw/
+   strix-related). Combined with `RestartPolicy: "no"` and `AutoRemove:
+   true`, the live service has **no automatic recovery on crash or host
+   reboot** — it was started by hand and stays up only until someone
+   restarts it. Phase 0's playbook should preserve this exact behavior
+   first (per the instruction to match the known-good config), then treat
+   adding real supervision as a separate, explicitly-flagged improvement
+   decision — not something to silently fix while "just" writing the IaC.
+
 The established current-state description is also recorded in
 [CyberSecEval current state](../cyberseceval-implementation/current-state.md).
 
@@ -219,3 +357,25 @@ homelab workload must be evaluated from the homelab's own egress path.
 - The llama.cpp endpoint is unauthenticated; access relies on network policy.
 - The correct runtime concurrency and model request limits have not been
   established for this workload.
+- ~~The live Nathanw llama.cpp deployment has no reproducing IaC.~~
+  **RESOLVED 2026-09-21** — `ansible/00-initial-setup/framework-desktop-llamacpp-nathanw-vulkan.yml`
+  now reproduces the live configuration (image pinned by digest, exact
+  command flags, bind mount, device, syslog log driver, no
+  supervision/auto-remove matching the original), with pre-flight guards
+  against the double-load failure mode that caused the same-day host-hang
+  incident above. `ansible/00-initial-setup/framework-desktop-llamacpp-nathanw.yml`
+  (the older, unrelated, explicitly-not-wired-up file for a different port/
+  model/build, written for CyberSecEval) is unaffected and still not to be
+  confused with this one.
+- **DDGS/DuckDuckGo reachability from this network is unresolved, not
+  confirmed-broken.** The 2026-08-02 finding above (SearXNG's `duckduckgo`/
+  `duckduckgo web` engines hit a hard TCP timeout, reproduced from a separate
+  workstation, confirmed at the router level) did not reproduce identically
+  on a fresh check from the workstation on 2026-09-21: two back-to-back
+  `curl` requests to `html.duckduckgo.com` returned HTTP 202 and then HTTP
+  400 within seconds of each other — active, inconsistent bot-detection
+  behavior, not a clean timeout. Neither result should be trusted as current
+  without re-testing from the actual runtime environment (the Stage A
+  throwaway LXC on `pve`, per `plan.md`) using the same client (`ddgs`) Stage A
+  will actually use — a `curl` GET does not reproduce what the `ddgs` Python
+  package's own request shape and backend selection will see.

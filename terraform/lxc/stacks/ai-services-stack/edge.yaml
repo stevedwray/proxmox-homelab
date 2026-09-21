@@ -45,3 +45,27 @@ spec:
         # unauthenticated network service; individual browser preferences
         # are stored in the user's cookie, not in an Authentik identity.
         mode: none
+    - name: deep-research
+      host: deep-research.${LAB_DOMAIN}
+      backend:
+        type: url
+        # Points at the Stage A throwaway LXC (VMID 50014, deep-research-agent
+        # --web mode on :8090), not a service inside ai-services-stack's own
+        # Docker network -- see docs/deep-research/plan.md. This route lives
+        # in ai-services-stack's edge.yaml as a matter of convenience (Stage B
+        # will eventually run inside this stack for real); it does not imply
+        # the backend is currently part of this stack.
+        url: http://192.168.50.13:8090
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Step 1 of a deliberately two-step rollout (docs/deep-research/plan.md):
+        # prove the Traefik route/DNS/TLS mechanism works on its own before
+        # adding an Authentik OIDC app in a separate, smaller change. Do not
+        # leave this as the final state -- see plan.md for the Authentik
+        # follow-up.
+        mode: none
