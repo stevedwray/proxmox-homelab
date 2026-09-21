@@ -13,6 +13,7 @@ service, not worth a dependency or build step. Serves a directory listing
 directly; never accepts a write of any kind (SimpleHTTPRequestHandler
 only implements GET/HEAD by default -- this file adds no write handler).
 """
+import datetime
 import functools
 import html
 import http.server
@@ -31,12 +32,14 @@ class BrowsableHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """SimpleHTTPRequestHandler, plus a link back up the tree.
 
     The stdlib handler has no way to navigate back up a level once you've
-    clicked into a subdirectory (e.g. a run's own folder) -- confirmed live
-    2026-09-22 (operator report). Reimplements list_directory() rather than
-    post-processing the parent class's HTML, because that class already
-    writes a Content-Length header sized for the *unmodified* body --
-    injecting an extra <li> afterward would leave that header wrong and
-    truncate the response in a real browser.
+    clicked into a subdirectory (e.g. a run's own folder), and shows no
+    date at all -- run directories are named after a raw epoch timestamp
+    (e.g. run_1789974125), unreadable at a glance. Both confirmed live
+    2026-09-22 (operator reports). Reimplements list_directory() rather
+    than post-processing the parent class's HTML, because that class
+    already writes a Content-Length header sized for the *unmodified*
+    body -- modifying the body afterward would leave that header wrong
+    and truncate the response in a real browser.
     """
 
     def list_directory(self, path):
@@ -52,23 +55,32 @@ class BrowsableHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         )
         rows = []
         if os.path.realpath(path) != os.path.realpath(self.directory):
-            rows.append('<li><a href="../">.. (parent directory)</a></li>')
+            rows.append('<tr><td><a href="../">.. (parent directory)</a></td><td></td></tr>')
         for name in entries:
             full_name = os.path.join(path, name)
             link_name = display_name = name
             if os.path.isdir(full_name):
                 link_name = display_name = name + "/"
+            try:
+                mtime = datetime.datetime.fromtimestamp(
+                    os.stat(full_name).st_mtime
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            except OSError:
+                mtime = ""
             rows.append(
-                '<li><a href="%s">%s</a></li>'
+                '<tr><td><a href="%s">%s</a></td><td>%s</td></tr>'
                 % (
                     urllib.parse.quote(link_name, errors="surrogatepass"),
                     html.escape(display_name, quote=False),
+                    mtime,
                 )
             )
 
         body = (
             "<!DOCTYPE HTML>\n<html><head><title>deep-research workspace: %s</title>"
-            "</head>\n<body>\n<h1>%s</h1>\n<hr>\n<ul>\n%s\n</ul>\n<hr>\n</body>\n</html>\n"
+            "</head>\n<body>\n<h1>%s</h1>\n<hr>\n"
+            "<table><tr><th align=\"left\">Name</th><th align=\"left\">Last modified</th></tr>\n"
+            "%s\n</table>\n<hr>\n</body>\n</html>\n"
             % (display_path, display_path, "\n".join(rows))
         ).encode("utf-8", "surrogateescape")
 
