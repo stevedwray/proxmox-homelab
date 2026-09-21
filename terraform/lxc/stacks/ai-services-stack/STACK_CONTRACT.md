@@ -11,15 +11,18 @@ dedicated `ai_seg` LXC. See `docs/ai-services-migration/plan.md` for the
 full migration design and why this is a rewrite of the old, stale
 `pve-framework`-era `stack.yaml`, not a reuse of it.
 
-Also runs `ollama-reliability-proxy` (added 2026-08-25, see
-`docs/coding-stack/plan.md` Phase 6) — a small stdlib-only Python proxy
-between any Ollama consumer and `framework:11434`, protecting against
-this project's own documented, repeated Ollama corruption bugs. Started
-as a per-workstation process for VS Code Copilot specifically, then
-deliberately centralized here so `OpenWebUI` (this stack's own Ollama
-consumer) benefits too, not just an external client. Source lives at
-`scripts/ollama-reliability-proxy/proxy.py` in this repo, copied in by
-this stack's own playbook — no separate build step.
+Also runs `deep-research`/`deep-research-files` (added 2026-09-21, see
+`docs/deep-research/plan.md` Phase 4) — the Stage B packaging of a local
+deep-research agent, built from source (not pulled), non-root, behind
+Authentik `forwardAuth`.
+
+`ollama-reliability-proxy` (added 2026-08-25) was **removed 2026-09-22**
+— Ollama/Laguna is no longer in active use on this platform (Nathanw/
+llama.cpp has proven better performance and reliability here). See git
+history if Ollama ever comes back into use. Its dedicated MikroTik
+firewall rule (`lan → 192.168.50.11:11435`, added for VS Code Copilot's
+use) is now orphaned and was not removed as part of this change — a
+separate, deliberate firewall cleanup if wanted.
 
 ## Network
 
@@ -68,7 +71,8 @@ hosts — not sufficient here):
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
 | `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. It remains available for browser search; OpenWebUI's AI search calls Brave LLM Context directly. |
-| `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
+| `deep-research-http` | 8090 | tcp | Deep-research agent `--web` UI, published on the LXC host. Fronted by `deep-research.${LAB_DOMAIN}` via Traefik, `forwardAuth`/Authentik. |
+| `deep-research-files-http` | 8091 | tcp | Read-only file browser over deep-research's report/workspace data, same auth posture. Fronted by `deep-research-files.${LAB_DOMAIN}`. |
 
 SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
 raw `:8082` service remains available for existing machine-to-machine
