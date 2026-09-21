@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-deep-research-agent"
+version = "0.1.0"
+description = "Stage A: faithful replication of Donato Capitella's Local Agent Builder deep-research design (docs/deep-research/plan.md)."
+authors = [{name = "Local Agent Builder"}]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework",
+    "python-dotenv",
+    "httpx",
+    "textual",
+    "beautifulsoup4",
+    "PyYAML",
+    "pyfiglet",
+    "ddgs==9.16.0",
+    "markitdown[all]",
+    "textual-serve"
+]
+
+[project.scripts]
+local-deep-research-agent = "src.app:cli_main"
+
+[tool.setuptools]
+packages = [
+    "src",
+    "src.tools",
+    "src.engine",
+    "src.utils"
+]

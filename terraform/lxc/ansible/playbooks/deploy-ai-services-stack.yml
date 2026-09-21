@@ -166,6 +166,21 @@
     # added.
     ai_services_brave_search_api_key: "{{ lookup('env', 'BRAVE_SEARCH_API_KEY') | default('', true) }}"
 
+    # deep-research + deep-research-files -- see docs/deep-research/plan.md
+    # Phase 4. Built from source (not pulled through Harbor), same pattern
+    # as mcp-utility-stack's cve-mcp-server/docs-rag-mcp: this is custom
+    # code, not a published upstream image.
+    ai_services_deep_research_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/deep-research-agent"
+    ai_services_deep_research_build_dir: "{{ ai_services_compose_dir }}/deep-research-agent"
+    ai_services_deep_research_files_source_dir: "{{ repo_root }}/scripts/deep-research-files"
+    ai_services_deep_research_files_build_dir: "{{ ai_services_compose_dir }}/deep-research-files"
+    ai_services_deep_research_port: 8090
+    ai_services_deep_research_files_port: 8091
+    ai_services_deep_research_public_url: "https://deep-research.{{ ai_services_lab_domain }}"
+    # Reuses the same Framework FQDN/path already proven for OpenWebUI's
+    # llamacpp route above -- not a new egress rule.
+    ai_services_deep_research_openai_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, matches ai_services_openwebui_llamacpp_api_base above
+
   tasks:
     - name: Create ai-services-stack compose directory
       ansible.builtin.file:
@@ -313,6 +328,38 @@
       # container with no image specified and fails outright. Redeploys
       # (container already exists) still restart correctly to pick up
       # the new settings.yml.
+
+    - name: Create deep-research-agent build directory
+      ansible.builtin.file:
+        path: "{{ ai_services_deep_research_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy deep-research-agent source (Dockerfile, pyproject.toml, src/)
+      ansible.builtin.copy:
+        src: "{{ ai_services_deep_research_source_dir }}/"
+        dest: "{{ ai_services_deep_research_build_dir }}/"
+        mode: preserve
+      register: ai_services_deep_research_copy_result
+
+    - name: Create deep-research-files build directory
+      ansible.builtin.file:
+        path: "{{ ai_services_deep_research_files_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy deep-research-files source
+      ansible.builtin.copy:
+        src: "{{ ai_services_deep_research_files_source_dir }}/serve.py"
+        dest: "{{ ai_services_deep_research_files_build_dir }}/serve.py"
+        # World-readable, not 0640: this bind-mounts into a container
+        # running as uid 1000 (deep-research-files has no matching
+        # /etc/passwd entry of its own), which can't read a root-owned
+        # 0640 file. Confirmed live 2026-09-21: "Permission denied"
+        # crash-looping until this was widened. Not sensitive content
+        # either way -- it's the file server's own source, not a secret.
+        mode: "0644"
+      register: ai_services_deep_research_files_copy_result
 
     - name: Install OpenWebUI docker-compose.yml
       ansible.builtin.copy:
@@ -462,14 +509,120 @@
                 retries: 3
                 start_period: 15s
 
+            deep-research:
+              build:
+                context: ./deep-research-agent
+              container_name: deep-research
+              restart: unless-stopped
+              command:
+                - python
+                - src/app.py
+                - --web
+                - --host
+                - "0.0.0.0"
+                - --port
+                - "{{ ai_services_deep_research_port }}"
+                - --auto-approve
+                - --public-url
+                - "{{ ai_services_deep_research_public_url }}"
+              ports:
+                - "{{ ai_services_deep_research_port }}:{{ ai_services_deep_research_port }}"
+              environment:
+                OPENAI_API_BASE: "{{ ai_services_deep_research_openai_api_base }}"
+                OPENAI_MODEL: local-model
+              # Mounted at /home/app (not a /data subdir) deliberately --
+              # same reasoning as mcp-utility-stack's cve-mcp-server volume:
+              # the Dockerfile's `useradd --create-home` already owns this
+              # path as app:app in the image, so a fresh named volume here
+              # inherits that ownership. Config/sessions/workspace all land
+              # under here via ~/.deep-research-agent (src/config.py), never
+              # /root -- this is the actual fix for the operator's non-root
+              # concern (2026-09-21), not an LXC-level workaround.
+              volumes:
+                - ai-services-deep-research-data:/home/app
+              # Own Graylog-bound logging (not this LXC's daemon-level
+              # json-file default -- see deploy-portainer-stack.yml for the
+              # same syslog-address/format/tag convention used fleet-wide)
+              # since this service is expected to run real, unattended
+              # overnight jobs and needs to be observable without opening a
+              # browser tab.
+              logging:
+                driver: syslog
+                options:
+                  syslog-address: "tcp://127.0.0.1:10514"
+                  syslog-format: rfc5424
+                  tag: "{% raw %}docker-{{.Name}}{% endraw %}"
+              healthcheck:
+                test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ ai_services_deep_research_port }}/', timeout=10)"]
+                interval: 15s
+                timeout: 10s
+                retries: 10
+                start_period: 20s
+
+            # Read-only file server over deep-research's own workspace data
+            # -- replaces the Stage A stopgap (python3 -m http.server, run
+            # by hand as root). Stdlib-only script, no build step, same
+            # bind-mount pattern as ollama-reliability-proxy above.
+            deep-research-files:
+              image: "{{ ai_services_registry_host }}/dockerhub/library/python:3.12-slim"
+              container_name: deep-research-files
+              restart: unless-stopped
+              command: ["python3", "/serve.py"]
+              # Matches the named volume's owning uid (1000, from
+              # deep-research's Dockerfile `useradd --uid 1000`) -- this
+              # image has no matching /etc/passwd entry, but a numeric
+              # uid:gid needs none for a stdlib script with no $HOME use.
+              user: "1000:1000"
+              ports:
+                - "{{ ai_services_deep_research_files_port }}:{{ ai_services_deep_research_files_port }}"
+              environment:
+                SERVE_HOST: "0.0.0.0"
+                SERVE_PORT: "{{ ai_services_deep_research_files_port }}"
+                WORKSPACE_DIR: /home/app/.deep-research-agent/workspace
+              volumes:
+                - "{{ ai_services_deep_research_files_build_dir }}/serve.py:/serve.py:ro"
+                - ai-services-deep-research-data:/home/app:ro
+              depends_on:
+                deep-research:
+                  condition: service_started
+              # Own Graylog-bound logging (not this LXC's daemon-level
+              # json-file default -- see deploy-portainer-stack.yml for the
+              # same syslog-address/format/tag convention used fleet-wide)
+              # since this service is expected to run real, unattended
+              # overnight jobs and needs to be observable without opening a
+              # browser tab.
+              logging:
+                driver: syslog
+                options:
+                  syslog-address: "tcp://127.0.0.1:10514"
+                  syslog-format: rfc5424
+                  tag: "{% raw %}docker-{{.Name}}{% endraw %}"
+              healthcheck:
+                # 404 must count as healthy, not just 200 -- a fresh volume
+                # has no workspace dir until deep-research's first real run
+                # creates one, and SimpleHTTPRequestHandler correctly 404s
+                # on a missing path. Confirmed live 2026-09-21: plain
+                # urlopen() raises HTTPError on 404, marking the container
+                # unhealthy even though the server itself was working
+                # correctly. CMD (not CMD-SHELL) runs argv directly with no
+                # shell, so this has to be handled in the Python one-liner
+                # itself, not with a shell '||' fallback.
+                test: ["CMD", "python3", "-c", "import urllib.error, urllib.request, sys\ntry:\n    urllib.request.urlopen('http://127.0.0.1:{{ ai_services_deep_research_files_port }}/', timeout=10)\nexcept urllib.error.HTTPError as e:\n    sys.exit(0 if e.code == 404 else 1)"]
+                interval: 15s
+                timeout: 10s
+                retries: 10
+                start_period: 10s
+
           volumes:
             ai-services-openwebui-data:
               name: ai-services-openwebui-data
             ai-services-searxng-data:
               name: ai-services-searxng-data
+            ai-services-deep-research-data:
+              name: ai-services-deep-research-data
       register: ai_services_compose_definition
 
-    - name: Deploy OpenWebUI and SearXNG via docker compose
+    - name: Deploy OpenWebUI, SearXNG, and deep-research via docker compose
       community.docker.docker_compose_v2:
         project_src: "{{ ai_services_compose_dir }}"
         state: present
@@ -479,6 +632,54 @@
         # elsewhere this session). Force recreation whenever the compose
         # file's own content changed.
         recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
+        # deep-research is the only service here with a build: section --
+        # same 'build: always' used by mcp-utility-stack's cve-mcp-server/
+        # docs-rag-mcp, its own build-from-source precedent. openwebui/
+        # searxng/ollama-reliability-proxy/deep-research-files all use
+        # plain image: references, so this is a no-op for them.
+        build: always
+
+    - name: Determine whether deep-research-files' source actually changed this run
+      ansible.builtin.set_fact:
+        ai_services_deep_research_files_changed: "{{ ai_services_deep_research_files_copy_result.changed and not ai_services_compose_definition.changed }}"
+        # Same reasoning as ollama-reliability-proxy below: a bind-mounted
+        # script's content change doesn't hash into docker compose's own
+        # recreate-trigger, only an actual compose-file change does.
+
+    - name: Restart deep-research-files to pick up a source-only change
+      community.docker.docker_container:
+        name: deep-research-files
+        state: started
+        restart: true
+      when: ai_services_deep_research_files_changed | bool
+
+    - name: Wait for deep-research-files to come back up after a source-change restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ai_services_deep_research_files_port }}/"
+        status_code: [200, 404]
+      register: ai_services_deep_research_files_health_after_restart
+      retries: 20
+      delay: 3
+      until: ai_services_deep_research_files_health_after_restart.status is defined
+      failed_when: false
+      when: ai_services_deep_research_files_changed | bool
+
+    - name: Fail if deep-research-files never came back up after restart
+      ansible.builtin.assert:
+        that:
+          - ai_services_deep_research_files_health_after_restart.status is defined
+          - ai_services_deep_research_files_health_after_restart.status in [200, 404]
+        fail_msg: "deep-research-files did not come back up after a source-change restart"
+      when: ai_services_deep_research_files_changed | bool
+
+    - name: Wait for deep-research to come up
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ai_services_deep_research_port }}/"
+        status_code: [200, 404]
+      register: ai_services_deep_research_health
+      retries: 30
+      delay: 3
+      until: ai_services_deep_research_health.status is defined and ai_services_deep_research_health.status in [200, 404]
 
     - name: Determine whether ollama-reliability-proxy's source actually changed this run
       ansible.builtin.set_fact:

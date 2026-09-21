@@ -49,13 +49,12 @@ spec:
       host: deep-research.${LAB_DOMAIN}
       backend:
         type: url
-        # Points at the Stage A throwaway LXC (VMID 50014, deep-research-agent
-        # --web mode on :8090), not a service inside ai-services-stack's own
-        # Docker network -- see docs/deep-research/plan.md. This route lives
-        # in ai-services-stack's edge.yaml as a matter of convenience (Stage B
-        # will eventually run inside this stack for real); it does not imply
-        # the backend is currently part of this stack.
-        url: http://192.168.50.13:8090
+        # Stage B (2026-09-21): now a real service inside ai-services-stack's
+        # own Docker network, container port published on the LXC host at
+        # 8090 -- same pattern as openwebui/searxng above. Replaces the
+        # Stage A throwaway LXC (VMID 50014), which is disposed of, not
+        # migrated -- see docs/deep-research/plan.md Phase 4.
+        url: http://${LAB_IP_AI_SERVICES}:8090
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}
@@ -63,22 +62,23 @@ spec:
       tls:
         resolver: letsencrypt
       auth:
-        # Step 1 of a deliberately two-step rollout (docs/deep-research/plan.md):
-        # prove the Traefik route/DNS/TLS mechanism works on its own before
-        # adding an Authentik OIDC app in a separate, smaller change. Do not
-        # leave this as the final state -- see plan.md for the Authentik
-        # follow-up.
-        mode: none
+        # Step 2 of the deliberate two-step rollout is done: this scaffold
+        # has no native OIDC support (unlike OpenWebUI above), so it uses
+        # forwardAuth -- the same pattern already used by comfyui-stack,
+        # netbox-stack, pentagi-stack, and proxy-stack. reconcile-edge.py's
+        # existing Authentik discovery/reconcile step provisions the
+        # provider/app automatically from this manifest.
+        mode: forwardAuth
     - name: deep-research-files
       host: deep-research-files.${LAB_DOMAIN}
       backend:
         type: url
-        # Read-only `python3 -m http.server` over the Stage A LXC's workspace
-        # dir (VMID 50014, port 8091), so final_report.md and run artifacts
-        # are downloadable from a browser instead of only readable by an
-        # operator with pct exec access. Same throwaway-prototype posture as
-        # the `deep-research` route above -- see docs/deep-research/plan.md.
-        url: http://192.168.50.13:8091
+        # Stage B (2026-09-21): a small stdlib-only, non-root, restart-managed
+        # Docker service (scripts/deep-research-files/serve.py), replacing
+        # the Stage A stopgap (python3 -m http.server, run by hand as root
+        # against the throwaway LXC). Read-only over the same named volume
+        # deep-research writes to -- see docs/deep-research/plan.md Phase 4.
+        url: http://${LAB_IP_AI_SERVICES}:8091
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}
@@ -86,8 +86,7 @@ spec:
       tls:
         resolver: letsencrypt
       auth:
-        # Same deliberate step-1-of-2 posture as the `deep-research` route:
-        # unauthenticated for now, Authentik OIDC deferred to the same
-        # follow-up step covering both routes. Directory listing exposes
-        # only research-report artifacts, not credentials or infra config.
-        mode: none
+        # Same forwardAuth posture as the deep-research route above --
+        # report artifacts are as sensitive as the interactive UI itself,
+        # not lower-trust.
+        mode: forwardAuth

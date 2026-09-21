@@ -576,27 +576,115 @@ different network).
 Exit: hierarchical/provider choices for the production build are justified
 by a measured before/after comparison, not by which one is more elegant.
 
-### Phase 4 (Stage B): package in `ai-services-stack`
+### Phase 4 (Stage B): package in `ai-services-stack` — design confirmed 2026-09-21
 
-- Add a dedicated application image, Compose service, volume, health check,
-  and resource limits to the `ai-services-stack` playbook — the same pattern
-  already used for `docs-rag-mcp` inside `mcp-utility-stack`.
-- Connect it to the chosen search provider(s) over the internal Compose
-  network and to Framework through the existing allowed path.
-- If Playwright was selected, package it separately with pinned browser
-  images.
-- Keep the service private during initial validation.
-- Add backup policy only for irreplaceable configuration/results; downloaded
-  web pages should have a defined retention period rather than indefinite
-  backup.
+Decided 2026-09-21: **the Stage A LXC (VMID 50014) is disposed of, not
+migrated.** The operator confirmed no test-session data needs preserving —
+Stage B starts clean. Everything below replaces the Stage A scaffold
+outright; there is no data-migration step.
+
+**Placement: a third Docker Compose service inside the existing
+`ai-services-stack` LXC (VMID 50013), not a new dedicated stack/LXC.** This
+is a deliberate call, not a default — reasoning, so it can be overridden:
+`ai-services-stack` is already in `ai_seg`, already has an allowed egress
+path to Framework:8080 (used by OpenWebUI/`ollama-reliability-proxy`
+today), and `cve-mcp-server` (`mcp-utility-stack`) is in the same `ai_seg`
+zone too — folding in avoids provisioning a new LXC, zone attachment, and
+MikroTik firewall rules from scratch. The app's own footprint is light (a
+few hundred MB RSS per active run, no local GPU/compute — it's a thin
+client of Framework), so it fits `ai-services-stack`'s existing 4096MB
+budget without a memory bump. That matters specifically because
+`mcp-utility-stack`'s own `stack.yaml` documents a real, unresolved problem
+bumping LXC memory via Terraform on live `pve` (an unrelated pre-existing
+SDN-attachment resource drift blocks it) — better not to invite that same
+class of trouble here if the workload doesn't require it.
+
+**Built from source, not a pulled image** — this is custom code (the
+vendored, patched Local Agent Builder scaffold), not a published upstream
+image, so it follows `mcp-utility-stack`'s build-from-source pattern
+(`cve-mcp-server`/`docs-rag-mcp`) rather than `ai-services-stack`'s
+pull-through-Harbor pattern (OpenWebUI/SearXNG). Ansible copies the cleaned
+app source into `/opt/ai-services-stack/deep-research/` on the LXC (mirrors
+`ai_services_reliability_proxy_build_dir`'s existing copy-then-build
+pattern in `deploy-ai-services-stack.yml`), and the Compose service builds
+its own image from a `Dockerfile` checked into this repo, not hand-edited
+on the LXC.
+
+**Runs as a non-root, dedicated container user.** The Stage A LXC's
+current root-owned process under `/root/.deep-research-agent` is the exact
+problem this phase fixes — not by hardening the LXC (it's being disposed
+of), but structurally: the `Dockerfile` creates an unprivileged user
+(`RUN useradd -m -u 1000 deepresearch`, `USER deepresearch`), and the
+container's `$HOME` (and therefore the scaffold's own
+`~/.{APP_NAME}` config/session/workspace path — no code change needed,
+confirmed in `config.py`) naturally lands inside a named Docker volume
+owned by that user, never `/root`.
+
+**Two Compose services, one for the interactive UI and one for artifacts:**
+
+1. `deep-research` — the existing `--web`/`textual-serve` app, `restart:
+   unless-stopped`, healthcheck against its own root path (matching the
+   `openwebui`/`searxng` healthcheck pattern already in this playbook).
+2. `deep-research-files` — a small stdlib-only Python script (same
+   "no build step, single bind-mounted file" pattern as
+   `ollama-reliability-proxy/proxy.py`, not a new nginx/registry image)
+   that lists runs and serves `final_report.md`/sources read-only from the
+   same named volume, mounted `:ro`. Replaces the Stage A stopgap
+   (`python3 -m http.server` run by hand as root) with a real, supervised,
+   non-root, restart-managed service. This is what "preferably through a
+   web interface" (operator, 2026-09-21) actually resolves to for Stage B —
+   see Phase 5, point 3 for why a bare file server still isn't the final
+   shape (no per-run structure, no auth until this phase adds it).
+
+Both share one named Docker volume (`ai-services-deep-research-data`) for
+config/sessions/workspace — `deep-research` writes, `deep-research-files`
+reads it read-only.
+
+**Auth: `forwardAuth`, not native OIDC.** Unlike OpenWebUI, this scaffold
+has no built-in OAuth support, so it follows the same pattern already used
+by `comfyui-stack`, `netbox-stack`, `pentagi-stack`, and `proxy-stack` —
+`auth.mode: forwardAuth` in `edge.yaml` for both routes
+(`deep-research`/`deep-research-files`), which `reconcile-edge.py`'s
+existing Authentik discovery/reconcile step provisions automatically from
+the manifest, the same mechanism already exercised (and already failing
+without a real Authentik target) during this session's dry-runs. No new
+Authentik integration code needed — this really is the "minor change" the
+operator expects, once the manifest's `auth.mode` flips from `none` to
+`forwardAuth`.
+
+**Monitoring: ship this service's logs to Graylog, not just local
+`json-file`.** `ai-services-stack`'s current Docker daemon logging
+(`json-file`, 50m/7 files, host-level default) is local-retention-only —
+fine for OpenWebUI/SearXNG today, but does not meet "monitoring appropriate
+to an application in the lab" (operator, 2026-09-21) for a service that's
+expected to run real overnight, unattended jobs. Give the `deep-research`
+and `deep-research-files` services their own `logging:` block using a
+syslog driver pointed at the existing Graylog stack (see
+`reference_json_file_log_driver_gap.md` — `docker_base` sets no syslog
+default; it's opt-in per playbook, same as other stacks that already do
+this). Add a health-check-based row to `CLAUDE.md`'s Stack Service Types
+table once this ships.
+
+**Security**, beyond the non-root/auth points above:
+
+- Confirm `ai_seg`'s existing egress already covers everything this service
+  needs (Framework:8080, `cve-mcp-server` intra-zone at
+  `192.168.50.10:8000`, general internet for DDGS) before assuming it —
+  check the live MikroTik rules, don't infer from other services' access.
+- Keep the search/fetch/CVE tool surface narrow per agent tier, per §2.6 —
+  do not widen it "while we're in here."
+- No SSH keys, cloud credentials, or Docker socket access inside either
+  container — matches §5's existing browser-container requirement, applies
+  equally to a non-browser tool-calling agent.
 
 This is an Ansible task/role change. Under the repository validation policy it
 must be deployed directly to `pve` through the production approval flow; it is
 not a `pve-test-vm` structural-network change unless the design later adds or
 modifies zones/firewall topology.
 
-Exit: a private production service completes the evaluation smoke set without
-regressing OpenWebUI or SearXNG.
+Exit: a private production service, running as a non-root container user
+with its data outside `/root`, completes the evaluation smoke set without
+regressing OpenWebUI or SearXNG, and its logs are visible in Graylog.
 
 ### Phase 5 (Stage B): UI, auth, artifacts, and specialist tools — decisions confirmed 2026-09-21
 
@@ -638,13 +726,12 @@ questions:
 3. **Result/artifact access needs real endpoints, not a bare file server.**
    `final_report.md` and a run's intermediate fetched sources currently only
    exist inside the Stage A LXC's filesystem, reachable only via `pct exec`/
-   `scp`. A stopgap read-only `python3 -m http.server` over the workspace
-   directory (route: `deep-research-files.${LAB_DOMAIN}`) was added
-   2026-09-21 purely so the operator can download a report from a browser;
-   this is explicitly **not** the Stage B design. Stage B needs real
-   endpoints (list runs, fetch a given run's report, list its sources)
-   behind the same Authentik auth as the main UI, backed by storage that
-   isn't a throwaway LXC's root disk.
+   `scp`. A stopgap read-only `python3 -m http.server`, run by hand as root,
+   over the workspace directory (route: `deep-research-files.${LAB_DOMAIN}`)
+   was added 2026-09-21 purely so the operator could download a report from
+   a browser; this is explicitly **not** the Stage B design — see Phase 4's
+   `deep-research-files` service for the real replacement (non-root,
+   restart-managed, behind `forwardAuth`).
 
 4. **`cve-mcp` is confirmed as the right specialist tool for CVE/vuln-class
    queries, validated by a live run, not just planned.** A real CVE lookup
