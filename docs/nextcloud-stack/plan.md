@@ -1071,105 +1071,44 @@ is published via Pangolin, at minimum confirm:
 - OCI compute/network/cost metrics are collected read-only via OCI
   Monitoring/Usage APIs (no public monitoring endpoint, no home VLAN
   route to OCI).
-- Pangolin/Traefik/Gerbil/Newt logs and metrics ship to the existing
-  Graylog service via a private Pangolin machine-client resource through
-  site `lab` — never a public Graylog port, never Newt reaching Graylog
-  UI/API/SSH directly (only a dedicated ingestion port, if/when this
-  lands — see nextcloud-P3-01's note on why that firewall rule isn't
-  added yet).
-- Grafana dashboards exist for the Pangolin edge (Traefik rate/latency/
-  5xx, certificate expiry, Newt online state) and alert on: Pangolin/
-  Gerbil down, Newt offline, no expected logs for 10 minutes, certificate
-  expiry under 21 days, and OCI cost spikes.
-- The acceptance tests in that doc's own "Acceptance tests" section pass:
-  no public monitoring/Graylog port open, revoking the machine credential
-  breaks only log delivery, Newt reaches only approved destinations.
+- Pangolin/Traefik/Gerbil/Newt availability, TLS posture, and public
+  port surface are monitored externally. Retain OCI control-plane logs
+  in OCI first; do not make a co-located Pangolin private-resource route
+  to Graylog a prerequisite, because the retired Wazuh investigation
+  established that this transport shape is unsuitable for raw services.
+- OCI dashboards and alarms cover Compute resource/cost signals, VCN
+  flow-log availability, and Cloud Guard/Vulnerability Scanning findings;
+  external probes alert on Pangolin/Gerbil availability, Newt-visible
+  service reachability, certificate expiry under 21 days, redirects, and
+  the expected public port surface.
+- Verify no monitoring endpoint or logging-ingestion port is publicly
+  opened, the connector reaches only its approved destination, and an
+  off-host backup can restore a replacement edge host.
 
 This is shared OCI-edge infrastructure, not specific to nextcloud-stack
 — treat it as its own workspace under `/home/steve/git/oci` (that repo
 already has the design; it just hasn't been executed), and treat
 nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on at
-minimum the logging path existing, so a compromised or misbehaving
-public-facing Nextcloud instance is actually observable and its access
-logs actually land somewhere reviewable.
+minimum the OCI-native/external observability path existing, so a
+compromised or misbehaving public-facing Nextcloud instance is visible
+outside the guest and recoverable from off-host state.
 
-### Step: nextcloud-P3-07-oci-hardening-and-wazuh
+### Step: nextcloud-P3-07-oci-hardening-and-external-observability
 
-**Not a step block — points at a full, detailed, executable plan
-written in the `oci` repo itself** (that repo has no local-model
-step-packet tooling, so it isn't written as fenced YAML steps the way
-this repo's plans are):
+The OCI edge does **not** run Wazuh. The original agent/relay/private-
+resource approach added a privileged package, enrollment credential,
+home-lab firewall exception, and a Gerbil-netns sidecar, while a root
+compromise could still blind the agent. The relay also proved incapable
+of reaching the raw private resource and introduced public-edge restart
+risk. The historical investigation and retirement checklist live in
 [`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`](../../../oci/docs/hardening-and-wazuh-plan.md).
-Covers, in five phases: SSH/NSG lockdown (OCI Bastion, removing direct
-SSH exposure), OS baseline hardening (unattended security upgrades, a
-host firewall mirroring the NSG allow-list, minimal installed
-packages), a Wazuh agent enrolled with a credential **unique to the OCI
-host** (manager-side pre-registration via `manage_agents`, never the
-shared `WAZUH_AGENT_AUTHD_PASSWORD` every other agent uses — so a
-compromise of this internet-facing host can't be used to enroll rogue
-agents or interfere with the rest of the fleet's trust), OCI-native VCN
-Flow Logs/Audit logs as a control-plane-level signal an attacker with
-root on the instance can't suppress, and shipping Pangolin's own
-backups off-host to Object Storage. That plan is self-contained and
-executable on its own — this step exists only to record the dependency:
-**nextcloud-P3-05 (Pangolin publish) should be treated as blocked on
-that plan's Phase 1 (SSH/NSG) and Phase 3 (Wazuh agent) at minimum**,
-same reasoning as nextcloud-P3-06 for logging.
 
-The one piece of that plan that is proxmox-homelab's own file, not
-oci's, is the firewall rule granting `connector_seg` reach to
-`wazuh-stack`'s event port. Write it as its own step, additive to
-nextcloud-P3-01's policy block:
+Before `nextcloud-P3-05` publishes a service, require that plan's
+hardening baseline plus: OCI VCN Flow Logs and Audit/Cloud Guard,
+Vulnerability Scanning/public-port checks, external HTTPS/TLS probes,
+and tested off-host Object Storage recovery. No `connector_seg` route
+to `wazuh-stack` is permitted; the zone's sole lateral destination stays
+`pangolin-proxy:443`.
 
-```yaml
-id: nextcloud-P3-07b-connector-wazuh-firewall-rule
-title: Add connector_seg -> wazuh-stack:1514 firewall rule (Wazuh agent events only, not enrollment)
-depends_on: [nextcloud-P3-01-create-connector-seg-zone]
-
-change: >
-  Insert this rule into terraform/lxc/network/pve.yaml's policies:
-  section, immediately before connector_seg's existing explicit-deny
-  rule (added by nextcloud-P3-01, description starting "Explicit deny —
-  connector_seg has no other reachability..."):
-
-    - from: connector_seg
-      to: 192.168.40.15
-      protocol: tcp
-      ports: [1514]
-      description: >-
-        Newt connector (via a private Pangolin resource, not a direct
-        public route -- see /home/steve/git/oci/docs/hardening-and-wazuh-plan.md
-        Phase 3.3) to wazuh-stack's agent-events port only. Deliberately
-        NOT port 1515 (enrollment): the oci-pangolin agent's client.keys
-        is provisioned out-of-band per that plan's Step 3.1/3.2, so this
-        connector never needs, and should never be granted, a route to
-        the enrollment port at all.
-
-  IMPORTANT — verify against MikroTik's live state before assuming this
-  file is a complete picture: wazuh-stack's existing agents
-  (proxy-stack, authentik-stack, technitium-stack, pve itself) already
-  have working 1514/1515 rules that were applied directly to MikroTik
-  and never mirrored back into this file (confirmed --
-  docs/wazuh-stack/README.md documents this explicitly, and this file
-  has zero existing 1514/1515/192.168.40.15 references despite 6 live
-  agents). Cross-check the live MikroTik ruleset, not just this file,
-  before treating this step as sufficient on its own.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/network/pve.yaml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "A rule granting connector_seg reach to wazuh-stack port 1515 (enrollment)"
-    - "Any terragrunt apply / SDN apply / MikroTik change in this step -- file edit and syntax gate only"
-
-gates:
-  - id: yaml-syntax
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
-    expect: "exit 0"
-    critical: true
-  - id: no-enrollment-port
-    cmd: "grep -A3 'from: connector_seg' terraform/lxc/network/pve.yaml | grep -q '1515' && echo FAIL || echo OK"
-    expect: "OK"
-    critical: true
-```
+The former `nextcloud-P3-07b` Wazuh firewall step is retired. Its
+desired-state rule has been removed from `pve.yaml`; do not recreate it.

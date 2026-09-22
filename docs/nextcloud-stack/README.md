@@ -45,8 +45,7 @@ this repo's automation) deployed via `provision.sh`, smoke test stable
 after fixing two real bugs (256MB OOM-killed `apt install`; bare `ssh`
 in `smoke-test.sh` worked standalone but failed silently under
 `provision.sh`'s subprocess environment — fixed with explicit
-`-F`/`-i`/`-n`). `nextcloud-P3-07b` (`connector_seg -> wazuh-stack:1514`)
-is live on both `pve.yaml` and MikroTik. **Newt itself is now connected
+`-F`/`-i`/`-n`). **Newt itself is now connected
 to the OCI Pangolin edge** — `lab` site recreated (original credentials
 unrecoverable, Community Edition gates regeneration behind Enterprise),
 tunnel confirmed up. Two more real bugs found and fixed on the OCI side
@@ -57,29 +56,17 @@ image, and the real blocker: a stale Let's Encrypt *staging* cert that
 protecting from ever being corrected — now self-healing, not a one-off
 manual fix).
 
-**Wazuh agent connectivity is BLOCKED, deeper than first thought
-(2026-09-23).** A private Pangolin resource for `wazuh-stack:1514`
-exists and is correctly linked to the `lab` site (verified via the
-API), and a loopback-only sidecar relay (`wazuh-forward`, shares
-Gerbil's Docker network namespace) was built and deployed on the OCI
-side. But Gerbil's own kernel routing table never gains a route to the
-resource's tunnel-internal address regardless — strong evidence that
-Pangolin's private "host"-mode resources are only reachable by real
-WireGuard peers (Newt sites / Olm clients), not by a generic process
-sharing Gerbil's namespace the way this sidecar does, meaning the
-approach may be structurally unable to work at all, not just
-misconfigured. A real Pangolin/Gerbil version bug was also found and
-fixed along the way (3 minor versions behind, rejecting a newer client
-protocol message outright), and an Olm machine-client path was
-re-investigated in depth after an earlier diagnosis turned out to be
-backwards — it's blocked for a real, structural reason (this OCI host
-can't hole-punch to its own NAT'd public IP, since it's co-located with
-the Pangolin server itself), not a Community Edition gap. Full account
-— including two more real bugs (a `docker compose restart` netns race
-that briefly took the public dashboard down, and how it was fixed) — in
-`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Steps 3.6–3.8.
-**No clear next step yet; needs a decision.** Nothing left to do on the
-`proxmox-homelab` side for this piece regardless of how it resolves.
+**Wazuh is retired for the OCI edge (decision 2026-09-23).** The failed
+path added a privileged endpoint agent, private resource, firewall
+exception, and a relay sharing Gerbil's namespace, but could not provide
+tamper-resistant evidence and briefly affected public-edge availability
+during recovery. The `connector_seg -> wazuh-stack:1514` desired-state
+rule has been removed; live cleanup of the router rule and OCI Wazuh
+objects is pending the normal production approval flow. OCI monitoring
+now prioritizes control-plane logs/alarms, public-port scans, external
+HTTPS/TLS probes, and tested off-host recovery. The investigation is
+retained as historical context in
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
 
 **Still not built:** `apps_seg` zone itself, `nextcloud-stack`, and the
 `pangolin-proxy` Traefik instance (scaffolded, not deployed). Phase 1/2
@@ -97,21 +84,15 @@ own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
   host-level `ufw` layer (`roles/os_hardening/` in the `oci` repo).
   Bastion was considered and explicitly rejected — IP restriction was
   judged sufficient, updated by hand if the operator's IP changes.
-- **Wazuh agent installed on the OCI host**, enrolled with its **own
-  unique credential** (manager-side pre-registration, agent ID `007`
-  `oci-pangolin` on `wazuh-stack`/`pve` — never the shared
-  `WAZUH_AGENT_AUTHD_PASSWORD` every other agent uses, so a compromise
-  of this internet-facing host can't touch the rest of the fleet's
-  enrollment trust). Service is `active` and running local modules
-  (SCA, syscollector), but shows `Never connected` on the manager —
-  **expected**, not broken: it's blocked on the same missing
-  infrastructure as the rest of Phase 3 below.
-- **What's actually blocking further progress on both sides**: the
-  `connector_seg` zone, the `newt-connector` host, and the
-  `pangolin-proxy` Traefik instance described in `plan.md` Phase 3 have
-  not been created in `proxmox-homelab` yet. Nothing routes OCI to the
-  home network privately. Wazuh going `Active` and the OCI-side
-  monitoring/logging phases both wait on this landing first.
+- **OCI Wazuh path retired:** a uniquely pre-registered `oci-pangolin`
+  credential was safer than fleet-wide enrollment, but the resulting
+  private route, agent, and Gerbil-netns relay had more security and
+  availability cost than value for this one-purpose edge host. The
+  planned live cleanup revokes the credential and removes the private
+  resource, relay, agent, and router rule.
+- **OCI monitoring priority:** VCN Flow Logs, OCI Audit/Cloud Guard,
+  vulnerability/public-port scanning, external HTTPS/TLS checks, and
+  off-host backups—not a home-lab Wazuh connection.
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with
@@ -206,13 +187,12 @@ See [plan.md](plan.md) for the full step-by-step plan.
   the single highest-value target in this whole design — treated as
   needing standalone hardening, not inherited from anything else here.
 - **Security assessment (2026-09-23) of the Phase 3 design itself,
-  before building it:** adding Wazuh telemetry from OCI *increases*
-  `connector_seg`'s blast radius (a second lateral target beyond
-  `pangolin-proxy`), and a host-based agent can be blinded by whoever
-  compromises the host it's watching — mitigated by (a) a Wazuh
-  enrollment credential unique to the OCI host, never the fleet-shared
-  one, and (b) OCI-native VCN Flow Logs/Audit logs as a control-plane
-  signal the guest OS can't suppress. `pangolin-proxy` (Option B) limits
+  updated after the Wazuh investigation:** Wazuh telemetry from OCI
+  increased `connector_seg`'s blast radius (a second lateral target
+  beyond `pangolin-proxy`) while a host agent could still be blinded by
+  a compromised host. It is therefore retired in favor of OCI-native
+  VCN Flow Logs/Audit/Cloud Guard, external checks, and recovery.
+  `pangolin-proxy` (Option B) limits
   lateral *scope* from a compromised connector but does not eliminate
   Traefik-CVE exposure — two Traefik instances now need tracking on the
   same patch cadence, and the smaller, quieter one is the more likely to
@@ -228,17 +208,11 @@ See [plan.md](plan.md) for the full step-by-step plan.
   egress IP is effectively static for this purpose; updated by hand via
   the OCI CLI if it ever changes. Executed live — see
   `hardening-and-wazuh-plan.md` Phase 1.
-- **Wazuh agent for the OCI host: unique enrollment credential, not the
-  shared fleet password (decided and executed 2026-09-23).** Manager-
-  side pre-registration on `wazuh-stack`/`pve` (agent ID `007`,
-  `oci-pangolin`), key delivered to the OCI host entirely out of band —
-  never through an automated pipeline (Claude Code's own safety
-  classifier correctly refused to script the key extraction). See
-  `hardening-and-wazuh-plan.md` Phase 3 for the full sequence, including
-  a real gap hit live (the `wazuh` group didn't exist until the agent
-  package was installed) and how it was fixed without ever exposing the
-  key to an intermediate file.
-- **`connector_seg` network placement (recap, not yet built):** VLAN
+- **Wazuh retirement (decided 2026-09-23):** revoke and remove the
+  pre-registered `oci-pangolin` agent rather than trying to repair its
+  private route. Keep the historical record for auditability, but do
+  not create a replacement home-lab route to Wazuh.
+- **`connector_seg` network placement (recap):** VLAN
   110, `192.168.110.0/24`, gateway `192.168.110.1`, single host
   `newt-connector` at `192.168.110.10`. Changed from the originally
   planned VLAN 100 on 2026-09-23 after confirming on the physical
@@ -246,9 +220,7 @@ See [plan.md](plan.md) for the full step-by-step plan.
   (`terraform/lxc/network/pve-tiny.yaml`) — 110 is the next tag not
   already claimed by any zone across `terraform/lxc/network/*.yaml`
   (10/20/30/40/50/60/70/80/90/100 all in use). Exactly two permitted
-  destinations: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443, and
-  — once the private Pangolin resource for it exists —
-  `wazuh-stack` (192.168.40.15, `infra_seg`) on 1514 only, never 1515.
+  destination: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443.
   Everything else explicit-deny; internet egress stays open for the
   actual Gerbil/Newt tunnel. See `nextcloud-P3-01` for the literal
   `pve.yaml` content.
