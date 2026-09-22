@@ -39,9 +39,29 @@ modeled on `cse_seg`'s egress rule), then default-deny. `connector_seg`
 is now enforced end-to-end (Proxmox SDN + MikroTik), not just declared
 in `pve.yaml`.
 
-**Still not built:** `apps_seg` zone itself, `nextcloud-stack`, the
-`newt-connector` LXC host, and the `pangolin-proxy` Traefik instance.
-Phase 1/2 remain untouched.
+**`newt-connector` is also live (2026-09-23)** — `nextcloud-P3-02`
+executed: base LXC (192.168.110.10, Docker only, no Newt credentials in
+this repo's automation) deployed via `provision.sh`, smoke test stable
+after fixing two real bugs (256MB OOM-killed `apt install`; bare `ssh`
+in `smoke-test.sh` worked standalone but failed silently under
+`provision.sh`'s subprocess environment — fixed with explicit
+`-F`/`-i`/`-n`). `nextcloud-P3-07b` (`connector_seg -> wazuh-stack:1514`)
+is live on both `pve.yaml` and MikroTik. **Newt itself is now connected
+to the OCI Pangolin edge** — `lab` site recreated (original credentials
+unrecoverable, Community Edition gates regeneration behind Enterprise),
+tunnel confirmed up. Two more real bugs found and fixed on the OCI side
+getting there — see `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
+Step 3.5 for the full account (a missing CA bundle in the `fosrl/newt`
+image, and the real blocker: a stale Let's Encrypt *staging* cert that
+`roles/pangolin/tasks/main.yml`'s ACME storage policy was silently
+protecting from ever being corrected — now self-healing, not a one-off
+manual fix).
+
+**Still not built:** `apps_seg` zone itself, `nextcloud-stack`, and the
+`pangolin-proxy` Traefik instance (scaffolded, not deployed). A private
+Pangolin resource for `wazuh-stack:1514` is the one remaining piece
+before agent `007`/`oci-pangolin` can go `Active`. Phase 1/2 remain
+untouched.
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`

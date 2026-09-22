@@ -98,8 +98,11 @@ deploy, no application-layer tasks).
 
 Once the host is provisioned, place a `docker-compose.yml` on
 `192.168.110.10` modeled on `/home/steve/git/oci/artifacts/lab-test/docker-compose.yml`'s
-already-proven `newt` service (drop the test `hello`/`whoami` service —
-this host runs Newt only):
+`newt` service (drop the test `hello`/`whoami` service — this host runs
+Newt only), **plus one addition confirmed necessary live, 2026-09-23**:
+the `fosrl/newt` image (Alpine-based) ships with no CA bundle at all, so
+TLS verification fails against even a genuinely valid public certificate
+without mounting the host's CA store in:
 
 ```yaml
 services:
@@ -111,12 +114,19 @@ services:
       PANGOLIN_ENDPOINT: https://pangolin.gibbsgreatly.xyz
       NEWT_ID: ${NEWT_ID:?set NEWT_ID in .env}
       NEWT_SECRET: ${NEWT_SECRET:?set NEWT_SECRET in .env}
+    volumes:
+      - /etc/ssl/certs:/etc/ssl/certs:ro
     network_mode: host
 ```
 
 `network_mode: host` is required (matches the proven test artifact) — Newt's
 WireGuard tunnel needs to bind directly to this host's own interface, not a
-Docker bridge network. `NEWT_ID`/`NEWT_SECRET` are the `lab` site's
-already-issued credentials (`/home/steve/git/oci/docs/repeatable-operations.md`:
+Docker bridge network. `NEWT_ID`/`NEWT_SECRET` are the site's already-issued
+credentials (`/home/steve/git/oci/docs/repeatable-operations.md`:
 "intentionally not stored in this repository or printed in logs") — keep
 them in a `.env` file on the host itself, mode `0600`, never in this repo.
+Confirmed working live 2026-09-23: `Tunnel connection to server
+established successfully!` — see
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Step 3.5 for the
+full debugging trail (the CA mount above, plus the real root cause: a
+stale Let's Encrypt staging cert on the OCI side, now self-healing).
