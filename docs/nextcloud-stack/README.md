@@ -165,8 +165,13 @@ See [plan.md](plan.md) for the full step-by-step plan.
   package was installed) and how it was fixed without ever exposing the
   key to an intermediate file.
 - **`connector_seg` network placement (recap, not yet built):** VLAN
-  100, `192.168.100.0/24`, gateway `192.168.100.1`, single host
-  `newt-connector` at `192.168.100.10`. Exactly two permitted
+  110, `192.168.110.0/24`, gateway `192.168.110.1`, single host
+  `newt-connector` at `192.168.110.10`. Changed from the originally
+  planned VLAN 100 on 2026-09-23 after confirming on the physical
+  switches that VLAN 100 is already live as `cse_seg`
+  (`terraform/lxc/network/pve-tiny.yaml`) — 110 is the next tag not
+  already claimed by any zone across `terraform/lxc/network/*.yaml`
+  (10/20/30/40/50/60/70/80/90/100 all in use). Exactly two permitted
   destinations: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443, and
   — once the private Pangolin resource for it exists —
   `wazuh-stack` (192.168.40.15, `infra_seg`) on 1514 only, never 1515.
@@ -276,7 +281,7 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **Connector VLAN placement.** `pangolin-observability-and-graylog-plan.md`
   itself lists "connector VLAN ID/subnet versus locked-down `mgmt_seg`
   LXC" as an open decision. This plan takes the dedicated-VLAN option
-  (`connector_seg`, VLAN 100) as the target since both OCI-repo docs
+  (`connector_seg`, VLAN 110) as the target since both OCI-repo docs
   prefer it, but that choice hasn't been re-confirmed with the operator
   independent of this plan's own read of those docs.
 - **OCI-side monitoring/logging.** Fully designed in

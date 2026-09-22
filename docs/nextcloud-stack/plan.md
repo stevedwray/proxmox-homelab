@@ -667,16 +667,26 @@ repeating this phase.
 
 ```yaml
 id: nextcloud-P3-01-create-connector-seg-zone
-title: Create connector_seg SDN zone for the Newt connector (VLAN 100, 192.168.100.0/24)
+title: Create connector_seg SDN zone for the Newt connector (VLAN 110, 192.168.110.0/24)
 depends_on: []
 
 change: >
+  VLAN 100 was this step's original choice but is already live as
+  cse_seg (terraform/lxc/network/pve-tiny.yaml, 192.168.100.0/24,
+  confirmed present on the physical switch trunk 2026-09-23) — using it
+  again here would collide on the shared trunk. Every VLAN tag already
+  in use across terraform/lxc/network/*.yaml as of 2026-09-23 is 10, 20,
+  30, 40, 50, 60, 70, 80, 90, 100; this step takes the next free tag,
+  110. Re-check terraform/lxc/network/*.yaml for `vlan_tag:` values
+  before executing this step, in case another zone has claimed 110 in
+  the meantime.
+
   Insert this exact block into terraform/lxc/network/pve.yaml in the
   zones: section, immediately after the apps_seg zone block added by
   nextcloud-01 (search for "gateway: \"192.168.90.1\"" then "snat: false"
   to find its end):
 
-    # connector_seg — Newt connector for OCI Pangolin edge (VLAN 100, 192.168.100.0/24)
+    # connector_seg — Newt connector for OCI Pangolin edge (VLAN 110, 192.168.110.0/24)
     connector_seg:
       description: Newt connector for the OCI Pangolin edge (see /home/steve/git/oci) — reaches only lab Traefik, nothing else
       type: sdn_vnet
@@ -689,10 +699,10 @@ change: >
         nodes:
           - pve
         vnet: tvnewt
-        vlan_tag: 100
+        vlan_tag: 110
         alias: pve connector segment
-        subnet: "192.168.100.0/24"
-        gateway: "192.168.100.1"
+        subnet: "192.168.110.0/24"
+        gateway: "192.168.110.1"
         snat: false
 
   In the members section, insert immediately after apps_seg's member block:
@@ -701,7 +711,7 @@ change: >
       description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
       attachment: connector_seg
       containers:
-        - "newt-connector (VMID 100010) — 192.168.100.10"
+        - "newt-connector (VMID 100010) — 192.168.110.10"
 
   In the policies: section, insert these two rules at the end of the
   policies list (after apps_seg's explicit-deny rule from nextcloud-01).
@@ -783,7 +793,7 @@ target (matching both OCI docs' stated preference), but the actual Newt
 install — enrollment credentials, minimal host provisioning, no
 unrelated workloads per the design — is a credential-creating
 control-plane action, not local-model-executable file content. Scaffold
-it as a minimal LXC in `connector_seg` (192.168.100.10, per
+it as a minimal LXC in `connector_seg` (192.168.110.10, per
 nextcloud-P3-01) the same way other stacks are scaffolded, but treat
 Newt's own enrollment (`repeatable-operations.md`: "install Newt with
 the site enrollment credentials... remain control-plane or
