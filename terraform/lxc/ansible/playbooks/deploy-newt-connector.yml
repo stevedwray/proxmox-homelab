@@ -1,0 +1,26 @@
+---
+- name: Configure Docker base for newt-connector
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    # No "Trust Harbor HTTP registry in Docker daemon" task here, unlike
+    # every other Docker stack's playbook -- connector_seg has no firewall
+    # reach to infra_seg or the main Traefik (nextcloud-P3-01), so this
+    # host never talks to Harbor. Newt (deployed separately, by the
+    # operator -- see STACK_CONTRACT.md) pulls fosrl/newt directly from
+    # Docker Hub over the zone's general internet egress rule instead.
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+# Deliberately no further plays. Newt's own docker-compose.yml/.env and
+# enrollment credentials are an operator action, not automation -- see
+# STACK_CONTRACT.md "Newt deployment (operator action, not automated)".
