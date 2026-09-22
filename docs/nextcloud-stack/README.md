@@ -50,11 +50,38 @@ See [plan.md](plan.md) for the full step-by-step plan.
   changed since that design was written (operator-confirmed), so it's
   treated as current, not stale, and this plan adapts it rather than
   re-deriving it. Key constraint carried over: Newt gets a firewall rule
-  only to lab Traefik (`edge_seg`), **never** directly to `apps_seg` — a
-  dedicated `connector_seg` VLAN, a source-aware Traefik split (LAN vs.
-  Pangolin), and working OCI-side monitoring/logging are all
-  prerequisites this plan treats as shared infrastructure, not
-  nextcloud-specific one-offs.
+  only to a Traefik, **never** directly to `apps_seg` — a dedicated
+  `connector_seg` VLAN and working OCI-side monitoring/logging are
+  shared infrastructure, not nextcloud-specific one-offs.
+- **LAN/Pangolin Traefik isolation (decided 2026-09-23): Option
+  B — a second, dedicated Traefik instance (`pangolin-proxy`,
+  192.168.30.11, `edge_seg`), not a second entrypoint on the existing
+  shared Traefik.** `connector_seg`'s one firewall rule points only at
+  `pangolin-proxy`; the main, LAN-facing Traefik (192.168.30.10) is
+  unreachable from `connector_seg` entirely, by construction. Rejected
+  the entrypoint-on-shared-instance option because its isolation is
+  *policy* (the renderer must always assign entrypoints correctly as
+  services get added) rather than *structural* (a second process simply
+  has no router for anything not deliberately published to it). This
+  generalizes beyond nextcloud-stack: any future Pangolin-published
+  service (cse-panel, deep-research, others) rides the same
+  `pangolin-proxy` instance and the same `connector_seg → pangolin-proxy`
+  rule — no new VLAN or firewall rule per service, only a new opt-in
+  entry in that service's own `edge.yaml`.
+- **Authentik login for Pangolin-published routes:** `pangolin-proxy`
+  needs its own copy of the shared `forwardAuth` middleware
+  (`nextcloud-P3-03b`) — confirmed this works for free, no new firewall
+  rule, because the middleware calls an internal-only hostname
+  (`LAB_FQDN_AUTHENTIK_INTERNAL`) that resolves straight to Authentik,
+  not through either Traefik, and `pangolin-proxy` sits in `edge_seg`
+  alongside the main Traefik so it inherits the same existing
+  `edge_seg → mgmt_seg:9443` rule. The real open item is OIDC-mode
+  routes (not `forwardAuth`-mode ones like cse-panel/deep-research):
+  `discover-authentik-edge.py` computes each route's expected
+  `redirect_uris` from a single `host:` field, so a service published
+  under two hostnames (LAN + `.pan.`) needs the reconciler taught to
+  register both callback URLs against the same OAuth client — not yet
+  built, see `nextcloud-P3-03c`.
 
 ## Research this plan is based on
 
@@ -145,13 +172,16 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
   scope for this plan entirely until `docs/reporting-platform/plan.md`
   Phase 3 (cross-node ingestion) lands upstream.
-- **Traefik source-aware LAN/Pangolin split (Phase 3).** The single
-  biggest genuinely-unresolved piece: `render-edge-traefik.py` currently
-  has no entrypoint-selection or per-route source-policy concept at all
-  (confirmed by reading it — one hardcoded `authentik` middleware, full
-  stop). Needs its own research/design pass reading
-  `deploy-proxy-stack.yml`'s static `traefik.yml` in full before it can
-  become literal step content — see `nextcloud-P3-03` in plan.md.
+- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** The Traefik
+  isolation question itself is resolved (Option B, a second dedicated
+  Traefik instance — see above), but `render-edge-traefik.py` still needs
+  a second output target and a per-route opt-in field so a service's
+  `edge.yaml` can publish to `pangolin-proxy` in addition to the main
+  Traefik — it currently renders everything into one dynamic-config
+  directory with no branching at all (confirmed by reading it). See
+  `nextcloud-P3-03c` in plan.md; also carries the OIDC `redirect_uris`
+  wrinkle (one route, two public hostnames, one OAuth client needing
+  both callback URLs registered).
 - **Connector VLAN placement.** `pangolin-observability-and-graylog-plan.md`
   itself lists "connector VLAN ID/subnet versus locked-down `mgmt_seg`
   LXC" as an open decision. This plan takes the dedicated-VLAN option

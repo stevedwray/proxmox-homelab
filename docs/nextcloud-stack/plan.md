@@ -717,17 +717,22 @@ change: >
   reach to lab Traefik — nowhere else:
 
     - from: connector_seg
-      to: 192.168.30.10
+      to: 192.168.30.11
       protocol: tcp
       ports: [443]
       description: >-
-        Newt connector to lab Traefik only (edge_seg) — the sole
-        east-west permission this zone has. Per
-        pangolin-observability-and-graylog-plan.md: "Newt does NOT
-        receive a direct allow rule to the [application] address... this
-        keeps the connector policy stable as services move behind the
-        edge proxy." Do not add a connector_seg -> apps_seg (or any other
-        app zone) rule even for a single, specific service.
+        Newt connector to pangolin-proxy ONLY (192.168.30.11, edge_seg)
+        — a second, dedicated Traefik instance created by nextcloud-P3-03
+        that serves only the explicit subset of routes opted into
+        Pangolin. This is deliberately NOT 192.168.30.10 (the main,
+        LAN-facing Traefik that fronts everything else) — connector_seg
+        has no network path to it at all, by construction, not by
+        per-router policy. Per pangolin-observability-and-graylog-plan.md:
+        "Newt does NOT receive a direct allow rule to the [application]
+        address... this keeps the connector policy stable as services
+        move behind the edge proxy." Do not add a connector_seg ->
+        apps_seg (or any other app zone, or the main Traefik) rule even
+        for a single, specific service.
     - from: connector_seg
       to: default
       protocol: all
@@ -747,7 +752,7 @@ scope:
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Any terragrunt apply / SDN apply -- validation only in this step"
-    - "Any rule granting connector_seg reach to apps_seg or any zone other than edge_seg"
+    - "Any rule granting connector_seg reach to apps_seg, the main Traefik (192.168.30.10), or any zone other than 192.168.30.11"
 
 gates:
   - id: yaml-syntax
@@ -756,6 +761,10 @@ gates:
     critical: true
   - id: no-direct-app-zone-rule
     cmd: "grep -A3 'from: connector_seg' terraform/lxc/network/pve.yaml | grep -q 'to: apps_seg' && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
+  - id: no-main-traefik-rule
+    cmd: "grep -A3 'from: connector_seg' terraform/lxc/network/pve.yaml | grep -q '192.168.30.10' && echo FAIL || echo OK"
     expect: "OK"
     critical: true
 ```
@@ -782,59 +791,177 @@ home-network operations") as an operator action using the already-issued
 `lab` site's credentials — never generate or store new ones in this
 repo.
 
-### Step: nextcloud-P3-03-traefik-source-aware-split
+### Step: nextcloud-P3-03-pangolin-proxy-stack
 
-**Genuinely open design work, not yet resolvable into literal content.**
-`pangolin-observability-and-graylog-plan.md` documents three isolation
-options for letting Pangolin-sourced traffic reach only specific
-Traefik-published services without also exposing every LAN-only route on
-the same listener (hostname-only isolation is explicitly called
-insufficient against a compromised connector). It recommends, as the
-preferred long-term layout: **a dedicated Traefik entrypoint/listener
-for Pangolin-published routes**, separate from the existing `web`/
-`websecure` entrypoints defined in `deploy-proxy-stack.yml`'s static
-`traefik.yml` (confirmed live in that file — entrypoint definitions are
-startup-only, not hot-reloaded, so this needs a `proxy-stack` redeploy).
-Before writing this as a real step:
+**Decision locked in (2026-09-23, operator-confirmed): Option B — a
+second, dedicated Traefik instance, not a second entrypoint on the
+shared one.** `pangolin-observability-and-graylog-plan.md` documented
+three isolation options; the entrypoint-on-shared-instance option was
+rejected in favor of physical separation: a compromised or misconfigured
+Newt host gets no network path to anything except this second Traefik's
+own, deliberately narrow dynamic config, rather than relying on
+`render-edge-traefik.py` always getting per-route entrypoint assignment
+right as more services get added. This is shared platform work (benefits
+every future Pangolin-published service — cse-panel, deep-research, and
+others — not just nextcloud-stack), scoped larger than nextcloud-stack
+alone; nextcloud-stack is the first concrete service riding on it.
 
-1. Read `deploy-proxy-stack.yml`'s full `entryPoints`/`providers`/
-   `certificatesResolvers` block to confirm the exact shape a new
-   `pangolin` entrypoint (e.g. a distinct internal port, reachable only
-   from `connector_seg` per nextcloud-P3-01's firewall rule) needs to
-   take.
-2. Extend the `EdgeManifest` schema (`terraform/lxc/discover-authentik-edge.py`'s
-   sibling renderer, `render-edge-traefik.py`) with an explicit
-   per-route field (e.g. `spec.routes[].pangolin.enabled: true`) so a
-   route can opt into being served on the Pangolin entrypoint — current
-   `render-edge-traefik.py` only assigns one `authentik` middleware, no
-   entrypoint selection at all (confirmed by reading the file — no
-   `entryPoints`/`middleware` selection logic beyond the single hardcoded
-   `authentik` middleware).
-3. Add the explicit LAN-vs-Pangolin source-policy regression tests
-   `pangolin-observability-and-graylog-plan.md` requires: every
-   LAN-approved service still works from the LAN, an unpublished service
-   fails through Pangolin even when its hostname is supplied, and a
-   request from the connector subnet cannot reach a route by changing
-   its Host header.
+```yaml
+id: nextcloud-P3-03-pangolin-proxy-stack
+title: Scaffold a second, dedicated Traefik instance (pangolin-proxy) for Pangolin-published routes only
+depends_on: [nextcloud-P3-01-create-connector-seg-zone]
 
-This is shared platform work (benefits every future Pangolin-published
-service), scoped larger than nextcloud-stack alone — treat it as its own
-sub-workspace or a dedicated follow-up plan once picked up, rather than
-compressing it into a single step block here.
+change: >
+  Scaffold a new stack, pangolin-proxy, in edge_seg alongside the
+  existing Traefik (same zone, same firewall reachability to Authentik --
+  see edge_seg -> mgmt_seg:9443 "Traefik forward-auth to Authentik",
+  already covers this new instance for free with no new rule needed).
+
+  stack.yaml facts: hostname pangolin-proxy, ip_address 192.168.30.11/24,
+  gateway 192.168.30.1 (edge_seg's existing gateway), vmid 30011, zone
+  edge_seg, tags [docker, traefik, pangolin, edge], provides
+  (pangolin-proxy-https, port 443, protocol tcp), deployment_tier apps,
+  apt_cacher_host "${lab_ip_apt_cacher}".
+
+  Compose: a single Traefik service, same pinned image/digest as the
+  main proxy-stack's traefik_image (see group_vars-equivalent pin in
+  this repo's own proxy-stack role -- read it directly rather than
+  assuming it matches, images drift independently per stack). Static
+  config (traefik.yml): entryPoints has only `websecure` (:443) -- no
+  `web`/:80 redirect entrypoint is needed since Pangolin already
+  terminates the public-facing TLS leg; this instance's :443 only needs
+  to be reachable from connector_seg, never from the internet or the
+  LAN directly. providers.file watching a `/etc/traefik/dynamic/`
+  directory, same pattern as the main proxy-stack. certificatesResolvers:
+  reuse the same Let's Encrypt account/Cloudflare DNS-01 challenge
+  pattern as the main proxy-stack's `letsencrypt` resolver (same
+  CF_DNS_API_TOKEN, separate acme.json storage since this is a distinct
+  Traefik process/container).
+
+  Dynamic config: write dynamic/authentik.yml as an EXACT copy of the
+  main proxy-stack's shared Authentik middleware block (same
+  `proxy_lab_fqdn_authentik_internal` address, same
+  authResponseHeaders) -- see nextcloud-P3-03b for why this needs its
+  own copy rather than being shared.
+
+  Per-route dynamic config files are NOT written by this step -- they
+  come from EdgeManifests via a new renderer target (nextcloud-P3-03c),
+  starting empty (this stack, by itself, publishes nothing).
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/pangolin-proxy/
+    - terraform/lxc/ansible/playbooks/deploy-pangolin-proxy.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Adding a web/:80 entrypoint or any route that is not explicitly opted into Pangolin publishing"
+    - "Any terragrunt apply or live deploy in this step -- scaffold and syntax-check only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-pangolin-proxy.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### Step: nextcloud-P3-03b-duplicate-authentik-middleware
+
+```yaml
+id: nextcloud-P3-03b-duplicate-authentik-middleware
+title: Confirm pangolin-proxy's forwardAuth middleware is a real, working duplicate, not a shared reference
+depends_on: [nextcloud-P3-03-pangolin-proxy-stack]
+
+change: >
+  The main proxy-stack's forwardAuth middleware
+  (terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml, "Write shared
+  Authentik middleware config" task) calls
+  https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik
+  -- an internal-only hostname (LAB_FQDN_AUTHENTIK_INTERNAL, default
+  authentik-int.<domain>) that resolves directly to Authentik, not
+  through either Traefik. This means pangolin-proxy's own copy of this
+  middleware (written by nextcloud-P3-03 above) works identically and
+  needs no new firewall rule -- confirm this live once both stacks
+  exist: the same outpost call from a second, independent Traefik
+  process, same edge_seg -> mgmt_seg:9443 reachability.
+
+  Live-verify (not assumed): that authentik-int.<domain> actually
+  resolves to Authentik's real IP from edge_seg (not through Traefik --
+  a routing loop would be a real, silent failure mode: pangolin-proxy
+  calling out through itself or the main Traefik to reach Authentik).
+
+scope:
+  allowed_paths: []
+  forbidden_actions:
+    - "Any file edit in this step -- verification only, against a live pangolin-proxy + proxy-stack + authentik-stack"
+
+gates:
+  - id: dns-resolves-directly
+    cmd: "dig +short authentik-int.${LAB_DOMAIN} | grep -qE '^[0-9]' && echo OK || echo FAIL"
+    expect: "OK"
+    critical: true
+```
+
+### Step: nextcloud-P3-03c-edgemanifest-pangolin-opt-in
+
+**Not a step block yet — genuinely open, needs a short design pass
+before it's literal.** `render-edge-traefik.py` currently renders every
+EdgeManifest route into the main proxy-stack's single dynamic config
+directory (confirmed by reading it — one output target, no branching on
+destination). It needs a second output path for routes that opt into
+Pangolin publishing. Two real design questions to resolve before writing
+this as a step:
+
+1. **Same route, two hostnames, or two separate route entries?** A
+   service published both on the LAN (`nextcloud.${LAB_DOMAIN}`) and via
+   Pangolin (`nextcloud.pan.gibbsgreatly.xyz`) could be modeled as one
+   EdgeManifest route with a `pangolin.public_host:` field (one router
+   rendered twice, once per Traefik instance, different Host rule each
+   time), or as two separate route entries in the same EdgeManifest.
+   Prefer the former — it keeps one source of truth for backend URL/auth
+   mode per service, rather than two entries that can drift out of sync.
+2. **OIDC redirect_uris need a second entry.** `discover-authentik-edge.py`
+   computes each OIDC route's expected `redirect_uris` from its `host:`
+   field alone (`_oidc_redirect_uris`, confirmed by reading it) and
+   reconciles Authentik's provider config to match exactly. A
+   Pangolin-published OIDC route (not nextcloud initially, since
+   nextcloud-04/05 use `forwardAuth`-free `occ user_oidc` wiring directly
+   against Authentik rather than this repo's `forwardAuth`/OIDC
+   EdgeManifest path — but relevant for any future OIDC-mode route, e.g.
+   openwebui) needs the reconciler taught to add both hostnames'
+   callback URLs to the same provider, not just the LAN one. Confirm
+   which of nextcloud's own auth paths (occ user_oidc vs this repo's
+   EdgeManifest OIDC path) actually applies before assuming this affects
+   nextcloud-stack directly.
+
+Once resolved, write the real step: extend `render-edge-traefik.py` and
+the `EdgeManifest` CRD-equivalent schema, add the LAN-vs-Pangolin source-
+policy regression tests from `pangolin-observability-and-graylog-plan.md`
+(every LAN-approved service still works from the LAN; an unpublished
+service fails through Pangolin even when its hostname is supplied — this
+is now trivially true by construction under Option B, since
+pangolin-proxy's dynamic config simply has no router for it; a request
+from the connector subnet cannot reach a route by changing its Host
+header — also true by construction, since connector_seg has no network
+path to the main Traefik at all under nextcloud-P3-01's rule).
 
 ### Step: nextcloud-P3-04-nextcloud-pangolin-route
 
-**Depends on nextcloud-P3-03 landing first.** Once the Pangolin
-entrypoint mechanism exists, add a `pangolin` block to
+**Depends on nextcloud-P3-03c landing first.** Once the EdgeManifest
+Pangolin opt-in mechanism exists, add a `pangolin` block to
 `terraform/lxc/stacks/nextcloud-stack/edge.yaml`'s `nextcloud` route
 (alongside the existing internal LAN route added by nextcloud-05),
-publishing `nextcloud.pan.gibbsgreatly.xyz` — matching
+publishing `nextcloud.pan.gibbsgreatly.xyz` via pangolin-proxy (not the
+main Traefik) — matching
 `pangolin-observability-and-graylog-plan.md`'s service onboarding
 contract table (dedicated `*.pan.gibbsgreatly.xyz` hostname, distinct
 resource/route names so an operator can tell which policy layer rejected
 a request, lab Traefik as the target — never the container directly).
-Not written as literal content yet since it depends on P3-03's
-not-yet-decided schema shape.
+Not written as literal content yet since it depends on P3-03c's
+not-yet-decided schema shape. Also confirm at this point which of
+nextcloud's two auth paths is actually live (occ user_oidc direct
+against Authentik, from nextcloud-04/05, vs this repo's EdgeManifest
+`forwardAuth`/OIDC path) — nextcloud-P3-03c's redirect_uri concern only
+applies if the EdgeManifest OIDC path is the one in use.
 
 ### Step: nextcloud-P3-05-pangolin-resource-and-lab-site
 
