@@ -14,9 +14,23 @@ Phase 3 in [plan.md](plan.md).
 
 ## Current execution state (2026-09-23)
 
-**Nothing in `proxmox-homelab` itself has been executed yet** — no
-`apps_seg` zone, no `nextcloud-stack`, no `connector_seg`, no
-`pangolin-proxy`. Phase 1/2/3 here are all still just plan.md content.
+**`connector_seg` is now live on `pve`** — `nextcloud-P3-01` executed:
+zone/vnet/subnet applied via `pvesh` under the production approval flow
+(VLAN 110, `192.168.110.0/24`, `tvnewt`), verified with `pvesh get` and
+`ip link show vmbr0.110`. Two real VLAN collisions were caught and
+fixed along the way (both from checking the actual physical switch
+config against what the plan assumed was free): `connector_seg` moved
+off VLAN 100 (already `cse_seg` on `pve-tiny`) to 110, and `apps_seg`
+(nextcloud's own zone, not yet built) moved off VLAN 90 (already
+`test_dhcp_seg` on `pve-test-vm`, nested inside `pve`) to 120 — see
+Decisions below for both.
+
+**Still not built:** `apps_seg` zone itself, `nextcloud-stack`, the
+`newt-connector` LXC host, the `pangolin-proxy` Traefik instance, and
+the MikroTik firewall rule that actually enforces
+`connector_seg → pangolin-proxy:443` (Proxmox SDN only creates the
+VLAN/trunk — the MikroTik router is what enforces the policy in
+`pve.yaml`'s `policies:` section). Phase 1/2 remain untouched.
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
@@ -58,11 +72,18 @@ See [plan.md](plan.md) for the full step-by-step plan.
   for programmatic writes from other stacks, larger app ecosystem;
   ownCloud has been shedding features into its paid Infinite Scale
   rewrite.
-- **Zone:** new `apps_seg` SDN zone (VLAN 90, `192.168.90.0/24`), not
+- **Zone:** new `apps_seg` SDN zone (VLAN 120, `192.168.120.0/24`), not
   reusing `infra_seg` or `media_seg` — keeps a future
   internet-exposed-via-Pangolin app isolated from core infra and media
   traffic, matching the existing per-purpose zone pattern
-  (`media_seg`, `game_seg`, `pentest_seg`, `ai_seg`).
+  (`media_seg`, `game_seg`, `pentest_seg`, `ai_seg`). Originally scoped
+  for VLAN 90; changed 2026-09-23 after confirming on the physical
+  switches that VLAN 90 is already live as `test_dhcp_seg`
+  (`terraform/lxc/network/pve-test-vm.yaml`, labeled `dhcp_test` on the
+  switch) — `pve-test-vm` is nested inside `pve` and shares its
+  physical trunk, so it would have collided. Same class of gap as the
+  `connector_seg`/VLAN 100 fix below; 120 is the next tag free across
+  `terraform/lxc/network/*.yaml` as of 2026-09-23.
 - **Database:** PostgreSQL — matches Authentik/NetBox/Wazuh, already
   operated on this platform; Nextcloud's own docs prefer it over MariaDB
   for new installs.

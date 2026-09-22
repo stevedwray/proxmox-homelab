@@ -23,15 +23,26 @@ monitoring, security — control-plane/credential-creating actions per
 
 ```yaml
 id: nextcloud-01-create-apps-seg-zone
-title: Create apps_seg SDN zone (VLAN 90, 192.168.90.0/24) and its firewall policies
+title: Create apps_seg SDN zone (VLAN 120, 192.168.120.0/24) and its firewall policies
 depends_on: []
 
 change: >
+  VLAN 90 was this step's original choice but is already live as
+  test_dhcp_seg (terraform/lxc/network/pve-test-vm.yaml, tvdhcp,
+  192.168.90.0/24 — the switch labels it "dhcp_test", confirmed present
+  on the physical trunk 2026-09-23). pve-test-vm is nested inside pve
+  and shares its physical NIC/trunk (see the ai_seg zone comment in
+  pve.yaml for the same reasoning applied to VLAN 50), so reusing 90
+  here would collide. Re-check terraform/lxc/network/*.yaml for
+  `vlan_tag:` values before executing this step in case another zone
+  has since claimed 120 — as of 2026-09-23 (after nextcloud-P3-01
+  claimed 110) every tag 10 through 110 is spoken for, so 120 is next.
+
   Insert this exact block into terraform/lxc/network/pve.yaml in the
   zones: section, immediately after the media_seg zone block (search for
   "gateway: \"192.168.80.1\"" then "snat: false" to find its end):
 
-    # apps_seg — General application services (VLAN 90, 192.168.90.0/24)
+    # apps_seg — General application services (VLAN 120, 192.168.120.0/24)
     apps_seg:
       description: General application services — Nextcloud (nextcloud-stack)
       type: sdn_vnet
@@ -44,10 +55,10 @@ change: >
         nodes:
           - pve
         vnet: tvapps
-        vlan_tag: 90
+        vlan_tag: 120
         alias: pve apps segment
-        subnet: "192.168.90.0/24"
-        gateway: "192.168.90.1"
+        subnet: "192.168.120.0/24"
+        gateway: "192.168.120.1"
         snat: false
 
   In the members section (search for "media_seg:" under the second
@@ -58,7 +69,7 @@ change: >
       description: General application services — Nextcloud, additive alongside existing zones
       attachment: apps_seg
       containers:
-        - "nextcloud-stack (VMID 90010) — 192.168.90.10"
+        - "nextcloud-stack (VMID 120010) — 192.168.120.10"
 
   In the policies: section, insert these six rules immediately before the
   final existing rule in the file (the "media-stack-lab node_exporter TLS
@@ -146,14 +157,14 @@ scoped by *source = greenbone-stack's own IP*
 `pentest_seg`, into `apps_seg` for discovery-scan reach (ICMP + the
 common TCP/UDP discovery ports that doc's Phase 1 already defines for
 other zones — copy its exact rule shape rather than reinventing one
-here), and register `192.168.90.0/24` in whatever GVM target/task
+here), and register `192.168.120.0/24` in whatever GVM target/task
 config that doc's Phase 1 established for the other SDN zones (`game_seg`,
 `media_seg`, etc.). Read `network-scan-rollout-plan.md` in full before
 doing this — it has real, hard-won specifics (in-interface matching over
 src-address matching, rule ordering against the default-deny, IoT/consumer
 gear sensitivity to `Full and fast` scans) that a from-scratch attempt
 would silently miss. This step should land as its own follow-up plan
-step once nextcloud-01/02 are actually deployed and `192.168.90.10` is a
+step once nextcloud-01/02 are actually deployed and `192.168.120.10` is a
 real, reachable host — scanning a zone with nothing live in it yet has
 no value and risks a stale/wrong target definition.
 
@@ -182,9 +193,9 @@ as prose, not a step — see `docs/agent-design/step-packet-schema.md`
 ```yaml
 stack_yaml:
   hostname: nextcloud-stack
-  ip_address: "192.168.90.10/24"
-  gateway: "192.168.90.1"
-  dns_server: "192.168.90.1"
+  ip_address: "192.168.120.10/24"
+  gateway: "192.168.120.1"
+  dns_server: "192.168.120.1"
   vmid: 90010
   cores: 4
   memory: 4096
@@ -288,9 +299,9 @@ contract_facts: |
   - Purpose: self-hosted file storage / sync, initial use case is a
     durable landing point for reports/docs from other lab projects
     (deep-research, CyberSecEval) — see docs/reporting-platform/
-  - Zone: apps_seg (VLAN 90, new zone — see nextcloud-01)
-  - IP: 192.168.90.10/24
-  - Gateway: 192.168.90.1
+  - Zone: apps_seg (VLAN 120, new zone — see nextcloud-01)
+  - IP: 192.168.120.10/24
+  - Gateway: 192.168.120.1
   - VMID: 90010
   - Provides: nextcloud, port 8080, protocol tcp
   - Dependencies: none at deploy time; Authentik must already be live
@@ -588,7 +599,7 @@ flow, not on `pve-test-vm`. Before running this:
    `./with-secrets-prod scripts/provision.sh --stack nextcloud-stack`.
 5. Verify per CLAUDE.md's Stack Service Types convention: `curl` to
    Nextcloud's HTTP port — add a row for `nextcloud-stack` there
-   (`curl -f http://192.168.90.10:8080/status.php`) once this step
+   (`curl -f http://192.168.120.10:8080/status.php`) once this step
    actually runs, since the table doesn't have one yet.
 6. After-Action Summary to the operator per the standard flow.
 
@@ -665,6 +676,18 @@ repeating this phase.
 
 ### Step: nextcloud-P3-01-create-connector-seg-zone
 
+**DONE, live on `pve` as of 2026-09-23** — file committed
+(`a24d0f94`) and SDN objects applied via `pvesh` under the production
+approval flow (task `nextcloud-P3-01-connector-seg-sdn-apply`).
+Verified: zone `tvnewt`, vnet `tvnewt` tag 110, subnet
+`192.168.110.0/24`/gw `192.168.110.1` all present via `pvesh get`, and
+`vmbr0.110` UP on the host. Kept below as a record of what ran, with
+one real deviation from the original text: `apps_seg` (from
+`nextcloud-01`) didn't exist yet when this ran — Phase 1 is still not
+built — so the block was anchored after `ai_seg` instead. Re-anchor
+after `apps_seg` only if this step is ever re-run from scratch on a
+host where Phase 1 already landed first.
+
 ```yaml
 id: nextcloud-P3-01-create-connector-seg-zone
 title: Create connector_seg SDN zone for the Newt connector (VLAN 110, 192.168.110.0/24)
@@ -683,8 +706,11 @@ change: >
 
   Insert this exact block into terraform/lxc/network/pve.yaml in the
   zones: section, immediately after the apps_seg zone block added by
-  nextcloud-01 (search for "gateway: \"192.168.90.1\"" then "snat: false"
-  to find its end):
+  nextcloud-01 (search for "gateway: \"192.168.120.1\"" then "snat: false"
+  to find its end) — or, if apps_seg doesn't exist yet (Phase 1 not
+  built), anchor after ai_seg instead (search for
+  "gateway: \"${lab_gw_ai}\"" then "snat: false"), as was actually done
+  2026-09-23:
 
     # connector_seg — Newt connector for OCI Pangolin edge (VLAN 110, 192.168.110.0/24)
     connector_seg:
