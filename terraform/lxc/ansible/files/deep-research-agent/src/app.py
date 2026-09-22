@@ -1,6 +1,17 @@
 import warnings
 warnings.filterwarnings("ignore", message=".*is experimental and may change.*")
 
+# Diagnostic hook -- added 2026-09-22 after a real production hang (CPU
+# pegged at 99% for 24+ minutes, GPU/LLM idle, no forward progress) that
+# could not be reproduced in isolated testing. `docker kill -s SIGUSR1
+# deep-research` now dumps every thread's real Python stack trace to
+# stderr (captured by this container's syslog logging driver) instead of
+# guessing at the cause next time. Zero new dependencies, always on, no
+# runtime cost unless triggered.
+import faulthandler
+import signal
+faulthandler.register(signal.SIGUSR1)
+
 from engine.sdk import AgentBuilder, SubAgentConfig
 from tools import (
     read_workspace_file,

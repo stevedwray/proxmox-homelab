@@ -116,6 +116,33 @@ tracks current live state.
   `ai-services-deep-research-data`) since the old volume's content
   structure doesn't match the new, narrower mount point. See
   `STACK_CONTRACT.md`'s Persistent State table.
+- **Real production hang, 2026-09-22: a live research session pegged the
+  container at 99% CPU for 24+ minutes with the GPU/LLM completely idle,
+  freezing the browser session.** `write_workspace_file` appeared stuck
+  in the UI, but `docker top`/`py-spy`-adjacent investigation (26 threads,
+  main thread state `R`/running, not blocked on I/O) showed a genuine
+  CPU-bound spin, not a network wait. Root cause not confirmed — three
+  separate reproduction attempts (single-page pathological parse,
+  concurrent `markitdown` conversions on fresh instances, concurrent
+  conversions on the exact shared-singleton pattern `utils/parsers.py`
+  actually uses) all completed cleanly in isolation. This matches an
+  already-documented residual risk from the 2026-09-21 timeout fix:
+  `asyncio.wait_for()` can give up and let the agent move on, but Python
+  cannot forcibly kill the underlying OS thread it spawned via
+  `asyncio.to_thread()` — a zombie thread from an earlier abandoned
+  `fetch_url_to_workspace`/markitdown call most likely kept running and
+  starved the whole container of CPU. Fixed at the structural level
+  regardless of the exact trigger: `fetch_url_to_workspace`'s blocking
+  work now runs in a spawned (not forked — see `tools/web.py`'s
+  `_MP_CONTEXT` comment for why fork is itself a deadlock risk here)
+  subprocess via `multiprocessing`, which **can** be genuinely SIGTERM/
+  SIGKILLed on timeout. Verified live: a simulated infinite-loop worker
+  was force-killed in exactly the configured timeout window, confirmed
+  dead via `process.is_alive()`. Also added a `faulthandler` SIGUSR1
+  hook in `app.py` (`docker kill -s SIGUSR1 deep-research` dumps every
+  thread's real stack trace to the container's logs) so a recurrence is
+  instantly diagnosable instead of requiring another round of blind
+  hypothesis testing.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 

@@ -1,6 +1,8 @@
 import httpx
+import multiprocessing
 import os
 import asyncio
+import queue as queue_module
 from bs4 import BeautifulSoup
 from agent_framework import tool
 from tools.core import with_quota
@@ -14,16 +16,36 @@ _FETCH_TIMEOUT_SECONDS = 45
 _SEARCH_TIMEOUT_SECONDS = 30
 _TAVILY_API_URL = "https://api.tavily.com/search"
 
-@tool
-@with_quota
-async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = True) -> str:
-    """Fetch external web content and save it directly to the workspace. If convert_to_md is True, parses to Markdown."""
-    def _fetch():
+# Real production incident 2026-09-22: a fetch/convert call got stuck
+# (root cause not confirmed -- could not reproduce in isolated testing
+# despite trying several hypotheses), asyncio.wait_for()'s timeout fired
+# and let the agent move on, but the underlying OS thread it had spawned
+# via asyncio.to_thread() kept running -- Python cannot forcibly kill a
+# thread. That zombie thread pegged the container at 99% CPU for 24+
+# minutes with the GPU/LLM completely idle, starving the whole app of
+# CPU and freezing the browser session. Running this work in a spawned
+# (not forked -- see _fetch_worker's own docstring) subprocess instead
+# means a stuck worker can be genuinely SIGKILLed on timeout, not just
+# abandoned. "spawn", not the Linux default "fork", because forking a
+# process that already has multiple threads/an active asyncio event loop
+# risks the child inheriting a lock held by a thread that doesn't exist
+# in it -- a different, equally real deadlock class.
+_MP_CONTEXT = multiprocessing.get_context("spawn")
+
+
+def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
+    """Module-level (not a closure) so it can be pickled and re-run in a
+    fresh spawned interpreter -- see the _MP_CONTEXT comment above for why
+    this runs in a subprocess at all. Puts ("ok", data) or ("error", msg)
+    onto result_queue; never raises across the process boundary.
+    """
+    try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
 
         if not convert_to_md:
-            return resp.content  # Raw bytes
+            result_queue.put(("ok", resp.content))  # Raw bytes
+            return
 
         content_type = resp.headers.get("content-type", "").lower()
         # Check actual bytes — a URL might say .pdf but serve HTML (JS-gated doc viewers)
@@ -46,18 +68,20 @@ async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = 
                         capture_output=True, text=True, timeout=60
                     )
                     if result.returncode == 0 and result.stdout.strip():
-                        return result.stdout
+                        result_queue.put(("ok", result.stdout))
+                        return
 
                 # Fallback to markitdown on local file
                 try:
                     from utils.parsers import convert_to_markdown
                     md_content = convert_to_markdown(tmp_path)
                     if md_content:
-                        return md_content
+                        result_queue.put(("ok", md_content))
+                        return
                 except ImportError:
                     pass
 
-                return f"[ERROR: PDF at {url} could not be parsed. Size: {len(resp.content)} bytes. Try a different source.]"
+                result_queue.put(("ok", f"[ERROR: PDF at {url} could not be parsed. Size: {len(resp.content)} bytes. Try a different source.]"))
             finally:
                 os.unlink(tmp_path)
         else:
@@ -71,7 +95,8 @@ async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = 
                 try:
                     md_content = convert_to_markdown(tmp_path)
                     if md_content:
-                        return md_content
+                        result_queue.put(("ok", md_content))
+                        return
                 finally:
                     os.unlink(tmp_path)
             except ImportError:
@@ -80,12 +105,46 @@ async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = 
             # BeautifulSoup fallback for HTML
             soup = BeautifulSoup(resp.text, "html.parser")
             for script in soup(["script", "style", "nav", "footer"]): script.extract()
-            return '\n'.join(line for line in (l.strip() for l in soup.get_text(separator='\n').splitlines()) if line)
+            text = '\n'.join(line for line in (l.strip() for l in soup.get_text(separator='\n').splitlines()) if line)
+            result_queue.put(("ok", text))
+    except Exception as e:
+        import traceback
+        result_queue.put(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
 
 
+async def _fetch_with_hard_kill(url: str, convert_to_md: bool, timeout: float):
+    """Runs _fetch_worker in a subprocess and guarantees it's dead -- via
+    SIGTERM then SIGKILL -- if it doesn't finish in time. This is the part
+    a plain asyncio.wait_for(asyncio.to_thread(...)) cannot do.
+    """
+    result_queue = _MP_CONTEXT.Queue()
+    process = _MP_CONTEXT.Process(target=_fetch_worker, args=(url, convert_to_md, result_queue), daemon=True)
+    process.start()
+    try:
+        status, payload = await asyncio.to_thread(result_queue.get, True, timeout)
+    except queue_module.Empty:
+        process.terminate()
+        await asyncio.to_thread(process.join, 5)
+        if process.is_alive():
+            process.kill()
+            await asyncio.to_thread(process.join, 5)
+        raise asyncio.TimeoutError
+    else:
+        await asyncio.to_thread(process.join, 5)
+        if process.is_alive():
+            process.kill()
+        if status == "error":
+            raise RuntimeError(payload)
+        return payload
+
+
+@tool
+@with_quota
+async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = True) -> str:
+    """Fetch external web content and save it directly to the workspace. If convert_to_md is True, parses to Markdown."""
     try:
         try:
-            data = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=_FETCH_TIMEOUT_SECONDS)
+            data = await _fetch_with_hard_kill(url, convert_to_md, _FETCH_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             return f"Failed: fetch_url_to_workspace timed out after {_FETCH_TIMEOUT_SECONDS}s fetching '{url}'."
 
