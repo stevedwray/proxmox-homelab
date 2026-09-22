@@ -1,11 +1,9 @@
 import httpx
-import multiprocessing
 import os
 import asyncio
-import queue as queue_module
 from bs4 import BeautifulSoup
 from agent_framework import tool
-from tools.core import with_quota
+from tools.core import with_quota, run_with_hard_kill
 from tools.fs import _get_safe_path, _get_workspace_type, _get_workspace_dir, _IN_MEMORY_FS
 
 # httpx's own timeout= only bounds individual network reads/writes, not the
@@ -16,28 +14,13 @@ _FETCH_TIMEOUT_SECONDS = 45
 _SEARCH_TIMEOUT_SECONDS = 30
 _TAVILY_API_URL = "https://api.tavily.com/search"
 
-# Real production incident 2026-09-22: a fetch/convert call got stuck
-# (root cause not confirmed -- could not reproduce in isolated testing
-# despite trying several hypotheses), asyncio.wait_for()'s timeout fired
-# and let the agent move on, but the underlying OS thread it had spawned
-# via asyncio.to_thread() kept running -- Python cannot forcibly kill a
-# thread. That zombie thread pegged the container at 99% CPU for 24+
-# minutes with the GPU/LLM completely idle, starving the whole app of
-# CPU and freezing the browser session. Running this work in a spawned
-# (not forked -- see _fetch_worker's own docstring) subprocess instead
-# means a stuck worker can be genuinely SIGKILLed on timeout, not just
-# abandoned. "spawn", not the Linux default "fork", because forking a
-# process that already has multiple threads/an active asyncio event loop
-# risks the child inheriting a lock held by a thread that doesn't exist
-# in it -- a different, equally real deadlock class.
-_MP_CONTEXT = multiprocessing.get_context("spawn")
-
 
 def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
     """Module-level (not a closure) so it can be pickled and re-run in a
-    fresh spawned interpreter -- see the _MP_CONTEXT comment above for why
-    this runs in a subprocess at all. Puts ("ok", data) or ("error", msg)
-    onto result_queue; never raises across the process boundary.
+    fresh spawned interpreter -- run via tools.core.run_with_hard_kill,
+    see its own docstring/comment for why this runs in a subprocess at
+    all. Puts ("ok", data) or ("error", msg) onto result_queue; never
+    raises across the process boundary.
     """
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
@@ -112,41 +95,17 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
         result_queue.put(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
 
 
-async def _fetch_with_hard_kill(url: str, convert_to_md: bool, timeout: float):
-    """Runs _fetch_worker in a subprocess and guarantees it's dead -- via
-    SIGTERM then SIGKILL -- if it doesn't finish in time. This is the part
-    a plain asyncio.wait_for(asyncio.to_thread(...)) cannot do.
-    """
-    result_queue = _MP_CONTEXT.Queue()
-    process = _MP_CONTEXT.Process(target=_fetch_worker, args=(url, convert_to_md, result_queue), daemon=True)
-    process.start()
-    try:
-        status, payload = await asyncio.to_thread(result_queue.get, True, timeout)
-    except queue_module.Empty:
-        process.terminate()
-        await asyncio.to_thread(process.join, 5)
-        if process.is_alive():
-            process.kill()
-            await asyncio.to_thread(process.join, 5)
-        raise asyncio.TimeoutError
-    else:
-        await asyncio.to_thread(process.join, 5)
-        if process.is_alive():
-            process.kill()
-        if status == "error":
-            raise RuntimeError(payload)
-        return payload
-
-
 @tool
 @with_quota
 async def fetch_url_to_workspace(url: str, filename: str, convert_to_md: bool = True) -> str:
     """Fetch external web content and save it directly to the workspace. If convert_to_md is True, parses to Markdown."""
     try:
         try:
-            data = await _fetch_with_hard_kill(url, convert_to_md, _FETCH_TIMEOUT_SECONDS)
+            data = await run_with_hard_kill(_fetch_worker, (url, convert_to_md), _FETCH_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             return f"Failed: fetch_url_to_workspace timed out after {_FETCH_TIMEOUT_SECONDS}s fetching '{url}'."
+        except RuntimeError as e:
+            return f"Failed: {e}"
 
         # Explicitly tag markdown files
         if convert_to_md and not filename.endswith('.md'):

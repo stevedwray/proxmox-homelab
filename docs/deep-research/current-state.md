@@ -143,6 +143,29 @@ tracks current live state.
   thread's real stack trace to the container's logs) so a recurrence is
   instantly diagnosable instead of requiring another round of blind
   hypothesis testing.
+- **Follow-on fix, same day: the hang class is bigger than just
+  `fetch_url_to_workspace`.** Live faulthandler dump on a *second* real
+  99%-CPU hang showed the main event loop idle (waiting in `select()`) —
+  the burn was in two `ThreadPoolExecutor` worker threads whose Python
+  stack stopped at the C-call boundary. Reading `agent_framework`'s
+  actual installed source (`_tools.py:822`) confirmed why: it wraps
+  *every* synchronous (`def`, not `async def`) `@tool` in
+  `asyncio.to_thread()` before calling it, and its own code comment
+  admits "a synchronous tool body already running in a worker thread
+  (asyncio.to_thread) cannot be interrupted." Only `fetch_url_to_workspace`/
+  `web_search` were `async def` and therefore exempt — `write_workspace_file`,
+  `read_workspace_file`, `list_workspace_files`, `remove_workspace_file`,
+  `write_todos`, `read_todos`, and `think_tool` were all still exposed.
+  `grep_workspace_file` was the one genuine risk among them (an
+  LLM-chosen regex against arbitrary fetched web content is a real
+  ReDoS/catastrophic-backtracking vector, not hypothetical) — its actual
+  matching step now also runs through the same `run_with_hard_kill`
+  subprocess helper (moved to `tools/core.py` so both `tools/web.py` and
+  `tools/fs.py` share it). Every other tool was converted to `async def`
+  to exit the framework's blanket thread-wrapping; their bodies are fast
+  local I/O with nothing else worth isolating. Verified live: a
+  classic `(a+)+$` catastrophic-backtracking pattern against adversarial
+  input was bounded by the grep timeout instead of hanging.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 

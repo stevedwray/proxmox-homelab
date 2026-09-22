@@ -1,6 +1,57 @@
 import contextvars
 import functools
 import asyncio
+import multiprocessing
+import queue as queue_module
+
+# Real production incident 2026-09-22: agent_framework itself wraps every
+# synchronous (`def`, not `async def`) @tool in asyncio.to_thread() before
+# calling it (agent_framework/_tools.py, confirmed by reading its actual
+# installed source) -- its own code comments acknowledge this directly:
+# "a synchronous tool body already running in a worker thread
+# (asyncio.to_thread) cannot be interrupted." Python cannot forcibly kill
+# a thread, so any tool whose underlying call can hang (a pathological
+# regex an LLM chose against arbitrary fetched content, a stuck native
+# library call) can peg the whole container's CPU forever once its own
+# asyncio.wait_for gives up -- exactly what happened live. A tool
+# declared `async def` bypasses this wrapping entirely (agent_framework
+# checks inspect.iscoroutinefunction() and calls it directly), so pairing
+# that with running the actually-risky work in a genuinely killable
+# subprocess (SIGTERM/SIGKILL, not a thread) closes the gap. Same
+# mechanism this repo's tools/web.py already uses for
+# fetch_url_to_workspace -- shared here so it isn't duplicated per tool.
+_MP_CONTEXT = multiprocessing.get_context("spawn")
+
+
+async def run_with_hard_kill(target, args: tuple, timeout: float):
+    """Runs `target(*args, result_queue)` in a spawned subprocess and
+    guarantees it's dead -- via SIGTERM then SIGKILL -- if it doesn't
+    finish in time. `target` must be a module-level function (picklable
+    for spawn) that puts ("ok", value) or ("error", message) onto the
+    queue it receives as its last argument; never raises across the
+    process boundary itself. Raises asyncio.TimeoutError on timeout, or
+    RuntimeError(message) if the worker reported its own failure.
+    """
+    result_queue = _MP_CONTEXT.Queue()
+    process = _MP_CONTEXT.Process(target=target, args=(*args, result_queue), daemon=True)
+    process.start()
+    try:
+        status, payload = await asyncio.to_thread(result_queue.get, True, timeout)
+    except queue_module.Empty:
+        process.terminate()
+        await asyncio.to_thread(process.join, 5)
+        if process.is_alive():
+            process.kill()
+            await asyncio.to_thread(process.join, 5)
+        raise asyncio.TimeoutError
+    else:
+        await asyncio.to_thread(process.join, 5)
+        if process.is_alive():
+            process.kill()
+        if status == "error":
+            raise RuntimeError(payload)
+        return payload
+
 
 # --- TOOL QUOTA SYSTEM ---
 # Protects local LLM workflows from infinite retry loops (e.g., repeatedly failing to parse a URL)
