@@ -366,7 +366,7 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
     expect: "exit 0"
     critical: true
   - id: no-bare-ip-var
@@ -510,7 +510,7 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
     expect: "exit 0"
     critical: true
 ```
@@ -849,6 +849,26 @@ every future Pangolin-published service — cse-panel, deep-research, and
 others — not just nextcloud-stack), scoped larger than nextcloud-stack
 alone; nextcloud-stack is the first concrete service riding on it.
 
+**Scaffolded (files only, no deploy) as of 2026-09-23** — all 6 files
+written (`stack.yaml`, `terragrunt.hcl`, `network-sdn-vars.yml`,
+`network-vnet-firewall-vars.yml`, `smoke-test.sh`, `STACK_CONTRACT.md`)
+plus `deploy-pangolin-proxy.yml`, modeled directly on `deploy-proxy-stack.yml`
+(read, not assumed — same `v3.7.10` pinned Traefik image, same
+`community.docker.docker_compose_v2` recreate-on-change pattern). Real
+gap found while running the step's own gate: the literal
+`ansible-playbook --syntax-check` command as originally written fails
+from the repo root — `ansible.cfg`'s `roles_path` (needed to resolve
+`lxc_base`/`docker_base`) is never picked up without
+`ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg`, which `provision.sh`
+always exports before any real run but a bare gate command does not.
+Fixed in this step's gate and in `nextcloud-02`/`nextcloud-02c`'s
+identical `deploy-nextcloud-stack.yml` gates too, since they'd have hit
+the same thing. No wazuh_agent/unattended_upgrades roles added — those
+are still a 6-stack pilot rollout, not yet universal (confirmed by
+checking which `deploy-*.yml` files actually reference them), so
+`media-stack-lab`'s precedent (a real, fully-deployed stack without
+them) was followed over `proxy-stack`'s.
+
 ```yaml
 id: nextcloud-P3-03-pangolin-proxy-stack
 title: Scaffold a second, dedicated Traefik instance (pangolin-proxy) for Pangolin-published routes only
@@ -902,7 +922,7 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-pangolin-proxy.yml"
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-pangolin-proxy.yml"
     expect: "exit 0"
     critical: true
 ```

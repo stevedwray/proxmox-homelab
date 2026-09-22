@@ -1,0 +1,222 @@
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy pangolin-proxy Traefik compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    proxy_compose_dir: /opt/pangolin-proxy
+    # Same pinned image/digest as the main proxy-stack's traefik_image —
+    # see terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml, read
+    # directly rather than assumed, since images drift independently per
+    # stack (docs/nextcloud-stack/plan.md nextcloud-P3-03).
+    traefik_version: "v3.7.10"
+    proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    proxy_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ proxy_lab_domain, true) }}"
+    traefik_image: "{{ proxy_registry_host }}/dockerhub/library/traefik:{{ traefik_version }}"
+    proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
+
+  tasks:
+    - name: Create Traefik directory structure
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ proxy_compose_dir }}", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
+        - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
+
+    - name: Create ACME storage file with strict permissions
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/certs/letsencrypt/acme.json"
+        content: ""
+        force: false
+        mode: "0600"
+
+    - name: Write compose secrets env file
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          CF_DNS_API_TOKEN={{ lookup('env', 'CF_DNS_API_TOKEN') | mandatory('CF_DNS_API_TOKEN env var is not set') }}
+
+    - name: Write Traefik static configuration
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/traefik.yml"
+        mode: "0640"
+        content: |
+          api:
+            dashboard: true
+            insecure: false
+
+          # Deliberately no `web`/:80 entrypoint. Pangolin already terminates
+          # the public-facing TLS leg; this instance's :443 only needs to be
+          # reachable from connector_seg, never from the internet or the LAN
+          # directly (docs/nextcloud-stack/plan.md nextcloud-P3-03).
+          entryPoints:
+            websecure:
+              address: ":443"
+              http:
+                underscoreHeadersStrategy: reject
+            metrics:
+              address: ":8082"
+
+          # Single resolver: nothing behind this instance uses internal
+          # step-ca certs, and step-ca's HTTP-01 challenge needs a web/:80
+          # entrypoint this instance doesn't have.
+          certificatesResolvers:
+            letsencrypt:
+              acme:
+                caServer: "{{ 'https://acme-v02.api.letsencrypt.org/directory' if proxy_lab_domain == 'lab.gibbsgreatly.xyz' else 'https://acme-staging-v02.api.letsencrypt.org/directory' }}"
+                email: "admin@gibbsgreatly.xyz"
+                storage: "/certs/letsencrypt/acme.json"
+                dnsChallenge:
+                  provider: cloudflare
+                  resolvers:
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_PRIMARY') | mandatory('TRAEFIK_DNS_RESOLVER_PRIMARY env var is required') }}"
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_SECONDARY') | mandatory('TRAEFIK_DNS_RESOLVER_SECONDARY env var is required') }}"
+
+          providers:
+            docker:
+              exposedByDefault: false
+            file:
+              # Active watched directory for all dynamic files. Per-route
+              # Pangolin-opted-in router configs land here once
+              # nextcloud-P3-03c's renderer target exists.
+              directory: "/etc/traefik/dynamic/"
+              watch: true
+
+          log:
+            level: INFO
+
+          metrics:
+            prometheus:
+              entryPoint: metrics
+      register: traefik_static_config
+
+    - name: Write shared Authentik middleware config (own copy, not a reference — see nextcloud-P3-03b)
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/dynamic/authentik.yml"
+        mode: "0640"
+        content: |
+          http:
+            middlewares:
+              authentik:
+                forwardAuth:
+                  address: "https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik"
+                  trustForwardHeader: true
+                  # v3.6.9+ warns on every router using this middleware
+                  # when unset ("unlimited response body size ... DoS
+                  # attacks and memory exhaustion"). The outpost's real
+                  # response is small (headers + at most a short
+                  # redirect/error body); 1MiB is generous headroom.
+                  maxResponseBodySize: 1048576
+                  authResponseHeaders:
+                    - X-authentik-username
+                    - X-authentik-groups
+                    - X-authentik-email
+
+    - name: Write wildcard certificate request config
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/dynamic/certs.yml"
+        mode: "0640"
+        content: |
+          # No defaultGeneratedCert: each router requests its own cert via its
+          # certResolver. This prevents the letsencrypt wildcard from shadowing
+          # resolver-specific certs.
+          {}
+
+    - name: Write Traefik compose definition
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            traefik:
+              image: {{ traefik_image }}
+              container_name: traefik
+              restart: unless-stopped
+              env_file: .env
+              ports:
+                - "443:443"
+                - "8082:8082"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./traefik.yml:/etc/traefik/traefik.yml:ro
+                - ./dynamic:/etc/traefik/dynamic:ro
+                - ./certs/letsencrypt:/certs/letsencrypt
+      register: pangolin_proxy_compose_definition
+
+    - name: Validate Traefik compose configuration
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
+        chdir: "{{ proxy_compose_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Traefik via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ proxy_compose_dir }}"
+        state: present
+        # See deploy-proxy-stack.yml's identical task for why 'auto' isn't
+        # reliable on an image-tag-only compose change — force recreation
+        # whenever the compose file or the static traefik.yml (startup-only,
+        # not hot-reloaded like the dynamic/ directory) actually changed.
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed or pangolin_proxy_compose_definition.changed
+                or traefik_static_config.changed)
+            else 'auto'
+          }}
+        remove_orphans: true
+      when: not ansible_check_mode
