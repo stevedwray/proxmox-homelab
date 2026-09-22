@@ -166,6 +166,29 @@ tracks current live state.
   local I/O with nothing else worth isolating. Verified live: a
   classic `(a+)+$` catastrophic-backtracking pattern against adversarial
   input was bounded by the grep timeout instead of hanging.
+- **Actual root cause found, same day, after a real hang recurred live
+  during operator testing despite both fixes above.** A live
+  `faulthandler` dump showed the identical signature (main event loop
+  idle, `ThreadPoolExecutor` workers stuck at the C-call boundary) even
+  though neither `fetch_url_to_workspace` nor any of the just-fixed sync
+  tools were involved. Reading `engine/tui.py` (this repo's own vendored
+  code, not `agent_framework`) found it: `_write_log()` is called from
+  `log_stream_content()` on **every single streamed chunk** — including
+  individual characters of a function-call argument delta, per the LLM's
+  own token stream — and re-serializes and rewrites the *entire*
+  `_session_events` list from scratch (pretty-printed JSON, no
+  incremental append) on every call. For a response streaming tens of
+  thousands of characters, that's a full O(n) rewrite called tens of
+  thousands of times — an O(n²) blowup overall, and it fully explains
+  the CPU curve observed live in both hangs (55% → 90% → 99%, tracking
+  session-file growth, not tool activity). Fixed by throttling
+  `_write_log()` to at most once per second on the hot streaming path;
+  the four call sites that matter for correctness (prompt logged,
+  persistence toggled, stream finalized, task completed) pass
+  `force=True` and write immediately, unaffected. The subprocess
+  hard-kill and async-tool fixes above are still real, worthwhile
+  fixes for their own genuine risks (ReDoS, unkillable native calls) —
+  they just weren't *this* incident's actual trigger.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 
