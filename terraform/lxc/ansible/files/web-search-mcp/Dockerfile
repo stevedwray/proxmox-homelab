@@ -73,31 +73,32 @@ USER pwuser
 # says so). Real memory use under a Brave-engine search is therefore
 # Chromium's pool plus one on-demand Firefox instance, not Chromium
 # alone -- factor that in before lowering the memory ceiling above.
-# ENABLE_RELEVANCE_CHECKING=false (flipped from true 2026-09-22, see
-# fix/deep-research-web-search-mcp): the upstream quality heuristic
-# (search-engine.ts assessResultQuality()) is a naive keyword-overlap
-# scorer -- it strips common/short words from the query, then scores a
-# result by literal keyword matches in its title/description/URL only.
-# Confirmed live: query "Ed Sheeran real name" reduces to keywords
-# [sheeran, real, name] ("Ed" is filtered, length <= 2), and Bing's
-# actual, correct top result ("Edward Christopher Sheeran... is an
-# English singer...") scored 0.00/1.0 and was discarded as "low quality"
-# purely because it doesn't contain the literal words "real"/"name" --
-# a false-negative in the heuristic, not a real quality problem with
-# Bing's result. With checking disabled, Bing's first real results are
-# accepted immediately (quality treated as 1.0, the "excellent, return
-# now" path) instead of falling through to Brave (whose scraper CSS
-# selectors -- .result/.fdb -- matched 0 elements against Brave's
-# current page layout, a separate upstream page-drift issue this repo
-# doesn't control) and then DuckDuckGo's axios fallback (hit a bot-
-# challenge page, HTTP 202, 0 parsed results). Two independent test
-# queries returned 0 results end-to-end with checking enabled; this is
-# the actual fix, not a tuning tweak -- lowering RELEVANCE_THRESHOLD
-# alone would not have helped a genuine 0.00 score.
+# ENABLE_RELEVANCE_CHECKING=true (reverted 2026-09-22 after a same-day
+# flip to false -- see fix/deep-research-web-search-mcp git history for
+# the full story, kept rather than squashed away because the failure it
+# documents is real and worth not repeating).
+#
+# Disabling this check does remove a real false-negative (Bing's
+# genuinely correct result for "Ed Sheeran real name" scored 0.00/1.0
+# under the upstream naive keyword-overlap heuristic and was discarded
+# -- see assessResultQuality() in search-engine.ts). But confirmed live
+# immediately after deploying that fix: with checking disabled, Bing's
+# scraper in this pinned version (v0.3.2) returns confidently-wrong,
+# unrelated results for ordinary queries -- "Ed Sheeran real name"
+# returned erectile-dysfunction articles, "python asyncio timeout best
+# practices" returned YouTube Music links. This isn't a quality-scoring
+# edge case; the scraper itself appears to be reading the wrong DOM
+# elements on Bing's current page layout (likely drifted since this
+# version was pinned, same class of issue as Brave's stale .result/.fdb
+# selectors below). Accepting these results unfiltered is worse than
+# the original 0-results failure it was meant to fix -- a research
+# agent has no signal that the results are garbage and could cite them.
+# Left ON until either a newer upstream tag fixes Bing's scraper, or a
+# real fix is found -- see docs/deep-research/current-state.md.
 ENV BROWSER_TYPES=chromium \
     MAX_BROWSERS=1 \
     BROWSER_HEADLESS=true \
-    ENABLE_RELEVANCE_CHECKING=false
+    ENABLE_RELEVANCE_CHECKING=true
 
 EXPOSE 8000
 
