@@ -711,7 +711,7 @@ change: >
       description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
       attachment: connector_seg
       containers:
-        - "newt-connector (VMID 100010) — 192.168.110.10"
+        - "newt-connector (VMID 110010) — 192.168.110.10"
 
   In the policies: section, insert these two rules at the end of the
   policies list (after apps_seg's explicit-deny rule from nextcloud-01).

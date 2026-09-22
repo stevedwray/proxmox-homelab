@@ -220,6 +220,32 @@ attachments:
       gateway: "${lab_gw_ai}"
       snat: false
 
+  # connector_seg — Newt connector for the OCI Pangolin edge (VLAN 110, 192.168.110.0/24)
+  #
+  # Originally scoped for VLAN 100, changed 2026-09-23 after confirming on
+  # the physical switches that VLAN 100 is already live as cse_seg
+  # (terraform/lxc/network/pve-tiny.yaml). 110 is the next tag not already
+  # claimed by any zone across terraform/lxc/network/*.yaml. See
+  # docs/nextcloud-stack/plan.md nextcloud-P3-01 and
+  # docs/nextcloud-stack/README.md for the full design.
+  connector_seg:
+    description: Newt connector for the OCI Pangolin edge (see /home/steve/git/oci) — reaches only lab Traefik, nothing else
+    type: sdn_vnet
+    bridge: tvnewt
+    firewall: false
+    sdn:
+      zone: tvnewt
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvnewt
+      vlan_tag: 110
+      alias: pve connector segment
+      subnet: "192.168.110.0/24"
+      gateway: "192.168.110.1"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -272,6 +298,11 @@ zones:
       - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility} — live, promoted to pve 2026-08-01 (fast-tracked directly from feat/mcp-utility-stack, not through the usual stable promotion step)"
       - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, planned by docs/ai-services-migration/plan.md, not yet deployed"
       - "secpipe-stack (VMID 50012) — ${lab_ip_secpipe} — CVE correlation/enrichment (cve_enrichment_sync), see docs/threat-vuln-platform/plan.md"
+  connector_seg:
+    description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
+    attachment: connector_seg
+    containers:
+      - "newt-connector (VMID 110010) — 192.168.110.10"
 
 policies:
   - from: edge_seg
@@ -568,6 +599,27 @@ policies:
       leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
       scrape config then rejected outright. Added with place-before
       targeting the deny rule.
+  - from: connector_seg
+    to: 192.168.30.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      Newt connector to pangolin-proxy ONLY (192.168.30.11, edge_seg) — a
+      second, dedicated Traefik instance created by nextcloud-P3-03 that
+      serves only the explicit subset of routes opted into Pangolin. This
+      is deliberately NOT 192.168.30.10 (the main, LAN-facing Traefik that
+      fronts everything else) — connector_seg has no network path to it at
+      all, by construction, not by per-router policy. Per
+      pangolin-observability-and-graylog-plan.md: "Newt does NOT receive a
+      direct allow rule to the [application] address... this keeps the
+      connector policy stable as services move behind the edge proxy." Do
+      not add a connector_seg -> apps_seg (or any other app zone, or the
+      main Traefik) rule even for a single, specific service.
+  - from: connector_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — connector_seg has no other reachability beyond lab Traefik plus internet egress
 
 inventory:
   proxmox_nodes:
