@@ -25,12 +25,23 @@ off VLAN 100 (already `cse_seg` on `pve-tiny`) to 110, and `apps_seg`
 `test_dhcp_seg` on `pve-test-vm`, nested inside `pve`) to 120 — see
 Decisions below for both.
 
+**MikroTik enforcement is also live (2026-09-23).** Applied by the
+operator directly on the router, verified read-only afterward via
+`terraform/lxc/stacks/netbox-stack/integrations/mikrotik_client.py`:
+VLAN 110 interface + bridge-vlan tagging (`ether1`,`ether5`, matching
+every other zone), gateway `192.168.110.1`, 3 input rules (ping/DNS to
+the router, placed before the input catch-all — the exact ordering bug
+hit live in `media-stack-lab`'s Stage B), and 3 forward rules scoped to
+`192.168.110.0/24`: accept to `pangolin-proxy` (192.168.30.11:443)
+only, accept general internet egress (covers both the Newt control
+connection and the Gerbil WireGuard tunnel — protocol-unrestricted,
+modeled on `cse_seg`'s egress rule), then default-deny. `connector_seg`
+is now enforced end-to-end (Proxmox SDN + MikroTik), not just declared
+in `pve.yaml`.
+
 **Still not built:** `apps_seg` zone itself, `nextcloud-stack`, the
-`newt-connector` LXC host, the `pangolin-proxy` Traefik instance, and
-the MikroTik firewall rule that actually enforces
-`connector_seg → pangolin-proxy:443` (Proxmox SDN only creates the
-VLAN/trunk — the MikroTik router is what enforces the policy in
-`pve.yaml`'s `policies:` section). Phase 1/2 remain untouched.
+`newt-connector` LXC host, and the `pangolin-proxy` Traefik instance.
+Phase 1/2 remain untouched.
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`

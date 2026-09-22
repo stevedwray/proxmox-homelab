@@ -681,7 +681,14 @@ repeating this phase.
 approval flow (task `nextcloud-P3-01-connector-seg-sdn-apply`).
 Verified: zone `tvnewt`, vnet `tvnewt` tag 110, subnet
 `192.168.110.0/24`/gw `192.168.110.1` all present via `pvesh get`, and
-`vmbr0.110` UP on the host. Kept below as a record of what ran, with
+`vmbr0.110` UP on the host. **MikroTik enforcement also applied and
+verified the same day** (operator-run, no automated wrapper for this
+device — see README.md "Current execution state" for the exact
+commands and read-only verification): VLAN interface, bridge-vlan
+tagging, gateway IP, and the 6 firewall rules (3 input, 3 forward)
+matching this step's own policy exactly. `connector_seg` is fully
+enforced end-to-end now, not just declared. Kept below as a record of
+what ran, with
 one real deviation from the original text: `apps_seg` (from
 `nextcloud-01`) didn't exist yet when this ran — Phase 1 is still not
 built — so the block was anchored after `ai_seg` instead. Re-anchor
