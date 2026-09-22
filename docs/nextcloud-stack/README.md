@@ -57,11 +57,22 @@ image, and the real blocker: a stale Let's Encrypt *staging* cert that
 protecting from ever being corrected — now self-healing, not a one-off
 manual fix).
 
+**Wazuh agent connectivity is BLOCKED, not just pending (2026-09-23).**
+The private Pangolin resource for `wazuh-stack:1514` was created
+(`siteResourceId: 1`), but its tunnel-internal address is only routable
+from inside Gerbil's own Docker network namespace — the Wazuh agent is
+a native host process on the OCI side, outside that namespace. Three
+different Pangolin-native mechanisms to bridge that gap (Olm machine
+client, interactive CLI login, direct dial) each hit a real, confirmed
+dead end on this Community Edition build — full account in
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Step 3.6. Next
+step (not yet built, needs operator sign-off): a sidecar container on
+the OCI side forwarding a loopback port into the private resource —
+nothing left to do on the `proxmox-homelab` side for this piece.
+
 **Still not built:** `apps_seg` zone itself, `nextcloud-stack`, and the
-`pangolin-proxy` Traefik instance (scaffolded, not deployed). A private
-Pangolin resource for `wazuh-stack:1514` is the one remaining piece
-before agent `007`/`oci-pangolin` can go `Active`. Phase 1/2 remain
-untouched.
+`pangolin-proxy` Traefik instance (scaffolded, not deployed). Phase 1/2
+remain untouched.
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
