@@ -31,6 +31,14 @@ tracks current live state.
   `https://deep-research-files.lab.gibbsgreatly.xyz` are both live**,
   behind real Authentik `forwardAuth` (confirmed live login round-trip,
   distinct OAuth `client_id` per route).
+- **`deep-research-files` now renders real formatted reports**, not raw
+  markdown text — Phase 1 of `docs/reporting-platform/plan.md`
+  generalized it into the shared reports viewer (real markdown/table
+  rendering, JSON pretty-printing, a project→run hierarchy), with
+  `deep-research` as its first adopter. No change needed to
+  `deep-research`'s own code — its existing output directory is wrapped
+  as the `deep-research` project via a runtime symlink. See that plan's
+  Phase 1 for two real bugs found deploying it.
 - **Session persistence found already built into the vendored scaffold, just
   defaulted off** — `/new`, `/sessions`, `/resume`, `--list-sessions`,
   `--resume <id>` all exist in `engine/tui.py`/`app.py`. Flipped on

@@ -1,10 +1,10 @@
 # Shared reporting/artifact platform — implementation plan
 
-Status: design only, 2026-09-22. No code written, no infrastructure
-changed. This plan exists because two independent projects
-(`deep-research`, CyberSecEval) hit the same underlying gap from two
-different angles, and more similar projects are expected — see
-`README.md` for the origin story.
+Status (2026-09-22): Phases 0–2 complete and deployed live. This plan
+exists because two independent projects (`deep-research`, CyberSecEval)
+hit the same underlying gap from two different angles, and more similar
+projects are expected — see `README.md` for the origin story and current
+summary. Phase 3 (cross-node unification) remains deliberately deferred.
 
 ## 1. Goals and boundaries
 

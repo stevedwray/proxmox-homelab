@@ -1,8 +1,14 @@
 # Local deep-research implementation plan
 
-Status: Phase 0 complete (2026-09-21). Stage A (Phase 1) scaffold built and
-first real end-to-end query succeeded (2026-09-21); eval harness and
-broader Phase 2 measurement not yet run.
+Status (2026-09-22): Phase 0 complete. Stage A ran, was measured, and is
+now decommissioned (VMID 50014 destroyed 2026-09-22) — its findings fed
+directly into Phase 4. **Stage B (Phase 4) is live**: `deep-research`/
+`deep-research-files` real Docker Compose services in `ai-services-stack`,
+non-root, Authentik `forwardAuth`, verified end-to-end with a real query.
+`deep-research-files` was further generalized into a shared reports
+viewer — see `docs/reporting-platform/plan.md`. Broader Phase 2/3
+measurement (eval harness, job-model decoupling, quota fix, `cve-mcp`
+wiring) not yet done — see Phase 5 for what's confirmed but unbuilt.
 
 This plan delivers in two stages. **Stage A** reproduces Donato Capitella's
 own design as literally as practical — Local Agent Builder skill, Microsoft
