@@ -57,18 +57,29 @@ image, and the real blocker: a stale Let's Encrypt *staging* cert that
 protecting from ever being corrected — now self-healing, not a one-off
 manual fix).
 
-**Wazuh agent connectivity is BLOCKED, not just pending (2026-09-23).**
-The private Pangolin resource for `wazuh-stack:1514` was created
-(`siteResourceId: 1`), but its tunnel-internal address is only routable
-from inside Gerbil's own Docker network namespace — the Wazuh agent is
-a native host process on the OCI side, outside that namespace. Three
-different Pangolin-native mechanisms to bridge that gap (Olm machine
-client, interactive CLI login, direct dial) each hit a real, confirmed
-dead end on this Community Edition build — full account in
-`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Step 3.6. Next
-step (not yet built, needs operator sign-off): a sidecar container on
-the OCI side forwarding a loopback port into the private resource —
-nothing left to do on the `proxmox-homelab` side for this piece.
+**Wazuh agent connectivity is BLOCKED, deeper than first thought
+(2026-09-23).** A private Pangolin resource for `wazuh-stack:1514`
+exists and is correctly linked to the `lab` site (verified via the
+API), and a loopback-only sidecar relay (`wazuh-forward`, shares
+Gerbil's Docker network namespace) was built and deployed on the OCI
+side. But Gerbil's own kernel routing table never gains a route to the
+resource's tunnel-internal address regardless — strong evidence that
+Pangolin's private "host"-mode resources are only reachable by real
+WireGuard peers (Newt sites / Olm clients), not by a generic process
+sharing Gerbil's namespace the way this sidecar does, meaning the
+approach may be structurally unable to work at all, not just
+misconfigured. A real Pangolin/Gerbil version bug was also found and
+fixed along the way (3 minor versions behind, rejecting a newer client
+protocol message outright), and an Olm machine-client path was
+re-investigated in depth after an earlier diagnosis turned out to be
+backwards — it's blocked for a real, structural reason (this OCI host
+can't hole-punch to its own NAT'd public IP, since it's co-located with
+the Pangolin server itself), not a Community Edition gap. Full account
+— including two more real bugs (a `docker compose restart` netns race
+that briefly took the public dashboard down, and how it was fixed) — in
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Steps 3.6–3.8.
+**No clear next step yet; needs a decision.** Nothing left to do on the
+`proxmox-homelab` side for this piece regardless of how it resolves.
 
 **Still not built:** `apps_seg` zone itself, `nextcloud-stack`, and the
 `pangolin-proxy` Traefik instance (scaffolded, not deployed). Phase 1/2
