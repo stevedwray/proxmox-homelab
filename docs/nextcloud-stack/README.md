@@ -66,7 +66,33 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - Compose shape (pinned image tags, Harbor pull-through
   `${REGISTRY_HOST}/dockerhub/...` prefix, password-via-env convention)
   modeled on `netbox-stack/docker-compose.yml`'s
-  app+Postgres+Redis pattern.
+  app+Postgres+Redis pattern — **but not its `REGISTRY_HOST` resolution**,
+  which resolves to `LAB_IP_HARBOR` (the bare Harbor IP) and is a known,
+  twice-confirmed-live bug (`docker login`/pull gets "connection refused"
+  on 443 against the raw IP — Harbor's TLS only works via the FQDN
+  through Traefik). `nextcloud-02b` fixes this by resolving
+  `LAB_FQDN_HARBOR` instead, the same way `media-stack-lab`'s playbook
+  does.
+- **apt-cacher, monitoring, and security-scan integration researched
+  directly against the real, running platform, not assumed from the
+  media-stack-lab precedent alone:**
+  - `apt_cacher_host` is a `stack.yaml` field consumed by the `lxc_base`
+    role (`terraform/lxc/ansible/roles/lxc_base/tasks/main.yml`) to point
+    `apt` at `apt-cacher-ng:3142` — every existing stack sets it;
+    `nextcloud-02`'s `stack-request.yaml` now includes it.
+  - Harbor (443) and apt-cacher (3142) reachability from a new zone is
+    already covered by an existing blanket rule (`from: all_zones, to:
+    infra_seg, ports: [80, 443, 3142]`) — no bespoke firewall rule needed
+    for either.
+  - VictoriaMetrics scrape targets are a fully manual, hardcoded static
+    list living inside `deploy-monitoring-stack.yml` itself (lines
+    183–264 as of this plan's writing) — there is no NetBox-driven
+    auto-discovery for metrics despite NetBox tracking the host.
+    `nextcloud-02c` adds the new target and redeploys `monitoring-stack`.
+  - GVM/Greenbone scan coverage of a new SDN zone is explicitly treated
+    by `docs/greenbone-stack/network-scan-rollout-plan.md` as a
+    deliberate widening action, not a routine add — `nextcloud-01b`
+    follows that doc's own process rather than inventing a new one.
 - Reports convention read from `docs/reporting-platform/CONVENTION.md`
   and `docs/reporting-platform/README.md` — **this is the same convention
   the current `feat/reporting-cyberseceval-phase2` branch's work belongs

@@ -62,7 +62,11 @@ change: >
   final existing rule in the file (the "media-stack-lab node_exporter TLS
   cert issuance from step-ca" rule, description ending "targeting the
   deny rule." — insert after that rule, i.e. at the end of the policies
-  list):
+  list). Image pulls (Harbor) and apt packages (apt-cacher) do NOT need
+  their own rules here — both are already covered by the existing
+  `from: all_zones, to: infra_seg, ports: [80, 443, 3142]` rule
+  ("All zones and LAN to Harbor and apt-cacher") elsewhere in this file,
+  which apps_seg inherits automatically once it exists as a zone:
 
     - from: edge_seg
       to: apps_seg
@@ -79,11 +83,16 @@ change: >
       protocol: tcp
       ports: [443]
       description: >-
-        nextcloud-stack (user_oidc) to Authentik via Traefik for OIDC
-        token exchange. media-stack-lab found live (2026-09-04) that an
-        OIDC client's server-to-server token exchange goes out via
-        edge_seg on 443, not direct to mgmt_seg:9443 — applying that
-        lesson here from the start rather than rediscovering it.
+        nextcloud-stack to Traefik on 443, for two distinct reasons:
+        (1) user_oidc's server-to-server OIDC token exchange -- media-
+        stack-lab found live (2026-09-04) that this goes out via edge_seg,
+        not direct to mgmt_seg:9443, applying that lesson from the start;
+        (2) docker pull against Harbor's FQDN (LAB_FQDN_HARBOR, routed
+        through Traefik) -- the direct-IP path to Harbor on infra_seg
+        fails TLS (see reference_registry_host_vs_fqdn_harbor: bare-IP
+        docker login gets "connection refused" on 443, confirmed live
+        twice). Both reasons share the same from/to/port so one rule
+        covers both.
     - from: apps_seg
       to: 192.168.20.14
       protocol: tcp
@@ -100,6 +109,15 @@ change: >
       ports: []
       description: Explicit deny — apps_seg has no other reachability beyond the above plus internet egress
 
+  Do NOT add a greenbone-stack scan-reach rule in this step. Per
+  docs/greenbone-stack/network-scan-rollout-plan.md, widening
+  greenbone-stack's (pentest_seg) reach into a new zone is a deliberate,
+  separately-called-out action ("treat with the same seriousness CLAUDE.md
+  gives production credential mutations"), not something to fold into a
+  routine zone-creation PR. nextcloud-01b below handles it as its own
+  explicit step, scoped by source = greenbone-stack's own IP only,
+  matching that doc's existing pattern.
+
 scope:
   allowed_paths:
     - terraform/lxc/network/pve.yaml
@@ -113,6 +131,29 @@ gates:
     expect: "exit 0"
     critical: true
 ```
+
+### Step: nextcloud-01b-greenbone-scan-reach
+
+**Not a step block — this is the deliberate security-scan widening
+`docs/greenbone-stack/network-scan-rollout-plan.md` requires be called
+out explicitly, not folded into nextcloud-01's routine zone-creation
+diff.** Follow that doc's own process for adding a new zone to GVM's
+scan reach, which as of this plan's writing is: add a firewall rule
+scoped by *source = greenbone-stack's own IP*
+(`${lab_ip_greenbone}`, canonical `192.168.70.11`), not blanket
+`pentest_seg`, into `apps_seg` for discovery-scan reach (ICMP + the
+common TCP/UDP discovery ports that doc's Phase 1 already defines for
+other zones — copy its exact rule shape rather than reinventing one
+here), and register `192.168.90.0/24` in whatever GVM target/task
+config that doc's Phase 1 established for the other SDN zones (`game_seg`,
+`media_seg`, etc.). Read `network-scan-rollout-plan.md` in full before
+doing this — it has real, hard-won specifics (in-interface matching over
+src-address matching, rule ordering against the default-deny, IoT/consumer
+gear sensitivity to `Full and fast` scans) that a from-scratch attempt
+would silently miss. This step should land as its own follow-up plan
+step once nextcloud-01/02 are actually deployed and `192.168.90.10` is a
+real, reachable host — scanning a zone with nothing live in it yet has
+no value and risks a stale/wrong target definition.
 
 ### Step: nextcloud-02-scaffold-stack-request
 
@@ -163,6 +204,7 @@ stack_yaml:
   ansible_playbook: deploy-nextcloud-stack
   deployment_tier: apps
   portainer_agent: true
+  apt_cacher_host: "${lab_ip_apt_cacher}"
 
   # Dedicated data volume for Nextcloud's actual file storage, separate
   # from rootfs/docker-storage — same pattern as harbor-stack's
@@ -184,8 +226,13 @@ compose_requirements: |
 
   nextcloud service:
   - Image: ${REGISTRY_HOST}/dockerhub/nextcloud:<PINNED_TAG> (Harbor
-    pull-through, matching netbox-stack's ${REGISTRY_HOST}/dockerhub/...
-    prefix convention — not a bare dockerhub reference).
+    pull-through). IMPORTANT: REGISTRY_HOST here must resolve to
+    LAB_FQDN_HARBOR (harbor.${LAB_DOMAIN}), NOT LAB_IP_HARBOR. Both
+    netbox-stack and media-stack-lab's cadvisor service copied the bare-IP
+    var by mistake and got "connection refused" on 443 at pull time --
+    see reference_registry_host_vs_fqdn_harbor and nextcloud-02b below,
+    which sets REGISTRY_HOST correctly in the playbook's environment
+    before "docker compose up" runs.
   - container_name: nextcloud-stack-app
   - depends_on: postgres (condition: service_healthy), redis (condition:
     service_healthy)
@@ -265,6 +312,81 @@ contract_facts: |
     terragrunt apply, do not hand-edit),
     terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml (new)
 ```
+
+### Step: nextcloud-02b-fix-registry-host-resolution
+
+```yaml
+id: nextcloud-02b-fix-registry-host-resolution
+title: Resolve REGISTRY_HOST to Harbor's FQDN (not IP) before docker compose up
+depends_on: [nextcloud-02-scaffold-stack-request]
+
+change: >
+  scaffold-stack.sh generates
+  terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml from
+  compose_requirements using the minecraft-stack exemplar's shape (copy
+  compose file to the target, "docker compose config" check, "docker
+  compose up -d"). That generated playbook has no REGISTRY_HOST
+  resolution of its own -- add one, modeled exactly on
+  deploy-media-stack-lab.yml's docker_registry_host var (NOT
+  netbox-stack's registry_host field, which resolves to the broken bare
+  IP -- see reference_registry_host_vs_fqdn_harbor).
+
+  Add this to the playbook's vars: block, alongside
+  nextcloud_stack_fqdn_authentik (added by nextcloud-04):
+
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+
+  Then add `environment: {REGISTRY_HOST: "{{ docker_registry_host }}"}`
+  to the generated "docker compose up -d" task (the
+  `ansible.builtin.command: cmd: docker compose up -d` task scaffold-stack.sh
+  produces) and to the "docker compose config" validation task, so
+  Compose's own ${REGISTRY_HOST} interpolation resolves to the FQDN at
+  both validate and run time, not just whatever happens to be in the
+  ambient shell environment.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any ansible-playbook run against pve or pve-test-vm in this step -- syntax-check only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: no-bare-ip-var
+    cmd: "grep -q 'LAB_IP_HARBOR' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### Step: nextcloud-02c-add-monitoring-scrape-targets
+
+**Not a step block against nextcloud-stack's own files — this edits a
+different, already-running stack's deploy playbook
+(`deploy-monitoring-stack.yml`), which needs its own scope/gate/deploy
+treatment, not nextcloud-stack's.** VictoriaMetrics scrape targets are a
+fully manual static list (`terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`
+lines 183-264 as of this plan's writing) — there is no NetBox-driven
+auto-discovery for metrics despite NetBox tracking the host. Add two
+entries there, matching the existing `media-stack-lab` entries exactly:
+
+    - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:9100"]
+      labels: {stack: nextcloud-stack}
+
+  (under job_name: node_exporter, and the equivalent under job_name:
+  cadvisor on port 8080 if a cadvisor sidecar is later added to
+  nextcloud-stack's compose — not in the first pass per
+  compose_forbidden above, so skip the cadvisor entry for now).
+
+This requires redeploying `monitoring-stack` itself
+(`scripts/provision.sh --stack monitoring-stack` against `pve`, under the
+production approval flow — Ansible task/role change tier per CLAUDE.md's
+Validation Tiers table) to pick up the new scrape target. Sequence this
+after nextcloud-stack is actually live (so `LAB_IP_NEXTCLOUD_STACK`
+resolves to a real, reachable host) rather than before.
 
 ### Step: nextcloud-03-add-secrets-placeholders
 
