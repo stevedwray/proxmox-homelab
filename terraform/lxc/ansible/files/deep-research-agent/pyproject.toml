@@ -17,7 +17,6 @@ dependencies = [
     "beautifulsoup4",
     "PyYAML",
     "pyfiglet",
-    "ddgs==9.16.0",
     "markitdown[all]",
     "textual-serve"
 ]

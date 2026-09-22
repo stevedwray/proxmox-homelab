@@ -68,6 +68,40 @@ tracks current live state.
   anything that must survive a client disconnecting. Confirmed as a
   required Stage B design point (job model decoupled from the browser
   connection), not just a known quirk — see `plan.md` Phase 5, point 2.
+- **`web_search` switched from DDGS to Tavily, 2026-09-22** — real,
+  reproducible production incident: DDGS's `backend="auto"` routed
+  through `search.yahoo.com`, which was erroring on every query, and the
+  Searcher agent had no graceful fallback (blindly guessed URLs,
+  exhausted its fetch/grep quotas, hard-aborted with "Agent trapped in
+  loop"). Investigation ruled out every unauthenticated scraping
+  alternative, confirmed live with five independent methods on this same
+  network: DDGS itself, real headless-browser (Playwright/Chromium)
+  scraping of both Bing and Brave via a recovered-but-still-broken
+  `web-search-mcp` (see below), and raw HTTP fetches of both Bing and
+  DuckDuckGo. All five failed the same way — not connectivity, not
+  parsing bugs, but the search engines themselves either silently
+  serving wrong/irrelevant results to unauthenticated automated traffic
+  (Bing: real Playwright browser fetched a genuine 86KB page, and a
+  plain `httpx` fetch of the same URL both returned articles about
+  erectile dysfunction and Philippine prison policy for queries about a
+  singer and an exact-phrase name) or explicitly CAPTCHA-gating it
+  (DuckDuckGo's HTML endpoint literally serves "Unfortunately, bots use
+  DuckDuckGo too... select all squares containing a duck"). Confirmed via
+  a clean-room test of the genuinely unmodified upstream
+  `kyuz0/local-agent-builder` scaffold (same `ddgs==9.16.0`, zero
+  homelab modifications) that DDGS fails identically there too — this
+  was never something Stage A/B modifications broke. Fixed by replacing
+  `web_search`'s implementation in `tools/web.py` with a direct call to
+  Tavily's search API (real authenticated API, free tier 1000
+  searches/month, `TAVILY_API_KEY` in `secrets.common.enc.yaml`) —
+  removes the `ddgs` dependency entirely. `web-search-mcp` (headless-
+  browser search fronted by `mcpo`) was separately recovered from an
+  unmerged, undocumented, drifted-out-of-sync branch during this
+  investigation and is now properly tracked IaC wired into OpenWebUI,
+  but is **not** used by `deep-research` — it has the same
+  unauthenticated-scraping reliability problem Tavily was adopted to
+  avoid. See `terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md`
+  for its current status.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 

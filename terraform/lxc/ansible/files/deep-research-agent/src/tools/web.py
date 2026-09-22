@@ -1,15 +1,10 @@
 import httpx
 import os
-import re
 import asyncio
-import threading
 from bs4 import BeautifulSoup
 from agent_framework import tool
 from tools.core import with_quota
 from tools.fs import _get_safe_path, _get_workspace_type, _get_workspace_dir, _IN_MEMORY_FS
-
-_ddgs_lock = threading.Lock()
-_ddgs_client = None
 
 # httpx's own timeout= only bounds individual network reads/writes, not the
 # whole thread (DNS, redirects, and post-fetch parsing with BeautifulSoup/
@@ -17,19 +12,7 @@ _ddgs_client = None
 # so a stuck backend fails the tool call instead of hanging the agent.
 _FETCH_TIMEOUT_SECONDS = 45
 _SEARCH_TIMEOUT_SECONDS = 30
-
-def get_ddgs_client():
-    """Thread-safe lazy initialization of the DDGS client."""
-    global _ddgs_client
-    with _ddgs_lock:
-        if _ddgs_client is None:
-            from ddgs import DDGS
-            _ddgs_client = DDGS()
-            # Pre-warm the internal engine cache to prevent PyO3 deadlocks
-            # when multiple threads initialize primp.Client concurrently later.
-            _ddgs_client._get_engines("text", "auto")
-            _ddgs_client._get_engines("news", "auto")
-    return _ddgs_client
+_TAVILY_API_URL = "https://api.tavily.com/search"
 
 @tool
 @with_quota
@@ -163,49 +146,47 @@ async def web_search(
     if quota_error:
         return quota_error
 
-    def _do_search():
-        from ddgs import DDGS
-        import config as app_config
+    # Real authenticated API, not scraping -- switched 2026-09-22 after
+    # confirming live (5 independent methods: DDGS's backend="auto",
+    # Playwright/Chromium against Bing and Brave, and raw HTTP against
+    # both Bing and DuckDuckGo) that every unauthenticated scraping path
+    # is either silently served wrong/irrelevant results (Bing) or
+    # explicitly CAPTCHA-gated (DuckDuckGo: "Unfortunately, bots use
+    # DuckDuckGo too"). No amount of better parsing or a "more real"
+    # browser fixes this -- see docs/deep-research/current-state.md.
+    # Free tier: 1000 searches/month, no card required -- see
+    # docs/deep-research/current-state.md for current usage expectations.
+    api_key = os.environ.get("TAVILY_API_KEY", "")
+    if not api_key:
+        return "Search failed: TAVILY_API_KEY is not configured."
 
-        def _sanitize_snippet(text: str) -> str:
-            """Strip CSS, SVG, and HTML artifacts from search snippets."""
-            text = re.sub(r'<svg[\s\S]*?</svg>', '', text, flags=re.IGNORECASE)
-            text = re.sub(r'<style[\s\S]*?</style>', '', text, flags=re.IGNORECASE)
-            text = re.sub(r'<[^>]+>', '', text)
-            text = re.sub(r"(?:[\w-]+=(?:'[^']*'|\"[^\"]*\")[\s]*){3,}", '', text)
-            text = re.sub(r'%3[CEce][^%\s]{10,}', '', text)
-            return re.sub(r'\s+', ' ', text).strip()
+    async def _do_search():
+        payload = {
+            "api_key": api_key,
+            "query": query,
+            "max_results": max_results,
+            "topic": "news" if topic == "news" else "general",
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(_TAVILY_API_URL, json=payload, timeout=_SEARCH_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            data = response.json()
 
-        provider = app_config.cfg.get("settings", {}).get("search_provider", "duckduckgo")
         result_texts = []
-
-        if provider == "duckduckgo" or provider not in ("duckduckgo", "tavily"):
-            # Default/fallback: DuckDuckGo (free, no API key required)
-            client = get_ddgs_client()
-
-            if topic == "news":
-                search_results = client.news(query, max_results=max_results)
-                for result in search_results:
-                    url = result.get("url", "")
-                    title = result.get("title", "")
-                    snippet = _sanitize_snippet(result.get("body", "No snippet available"))
-                    result_texts.append(f"## {title}\n**URL:** {url}\n**Snippet:** {snippet}\n")
-            else:
-                search_results = client.text(query, max_results=max_results)
-                for result in search_results:
-                    url = result.get("href", "")
-                    title = result.get("title", "")
-                    snippet = _sanitize_snippet(result.get("body", "No snippet available"))
-                    result_texts.append(f"## {title}\n**URL:** {url}\n**Snippet:** {snippet}\n")
-        elif provider == "tavily":
-            pass # Removed Tavily placeholder to avoid undefined get_tavily_client() error in scaffold
+        for result in data.get("results", []):
+            url = result.get("url", "")
+            title = result.get("title", "")
+            snippet = result.get("content", "No snippet available")
+            result_texts.append(f"## {title}\n**URL:** {url}\n**Snippet:** {snippet}\n")
 
         return f"🔍 Found {len(result_texts)} result(s) for '{query}':\n\n{chr(10).join(result_texts)}"
 
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_do_search), timeout=_SEARCH_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(_do_search(), timeout=_SEARCH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         return f"Search failed: timed out after {_SEARCH_TIMEOUT_SECONDS}s for query '{query}'."
+    except httpx.HTTPStatusError as e:
+        return f"Search failed: Tavily returned {e.response.status_code} for query '{query}'."
     except Exception as e:
         import traceback
         return f"Search failed: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"

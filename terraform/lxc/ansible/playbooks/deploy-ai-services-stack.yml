@@ -165,6 +165,7 @@
     # Reuses the same Framework FQDN/path already proven for OpenWebUI's
     # llamacpp route above -- not a new egress rule.
     ai_services_deep_research_openai_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, matches ai_services_openwebui_llamacpp_api_base above
+    ai_services_tavily_api_key: "{{ lookup('env', 'TAVILY_API_KEY') | mandatory('TAVILY_API_KEY env var is required') }}"
 
     # web-search-mcp + mcpo: headless-browser web search (Playwright/
     # Chromium against Bing/Brave/DuckDuckGo, no API key/quota), replacing
@@ -525,15 +526,16 @@
               environment:
                 OPENAI_API_BASE: "{{ ai_services_deep_research_openai_api_base }}"
                 OPENAI_MODEL: local-model
-                # Real headless-browser search instead of DDGS's unstable
-                # backend="auto" scraping (real incident 2026-09-22 -- see
-                # docs/deep-research/current-state.md). Internal-only,
-                # same compose network -- no new firewall/SDN work.
-                WEB_SEARCH_MCP_URL: "http://web-search-mcp:8000"
-                WEB_SEARCH_MCP_API_KEY: "{{ ai_services_web_search_mcp_api_key }}"
-              depends_on:
-                web-search-mcp:
-                  condition: service_healthy
+                # Real authenticated search API, not scraping -- switched
+                # 2026-09-22 after confirming live that every
+                # unauthenticated scraping path (DDGS's backend="auto",
+                # web-search-mcp's headless-browser Bing/Brave scraping,
+                # raw HTTP against both Bing and DuckDuckGo) is either
+                # silently served wrong results or explicitly CAPTCHA-
+                # gated. See tools/web.py's web_search() and
+                # docs/deep-research/current-state.md for the full
+                # investigation. Free tier: 1000 searches/month.
+                TAVILY_API_KEY: "{{ ai_services_tavily_api_key }}"
               # Mounted at /home/app (not a /data subdir) deliberately --
               # same reasoning as mcp-utility-stack's cve-mcp-server volume:
               # the Dockerfile's `useradd --create-home` already owns this
