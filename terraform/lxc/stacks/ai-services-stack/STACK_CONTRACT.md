@@ -24,6 +24,25 @@ firewall rule (`lan → 192.168.50.11:11435`, added for VS Code Copilot's
 use) is now orphaned and was not removed as part of this change — a
 separate, deliberate firewall cleanup if wanted.
 
+Also runs `web-search-mcp` — a headless-browser (Playwright/Chromium)
+web search MCP server (`mrkrsl/web-search-mcp`, pinned `v0.3.2`) fronted
+by `mcpo` so it's reachable over plain HTTP/OpenAPI instead of only the
+upstream project's `stdio` transport. Built and deployed live 2026-09-16
+on an unmerged branch (`feat/openwebui-web-search-mcp`) as a real,
+quota-free replacement for Brave's Search API (Free-tier 2000 req/month
+quota exhausted 2026-09-16) for OpenWebUI's own web search. That branch
+was never merged, so the running container silently drifted out of sync
+with this repo until recovered here 2026-09-22 (`fix/deep-research-web-
+search-mcp`) — see this stack's git history for the full story. Recovery
+also wired it up as `deep-research`'s search backend, its second real
+consumer: `deep-research`'s own DDGS-based search (`backend="auto"`)
+proved unstable in production 2026-09-22 (silently routed through
+`search.yahoo.com`, which was erroring on every query; the agent had no
+graceful fallback and burned through its fetch/grep quotas guessing URLs
+blind instead — see `docs/deep-research/current-state.md`). Internal-only
+(no published host port) — reachable only from `openwebui` and
+`deep-research` over this compose network.
+
 ## Network
 
 | Field        | Value                    |
@@ -63,7 +82,8 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. |
+| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. **Free-tier monthly quota (2000 req) exhausted 2026-09-16** — one of the two reasons `web-search-mcp` exists; kept configured (not removed) in case the plan is upgraded later. |
+| `WEB_SEARCH_MCP_API_KEY` | SOPS, mandatory | Bearer key `mcpo` requires from callers — protects the internal-only OpenAPI bridge from anything else reachable on this LXC's compose network, not a real external-facing secret. **Not yet in `secrets.common.enc.yaml` as of this recovery** — the value has already been exposed once (surfaced live via `docker exec printenv` during 2026-09-22 diagnosis) and should be rotated to a fresh value when added, not reused. |
 
 ## Provides
 
@@ -171,6 +191,21 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   `settings.yml` — this survives a settings file migrated in from
   `framework` (which has the same underlying default-engine problem, just
   never surfaced because nobody stress-tested web search there).
+- **`stack.yaml`'s `memory: 6144` is load-bearing for `web-search-mcp`.**
+  One headless Chromium instance plus its Node/`mcpo` process is real,
+  persistent memory pressure this LXC didn't carry at its original `4096`
+  (confirmed live 2026-09-16: ~1GB used of 4GB immediately before this
+  change). The bump was applied live via `pct set` on 2026-09-16 but the
+  tracked file itself said `4096` until this 2026-09-22 recovery — don't
+  assume `stack.yaml` and the live LXC agree without checking after a gap
+  like this.
+- **`web-search-mcp` has no `image:` — it's the only service in this
+  compose built locally (`build: context: ./web-search-mcp`).** The
+  `docker_compose_v2` deploy task's `build: always` (already required for
+  `deep-research`/`deep-research-files`) also covers it; removing that
+  flag can silently leave a stale build after a Dockerfile-only change
+  with no compose-file diff to trigger a rebuild otherwise — same failure
+  mode `mcp-utility-stack`'s `docs-rag-mcp` needed this for.
 - **Google Custom Search is deliberately not deployed** — Google no longer
   permits new Programmable Search Engines to search the general web, so its
   curated-site results do not meet this stack's general-search requirement.
