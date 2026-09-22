@@ -6,7 +6,8 @@ it's ready to execute whenever it becomes one.
 Goal: a self-hosted Nextcloud instance as a durable local storage point,
 initially for documentation/reports produced by other lab projects (the
 `deep-research` agent, CyberSecEval), later opened to the internet via
-Pangolin (separate, lower-priority effort, not addressed by this plan).
+Pangolin with monitoring and a deliberately narrow blast radius — see
+Phase 3 in [plan.md](plan.md).
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with
@@ -42,6 +43,18 @@ See [plan.md](plan.md) for the full step-by-step plan.
   (`docs/reporting-platform/CONVENTION.md`) rather than a bespoke path —
   see [plan.md](plan.md) Phase 2 for what that means concretely and what's
   still genuinely open (cross-node reach to CyberSecEval on `pve-tiny`).
+- **Pangolin exposure (Phase 3, 2026-09-23):** not deprioritized after
+  all — rolled into this plan. Anchored to a separate, already-existing
+  repo, `/home/steve/git/oci`, which designs the OCI-hosted Pangolin edge
+  and home-side Newt connector in real detail. The OCI instance hasn't
+  changed since that design was written (operator-confirmed), so it's
+  treated as current, not stale, and this plan adapts it rather than
+  re-deriving it. Key constraint carried over: Newt gets a firewall rule
+  only to lab Traefik (`edge_seg`), **never** directly to `apps_seg` — a
+  dedicated `connector_seg` VLAN, a source-aware Traefik split (LAN vs.
+  Pangolin), and working OCI-side monitoring/logging are all
+  prerequisites this plan treats as shared infrastructure, not
+  nextcloud-specific one-offs.
 
 ## Research this plan is based on
 
@@ -132,6 +145,21 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
   scope for this plan entirely until `docs/reporting-platform/plan.md`
   Phase 3 (cross-node ingestion) lands upstream.
-- **Pangolin exposure.** Not addressed here at all — explicitly
-  deprioritized by the operator; revisit as its own plan once this
-  stack is live internally.
+- **Traefik source-aware LAN/Pangolin split (Phase 3).** The single
+  biggest genuinely-unresolved piece: `render-edge-traefik.py` currently
+  has no entrypoint-selection or per-route source-policy concept at all
+  (confirmed by reading it — one hardcoded `authentik` middleware, full
+  stop). Needs its own research/design pass reading
+  `deploy-proxy-stack.yml`'s static `traefik.yml` in full before it can
+  become literal step content — see `nextcloud-P3-03` in plan.md.
+- **Connector VLAN placement.** `pangolin-observability-and-graylog-plan.md`
+  itself lists "connector VLAN ID/subnet versus locked-down `mgmt_seg`
+  LXC" as an open decision. This plan takes the dedicated-VLAN option
+  (`connector_seg`, VLAN 100) as the target since both OCI-repo docs
+  prefer it, but that choice hasn't been re-confirmed with the operator
+  independent of this plan's own read of those docs.
+- **OCI-side monitoring/logging.** Fully designed in
+  `pangolin-observability-and-graylog-plan.md` but, by that document's
+  own admission, not yet implemented — its Phase 0 (verify the live
+  Graylog input/TLS/port contract) hasn't run. This plan treats that as
+  a prerequisite for Phase 3's Pangolin publish, not something to skip.

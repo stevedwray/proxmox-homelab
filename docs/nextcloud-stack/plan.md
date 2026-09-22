@@ -8,10 +8,12 @@ decisions, research, and what's still genuinely open.
 **Not a priority right now** — this plan exists so the work is ready to
 pick up, not to be run immediately.
 
-Two things below are genuinely not step blocks, and are written as plain
-operator/prose instructions instead: running `scaffold-stack.sh`
-(`nextcloud-02`) and the live deploy against `pve` under the production
-approval flow (`nextcloud-06`).
+Several things below are genuinely not step blocks, and are written as
+plain operator/prose instructions instead: running `scaffold-stack.sh`
+(`nextcloud-02`), the live deploy against `pve` under the production
+approval flow (`nextcloud-06`), and most of Phase 3 (Pangolin exposure,
+monitoring, security — control-plane/credential-creating actions per
+`/home/steve/git/oci/docs/repeatable-operations.md`'s own stated policy).
 
 ---
 
@@ -627,3 +629,276 @@ literal content.** Before authoring a real step:
 Once these are resolved, write `nextcloud-P2-02-...` as a real step
 block with literal file paths and exact content, following the same
 literal-vs-constrained discipline as Phase 1 above.
+
+---
+
+## Phase 3 — Pangolin exposure, monitoring, and security
+
+**Basis:** a separate, already-existing repo, `/home/steve/git/oci`,
+designs the OCI-hosted Pangolin edge and its home-side connector in
+detail (`docs/pangolin-architecture-plan.md`,
+`docs/newt-vlan-design-plan.md`,
+`docs/pangolin-observability-and-graylog-plan.md`). The OCI instance
+itself hasn't changed since that design was written (operator-confirmed
+2026-09-23), so this plan treats it as the current, authoritative design
+— not stale — and does not re-derive it. This phase adapts that design
+to `nextcloud-stack` as the concrete driver, rather than inventing a
+separate exposure mechanism.
+
+**Correction to this plan's own earlier framing:** `nextcloud-stack`'s
+README originally said Pangolin exposure would eventually reach
+`apps_seg:8080` directly. That is wrong per
+`pangolin-observability-and-graylog-plan.md`: Newt gets an allow rule
+only to lab Traefik (`edge_seg`), never to the application zone/port
+directly — "this keeps the connector policy stable as services move
+behind the edge proxy and prevents a published resource from becoming a
+general LAN route." Traefik remains the single ingress control point for
+both LAN and Pangolin-sourced traffic.
+
+**Shared infrastructure, not nextcloud-specific.** The connector VLAN,
+the Traefik source-aware split, and OCI-side monitoring/logging all
+benefit every future Pangolin-published service (Pentagi is the OCI
+repo's own documented first pilot), not just nextcloud-stack. This phase
+builds that shared infrastructure with nextcloud-stack as the first
+concrete service riding on it — subsequent services reuse it rather than
+repeating this phase.
+
+### Step: nextcloud-P3-01-create-connector-seg-zone
+
+```yaml
+id: nextcloud-P3-01-create-connector-seg-zone
+title: Create connector_seg SDN zone for the Newt connector (VLAN 100, 192.168.100.0/24)
+depends_on: []
+
+change: >
+  Insert this exact block into terraform/lxc/network/pve.yaml in the
+  zones: section, immediately after the apps_seg zone block added by
+  nextcloud-01 (search for "gateway: \"192.168.90.1\"" then "snat: false"
+  to find its end):
+
+    # connector_seg — Newt connector for OCI Pangolin edge (VLAN 100, 192.168.100.0/24)
+    connector_seg:
+      description: Newt connector for the OCI Pangolin edge (see /home/steve/git/oci) — reaches only lab Traefik, nothing else
+      type: sdn_vnet
+      bridge: tvnewt
+      firewall: false
+      sdn:
+        zone: tvnewt
+        zone_type: vlan
+        bridge: vmbr0
+        nodes:
+          - pve
+        vnet: tvnewt
+        vlan_tag: 100
+        alias: pve connector segment
+        subnet: "192.168.100.0/24"
+        gateway: "192.168.100.1"
+        snat: false
+
+  In the members section, insert immediately after apps_seg's member block:
+
+    connector_seg:
+      description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
+      attachment: connector_seg
+      containers:
+        - "newt-connector (VMID 100010) — 192.168.100.10"
+
+  In the policies: section, insert these two rules at the end of the
+  policies list (after apps_seg's explicit-deny rule from nextcloud-01).
+  This is deliberately narrower than newt-vlan-design-plan.md's generic
+  matrix: that doc's DNS/internet-egress rows aren't needed as explicit
+  east-west rules in this repo's existing pattern (MikroTik is the
+  gateway for every zone, and internet egress is already implied by
+  every other zone's own "explicit deny" rule wording, e.g. apps_seg's
+  "no other reachability beyond the above plus internet egress" —
+  confirm this reading against MikroTik's actual default-forward policy
+  before treating it as proven, not just inferred from file comments).
+  The one genuinely new east-west permission this connector needs is
+  reach to lab Traefik — nowhere else:
+
+    - from: connector_seg
+      to: 192.168.30.10
+      protocol: tcp
+      ports: [443]
+      description: >-
+        Newt connector to lab Traefik only (edge_seg) — the sole
+        east-west permission this zone has. Per
+        pangolin-observability-and-graylog-plan.md: "Newt does NOT
+        receive a direct allow rule to the [application] address... this
+        keeps the connector policy stable as services move behind the
+        edge proxy." Do not add a connector_seg -> apps_seg (or any other
+        app zone) rule even for a single, specific service.
+    - from: connector_seg
+      to: default
+      protocol: all
+      ports: []
+      description: Explicit deny — connector_seg has no other reachability beyond lab Traefik plus internet egress
+
+  Do NOT add a connector_seg -> Graylog rule in this step. Per
+  pangolin-observability-and-graylog-plan.md, OCI log delivery to Graylog
+  is a separate, not-yet-implemented piece (see nextcloud-P3-05) that
+  would need its own dedicated-ingestion-port rule, added only once that
+  path is actually built — adding it speculatively now would open a path
+  to nothing.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/network/pve.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any terragrunt apply / SDN apply -- validation only in this step"
+    - "Any rule granting connector_seg reach to apps_seg or any zone other than edge_seg"
+
+gates:
+  - id: yaml-syntax
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: no-direct-app-zone-rule
+    cmd: "grep -A3 'from: connector_seg' terraform/lxc/network/pve.yaml | grep -q 'to: apps_seg' && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### Step: nextcloud-P3-02-newt-host-deploy
+
+**Not a step block yet — depends on nextcloud-P3-01 being deployed and
+validated first**, and on a decision this plan defers rather than
+defaults: `newt-vlan-design-plan.md` Phase 1 calls for "choose the Newt
+host and its VLAN/subnet" as an explicit inventory-check step, and its
+own transitional option (a locked-down `mgmt_seg` LXC) versus a
+dedicated `connector_seg` host (what nextcloud-P3-01 above assumes) is
+listed as one of `pangolin-observability-and-graylog-plan.md`'s own
+"Open decisions." This plan takes the dedicated-VLAN option as the
+target (matching both OCI docs' stated preference), but the actual Newt
+install — enrollment credentials, minimal host provisioning, no
+unrelated workloads per the design — is a credential-creating
+control-plane action, not local-model-executable file content. Scaffold
+it as a minimal LXC in `connector_seg` (192.168.100.10, per
+nextcloud-P3-01) the same way other stacks are scaffolded, but treat
+Newt's own enrollment (`repeatable-operations.md`: "install Newt with
+the site enrollment credentials... remain control-plane or
+home-network operations") as an operator action using the already-issued
+`lab` site's credentials — never generate or store new ones in this
+repo.
+
+### Step: nextcloud-P3-03-traefik-source-aware-split
+
+**Genuinely open design work, not yet resolvable into literal content.**
+`pangolin-observability-and-graylog-plan.md` documents three isolation
+options for letting Pangolin-sourced traffic reach only specific
+Traefik-published services without also exposing every LAN-only route on
+the same listener (hostname-only isolation is explicitly called
+insufficient against a compromised connector). It recommends, as the
+preferred long-term layout: **a dedicated Traefik entrypoint/listener
+for Pangolin-published routes**, separate from the existing `web`/
+`websecure` entrypoints defined in `deploy-proxy-stack.yml`'s static
+`traefik.yml` (confirmed live in that file — entrypoint definitions are
+startup-only, not hot-reloaded, so this needs a `proxy-stack` redeploy).
+Before writing this as a real step:
+
+1. Read `deploy-proxy-stack.yml`'s full `entryPoints`/`providers`/
+   `certificatesResolvers` block to confirm the exact shape a new
+   `pangolin` entrypoint (e.g. a distinct internal port, reachable only
+   from `connector_seg` per nextcloud-P3-01's firewall rule) needs to
+   take.
+2. Extend the `EdgeManifest` schema (`terraform/lxc/discover-authentik-edge.py`'s
+   sibling renderer, `render-edge-traefik.py`) with an explicit
+   per-route field (e.g. `spec.routes[].pangolin.enabled: true`) so a
+   route can opt into being served on the Pangolin entrypoint — current
+   `render-edge-traefik.py` only assigns one `authentik` middleware, no
+   entrypoint selection at all (confirmed by reading the file — no
+   `entryPoints`/`middleware` selection logic beyond the single hardcoded
+   `authentik` middleware).
+3. Add the explicit LAN-vs-Pangolin source-policy regression tests
+   `pangolin-observability-and-graylog-plan.md` requires: every
+   LAN-approved service still works from the LAN, an unpublished service
+   fails through Pangolin even when its hostname is supplied, and a
+   request from the connector subnet cannot reach a route by changing
+   its Host header.
+
+This is shared platform work (benefits every future Pangolin-published
+service), scoped larger than nextcloud-stack alone — treat it as its own
+sub-workspace or a dedicated follow-up plan once picked up, rather than
+compressing it into a single step block here.
+
+### Step: nextcloud-P3-04-nextcloud-pangolin-route
+
+**Depends on nextcloud-P3-03 landing first.** Once the Pangolin
+entrypoint mechanism exists, add a `pangolin` block to
+`terraform/lxc/stacks/nextcloud-stack/edge.yaml`'s `nextcloud` route
+(alongside the existing internal LAN route added by nextcloud-05),
+publishing `nextcloud.pan.gibbsgreatly.xyz` — matching
+`pangolin-observability-and-graylog-plan.md`'s service onboarding
+contract table (dedicated `*.pan.gibbsgreatly.xyz` hostname, distinct
+resource/route names so an operator can tell which policy layer rejected
+a request, lab Traefik as the target — never the container directly).
+Not written as literal content yet since it depends on P3-03's
+not-yet-decided schema shape.
+
+### Step: nextcloud-P3-05-pangolin-resource-and-lab-site
+
+**Not a step block — control-plane, credential/policy-creating action,
+same category `repeatable-operations.md` explicitly reserves for manual
+operation: "should be automated only after the target API workflow is
+confirmed, because those steps create credentials and access policy."**
+Once nextcloud-P3-04's route exists:
+
+1. Create the Pangolin resource via the Integration API
+   (`https://api.gibbsgreatly.xyz/v1`), site `lab` (already created and
+   enrolled per `repeatable-operations.md`), targeting the new Pangolin
+   Traefik entrypoint/route for nextcloud, not the container directly.
+2. Require SSO and MFA by default (no anonymous bypass), per
+   `pangolin-architecture-plan.md` and the service onboarding contract.
+3. Assign a dedicated access group, not the owner account, per
+   `pangolin-architecture-plan.md` Phase 3.
+4. Decide whether to keep Nextcloud's own Authentik OIDC login active in
+   addition to Pangolin's gate (defense in depth, the same call
+   `pangolin-observability-and-graylog-plan.md` makes for Pentagi as "an
+   administrative or AI service") — Nextcloud holds real user files, so
+   default to keeping both layers unless a documented decision says
+   otherwise.
+5. Run the public-edge security tests from
+   `pangolin-observability-and-graylog-plan.md`'s "Public-edge security
+   tests" section against `nextcloud.pan.gibbsgreatly.xyz`: clean-browser
+   and unauthorized-account access, MFA, certificate hostname, secure
+   redirects/cookies, uploads (Nextcloud is upload-heavy — this is a real
+   functional risk, not a formality), idle/long-request timeouts, and
+   confirm the home service is unreachable directly from the internet.
+6. Confirm the rollback path works: disabling the Pangolin resource,
+   then disabling the Traefik route, each independently blocks access.
+
+### Step: nextcloud-P3-06-oci-monitoring-and-logging
+
+**Not a step block — this is `pangolin-observability-and-graylog-plan.md`'s
+own Phases 0–5, not re-derived here.** That plan's own "Purpose and
+current state" section says explicitly: "No infrastructure changes are
+authorized by this document. First verify the live Graylog input,
+address, TLS mode, and firewall contract" — i.e. even its own Phase 0
+hasn't been done yet as of this plan's writing. Before nextcloud-stack
+is published via Pangolin, at minimum confirm:
+
+- OCI compute/network/cost metrics are collected read-only via OCI
+  Monitoring/Usage APIs (no public monitoring endpoint, no home VLAN
+  route to OCI).
+- Pangolin/Traefik/Gerbil/Newt logs and metrics ship to the existing
+  Graylog service via a private Pangolin machine-client resource through
+  site `lab` — never a public Graylog port, never Newt reaching Graylog
+  UI/API/SSH directly (only a dedicated ingestion port, if/when this
+  lands — see nextcloud-P3-01's note on why that firewall rule isn't
+  added yet).
+- Grafana dashboards exist for the Pangolin edge (Traefik rate/latency/
+  5xx, certificate expiry, Newt online state) and alert on: Pangolin/
+  Gerbil down, Newt offline, no expected logs for 10 minutes, certificate
+  expiry under 21 days, and OCI cost spikes.
+- The acceptance tests in that doc's own "Acceptance tests" section pass:
+  no public monitoring/Graylog port open, revoking the machine credential
+  breaks only log delivery, Newt reaches only approved destinations.
+
+This is shared OCI-edge infrastructure, not specific to nextcloud-stack
+— treat it as its own workspace under `/home/steve/git/oci` (that repo
+already has the design; it just hasn't been executed), and treat
+nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on at
+minimum the logging path existing, so a compromised or misbehaving
+public-facing Nextcloud instance is actually observable and its access
+logs actually land somewhere reviewable.
