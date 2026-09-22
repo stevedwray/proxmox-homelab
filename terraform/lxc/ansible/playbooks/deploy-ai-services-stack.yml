@@ -536,16 +536,25 @@
                 # docs/deep-research/current-state.md for the full
                 # investigation. Free tier: 1000 searches/month.
                 TAVILY_API_KEY: "{{ ai_services_tavily_api_key }}"
-              # Mounted at /home/app (not a /data subdir) deliberately --
-              # same reasoning as mcp-utility-stack's cve-mcp-server volume:
-              # the Dockerfile's `useradd --create-home` already owns this
-              # path as app:app in the image, so a fresh named volume here
-              # inherits that ownership. Config/sessions/workspace all land
-              # under here via ~/.deep-research-agent (src/config.py), never
-              # /root -- this is the actual fix for the operator's non-root
-              # concern (2026-09-21), not an LXC-level workaround.
+              # Mounted at ~/.deep-research-agent specifically, NOT the
+              # whole /home/app home dir -- real bug found and fixed
+              # 2026-09-22: mounting the entire home dir meant every image
+              # rebuild's fresh COPY src ./src was silently shadowed at
+              # runtime by whatever was already in the persistent volume
+              # from Stage B's very first deploy, so every code change
+              # since then was being ignored. New volume name
+              # (ai-services-deep-research-config, not the old
+              # ai-services-deep-research-data) because the old volume's
+              # stored content sits at what was /home/app's root (stale
+              # src/, pyproject.toml, mixed with the real
+              # .deep-research-agent/ one level deeper) -- reusing it at
+              # this narrower path would double-nest and break lookup.
+              # Nothing in the old volume needs preserving (test-session
+              # data only, already established this session). The
+              # Dockerfile pre-creates and chowns this exact path so the
+              # volume inherits correct ownership on first mount.
               volumes:
-                - ai-services-deep-research-data:/home/app
+                - ai-services-deep-research-config:/home/app/.deep-research-agent
               # Own Graylog-bound logging (not this LXC's daemon-level
               # json-file default -- see deploy-portainer-stack.yml for the
               # same syslog-address/format/tag convention used fleet-wide)
@@ -587,13 +596,12 @@
                 SERVE_PORT: "{{ ai_services_deep_research_files_port }}"
                 WORKSPACE_DIR: /home/app/.deep-research-agent/workspace
                 REPORT_PROJECT_NAME: deep-research
-              # Mounted at /home/app (not a /data subdir) deliberately,
-              # same reasoning as deep-research's own volume above: this
-              # image's Dockerfile also runs `useradd --create-home --uid
-              # 1000 app`, so the already-uid-1000-owned named volume is
-              # readable without a numeric user: override.
+              # Same narrowed volume as deep-research's own service above
+              # (see its comment for the 2026-09-22 shadowing bug this
+              # fixes) -- read-only here since this container only ever
+              # displays deep-research's output, never writes to it.
               volumes:
-                - ai-services-deep-research-data:/home/app:ro
+                - ai-services-deep-research-config:/home/app/.deep-research-agent:ro
               depends_on:
                 deep-research:
                   condition: service_started
@@ -630,8 +638,8 @@
               name: ai-services-openwebui-data
             ai-services-searxng-data:
               name: ai-services-searxng-data
-            ai-services-deep-research-data:
-              name: ai-services-deep-research-data
+            ai-services-deep-research-config:
+              name: ai-services-deep-research-config
       register: ai_services_compose_definition
 
     - name: Deploy OpenWebUI, SearXNG, and deep-research via docker compose

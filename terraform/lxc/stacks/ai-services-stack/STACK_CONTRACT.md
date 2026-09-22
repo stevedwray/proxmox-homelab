@@ -118,6 +118,7 @@ firewall rule above instead of `depends_on:`.
 | `/var/lib/docker` | `docker_storage` (24G) | Docker image/container layers plus both named volumes below |
 | `ai-services-openwebui-data` (Docker named volume) | Docker volume | OpenWebUI's `webui.db` (chat history, users, settings) — migrated from framework's `/mnt/container-storage/openwebui-data` on first deploy, see plan.md Step 5 |
 | `ai-services-searxng-data` (Docker named volume) | Docker volume | SearXNG's `settings.yml` — migrated from framework's `/mnt/container-storage/searxng-data` on first deploy |
+| `ai-services-deep-research-config` (Docker named volume) | Docker volume | `deep-research`'s own `~/.deep-research-agent` (config.yaml, sessions/, workspace/) — mounted at exactly that path, not the whole `/home/app` home dir. **Renamed from `ai-services-deep-research-data` 2026-09-22** after a real bug: the old volume mounted the entire home directory, which meant every image rebuild's fresh `COPY src ./src` was silently shadowed at runtime by whatever was already in the volume from Stage B's very first deploy — every code change to `deep-research` since then had been silently ignored. See `docs/deep-research/current-state.md`. |
 
 ## What May Depend On This Stack
 

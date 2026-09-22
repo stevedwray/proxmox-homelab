@@ -102,6 +102,20 @@ tracks current live state.
   unauthenticated-scraping reliability problem Tavily was adopted to
   avoid. See `terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md`
   for its current status.
+- **Real bug found deploying the Tavily switch, 2026-09-22: every code
+  change to `deep-research` since Stage B's first deploy had been
+  silently ignored at runtime.** The named volume backing config/session/
+  workspace persistence was mounted at the whole `/home/app` home
+  directory, not just `~/.deep-research-agent` — so the volume's content
+  from the very first deploy shadowed every subsequent image rebuild's
+  fresh `COPY src ./src` at container start. Confirmed live: the running
+  container's `src/tools/web.py` was dated the day before, with none of
+  that day's fixes (Tavily switch, earlier timeout fix, etc.) present.
+  Fixed by narrowing the mount to exactly `~/.deep-research-agent` and
+  renaming the volume (`ai-services-deep-research-config`, not the old
+  `ai-services-deep-research-data`) since the old volume's content
+  structure doesn't match the new, narrower mount point. See
+  `STACK_CONTRACT.md`'s Persistent State table.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 
