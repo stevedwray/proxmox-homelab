@@ -8,6 +8,24 @@ day (a new Traefik/DNS route) once the plan called for prototyping a
 browser-based interface. See `plan.md` for the full narrative; this file
 tracks current live state.
 
+**Final status as of 2026-09-22, end of day:** `deep-research` is live,
+healthy, and has been verified end-to-end with real operator-driven
+research sessions after a genuinely eventful day. In order: `web_search`
+was switched from unreliable DDGS scraping to Tavily's real API; a
+volume-mount bug that had been silently discarding every code change
+since Stage B's original deploy was found and fixed; a real production
+hang was root-caused through two rounds of investigation — first
+hardening `fetch_url_to_workspace`/`grep_workspace_file` against
+unkillable native-code hangs (a real, worthwhile fix for a real ReDoS
+risk, but not what actually caused the observed hangs), then finding and
+fixing the actual trigger, an O(n²) session-log bug in `engine/tui.py`
+that was silently making every long-running session progressively
+slower and eventually pegging the whole container's CPU. Verified live
+with a 30,408x speedup on an equivalent workload. See the dated entries
+below for the full investigation, including two genuine dead ends that
+were tested, ruled out with real evidence, and kept in this record
+rather than quietly dropped.
+
 ## Live state summary (2026-09-22, current)
 
 - **Stage A LXC (VMID 50014) is decommissioned** — stopped and `pct
