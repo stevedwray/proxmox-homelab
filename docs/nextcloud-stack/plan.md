@@ -1029,3 +1029,84 @@ nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on at
 minimum the logging path existing, so a compromised or misbehaving
 public-facing Nextcloud instance is actually observable and its access
 logs actually land somewhere reviewable.
+
+### Step: nextcloud-P3-07-oci-hardening-and-wazuh
+
+**Not a step block — points at a full, detailed, executable plan
+written in the `oci` repo itself** (that repo has no local-model
+step-packet tooling, so it isn't written as fenced YAML steps the way
+this repo's plans are):
+[`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`](../../../oci/docs/hardening-and-wazuh-plan.md).
+Covers, in five phases: SSH/NSG lockdown (OCI Bastion, removing direct
+SSH exposure), OS baseline hardening (unattended security upgrades, a
+host firewall mirroring the NSG allow-list, minimal installed
+packages), a Wazuh agent enrolled with a credential **unique to the OCI
+host** (manager-side pre-registration via `manage_agents`, never the
+shared `WAZUH_AGENT_AUTHD_PASSWORD` every other agent uses — so a
+compromise of this internet-facing host can't be used to enroll rogue
+agents or interfere with the rest of the fleet's trust), OCI-native VCN
+Flow Logs/Audit logs as a control-plane-level signal an attacker with
+root on the instance can't suppress, and shipping Pangolin's own
+backups off-host to Object Storage. That plan is self-contained and
+executable on its own — this step exists only to record the dependency:
+**nextcloud-P3-05 (Pangolin publish) should be treated as blocked on
+that plan's Phase 1 (SSH/NSG) and Phase 3 (Wazuh agent) at minimum**,
+same reasoning as nextcloud-P3-06 for logging.
+
+The one piece of that plan that is proxmox-homelab's own file, not
+oci's, is the firewall rule granting `connector_seg` reach to
+`wazuh-stack`'s event port. Write it as its own step, additive to
+nextcloud-P3-01's policy block:
+
+```yaml
+id: nextcloud-P3-07b-connector-wazuh-firewall-rule
+title: Add connector_seg -> wazuh-stack:1514 firewall rule (Wazuh agent events only, not enrollment)
+depends_on: [nextcloud-P3-01-create-connector-seg-zone]
+
+change: >
+  Insert this rule into terraform/lxc/network/pve.yaml's policies:
+  section, immediately before connector_seg's existing explicit-deny
+  rule (added by nextcloud-P3-01, description starting "Explicit deny —
+  connector_seg has no other reachability..."):
+
+    - from: connector_seg
+      to: 192.168.40.15
+      protocol: tcp
+      ports: [1514]
+      description: >-
+        Newt connector (via a private Pangolin resource, not a direct
+        public route -- see /home/steve/git/oci/docs/hardening-and-wazuh-plan.md
+        Phase 3.3) to wazuh-stack's agent-events port only. Deliberately
+        NOT port 1515 (enrollment): the oci-pangolin agent's client.keys
+        is provisioned out-of-band per that plan's Step 3.1/3.2, so this
+        connector never needs, and should never be granted, a route to
+        the enrollment port at all.
+
+  IMPORTANT — verify against MikroTik's live state before assuming this
+  file is a complete picture: wazuh-stack's existing agents
+  (proxy-stack, authentik-stack, technitium-stack, pve itself) already
+  have working 1514/1515 rules that were applied directly to MikroTik
+  and never mirrored back into this file (confirmed --
+  docs/wazuh-stack/README.md documents this explicitly, and this file
+  has zero existing 1514/1515/192.168.40.15 references despite 6 live
+  agents). Cross-check the live MikroTik ruleset, not just this file,
+  before treating this step as sufficient on its own.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/network/pve.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "A rule granting connector_seg reach to wazuh-stack port 1515 (enrollment)"
+    - "Any terragrunt apply / SDN apply / MikroTik change in this step -- file edit and syntax gate only"
+
+gates:
+  - id: yaml-syntax
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: no-enrollment-port
+    cmd: "grep -A3 'from: connector_seg' terraform/lxc/network/pve.yaml | grep -q '1515' && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
+```

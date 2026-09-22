@@ -82,6 +82,31 @@ See [plan.md](plan.md) for the full step-by-step plan.
   under two hostnames (LAN + `.pan.`) needs the reconciler taught to
   register both callback URLs against the same OAuth client — not yet
   built, see `nextcloud-P3-03c`.
+- **Pangolin's own dashboard login is NOT Authentik-backed.** Checked
+  the actual `oci` repo config (`group_vars/pangolin.yml`,
+  `roles/pangolin/tasks/main.yml`) — no OIDC/SAML/IdP wiring exists for
+  it. Every "Authentik" reference in that repo's docs is about
+  *published applications'* own middleware, never about federating
+  Pangolin's own login. Pangolin's dashboard uses its own native
+  owner/user/MFA system, entirely separate from Authentik's centralized
+  policies (session lifetime, group-based review, MFA enforcement).
+  Since compromising the Pangolin dashboard means an attacker can
+  define what gets published from the lab and to whom, it's arguably
+  the single highest-value target in this whole design — treated as
+  needing standalone hardening, not inherited from anything else here.
+- **Security assessment (2026-09-23) of the Phase 3 design itself,
+  before building it:** adding Wazuh telemetry from OCI *increases*
+  `connector_seg`'s blast radius (a second lateral target beyond
+  `pangolin-proxy`), and a host-based agent can be blinded by whoever
+  compromises the host it's watching — mitigated by (a) a Wazuh
+  enrollment credential unique to the OCI host, never the fleet-shared
+  one, and (b) OCI-native VCN Flow Logs/Audit logs as a control-plane
+  signal the guest OS can't suppress. `pangolin-proxy` (Option B) limits
+  lateral *scope* from a compromised connector but does not eliminate
+  Traefik-CVE exposure — two Traefik instances now need tracking on the
+  same patch cadence, and the smaller, quieter one is the more likely to
+  be forgotten. Full writeup: `nextcloud-P3-07` and
+  `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
 
 ## Research this plan is based on
 
