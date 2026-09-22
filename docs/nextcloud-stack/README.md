@@ -1,13 +1,50 @@
 # nextcloud-stack
 
-Status: **planning, not started.** Not a priority — scoped ahead of time so
-it's ready to execute whenever it becomes one.
+Status (2026-09-23): **Phase 1 (the nextcloud-stack itself) still not
+started — still not a priority, still just planned.** But Phase 3
+(Pangolin exposure/monitoring/security) has real, executed groundwork
+now, entirely on the OCI side — see "Current execution state" below
+before assuming anything here is still purely theoretical.
 
 Goal: a self-hosted Nextcloud instance as a durable local storage point,
 initially for documentation/reports produced by other lab projects (the
 `deep-research` agent, CyberSecEval), later opened to the internet via
 Pangolin with monitoring and a deliberately narrow blast radius — see
 Phase 3 in [plan.md](plan.md).
+
+## Current execution state (2026-09-23)
+
+**Nothing in `proxmox-homelab` itself has been executed yet** — no
+`apps_seg` zone, no `nextcloud-stack`, no `connector_seg`, no
+`pangolin-proxy`. Phase 1/2/3 here are all still just plan.md content.
+
+**But the OCI side of Phase 3 has real, live progress**, tracked in its
+own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
+(that repo has no `.git` — not a commit history, just a live file):
+
+- **OCI instance hardened**: NSG confirmed clean (80/443/UDP tunnel
+  ports only); subnet security list stripped of 8 leftover rules from
+  the box's prior life as a Minecraft server (Minecraft ports, an
+  `"obsidian"` sync rule, a `"crawl4ai"` rule); SSH restricted to the
+  operator's egress IP at both the OCI security-list layer and a new
+  host-level `ufw` layer (`roles/os_hardening/` in the `oci` repo).
+  Bastion was considered and explicitly rejected — IP restriction was
+  judged sufficient, updated by hand if the operator's IP changes.
+- **Wazuh agent installed on the OCI host**, enrolled with its **own
+  unique credential** (manager-side pre-registration, agent ID `007`
+  `oci-pangolin` on `wazuh-stack`/`pve` — never the shared
+  `WAZUH_AGENT_AUTHD_PASSWORD` every other agent uses, so a compromise
+  of this internet-facing host can't touch the rest of the fleet's
+  enrollment trust). Service is `active` and running local modules
+  (SCA, syscollector), but shows `Never connected` on the manager —
+  **expected**, not broken: it's blocked on the same missing
+  infrastructure as the rest of Phase 3 below.
+- **What's actually blocking further progress on both sides**: the
+  `connector_seg` zone, the `newt-connector` host, and the
+  `pangolin-proxy` Traefik instance described in `plan.md` Phase 3 have
+  not been created in `proxmox-homelab` yet. Nothing routes OCI to the
+  home network privately. Wazuh going `Active` and the OCI-side
+  monitoring/logging phases both wait on this landing first.
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with
@@ -107,6 +144,35 @@ See [plan.md](plan.md) for the full step-by-step plan.
   same patch cadence, and the smaller, quieter one is the more likely to
   be forgotten. Full writeup: `nextcloud-P3-07` and
   `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
+- **OCI SSH access: IP-restriction, not Bastion (decided 2026-09-23).**
+  OCI's native Bastion service was considered for `nextcloud-P3-01`-
+  adjacent reasoning (session-based, no persistent open port) but
+  rejected: Bastion sessions are ephemeral (TTL-bound), which would
+  require new wrapper tooling around Ansible and
+  `scripts/pangolin-backup.sh` (both assume a static, always-reachable
+  SSH host) just to keep existing OCI workflows working. The operator's
+  egress IP is effectively static for this purpose; updated by hand via
+  the OCI CLI if it ever changes. Executed live — see
+  `hardening-and-wazuh-plan.md` Phase 1.
+- **Wazuh agent for the OCI host: unique enrollment credential, not the
+  shared fleet password (decided and executed 2026-09-23).** Manager-
+  side pre-registration on `wazuh-stack`/`pve` (agent ID `007`,
+  `oci-pangolin`), key delivered to the OCI host entirely out of band —
+  never through an automated pipeline (Claude Code's own safety
+  classifier correctly refused to script the key extraction). See
+  `hardening-and-wazuh-plan.md` Phase 3 for the full sequence, including
+  a real gap hit live (the `wazuh` group didn't exist until the agent
+  package was installed) and how it was fixed without ever exposing the
+  key to an intermediate file.
+- **`connector_seg` network placement (recap, not yet built):** VLAN
+  100, `192.168.100.0/24`, gateway `192.168.100.1`, single host
+  `newt-connector` at `192.168.100.10`. Exactly two permitted
+  destinations: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443, and
+  — once the private Pangolin resource for it exists —
+  `wazuh-stack` (192.168.40.15, `infra_seg`) on 1514 only, never 1515.
+  Everything else explicit-deny; internet egress stays open for the
+  actual Gerbil/Newt tunnel. See `nextcloud-P3-01` for the literal
+  `pve.yaml` content.
 
 ## Research this plan is based on
 
