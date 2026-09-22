@@ -157,7 +157,8 @@
       "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/opensearch-stack apply*)",
       "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/opensearch-stack plan*)",
       "Bash(./with-secrets-prod ./scripts/provision.sh --stack opensearch-stack*)",
-      "Bash(./with-secrets-prod scripts/provision.sh --stack opensearch-stack*)"
+      "Bash(./with-secrets-prod scripts/provision.sh --stack opensearch-stack*)",
+      "Bash(git push *)"
     ],
     "deny": [
       "Read(./secrets/**)",
