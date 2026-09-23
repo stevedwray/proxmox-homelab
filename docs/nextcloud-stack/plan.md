@@ -15,6 +15,15 @@ The step blocks below are retained as the implementation record. Phase 2
 ingestion, monitoring end-to-end validation, credential rotation, and
 public Pangolin publishing remain open and separately gated.
 
+A deliberate maintenance-window `apt-get upgrade` subsequently completed on
+both `nextcloud-stack` and `newt-connector`: each had zero remaining
+upgrades, no reboot requirement, an active connected Wazuh agent, and its
+application path verified afterward. This remediates the current Wazuh
+package findings but does not alter the future update policy:
+`nextcloud-02g` still needs to enroll Nextcloud in the security-only
+unattended-upgrades pilot, and Debian point-release-only fixes remain a
+separate fleet-wide maintenance decision.
+
 Newt's host-local maintenance follow-up is also complete: the narrowly scoped
 `connector_seg -> wazuh-stack:1514,1515` policy and MikroTik mirror are live,
 the agent is enrolled, and its Compose definition (not `.env`) is under FIM.

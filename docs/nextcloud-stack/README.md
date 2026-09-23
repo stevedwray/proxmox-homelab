@@ -413,21 +413,17 @@ See [plan.md](plan.md) for the full step-by-step plan.
   `nextcloud` reference yet, matching the "Monitoring validation" item
   above; listed here explicitly so it doesn't get missed as a discrete
   redeploy step.
-- **9 Critical CVEs found by Wazuh on nextcloud-stack (2026-09-24),
-  triaged.** All base-OS packages (openssl x3, perl x3, glibc,
-  libssh2, gnutls), none application-layer. Root cause: nextcloud-stack
-  was never enrolled in the unattended-upgrades pilot — fixed by
-  `nextcloud-02g` (not yet applied). **That step alone does not close
-  all 9** — confirmed live that glibc's and perl's fixes ship only via
-  Debian's `trixie/main` point-release pocket, not the
-  `trixie-security` pocket unattended-upgrades watches by deliberate
-  design (`roles/unattended_upgrades/templates/50unattended-upgrades.j2`'s
-  own comment: non-security updates are applied deliberately, not
-  silently overnight). **This is fleet-wide, not nextcloud-specific**:
-  spot-checked live, all 5 other pilot hosts (`authentik-stack`,
-  `proxy-stack`, `apt-cacher-stack`, `technitium-stack`, `wazuh-stack`)
-  are still on the same unpatched glibc despite unattended-upgrades
-  running successfully on all of them daily. Closing the glibc/perl
-  CVEs anywhere requires either an explicit manual `apt upgrade` per
-  host or a separate, deliberate decision to widen
-  `Origins-Pattern` fleet-wide — not decided here.
+- **Wazuh critical package findings remediated on Nextcloud and Newt
+  (2026-09-24).** A deliberate maintenance-window `apt-get upgrade` was
+  completed on both hosts. Each reports zero remaining upgrades, no reboot
+  requirement, and an active connected Wazuh agent; Nextcloud's status
+  endpoint and Newt's Pangolin tunnel were also verified afterward. Wazuh
+  will clear the historical findings on its next vulnerability inventory.
+  The original Nextcloud findings were base-OS packages only (openssl,
+  perl, glibc, libssh2, gnutls), not application-layer issues.
+- **The ongoing point-release policy remains a fleet-wide decision.**
+  `nextcloud-02g` has not yet enrolled Nextcloud in security-only
+  unattended upgrades. Even once it does, glibc/perl fixes delivered only
+  through Debian `trixie/main` will still require a deliberate maintenance
+  upgrade under the current policy. Widening `Origins-Pattern` remains a
+  separate decision and was not made here.
