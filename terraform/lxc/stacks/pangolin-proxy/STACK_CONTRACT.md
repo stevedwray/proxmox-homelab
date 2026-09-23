@@ -74,7 +74,6 @@ values must come from the environment.
 |---|---|---|
 | `/opt/pangolin-proxy` | LXC host filesystem / Docker compose project | Compose file, `.env`, `traefik.yml`, `dynamic/` config directory |
 | `/opt/pangolin-proxy/dynamic` | LXC host filesystem | Traefik dynamic config files: Authentik middleware and generated Pangolin route files |
-| `/opt/pangolin-proxy/dynamic/routes` | LXC host filesystem | Replaced atomically on deployment from the control-node generated output; empty means no service is published |
 | `/opt/pangolin-proxy/certs` | extra mount (2 GiB) | ACME storage (`letsencrypt/acme.json`) — separate from `proxy-stack`'s own, since this is a distinct Traefik process |
 | Docker volumes from compose | Docker storage (4 GiB) | Traefik runtime state |
 
@@ -84,7 +83,7 @@ values must come from the environment.
   Authentik forwardAuth middleware definition, not a shared reference (see
   nextcloud-P3-03b for why this needs its own copy and how it's
   live-verified).
-- `dynamic/routes/<stack>.yml` files — generated only for EdgeManifest
+- `dynamic/route-<stack>.yml` files — generated only for EdgeManifest
   routes that explicitly set `pangolin.public_host`. `reconcile-edge.py`
   writes them to `.generated/pangolin-traefik`; `provision.sh` passes that
   source to this playbook. The main proxy renderer never writes these

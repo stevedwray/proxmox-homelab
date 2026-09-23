@@ -79,7 +79,6 @@
       loop:
         - { path: "{{ proxy_compose_dir }}", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
-        - { path: "{{ proxy_compose_dir }}/dynamic/routes", mode: "0755" }
         - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
 
@@ -205,16 +204,26 @@
           exists but is not a directory.
       when: pangolin_traefik_generated_source_dir_stat.stat.exists
 
-    - name: Remove previously rendered Pangolin route files
+    # Traefik's file provider watches its configured directory, not child
+    # directories. Keep generated routers at that root, distinguished from
+    # the hand-owned authentik.yml/certs.yml files by this reserved prefix.
+    - name: Remove legacy Pangolin routes subdirectory
       ansible.builtin.file:
         path: "{{ proxy_compose_dir }}/dynamic/routes"
         state: absent
 
-    - name: Recreate Pangolin route directory
+    - name: Find previously rendered Pangolin route files
+      ansible.builtin.find:
+        paths: "{{ proxy_compose_dir }}/dynamic"
+        file_type: file
+        patterns: "route-*.yml"
+      register: pangolin_existing_route_files
+
+    - name: Remove previously rendered Pangolin route files
       ansible.builtin.file:
-        path: "{{ proxy_compose_dir }}/dynamic/routes"
-        state: directory
-        mode: "0755"
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ pangolin_existing_route_files.files }}"
 
     - name: Discover generated Pangolin Traefik files on control node
       ansible.builtin.find:
@@ -226,9 +235,9 @@
       become: false
       when: pangolin_traefik_generated_source_dir_stat.stat.exists
 
-    - name: Publish rendered Pangolin route files into active dynamic directory
+    - name: Publish rendered Pangolin route files into watched dynamic directory
       ansible.builtin.copy:
-        dest: "{{ proxy_compose_dir }}/dynamic/routes/{{ item.path | basename }}"
+        dest: "{{ proxy_compose_dir }}/dynamic/route-{{ item.path | basename }}"
         mode: "0640"
         content: >-
           {{
