@@ -123,7 +123,9 @@ an identical `404` on both hosts; no route currently invokes the middleware.
 internally to `192.168.30.11`. Nextcloud persistently trusts that hostname
 and the dedicated proxy IP, while Authentik's reconciled provider contains
 both LAN and Pangolin `user_oidc` callbacks. This is not public exposure:
-there is still no Pangolin resource or public DNS record.
+this internal-route result is merely its prerequisite. Public publication was then
+completed through Pangolin at `https://nextcloud.pan.gibbsgreatly.xyz` (see
+`nextcloud-P3-05` below for the verified policy and remaining rollback test).
 
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
@@ -413,9 +415,11 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **EdgeManifest Pangolin opt-in mechanism (Phase 3).** Implemented and
   exercised for Nextcloud: `pangolin-proxy` is deployed, its generated
   `nextcloud.pan.gibbsgreatly.xyz` route serves Nextcloud internally, and
-  Authentik reconciliation preserves both OIDC callbacks. No Pangolin
-  resource or public DNS record exists, so the service is not public. See
-  `nextcloud-P3-03c` and `nextcloud-P3-04`.
+  Authentik reconciliation preserves both OIDC callbacks. Pangolin's
+  dashboard resource `nextcloud-public` now publishes that hostname through
+  the `lab` site and protects it with the `nextcloud-users` role. See
+  `nextcloud-P3-03c` through `nextcloud-P3-05`; the independent rollback
+  test remains a maintenance-window task.
 - **OCI-side monitoring/logging.** Fully designed in
   `pangolin-observability-and-graylog-plan.md` but not yet implemented
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated

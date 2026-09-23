@@ -1588,19 +1588,21 @@ Validated locally with EdgeManifest, renderer, Authentik discovery, and
 reconcile unit suites, plus an Ansible syntax check of the Pangolin proxy
 playbook. `nextcloud-stack/nextcloud` is the first opt-in: its generated
 route was delivered successfully to the live `pangolin-proxy`. The remaining
-publication boundary is the manual Pangolin resource and public DNS, not the
-renderer or lab proxy.
+publication boundary was the manual Pangolin resource and public DNS, not the
+renderer or lab proxy; that dashboard publication is now complete in
+`nextcloud-P3-05`.
 
 ### Step: nextcloud-P3-04-nextcloud-pangolin-route
 
-**Internal readiness done 2026-09-24; public publication remains blocked on
-P3-05/P3-06.** The route declares `pangolin.public_host:
+**Implemented and published 2026-09-24.** The route declares `pangolin.public_host:
 nextcloud.pan.gibbsgreatly.xyz`; Authentik discovery confirms both strict
 `user_oidc` callbacks, and Nextcloud persistently trusts the public hostname
 and `192.168.30.11`; the deployment configuration retains the existing LAN
 hostname and main-proxy trust. An internal TLS Host-header probe through
-`pangolin-proxy` returned Nextcloud `status.php` HTTP 200. No public DNS or
-Pangolin resource was created.
+`pangolin-proxy` returned Nextcloud `status.php` HTTP 200. The dashboard
+resource `nextcloud-public` subsequently published that hostname through the
+`lab` site; an unauthenticated external request receives Pangolin HTTP 401,
+not Nextcloud content.
 
 **Implementation lesson:** Traefik's file provider did not load generated
 routers placed in a nested `dynamic/routes/` directory. The delivery playbook
@@ -1626,6 +1628,23 @@ trusted proxies, retaining the LAN hostname and main proxy. Its direct
 must contain both callback URLs before an external login is attempted.
 
 ### Step: nextcloud-P3-05-pangolin-resource-and-lab-site
+
+**Completed 2026-09-24 through the Pangolin dashboard.** Resource
+`nextcloud-public` is enabled at `https://nextcloud.pan.gibbsgreatly.xyz`,
+on site `lab`, targeting `https://192.168.30.11:443`. Its target has no path
+match or rewrite and priority 100. Pangolin reports a valid certificate and
+protected authentication. Platform SSO is enabled; the non-admin
+`nextcloud-users` role is assigned, with `steve` as its initial user, no
+direct-user exception, and PIN, passcode, email-whitelist, and basic-header
+methods disabled. This is Pangolin's own account/MFA gate, not an Authentik
+identity-provider integration; Nextcloud's separate Authentik OIDC login
+remains enabled by design.
+
+The complete user path was confirmed by the operator: `steve` authenticates
+through Pangolin MFA, then Authentik, then Nextcloud. A clean unauthenticated
+external request returned HTTP 401 rather than application content. The
+remaining completion item is the deliberately deferred, maintenance-window
+rollback test in item 6 below.
 
 **Not a step block — control-plane, credential/policy-creating action,
 same category `repeatable-operations.md` explicitly reserves for manual
@@ -1708,9 +1727,9 @@ probes are deferred; so is off-host Object Storage recovery. Add these before
 treating the public service as production-critical.
 
 This is shared OCI-edge infrastructure, not specific to nextcloud-stack.
-Treat nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on the
-OCI-native/external observability path, so a compromised or misbehaving
-public-facing service remains visible outside the guest.
+Publication proceeded under the documented free-tier observability deferrals;
+these items remain required before classifying the public service as
+production-critical, rather than a retroactive publication blocker.
 
 ### Step: nextcloud-P3-07-oci-hardening-and-external-observability
 
@@ -1722,8 +1741,8 @@ of reaching the raw private resource and introduced public-edge restart
 risk. The historical investigation and retirement checklist live in
 [`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`](../../../oci/docs/hardening-and-wazuh-plan.md).
 
-Before `nextcloud-P3-05` publishes a service, require the existing hardening
-baseline and OCI Audit. VCN Flow Logs are deliberately skipped to protect the
+At `nextcloud-P3-05` publication, the existing hardening baseline and OCI
+Audit were required. VCN Flow Logs are deliberately skipped to protect the
 free Logging allowance; Cloud Guard is unavailable on this free tenancy and
 is not a gate. Public-port checks, external HTTPS/TLS probes, and tested
 off-host Object Storage recovery are operator-deferred exceptions; record
