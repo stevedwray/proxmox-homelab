@@ -37,6 +37,7 @@
       - {comment: "apps_seg to Traefik OIDC and Harbor", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.30.10, dst-port: "443"}
       - {comment: "apps_seg to step-ca", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.20.11, dst-port: "443"}
       - {comment: "apps_seg to Harbor and apt-cacher", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.40.0/24, dst-port: "80,443,3142"}
+      - {comment: "apps_seg Wazuh agent to manager", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.40.15, dst-port: "1514,1515"}
       - {comment: "apps_seg internet package and image egress", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: "!192.168.0.0/16", dst-port: "80,443"}
       - {comment: "apps_seg default-deny to LAN and other zones", chain: forward, action: drop, src-address: "{{ apps_subnet }}"}
 

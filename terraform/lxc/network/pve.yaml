@@ -628,6 +628,14 @@ policies:
     ports: [443]
     description: Nextcloud node_exporter TLS certificate issuance from step-ca
   - from: apps_seg
+    to: 192.168.40.15
+    protocol: tcp
+    ports: [1514, 1515]
+    description: >-
+      nextcloud-stack's Wazuh agent to wazuh-stack's manager
+      (event and enrollment ports). Scoped to the manager host rather than
+      all of infra_seg; must precede apps_seg's explicit default deny.
+  - from: apps_seg
     to: default
     protocol: all
     ports: []
