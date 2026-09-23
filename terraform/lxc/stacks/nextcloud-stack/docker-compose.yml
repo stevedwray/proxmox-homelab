@@ -1,0 +1,67 @@
+services:
+  nextcloud:
+    image: ${REGISTRY_HOST}/dockerhub/nextcloud:${NEXTCLOUD_IMAGE_TAG}
+    container_name: nextcloud-stack-app
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["8080:80"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${NEXTCLOUD_REDIS_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: nextcloud.${LAB_DOMAIN}
+      OVERWRITEPROTOCOL: https
+      TRUSTED_PROXIES: ${LAB_IP_PROXY}
+    volumes:
+      - nextcloud-app-data:/var/www/html
+      - /var/lib/nextcloud-persistent/data:/var/www/html/data
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost/status.php]
+      start_period: 120s
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  postgres:
+    image: ${REGISTRY_HOST}/dockerhub/postgres:16-alpine
+    container_name: nextcloud-stack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+    volumes: [/var/lib/nextcloud-persistent/postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U nextcloud]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: ${REGISTRY_HOST}/dockerhub/redis:7-alpine
+    container_name: nextcloud-stack-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${NEXTCLOUD_REDIS_PASSWORD}
+    healthcheck:
+      test: [CMD, redis-cli, -a, "${NEXTCLOUD_REDIS_PASSWORD}", ping]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  cadvisor:
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
+    container_name: nextcloud-stack-cadvisor
+    restart: unless-stopped
+    ports: ["8081:8080"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /etc/machine-id:/etc/machine-id:ro
+volumes:
+  nextcloud-app-data:
