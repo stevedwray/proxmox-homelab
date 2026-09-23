@@ -153,10 +153,11 @@ own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
   agent, relay, manager registration, private resource/client, and
   router rule have been removed. The `lab` Newt site remains intact for
   future Pangolin-published services.
-- **OCI monitoring priority:** VCN Flow Logs, OCI Audit, public-port
-  scanning, and external HTTPS/TLS checks—not a home-lab Wazuh connection.
-  Cloud Guard is unavailable to this free OCI tenancy. Off-host backup remains
-  recommended but is deliberately deferred for this rollout.
+- **OCI monitoring priority:** OCI Audit, public-port scanning, and external
+  HTTPS/TLS checks—not a home-lab Wazuh connection. VCN Flow Logs are
+  deliberately skipped to protect the free tenancy's shared Logging allowance;
+  Cloud Guard is unavailable. Off-host backup remains recommended but is
+  deliberately deferred for this rollout.
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with

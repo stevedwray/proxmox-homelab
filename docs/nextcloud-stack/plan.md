@@ -1666,19 +1666,20 @@ contract, but does not make raw OCI-to-home logging a prerequisite or a
 replacement for OCI-native observability. Before nextcloud-stack is
 published via Pangolin, at minimum confirm:
 
-- OCI compute/network/cost metrics are collected read-only via OCI
-  Monitoring/Usage APIs (no public monitoring endpoint, no home VLAN
-  route to OCI).
+- OCI compute/cost metrics are collected read-only via OCI Monitoring/Usage
+  APIs (no public monitoring endpoint, no home VLAN route to OCI). VCN Flow
+  Logs are intentionally not enabled: continuous accepted-and-rejected flow
+  capture has a minimum 30-day retention and could exhaust the free tenancy's
+  shared 10 GB/month OCI Logging allowance.
 - Pangolin/Traefik/Gerbil/Newt availability, TLS posture, and public
   port surface are monitored externally. Retain OCI control-plane logs
   in OCI first; do not make a co-located Pangolin private-resource route
   to Graylog a prerequisite, because the retired Wazuh investigation
   established that this transport shape is unsuitable for raw services.
-- OCI dashboards and alarms cover Compute resource/cost signals, VCN
-  flow-log availability, and OCI Audit activity; external probes alert on
-  Pangolin/Gerbil availability, Newt-visible service reachability,
-  certificate expiry under 21 days, redirects, and the expected public port
-  surface.
+- OCI dashboards and alarms cover Compute resource/cost signals and OCI Audit
+  activity; external probes alert on Pangolin/Gerbil availability,
+  Newt-visible service reachability, certificate expiry under 21 days,
+  redirects, and the expected public port surface.
 - Verify no monitoring endpoint or logging-ingestion port is publicly
   opened and the connector reaches only its approved destination.
 - Immediately before publication, confirm the Nextcloud guest has no
@@ -1689,14 +1690,15 @@ published via Pangolin, at minimum confirm:
   not cover every Debian stable point-release fix, so a prior successful
   manual upgrade is evidence, not a permanent gate.
 
-**Current checkpoint (2026-09-24): not ready to publish.** The OCI plan
-records VCN Flow Logs, OCI metrics/alarms, public-port scanning, and external
-HTTPS/TLS probes as unconfigured. Cloud Guard is explicitly out of scope:
-Oracle does not make it available to free OCI tenancies. These remaining
-controls must be configured in the OCI Console before creating the public
-resource. Off-host Object Storage recovery is deliberately deferred by the
-operator; it remains a recommended resilience follow-up, not the publication
-blocker for this rollout.
+**Current checkpoint (2026-09-24): not ready to publish.** VCN Flow Logs were
+assessed and deliberately skipped: their all-traffic capture plus OCI's
+30-day minimum log retention is not appropriate for the shared 10 GB/month
+free Logging allowance. Cloud Guard is also explicitly out of scope because
+Oracle does not make it available to free OCI tenancies. OCI metrics/alarms,
+public-port scanning, and external HTTPS/TLS probes remain to be configured
+before creating the public resource. Off-host Object Storage recovery is
+deliberately deferred by the operator; it remains a recommended resilience
+follow-up, not the publication blocker for this rollout.
 
 This is shared OCI-edge infrastructure, not specific to nextcloud-stack.
 Treat nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on the
@@ -1714,11 +1716,12 @@ risk. The historical investigation and retirement checklist live in
 [`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`](../../../oci/docs/hardening-and-wazuh-plan.md).
 
 Before `nextcloud-P3-05` publishes a service, require that plan's hardening
-baseline plus OCI VCN Flow Logs and Audit, public-port checks, and external
-HTTPS/TLS probes. Cloud Guard is unavailable on this free tenancy and is not
-a gate. The operator has explicitly deferred tested off-host Object Storage
-recovery; record that exception at publication and revisit it before treating
-the service as production-critical.
+baseline plus OCI Audit, public-port checks, and external HTTPS/TLS probes.
+VCN Flow Logs are deliberately skipped to protect the free Logging allowance;
+Cloud Guard is unavailable on this free tenancy and is not a gate. The
+operator has explicitly deferred tested off-host Object Storage recovery;
+record that exception at publication and revisit it before treating the
+service as production-critical.
 
 **Distinguish two different `connector_seg -> wazuh-stack` rules, only
 one of which is retired.** The former `nextcloud-P3-07b` rule allowed
