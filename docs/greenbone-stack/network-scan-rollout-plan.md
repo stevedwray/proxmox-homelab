@@ -30,7 +30,7 @@ credentialed or Full-and-fast vulnerability scan. This is the initial,
 low-impact public surface check; schedule or promote it only after reviewing
 its first result.
 
-### Credentialed OCI Pangolin audit (staged)
+### Credentialed OCI Pangolin audit (live; first result pending)
 
 After the public discovery result is reviewed, the separate
 `setup_oci_pangolin_credentialed.py` program creates one explicit-host GVM
