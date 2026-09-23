@@ -242,13 +242,13 @@ vmid: 120010
 cores: 4
 memory: 4096
 swap: 1024
-rootfs_size: 12
-storage_profile: platform-default
-docker_storage_size: "15G"
+rootfs_size: 16
+storage_profile: platform-apps-zfs
+docker_storage_size: "30G"
 docker_mount:
   logical_name: docker-data
   path: /var/lib/docker
-  size: "15G"
+  size: "30G"
   backup_policy: include
   resize_control_plane: operational
   mutation_policy: grow-only
@@ -270,12 +270,12 @@ portainer_agent: true
 # Dedicated data volume for Nextcloud's actual file storage, separate
 # from rootfs/docker-storage -- same pattern as harbor-stack's
 # extra_mount for registry blobs.
-extra_mount_path: "/var/lib/nextcloud-data"
+extra_mount_path: "/var/lib/nextcloud-persistent"
 extra_mount_size: "200G"
 extra_mount_profile: durable-zfs
 extra_mount:
-  logical_name: nextcloud-data
-  path: /var/lib/nextcloud-data
+  logical_name: nextcloud-persistent
+  path: /var/lib/nextcloud-persistent
   size: "200G"
   profile: durable-zfs
   backup_policy: include
@@ -403,7 +403,7 @@ services:
       TRUSTED_PROXIES: ${LAB_IP_PROXY}
     volumes:
       - nextcloud-app-data:/var/www/html
-      - /var/lib/nextcloud-data:/var/www/html/data
+      - /var/lib/nextcloud-persistent/data:/var/www/html/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/status.php"]
       start_period: 120s
@@ -420,7 +420,7 @@ services:
       POSTGRES_USER: nextcloud
       POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
     volumes:
-      - nextcloud-db-data:/var/lib/postgresql/data
+      - /var/lib/nextcloud-persistent/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nextcloud"]
       interval: 10s
@@ -457,7 +457,6 @@ services:
 
 volumes:
   nextcloud-app-data:
-  nextcloud-db-data:
 ```
 
 ### Step: nextcloud-02d-deploy-playbook
@@ -491,7 +490,7 @@ change: >
   sequencing the dependency makes the real blocker explicit rather than
   discovering it at deploy time.
 
-  Deliberately do NOT add /var/lib/nextcloud-data (the extra_mount path)
+  Deliberately do NOT add /var/lib/nextcloud-persistent (the extra_mount path)
   to wazuh_agent_fim_paths -- FIM (syscheck) hashes and diffs every file
   under a watched path on every scan interval; a 200G, constantly-
   changing user file store would make syscheck either impossibly slow or
@@ -515,7 +514,7 @@ scope:
     - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Adding /var/lib/nextcloud-data or any subpath of it to wazuh_agent_fim_paths"
+    - "Adding /var/lib/nextcloud-persistent or any subpath of it to wazuh_agent_fim_paths"
     - "Adding an insecure-registries entry to daemon.json -- REGISTRY_HOST already resolves to a real TLS FQDN"
     - "Any ansible-playbook run against pve in this step -- syntax-check only"
 
@@ -537,7 +536,7 @@ gates:
     expect: "exit 0"
     critical: true
   - id: no-user-data-fim-watch
-    cmd: "grep -A5 'wazuh_agent_fim_paths' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml | grep -q 'nextcloud-data' && echo FAIL || echo OK"
+    cmd: "grep -A5 'wazuh_agent_fim_paths' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml | grep -q 'nextcloud-persistent' && echo FAIL || echo OK"
     expect: "OK"
     critical: true
 ```

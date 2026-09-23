@@ -129,10 +129,10 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **Database:** PostgreSQL — matches Authentik/NetBox/Wazuh, already
   operated on this platform; Nextcloud's own docs prefer it over MariaDB
   for new installs.
-- **Storage:** actual Nextcloud data directory on a dedicated
-  `extra_mount_profile: durable-zfs` volume (same pattern as
-  `harbor-stack`/`wazuh-stack`/`opensearch-stack`), not crammed into the
-  container's own rootfs/docker-storage.
+- **Storage:** rootfs and Docker storage use `platform-apps-zfs` (the
+  ZFS-backed `apps-containers` pool); a 200G `durable-zfs` mount on
+  `storage-containers` holds both user files and PostgreSQL data under
+  separate directories. No NAS mount is part of the first deployment.
 - **Auth:** Authentik OIDC (`user_oidc` app) wired from day one, via the
   same `edge-<stack>-<route>` reconciler pattern (`discover-authentik-edge.py`
   / `reconcile-authentik-edge.py`) already used for Harbor, Grafana,
