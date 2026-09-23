@@ -19,6 +19,28 @@ one authorized target when asked" into a routine discovery + vulnerability
 scanning program covering the whole home network and lab: every Proxmox SDN
 zone on `pve`, plus the flat `192.168.1.0/24` LAN.
 
+## OCI public-edge discovery
+
+The OCI Pangolin edge is not in a home-lab CIDR and must never be folded into
+the broad LAN/VLAN targets. `setup_oci_pangolin_discovery.py` creates one
+separate, unscheduled Greenbone **Discovery** task for `192.9.191.163`,
+restricted to TCP 22/80/443 and UDP 51820/21820. Starting it requires the
+explicit `GREENBONE_START_OCI_PANGOLIN_DISCOVERY=true` opt-in. It performs no
+credentialed or Full-and-fast vulnerability scan. This is the initial,
+low-impact public surface check; schedule or promote it only after reviewing
+its first result.
+
+### Credentialed OCI Pangolin audit (staged)
+
+After the public discovery result is reviewed, the separate
+`setup_oci_pangolin_credentialed.py` program creates one explicit-host GVM
+task using the `greenbone-audit` account. Its private key is SOPS-backed,
+bind-mounted only into the throwaway `gvm-tools` process, and is distinct
+from the normal OCI administrator key. It remains unscheduled and requires
+`GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN=true` for the first run.
+The OCI Ansible role owns creation and revocation of the account/key; GVM
+object revocation is paired with account removal.
+
 ## Why this isn't just "add a few more targets"
 
 `greenbone-stack` sits in `pentest_seg` (VLAN 70), which is a **deny-by-default,
