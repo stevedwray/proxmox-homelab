@@ -1633,10 +1633,13 @@ operation: "should be automated only after the target API workflow is
 confirmed, because those steps create credentials and access policy."**
 Once nextcloud-P3-04's route exists:
 
-1. Create the Pangolin resource via the Integration API
-   (`https://api.gibbsgreatly.xyz/v1`), site `lab` (already created and
-   enrolled per `repeatable-operations.md`), targeting the new Pangolin
-   Traefik entrypoint/route for nextcloud, not the container directly.
+1. Create the **public HTTP resource through the Pangolin dashboard**, site
+   `lab` (already created and enrolled per `repeatable-operations.md`),
+   targeting the new Pangolin Traefik entrypoint/route for Nextcloud, not the
+   container directly. Do not use the legacy Integration API creation endpoint:
+   the live Wazuh investigation proved it silently discarded a supplied
+   `siteId`, leaving a resource unlinked from `lab`. Select the `lab` site in
+   the dashboard and verify that the resulting resource reports that site.
 2. Require SSO and MFA by default (no anonymous bypass), per
    `pangolin-architecture-plan.md` and the service onboarding contract.
 3. Assign a dedicated access group, not the owner account, per
