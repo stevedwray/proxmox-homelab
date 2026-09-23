@@ -140,6 +140,25 @@ attachments:
       gateway: "192.168.80.1"
       snat: false
 
+  # apps_seg — Application services (VLAN 120, 192.168.120.0/24)
+  apps_seg:
+    description: Application services — Nextcloud
+    type: sdn_vnet
+    bridge: tvapps
+    firewall: false
+    sdn:
+      zone: tvapps
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvapps
+      vlan_tag: 120
+      alias: pve application segment
+      subnet: "192.168.120.0/24"
+      gateway: "192.168.120.1"
+      snat: false
+
   # -------------------------------------------------------------------------
   # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
   #
@@ -284,6 +303,11 @@ zones:
     attachment: media_seg
     containers:
       - "media-stack-lab (VMID 80010) — 192.168.80.10"
+  apps_seg:
+    description: Application services — Nextcloud
+    attachment: apps_seg
+    containers:
+      - "nextcloud-stack (VMID pending) — 192.168.120.10"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
@@ -583,6 +607,31 @@ policies:
       leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
       scrape config then rejected outright. Added with place-before
       targeting the deny rule.
+  - from: edge_seg
+    to: apps_seg
+    protocol: tcp
+    ports: [8080]
+    description: Traefik to Nextcloud web UI
+  - from: apps_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9443]
+    description: Nextcloud to Authentik for OIDC
+  - from: apps_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [443]
+    description: Nextcloud to Traefik for Authentik OIDC token exchange and Harbor FQDN pulls
+  - from: apps_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: Nextcloud node_exporter TLS certificate issuance from step-ca
+  - from: apps_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — apps_seg has no reachability beyond the above plus internet egress
   - from: connector_seg
     to: 192.168.30.11
     protocol: tcp

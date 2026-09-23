@@ -72,9 +72,12 @@ HTTPS/TLS probes, and tested off-host recovery. The investigation is
 retained as historical context in
 `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
 
-**Still not built:** `apps_seg` zone itself, `nextcloud-stack`, and the
-`pangolin-proxy` Traefik instance (scaffolded, not deployed). Phase 1/2
-remain untouched.
+**`apps_seg` is now live on `pve` (2026-09-24):** VLAN 120,
+`192.168.120.0/24`, gateway `192.168.120.1`, and `tvapps` are applied on
+Proxmox and the MikroTik. Its policy permits only the planned application
+dependencies, shared TCP syslog, internet package/image egress, and an
+explicit deny for everything else. **Still not built:** `nextcloud-stack`
+and the `pangolin-proxy` Traefik instance (scaffolded, not deployed).
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
@@ -111,7 +114,7 @@ See [plan.md](plan.md) for the full step-by-step plan.
   for programmatic writes from other stacks, larger app ecosystem;
   ownCloud has been shedding features into its paid Infinite Scale
   rewrite.
-- **Zone:** new `apps_seg` SDN zone (VLAN 120, `192.168.120.0/24`), not
+- **Zone:** `apps_seg` SDN zone (VLAN 120, `192.168.120.0/24`), not
   reusing `infra_seg` or `media_seg` — keeps a future
   internet-exposed-via-Pangolin app isolated from core infra and media
   traffic, matching the existing per-purpose zone pattern

@@ -599,11 +599,10 @@ table, "Ansible task or role changes" (which a brand-new stack's first
 deploy is) validate directly on `pve` under the production approval
 flow, not on `pve-test-vm`. Before running this:
 
-1. Before any production mutation, prepare and run a separate additive-SDN
-   validation packet on `pve-test-vm`. It must use that node's own network
-   intent and prove that adding the new zone does not regress one or two
-   existing adjacent stacks. Do not treat a direct `pve` deploy as a
-   substitute for this structural validation tier.
+1. `pve-test-vm` no longer exists. Perform the additive SDN change directly
+   on `pve` only in an approved maintenance window, with pre- and post-apply
+   SDN object and firewall-compilation checks. VLAN 120 was applied this way
+   on 2026-09-24.
 2. Confirm all SOPS secrets from nextcloud-03's checklist are set.
 3. Preflight Summary to the operator: target = `pve`, mutating, exact
    objects = new `apps_seg` SDN zone/vnet/firewall rules (from
