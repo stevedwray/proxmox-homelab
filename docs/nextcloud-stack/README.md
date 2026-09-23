@@ -156,8 +156,8 @@ own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
 - **OCI monitoring priority:** OCI Audit, public-port scanning, and external
   HTTPS/TLS checks—not a home-lab Wazuh connection. VCN Flow Logs are
   deliberately skipped to protect the free tenancy's shared Logging allowance;
-  Cloud Guard is unavailable. Off-host backup remains recommended but is
-  deliberately deferred for this rollout.
+  Cloud Guard is unavailable. External checks and off-host backup remain
+  recommended but are deliberately deferred for this rollout.
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with
@@ -419,10 +419,10 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **OCI-side monitoring/logging.** Fully designed in
   `pangolin-observability-and-graylog-plan.md` but not yet implemented
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated
-  API were verified on 2026-09-24. OCI-native signals and external probes
-  remain publication prerequisites; Cloud Guard is excluded because it is not
-  available to this free tenancy. Off-host recovery is intentionally deferred
-  for this rollout and remains a documented resilience follow-up.
+  API were verified on 2026-09-24. OCI-native signals, external probes, and
+  off-host recovery are intentionally deferred for this rollout and remain
+  documented resilience follow-ups. Cloud Guard is excluded because it is not
+  available to this free tenancy.
 - **nextcloud-stack and Newt telemetry are deployed.** `nextcloud-stack` has
   its Wazuh agent, cAdvisor, Docker-to-rsyslog relay, and the
   `apps_seg -> wazuh-stack:1514,1515` policy/MikroTik mirror.
