@@ -334,12 +334,21 @@ See [plan.md](plan.md) for the full step-by-step plan.
 
 ## Still genuinely open
 
-- **Nextcloud image tag.** Deliberately not pinned in this doc — check
-  the current stable tag at `hub.docker.com/_/nextcloud` (or
-  `hub.docker.com/r/nextcloud/server`) at execution time and pin it
-  literally into the compose/playbook content nextcloud-02c/02d author,
-  rather than baking in a version that may already be stale by the time
-  this plan is run.
+## New SOPS secrets required before first deploy
+
+Add these keys to `terraform/secrets.common.enc.yaml` through SOPS before
+the first deploy. Do not put them in `.env` or any tracked file.
+
+- `NEXTCLOUD_DB_PASSWORD` — PostgreSQL password for the Nextcloud DB user
+- `NEXTCLOUD_REDIS_PASSWORD` — Redis authentication password
+- `NEXTCLOUD_ADMIN_PASSWORD` — initial Nextcloud administrator password
+- `NEXTCLOUD_OIDC_CLIENT_ID` — Authentik OIDC client ID
+- `NEXTCLOUD_OIDC_CLIENT_SECRET` — Authentik OIDC client secret
+
+`NEXTCLOUD_IMAGE_TAG` is non-secret and is set in the operator's local
+`.env` to `35.0.0-apache`. Review and deliberately update that pin during a
+future Nextcloud upgrade.
+
 - **`user_oidc` provisioning mechanism.** Nextcloud has no compose-level
   env-var equivalent to Immich's `IMMICH_CONFIG_FILE`; OIDC provider
   registration is normally done via `occ user_oidc:provider` after the
