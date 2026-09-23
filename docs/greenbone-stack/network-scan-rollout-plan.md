@@ -30,7 +30,7 @@ credentialed or Full-and-fast vulnerability scan. This is the initial,
 low-impact public surface check; schedule or promote it only after reviewing
 its first result.
 
-### Credentialed OCI Pangolin audit (live; first result pending)
+### Credentialed OCI Pangolin audit (live; first run complete)
 
 After the public discovery result is reviewed, the separate
 `setup_oci_pangolin_credentialed.py` program creates one explicit-host GVM
@@ -39,7 +39,12 @@ bind-mounted only into the throwaway `gvm-tools` process, and is distinct
 from the normal OCI administrator key. It remains unscheduled and requires
 `GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN=true` for the first run.
 The OCI Ansible role owns creation and revocation of the account/key; GVM
-object revocation is paired with account removal.
+object revocation is paired with account removal. The first manual run
+completed on 2026-09-23 and authenticated successfully. It remains
+unscheduled while its package/library remediation and the web-finding
+validation are completed. The alleged osCommerce upload/SQLi findings were
+checked against the live service and are Next.js fallback/404 false positives,
+not evidence of a web-shell upload.
 
 ## Why this isn't just "add a few more targets"
 
