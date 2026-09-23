@@ -1521,6 +1521,15 @@ gates:
 
 ### Step: nextcloud-P3-03b-duplicate-authentik-middleware
 
+**Done 2026-09-24.** `pangolin-proxy` was deployed on `pve` as LXC `30011`
+(`192.168.30.11`) and its metrics smoke test passed. From that host,
+`authentik-int.lab.gibbsgreatly.xyz` resolves directly to `192.168.20.10`
+(Authentik), not to either Traefik. The forwarded-header probe returned the
+same Authentik/Nginx `404` as the established main proxy; this proves the
+second Traefik reaches the same direct endpoint and has no routing loop. No
+application router is present yet, so this verifies reachability and loop
+absence rather than a user-facing authorization flow.
+
 ```yaml
 id: nextcloud-P3-03b-duplicate-authentik-middleware
 title: Confirm pangolin-proxy's forwardAuth middleware is a real, working duplicate, not a shared reference

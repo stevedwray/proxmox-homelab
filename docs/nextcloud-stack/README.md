@@ -96,7 +96,9 @@ Docker mount on `apps-containers`, with a 200G durable mount on
 the Wazuh agent is enrolled; Docker uses the local rsyslog/syslog relay for
 Graylog forwarding. The main Traefik and Technitium authority publish
 `nextcloud.lab.gibbsgreatly.xyz` to `192.168.30.10` and proxy it to the LXC.
-The separate `pangolin-proxy` remains scaffolded, not deployed. Its tracked
+`pangolin-proxy` is live on `pve` as LXC `30011` at `192.168.30.11` in
+`edge_seg`; its Traefik metrics smoke test passed on 2026-09-24. It has no
+generated application routes and therefore publishes no service. Its tracked
 production Terragrunt entrypoint is
 `terraform/lxc/environments/pve/pangolin-proxy/`. The active production
 convention uses both that per-environment directory and the named `pve`
@@ -107,6 +109,13 @@ first production initialization must create its `pve` workspace from
 `default`; it must not be initialized against an assumed default-workspace
 state. The 2026-09-24 plan attempts stopped before calculating or changing
 infrastructure.
+
+**P3-03b is verified.** From both `pangolin-proxy` and the established main
+proxy, `authentik-int.lab.gibbsgreatly.xyz` resolves directly to Authentik
+(`192.168.20.10`) and the forward-auth endpoint returns the same
+Authentik/Nginx response. This rules out a route through either Traefik and
+therefore the potential proxy loop. The unauthenticated endpoint response is
+an identical `404` on both hosts; no route currently invokes the middleware.
 
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
