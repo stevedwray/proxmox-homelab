@@ -3,9 +3,18 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    # Watch the Compose definition but deliberately not its adjacent .env:
+    # the latter contains the operator-managed Newt enrollment secret.
+    wazuh_agent_fim_paths:
+      - /opt/newt-connector/docker-compose.yml
+    # This accepts Docker socket access for Wazuh on this high-value,
+    # single-workload host; see the shared role's documented tradeoff.
+    wazuh_agent_docker_monitoring_enabled: true
   roles:
     - lxc_base
     - docker_base
+    - wazuh_agent
 
   tasks:
     # No "Trust Harbor HTTP registry in Docker daemon" task here, unlike
@@ -21,6 +30,69 @@
         enabled: false
       failed_when: false
 
-# Deliberately no further plays. Newt's own docker-compose.yml/.env and
-# enrollment credentials are an operator action, not automation -- see
-# STACK_CONTRACT.md "Newt deployment (operator action, not automated)".
+    # The Compose file and .env remain operator-managed. This timer only
+    # operates the existing `newt` service; it never writes or logs either
+    # file, and it keeps old images so rollback remains manual and possible.
+    - name: Install weekly Newt image refresh script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/newt-image-refresh
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+
+          cd /opt/newt-connector
+          /usr/bin/docker compose pull newt
+          /usr/bin/docker compose up --detach --no-deps newt
+          /usr/bin/docker compose ps --status running --services | grep --fixed-strings --line-regexp newt >/dev/null
+
+    - name: Install weekly Newt image refresh service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/newt-image-refresh.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Refresh the Newt connector image
+          Wants=network-online.target
+          After=network-online.target docker.service
+          ConditionPathExists=/opt/newt-connector/docker-compose.yml
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/newt-image-refresh
+
+    - name: Install weekly Newt image refresh timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/newt-image-refresh.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Weekly Newt connector image refresh
+
+          [Timer]
+          OnCalendar=Sun *-*-* 03:15:00
+          RandomizedDelaySec=30m
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable weekly Newt image refresh timer
+      ansible.builtin.systemd:
+        name: newt-image-refresh.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Enable unattended security updates for newt-connector
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

@@ -11,8 +11,9 @@ this host is expected or needed beyond the router-level DNS/ICMP rules
 every zone gets.
 
 This host's own Ansible playbook (`deploy-newt-connector`) provisions the
-base OS/Docker only — `lxc_base`, `docker_base`. It deliberately does **not**
-write Newt's own `docker-compose.yml`, `.env`, or credentials. That's an
+base OS/Docker, a host-local Wazuh agent, security-only unattended updates,
+and a weekly Newt image-refresh timer. It deliberately does **not** write
+Newt's own `docker-compose.yml`, `.env`, or credentials. Those remain an
 operator action, same boundary as every other Newt/Pangolin credential in
 this plan (control-plane/credential-creating, per
 `/home/steve/git/oci/docs/repeatable-operations.md`'s own stated policy).
@@ -29,7 +30,8 @@ See "Newt deployment (operator action)" below for the exact config to use.
 
 `connector_seg`'s only permitted destinations are `pangolin-proxy`
 (192.168.30.11:443, `edge_seg`), Graylog (192.168.20.14:514/TCP) via the
-shared managed-zone syslog policy, and general internet egress (any address
+shared managed-zone syslog policy, Wazuh manager (192.168.40.15:1514,1515)
+for this host's local agent only, and general internet egress (any address
 outside `192.168.0.0/16`, protocol-unrestricted — covers both Newt's control
 connection and the Gerbil WireGuard tunnel). **No route to `infra_seg`
 (Harbor, apt-cacher) or the main `proxy-stack` Traefik (192.168.30.10)** —
@@ -89,8 +91,8 @@ that permitted that tunnel-sourced traffic has been removed from
 **This host itself is a separate matter.** `newt-connector` is a normal
 home-lab LXC on the same physical network as `wazuh-stack` — no tunnel,
 no NAT hairpin, no Gerbil-netns sharing in that path. Per
-`docs/nextcloud-stack/plan.md`'s `nextcloud-P3-02b`/`nextcloud-P3-02c`
-(added 2026-09-24, **not yet applied**), this host is planned to join
+`docs/nextcloud-stack/plan.md`'s `nextcloud-P3-02b`/`nextcloud-P3-02c`, this
+host joins
 the existing 6-host home-lab Wazuh agent pilot via a narrowly-scoped new
 `connector_seg -> wazuh-stack:1514,1515` firewall rule (sourced from
 this host's own agent process, not from anything relayed through the
@@ -110,8 +112,14 @@ tunnel between the home lab and the public internet.
 
 ## Playbook
 
-`deploy-newt-connector` (plays: `lxc_base`, `docker_base` only — no compose
-deploy, no application-layer tasks).
+`deploy-newt-connector` manages the base OS/Docker, the Wazuh agent, a
+security-only unattended-upgrades policy, and a weekly `newt-image-refresh`
+systemd timer. The timer runs Sundays at 03:15 host-local time with up to a
+30-minute jitter, pulls only the existing `newt` Compose service, recreates
+it only if needed, and verifies that service is running. It does not prune
+old images, so rollback remains possible. It does not run during provisioning.
+
+The Compose deployment and all credentials remain operator-managed.
 
 ## Newt deployment (operator action, not automated)
 

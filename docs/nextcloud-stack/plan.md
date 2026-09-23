@@ -15,6 +15,12 @@ The step blocks below are retained as the implementation record. Phase 2
 ingestion, monitoring end-to-end validation, credential rotation, and
 public Pangolin publishing remain open and separately gated.
 
+Newt's host-local maintenance follow-up is also complete: the narrowly scoped
+`connector_seg -> wazuh-stack:1514,1515` policy and MikroTik mirror are live,
+the agent is enrolled, and its Compose definition (not `.env`) is under FIM.
+Security-only unattended updates and the weekly, non-pruning Newt image-refresh
+timer are enabled. This is distinct from the retired OCI-to-Wazuh tunnel path.
+
 Several things below are genuinely not step blocks, and are written as
 plain operator/prose instructions instead: the `deploy-monitoring-stack.yml`
 scrape-target edit (`nextcloud-02f`, a different stack's file), the live
@@ -1360,17 +1366,16 @@ change: >
       - docker_base
       - wazuh_agent
 
-  Set in the play's vars: block:
+  The actual operator-managed Compose path was confirmed as
+  `/opt/newt-connector/docker-compose.yml`; set in the play's vars: block:
 
     wazuh_agent_fim_paths:
-      - /root   # wherever the operator's docker-compose.yml/.env for Newt live, per STACK_CONTRACT.md "Newt deployment (operator action)"
+      - /opt/newt-connector/docker-compose.yml
     wazuh_agent_docker_monitoring_enabled: true   # watches the newt-connector container itself
 
-  Confirm the actual path the operator used for Newt's
-  docker-compose.yml/.env (STACK_CONTRACT.md doesn't pin one — it's
-  operator-placed, out-of-band) before treating `/root` above as
-  literal; adjust `wazuh_agent_fim_paths` to match whatever path is
-  actually in use.
+  Watch the Compose definition only; do not watch its adjacent `.env`, which
+  contains operator-managed enrollment credentials. Do not add broad watches
+  such as `/root` or `/opt/newt-connector`.
 
   No new SOPS secret required, same reasoning as nextcloud-02d:
   `WAZUH_AGENT_AUTHD_PASSWORD` and `LAB_IP_WAZUH` are both already

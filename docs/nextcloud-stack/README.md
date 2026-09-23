@@ -57,6 +57,17 @@ image, and the real blocker: a stale Let's Encrypt *staging* cert that
 protecting from ever being corrected — now self-healing, not a one-off
 manual fix).
 
+**Newt maintenance and Wazuh coverage are live (2026-09-24).** Its local
+Wazuh agent is enrolled and connected to the manager through the narrowly
+scoped `connector_seg -> 192.168.40.15:1514,1515` policy and matching
+MikroTik rule. FIM watches only `/opt/newt-connector/docker-compose.yml`,
+not its credential-bearing `.env`; Docker monitoring is enabled for this
+single-workload host. Security-only unattended updates are enabled (without
+automatic reboots), and a weekly image-refresh timer runs the existing
+`newt` Compose service on Sundays at 03:15 host-local time with up to
+30 minutes of jitter. It does not run during provisioning or prune old
+images.
+
 **Wazuh is retired for the OCI edge (decision 2026-09-23).** The failed
 path added a privileged endpoint agent, private resource, firewall
 exception, and a relay sharing Gerbil's namespace, but could not provide
@@ -385,12 +396,12 @@ See [plan.md](plan.md) for the full step-by-step plan.
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated
   API were verified on 2026-09-24; OCI-native signals, external probes,
   and recovery validation remain prerequisites for Phase 3 publishing.
-- **nextcloud-stack telemetry is deployed; Newt telemetry remains open.**
-  `nextcloud-stack` has its Wazuh agent, cAdvisor, Docker-to-rsyslog relay,
-  and the `apps_seg -> wazuh-stack:1514,1515` policy/MikroTik mirror.
-  `newt-connector` remains a separate follow-up because its
-  operator-managed Compose path must be confirmed before FIM can be scoped
-  safely; do not add broad watches such as `/root`.
+- **nextcloud-stack and Newt telemetry are deployed.** `nextcloud-stack` has
+  its Wazuh agent, cAdvisor, Docker-to-rsyslog relay, and the
+  `apps_seg -> wazuh-stack:1514,1515` policy/MikroTik mirror.
+  `newt-connector` has a connected local Wazuh agent and its Compose-only
+  FIM watch; its weekly refresh and security-only update timers are enabled.
+  Do not add broad FIM watches such as `/root` or the whole Compose directory.
 - **Greenbone scan reach (`nextcloud-01b`) not yet applied.** Confirmed
   live 2026-09-24: `apps_seg` has no `greenbone-stack`-sourced discovery
   rule in `pve.yaml`, and `192.168.120.10` isn't registered as a GVM scan

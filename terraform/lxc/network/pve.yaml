@@ -657,6 +657,16 @@ policies:
       not add a connector_seg -> apps_seg (or any other app zone, or the
       main Traefik) rule even for a single, specific service.
   - from: connector_seg
+    to: 192.168.40.15
+    protocol: tcp
+    ports: [1514, 1515]
+    description: >-
+      newt-connector's host-local Wazuh agent to wazuh-stack's manager
+      (event and enrollment ports). This is not traffic relayed through
+      the Newt/Gerbil tunnel and does not recreate the retired OCI Wazuh
+      path; it is scoped only to the manager host and must precede the
+      connector segment's explicit default deny.
+  - from: connector_seg
     to: default
     protocol: all
     ports: []
