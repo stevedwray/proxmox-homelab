@@ -890,6 +890,13 @@ gates:
     critical: true
 ```
 
+**Status: completed on production `pve`, 2026-09-24.** The trailing role is
+now in `deploy-nextcloud-stack.yml`; `unattended-upgrades` 2.12 is installed,
+both apt-daily timers are enabled and active, and automatic reboot remains
+disabled. The initial full replay did not reach the trailing play, so the
+role was then applied by starting Ansible at its first task; Nextcloud and its
+Wazuh connection were verified afterward.
+
 ### Step: nextcloud-01c-wazuh-agent-firewall-reach
 
 ```yaml
@@ -1447,9 +1454,10 @@ from the repo root — `ansible.cfg`'s `roles_path` (needed to resolve
 always exports before any real run but a bare gate command does not.
 Fixed in this step's gate and in `nextcloud-02d`'s identical
 `deploy-nextcloud-stack.yml` gate too, since they'd have hit the same
-thing. No wazuh_agent/unattended_upgrades roles added — those
-are still a 6-stack pilot rollout, not yet universal (confirmed by
-checking which `deploy-*.yml` files actually reference them), so
+thing. At that time no `wazuh_agent`/`unattended_upgrades` roles were added —
+they were still a 6-stack pilot rollout, not yet universal. That historical
+note was superseded for `nextcloud-stack` on 2026-09-24: it now has both
+roles, as recorded in `nextcloud-02d` and `nextcloud-02g`. Thus
 `media-stack-lab`'s precedent (a real, fully-deployed stack without
 them) was followed over `proxy-stack`'s.
 
