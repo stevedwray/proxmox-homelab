@@ -61,8 +61,10 @@ path added a privileged endpoint agent, private resource, firewall
 exception, and a relay sharing Gerbil's namespace, but could not provide
 tamper-resistant evidence and briefly affected public-edge availability
 during recovery. The `connector_seg -> wazuh-stack:1514` desired-state
-rule has been removed; live cleanup of the router rule and OCI Wazuh
-objects is pending the normal production approval flow. OCI monitoring
+rule has been removed. The OCI agent, relay, and manager registration
+are gone; the Pangolin dashboard resource/client and MikroTik rule
+`*A3` await removal by sessions with their respective write authority.
+OCI monitoring
 now prioritizes control-plane logs/alarms, public-port scans, external
 HTTPS/TLS probes, and tested off-host recovery. The investigation is
 retained as historical context in
@@ -88,8 +90,9 @@ own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
   credential was safer than fleet-wide enrollment, but the resulting
   private route, agent, and Gerbil-netns relay had more security and
   availability cost than value for this one-purpose edge host. The
-  planned live cleanup revokes the credential and removes the private
-  resource, relay, agent, and router rule.
+  agent, relay, and manager registration have been removed. The private
+  resource/client and router rule remain pending manual deletion because
+  the available API credentials are read-only or lack dashboard access.
 - **OCI monitoring priority:** VCN Flow Logs, OCI Audit/Cloud Guard,
   vulnerability/public-port scanning, external HTTPS/TLS checks, and
   off-host backups—not a home-lab Wazuh connection.
