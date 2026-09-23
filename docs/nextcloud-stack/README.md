@@ -219,7 +219,26 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **Wazuh retirement (decided 2026-09-23):** revoke and remove the
   pre-registered `oci-pangolin` agent rather than trying to repair its
   private route. Keep the historical record for auditability, but do
-  not create a replacement home-lab route to Wazuh.
+  not create a replacement home-lab route to Wazuh **for OCI-originated
+  traffic through the tunnel** — that transport shape is what was
+  retired, not home-lab Wazuh coverage in general.
+- **nextcloud-stack and newt-connector monitoring (added 2026-09-24):**
+  the OCI retirement above is specific to the Pangolin/Gerbil tunnel
+  path and does not extend to ordinary same-network hosts. Both
+  `nextcloud-stack` (Phase 1, `apps_seg`) and `newt-connector` (Phase 3,
+  `connector_seg`) join the existing 6-host home-lab Wazuh agent pilot
+  (`authentik-stack`, `proxy-stack`, `harbor-stack`, `technitium-stack`,
+  `apt-cacher-stack`, `pve` — see `docs/wazuh-stack/README.md`), each via
+  a narrowly-scoped new `<zone> -> wazuh-stack:1514,1515` firewall rule
+  (`nextcloud-01c`, `nextcloud-P3-02b`) and the shared `wazuh_agent` role
+  (`nextcloud-02e`, `nextcloud-P3-02c`). `newt-connector` is a
+  particularly high-value target for this — it's the only host holding
+  the live credential-bearing tunnel to OCI. Container-level metrics
+  (cadvisor, `nextcloud-02`/`02c`) and Docker→Graylog log forwarding
+  (`nextcloud-02d`) are also now part of nextcloud-stack's first deploy,
+  matching the pattern already live on `authentik-stack`/`netbox-stack`/
+  `media-stack-lab` rather than treating monitoring/logging as a later
+  add-on. See `plan.md` for the literal steps.
 - **`connector_seg` network placement (recap):** VLAN
   110, `192.168.110.0/24`, gateway `192.168.110.1`, single host
   `newt-connector` at `192.168.110.10`. Changed from the originally
@@ -341,3 +360,13 @@ See [plan.md](plan.md) for the full step-by-step plan.
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated
   API were verified on 2026-09-24; OCI-native signals, external probes,
   and recovery validation remain prerequisites for Phase 3 publishing.
+- **nextcloud-stack/newt-connector Wazuh + cadvisor + Graylog forwarding
+  (added 2026-09-24) are written as literal plan.md steps
+  (`nextcloud-01c`, `nextcloud-02c`/`02d`/`02e`, `nextcloud-P3-02b`/
+  `02c`) but not yet applied anywhere** — `nextcloud-stack` doesn't exist
+  yet (Phase 1 hasn't started) and `newt-connector`'s deploy playbook
+  hasn't been touched. The two new firewall rules
+  (`apps_seg`/`connector_seg` -> `wazuh-stack:1514,1515`) need a real
+  `pve.yaml` edit plus MikroTik mirror under the production approval
+  flow, same as every other live firewall change in this plan — nothing
+  here is enforced until that happens.

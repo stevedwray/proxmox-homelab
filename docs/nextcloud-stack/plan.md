@@ -296,6 +296,19 @@ compose_requirements: |
   nextcloud-db-data as named Docker volumes (not bind mounts — only the
   data directory is a bind mount, to the extra_mount path).
 
+  cadvisor service (container-level metrics, matching the pattern already
+  live on authentik-stack/netbox-stack — read authentik-stack/docker-compose.yml's
+  `cadvisor:` service directly rather than reinventing the shape):
+  - Image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
+  - restart: unless-stopped
+  - ports: "8081:8080" — NOT "8080:8080" like the other stacks' copies,
+    because nextcloud's own app service already owns host port 8080 (see
+    the `provides: nextcloud, port 8080` fact above); cadvisor's container
+    side still listens on 8080 internally, only the host-side mapping
+    changes. nextcloud-02c's scrape target below must use :8081 to match.
+  - volumes: /:/rootfs:ro, /var/run:/var/run:ro, /sys:/sys:ro,
+    /var/lib/docker:/var/lib/docker:ro, /etc/machine-id:/etc/machine-id:ro
+
 compose_forbidden: |
   a custom top-level networks: block, the "latest" image tag on any
   service, a cron container in this first pass (Nextcloud's background
@@ -399,10 +412,17 @@ entries there, matching the existing `media-stack-lab` entries exactly:
     - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:9100"]
       labels: {stack: nextcloud-stack}
 
-  (under job_name: node_exporter, and the equivalent under job_name:
-  cadvisor on port 8080 if a cadvisor sidecar is later added to
-  nextcloud-stack's compose — not in the first pass per
-  compose_forbidden above, so skip the cadvisor entry for now).
+  (under job_name: node_exporter.) Add a second entry under job_name:
+  cadvisor, matching authentik-stack/netbox-stack's existing entries
+  there exactly:
+
+    - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:8081"]
+      labels: {stack: nextcloud-stack}
+
+  Port 8081, not 8080 — nextcloud-02's compose now ships a cadvisor
+  sidecar (container-level CPU/mem/network/disk-IO per container, not
+  just host-level node_exporter metrics) mapped to host port 8081
+  specifically because nextcloud's own app service already owns 8080.
 
 This requires redeploying `monitoring-stack` itself
 (`scripts/provision.sh --stack monitoring-stack` against `pve`, under the
@@ -410,6 +430,244 @@ production approval flow — Ansible task/role change tier per CLAUDE.md's
 Validation Tiers table) to pick up the new scrape target. Sequence this
 after nextcloud-stack is actually live (so `LAB_IP_NEXTCLOUD_STACK`
 resolves to a real, reachable host) rather than before.
+
+### Step: nextcloud-02d-forward-docker-logs-to-graylog
+
+```yaml
+id: nextcloud-02d-forward-docker-logs-to-graylog
+title: Configure the Docker daemon to forward container logs to Graylog
+depends_on: [nextcloud-02-scaffold-stack-request]
+
+change: >
+  apps_seg already has a shared firewall path to Graylog (TCP/514, via
+  the `graylog_sender_subnets` address-list policy — see nextcloud-01),
+  and every LXC already runs a local rsyslog relay listening on
+  127.0.0.1:10514 for Docker (the `rsyslog_forward` role, invoked
+  unconditionally by `lxc_base` — confirmed by reading
+  terraform/lxc/ansible/roles/lxc_base/tasks/main.yml and
+  roles/rsyslog_forward/tasks/main.yml directly, not assumed). Neither
+  of those makes Nextcloud's own container logs actually reach Graylog
+  by itself -- scaffold-stack.sh's minecraft-stack exemplar generates no
+  Docker daemon.json at all, and reachability plus a listening relay
+  without the daemon actually pointed at it is a real, silent gap (21 of
+  61 existing deploy-*.yml playbooks explicitly add this task; the
+  minecraft-stack exemplar this plan otherwise follows is not one of
+  them).
+
+  Add this task to deploy-nextcloud-stack.yml's tasks: list, immediately
+  before the "docker compose up -d" task (Docker must be reconfigured
+  before the stack's containers start, so they pick up the new
+  log-driver from their first run), modeled exactly on
+  deploy-media-stack-lab.yml's "Trust Harbor HTTP registry and forward
+  Docker container logs to Graylog" task -- but without its
+  insecure-registries block, which nextcloud-stack doesn't need since
+  nextcloud-02b already resolves REGISTRY_HOST to Harbor's real,
+  TLS-valid FQDN:
+
+    - name: Forward Docker container logs to Graylog
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: nextcloud_stack_docker_daemon_config
+
+  Add the matching handler (copy media-stack-lab's exactly):
+
+    handlers:
+      - name: Restart Docker
+        ansible.builtin.systemd:
+          name: docker
+          state: restarted
+          daemon_reload: true
+
+  If deploy-nextcloud-stack.yml already has a `handlers:` block by this
+  point (scaffold-stack.sh may add one of its own), add this handler to
+  the existing list rather than writing a second `handlers:` key —
+  Ansible playbooks allow only one per play.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any ansible-playbook run against pve in this step -- syntax-check only"
+    - "Adding an insecure-registries entry -- REGISTRY_HOST already resolves to a real TLS FQDN per nextcloud-02b"
+
+gates:
+  - id: syntax-check
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: log-driver-present
+    cmd: "grep -q 'syslog-address' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### Step: nextcloud-02e-add-wazuh-agent
+
+```yaml
+id: nextcloud-02e-add-wazuh-agent
+title: Enroll nextcloud-stack in the existing home-lab Wazuh agent pilot
+depends_on: [nextcloud-02-scaffold-stack-request]
+
+change: >
+  This is the home-lab Wazuh manager (`wazuh-stack`, 192.168.40.15,
+  `infra_seg`) that the retired OCI investigation was never about --
+  that retirement (`nextcloud-P3-07`) concerned a privileged agent on
+  the *OCI-hosted Pangolin edge*, tunneled back through a Pangolin
+  private resource and a Gerbil-netns relay, a fundamentally different
+  and unreachable transport shape. nextcloud-stack is a normal same-
+  network home-lab host, exactly like the 6 hosts already enrolled
+  (`authentik-stack`, `proxy-stack`, `harbor-stack`, `technitium-stack`,
+  `apt-cacher-stack`, `pve` itself -- see docs/wazuh-stack/README.md) --
+  there is no tunnel, no NAT hairpin, and no netns-sharing sidecar in
+  this path at all, so none of the reasons Wazuh was retired for OCI
+  apply here.
+
+  Add the shared `wazuh_agent` role
+  (terraform/lxc/ansible/roles/wazuh_agent/, already used by 6 other
+  playbooks -- read its defaults/main.yml and tasks/main.yml directly,
+  do not re-derive the enrollment flow) to deploy-nextcloud-stack.yml's
+  roles: list, after portainer_agent:
+
+    roles:
+      - lxc_base
+      - docker_base
+      - portainer_agent
+      - wazuh_agent
+
+  Set these role vars in the play's vars: block (matching the pattern
+  the 4 already-enrolled Docker Compose stacks use for
+  wazuh_agent_docker_monitoring_enabled -- read one of them, e.g.
+  deploy-harbor-stack.yml, directly rather than assuming the exact var
+  name/shape):
+
+    wazuh_agent_fim_paths:
+      - /opt/nextcloud-stack   # compose file + .env, not the 200G user-data mount
+    wazuh_agent_docker_monitoring_enabled: true
+
+  Deliberately do NOT add /var/lib/nextcloud-data (the extra_mount path)
+  to wazuh_agent_fim_paths -- FIM (syscheck) hashes and diffs every file
+  under a watched path on every scan interval; a 200G, constantly-
+  changing user file store would make syscheck either impossibly slow or
+  drown real alerts in routine user activity noise. FIM should watch
+  Nextcloud's own app/config surface, not treat every user upload as a
+  file-integrity event.
+
+  No new SOPS secret is required -- `wazuh_agent`'s
+  `WAZUH_AGENT_AUTHD_PASSWORD` is already common/shared
+  (terraform/secrets.common.enc.yaml, per the role's own tasks/main.yml
+  comment), and `LAB_IP_WAZUH` is already common `.env` config, same as
+  every other enrolled stack's session already has both without any new
+  step.
+
+  apps_seg has an explicit default-deny policy rule (unlike infra_seg/
+  edge_seg, which have none per docs/wazuh-stack/plan.md's live
+  MikroTik read -- traffic between zones with no default-deny falls
+  through to RouterOS's implicit accept there, but apps_seg doesn't get
+  that for free). See nextcloud-01c below for the required firewall
+  rule; this step's own playbook change will fail enrollment (connection
+  refused to 1514/1515) until nextcloud-01c is applied.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Adding /var/lib/nextcloud-data or any subpath of it to wazuh_agent_fim_paths"
+    - "Any ansible-playbook run against pve in this step -- syntax-check only"
+
+gates:
+  - id: syntax-check
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: wazuh-role-present
+    cmd: "grep -q 'wazuh_agent' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: no-user-data-fim-watch
+    cmd: "grep -A5 'wazuh_agent_fim_paths' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml | grep -q 'nextcloud-data' && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### Step: nextcloud-01c-wazuh-agent-firewall-reach
+
+```yaml
+id: nextcloud-01c-wazuh-agent-firewall-reach
+title: Add apps_seg -> wazuh-stack firewall reach for nextcloud-stack's Wazuh agent
+depends_on: [nextcloud-01-create-apps-seg-zone]
+
+change: >
+  apps_seg is already live on pve (2026-09-24, see README.md "Current
+  execution state") with its explicit-deny rule already applied and
+  enforced. This step is a follow-up modification to an already-live
+  zone's firewall policy, not part of the original zone-creation apply
+  -- treat it with the same real-apply discipline as nextcloud-P3-01's
+  own MikroTik enforcement, not as a paper edit.
+
+  Insert this new rule into terraform/lxc/network/pve.yaml's policies:
+  list immediately BEFORE the existing "Explicit deny — apps_seg has no
+  reachability beyond the above plus internet egress" rule (ordering
+  matters -- a rule placed after a zone's own catch-all deny never
+  matches, the same class of bug already hit live in media-stack-lab's
+  Stage B):
+
+    - from: apps_seg
+      to: 192.168.40.15
+      protocol: tcp
+      ports: [1514, 1515]
+      description: >-
+        nextcloud-stack's Wazuh agent to wazuh-stack's manager
+        (event/enrollment ports), added by nextcloud-02e. Narrowly
+        scoped to wazuh-stack's IP, not all of infra_seg -- apps_seg's
+        other infra reachability (Harbor/apt-cacher) already comes from
+        the separate all_zones -> infra_seg:80/443/3142 blanket rule and
+        does not need widening for this.
+
+  This is Proxmox SDN policy only. Per docs/wazuh-stack/README.md's own
+  precedent (authentik-stack/technitium-stack/proxy-stack each "needed a
+  narrowly-scoped new MikroTik forward rule to wazuh-stack's manager
+  ports" beyond the SDN-level change), also apply the equivalent
+  MikroTik forward-chain accept rule for 192.168.120.0/24 ->
+  192.168.40.15:1514,1515, placed before apps_seg's existing MikroTik
+  default-deny/catch-all -- operator action, same as every other
+  MikroTik change in this plan (no automated wrapper for this device).
+  Re-verify read-only afterward via
+  terraform/lxc/stacks/netbox-stack/integrations/mikrotik_client.py,
+  matching how nextcloud-P3-01's own MikroTik rules were confirmed.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/network/pve.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Placing the new rule after apps_seg's explicit-deny rule"
+    - "Widening the rule beyond 192.168.40.15 (wazuh-stack's own IP) or beyond ports 1514/1515"
+    - "Any terragrunt apply / SDN apply in this step -- validation only; live application under the production approval flow, per CLAUDE.md's additive-firewall-rule tier"
+
+gates:
+  - id: yaml-syntax
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: rule-before-deny
+    cmd: "awk '/from: apps_seg/{f=NR} /to: 192.168.40.15/{w=NR} /Explicit deny .* apps_seg/{d=NR} END{if (w>0 && d>0 && w<d) print \"OK\"; else print \"FAIL\"}' terraform/lxc/network/pve.yaml"
+    expect: "OK"
+    critical: true
+```
 
 ### Step: nextcloud-03-add-secrets-placeholders
 
@@ -603,19 +861,30 @@ flow, not on `pve-test-vm`. Before running this:
    on `pve` only in an approved maintenance window, with pre- and post-apply
    SDN object and firewall-compilation checks. VLAN 120 was applied this way
    on 2026-09-24.
-2. Confirm all SOPS secrets from nextcloud-03's checklist are set.
-3. Preflight Summary to the operator: target = `pve`, mutating, exact
+2. Apply nextcloud-01c's `apps_seg -> wazuh-stack:1514,1515` rule (both
+   the `pve.yaml` policy and its MikroTik mirror) in the same maintenance
+   window as step 1 — the Wazuh agent added by nextcloud-02e will enroll
+   but fail to reach the manager without it.
+3. Confirm all SOPS secrets from nextcloud-03's checklist are set.
+4. Preflight Summary to the operator: target = `pve`, mutating, exact
    objects = new `apps_seg` SDN zone/vnet/firewall rules (from
-   nextcloud-01) + new `nextcloud-stack` LXC + its Docker Compose stack,
-   out-of-scope = everything else.
-4. Wait for explicit operator "Proceed."
-5. `export TASK_APPROVAL="nextcloud-stack-first-deploy"` then
+   nextcloud-01 and nextcloud-01c) + new `nextcloud-stack` LXC + its
+   Docker Compose stack (including the cadvisor sidecar, Graylog log
+   forwarding, and Wazuh agent enrollment added by
+   nextcloud-02c/02d/02e), out-of-scope = everything else.
+5. Wait for explicit operator "Proceed."
+6. `export TASK_APPROVAL="nextcloud-stack-first-deploy"` then
    `./with-secrets-prod scripts/provision.sh --stack nextcloud-stack`.
-6. Verify per CLAUDE.md's Stack Service Types convention: `curl` to
+7. Verify per CLAUDE.md's Stack Service Types convention: `curl` to
    Nextcloud's HTTP port — add a row for `nextcloud-stack` there
    (`curl -f http://192.168.120.10:8080/status.php`) once this step
-   actually runs, since the table doesn't have one yet.
-7. After-Action Summary to the operator per the standard flow.
+   actually runs, since the table doesn't have one yet. Also verify the
+   3 new integrations added by this plan revision: cadvisor metrics
+   visible in Grafana/VictoriaMetrics (nextcloud-02c), Nextcloud's Docker
+   container logs arriving in Graylog (nextcloud-02d), and the Wazuh
+   agent showing `Active` on the wazuh-stack dashboard (nextcloud-02e) —
+   none of these are covered by the `status.php` HTTP check alone.
+8. After-Action Summary to the operator per the standard flow.
 
 ---
 
@@ -846,6 +1115,146 @@ the site enrollment credentials... remain control-plane or
 home-network operations") as an operator action using the already-issued
 `lab` site's credentials — never generate or store new ones in this
 repo.
+
+**Status: done.** `newt-connector` is live on `pve` per README.md's
+"Current execution state" (192.168.110.10, base LXC via `provision.sh`,
+Newt itself connected to the OCI Pangolin edge). nextcloud-P3-02b/02c
+below extend the already-deployed host, not the original scaffold.
+
+### Step: nextcloud-P3-02b-connector-seg-wazuh-firewall-reach
+
+```yaml
+id: nextcloud-P3-02b-connector-seg-wazuh-firewall-reach
+title: Add connector_seg -> wazuh-stack firewall reach for newt-connector's Wazuh agent
+depends_on: [nextcloud-P3-01-create-connector-seg-zone]
+
+change: >
+  This is a home-lab-local addition, unrelated to the retired OCI-side
+  Wazuh integration (`nextcloud-P3-07`). That retirement was about a
+  privileged agent on the OCI-hosted Pangolin edge tunneled back through
+  a Pangolin private resource and Gerbil-netns relay — a transport shape
+  confirmed unreachable. `newt-connector` itself is a normal home-lab
+  LXC sitting on the same physical network as `wazuh-stack`, no tunnel
+  or NAT hairpin involved; giving it a Wazuh agent is architecturally
+  identical to the existing 6-host pilot, not a repeat of the failed
+  path. The retired `connector_seg -> wazuh-stack:1514` rule
+  (`nextcloud-P3-07b`, removed from `pve.yaml`) was for OCI-originated
+  traffic arriving *through* the Newt tunnel; this new rule is for
+  `newt-connector`'s own host-local agent process, sourced from
+  `connector_seg` itself — do not conflate the two or treat this as
+  "recreating" the retired rule.
+
+  connector_seg already has an explicit default-deny policy rule, live
+  and enforced (see nextcloud-P3-01's own "DONE, live" note). Insert
+  this new rule into terraform/lxc/network/pve.yaml's policies: list
+  immediately BEFORE the existing "Explicit deny — connector_seg has no
+  other reachability beyond lab Traefik plus internet egress" rule:
+
+    - from: connector_seg
+      to: 192.168.40.15
+      protocol: tcp
+      ports: [1514, 1515]
+      description: >-
+        newt-connector's own Wazuh agent (nextcloud-P3-02c) to
+        wazuh-stack's manager. Sourced from connector_seg itself, not
+        from anything arriving via the Newt/Gerbil tunnel — distinct
+        from the retired nextcloud-P3-07b rule. Narrowly scoped to
+        wazuh-stack's own IP, not all of infra_seg.
+
+  Apply the equivalent MikroTik forward-chain accept rule for
+  192.168.110.0/24 -> 192.168.40.15:1514,1515, placed before
+  connector_seg's existing MikroTik default-deny — operator action, same
+  pattern as nextcloud-01c and every other MikroTik change in this plan.
+  Re-verify read-only afterward via
+  terraform/lxc/stacks/netbox-stack/integrations/mikrotik_client.py.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/network/pve.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Placing the new rule after connector_seg's explicit-deny rule"
+    - "Widening the rule beyond 192.168.40.15 or beyond ports 1514/1515"
+    - "Any terragrunt apply / SDN apply in this step -- validation only; live application under the production approval flow"
+
+gates:
+  - id: yaml-syntax
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: rule-before-deny
+    cmd: "awk '/from: connector_seg/{f=NR} /to: 192.168.40.15/{w=NR} /Explicit deny .* connector_seg/{d=NR} END{if (w>0 && d>0 && w<d) print \"OK\"; else print \"FAIL\"}' terraform/lxc/network/pve.yaml"
+    expect: "OK"
+    critical: true
+```
+
+### Step: nextcloud-P3-02c-newt-connector-wazuh-agent
+
+```yaml
+id: nextcloud-P3-02c-newt-connector-wazuh-agent
+title: Enroll newt-connector in the home-lab Wazuh agent pilot
+depends_on: [nextcloud-P3-02b-connector-seg-wazuh-firewall-reach]
+
+change: >
+  newt-connector is a minimal, single-purpose host (per its own
+  STACK_CONTRACT.md: "runs exactly one thing... no unrelated
+  workloads"), which is exactly the kind of host worth the most from
+  FIM/SCA coverage — it holds the only live credential-bearing tunnel
+  between the home lab and the public internet via OCI Pangolin, so
+  tamper detection on it matters more than on most stacks, not less.
+
+  Add the shared `wazuh_agent` role to
+  `terraform/lxc/ansible/playbooks/deploy-newt-connector.yml`'s roles:
+  list (currently `lxc_base`, `docker_base` only, per
+  newt-connector/STACK_CONTRACT.md's "Playbook" section):
+
+    roles:
+      - lxc_base
+      - docker_base
+      - wazuh_agent
+
+  Set in the play's vars: block:
+
+    wazuh_agent_fim_paths:
+      - /root   # wherever the operator's docker-compose.yml/.env for Newt live, per STACK_CONTRACT.md "Newt deployment (operator action)"
+    wazuh_agent_docker_monitoring_enabled: true   # watches the newt-connector container itself
+
+  Confirm the actual path the operator used for Newt's
+  docker-compose.yml/.env (STACK_CONTRACT.md doesn't pin one — it's
+  operator-placed, out-of-band) before treating `/root` above as
+  literal; adjust `wazuh_agent_fim_paths` to match whatever path is
+  actually in use.
+
+  No new SOPS secret required, same reasoning as nextcloud-02e:
+  `WAZUH_AGENT_AUTHD_PASSWORD` and `LAB_IP_WAZUH` are both already
+  common. Requires nextcloud-P3-02b's firewall rule applied first, or
+  enrollment will fail to reach the manager (connection refused on
+  1514/1515).
+
+  Update newt-connector/STACK_CONTRACT.md's "What May Depend on This
+  Stack" section once this lands: its existing "Not a Wazuh agent-events
+  route" note is still correct (that's about traffic *through* the
+  tunnel) but should gain a clarifying line that the host itself now
+  carries a local Wazuh agent, unrelated to that retired path.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-newt-connector.yml
+    - terraform/lxc/stacks/newt-connector/STACK_CONTRACT.md
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any ansible-playbook run against pve in this step -- syntax-check only"
+
+gates:
+  - id: syntax-check
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-newt-connector.yml"
+    expect: "exit 0"
+    critical: true
+  - id: wazuh-role-present
+    cmd: "grep -q 'wazuh_agent' terraform/lxc/ansible/playbooks/deploy-newt-connector.yml"
+    expect: "exit 0"
+    critical: true
+```
 
 ### Step: nextcloud-P3-03-pangolin-proxy-stack
 
@@ -1118,10 +1527,21 @@ risk. The historical investigation and retirement checklist live in
 Before `nextcloud-P3-05` publishes a service, require that plan's
 hardening baseline plus: OCI VCN Flow Logs and Audit/Cloud Guard,
 Vulnerability Scanning/public-port checks, external HTTPS/TLS probes,
-and tested off-host Object Storage recovery. No `connector_seg` route
-to `wazuh-stack` is permitted; its sole application destination stays
-`pangolin-proxy:443`, with the separate shared TCP/514 syslog policy as
-the only logging exception.
+and tested off-host Object Storage recovery.
 
-The former `nextcloud-P3-07b` Wazuh firewall step is retired. Its
-desired-state rule has been removed from `pve.yaml`; do not recreate it.
+**Distinguish two different `connector_seg -> wazuh-stack` rules, only
+one of which is retired.** The former `nextcloud-P3-07b` rule allowed
+traffic *arriving through the Newt/Gerbil tunnel from OCI* to reach
+`wazuh-stack` — that transport shape (a Pangolin private resource plus a
+Gerbil-netns relay) was proven unreachable and its desired-state rule
+has been removed from `pve.yaml`; do not recreate it, and no OCI-
+originated traffic should ever reach `wazuh-stack`. Separately,
+`nextcloud-P3-02b` adds a narrowly-scoped `connector_seg -> wazuh-stack:
+1514,1515` rule for `newt-connector`'s own host-local Wazuh agent
+(`nextcloud-P3-02c`) — this is ordinary same-network agent traffic
+sourced from the `newt-connector` LXC itself, architecturally unrelated
+to the tunnel and not a re-creation of the retired rule. `pangolin-proxy:
+443` remains `connector_seg`'s sole destination for anything relayed
+from OCI/Pangolin; the shared TCP/514 syslog policy and the new
+1514/1515 Wazuh-agent rule are the only other exceptions, both scoped to
+`newt-connector`'s own outbound traffic, never inbound from the tunnel.

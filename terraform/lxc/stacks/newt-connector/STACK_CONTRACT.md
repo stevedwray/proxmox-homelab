@@ -75,14 +75,29 @@ not persisted to a mounted volume.
 - Any future service published via `pangolin-proxy` — the tunnel this host
   provides is the only path in from OCI to the home network at all.
 
-**Not** a Wazuh agent-events route. That was investigated and retired
-(operator decision, 2026-09-23) — the private-resource transport shape
-this connector's tunnel provides turned out to be unreachable by a
-process co-located with the Pangolin/Gerbil server itself, and OCI-side
+**Not** a Wazuh agent-events route *for OCI-originated traffic arriving
+through the tunnel*. That was investigated and retired (operator
+decision, 2026-09-23) — the private-resource transport shape this
+connector's tunnel provides turned out to be unreachable by a process
+co-located with the Pangolin/Gerbil server itself, and OCI-side
 monitoring now prioritizes OCI-native control-plane signals instead. The
 `connector_seg -> wazuh-stack:1514` firewall rule (`nextcloud-P3-07b`)
-has been removed from `pve.yaml`. Full account:
+that permitted that tunnel-sourced traffic has been removed from
+`pve.yaml`. Full account:
 `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
+
+**This host itself is a separate matter.** `newt-connector` is a normal
+home-lab LXC on the same physical network as `wazuh-stack` — no tunnel,
+no NAT hairpin, no Gerbil-netns sharing in that path. Per
+`docs/nextcloud-stack/plan.md`'s `nextcloud-P3-02b`/`nextcloud-P3-02c`
+(added 2026-09-24, **not yet applied**), this host is planned to join
+the existing 6-host home-lab Wazuh agent pilot via a narrowly-scoped new
+`connector_seg -> wazuh-stack:1514,1515` firewall rule (sourced from
+this host's own agent process, not from anything relayed through the
+tunnel) plus the shared `wazuh_agent` Ansible role added to
+`deploy-newt-connector.yml`. This is a particularly high-value target
+for FIM/SCA coverage since it holds the only live credential-bearing
+tunnel between the home lab and the public internet.
 
 ## What Must Not Be Edited Casually
 
