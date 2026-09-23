@@ -97,6 +97,9 @@ the Wazuh agent is enrolled; Docker uses the local rsyslog/syslog relay for
 Graylog forwarding. The main Traefik and Technitium authority publish
 `nextcloud.lab.gibbsgreatly.xyz` to `192.168.30.10` and proxy it to the LXC.
 The separate `pangolin-proxy` remains scaffolded, not deployed.
+Its production Terraform workspace (`pve`) has not been initialized yet;
+a 2026-09-24 read-only plan stopped at that missing local-state workspace,
+before calculating or changing any infrastructure.
 
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
