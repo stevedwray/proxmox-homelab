@@ -117,6 +117,14 @@ Authentik/Nginx response. This rules out a route through either Traefik and
 therefore the potential proxy loop. The unauthenticated endpoint response is
 an identical `404` on both hosts; no route currently invokes the middleware.
 
+**P3-04 internal route readiness is verified.** The generated root-level
+`route-nextcloud-stack.yml` router on `pangolin-proxy` serves
+`nextcloud.pan.gibbsgreatly.xyz/status.php` with HTTP 200 when resolved
+internally to `192.168.30.11`. Nextcloud persistently trusts that hostname
+and the dedicated proxy IP, while Authentik's reconciled provider contains
+both LAN and Pangolin `user_oidc` callbacks. This is not public exposure:
+there is still no Pangolin resource or public DNS record.
+
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
 `https://nextcloud.lab.gibbsgreatly.xyz/apps/user_oidc/code` and the required

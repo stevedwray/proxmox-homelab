@@ -1591,6 +1591,21 @@ publishes Nextcloud.
 
 ### Step: nextcloud-P3-04-nextcloud-pangolin-route
 
+**Internal readiness done 2026-09-24; public publication remains blocked on
+P3-05/P3-06.** The route declares `pangolin.public_host:
+nextcloud.pan.gibbsgreatly.xyz`; Authentik discovery confirms both strict
+`user_oidc` callbacks, and Nextcloud's persistent `trusted_domains` and
+`trusted_proxies` contain the public hostname and `192.168.30.11` alongside
+their LAN equivalents. An internal TLS Host-header probe through
+`pangolin-proxy` returned Nextcloud `status.php` HTTP 200. No public DNS or
+Pangolin resource was created.
+
+**Implementation lesson:** Traefik's file provider did not load generated
+routers placed in a nested `dynamic/routes/` directory. The delivery playbook
+now removes that inactive directory and writes `route-<stack>.yml` directly
+under its watched `dynamic/` root; the initial internal probe's Traefik 404
+exposed and verified this correction.
+
 **Depends on nextcloud-P3-03c landing first.** Once the EdgeManifest
 Pangolin opt-in mechanism exists, add a `pangolin` block to
 `terraform/lxc/stacks/nextcloud-stack/edge.yaml`'s `nextcloud` route
