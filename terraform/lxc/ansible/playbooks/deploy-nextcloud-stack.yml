@@ -57,11 +57,12 @@
         mode: "{{ item.mode }}"
       loop:
         # The parent is the 200 GiB durable ZFS mount.  The child directory
-        # owners match the unprivileged service users in the official images,
-        # so neither service needs a broad world-writable mount.
+        # owners match the unprivileged service users in the pinned official
+        # images (www-data is 33; PostgreSQL 16 Alpine is 70), so neither
+        # service needs a broad world-writable mount.
         - { path: /var/lib/nextcloud-persistent, owner: root, group: root, mode: "0750" }
         - { path: /var/lib/nextcloud-persistent/data, owner: "33", group: "33", mode: "0750" }
-        - { path: /var/lib/nextcloud-persistent/postgres, owner: "999", group: "999", mode: "0700" }
+        - { path: /var/lib/nextcloud-persistent/postgres, owner: "70", group: "70", mode: "0700" }
 
     - name: Create Nextcloud compose directory
       ansible.builtin.file:
@@ -122,6 +123,19 @@
         occ_install_user_oidc.rc != 0 and
         'already installed' not in occ_install_user_oidc.stdout and
         'already installed' not in occ_install_user_oidc.stderr
+      when: not ansible_check_mode
+
+    - name: Enable Nextcloud user_oidc app
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ app:enable user_oidc
+      register: occ_enable_user_oidc
+      changed_when: >-
+        'already enabled' not in occ_enable_user_oidc.stdout and
+        'already enabled' not in occ_enable_user_oidc.stderr
+      failed_when: >-
+        occ_enable_user_oidc.rc != 0 and
+        'already enabled' not in occ_enable_user_oidc.stdout and
+        'already enabled' not in occ_enable_user_oidc.stderr
       when: not ansible_check_mode
 
     - name: Register Authentik as Nextcloud OIDC provider
