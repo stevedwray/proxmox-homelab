@@ -1,0 +1,222 @@
+---
+# Shared TCP syslog path for normal LAN and production service zones.  The
+# source address list deliberately excludes the hostile/test zones (VLAN 70
+# pentest_seg, VLAN 90 test_dhcp_seg and VLAN 100 cse_seg).  Do not replace it
+# with a 192.168.0.0/16 source rule: that would silently re-admit those zones.
+#
+# The rule is the single forwarding contract for Graylog at 192.168.20.14:514.
+# It supersedes the historic per-workload game/media rules after the shared
+# rule has been installed and asserted.
+
+- name: Reconcile shared Graylog TCP syslog ingress on MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{ lookup('env', 'MIKROTIK_ADMIN') | default(lookup('env', 'MIKROTIK_USER'), true) }}
+    mikrotik_password: >-
+      {{ lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD'), true) }}
+
+    graylog_ip: "192.168.20.14"
+    graylog_syslog_port: "514"
+    graylog_sender_address_list: "graylog-shared-senders"
+    # Normal LAN plus managed production service zones.  Excludes VLANs 70,
+    # 90 and 100: hostile/test traffic must not inject into shared logging.
+    graylog_sender_subnets:
+      - "192.168.1.0/24"
+      - "192.168.10.0/24"
+      - "192.168.20.0/24"
+      - "192.168.30.0/24"
+      - "192.168.40.0/24"
+      - "192.168.50.0/24"
+      - "192.168.60.0/24"
+      - "192.168.80.0/24"
+      - "192.168.110.0/24"
+    graylog_shared_rule_comment: "shared Graylog TCP syslog ingress (managed zones)"
+    graylog_legacy_rule_comments:
+      - "game-stack syslog to Graylog"
+      - "media_seg rsyslog forwarding to Graylog"
+
+  pre_tasks:
+    - name: Assert MikroTik administrative credentials are set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: "Set MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD before running this playbook."
+
+  tasks:
+    - name: Read current MikroTik address lists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      register: address_lists
+      no_log: true
+
+    - name: Add normal sender subnet to the shared Graylog address list
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body:
+          list: "{{ graylog_sender_address_list }}"
+          address: "{{ item }}"
+          comment: "Managed shared Graylog TCP syslog sender subnet"
+        status_code: [200, 201]
+      loop: "{{ graylog_sender_subnets }}"
+      when: >-
+        (address_lists.json
+          | selectattr('list', 'defined')
+          | selectattr('list', 'equalto', graylog_sender_address_list)
+          | selectattr('address', 'defined')
+          | selectattr('address', 'equalto', item)
+          | list | length) == 0
+      no_log: true
+
+    - name: Remove subnet no longer permitted to send shared Graylog syslog
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list/{{ item['.id'] }}"
+        method: DELETE
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        status_code: [200, 204, 404]
+      loop: >-
+        {{
+          address_lists.json
+          | selectattr('list', 'defined')
+          | selectattr('list', 'equalto', graylog_sender_address_list)
+          | selectattr('address', 'defined')
+          | rejectattr('address', 'in', graylog_sender_subnets)
+          | list
+        }}
+      no_log: true
+
+    - name: Read MikroTik forward rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop or reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add shared Graylog TCP syslog rule before the forward deny boundary
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body:
+          comment: "{{ graylog_shared_rule_comment }}"
+          chain: forward
+          action: accept
+          protocol: tcp
+          src-address-list: "{{ graylog_sender_address_list }}"
+          dst-address: "{{ graylog_ip }}"
+          dst-port: "{{ graylog_syslog_port }}"
+          place-before: "{{ forward_drop_anchor['.id'] }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', graylog_shared_rule_comment)
+            | selectattr('chain', 'equalto', 'forward')
+            | selectattr('action', 'equalto', 'accept')
+            | selectattr('protocol', 'equalto', 'tcp')
+            | selectattr('src-address-list', 'defined')
+            | selectattr('src-address-list', 'equalto', graylog_sender_address_list)
+            | selectattr('dst-address', 'equalto', graylog_ip)
+            | selectattr('dst-port', 'equalto', graylog_syslog_port)
+            | list | length) == 0
+      no_log: true
+
+    - name: Re-read MikroTik forward rules after adding shared rule
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert the shared Graylog rule has the exact expected scope
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', graylog_shared_rule_comment)
+            | selectattr('chain', 'equalto', 'forward')
+            | selectattr('action', 'equalto', 'accept')
+            | selectattr('protocol', 'equalto', 'tcp')
+            | selectattr('src-address-list', 'defined')
+            | selectattr('src-address-list', 'equalto', graylog_sender_address_list)
+            | selectattr('dst-address', 'equalto', graylog_ip)
+            | selectattr('dst-port', 'equalto', graylog_syslog_port)
+            | list | length == 1
+        fail_msg: "Expected shared Graylog TCP syslog rule was not found after apply."
+
+    - name: Remove superseded per-workload Graylog rules after shared rule validation
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/{{ item['.id'] }}"
+        method: DELETE
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        status_code: [200, 204, 404]
+      loop: >-
+        {{
+          firewall_filters_final.json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'in', graylog_legacy_rule_comments)
+          | list
+        }}
+      no_log: true
+
+    - name: Report shared Graylog syslog policy is active
+      ansible.builtin.debug:
+        msg: >-
+          Shared Graylog TCP syslog ingress is active for normal LAN and
+          production service zones; hostile/test zones remain excluded.

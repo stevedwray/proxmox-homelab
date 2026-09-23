@@ -31,11 +31,12 @@ operator directly on the router, verified read-only afterward via
 VLAN 110 interface + bridge-vlan tagging (`ether1`,`ether5`, matching
 every other zone), gateway `192.168.110.1`, 3 input rules (ping/DNS to
 the router, placed before the input catch-all — the exact ordering bug
-hit live in `media-stack-lab`'s Stage B), and 3 forward rules scoped to
-`192.168.110.0/24`: accept to `pangolin-proxy` (192.168.30.11:443)
-only, accept general internet egress (covers both the Newt control
-connection and the Gerbil WireGuard tunnel — protocol-unrestricted,
-modeled on `cse_seg`'s egress rule), then default-deny. `connector_seg`
+hit live in `media-stack-lab`'s Stage B), and forward rules scoped to
+`192.168.110.0/24`: accept to `pangolin-proxy` (192.168.30.11:443),
+the shared Graylog TCP syslog ingress (192.168.20.14:514), accept general
+internet egress (covers both the Newt control connection and the Gerbil
+WireGuard tunnel — protocol-unrestricted, modeled on `cse_seg`'s egress
+rule), then default-deny. `connector_seg`
 is now enforced end-to-end (Proxmox SDN + MikroTik), not just declared
 in `pve.yaml`.
 

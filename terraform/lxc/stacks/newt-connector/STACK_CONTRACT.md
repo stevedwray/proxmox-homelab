@@ -27,9 +27,9 @@ See "Newt deployment (operator action)" below for the exact config to use.
 | Gateway | `192.168.110.1` |
 | VMID | 110010 |
 
-`connector_seg`'s only permitted destinations (nextcloud-P3-01's firewall
-policy, enforced on the MikroTik, verified live 2026-09-23): `pangolin-proxy`
-(192.168.30.11:443, `edge_seg`) and general internet egress (any address
+`connector_seg`'s only permitted destinations are `pangolin-proxy`
+(192.168.30.11:443, `edge_seg`), Graylog (192.168.20.14:514/TCP) via the
+shared managed-zone syslog policy, and general internet egress (any address
 outside `192.168.0.0/16`, protocol-unrestricted — covers both Newt's control
 connection and the Gerbil WireGuard tunnel). **No route to `infra_seg`
 (Harbor, apt-cacher) or the main `proxy-stack` Traefik (192.168.30.10)** —

@@ -229,7 +229,7 @@ attachments:
   # docs/nextcloud-stack/plan.md nextcloud-P3-01 and
   # docs/nextcloud-stack/README.md for the full design.
   connector_seg:
-    description: Newt connector for the OCI Pangolin edge (see /home/steve/git/oci) — reaches only lab Traefik, nothing else
+    description: Newt connector for the OCI Pangolin edge — lab Traefik, shared Graylog TCP syslog, and internet egress only
     type: sdn_vnet
     bridge: tvnewt
     firewall: false
@@ -305,6 +305,10 @@ zones:
       - "newt-connector (VMID 110010) — 192.168.110.10"
 
 policies:
+  # Shared Graylog sender policy is reconciled by
+  # ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml.
+  # It covers the normal LAN and managed service zones, while excluding
+  # intentionally hostile/test zones. Do not add per-workload :514 rules.
   - from: edge_seg
     to: ai_seg
     protocol: tcp
@@ -460,15 +464,6 @@ policies:
       endpoint -- the adviser/pentester/coder chat-completion provider as
       of 2026-07-28, replacing Ollama for that role specifically).
   - from: pentest_seg
-    to: 192.168.20.14
-    protocol: tcp
-    ports: [514]
-    description: >-
-      pentagi-stack rsyslog forwarding to Graylog. Missed on the first pass --
-      only the inbound mgmt_seg -> pentest_seg:9187 scrape rule was added;
-      this outbound leg is what rsyslog itself needs and was timing out
-      until this was added (confirmed live via journalctl on pentagi-stack).
-  - from: pentest_seg
     to: 192.168.20.11
     protocol: tcp
     ports: [443]
@@ -576,17 +571,6 @@ policies:
       default-deny). Added with place-before targeting the deny rule
       explicitly, applying the lesson from the earlier input-chain
       ordering bug rather than repeating it.
-  - from: media_seg
-    to: 192.168.20.14
-    protocol: tcp
-    ports: [514]
-    description: >-
-      media-stack-lab rsyslog forwarding to Graylog. Real gap found live
-      2026-09-04: every other zone with syslog forwarding (game_seg,
-      pentest_seg) had this rule, media_seg never did -- rsyslog was
-      running (via lxc_base) but every log, including plain host
-      syslog, was silently dropped at the zone boundary. Added with
-      place-before targeting the deny rule.
   - from: media_seg
     to: 192.168.20.11
     protocol: tcp
