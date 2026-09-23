@@ -1567,7 +1567,7 @@ gates:
 
 ### Step: nextcloud-P3-03c-edgemanifest-pangolin-opt-in
 
-**Implemented 2026-09-24; no route has opted in.** One EdgeManifest route
+**Implemented and exercised 2026-09-24.** One EdgeManifest route
 owns the LAN hostname and may add `pangolin.public_host` for its distinct
 public hostname. `render-edge-traefik.py` renders only LAN routers to the
 main proxy output; its Pangolin render path emits only explicit opt-ins to
@@ -1586,17 +1586,19 @@ reconcile would restore declarative state.
 
 Validated locally with EdgeManifest, renderer, Authentik discovery, and
 reconcile unit suites, plus an Ansible syntax check of the Pangolin proxy
-playbook. This is code-only work: it neither deploys `pangolin-proxy` nor
-publishes Nextcloud.
+playbook. `nextcloud-stack/nextcloud` is the first opt-in: its generated
+route was delivered successfully to the live `pangolin-proxy`. The remaining
+publication boundary is the manual Pangolin resource and public DNS, not the
+renderer or lab proxy.
 
 ### Step: nextcloud-P3-04-nextcloud-pangolin-route
 
 **Internal readiness done 2026-09-24; public publication remains blocked on
 P3-05/P3-06.** The route declares `pangolin.public_host:
 nextcloud.pan.gibbsgreatly.xyz`; Authentik discovery confirms both strict
-`user_oidc` callbacks, and Nextcloud's persistent `trusted_domains` and
-`trusted_proxies` contain the public hostname and `192.168.30.11` alongside
-their LAN equivalents. An internal TLS Host-header probe through
+`user_oidc` callbacks, and Nextcloud persistently trusts the public hostname
+and `192.168.30.11`; the deployment configuration retains the existing LAN
+hostname and main-proxy trust. An internal TLS Host-header probe through
 `pangolin-proxy` returned Nextcloud `status.php` HTTP 200. No public DNS or
 Pangolin resource was created.
 
@@ -1673,13 +1675,12 @@ published via Pangolin, at minimum confirm:
   to Graylog a prerequisite, because the retired Wazuh investigation
   established that this transport shape is unsuitable for raw services.
 - OCI dashboards and alarms cover Compute resource/cost signals, VCN
-  flow-log availability, and Cloud Guard/Vulnerability Scanning findings;
-  external probes alert on Pangolin/Gerbil availability, Newt-visible
-  service reachability, certificate expiry under 21 days, redirects, and
-  the expected public port surface.
+  flow-log availability, and OCI Audit activity; external probes alert on
+  Pangolin/Gerbil availability, Newt-visible service reachability,
+  certificate expiry under 21 days, redirects, and the expected public port
+  surface.
 - Verify no monitoring endpoint or logging-ingestion port is publicly
-  opened, the connector reaches only its approved destination, and an
-  off-host backup can restore a replacement edge host.
+  opened and the connector reaches only its approved destination.
 - Immediately before publication, confirm the Nextcloud guest has no
   unresolved Critical OS-vulnerability findings: review current package
   state (`apt list --upgradable` or equivalent), allow Wazuh inventory to
@@ -1688,13 +1689,19 @@ published via Pangolin, at minimum confirm:
   not cover every Debian stable point-release fix, so a prior successful
   manual upgrade is evidence, not a permanent gate.
 
-This is shared OCI-edge infrastructure, not specific to nextcloud-stack
-— treat it as its own workspace under `/home/steve/git/oci` (that repo
-already has the design; it just hasn't been executed), and treat
-nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on at
-minimum the OCI-native/external observability path existing, so a
-compromised or misbehaving public-facing Nextcloud instance is visible
-outside the guest and recoverable from off-host state.
+**Current checkpoint (2026-09-24): not ready to publish.** The OCI plan
+records VCN Flow Logs, OCI metrics/alarms, public-port scanning, and external
+HTTPS/TLS probes as unconfigured. Cloud Guard is explicitly out of scope:
+Oracle does not make it available to free OCI tenancies. These remaining
+controls must be configured in the OCI Console before creating the public
+resource. Off-host Object Storage recovery is deliberately deferred by the
+operator; it remains a recommended resilience follow-up, not the publication
+blocker for this rollout.
+
+This is shared OCI-edge infrastructure, not specific to nextcloud-stack.
+Treat nextcloud-stack's Pangolin publish (nextcloud-P3-05) as blocked on the
+OCI-native/external observability path, so a compromised or misbehaving
+public-facing service remains visible outside the guest.
 
 ### Step: nextcloud-P3-07-oci-hardening-and-external-observability
 
@@ -1706,10 +1713,12 @@ of reaching the raw private resource and introduced public-edge restart
 risk. The historical investigation and retirement checklist live in
 [`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`](../../../oci/docs/hardening-and-wazuh-plan.md).
 
-Before `nextcloud-P3-05` publishes a service, require that plan's
-hardening baseline plus: OCI VCN Flow Logs and Audit/Cloud Guard,
-Vulnerability Scanning/public-port checks, external HTTPS/TLS probes,
-and tested off-host Object Storage recovery.
+Before `nextcloud-P3-05` publishes a service, require that plan's hardening
+baseline plus OCI VCN Flow Logs and Audit, public-port checks, and external
+HTTPS/TLS probes. Cloud Guard is unavailable on this free tenancy and is not
+a gate. The operator has explicitly deferred tested off-host Object Storage
+recovery; record that exception at publication and revisit it before treating
+the service as production-critical.
 
 **Distinguish two different `connector_seg -> wazuh-stack` rules, only
 one of which is retired.** The former `nextcloud-P3-07b` rule allowed

@@ -153,9 +153,10 @@ own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
   agent, relay, manager registration, private resource/client, and
   router rule have been removed. The `lab` Newt site remains intact for
   future Pangolin-published services.
-- **OCI monitoring priority:** VCN Flow Logs, OCI Audit/Cloud Guard,
-  vulnerability/public-port scanning, external HTTPS/TLS checks, and
-  off-host backups—not a home-lab Wazuh connection.
+- **OCI monitoring priority:** VCN Flow Logs, OCI Audit, public-port
+  scanning, and external HTTPS/TLS checks—not a home-lab Wazuh connection.
+  Cloud Guard is unavailable to this free OCI tenancy. Off-host backup remains
+  recommended but is deliberately deferred for this rollout.
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Intended to be executed with
@@ -408,18 +409,19 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
   scope for this plan entirely until `docs/reporting-platform/plan.md`
   Phase 3 (cross-node ingestion) lands upstream.
-- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** Implemented but
-  deliberately unused: a route may now declare `pangolin.public_host`.
-  The normal renderer emits only its LAN hostname; the separate Pangolin
-  renderer emits only explicit opt-ins. For an OIDC route, Authentik
-  reconciliation preserves callbacks for both hostnames. No route has
-  opted in yet, so `pangolin-proxy` remains scaffolded/not deployed and
-  no service is public through Pangolin. See `nextcloud-P3-03c`.
+- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** Implemented and
+  exercised for Nextcloud: `pangolin-proxy` is deployed, its generated
+  `nextcloud.pan.gibbsgreatly.xyz` route serves Nextcloud internally, and
+  Authentik reconciliation preserves both OIDC callbacks. No Pangolin
+  resource or public DNS record exists, so the service is not public. See
+  `nextcloud-P3-03c` and `nextcloud-P3-04`.
 - **OCI-side monitoring/logging.** Fully designed in
   `pangolin-observability-and-graylog-plan.md` but not yet implemented
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated
-  API were verified on 2026-09-24; OCI-native signals, external probes,
-  and recovery validation remain prerequisites for Phase 3 publishing.
+  API were verified on 2026-09-24. OCI-native signals and external probes
+  remain publication prerequisites; Cloud Guard is excluded because it is not
+  available to this free tenancy. Off-host recovery is intentionally deferred
+  for this rollout and remains a documented resilience follow-up.
 - **nextcloud-stack and Newt telemetry are deployed.** `nextcloud-stack` has
   its Wazuh agent, cAdvisor, Docker-to-rsyslog relay, and the
   `apps_seg -> wazuh-stack:1514,1515` policy/MikroTik mirror.
