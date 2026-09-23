@@ -391,3 +391,14 @@ See [plan.md](plan.md) for the full step-by-step plan.
   `newt-connector` remains a separate follow-up because its
   operator-managed Compose path must be confirmed before FIM can be scoped
   safely; do not add broad watches such as `/root`.
+- **Greenbone scan reach (`nextcloud-01b`) not yet applied.** Confirmed
+  live 2026-09-24: `apps_seg` has no `greenbone-stack`-sourced discovery
+  rule in `pve.yaml`, and `192.168.120.10` isn't registered as a GVM scan
+  target. This step was deliberately deferred until the host was real and
+  reachable (per its own note in plan.md) — that precondition is now met,
+  so this is actionable, just not yet done.
+- **Monitoring-stack scrape target (`nextcloud-02f`) confirmed not
+  applied live 2026-09-24** — `deploy-monitoring-stack.yml` has no
+  `nextcloud` reference yet, matching the "Monitoring validation" item
+  above; listed here explicitly so it doesn't get missed as a discrete
+  redeploy step.
