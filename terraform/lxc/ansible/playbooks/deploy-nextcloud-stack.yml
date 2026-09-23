@@ -1,0 +1,138 @@
+---
+- name: Deploy nextcloud-stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: nextcloud-stack
+    nextcloud_stack_dir: "/opt/{{ stack_name }}"
+    nextcloud_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    nextcloud_stack_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    nextcloud_stack_image_tag: "{{ lookup('env', 'NEXTCLOUD_IMAGE_TAG') | mandatory('NEXTCLOUD_IMAGE_TAG must pin a supported release') }}"
+    wazuh_agent_fim_paths:
+      - "{{ nextcloud_stack_dir }}"
+    wazuh_agent_docker_monitoring_enabled: true
+
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+    - wazuh_agent
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+        daemon_reload: true
+
+  tasks:
+    - name: Forward Docker container logs to Graylog via local rsyslog relay
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Apply Docker logging configuration before compose deployment
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create Nextcloud persistent data directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        # The parent is the 200 GiB durable ZFS mount.  The child directory
+        # owners match the unprivileged service users in the official images,
+        # so neither service needs a broad world-writable mount.
+        - { path: /var/lib/nextcloud-persistent, owner: root, group: root, mode: "0750" }
+        - { path: /var/lib/nextcloud-persistent/data, owner: "33", group: "33", mode: "0750" }
+        - { path: /var/lib/nextcloud-persistent/postgres, owner: "999", group: "999", mode: "0700" }
+
+    - name: Create Nextcloud compose directory
+      ansible.builtin.file:
+        path: "{{ nextcloud_stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write Nextcloud compose definition
+      ansible.builtin.copy:
+        content: "{{ nextcloud_stack_compose_content }}"
+        dest: "{{ nextcloud_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write Nextcloud Compose environment
+      ansible.builtin.copy:
+        dest: "{{ nextcloud_stack_dir }}/.env"
+        mode: "0600"
+        content: |
+          REGISTRY_HOST={{ docker_registry_host }}
+          NEXTCLOUD_IMAGE_TAG={{ nextcloud_stack_image_tag }}
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          LAB_IP_PROXY={{ lookup('env', 'LAB_IP_PROXY') }}
+          NEXTCLOUD_DB_PASSWORD={{ lookup('env', 'NEXTCLOUD_DB_PASSWORD') | mandatory }}
+          NEXTCLOUD_REDIS_PASSWORD={{ lookup('env', 'NEXTCLOUD_REDIS_PASSWORD') | mandatory }}
+          NEXTCLOUD_ADMIN_PASSWORD={{ lookup('env', 'NEXTCLOUD_ADMIN_PASSWORD') | mandatory }}
+      no_log: true
+
+    - name: Validate Nextcloud Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ nextcloud_stack_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Nextcloud stack
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ nextcloud_stack_dir }}"
+      register: nextcloud_compose_up
+      changed_when: "'Started' in nextcloud_compose_up.stdout or 'Created' in nextcloud_compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Nextcloud HTTP service
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        timeout: 180
+      when: not ansible_check_mode
+
+    - name: Install Nextcloud user_oidc app
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ app:install user_oidc
+      register: occ_install_user_oidc
+      changed_when: >-
+        'already installed' not in occ_install_user_oidc.stdout and
+        'already installed' not in occ_install_user_oidc.stderr
+      failed_when: >-
+        occ_install_user_oidc.rc != 0 and
+        'already installed' not in occ_install_user_oidc.stdout and
+        'already installed' not in occ_install_user_oidc.stderr
+      when: not ansible_check_mode
+
+    - name: Register Authentik as Nextcloud OIDC provider
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ user_oidc:provider authentik
+          --clientid={{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_ID') | mandatory }}
+          --clientsecret={{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_SECRET') | mandatory }}
+          --discoveryuri=https://{{ nextcloud_stack_fqdn_authentik }}/application/o/edge-nextcloud-stack-nextcloud/.well-known/openid-configuration
+      register: occ_register_provider
+      changed_when: false
+      failed_when: occ_register_provider.rc != 0 and 'already exists' not in occ_register_provider.stderr
+      no_log: true
+      when: not ansible_check_mode
