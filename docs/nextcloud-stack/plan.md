@@ -11,11 +11,15 @@ private Phase 1 service first; public Pangolin publishing remains a later,
 separately-gated step.
 
 Several things below are genuinely not step blocks, and are written as
-plain operator/prose instructions instead: running `scaffold-stack.sh`
-(`nextcloud-02`), the live deploy against `pve` under the production
-approval flow (`nextcloud-06`), and most of Phase 3 (Pangolin exposure,
-monitoring, security — control-plane/credential-creating actions per
+plain operator/prose instructions instead: the `deploy-monitoring-stack.yml`
+scrape-target edit (`nextcloud-02f`, a different stack's file), the live
+deploy against `pve` under the production approval flow (`nextcloud-06`),
+and most of Phase 3 (Pangolin exposure, monitoring, security —
+control-plane/credential-creating actions per
 `/home/steve/git/oci/docs/repeatable-operations.md`'s own stated policy).
+nextcloud-stack's own `stack.yaml`/`terragrunt.hcl`/`docker-compose.yml`/
+deploy playbook are hand-authored directly (`nextcloud-02`–`02e`), not
+via `scaffold-stack.sh` — see that step's own note for why.
 
 ---
 
@@ -178,214 +182,342 @@ step once nextcloud-01/02 are actually deployed and `192.168.120.10` is a
 real, reachable host — scanning a zone with nothing live in it yet has
 no value and risks a stale/wrong target definition.
 
-### Step: nextcloud-02-scaffold-stack-request
+**Hand-authored, not scaffolded (decided 2026-09-24).** `scaffold-stack.sh`
+was dropped for nextcloud-stack, matching the precedent `wazuh-stack`/
+`opensearch-stack`/`greenbone-stack` already set: their own plan docs
+say the generic five-file scaffolder is only worth it when a stack's
+`compose_requirements` prose maps cleanly onto the minecraft-stack
+exemplar with no real integration work layered on afterward. This plan
+had grown five separate hand-written patch steps on top of a generated
+playbook (registry-host fix, monitoring, Graylog forwarding, Wazuh
+agent, OIDC bootstrap) — at that point the generator was contributing
+only a throwaway skeleton immediately rewritten by hand anyway. The
+steps below author `stack.yaml`, `terragrunt.hcl`, `docker-compose.yml`,
+and `deploy-nextcloud-stack.yml` directly instead, each as literal
+content the way `wazuh-02`/`wazuh-03`/`wazuh-04` do in
+`docs/wazuh-stack/plan.md` — read those for the same pattern applied to
+a more complex stack.
 
-**Not a step block — operator/local-model prose instruction, not
-`implement-step` work.** `scaffold-stack.sh` internally depends on tools
-outside a bounded execution loop (same reason `media-lab-02` was written
-as prose, not a step — see `docs/agent-design/step-packet-schema.md`
-"Reuse `scaffold-stack.sh`... but not as a step block").
-
-1. Confirm the current stable Nextcloud image tag (check
-   `hub.docker.com/r/nextcloud/server/tags` — pin the specific version,
-   e.g. `nextcloud:30-apache`, not `latest`). Fill it into the
-   `compose_requirements` block below before use.
-2. Copy `terraform/lxc/stacks/stack-request.example.yaml` to
-   `terraform/lxc/stacks/nextcloud-stack/stack-request.yaml` and replace
-   its contents with the literal content below (image tag filled in per
-   step 1).
-3. Run `terraform/lxc/scaffold-stack.sh nextcloud-stack` from the repo
-   root.
-4. Delete `terraform/lxc/stacks/nextcloud-stack/stack-request.yaml` once
-   scaffolding succeeds (or keep it as a record of intent — either is
-   fine per the example file's own guidance).
+### Step: nextcloud-02-stack-yaml
 
 ```yaml
-stack_yaml:
-  hostname: nextcloud-stack
-  ip_address: "192.168.120.10/24"
-  gateway: "192.168.120.1"
-  dns_server: "192.168.120.1"
-  vmid: 120010
-  cores: 4
-  memory: 4096
-  swap: 1024
-  rootfs_size: 12
-  storage_profile: platform-default
-  docker_storage_size: "15G"
-  template_name: "debian-13.1-2-docker-template.tar.gz"
-  tags:
-    - docker
-    - nextcloud
-    - storage
-    - apps
-  depends_on: []
-  provides:
-    - service: nextcloud
-      port: 8080
-      protocol: tcp
-  ansible_playbook: deploy-nextcloud-stack
-  deployment_tier: apps
-  portainer_agent: true
-  apt_cacher_host: "${lab_ip_apt_cacher}"
-
-  # Dedicated data volume for Nextcloud's actual file storage, separate
-  # from rootfs/docker-storage — same pattern as harbor-stack's
-  # extra_mount for registry blobs.
-  extra_mount_path: "/var/lib/nextcloud-data"
-  extra_mount_size: "200G"
-  extra_mount_profile: durable-zfs
-  extra_mount:
-    logical_name: nextcloud-data
-    path: /var/lib/nextcloud-data
-    size: "200G"
-    profile: durable-zfs
-    backup_policy: include
-    resize_control_plane: operational
-    mutation_policy: grow-only
-
-compose_requirements: |
-  Three services: nextcloud (app), postgres (db), redis (cache/locking).
-
-  nextcloud service:
-  - Image: ${REGISTRY_HOST}/dockerhub/nextcloud:<PINNED_TAG> (Harbor
-    pull-through). IMPORTANT: REGISTRY_HOST here must resolve to
-    LAB_FQDN_HARBOR (harbor.${LAB_DOMAIN}), NOT LAB_IP_HARBOR. Both
-    netbox-stack and media-stack-lab's cadvisor service copied the bare-IP
-    var by mistake and got "connection refused" on 443 at pull time --
-    see reference_registry_host_vs_fqdn_harbor and nextcloud-02b below,
-    which sets REGISTRY_HOST correctly in the playbook's environment
-    before "docker compose up" runs.
-  - container_name: nextcloud-stack-app
-  - depends_on: postgres (condition: service_healthy), redis (condition:
-    service_healthy)
-  - ports: "8080:80" only (container listens on 80 internally; host side
-    matches the provides: port 8080 in stack_yaml above)
-  - environment: POSTGRES_HOST=postgres, POSTGRES_DB=nextcloud,
-    POSTGRES_USER=nextcloud, POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD},
-    REDIS_HOST=redis, REDIS_HOST_PASSWORD=${NEXTCLOUD_REDIS_PASSWORD},
-    NEXTCLOUD_ADMIN_USER=admin, NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD},
-    NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${LAB_DOMAIN},
-    OVERWRITEPROTOCOL=https, TRUSTED_PROXIES=${LAB_IP_PROXY}
-  - volumes: named volume nextcloud-app-data for /var/www/html (app code
-    + config), bind mount /var/lib/nextcloud-data (the extra_mount path
-    above) to /var/www/html/data (actual user files)
-  - restart: unless-stopped
-  - healthcheck: test against http://localhost/status.php, start_period
-    120s, interval 15s, timeout 5s, retries 5
-
-  postgres service:
-  - Image: ${REGISTRY_HOST}/dockerhub/postgres:16-alpine
-  - container_name: nextcloud-stack-db
-  - environment: POSTGRES_DB=nextcloud, POSTGRES_USER=nextcloud,
-    POSTGRES_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
-  - volumes: named volume nextcloud-db-data for /var/lib/postgresql/data
-  - healthcheck: pg_isready -U nextcloud, interval 10s, timeout 5s,
-    retries 5
-  - restart: unless-stopped
-
-  redis service:
-  - Image: ${REGISTRY_HOST}/dockerhub/redis:7-alpine
-  - container_name: nextcloud-stack-redis
-  - command: redis-server --requirepass ${NEXTCLOUD_REDIS_PASSWORD}
-  - healthcheck: redis-cli -a ${NEXTCLOUD_REDIS_PASSWORD} ping, interval
-    10s, timeout 5s, retries 5
-  - restart: unless-stopped
-
-  Top-level volumes: block declaring nextcloud-app-data and
-  nextcloud-db-data as named Docker volumes (not bind mounts — only the
-  data directory is a bind mount, to the extra_mount path).
-
-  cadvisor service (container-level metrics, matching the pattern already
-  live on authentik-stack/netbox-stack — read authentik-stack/docker-compose.yml's
-  `cadvisor:` service directly rather than reinventing the shape):
-  - Image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
-  - restart: unless-stopped
-  - ports: "8081:8080" — NOT "8080:8080" like the other stacks' copies,
-    because nextcloud's own app service already owns host port 8080 (see
-    the `provides: nextcloud, port 8080` fact above); cadvisor's container
-    side still listens on 8080 internally, only the host-side mapping
-    changes. nextcloud-02c's scrape target below must use :8081 to match.
-  - volumes: /:/rootfs:ro, /var/run:/var/run:ro, /sys:/sys:ro,
-    /var/lib/docker:/var/lib/docker:ro, /etc/machine-id:/etc/machine-id:ro
-
-compose_forbidden: |
-  a custom top-level networks: block, the "latest" image tag on any
-  service, a cron container in this first pass (Nextcloud's background
-  jobs can run via AJAX/webcron initially — add a dedicated cron
-  container as a later, separate step once the base stack is validated,
-  not bundled into first deploy), any hardcoded password (everything
-  password-shaped must be a ${VAR} sourced from SOPS via with-secrets,
-  same as NETBOX_DB_PASSWORD/NETBOX_REDIS_PASSWORD elsewhere).
-
-contract_facts: |
-  - Purpose: self-hosted file storage / sync, initial use case is a
-    durable landing point for reports/docs from other lab projects
-    (deep-research, CyberSecEval) — see docs/reporting-platform/
-  - Zone: apps_seg (VLAN 120, new zone — see nextcloud-01)
-  - IP: 192.168.120.10/24
-  - Gateway: 192.168.120.1
-  - VMID: 120010
-  - Provides: nextcloud, port 8080, protocol tcp
-  - Dependencies: none at deploy time; Authentik must already be live
-    for OIDC wiring (nextcloud-05) to succeed
-  - Persistent state: /var/www/html (app+config, named volume,
-    docker_storage-backed), /var/www/html/data (user files, bind-mounted
-    to the durable-zfs extra_mount at /var/lib/nextcloud-data),
-    postgres data (named volume)
-  - Nothing depends on this stack yet (deep-research/CyberSecEval
-    ingestion is Phase 2, not yet wired)
-  - What must not be edited casually: NEXTCLOUD_TRUSTED_DOMAINS and
-    TRUSTED_PROXIES must stay correct or Nextcloud will reject all
-    requests through Traefik with a "untrusted domain" error
-  - Playbook: deploy-nextcloud-stack, docker_base + portainer_agent
-    roles plus a compose file, plus post-install occ bootstrap tasks
-    (see nextcloud-04)
-  - Implementation files: terraform/lxc/stacks/nextcloud-stack/stack.yaml
-    (new), terraform/lxc/stacks/nextcloud-stack/terragrunt.hcl (new),
-    terraform/lxc/stacks/nextcloud-stack/docker-compose.yml (new),
-    terraform/lxc/stacks/nextcloud-stack/inventory.yml (generated by
-    terragrunt apply, do not hand-edit),
-    terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml (new)
-```
-
-### Step: nextcloud-02b-fix-registry-host-resolution
-
-```yaml
-id: nextcloud-02b-fix-registry-host-resolution
-title: Resolve REGISTRY_HOST to Harbor's FQDN (not IP) before docker compose up
-depends_on: [nextcloud-02-scaffold-stack-request]
+id: nextcloud-02-stack-yaml
+title: Author nextcloud-stack's stack.yaml
+depends_on: [nextcloud-01-create-apps-seg-zone]
 
 change: >
-  scaffold-stack.sh generates
-  terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml from
-  compose_requirements using the minecraft-stack exemplar's shape (copy
-  compose file to the target, "docker compose config" check, "docker
-  compose up -d"). That generated playbook has no REGISTRY_HOST
-  resolution of its own -- add one, modeled exactly on
-  deploy-media-stack-lab.yml's docker_registry_host var (NOT
-  netbox-stack's registry_host field, which resolves to the broken bare
-  IP -- see reference_registry_host_vs_fqdn_harbor).
+  Create terraform/lxc/stacks/nextcloud-stack/stack.yaml, transcribing
+  the exact field structure of terraform/lxc/stacks/pangolin-proxy/stack.yaml
+  (the most recent hand-authored stack.yaml in this repo, 2026-09-24 —
+  read it directly for the `network:`/`docker_mount:`/`extra_mount:`
+  block shapes) with the literal values below. Confirm the current
+  stable Nextcloud image tag (`hub.docker.com/r/nextcloud/server/tags`)
+  before nextcloud-02c below uses it — this file itself has no image tag
+  field, so nothing here blocks on that lookup.
 
-  Add this to the playbook's vars: block, alongside
-  nextcloud_stack_fqdn_authentik (added by nextcloud-04):
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/nextcloud-stack/stack.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any provision.sh / terragrunt apply run -- authoring only in this step"
 
-    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+gates:
+  - id: yaml-parses
+    cmd: "python3 -c \"import yaml,sys; yaml.safe_load(open('terraform/lxc/stacks/nextcloud-stack/stack.yaml'))\""
+    expect: "exit 0"
+    critical: true
+```
 
-  Then add `environment: {REGISTRY_HOST: "{{ docker_registry_host }}"}`
-  to the generated "docker compose up -d" task (the
-  `ansible.builtin.command: cmd: docker compose up -d` task scaffold-stack.sh
-  produces) and to the "docker compose config" validation task, so
-  Compose's own ${REGISTRY_HOST} interpolation resolves to the FQDN at
-  both validate and run time, not just whatever happens to be in the
-  ambient shell environment.
+Literal content to transcribe:
+
+```yaml
+hostname: nextcloud-stack
+ip_address: "192.168.120.10/24"
+gateway: "192.168.120.1"
+dns_server: "192.168.120.1"
+network:
+  zone: apps_seg
+vmid: 120010
+cores: 4
+memory: 4096
+swap: 1024
+rootfs_size: 12
+storage_profile: platform-default
+docker_storage_size: "15G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "15G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - docker
+  - nextcloud
+  - storage
+  - apps
+depends_on: []
+provides:
+  - service: nextcloud
+    port: 8080
+    protocol: tcp
+ansible_playbook: "deploy-nextcloud-stack"
+deployment_tier: apps
+portainer_agent: true
+
+# Dedicated data volume for Nextcloud's actual file storage, separate
+# from rootfs/docker-storage -- same pattern as harbor-stack's
+# extra_mount for registry blobs.
+extra_mount_path: "/var/lib/nextcloud-data"
+extra_mount_size: "200G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: nextcloud-data
+  path: /var/lib/nextcloud-data
+  size: "200G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+
+# Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+# docs/harbor-stack/image-sourcing-enforcement.md and this plan's own
+# reference_registry_host_vs_fqdn_harbor precedent (netbox-stack and
+# media-stack-lab's cadvisor service both got this wrong first).
+registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | mandatory('LAB_FQDN_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+```
+
+### Step: nextcloud-02b-terragrunt
+
+```yaml
+id: nextcloud-02b-terragrunt
+title: Author nextcloud-stack's terragrunt entrypoint
+depends_on: [nextcloud-02-stack-yaml]
+
+change: >
+  Create terraform/lxc/stacks/nextcloud-stack/terragrunt.hcl as an exact
+  copy of pangolin-proxy's equivalent file -- pure path-relative
+  boilerplate that resolves stack_name and stack_yaml_path from its own
+  directory, no stack-specific content at all.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/nextcloud-stack/terragrunt.hcl
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any terragrunt plan/apply run -- authoring only in this step"
+
+gates:
+  - id: file-exists
+    cmd: "test -f terraform/lxc/stacks/nextcloud-stack/terragrunt.hcl"
+    expect: "exit 0"
+    critical: true
+```
+
+Literal content:
+
+```hcl
+include "root" {
+  path = find_in_parent_folders()
+}
+
+terraform {
+  source = "${get_repo_root()}/terraform/lxc//"
+}
+
+inputs = {
+  stack_name      = basename(get_terragrunt_dir())
+  stack_yaml_path = "${get_terragrunt_dir()}/stack.yaml"
+}
+```
+
+### Step: nextcloud-02c-docker-compose
+
+```yaml
+id: nextcloud-02c-docker-compose
+title: Author nextcloud-stack's docker-compose.yml
+depends_on: [nextcloud-02-stack-yaml]
+
+change: >
+  Create terraform/lxc/stacks/nextcloud-stack/docker-compose.yml with
+  the four services below: nextcloud (app), postgres (db), redis
+  (cache/locking), and cadvisor (container-level metrics, matching the
+  pattern already live on authentik-stack/netbox-stack -- read
+  authentik-stack/docker-compose.yml's `cadvisor:` service directly
+  rather than reinventing the shape). Substitute the current stable
+  Nextcloud tag for NEXTCLOUD_IMAGE_TAG (check
+  hub.docker.com/r/nextcloud/server/tags at execution time -- never
+  `latest`); it's passed as a compose-level env var (see
+  nextcloud-02d's .env file), not hardcoded into the image line, so this
+  file itself doesn't need editing again once that's decided.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/nextcloud-stack/docker-compose.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Adding a custom top-level networks: block"
+    - "Hardcoding any password-shaped value instead of a ${VAR}"
+    - "Adding a cron container in this first pass -- Nextcloud's background jobs run via AJAX/webcron initially; a dedicated cron container is a later, separate step once the base stack is validated"
+
+gates:
+  - id: compose-parses
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/nextcloud-stack/docker-compose.yml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: cadvisor-port-8081
+    cmd: "grep -A3 'nextcloud-stack-cadvisor' terraform/lxc/stacks/nextcloud-stack/docker-compose.yml | grep -q '8081:8080'"
+    expect: "exit 0"
+    critical: true
+```
+
+Literal content:
+
+```yaml
+services:
+  nextcloud:
+    image: ${REGISTRY_HOST}/dockerhub/nextcloud:${NEXTCLOUD_IMAGE_TAG}
+    container_name: nextcloud-stack-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${NEXTCLOUD_REDIS_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: nextcloud.${LAB_DOMAIN}
+      OVERWRITEPROTOCOL: https
+      TRUSTED_PROXIES: ${LAB_IP_PROXY}
+    volumes:
+      - nextcloud-app-data:/var/www/html
+      - /var/lib/nextcloud-data:/var/www/html/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      start_period: 120s
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: ${REGISTRY_HOST}/dockerhub/postgres:16-alpine
+    container_name: nextcloud-stack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+    volumes:
+      - nextcloud-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextcloud"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: ${REGISTRY_HOST}/dockerhub/redis:7-alpine
+    container_name: nextcloud-stack-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${NEXTCLOUD_REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${NEXTCLOUD_REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Container-level metrics (CPU/mem/network/disk-IO per container), not
+  # just host-level node_exporter metrics from lxc_base. Host port 8081,
+  # NOT 8080 like other stacks' copies -- nextcloud's own app service
+  # already owns 8080. nextcloud-02f's scrape target must use :8081.
+  cadvisor:
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
+    container_name: nextcloud-stack-cadvisor
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /etc/machine-id:/etc/machine-id:ro
+
+volumes:
+  nextcloud-app-data:
+  nextcloud-db-data:
+```
+
+### Step: nextcloud-02d-deploy-playbook
+
+```yaml
+id: nextcloud-02d-deploy-playbook
+title: Author nextcloud-stack's deploy playbook
+depends_on: [nextcloud-02c-docker-compose, nextcloud-01c-wazuh-agent-firewall-reach]
+
+change: >
+  Create terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml,
+  modeled directly on deploy-media-stack-lab.yml's shape (compose
+  content read via `lookup('file', ...)`, written to the host, `docker
+  compose config` validated, then `docker compose up -d`) -- read that
+  playbook directly rather than reinventing the pattern. Unlike the
+  earlier scaffolded-then-patched approach, this folds every integration
+  in directly on first authoring: REGISTRY_HOST resolution (the bug
+  reference_registry_host_vs_fqdn_harbor already documents), Docker's
+  daemon.json log-driver pointed at the local rsyslog_forward relay on
+  127.0.0.1:10514 so container logs actually reach Graylog (that relay
+  is already running via lxc_base's unconditional rsyslog_forward role
+  -- confirmed by reading terraform/lxc/ansible/roles/lxc_base/tasks/main.yml
+  and roles/rsyslog_forward/tasks/main.yml directly), the shared
+  wazuh_agent role (home-lab-local, unrelated to the retired OCI
+  tunnel path -- nextcloud-stack is a normal same-network host, exactly
+  like the 6 already-enrolled stacks in docs/wazuh-stack/README.md), and
+  the occ-based user_oidc bootstrap tasks. This step depends on
+  nextcloud-01c because the Wazuh agent it adds will fail to enroll
+  (connection refused on 1514/1515) without that firewall rule applied
+  first -- syntax-checking here doesn't require the rule live, but
+  sequencing the dependency makes the real blocker explicit rather than
+  discovering it at deploy time.
+
+  Deliberately do NOT add /var/lib/nextcloud-data (the extra_mount path)
+  to wazuh_agent_fim_paths -- FIM (syscheck) hashes and diffs every file
+  under a watched path on every scan interval; a 200G, constantly-
+  changing user file store would make syscheck either impossibly slow or
+  drown real alerts in routine user activity noise. FIM watches
+  nextcloud-stack's own app/config directory only.
+
+  No new SOPS secret is required for the Wazuh piece --
+  `WAZUH_AGENT_AUTHD_PASSWORD` and `LAB_IP_WAZUH` are both already
+  common, same as every other enrolled stack. NEXTCLOUD_OIDC_CLIENT_ID/
+  SECRET are still new and covered by nextcloud-03.
+
+  The exact `occ user_oidc:provider` flag set (`--unique-uid`,
+  discovery-uri-based vs manual endpoint flags) has not been validated
+  against a live instance (see README.md "Still genuinely open") --
+  confirm against the actual pinned Nextcloud version's `occ
+  user_oidc:provider --help` output before treating this step's gate as
+  sufficient proof it works end to end.
 
 scope:
   allowed_paths:
     - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Any ansible-playbook run against pve or pve-test-vm in this step -- syntax-check only"
+    - "Adding /var/lib/nextcloud-data or any subpath of it to wazuh_agent_fim_paths"
+    - "Adding an insecure-registries entry to daemon.json -- REGISTRY_HOST already resolves to a real TLS FQDN"
+    - "Any ansible-playbook run against pve in this step -- syntax-check only"
 
 gates:
   - id: syntax-check
@@ -396,9 +528,222 @@ gates:
     cmd: "grep -q 'LAB_IP_HARBOR' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml && echo FAIL || echo OK"
     expect: "OK"
     critical: true
+  - id: log-driver-present
+    cmd: "grep -q 'syslog-address' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: wazuh-role-present
+    cmd: "grep -q 'wazuh_agent' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: no-user-data-fim-watch
+    cmd: "grep -A5 'wazuh_agent_fim_paths' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml | grep -q 'nextcloud-data' && echo FAIL || echo OK"
+    expect: "OK"
+    critical: true
 ```
 
-### Step: nextcloud-02c-add-monitoring-scrape-targets
+Literal content:
+
+```yaml
+---
+- name: Deploy nextcloud-stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: nextcloud-stack
+    nextcloud_stack_dir: "/opt/{{ stack_name }}"
+    nextcloud_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    nextcloud_stack_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    nextcloud_stack_image_tag: "{{ lookup('env', 'NEXTCLOUD_IMAGE_TAG') | mandatory('NEXTCLOUD_IMAGE_TAG env var is required -- pin the current stable tag from hub.docker.com/r/nextcloud/server/tags') }}"
+    wazuh_agent_fim_paths:
+      - "{{ nextcloud_stack_dir }}"
+    wazuh_agent_docker_monitoring_enabled: true
+
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+    - wazuh_agent
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+        daemon_reload: true
+
+  tasks:
+    - name: Forward Docker container logs to Graylog
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: nextcloud_stack_docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before compose up
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure nextcloud-stack directory exists
+      ansible.builtin.file:
+        path: "{{ nextcloud_stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write docker-compose.yml to its stack directory
+      ansible.builtin.copy:
+        content: "{{ nextcloud_stack_compose_content }}"
+        dest: "{{ nextcloud_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write compose env file
+      ansible.builtin.copy:
+        dest: "{{ nextcloud_stack_dir }}/.env"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          REGISTRY_HOST={{ docker_registry_host }}
+          NEXTCLOUD_IMAGE_TAG={{ nextcloud_stack_image_tag }}
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          LAB_IP_PROXY={{ lookup('env', 'LAB_IP_PROXY') }}
+          NEXTCLOUD_DB_PASSWORD={{ lookup('env', 'NEXTCLOUD_DB_PASSWORD') }}
+          NEXTCLOUD_REDIS_PASSWORD={{ lookup('env', 'NEXTCLOUD_REDIS_PASSWORD') }}
+          NEXTCLOUD_ADMIN_PASSWORD={{ lookup('env', 'NEXTCLOUD_ADMIN_PASSWORD') }}
+      no_log: true
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ nextcloud_stack_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start nextcloud-stack via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ nextcloud_stack_dir }}"
+      register: nextcloud_stack_compose_up
+      changed_when: "'Started' in nextcloud_stack_compose_up.stdout or 'Created' in nextcloud_stack_compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Nextcloud to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        timeout: 180
+      when: not ansible_check_mode
+
+    - name: Install user_oidc app in Nextcloud
+      ansible.builtin.command:
+        cmd: docker exec nextcloud-stack-app php occ app:install user_oidc
+      register: occ_install_user_oidc
+      changed_when: "'already installed' not in occ_install_user_oidc.stderr"
+      failed_when: >-
+        occ_install_user_oidc.rc != 0 and
+        'already installed' not in occ_install_user_oidc.stderr
+      when: not ansible_check_mode
+
+    - name: Register Authentik as an OIDC provider
+      ansible.builtin.command:
+        cmd: >-
+          docker exec nextcloud-stack-app php occ user_oidc:provider
+          authentik
+          --clientid="{{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_ID') | mandatory('NEXTCLOUD_OIDC_CLIENT_ID env var is not set') }}"
+          --clientsecret="{{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_SECRET') | mandatory('NEXTCLOUD_OIDC_CLIENT_SECRET env var is not set') }}"
+          --discoveryuri="https://{{ nextcloud_stack_fqdn_authentik }}/application/o/edge-nextcloud-stack-nextcloud/.well-known/openid-configuration"
+          --unique-uid=0
+      register: occ_register_provider
+      changed_when: "'Provider added' in occ_register_provider.stdout"
+      failed_when: >-
+        occ_register_provider.rc != 0 and
+        'already exists' not in occ_register_provider.stderr
+      when: not ansible_check_mode
+```
+
+### Step: nextcloud-02e-edge-manifest
+
+```yaml
+id: nextcloud-02e-edge-manifest
+title: Author nextcloud-stack's Traefik/Authentik edge manifest and register its OIDC route
+depends_on: [nextcloud-02-stack-yaml]
+
+change: >
+  In terraform/lxc/discover-authentik-edge.py, add one entry to each of
+  the two existing dicts (immediately after the
+  ("media-stack-lab", "immich") entries, matching their exact tuple
+  shape):
+
+  In OIDC_ROUTE_CLIENT_IDS (around line 51):
+    ("nextcloud-stack", "nextcloud"): ("NEXTCLOUD_OIDC_CLIENT_ID", "nextcloud"),
+
+  In OIDC_ROUTE_CLIENT_SECRETS (around line 62):
+    ("nextcloud-stack", "nextcloud"): "NEXTCLOUD_OIDC_CLIENT_SECRET",
+
+  Then create terraform/lxc/stacks/nextcloud-stack/edge.yaml,
+  transcribing media-stack-lab/edge.yaml's exact EdgeManifest structure
+  with the literal values below.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/discover-authentik-edge.py
+    - terraform/lxc/stacks/nextcloud-stack/edge.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any reconcile-authentik-edge.py run against pve in this step -- discovery/validation only"
+
+gates:
+  - id: python-syntax
+    cmd: "python3 -m py_compile terraform/lxc/discover-authentik-edge.py"
+    expect: "exit 0"
+    critical: true
+  - id: yaml-syntax
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/nextcloud-stack/edge.yaml'))\""
+    expect: "exit 0"
+    critical: true
+```
+
+Literal content for `edge.yaml`:
+
+```yaml
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: nextcloud-stack-edge
+  stack: nextcloud-stack
+  annotations:
+    repo.auth.oidc.client_id_env: NEXTCLOUD_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: NEXTCLOUD_OIDC_CLIENT_SECRET
+spec:
+  routes:
+    - name: nextcloud
+      host: nextcloud.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_NEXTCLOUD_STACK}:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc
+```
+
+### Step: nextcloud-02f-add-monitoring-scrape-targets
 
 **Not a step block against nextcloud-stack's own files — this edits a
 different, already-running stack's deploy playbook
@@ -419,9 +764,9 @@ entries there, matching the existing `media-stack-lab` entries exactly:
     - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:8081"]
       labels: {stack: nextcloud-stack}
 
-  Port 8081, not 8080 — nextcloud-02's compose now ships a cadvisor
-  sidecar (container-level CPU/mem/network/disk-IO per container, not
-  just host-level node_exporter metrics) mapped to host port 8081
+  Port 8081, not 8080 — nextcloud-02c's compose ships a cadvisor sidecar
+  (container-level CPU/mem/network/disk-IO per container, not just
+  host-level node_exporter metrics) mapped to host port 8081
   specifically because nextcloud's own app service already owns 8080.
 
 This requires redeploying `monitoring-stack` itself
@@ -430,178 +775,6 @@ production approval flow — Ansible task/role change tier per CLAUDE.md's
 Validation Tiers table) to pick up the new scrape target. Sequence this
 after nextcloud-stack is actually live (so `LAB_IP_NEXTCLOUD_STACK`
 resolves to a real, reachable host) rather than before.
-
-### Step: nextcloud-02d-forward-docker-logs-to-graylog
-
-```yaml
-id: nextcloud-02d-forward-docker-logs-to-graylog
-title: Configure the Docker daemon to forward container logs to Graylog
-depends_on: [nextcloud-02-scaffold-stack-request]
-
-change: >
-  apps_seg already has a shared firewall path to Graylog (TCP/514, via
-  the `graylog_sender_subnets` address-list policy — see nextcloud-01),
-  and every LXC already runs a local rsyslog relay listening on
-  127.0.0.1:10514 for Docker (the `rsyslog_forward` role, invoked
-  unconditionally by `lxc_base` — confirmed by reading
-  terraform/lxc/ansible/roles/lxc_base/tasks/main.yml and
-  roles/rsyslog_forward/tasks/main.yml directly, not assumed). Neither
-  of those makes Nextcloud's own container logs actually reach Graylog
-  by itself -- scaffold-stack.sh's minecraft-stack exemplar generates no
-  Docker daemon.json at all, and reachability plus a listening relay
-  without the daemon actually pointed at it is a real, silent gap (21 of
-  61 existing deploy-*.yml playbooks explicitly add this task; the
-  minecraft-stack exemplar this plan otherwise follows is not one of
-  them).
-
-  Add this task to deploy-nextcloud-stack.yml's tasks: list, immediately
-  before the "docker compose up -d" task (Docker must be reconfigured
-  before the stack's containers start, so they pick up the new
-  log-driver from their first run), modeled exactly on
-  deploy-media-stack-lab.yml's "Trust Harbor HTTP registry and forward
-  Docker container logs to Graylog" task -- but without its
-  insecure-registries block, which nextcloud-stack doesn't need since
-  nextcloud-02b already resolves REGISTRY_HOST to Harbor's real,
-  TLS-valid FQDN:
-
-    - name: Forward Docker container logs to Graylog
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        mode: "0644"
-        content: |
-          {
-            "log-driver": "syslog",
-            "log-opts": {
-              "syslog-address": "tcp://127.0.0.1:10514",
-              "syslog-format": "rfc5424",
-              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
-            },
-            "storage-driver": "overlay2"
-          }
-      notify: Restart Docker
-      register: nextcloud_stack_docker_daemon_config
-
-  Add the matching handler (copy media-stack-lab's exactly):
-
-    handlers:
-      - name: Restart Docker
-        ansible.builtin.systemd:
-          name: docker
-          state: restarted
-          daemon_reload: true
-
-  If deploy-nextcloud-stack.yml already has a `handlers:` block by this
-  point (scaffold-stack.sh may add one of its own), add this handler to
-  the existing list rather than writing a second `handlers:` key —
-  Ansible playbooks allow only one per play.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Any ansible-playbook run against pve in this step -- syntax-check only"
-    - "Adding an insecure-registries entry -- REGISTRY_HOST already resolves to a real TLS FQDN per nextcloud-02b"
-
-gates:
-  - id: syntax-check
-    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
-    expect: "exit 0"
-    critical: true
-  - id: log-driver-present
-    cmd: "grep -q 'syslog-address' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
-    expect: "exit 0"
-    critical: true
-```
-
-### Step: nextcloud-02e-add-wazuh-agent
-
-```yaml
-id: nextcloud-02e-add-wazuh-agent
-title: Enroll nextcloud-stack in the existing home-lab Wazuh agent pilot
-depends_on: [nextcloud-02-scaffold-stack-request]
-
-change: >
-  This is the home-lab Wazuh manager (`wazuh-stack`, 192.168.40.15,
-  `infra_seg`) that the retired OCI investigation was never about --
-  that retirement (`nextcloud-P3-07`) concerned a privileged agent on
-  the *OCI-hosted Pangolin edge*, tunneled back through a Pangolin
-  private resource and a Gerbil-netns relay, a fundamentally different
-  and unreachable transport shape. nextcloud-stack is a normal same-
-  network home-lab host, exactly like the 6 hosts already enrolled
-  (`authentik-stack`, `proxy-stack`, `harbor-stack`, `technitium-stack`,
-  `apt-cacher-stack`, `pve` itself -- see docs/wazuh-stack/README.md) --
-  there is no tunnel, no NAT hairpin, and no netns-sharing sidecar in
-  this path at all, so none of the reasons Wazuh was retired for OCI
-  apply here.
-
-  Add the shared `wazuh_agent` role
-  (terraform/lxc/ansible/roles/wazuh_agent/, already used by 6 other
-  playbooks -- read its defaults/main.yml and tasks/main.yml directly,
-  do not re-derive the enrollment flow) to deploy-nextcloud-stack.yml's
-  roles: list, after portainer_agent:
-
-    roles:
-      - lxc_base
-      - docker_base
-      - portainer_agent
-      - wazuh_agent
-
-  Set these role vars in the play's vars: block (matching the pattern
-  the 4 already-enrolled Docker Compose stacks use for
-  wazuh_agent_docker_monitoring_enabled -- read one of them, e.g.
-  deploy-harbor-stack.yml, directly rather than assuming the exact var
-  name/shape):
-
-    wazuh_agent_fim_paths:
-      - /opt/nextcloud-stack   # compose file + .env, not the 200G user-data mount
-    wazuh_agent_docker_monitoring_enabled: true
-
-  Deliberately do NOT add /var/lib/nextcloud-data (the extra_mount path)
-  to wazuh_agent_fim_paths -- FIM (syscheck) hashes and diffs every file
-  under a watched path on every scan interval; a 200G, constantly-
-  changing user file store would make syscheck either impossibly slow or
-  drown real alerts in routine user activity noise. FIM should watch
-  Nextcloud's own app/config surface, not treat every user upload as a
-  file-integrity event.
-
-  No new SOPS secret is required -- `wazuh_agent`'s
-  `WAZUH_AGENT_AUTHD_PASSWORD` is already common/shared
-  (terraform/secrets.common.enc.yaml, per the role's own tasks/main.yml
-  comment), and `LAB_IP_WAZUH` is already common `.env` config, same as
-  every other enrolled stack's session already has both without any new
-  step.
-
-  apps_seg has an explicit default-deny policy rule (unlike infra_seg/
-  edge_seg, which have none per docs/wazuh-stack/plan.md's live
-  MikroTik read -- traffic between zones with no default-deny falls
-  through to RouterOS's implicit accept there, but apps_seg doesn't get
-  that for free). See nextcloud-01c below for the required firewall
-  rule; this step's own playbook change will fail enrollment (connection
-  refused to 1514/1515) until nextcloud-01c is applied.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Adding /var/lib/nextcloud-data or any subpath of it to wazuh_agent_fim_paths"
-    - "Any ansible-playbook run against pve in this step -- syntax-check only"
-
-gates:
-  - id: syntax-check
-    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
-    expect: "exit 0"
-    critical: true
-  - id: wazuh-role-present
-    cmd: "grep -q 'wazuh_agent' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
-    expect: "exit 0"
-    critical: true
-  - id: no-user-data-fim-watch
-    cmd: "grep -A5 'wazuh_agent_fim_paths' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml | grep -q 'nextcloud-data' && echo FAIL || echo OK"
-    expect: "OK"
-    critical: true
-```
 
 ### Step: nextcloud-01c-wazuh-agent-firewall-reach
 
@@ -631,7 +804,7 @@ change: >
       ports: [1514, 1515]
       description: >-
         nextcloud-stack's Wazuh agent to wazuh-stack's manager
-        (event/enrollment ports), added by nextcloud-02e. Narrowly
+        (event/enrollment ports), added by nextcloud-02d. Narrowly
         scoped to wazuh-stack's IP, not all of infra_seg -- apps_seg's
         other infra reachability (Harbor/apt-cacher) already comes from
         the separate all_zones -> infra_seg:80/443/3142 blanket rule and
@@ -674,7 +847,7 @@ gates:
 ```yaml
 id: nextcloud-03-add-secrets-placeholders
 title: Document required new SOPS secret keys for nextcloud-stack
-depends_on: [nextcloud-02-scaffold-stack-request]
+depends_on: [nextcloud-02-stack-yaml]
 
 change: >
   This step does NOT edit terraform/secrets.common.enc.yaml directly —
@@ -693,14 +866,15 @@ change: >
     `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml`
     before running nextcloud-06:
 
-    - `TF_VAR_nextcloud_db_password` — Postgres password for the
-      nextcloud DB user
-    - `TF_VAR_nextcloud_redis_password` — Redis auth password
-    - `TF_VAR_nextcloud_admin_password` — initial Nextcloud admin
-      account password
+    - `NEXTCLOUD_DB_PASSWORD` — Postgres password for the nextcloud DB user
+    - `NEXTCLOUD_REDIS_PASSWORD` — Redis auth password
+    - `NEXTCLOUD_ADMIN_PASSWORD` — initial Nextcloud admin account password
     - `NEXTCLOUD_OIDC_CLIENT_ID` — Authentik OIDC client id (also
-      referenced by discover-authentik-edge.py, see nextcloud-05)
+      referenced by discover-authentik-edge.py, see nextcloud-02e)
     - `NEXTCLOUD_OIDC_CLIENT_SECRET` — Authentik OIDC client secret
+
+    Also set `NEXTCLOUD_IMAGE_TAG` in the operator's own `.env` (not
+    SOPS — it's not a secret) to the pinned tag chosen in nextcloud-02c.
 
 scope:
   allowed_paths:
@@ -713,138 +887,6 @@ gates:
   - id: no-secrets-file-touched
     cmd: "git diff --name-only | grep -v 'docs/nextcloud-stack/README.md' | grep -q . && echo FAIL || echo OK"
     expect: "OK"
-    critical: true
-```
-
-### Step: nextcloud-04-occ-oidc-bootstrap-tasks
-
-```yaml
-id: nextcloud-04-occ-oidc-bootstrap-tasks
-title: Add occ-based user_oidc bootstrap tasks to the generated deploy playbook
-depends_on: [nextcloud-02-scaffold-stack-request]
-
-change: >
-  After nextcloud-02 generates
-  terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml, append these
-  tasks to its tasks: list (after the existing "Start ... via docker
-  compose" / wait_for-style tasks scaffold-stack.sh generates, following
-  the minecraft-stack exemplar's shape in
-  terraform/lxc/stacks/stack-request.example.yaml):
-
-    - name: Install user_oidc app in Nextcloud
-      ansible.builtin.command:
-        cmd: docker exec nextcloud-stack-app php occ app:install user_oidc
-      register: occ_install_user_oidc
-      changed_when: "'already installed' not in occ_install_user_oidc.stderr"
-      failed_when: >-
-        occ_install_user_oidc.rc != 0 and
-        'already installed' not in occ_install_user_oidc.stderr
-      when: not ansible_check_mode
-
-    - name: Register Authentik as an OIDC provider
-      ansible.builtin.command:
-        cmd: >-
-          docker exec nextcloud-stack-app php occ user_oidc:provider
-          authentik
-          --clientid="{{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_ID') | mandatory('NEXTCLOUD_OIDC_CLIENT_ID env var is not set') }}"
-          --clientsecret="{{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_SECRET') | mandatory('NEXTCLOUD_OIDC_CLIENT_SECRET env var is not set') }}"
-          --discoveryuri="https://{{ nextcloud_stack_fqdn_authentik }}/application/o/edge-nextcloud-stack-nextcloud/.well-known/openid-configuration"
-          --unique-uid=0
-      register: occ_register_provider
-      changed_when: "'Provider added' in occ_register_provider.stdout"
-      failed_when: >-
-        occ_register_provider.rc != 0 and
-        'already exists' not in occ_register_provider.stderr
-      when: not ansible_check_mode
-
-  Add nextcloud_stack_fqdn_authentik to the playbook's vars: block,
-  matching media-stack-lab's own pattern exactly:
-
-    nextcloud_stack_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
-
-  NOTE (see README.md "Still genuinely open"): the exact `occ
-  user_oidc:provider` flag set (`--unique-uid`, discovery-uri-based vs
-  manual endpoint flags) has not been validated against a live
-  instance — confirm against the actual pinned Nextcloud version's
-  `occ user_oidc:provider --help` output before treating this step's
-  gate as sufficient proof it works end to end.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Any ansible-playbook run against pve or pve-test-vm in this step -- syntax-check only"
-
-gates:
-  - id: syntax-check
-    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
-    expect: "exit 0"
-    critical: true
-```
-
-### Step: nextcloud-05-authentik-oidc-route
-
-```yaml
-id: nextcloud-05-authentik-oidc-route
-title: Register nextcloud-stack's OIDC route in the Authentik edge reconciler and add its EdgeManifest
-depends_on: [nextcloud-02-scaffold-stack-request]
-
-change: >
-  In terraform/lxc/discover-authentik-edge.py, add one entry to each of
-  the two existing dicts (immediately after the
-  ("media-stack-lab", "immich") entries, matching their exact tuple
-  shape):
-
-  In OIDC_ROUTE_CLIENT_IDS (around line 51):
-    ("nextcloud-stack", "nextcloud"): ("NEXTCLOUD_OIDC_CLIENT_ID", "nextcloud"),
-
-  In OIDC_ROUTE_CLIENT_SECRETS (around line 62):
-    ("nextcloud-stack", "nextcloud"): "NEXTCLOUD_OIDC_CLIENT_SECRET",
-
-  Then create terraform/lxc/stacks/nextcloud-stack/edge.yaml with this
-  exact content, modeled on media-stack-lab/edge.yaml:
-
-    apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
-    kind: EdgeManifest
-    metadata:
-      name: nextcloud-stack-edge
-      stack: nextcloud-stack
-      annotations:
-        repo.auth.oidc.client_id_env: NEXTCLOUD_OIDC_CLIENT_ID
-        repo.auth.oidc.client_secret_env: NEXTCLOUD_OIDC_CLIENT_SECRET
-    spec:
-      routes:
-        - name: nextcloud
-          host: nextcloud.${LAB_DOMAIN}
-          backend:
-            type: url
-            url: http://${LAB_IP_NEXTCLOUD_STACK}:8080
-          dns:
-            enabled: true
-            target: ${LAB_IP_PROXY}
-            ttl: 5m
-          tls:
-            resolver: letsencrypt
-          auth:
-            mode: oidc
-
-scope:
-  allowed_paths:
-    - terraform/lxc/discover-authentik-edge.py
-    - terraform/lxc/stacks/nextcloud-stack/edge.yaml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Any reconcile-authentik-edge.py run against pve in this step -- discovery/validation only"
-
-gates:
-  - id: python-syntax
-    cmd: "python3 -m py_compile terraform/lxc/discover-authentik-edge.py"
-    expect: "exit 0"
-    critical: true
-  - id: yaml-syntax
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/nextcloud-stack/edge.yaml'))\""
-    expect: "exit 0"
     critical: true
 ```
 
@@ -863,15 +905,15 @@ flow, not on `pve-test-vm`. Before running this:
    on 2026-09-24.
 2. Apply nextcloud-01c's `apps_seg -> wazuh-stack:1514,1515` rule (both
    the `pve.yaml` policy and its MikroTik mirror) in the same maintenance
-   window as step 1 — the Wazuh agent added by nextcloud-02e will enroll
+   window as step 1 — the Wazuh agent added by nextcloud-02d will enroll
    but fail to reach the manager without it.
 3. Confirm all SOPS secrets from nextcloud-03's checklist are set.
 4. Preflight Summary to the operator: target = `pve`, mutating, exact
    objects = new `apps_seg` SDN zone/vnet/firewall rules (from
    nextcloud-01 and nextcloud-01c) + new `nextcloud-stack` LXC + its
    Docker Compose stack (including the cadvisor sidecar, Graylog log
-   forwarding, and Wazuh agent enrollment added by
-   nextcloud-02c/02d/02e), out-of-scope = everything else.
+   forwarding, and Wazuh agent enrollment authored in nextcloud-02c/02d),
+   out-of-scope = everything else.
 5. Wait for explicit operator "Proceed."
 6. `export TASK_APPROVAL="nextcloud-stack-first-deploy"` then
    `./with-secrets-prod scripts/provision.sh --stack nextcloud-stack`.
@@ -880,10 +922,11 @@ flow, not on `pve-test-vm`. Before running this:
    (`curl -f http://192.168.120.10:8080/status.php`) once this step
    actually runs, since the table doesn't have one yet. Also verify the
    3 new integrations added by this plan revision: cadvisor metrics
-   visible in Grafana/VictoriaMetrics (nextcloud-02c), Nextcloud's Docker
-   container logs arriving in Graylog (nextcloud-02d), and the Wazuh
-   agent showing `Active` on the wazuh-stack dashboard (nextcloud-02e) —
-   none of these are covered by the `status.php` HTTP check alone.
+   visible in Grafana/VictoriaMetrics (nextcloud-02c/02f), Nextcloud's
+   Docker container logs arriving in Graylog (nextcloud-02d), and the
+   Wazuh agent showing `Active` on the wazuh-stack dashboard
+   (nextcloud-02d) — none of these are covered by the `status.php` HTTP
+   check alone.
 8. After-Action Summary to the operator per the standard flow.
 
 ---
@@ -1225,7 +1268,7 @@ change: >
   literal; adjust `wazuh_agent_fim_paths` to match whatever path is
   actually in use.
 
-  No new SOPS secret required, same reasoning as nextcloud-02e:
+  No new SOPS secret required, same reasoning as nextcloud-02d:
   `WAZUH_AGENT_AUTHD_PASSWORD` and `LAB_IP_WAZUH` are both already
   common. Requires nextcloud-P3-02b's firewall rule applied first, or
   enrollment will fail to reach the manager (connection refused on
@@ -1283,9 +1326,9 @@ from the repo root — `ansible.cfg`'s `roles_path` (needed to resolve
 `lxc_base`/`docker_base`) is never picked up without
 `ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg`, which `provision.sh`
 always exports before any real run but a bare gate command does not.
-Fixed in this step's gate and in `nextcloud-02`/`nextcloud-02c`'s
-identical `deploy-nextcloud-stack.yml` gates too, since they'd have hit
-the same thing. No wazuh_agent/unattended_upgrades roles added — those
+Fixed in this step's gate and in `nextcloud-02d`'s identical
+`deploy-nextcloud-stack.yml` gate too, since they'd have hit the same
+thing. No wazuh_agent/unattended_upgrades roles added — those
 are still a 6-stack pilot rollout, not yet universal (confirmed by
 checking which `deploy-*.yml` files actually reference them), so
 `media-stack-lab`'s precedent (a real, fully-deployed stack without
@@ -1409,7 +1452,7 @@ this as a step:
    field alone (`_oidc_redirect_uris`, confirmed by reading it) and
    reconciles Authentik's provider config to match exactly. A
    Pangolin-published OIDC route (not nextcloud initially, since
-   nextcloud-04/05 use `forwardAuth`-free `occ user_oidc` wiring directly
+   nextcloud-02d/02e use `forwardAuth`-free `occ user_oidc` wiring directly
    against Authentik rather than this repo's `forwardAuth`/OIDC
    EdgeManifest path — but relevant for any future OIDC-mode route, e.g.
    openwebui) needs the reconciler taught to add both hostnames'
@@ -1434,7 +1477,7 @@ path to the main Traefik at all under nextcloud-P3-01's rule).
 **Depends on nextcloud-P3-03c landing first.** Once the EdgeManifest
 Pangolin opt-in mechanism exists, add a `pangolin` block to
 `terraform/lxc/stacks/nextcloud-stack/edge.yaml`'s `nextcloud` route
-(alongside the existing internal LAN route added by nextcloud-05),
+(alongside the existing internal LAN route added by nextcloud-02e),
 publishing `nextcloud.pan.gibbsgreatly.xyz` via pangolin-proxy (not the
 main Traefik) — matching
 `pangolin-observability-and-graylog-plan.md`'s service onboarding
@@ -1444,7 +1487,7 @@ a request, lab Traefik as the target — never the container directly).
 Not written as literal content yet since it depends on P3-03c's
 not-yet-decided schema shape. Also confirm at this point which of
 nextcloud's two auth paths is actually live (occ user_oidc direct
-against Authentik, from nextcloud-04/05, vs this repo's EdgeManifest
+against Authentik, from nextcloud-02d/02e, vs this repo's EdgeManifest
 `forwardAuth`/OIDC path) — nextcloud-P3-03c's redirect_uri concern only
 applies if the EdgeManifest OIDC path is the one in use.
 
