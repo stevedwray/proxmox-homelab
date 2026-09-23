@@ -98,15 +98,15 @@ Graylog forwarding. The main Traefik and Technitium authority publish
 `nextcloud.lab.gibbsgreatly.xyz` to `192.168.30.10` and proxy it to the LXC.
 The separate `pangolin-proxy` remains scaffolded, not deployed. Its tracked
 production Terragrunt entrypoint is
-`terraform/lxc/environments/pve/pangolin-proxy/`; the per-environment layout
-is intended to use the implicit `default` Terraform workspace. Do not create
-a named `pve` workspace here: that is the retired shared-directory pattern
-and would create an orphaned state file. **Current configuration drift blocks
-the first plan:** `.env.pve` still exports `TF_WORKSPACE=pve`, so even the
-production wrapper's ordinary `terragrunt init` attempts to select the old
-named workspace. Reconcile that shared production workspace setting with the
-existing live stacks before initializing or applying pangolin-proxy. The
-2026-09-24 plan attempts stopped before calculating or changing infrastructure.
+`terraform/lxc/environments/pve/pangolin-proxy/`. The active production
+convention uses both that per-environment directory and the named `pve`
+Terraform workspace: `.env.pve` exports `TF_WORKSPACE=pve`, and the live
+state for existing environment-scoped stacks is stored under each stack's
+`terraform.tfstate.d/pve/`. Pangolin-proxy has no such state yet, so the
+first production initialization must create its `pve` workspace from
+`default`; it must not be initialized against an assumed default-workspace
+state. The 2026-09-24 plan attempts stopped before calculating or changing
+infrastructure.
 
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
