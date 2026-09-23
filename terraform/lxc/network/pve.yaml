@@ -307,7 +307,7 @@ zones:
     description: Application services — Nextcloud
     attachment: apps_seg
     containers:
-      - "nextcloud-stack (VMID pending) — 192.168.120.10"
+      - "nextcloud-stack (VMID 120010) — 192.168.120.10 — live, deployed 2026-09-24"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
