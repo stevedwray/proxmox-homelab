@@ -1046,6 +1046,38 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             payload["redirect_uris"],
         )
 
+    def test_nextcloud_oidc_apply_writes_user_oidc_callback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "nextcloud.yaml"
+            _write_manifest(
+                manifest,
+                stack="nextcloud-stack",
+                route="nextcloud",
+                host="nextcloud.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(
+                MODULE.os.environ,
+                {"NEXTCLOUD_OIDC_CLIENT_SECRET": "secret-value"},
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual(
+            [{"matching_mode": "strict", "url": "https://nextcloud.lab.gibbsgreatly.xyz/apps/user_oidc/code"}],
+            payload["redirect_uris"],
+        )
+        self.assertEqual(
+            ["authorization_code", "client_credentials", "password"],
+            payload["grant_types"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
