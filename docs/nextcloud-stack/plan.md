@@ -5,8 +5,10 @@ Written with `.github/prompts/plan-change.prompt.md`, following
 `.github/prompts/implement-step.prompt.md`. See [README.md](README.md) for
 decisions, research, and what's still genuinely open.
 
-**Not a priority right now** — this plan exists so the work is ready to
-pick up, not to be run immediately.
+**Execution order refreshed 2026-09-24.** Phase 3's connector groundwork
+is live, but the Nextcloud application remains unbuilt. Complete the
+private Phase 1 service first; public Pangolin publishing remains a later,
+separately-gated step.
 
 Several things below are genuinely not step blocks, and are written as
 plain operator/prose instructions instead: running `scaffold-stack.sh`
@@ -71,7 +73,7 @@ change: >
       containers:
         - "nextcloud-stack (VMID 120010) — 192.168.120.10"
 
-  In the policies: section, insert these six rules immediately before the
+  In the policies: section, insert these five rules immediately before the
   final existing rule in the file (the "media-stack-lab node_exporter TLS
   cert issuance from step-ca" rule, description ending "targeting the
   deny rule." — insert after that rule, i.e. at the end of the policies
@@ -107,11 +109,6 @@ change: >
         twice). Both reasons share the same from/to/port so one rule
         covers both.
     - from: apps_seg
-      to: 192.168.20.14
-      protocol: tcp
-      ports: [514]
-      description: nextcloud-stack rsyslog forwarding to Graylog
-    - from: apps_seg
       to: 192.168.20.11
       protocol: tcp
       ports: [443]
@@ -121,6 +118,14 @@ change: >
       protocol: all
       ports: []
       description: Explicit deny — apps_seg has no other reachability beyond the above plus internet egress
+
+  Do not add a per-workload `apps_seg -> Graylog:514` rule. TCP syslog is
+  now a shared normal-zone policy, reconciled by
+  `ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml`.
+  In the same change, add `192.168.120.0/24` to that playbook's
+  `graylog_sender_subnets`; its one address-list-based rule is the sole
+  source of Graylog reachability. Keep intentionally hostile/test zones
+  excluded from that list.
 
   Do NOT add a greenbone-stack scan-reach rule in this step. Per
   docs/greenbone-stack/network-scan-rollout-plan.md, widening
@@ -134,6 +139,7 @@ change: >
 scope:
   allowed_paths:
     - terraform/lxc/network/pve.yaml
+    - ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Any terragrunt apply / SDN apply -- validation only in this step"
@@ -141,6 +147,10 @@ scope:
 gates:
   - id: yaml-syntax
     cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/network/pve.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: shared-graylog-includes-apps-seg
+    cmd: "grep -q '\"192.168.120.0/24\"' ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml"
     expect: "exit 0"
     critical: true
 ```
@@ -582,26 +592,31 @@ gates:
 
 ### Step: nextcloud-06-deploy-and-validate
 
-**Not a step block — production deploy, operator approval flow.**
+**Not a step block — structural validation followed by production deploy.**
 `scripts/provision.sh --stack nextcloud-stack` is a mutating,
 Ansible-backed deploy against `pve`. Per CLAUDE.md's Validation Tiers
 table, "Ansible task or role changes" (which a brand-new stack's first
 deploy is) validate directly on `pve` under the production approval
 flow, not on `pve-test-vm`. Before running this:
 
-1. Confirm all SOPS secrets from nextcloud-03's checklist are set.
-2. Preflight Summary to the operator: target = `pve`, mutating, exact
+1. Before any production mutation, prepare and run a separate additive-SDN
+   validation packet on `pve-test-vm`. It must use that node's own network
+   intent and prove that adding the new zone does not regress one or two
+   existing adjacent stacks. Do not treat a direct `pve` deploy as a
+   substitute for this structural validation tier.
+2. Confirm all SOPS secrets from nextcloud-03's checklist are set.
+3. Preflight Summary to the operator: target = `pve`, mutating, exact
    objects = new `apps_seg` SDN zone/vnet/firewall rules (from
    nextcloud-01) + new `nextcloud-stack` LXC + its Docker Compose stack,
    out-of-scope = everything else.
-3. Wait for explicit operator "Proceed."
-4. `export TASK_APPROVAL="nextcloud-stack-first-deploy"` then
+4. Wait for explicit operator "Proceed."
+5. `export TASK_APPROVAL="nextcloud-stack-first-deploy"` then
    `./with-secrets-prod scripts/provision.sh --stack nextcloud-stack`.
-5. Verify per CLAUDE.md's Stack Service Types convention: `curl` to
+6. Verify per CLAUDE.md's Stack Service Types convention: `curl` to
    Nextcloud's HTTP port — add a row for `nextcloud-stack` there
    (`curl -f http://192.168.120.10:8080/status.php`) once this step
    actually runs, since the table doesn't have one yet.
-6. After-Action Summary to the operator per the standard flow.
+7. After-Action Summary to the operator per the standard flow.
 
 ---
 
@@ -685,10 +700,10 @@ Verified: zone `tvnewt`, vnet `tvnewt` tag 110, subnet
 verified the same day** (operator-run, no automated wrapper for this
 device — see README.md "Current execution state" for the exact
 commands and read-only verification): VLAN interface, bridge-vlan
-tagging, gateway IP, and the 6 firewall rules (3 input, 3 forward)
-matching this step's own policy exactly. `connector_seg` is fully
-enforced end-to-end now, not just declared. Kept below as a record of
-what ran, with
+tagging, gateway IP, connector-specific input/forward rules, and (as of
+2026-09-24) the separate shared Graylog TCP syslog policy. `connector_seg`
+is fully enforced end-to-end now, not just declared. Kept below as a
+record of what ran, with
 one real deviation from the original text: `apps_seg` (from
 `nextcloud-01`) didn't exist yet when this ran — Phase 1 is still not
 built — so the block was anchored after `ai_seg` instead. Re-anchor
@@ -782,12 +797,11 @@ change: >
       ports: []
       description: Explicit deny — connector_seg has no other reachability beyond lab Traefik plus internet egress
 
-  Do NOT add a connector_seg -> Graylog rule in this step. Per
-  pangolin-observability-and-graylog-plan.md, OCI log delivery to Graylog
-  is a separate, not-yet-implemented piece (see nextcloud-P3-05) that
-  would need its own dedicated-ingestion-port rule, added only once that
-  path is actually built — adding it speculatively now would open a path
-  to nothing.
+  Do NOT add a connector-specific Graylog rule in this step. The live
+  deployment instead adds connector_seg to the shared managed-zone syslog
+  sender list, which permits only TCP/514 to Graylog and excludes hostile/test
+  zones. This preserves one reusable logging contract rather than creating
+  service-specific exceptions.
 
 scope:
   allowed_paths:
@@ -1060,13 +1074,12 @@ Once nextcloud-P3-04's route exists:
 
 ### Step: nextcloud-P3-06-oci-monitoring-and-logging
 
-**Not a step block — this is `pangolin-observability-and-graylog-plan.md`'s
-own Phases 0–5, not re-derived here.** That plan's own "Purpose and
-current state" section says explicitly: "No infrastructure changes are
-authorized by this document. First verify the live Graylog input,
-address, TLS mode, and firewall contract" — i.e. even its own Phase 0
-hasn't been done yet as of this plan's writing. Before nextcloud-stack
-is published via Pangolin, at minimum confirm:
+**Not a step block — this is shared OCI-edge work, not re-derived here.**
+The live Graylog TCP/514 transport path and authenticated API were verified
+on 2026-09-24 for `newt-connector`; that confirms the shared lab logging
+contract, but does not make raw OCI-to-home logging a prerequisite or a
+replacement for OCI-native observability. Before nextcloud-stack is
+published via Pangolin, at minimum confirm:
 
 - OCI compute/network/cost metrics are collected read-only via OCI
   Monitoring/Usage APIs (no public monitoring endpoint, no home VLAN
@@ -1107,8 +1120,9 @@ Before `nextcloud-P3-05` publishes a service, require that plan's
 hardening baseline plus: OCI VCN Flow Logs and Audit/Cloud Guard,
 Vulnerability Scanning/public-port checks, external HTTPS/TLS probes,
 and tested off-host Object Storage recovery. No `connector_seg` route
-to `wazuh-stack` is permitted; the zone's sole lateral destination stays
-`pangolin-proxy:443`.
+to `wazuh-stack` is permitted; its sole application destination stays
+`pangolin-proxy:443`, with the separate shared TCP/514 syslog policy as
+the only logging exception.
 
 The former `nextcloud-P3-07b` Wazuh firewall step is retired. Its
 desired-state rule has been removed from `pve.yaml`; do not recreate it.

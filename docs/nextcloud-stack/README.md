@@ -1,7 +1,7 @@
 # nextcloud-stack
 
-Status (2026-09-23): **Phase 1 (the nextcloud-stack itself) still not
-started — still not a priority, still just planned.** But Phase 3
+Status (2026-09-24): **Phase 1 (the nextcloud-stack itself) is not yet
+started, but is now the next planned workstream.** Phase 3
 (Pangolin exposure/monitoring/security) has real, executed groundwork
 now, entirely on the OCI side — see "Current execution state" below
 before assuming anything here is still purely theoretical.
@@ -12,7 +12,7 @@ initially for documentation/reports produced by other lab projects (the
 Pangolin with monitoring and a deliberately narrow blast radius — see
 Phase 3 in [plan.md](plan.md).
 
-## Current execution state (2026-09-23)
+## Current execution state (2026-09-24)
 
 **`connector_seg` is now live on `pve`** — `nextcloud-P3-01` executed:
 zone/vnet/subnet applied via `pvesh` under the production approval flow
@@ -224,8 +224,10 @@ See [plan.md](plan.md) for the full step-by-step plan.
   switches that VLAN 100 is already live as `cse_seg`
   (`terraform/lxc/network/pve-tiny.yaml`) — 110 is the next tag not
   already claimed by any zone across `terraform/lxc/network/*.yaml`
-  (10/20/30/40/50/60/70/80/90/100 all in use). Exactly one permitted
-  destination: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443 —
+  (10/20/30/40/50/60/70/80/90/100 all in use). Its only application
+  destination is `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443;
+  TCP syslog to Graylog (192.168.20.14:514) is separately allowed through
+  the shared managed-zone sender policy —
   the `connector_seg → wazuh-stack:1514` rule that briefly existed
   alongside it has been removed (Wazuh retired, see "Current execution
   state" above). Everything else explicit-deny; internet egress stays
@@ -331,14 +333,8 @@ See [plan.md](plan.md) for the full step-by-step plan.
   `nextcloud-P3-03c` in plan.md; also carries the OIDC `redirect_uris`
   wrinkle (one route, two public hostnames, one OAuth client needing
   both callback URLs registered).
-- **Connector VLAN placement.** `pangolin-observability-and-graylog-plan.md`
-  itself lists "connector VLAN ID/subnet versus locked-down `mgmt_seg`
-  LXC" as an open decision. This plan takes the dedicated-VLAN option
-  (`connector_seg`, VLAN 110) as the target since both OCI-repo docs
-  prefer it, but that choice hasn't been re-confirmed with the operator
-  independent of this plan's own read of those docs.
 - **OCI-side monitoring/logging.** Fully designed in
-  `pangolin-observability-and-graylog-plan.md` but, by that document's
-  own admission, not yet implemented — its Phase 0 (verify the live
-  Graylog input/TLS/port contract) hasn't run. This plan treats that as
-  a prerequisite for Phase 3's Pangolin publish, not something to skip.
+  `pangolin-observability-and-graylog-plan.md` but not yet implemented
+  end-to-end. The shared lab Graylog TCP/514 transport and authenticated
+  API were verified on 2026-09-24; OCI-native signals, external probes,
+  and recovery validation remain prerequisites for Phase 3 publishing.
