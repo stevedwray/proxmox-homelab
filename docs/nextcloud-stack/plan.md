@@ -1642,8 +1642,12 @@ Once nextcloud-P3-04's route exists:
    the dashboard and verify that the resulting resource reports that site.
 2. Require SSO and MFA by default (no anonymous bypass), per
    `pangolin-architecture-plan.md` and the service onboarding contract.
-3. Assign a dedicated access group, not the owner account, per
-   `pangolin-architecture-plan.md` Phase 3.
+3. Assign the non-admin `nextcloud-users` role, initially containing only
+   `steve`, rather than assigning the owner account directly. Pangolin's free
+   tier allows only one role per user, so this is Steve's reusable day-to-day
+   role for every resource he is authorized to use—not a one-role-per-service
+   pattern. Do not create further service-specific roles for Steve unless the
+   plan limit changes or a genuinely separate user/access boundary is needed.
 4. Decide whether to keep Nextcloud's own Authentik OIDC login active in
    addition to Pangolin's gate (defense in depth, the same call
    `pangolin-observability-and-graylog-plan.md` makes for Pentagi as "an
