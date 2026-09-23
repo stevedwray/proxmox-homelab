@@ -112,6 +112,14 @@
         timeout: 180
       when: not ansible_check_mode
 
+    - name: Allow Nextcloud to contact internal OIDC services
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          allow_local_remote_servers --type=boolean --value=true
+      changed_when: false
+      when: not ansible_check_mode
+
     - name: Install Nextcloud user_oidc app
       ansible.builtin.command:
         cmd: docker exec --user www-data nextcloud-stack-app php occ app:install user_oidc
