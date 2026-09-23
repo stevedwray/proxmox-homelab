@@ -158,3 +158,10 @@
       failed_when: occ_register_provider.rc != 0 and 'already exists' not in occ_register_provider.stderr
       no_log: true
       when: not ansible_check_mode
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

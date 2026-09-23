@@ -421,9 +421,10 @@ See [plan.md](plan.md) for the full step-by-step plan.
   will clear the historical findings on its next vulnerability inventory.
   The original Nextcloud findings were base-OS packages only (openssl,
   perl, glibc, libssh2, gnutls), not application-layer issues.
-- **The ongoing point-release policy remains a fleet-wide decision.**
-  `nextcloud-02g` has not yet enrolled Nextcloud in security-only
-  unattended upgrades. Even once it does, glibc/perl fixes delivered only
-  through Debian `trixie/main` will still require a deliberate maintenance
-  upgrade under the current policy. Widening `Origins-Pattern` remains a
-  separate decision and was not made here.
+- **Nextcloud is enrolled in security-only unattended upgrades
+  (`nextcloud-02g`, 2026-09-24).** `unattended-upgrades` is installed and
+  both apt daily timers are enabled; automatic reboots remain disabled.
+  The ongoing point-release policy is still a fleet-wide decision:
+  glibc/perl fixes delivered only through Debian `trixie/main` require a
+  deliberate maintenance upgrade under the current policy. Widening
+  `Origins-Pattern` remains a separate decision and was not made here.
