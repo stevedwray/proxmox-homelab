@@ -73,7 +73,8 @@ values must come from the environment.
 | Path | Storage | Contents |
 |---|---|---|
 | `/opt/pangolin-proxy` | LXC host filesystem / Docker compose project | Compose file, `.env`, `traefik.yml`, `dynamic/` config directory |
-| `/opt/pangolin-proxy/dynamic` | LXC host filesystem | Traefik dynamic config files (Authentik middleware; per-route Pangolin-opted-in router configs once nextcloud-P3-03c exists) |
+| `/opt/pangolin-proxy/dynamic` | LXC host filesystem | Traefik dynamic config files: Authentik middleware and generated Pangolin route files |
+| `/opt/pangolin-proxy/dynamic/routes` | LXC host filesystem | Replaced atomically on deployment from the control-node generated output; empty means no service is published |
 | `/opt/pangolin-proxy/certs` | extra mount (2 GiB) | ACME storage (`letsencrypt/acme.json`) — separate from `proxy-stack`'s own, since this is a distinct Traefik process |
 | Docker volumes from compose | Docker storage (4 GiB) | Traefik runtime state |
 
@@ -83,16 +84,17 @@ values must come from the environment.
   Authentik forwardAuth middleware definition, not a shared reference (see
   nextcloud-P3-03b for why this needs its own copy and how it's
   live-verified).
-- `dynamic/<route>.yml` files — per-route Pangolin-opted-in router configs.
-  **Not written by this stack's own deploy** — they come from EdgeManifests
-  via a renderer target that doesn't exist yet (nextcloud-P3-03c). Until
-  that lands, this instance publishes nothing and `dynamic/` beyond
-  `authentik.yml` stays empty.
+- `dynamic/routes/<stack>.yml` files — generated only for EdgeManifest
+  routes that explicitly set `pangolin.public_host`. `reconcile-edge.py`
+  writes them to `.generated/pangolin-traefik`; `provision.sh` passes that
+  source to this playbook. The main proxy renderer never writes these
+  routes. With no opt-ins, the directory is deliberately empty and this
+  instance publishes nothing.
 
 ## What May Depend on This Stack
 
-- Any future service opted into Pangolin publishing via its own
-  `edge.yaml`, once nextcloud-P3-03c's renderer target exists.
+- Any service opted into Pangolin publishing through `pangolin.public_host`
+  in its own `edge.yaml`.
 - `nextcloud-stack`, once deployed and opted in (nextcloud-P3-04).
 
 ## What Must Not Be Edited Casually
@@ -108,8 +110,8 @@ values must come from the environment.
   for the enforced boundary.
 - `portainer_agent: false` is intentional, same reasoning as `proxy-stack`.
 - Do not add router definitions directly to `/opt/pangolin-proxy/dynamic/`
-  by hand once the generated-source pattern (nextcloud-P3-03c) exists — use
-  the generated source to keep routing config under version control.
+  by hand. Use the generated EdgeManifest source so routing remains under
+  version control and reconciliation cannot silently remove a manual route.
 
 ## Playbook
 
