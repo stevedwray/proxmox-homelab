@@ -5,10 +5,15 @@ Written with `.github/prompts/plan-change.prompt.md`, following
 `.github/prompts/implement-step.prompt.md`. See [README.md](README.md) for
 decisions, research, and what's still genuinely open.
 
-**Execution order refreshed 2026-09-24.** Phase 3's connector groundwork
-is live, but the Nextcloud application remains unbuilt. Complete the
-private Phase 1 service first; public Pangolin publishing remains a later,
-separately-gated step.
+**Implementation status (2026-09-24).** Phase 1 is complete on production
+`pve`: `apps_seg`, the 200G durable mount, LXC `120010`, Compose services,
+Wazuh enrollment, main Traefik/Technitium publication, and Authentik OIDC
+are live. OIDC needed three live corrections now represented in source:
+enable `user_oidc`, permit Nextcloud's required internal OIDC request path,
+and register `/apps/user_oidc/code` plus the authorization-code grant.
+The step blocks below are retained as the implementation record. Phase 2
+ingestion, monitoring end-to-end validation, credential rotation, and
+public Pangolin publishing remain open and separately gated.
 
 Several things below are genuinely not step blocks, and are written as
 plain operator/prose instructions instead: the `deploy-monitoring-stack.yml`
@@ -502,12 +507,12 @@ change: >
   common, same as every other enrolled stack. NEXTCLOUD_OIDC_CLIENT_ID/
   SECRET are still new and covered by nextcloud-03.
 
-  The exact `occ user_oidc:provider` flag set (`--unique-uid`,
-  discovery-uri-based vs manual endpoint flags) has not been validated
-  against a live instance (see README.md "Still genuinely open") --
-  confirm against the actual pinned Nextcloud version's `occ
-  user_oidc:provider --help` output before treating this step's gate as
-  sufficient proof it works end to end.
+  **Validated live 2026-09-24:** Nextcloud 35.0.0 uses the discovery-URI
+  form of `occ user_oidc:provider`; `user_oidc` must be enabled after its
+  installation. The deployment also sets `allow_local_remote_servers=true`
+  for the internal Authentik discovery request. The reconciler owns the
+  `/apps/user_oidc/code` callback and authorization-code grant; browser
+  login reached Authentik successfully after reconciliation.
 
 scope:
   allowed_paths:
@@ -890,6 +895,12 @@ gates:
 ```
 
 ### Step: nextcloud-06-deploy-and-validate
+
+**Completed 2026-09-24.** The production deployment created LXC `120010`
+at `192.168.120.10`, verified Nextcloud 35.0.0 healthy, enrolled Wazuh,
+published the main Traefik/Technitium route, and verified the Authentik OIDC
+browser flow. The historical instructions below remain for repeatability;
+use the current README for residual validation and rotation work.
 
 **Not a step block — structural validation followed by production deploy.**
 `scripts/provision.sh --stack nextcloud-stack` is a mutating,

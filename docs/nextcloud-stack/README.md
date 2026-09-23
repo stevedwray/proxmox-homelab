@@ -1,10 +1,10 @@
 # nextcloud-stack
 
-Status (2026-09-24): **Phase 1 (the nextcloud-stack itself) is not yet
-started, but is now the next planned workstream.** Phase 3
-(Pangolin exposure/monitoring/security) has real, executed groundwork
-now, entirely on the OCI side — see "Current execution state" below
-before assuming anything here is still purely theoretical.
+Status (2026-09-24): **Phase 1 is deployed and operational on `pve`.**
+Nextcloud is private to the lab edge at
+`https://nextcloud.lab.gibbsgreatly.xyz`; Pangolin publication remains a
+separate, later Phase 3 decision. See "Current execution state" for the
+verified deployment and the remaining follow-up work.
 
 Goal: a self-hosted Nextcloud instance as a durable local storage point,
 initially for documentation/reports produced by other lab projects (the
@@ -72,12 +72,29 @@ HTTPS/TLS probes, and tested off-host recovery. The investigation is
 retained as historical context in
 `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
 
-**`apps_seg` is now live on `pve` (2026-09-24):** VLAN 120,
+**`apps_seg` and `nextcloud-stack` are live on `pve` (2026-09-24):** VLAN 120,
 `192.168.120.0/24`, gateway `192.168.120.1`, and `tvapps` are applied on
 Proxmox and the MikroTik. Its policy permits only the planned application
-dependencies, shared TCP syslog, internet package/image egress, and an
-explicit deny for everything else. **Still not built:** `nextcloud-stack`
-and the `pangolin-proxy` Traefik instance (scaffolded, not deployed).
+dependencies, shared TCP syslog, internet package/image egress, the Wazuh
+agent manager ports, and an explicit deny for everything else.
+
+`nextcloud-stack` is LXC `120010` at `192.168.120.10`: a 16G rootfs and 30G
+Docker mount on `apps-containers`, with a 200G durable mount on
+`storage-containers` at `/var/lib/nextcloud-persistent`. It runs Nextcloud
+35.0.0, PostgreSQL 16 Alpine, Redis, and cAdvisor. `status.php` is healthy;
+the Wazuh agent is enrolled; Docker uses the local rsyslog/syslog relay for
+Graylog forwarding. The main Traefik and Technitium authority publish
+`nextcloud.lab.gibbsgreatly.xyz` to `192.168.30.10` and proxy it to the LXC.
+The separate `pangolin-proxy` remains scaffolded, not deployed.
+
+**OIDC was verified live.** The `user_oidc` app is installed and enabled;
+Authentik manages the strict callback
+`https://nextcloud.lab.gibbsgreatly.xyz/apps/user_oidc/code` and the required
+authorization-code grant. Nextcloud has `allow_local_remote_servers=true` so
+its server-side OIDC client can resolve the internal Authentik endpoint. This
+is a deliberate SSRF-hardening trade-off: restrict and review features that
+can make arbitrary outbound requests, and rely on the apps-segment firewall
+for network containment.
 
 **But the OCI side of Phase 3 has real, live progress**, tracked in its
 own repo's plan, `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
@@ -334,30 +351,16 @@ See [plan.md](plan.md) for the full step-by-step plan.
 
 ## Still genuinely open
 
-## New SOPS secrets required before first deploy
-
-Add these keys to `terraform/secrets.common.enc.yaml` through SOPS before
-the first deploy. Do not put them in `.env` or any tracked file.
-
-- `NEXTCLOUD_DB_PASSWORD` — PostgreSQL password for the Nextcloud DB user
-- `NEXTCLOUD_REDIS_PASSWORD` — Redis authentication password
-- `NEXTCLOUD_ADMIN_PASSWORD` — initial Nextcloud administrator password
-- `NEXTCLOUD_OIDC_CLIENT_ID` — Authentik OIDC client ID
-- `NEXTCLOUD_OIDC_CLIENT_SECRET` — Authentik OIDC client secret
-
-`NEXTCLOUD_IMAGE_TAG` is non-secret and is set in the operator's local
-`.env` to `35.0.0-apache`. Review and deliberately update that pin during a
-future Nextcloud upgrade.
-
-- **`user_oidc` provisioning mechanism.** Nextcloud has no compose-level
-  env-var equivalent to Immich's `IMMICH_CONFIG_FILE`; OIDC provider
-  registration is normally done via `occ user_oidc:provider` after the
-  app itself is installed via `occ app:install user_oidc`. `nextcloud-02d`
-  writes this as literal `docker exec ... occ ...` post-tasks in the
-  hand-authored deploy playbook, but it has **not been validated live**
-  — confirm the exact `occ user_oidc:provider` flag set against whatever
-  Nextcloud major version gets pinned before treating that step as
-  gate-clean.
+- **Credential rotation.** The first bootstrap produced an over-verbose
+  database exception log. Rotate `NEXTCLOUD_DB_PASSWORD` with a coordinated
+  PostgreSQL, Compose, and SOPS update; do not treat this as a simple `.env`
+  edit. The other first-deploy secrets are present in SOPS. `NEXTCLOUD_IMAGE_TAG`
+  is non-secret and pinned in the operator's local `.env` to `35.0.0-apache`;
+  review and deliberately update it during a future Nextcloud upgrade.
+- **Monitoring validation.** The cAdvisor sidecar, Wazuh agent, and local
+  Docker-to-rsyslog relay are deployed. Confirm the VictoriaMetrics/Grafana
+  scrape and a real Graylog search before declaring metrics and log delivery
+  end-to-end validated.
 - **Deep-research → Nextcloud push implementation.** `nextcloud-P2-01`
   below identifies *where* this needs to hook in
   (`docs/reporting-platform/plan.md`'s Phase 1 adopter code path for
@@ -382,13 +385,9 @@ future Nextcloud upgrade.
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated
   API were verified on 2026-09-24; OCI-native signals, external probes,
   and recovery validation remain prerequisites for Phase 3 publishing.
-- **nextcloud-stack/newt-connector Wazuh + cadvisor + Graylog forwarding
-  (added 2026-09-24) are written as literal plan.md steps
-  (`nextcloud-01c`, `nextcloud-02c`/`02d`/`02e`, `nextcloud-P3-02b`/
-  `02c`) but not yet applied anywhere** — `nextcloud-stack` doesn't exist
-  yet (Phase 1 hasn't started) and `newt-connector`'s deploy playbook
-  hasn't been touched. The two new firewall rules
-  (`apps_seg`/`connector_seg` -> `wazuh-stack:1514,1515`) need a real
-  `pve.yaml` edit plus MikroTik mirror under the production approval
-  flow, same as every other live firewall change in this plan — nothing
-  here is enforced until that happens.
+- **nextcloud-stack telemetry is deployed; Newt telemetry remains open.**
+  `nextcloud-stack` has its Wazuh agent, cAdvisor, Docker-to-rsyslog relay,
+  and the `apps_seg -> wazuh-stack:1514,1515` policy/MikroTik mirror.
+  `newt-connector` remains a separate follow-up because its
+  operator-managed Compose path must be confirmed before FIM can be scoped
+  safely; do not add broad watches such as `/root`.
