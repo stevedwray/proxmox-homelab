@@ -243,7 +243,7 @@
       when: not pterodactyl_wings_config.stat.exists
       no_log: true
 
-    # Three real, live-found fixes to Wings' own generated config.yml,
+    # Four real, live-found fixes to Wings' own generated config.yml,
     # applied unconditionally (not gated on first-configure) so they
     # self-heal even against an already-existing file:
     #
@@ -302,6 +302,28 @@
         pterodactyl_wings_dns_fix.changed or
         pterodactyl_wings_dns_fix2.changed
 
+    # 4. system.data defaults to /var/lib/pterodactyl/volumes, on this
+    #    host's 16GB rootfs -- not the dedicated 500GB gaming-containers
+    #    mount at /srv/docker that's provisioned specifically for game
+    #    data (see this stack's extra_mount in stack.yaml). Every
+    #    server's data was piling onto the small disk, discovered live
+    #    2026-09-23 when the rootfs hit 72% and blocked an ARK update
+    #    mid-download. Existing data was migrated by hand (rsync,
+    #    checksum-verified) before this fix landed; a fresh deploy just
+    #    gets the right path from the start.
+    - name: Ensure the game-data volumes directory exists on the dedicated mount
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/volumes
+        state: directory
+        mode: "0755"
+
+    - name: Fix Wings config -- store server data on the dedicated game-data mount
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^  data: .*"
+        line: "  data: /srv/docker/pterodactyl/volumes"
+      register: pterodactyl_wings_data_path_fix
+
     - name: Restart Wings if any config fix actually changed something
       ansible.builtin.systemd:
         name: wings
@@ -310,7 +332,8 @@
         pterodactyl_wings_origins_fix.changed or
         pterodactyl_wings_dns_fix.changed or
         pterodactyl_wings_dns_fix2.changed or
-        pterodactyl_wings_subnet_fix.changed
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_data_path_fix.changed
 
     - name: Install Wings systemd unit
       ansible.builtin.copy:
