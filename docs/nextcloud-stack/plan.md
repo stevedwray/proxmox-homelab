@@ -780,6 +780,100 @@ Validation Tiers table) to pick up the new scrape target. Sequence this
 after nextcloud-stack is actually live (so `LAB_IP_NEXTCLOUD_STACK`
 resolves to a real, reachable host) rather than before.
 
+### Step: nextcloud-02g-add-unattended-upgrades
+
+```yaml
+id: nextcloud-02g-add-unattended-upgrades
+title: Enroll nextcloud-stack in the unattended security-upgrades pilot
+depends_on: [nextcloud-02d-deploy-playbook]
+
+change: >
+  Real finding, not speculative: Wazuh's vulnerability-detection module
+  flagged 9 distinct Critical CVEs (CVSS 9.1-9.8) on nextcloud-stack --
+  openssl, perl, glibc, gnutls, libssh2 -- all base-OS packages from the
+  Debian 13 template, none application-layer. Confirmed live via
+  `apt list --upgradable` on the host: fixed versions already exist in
+  Debian's repos for every one of them. Root cause confirmed, not
+  guessed: nextcloud-stack has no unattended-upgrades at all
+  (`systemctl is-enabled unattended-upgrades` -> not-found) -- it was
+  never added to the existing 6-host pilot (`authentik-stack`,
+  `proxy-stack`, `harbor-stack`, `technitium-stack`, `apt-cacher-stack`,
+  `wazuh-stack`, added 2026-08-30).
+
+  Add a second, separate play to
+  terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml, appended
+  after the existing "Deploy nextcloud-stack" play, matching every pilot
+  host's own pattern exactly (read deploy-harbor-stack.yml's trailing
+  "Enable unattended security updates" play directly rather than
+  reinventing the shape -- it's deliberately its own play, not folded
+  into roles: on the main play, because the role unmasks
+  apt-daily*.timer only once a host's own stack-specific apt tasks are
+  already done):
+
+    - name: Enable unattended security updates (fleet rollout, 2026-08-30)
+      hosts: all
+      become: true
+      gather_facts: false
+      roles:
+        - unattended_upgrades
+
+  **This does not fully close the 9 CVEs on its own -- read before
+  treating the gate as sufficient.** Cross-checked against the role's
+  own template (roles/unattended_upgrades/templates/50unattended-upgrades.j2):
+  `Origins-Pattern` is deliberately scoped to `label=Debian-Security`
+  only ("Regular (non-security) package updates are deliberately left
+  out... this repo still wants those applied deliberately via
+  provision.sh, not picked up silently overnight" -- the role's own
+  comment). Checked live via `apt-cache policy` on nextcloud-stack which
+  pocket each fix actually ships from:
+
+  - **openssl (3 CVEs) and gnutls (1 CVE)**: fix is in BOTH
+    `trixie/main` and `trixie-security` -- auto-applied correctly on
+    already-enrolled pilot hosts (confirmed live: harbor-stack already
+    has openssl 3.5.7 installed). Enrolling nextcloud-stack via this
+    step closes these 4 automatically.
+  - **libssh2 (1 CVE)**: a security-pocket fix (`+deb13u1`) exists and
+    will auto-apply once enrolled; a newer `+deb13u2` exists in
+    `trixie/main` only and will not, but confirm which version the
+    flagged CVE actually requires before assuming `+deb13u1` alone
+    closes it.
+  - **glibc/libc6 (1 CVE, CVSS 9.8) and perl (3 CVEs)**: fix exists
+    ONLY in `trixie/main` (the regular stable point-release pocket),
+    not `trixie-security` -- confirmed via `apt-cache policy` showing a
+    single origin line, no `security.debian.org` entry. This is
+    fleet-wide, not nextcloud-specific: spot-checked all 5 other pilot
+    hosts live (`authentik-stack`, `proxy-stack`, `apt-cacher-stack`,
+    `technitium-stack`, `wazuh-stack`) -- every one is still on the
+    same unpatched glibc 2.41-12+deb13u2, despite unattended-upgrades
+    running successfully there daily. Enrolling nextcloud-stack in this
+    step will NOT close these 4 CVEs; per the role's own documented
+    design intent, that requires an explicit, deliberate
+    `apt-get upgrade` (via `provision.sh` or a manual maintenance
+    action), not a change to `Origins-Pattern` -- widening
+    `Origins-Pattern` to include `trixie/main` fleet-wide is a bigger,
+    separate security-posture decision (auto-applying non-security
+    stable updates unattended) that this step deliberately does not
+    make. Flag this as a fleet-wide follow-up, not close it here.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Widening roles/unattended_upgrades/templates/50unattended-upgrades.j2's Origins-Pattern -- that is a separate, fleet-wide decision, not part of this step"
+    - "Any ansible-playbook run against pve in this step -- syntax-check only"
+
+gates:
+  - id: syntax-check
+    cmd: "ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: unattended-upgrades-role-present
+    cmd: "grep -q 'unattended_upgrades' terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
 ### Step: nextcloud-01c-wazuh-agent-firewall-reach
 
 ```yaml
