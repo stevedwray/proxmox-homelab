@@ -396,6 +396,28 @@ def _resolve_selected_manifests(
     return rewritten, temp_dir, None
 
 
+def _resolve_render_manifest_paths(
+    args: argparse.Namespace,
+    selected_manifest_paths: list[Path],
+) -> list[Path]:
+    """Resolve the complete declarative route set used for generated output.
+
+    An explicit manifest selection scopes the Authentik reconciliation phase;
+    it must not scope the shared Traefik or Technitium artifacts.  Rendering
+    only the selected manifest would replace the Technitium record file with a
+    partial zone.  Intended-replacement mode uses temporary rewritten
+    manifests, so retain that selection until its replacement mapping can be
+    represented across the complete set.
+    """
+    stacks_dir = args.stacks_dir.resolve()
+    selected_are_managed = all(
+        path.resolve().is_relative_to(stacks_dir) for path in selected_manifest_paths
+    )
+    if not args.manifests or args.intended_replacement_host or not selected_are_managed:
+        return selected_manifest_paths
+    return discover_edge_manifests(stacks_dir)
+
+
 def _render_outputs(
     args: argparse.Namespace,
     manifest_paths: list[Path],
@@ -883,7 +905,22 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:  # nosonar: p
             temp_dir.cleanup()
         return result
 
-    traefik_result, technitium_result, coredns_result, render_issues = _render_outputs(args, manifest_paths)
+    render_manifest_paths = _resolve_render_manifest_paths(args, manifest_paths)
+    render_validation = validate_manifests(render_manifest_paths)
+    if not render_validation.ok:
+        result = _build_failed_result(
+            applied=applied,
+            manifest_paths=render_manifest_paths,
+            validation=render_validation.to_dict(),
+            issues=[EdgeIssue(code="EGR121", message="complete edge manifest validation failed")],
+        )
+        if temp_dir is not None:
+            temp_dir.cleanup()
+        return result
+
+    traefik_result, technitium_result, coredns_result, render_issues = _render_outputs(
+        args, render_manifest_paths
+    )
     issues.extend(render_issues)
 
     if issues:

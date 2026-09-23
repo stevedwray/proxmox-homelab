@@ -99,6 +99,33 @@ class TestReconcileEdge(unittest.TestCase):
         self.assertIsNone(result["coredns"])
         self.assertEqual(0, result["technitium"]["generated_record_count"])
 
+    def test_explicit_selection_uses_complete_manifest_set_for_rendering(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            selected = Path(tmpdir) / "selected.yaml"
+            selected.write_text("apiVersion: v1\n", encoding="utf-8")
+            complete = Path(tmpdir) / "complete.yaml"
+            complete.write_text("apiVersion: v1\n", encoding="utf-8")
+
+            args = MODULE.parse_args([str(selected), "--stacks-dir", tmpdir])
+            with mock.patch.object(MODULE, "discover_edge_manifests", return_value=[complete]):
+                resolved = MODULE._resolve_render_manifest_paths(args, [selected])
+
+        self.assertEqual([complete], resolved)
+
+    def test_intended_replacement_keeps_rewritten_selection_for_rendering(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            selected = Path(tmpdir) / "selected.yaml"
+            selected.write_text("apiVersion: v1\n", encoding="utf-8")
+
+            args = MODULE.parse_args(
+                [str(selected), "--stacks-dir", tmpdir, "--intended-replacement-host", "example.test"]
+            )
+            with mock.patch.object(MODULE, "discover_edge_manifests") as discover:
+                resolved = MODULE._resolve_render_manifest_paths(args, [selected])
+
+        self.assertEqual([selected], resolved)
+        discover.assert_not_called()
+
     def test_intended_replacement_host_allows_migration_collision(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest_path = Path(tmpdir) / "traefik-dashboard.yaml"
