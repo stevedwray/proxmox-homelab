@@ -44,7 +44,10 @@ completed on 2026-09-23 and authenticated successfully. It remains
 unscheduled while its package/library remediation and the web-finding
 validation are completed. The alleged osCommerce upload/SQLi findings were
 checked against the live service and are Next.js fallback/404 false positives,
-not evidence of a web-shell upload.
+not evidence of a web-shell upload. The follow-up manual authenticated scan
+completed after the OCI package/Gradle cleanup and SSH MAC tightening: it
+confirmed SSH login and package checks, with only low-severity TCP timestamps
+remaining in the latest report.
 
 ## Why this isn't just "add a few more targets"
 
