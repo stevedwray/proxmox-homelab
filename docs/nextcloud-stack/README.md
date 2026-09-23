@@ -96,10 +96,17 @@ Docker mount on `apps-containers`, with a 200G durable mount on
 the Wazuh agent is enrolled; Docker uses the local rsyslog/syslog relay for
 Graylog forwarding. The main Traefik and Technitium authority publish
 `nextcloud.lab.gibbsgreatly.xyz` to `192.168.30.10` and proxy it to the LXC.
-The separate `pangolin-proxy` remains scaffolded, not deployed.
-Its production Terraform workspace (`pve`) has not been initialized yet;
-a 2026-09-24 read-only plan stopped at that missing local-state workspace,
-before calculating or changing any infrastructure.
+The separate `pangolin-proxy` remains scaffolded, not deployed. Its tracked
+production Terragrunt entrypoint is
+`terraform/lxc/environments/pve/pangolin-proxy/`; the per-environment layout
+is intended to use the implicit `default` Terraform workspace. Do not create
+a named `pve` workspace here: that is the retired shared-directory pattern
+and would create an orphaned state file. **Current configuration drift blocks
+the first plan:** `.env.pve` still exports `TF_WORKSPACE=pve`, so even the
+production wrapper's ordinary `terragrunt init` attempts to select the old
+named workspace. Reconcile that shared production workspace setting with the
+existing live stacks before initializing or applying pangolin-proxy. The
+2026-09-24 plan attempts stopped before calculating or changing infrastructure.
 
 **OIDC was verified live.** The `user_oidc` app is installed and enabled;
 Authentik manages the strict callback
