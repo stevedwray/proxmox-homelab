@@ -217,8 +217,13 @@ def _extract_intended_replacements(
 
 
 def _build_route_dynamic_config(route: dict[str, object]) -> tuple[str, dict[str, object], dict[str, object] | None]:
+    return _build_route_dynamic_config_for_host(route, str(route["host"]))
+
+
+def _build_route_dynamic_config_for_host(
+    route: dict[str, object], host: str
+) -> tuple[str, dict[str, object], dict[str, object] | None]:
     route_name = str(route["name"])
-    host = str(route["host"])
     backend = route["backend"]
     auth_mode = route["auth"]["mode"]
     resolver = route["tls"]["resolver"]
@@ -245,6 +250,50 @@ def _build_route_dynamic_config(route: dict[str, object]) -> tuple[str, dict[str
         router["service"] = backend["service"]
 
     return route_name, router, service
+
+
+def render_pangolin_traefik_dry_run(manifest_paths: list[Path]) -> RenderResult:
+    """Render only explicit Pangolin opt-ins; LAN routes never appear here."""
+
+    validation = validate_manifests(manifest_paths)
+    if not validation.ok:
+        return RenderResult(
+            rendered=(),
+            issues=tuple(
+                RenderIssue(code=issue.code, message=issue.message, manifest=issue.manifest, host=issue.route)
+                for issue in validation.issues
+            ),
+            warnings=(),
+            legacy_route_count=0,
+        )
+
+    rendered: list[RenderedStack] = []
+    for manifest_path in sorted(manifest_paths):
+        document = load_manifest(manifest_path)
+        metadata = document["metadata"]
+        stack = str(metadata["stack"])
+        routers: dict[str, object] = {}
+        services: dict[str, object] = {}
+        for route in sorted(document["spec"]["routes"], key=lambda item: str(item["name"])):
+            pangolin = route.get("pangolin")
+            if not isinstance(pangolin, dict):
+                continue
+            public_host = str(pangolin["public_host"])
+            route_name, router, service = _build_route_dynamic_config_for_host(route, public_host)
+            routers[route_name] = router
+            if service is not None:
+                services[str(router["service"])] = service
+        if routers:
+            rendered_http: dict[str, object] = {"routers": routers}
+            if services:
+                rendered_http["services"] = services
+            rendered.append(
+                RenderedStack(stack=stack, manifest=str(manifest_path), config={"http": rendered_http})
+            )
+
+    return RenderResult(
+        rendered=tuple(rendered), issues=(), warnings=(), legacy_route_count=0
+    )
 
 
 def _render_manifest(

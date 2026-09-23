@@ -23,7 +23,14 @@ SPEC.loader.exec_module(MODULE)
 reconcile_authentik = MODULE.reconcile_authentik
 
 
-def _write_manifest(path: Path, stack: str, route: str, host: str, mode: str) -> None:
+def _write_manifest(
+    path: Path, stack: str, route: str, host: str, mode: str, pangolin_public_host: str | None = None
+) -> None:
+    pangolin = (
+        f"      pangolin:\n        public_host: {pangolin_public_host}\n"
+        if pangolin_public_host
+        else ""
+    )
     path.write_text(
         f"""apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
 kind: EdgeManifest
@@ -45,6 +52,7 @@ spec:
         resolver: letsencrypt
       auth:
         mode: {mode}
+{pangolin}
 """,
         encoding="utf-8",
     )
@@ -1076,6 +1084,36 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual(
             ["authorization_code", "client_credentials", "password"],
             payload["grant_types"],
+        )
+
+    def test_nextcloud_oidc_apply_preserves_lan_and_pangolin_callbacks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "nextcloud.yaml"
+            _write_manifest(
+                manifest,
+                stack="nextcloud-stack",
+                route="nextcloud",
+                host="nextcloud.lab.gibbsgreatly.xyz",
+                mode="oidc",
+                pangolin_public_host="nextcloud.pan.gibbsgreatly.xyz",
+            )
+            client = FakeClient()
+
+            with patch.dict(
+                MODULE.os.environ,
+                {"NEXTCLOUD_OIDC_CLIENT_SECRET": "secret-value"},
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        payload = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"][0][2]
+        self.assertEqual(
+            [
+                {"matching_mode": "strict", "url": "https://nextcloud.lab.gibbsgreatly.xyz/apps/user_oidc/code"},
+                {"matching_mode": "strict", "url": "https://nextcloud.pan.gibbsgreatly.xyz/apps/user_oidc/code"},
+            ],
+            payload["redirect_uris"],
         )
 
 

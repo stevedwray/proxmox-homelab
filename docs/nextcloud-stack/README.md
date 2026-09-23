@@ -381,16 +381,13 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
   scope for this plan entirely until `docs/reporting-platform/plan.md`
   Phase 3 (cross-node ingestion) lands upstream.
-- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** The Traefik
-  isolation question itself is resolved (Option B, a second dedicated
-  Traefik instance — see above), but `render-edge-traefik.py` still needs
-  a second output target and a per-route opt-in field so a service's
-  `edge.yaml` can publish to `pangolin-proxy` in addition to the main
-  Traefik — it currently renders everything into one dynamic-config
-  directory with no branching at all (confirmed by reading it). See
-  `nextcloud-P3-03c` in plan.md; also carries the OIDC `redirect_uris`
-  wrinkle (one route, two public hostnames, one OAuth client needing
-  both callback URLs registered).
+- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** Implemented but
+  deliberately unused: a route may now declare `pangolin.public_host`.
+  The normal renderer emits only its LAN hostname; the separate Pangolin
+  renderer emits only explicit opt-ins. For an OIDC route, Authentik
+  reconciliation preserves callbacks for both hostnames. No route has
+  opted in yet, so `pangolin-proxy` remains scaffolded/not deployed and
+  no service is public through Pangolin. See `nextcloud-P3-03c`.
 - **OCI-side monitoring/logging.** Fully designed in
   `pangolin-observability-and-graylog-plan.md` but not yet implemented
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated

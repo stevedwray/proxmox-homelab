@@ -1558,46 +1558,27 @@ gates:
 
 ### Step: nextcloud-P3-03c-edgemanifest-pangolin-opt-in
 
-**Not a step block yet — genuinely open, needs a short design pass
-before it's literal.** `render-edge-traefik.py` currently renders every
-EdgeManifest route into the main proxy-stack's single dynamic config
-directory (confirmed by reading it — one output target, no branching on
-destination). It needs a second output path for routes that opt into
-Pangolin publishing. Two real design questions to resolve before writing
-this as a step:
+**Implemented 2026-09-24; no route has opted in.** One EdgeManifest route
+owns the LAN hostname and may add `pangolin.public_host` for its distinct
+public hostname. `render-edge-traefik.py` renders only LAN routers to the
+main proxy output; its Pangolin render path emits only explicit opt-ins to
+`.generated/pangolin-traefik`, which `deploy-pangolin-proxy.yml` publishes
+under its own dynamic route directory. An unpublished route therefore has
+no Pangolin router by construction.
 
-1. **Same route, two hostnames, or two separate route entries?** A
-   service published both on the LAN (`nextcloud.${LAB_DOMAIN}`) and via
-   Pangolin (`nextcloud.pan.gibbsgreatly.xyz`) could be modeled as one
-   EdgeManifest route with a `pangolin.public_host:` field (one router
-   rendered twice, once per Traefik instance, different Host rule each
-   time), or as two separate route entries in the same EdgeManifest.
-   Prefer the former — it keeps one source of truth for backend URL/auth
-   mode per service, rather than two entries that can drift out of sync.
-2. **OIDC redirect_uris need a second entry.** `discover-authentik-edge.py`
-   computes each OIDC route's expected `redirect_uris` from its `host:`
-   field alone (`_oidc_redirect_uris`, confirmed by reading it) and
-   reconciles Authentik's provider config to match exactly. A
-   Pangolin-published OIDC route (not nextcloud initially, since
-   nextcloud-02d/02e use `forwardAuth`-free `occ user_oidc` wiring directly
-   against Authentik rather than this repo's `forwardAuth`/OIDC
-   EdgeManifest path — but relevant for any future OIDC-mode route, e.g.
-   openwebui) needs the reconciler taught to add both hostnames'
-   callback URLs to the same provider, not just the LAN one. Confirm
-   which of nextcloud's own auth paths (occ user_oidc vs this repo's
-   EdgeManifest OIDC path) actually applies before assuming this affects
-   nextcloud-stack directly.
+This must not be treated as a Traefik-only feature. Nextcloud uses direct
+`occ user_oidc` configuration for token validation, but its Authentik OAuth2
+provider is still reconciler-owned through this OIDC EdgeManifest route.
+For `nextcloud-stack/nextcloud`, the reconciler generates
+`/apps/user_oidc/code` callbacks for both the LAN host and
+`pangolin.public_host`; regression coverage proves a reconcile creates and
+preserves both. Do not edit the Authentik provider manually because a later
+reconcile would restore declarative state.
 
-Once resolved, write the real step: extend `render-edge-traefik.py` and
-the `EdgeManifest` CRD-equivalent schema, add the LAN-vs-Pangolin source-
-policy regression tests from `pangolin-observability-and-graylog-plan.md`
-(every LAN-approved service still works from the LAN; an unpublished
-service fails through Pangolin even when its hostname is supplied — this
-is now trivially true by construction under Option B, since
-pangolin-proxy's dynamic config simply has no router for it; a request
-from the connector subnet cannot reach a route by changing its Host
-header — also true by construction, since connector_seg has no network
-path to the main Traefik at all under nextcloud-P3-01's rule).
+Validated locally with EdgeManifest, renderer, Authentik discovery, and
+reconcile unit suites, plus an Ansible syntax check of the Pangolin proxy
+playbook. This is code-only work: it neither deploys `pangolin-proxy` nor
+publishes Nextcloud.
 
 ### Step: nextcloud-P3-04-nextcloud-pangolin-route
 
@@ -1611,12 +1592,12 @@ main Traefik) — matching
 contract table (dedicated `*.pan.gibbsgreatly.xyz` hostname, distinct
 resource/route names so an operator can tell which policy layer rejected
 a request, lab Traefik as the target — never the container directly).
-Not written as literal content yet since it depends on P3-03c's
-not-yet-decided schema shape. Also confirm at this point which of
-nextcloud's two auth paths is actually live (occ user_oidc direct
-against Authentik, from nextcloud-02d/02e, vs this repo's EdgeManifest
-`forwardAuth`/OIDC path) — nextcloud-P3-03c's redirect_uri concern only
-applies if the EdgeManifest OIDC path is the one in use.
+Use the implemented schema: `pangolin.public_host:
+nextcloud.pan.gibbsgreatly.xyz`. Before route deployment, add that hostname
+to Nextcloud's trusted domains and add `pangolin-proxy` (192.168.30.11) to
+trusted proxies, retaining the LAN hostname and main proxy. Its direct
+`occ user_oidc` login is live, and the reconciler-managed Authentik provider
+must contain both callback URLs before an external login is attempted.
 
 ### Step: nextcloud-P3-05-pangolin-resource-and-lab-site
 
@@ -1675,6 +1656,13 @@ published via Pangolin, at minimum confirm:
 - Verify no monitoring endpoint or logging-ingestion port is publicly
   opened, the connector reaches only its approved destination, and an
   off-host backup can restore a replacement edge host.
+- Immediately before publication, confirm the Nextcloud guest has no
+  unresolved Critical OS-vulnerability findings: review current package
+  state (`apt list --upgradable` or equivalent), allow Wazuh inventory to
+  refresh so historical findings are not mistaken for active ones, and
+  record any intentional exception. Security-only unattended upgrades do
+  not cover every Debian stable point-release fix, so a prior successful
+  manual upgrade is evidence, not a permanent gate.
 
 This is shared OCI-edge infrastructure, not specific to nextcloud-stack
 — treat it as its own workspace under `/home/steve/git/oci` (that repo

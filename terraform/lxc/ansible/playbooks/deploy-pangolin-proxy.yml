@@ -62,6 +62,13 @@
     proxy_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ proxy_lab_domain, true) }}"
     traefik_image: "{{ proxy_registry_host }}/dockerhub/library/traefik:{{ traefik_version }}"
     proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
+    # Control-node source directory for generated Pangolin-only routes. The
+    # renderer emits nothing here unless a route explicitly opts in with
+    # pangolin.public_host, so the proxy starts with no application routers.
+    pangolin_traefik_generated_source_dir: >-
+      {{ (playbook_dir ~ '/../../environments/' ~ lookup('env', 'PVE_ENV') ~ '/.generated/pangolin-traefik')
+         if lookup('env', 'PVE_ENV') | length > 0
+         else (playbook_dir ~ '/../../.generated/pangolin-traefik') }}
 
   tasks:
     - name: Create Traefik directory structure
@@ -72,6 +79,7 @@
       loop:
         - { path: "{{ proxy_compose_dir }}", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
+        - { path: "{{ proxy_compose_dir }}/dynamic/routes", mode: "0755" }
         - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
 
@@ -174,6 +182,62 @@
           # certResolver. This prevents the letsencrypt wildcard from shadowing
           # resolver-specific certs.
           {}
+
+    - name: Assert generated Pangolin Traefik source directory is valid
+      ansible.builtin.stat:
+        path: "{{ pangolin_traefik_generated_source_dir }}"
+      delegate_to: localhost
+      become: false
+      register: pangolin_traefik_generated_source_dir_stat
+
+    - name: Explain absent generated Pangolin route directory
+      ansible.builtin.debug:
+        msg: >-
+          No generated Pangolin route directory exists yet; this is expected
+          before any EdgeManifest opts in with pangolin.public_host.
+      when: not pangolin_traefik_generated_source_dir_stat.stat.exists
+
+    - name: Require generated Pangolin route source to be a directory when present
+      ansible.builtin.assert:
+        that: pangolin_traefik_generated_source_dir_stat.stat.isdir
+        fail_msg: >-
+          pangolin_traefik_generated_source_dir={{ pangolin_traefik_generated_source_dir }}
+          exists but is not a directory.
+      when: pangolin_traefik_generated_source_dir_stat.stat.exists
+
+    - name: Remove previously rendered Pangolin route files
+      ansible.builtin.file:
+        path: "{{ proxy_compose_dir }}/dynamic/routes"
+        state: absent
+
+    - name: Recreate Pangolin route directory
+      ansible.builtin.file:
+        path: "{{ proxy_compose_dir }}/dynamic/routes"
+        state: directory
+        mode: "0755"
+
+    - name: Discover generated Pangolin Traefik files on control node
+      ansible.builtin.find:
+        paths: "{{ pangolin_traefik_generated_source_dir }}"
+        file_type: file
+        patterns: "*.yml"
+      register: pangolin_traefik_generated_files
+      delegate_to: localhost
+      become: false
+      when: pangolin_traefik_generated_source_dir_stat.stat.exists
+
+    - name: Publish rendered Pangolin route files into active dynamic directory
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/dynamic/routes/{{ item.path | basename }}"
+        mode: "0640"
+        content: >-
+          {{
+            lookup('file', item.path)
+            | replace('${LAB_IP_NEXTCLOUD_STACK}', lookup('env', 'LAB_IP_NEXTCLOUD_STACK'))
+          }}
+      loop: "{{ pangolin_traefik_generated_files.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:

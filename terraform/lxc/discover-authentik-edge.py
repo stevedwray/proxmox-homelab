@@ -162,6 +162,7 @@ class RouteIntent:
     stack: str
     route: str
     host: str
+    pangolin_public_host: str | None
     auth_mode: str
     app_name: str
     app_slug: str
@@ -343,6 +344,12 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
         for route in doc["spec"]["routes"]:
             route_name = str(route["name"])
             host = str(route["host"])
+            pangolin = route.get("pangolin")
+            pangolin_public_host = (
+                str(pangolin["public_host"]).strip().rstrip(".")
+                if isinstance(pangolin, dict) and isinstance(pangolin.get("public_host"), str)
+                else None
+            )
             auth_mode = str(route["auth"]["mode"])
             name_base = _slugify(f"{stack}-{route_name}")
             intents.append(
@@ -351,6 +358,7 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
                     stack=stack,
                     route=route_name,
                     host=host,
+                    pangolin_public_host=pangolin_public_host,
                     auth_mode=auth_mode,
                     app_name=f"{OWNED_NAME_PREFIX}{name_base}-app",
                     app_slug=f"{OWNED_NAME_PREFIX}{name_base}",
@@ -461,6 +469,9 @@ def _oidc_base_url(intent: RouteIntent) -> str:
 
 def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
     base_url = _oidc_base_url(intent)
+    base_urls = (base_url,)
+    if intent.pangolin_public_host:
+        base_urls += (f"https://{intent.pangolin_public_host}",)
     if _oidc_route_key(intent) == ("harbor-stack", "harbor"):
         return (f"{base_url}/c/oidc/callback",)
     if _oidc_route_key(intent) == ("monitoring-stack", "grafana"):
@@ -490,7 +501,7 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/auth/login",)
     if _oidc_route_key(intent) == ("nextcloud-stack", "nextcloud"):
         # user_oidc builds this fixed callback path for the provider code flow.
-        return (f"{base_url}/apps/user_oidc/code",)
+        return tuple(f"{url}/apps/user_oidc/code" for url in base_urls)
     return ()
 
 

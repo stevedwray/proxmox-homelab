@@ -81,10 +81,13 @@ class RenderPhaseResult:
     """Bundled render outputs -- keeps _build_passed_payload's parameter count sane."""
 
     traefik_result: Any
+    pangolin_traefik_result: Any
     technitium_result: Any
     coredns_result: Any | None
     traefik_output_dir: Path
+    pangolin_traefik_output_dir: Path
     rendered_files: list[str]
+    pangolin_rendered_files: list[str]
     rendered_records: str
     rendered_zone: str | None
 
@@ -162,6 +165,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=_generated_base / "traefik",
         help="Output directory for rendered Traefik dynamic files.",
+    )
+    parser.add_argument(
+        "--pangolin-traefik-output-dir",
+        type=Path,
+        default=_generated_base / "pangolin-traefik",
+        help="Output directory for Pangolin-opted-in Traefik dynamic files.",
     )
     parser.add_argument(
         "--seed-zone",
@@ -421,12 +430,13 @@ def _resolve_render_manifest_paths(
 def _render_outputs(
     args: argparse.Namespace,
     manifest_paths: list[Path],
-) -> tuple[Any, Any, Any | None, list[EdgeIssue]]:
+) -> tuple[Any, Any, Any, Any | None, list[EdgeIssue]]:
     issues: list[EdgeIssue] = []
     traefik_result = RENDER_TRAEFIK.render_traefik_dry_run(
         manifest_paths,
         args.legacy_playbook.resolve(),
     )
+    pangolin_traefik_result = RENDER_TRAEFIK.render_pangolin_traefik_dry_run(manifest_paths)
     technitium_result = RENDER_TECHNITIUM.render_technitium_dry_run(
         manifest_paths=manifest_paths,
         seed_zone_path=args.seed_zone.resolve(),
@@ -444,11 +454,13 @@ def _render_outputs(
 
     if not traefik_result.ok:
         issues.append(EdgeIssue(code="EGR130", message="Traefik render failed"))
+    if not pangolin_traefik_result.ok:
+        issues.append(EdgeIssue(code="EGR133", message="Pangolin Traefik render failed"))
     if not technitium_result.ok:
         issues.append(EdgeIssue(code="EGR132", message="Technitium render failed"))
     if coredns_result is not None and not coredns_result.ok:
         issues.append(EdgeIssue(code="EGR131", message="CoreDNS render failed"))
-    return traefik_result, technitium_result, coredns_result, issues
+    return traefik_result, pangolin_traefik_result, technitium_result, coredns_result, issues
 
 
 def _run_pve_target_preflight(expected_target: str) -> tuple[bool, str]:
@@ -799,12 +811,20 @@ def _dry_run_health_stubs(args: argparse.Namespace) -> HealthPhaseResult:
 def _write_render_outputs(
     args: argparse.Namespace,
     traefik_result: Any,
+    pangolin_traefik_result: Any,
     technitium_result: Any,
     coredns_result: Any | None,
 ) -> RenderPhaseResult:
     traefik_output_dir = args.traefik_output_dir.resolve()
+    pangolin_traefik_output_dir = args.pangolin_traefik_output_dir.resolve()
     rendered_files = [
         str(path) for path in RENDER_TRAEFIK.write_rendered_files(traefik_result.rendered, traefik_output_dir)
+    ]
+    pangolin_rendered_files = [
+        str(path)
+        for path in RENDER_TRAEFIK.write_rendered_files(
+            pangolin_traefik_result.rendered, pangolin_traefik_output_dir
+        )
     ]
     rendered_records = str(
         RENDER_TECHNITIUM.write_rendered_records(
@@ -818,10 +838,13 @@ def _write_render_outputs(
         )
     return RenderPhaseResult(
         traefik_result=traefik_result,
+        pangolin_traefik_result=pangolin_traefik_result,
         technitium_result=technitium_result,
         coredns_result=coredns_result,
         traefik_output_dir=traefik_output_dir,
+        pangolin_traefik_output_dir=pangolin_traefik_output_dir,
         rendered_files=rendered_files,
+        pangolin_rendered_files=pangolin_rendered_files,
         rendered_records=rendered_records,
         rendered_zone=rendered_zone,
     )
@@ -868,6 +891,11 @@ def _build_passed_payload(
             **render.traefik_result.to_dict(),
             "output_dir": str(render.traefik_output_dir),
             "files": render.rendered_files,
+        },
+        "pangolin_traefik": {
+            **render.pangolin_traefik_result.to_dict(),
+            "output_dir": str(render.pangolin_traefik_output_dir),
+            "files": render.pangolin_rendered_files,
         },
         "technitium": {
             **render.technitium_result.to_dict(),
@@ -918,7 +946,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:  # nosonar: p
             temp_dir.cleanup()
         return result
 
-    traefik_result, technitium_result, coredns_result, render_issues = _render_outputs(
+    traefik_result, pangolin_traefik_result, technitium_result, coredns_result, render_issues = _render_outputs(
         args, render_manifest_paths
     )
     issues.extend(render_issues)
@@ -937,7 +965,9 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:  # nosonar: p
             temp_dir.cleanup()
         return result
 
-    render = _write_render_outputs(args, traefik_result, technitium_result, coredns_result)
+    render = _write_render_outputs(
+        args, traefik_result, pangolin_traefik_result, technitium_result, coredns_result
+    )
 
     needs_authentik = _selected_manifests_require_authentik(manifest_paths)
     discovery_dict: dict[str, object] | None = None
