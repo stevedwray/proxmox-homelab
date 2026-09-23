@@ -10,6 +10,8 @@ spec:
   routes:
     - name: nextcloud
       host: nextcloud.${LAB_DOMAIN}
+      pangolin:
+        public_host: nextcloud.pan.gibbsgreatly.xyz
       backend:
         type: url
         url: http://${LAB_IP_NEXTCLOUD_STACK}:8080

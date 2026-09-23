@@ -11,6 +11,11 @@
     nextcloud_stack_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
     nextcloud_stack_image_tag: "{{ lookup('env', 'NEXTCLOUD_IMAGE_TAG') | mandatory('NEXTCLOUD_IMAGE_TAG must pin a supported release') }}"
+    # The public hostname is intentionally distinct from LAB_DOMAIN. It is
+    # only routed by pangolin-proxy after the EdgeManifest opt-in; creating
+    # this trust entry does not create public DNS or a Pangolin resource.
+    nextcloud_pangolin_public_host: "{{ lookup('env', 'NEXTCLOUD_PANGOLIN_PUBLIC_HOST') | default('nextcloud.pan.gibbsgreatly.xyz', true) }}"
+    nextcloud_pangolin_proxy_ip: "{{ lookup('env', 'LAB_IP_PANGOLIN_PROXY') | default('192.168.30.11', true) }}"
     wazuh_agent_fim_paths:
       - "{{ nextcloud_stack_dir }}"
     wazuh_agent_docker_monitoring_enabled: true
@@ -85,6 +90,8 @@
           NEXTCLOUD_IMAGE_TAG={{ nextcloud_stack_image_tag }}
           LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
           LAB_IP_PROXY={{ lookup('env', 'LAB_IP_PROXY') }}
+          LAB_IP_PANGOLIN_PROXY={{ nextcloud_pangolin_proxy_ip }}
+          NEXTCLOUD_PANGOLIN_PUBLIC_HOST={{ nextcloud_pangolin_public_host }}
           NEXTCLOUD_DB_PASSWORD={{ lookup('env', 'NEXTCLOUD_DB_PASSWORD') | mandatory }}
           NEXTCLOUD_REDIS_PASSWORD={{ lookup('env', 'NEXTCLOUD_REDIS_PASSWORD') | mandatory }}
           NEXTCLOUD_ADMIN_PASSWORD={{ lookup('env', 'NEXTCLOUD_ADMIN_PASSWORD') | mandatory }}
@@ -117,6 +124,24 @@
         cmd: >-
           docker exec --user www-data nextcloud-stack-app php occ config:system:set
           allow_local_remote_servers --type=boolean --value=true
+      changed_when: false
+      when: not ansible_check_mode
+
+    # These persistent config.php entries are required for an existing
+    # installation; Compose environment variables only cover first install.
+    - name: Trust the Pangolin Nextcloud hostname
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          trusted_domains 1 --value={{ nextcloud_pangolin_public_host }}
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Trust the dedicated Pangolin proxy only
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          trusted_proxies 1 --value={{ nextcloud_pangolin_proxy_ip }}
       changed_when: false
       when: not ansible_check_mode
 

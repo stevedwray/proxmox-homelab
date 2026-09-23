@@ -16,9 +16,11 @@ services:
       REDIS_HOST_PASSWORD: ${NEXTCLOUD_REDIS_PASSWORD}
       NEXTCLOUD_ADMIN_USER: admin
       NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
-      NEXTCLOUD_TRUSTED_DOMAINS: nextcloud.${LAB_DOMAIN}
+      # Keep first-install settings aligned with the persistent occ-managed
+      # settings in deploy-nextcloud-stack.yml.
+      NEXTCLOUD_TRUSTED_DOMAINS: nextcloud.${LAB_DOMAIN} ${NEXTCLOUD_PANGOLIN_PUBLIC_HOST}
       OVERWRITEPROTOCOL: https
-      TRUSTED_PROXIES: ${LAB_IP_PROXY}
+      TRUSTED_PROXIES: ${LAB_IP_PROXY} ${LAB_IP_PANGOLIN_PROXY}
     volumes:
       - nextcloud-app-data:/var/www/html
       - /var/lib/nextcloud-persistent/data:/var/www/html/data
