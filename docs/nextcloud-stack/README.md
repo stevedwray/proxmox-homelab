@@ -50,7 +50,7 @@ to the OCI Pangolin edge** — `lab` site recreated (original credentials
 unrecoverable, Community Edition gates regeneration behind Enterprise),
 tunnel confirmed up. Two more real bugs found and fixed on the OCI side
 getting there — see `/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`
-Step 3.5 for the full account (a missing CA bundle in the `fosrl/newt`
+Historical Step 3.5 for the full account (a missing CA bundle in the `fosrl/newt`
 image, and the real blocker: a stale Let's Encrypt *staging* cert that
 `roles/pangolin/tasks/main.yml`'s ACME storage policy was silently
 protecting from ever being corrected — now self-healing, not a one-off
@@ -223,11 +223,13 @@ See [plan.md](plan.md) for the full step-by-step plan.
   switches that VLAN 100 is already live as `cse_seg`
   (`terraform/lxc/network/pve-tiny.yaml`) — 110 is the next tag not
   already claimed by any zone across `terraform/lxc/network/*.yaml`
-  (10/20/30/40/50/60/70/80/90/100 all in use). Exactly two permitted
-  destination: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443.
-  Everything else explicit-deny; internet egress stays open for the
-  actual Gerbil/Newt tunnel. See `nextcloud-P3-01` for the literal
-  `pve.yaml` content.
+  (10/20/30/40/50/60/70/80/90/100 all in use). Exactly one permitted
+  destination: `pangolin-proxy` (192.168.30.11, `edge_seg`) on 443 —
+  the `connector_seg → wazuh-stack:1514` rule that briefly existed
+  alongside it has been removed (Wazuh retired, see "Current execution
+  state" above). Everything else explicit-deny; internet egress stays
+  open for the actual Gerbil/Newt tunnel. See `nextcloud-P3-01` for the
+  literal `pve.yaml` content.
 
 ## Research this plan is based on
 

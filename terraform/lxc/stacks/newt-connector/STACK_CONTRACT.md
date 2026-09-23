@@ -72,13 +72,17 @@ not persisted to a mounted volume.
 
 ## What May Depend on This Stack
 
-- The Wazuh agent on the OCI Pangolin host (`oci-pangolin`, agent `007`)
-  going `Active` — needs this connector's tunnel up, plus
-  `nextcloud-P3-07b`'s `connector_seg -> wazuh-stack:1514` firewall rule,
-  plus a private Pangolin resource for `wazuh-stack:1514` (operator/Pangolin
-  dashboard action).
 - Any future service published via `pangolin-proxy` — the tunnel this host
   provides is the only path in from OCI to the home network at all.
+
+**Not** a Wazuh agent-events route. That was investigated and retired
+(operator decision, 2026-09-23) — the private-resource transport shape
+this connector's tunnel provides turned out to be unreachable by a
+process co-located with the Pangolin/Gerbil server itself, and OCI-side
+monitoring now prioritizes OCI-native control-plane signals instead. The
+`connector_seg -> wazuh-stack:1514` firewall rule (`nextcloud-P3-07b`)
+has been removed from `pve.yaml`. Full account:
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md`.
 
 ## What Must Not Be Edited Casually
 
@@ -127,6 +131,7 @@ credentials (`/home/steve/git/oci/docs/repeatable-operations.md`:
 them in a `.env` file on the host itself, mode `0600`, never in this repo.
 Confirmed working live 2026-09-23: `Tunnel connection to server
 established successfully!` — see
-`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Step 3.5 for the
-full debugging trail (the CA mount above, plus the real root cause: a
-stale Let's Encrypt staging cert on the OCI side, now self-healing).
+`/home/steve/git/oci/docs/hardening-and-wazuh-plan.md` Historical Step
+3.5 for the full debugging trail (the CA mount above, plus the real
+root cause: a stale Let's Encrypt staging cert on the OCI side, now
+self-healing).
