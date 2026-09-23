@@ -206,7 +206,7 @@ stack_yaml:
   ip_address: "192.168.120.10/24"
   gateway: "192.168.120.1"
   dns_server: "192.168.120.1"
-  vmid: 90010
+  vmid: 120010
   cores: 4
   memory: 4096
   swap: 1024
@@ -312,7 +312,7 @@ contract_facts: |
   - Zone: apps_seg (VLAN 120, new zone — see nextcloud-01)
   - IP: 192.168.120.10/24
   - Gateway: 192.168.120.1
-  - VMID: 90010
+  - VMID: 120010
   - Provides: nextcloud, port 8080, protocol tcp
   - Dependencies: none at deploy time; Authentik must already be live
     for OIDC wiring (nextcloud-05) to succeed
