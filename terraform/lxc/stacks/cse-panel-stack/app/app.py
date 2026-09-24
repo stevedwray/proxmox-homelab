@@ -613,6 +613,9 @@ def index():
       .oplog-turn.oplog-ai {{ border-left-color: #1565c0; }}
       .oplog-turn.oplog-env {{ border-left-color: #999; }}
       .oplog-turn .transcript-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }}
+      .oplog-prompt {{ margin: 0.5rem 0; }}
+      .oplog-prompt summary {{ cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #555; }}
+      .oplog-prompt .transcript-text {{ margin-top: 0.3rem; }}
     </style>
     </head>
     <body>
@@ -865,8 +868,17 @@ def index():
             const headerParts = ['attacker', 'target', 'model']
               .filter(k => entry[k])
               .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
+            // Collapsed by default -- this is the system prompt actually
+            // given to the model (the red-team objective plus a leaked-
+            // credential list), genuinely useful for research but long
+            // enough (2000+ chars) that showing it open by default would
+            // bury the actual attack turns below it.
+            const systemPrompt = entry.system_prompt
+              ? `<details class="oplog-prompt"><summary>System prompt (what the model was actually told)</summary><p class="transcript-text">${{textOrEmpty(entry.system_prompt)}}</p></details>`
+              : '';
             return `<div class="transcript-entry"><b>Attack session ${{i + 1}}</b>
               ${{headerParts.length ? `<div class="transcript-meta">${{headerParts.join(' &middot; ')}}</div>` : ''}}
+              ${{systemPrompt}}
               ${{renderOperationLog(entry.operation_log)}}
             </div>`;
           }}
