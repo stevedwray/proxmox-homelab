@@ -34,11 +34,14 @@
     # Fixed 2026-09-24: XPMultiplier was 5 (5x all XP from every source),
     # not just "less grindy" but a flat sprint to max level -- reported
     # live as reaching level 21 from a few minutes of punching trees.
-    # Dropped to 2x: still noticeably faster than vanilla, nowhere near
-    # instant. Everything else here matches the original "less grindy
-    # taming/breeding, less punishing" ask and is intentionally kept.
+    # First dropped to 2x -- still reported as too fast (3 levels from one
+    # tree + some fiber/stone), because ARK's own level curve is very
+    # front-loaded even at vanilla rates, not because 2x was itself buggy.
+    # Operator's actual target (2026-09-24): deliberately *below* vanilla.
+    # Everything else here matches the original "less grindy taming/
+    # breeding, less punishing" ask and is intentionally kept.
     ark_gameplay_settings:
-      XPMultiplier: 2
+      XPMultiplier: 0.5
       PlayerDamageMultiplier: 1.5
       PlayerResistanceMultiplier: 1.5
       TamingSpeedMultiplier: 10
