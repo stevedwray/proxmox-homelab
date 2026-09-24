@@ -1,10 +1,26 @@
 # nextcloud-stack
 
-Status (2026-09-24): **Phase 1 is deployed and operational on `pve`.**
-Nextcloud is private to the lab edge at
-`https://nextcloud.lab.gibbsgreatly.xyz`; Pangolin publication remains a
-separate, later Phase 3 decision. See "Current execution state" for the
-verified deployment and the remaining follow-up work.
+Status (2026-09-25): **Phase 1 is deployed and operational on `pve`.**
+Nextcloud is published through Pangolin at
+`https://nextcloud.pan.gibbsgreatly.xyz` and internally at
+`https://nextcloud.lab.gibbsgreatly.xyz`.
+
+**Authentik-via-Pangolin is retired (operator decision, 2026-09-25) — read
+this before anything else in this file.** Everything below describing
+Nextcloud's `user_oidc`/Authentik SSO and Authentik's own `pangolin`
+route (`P3-03b` through `P3-05`, "OIDC was verified live", etc.) documents
+a real, working, but now-reversed design. **Authentik must never gain any
+externally reachable path, direct or via Pangolin, public or
+client-only** — the blast radius of exposing the lab's single IdP in any
+form was judged too large relative to the benefit. Nextcloud now
+authenticates with a single local account (`steve`) only; Pangolin's own
+`nextcloud-users` role/MFA remains the external gate. **New standing
+policy, applying to every future Pangolin-published service, not just
+Nextcloud: no service published through Pangolin may use Authentik as its
+login mechanism.** Each needs its own local/native auth, or Pangolin's own
+SSO/MFA as the sole gate. See "Authentik-via-Pangolin retired" below for
+the full rollback and rationale; the historical sections further down are
+kept as a record of what was built and verified, not as current state.
 
 Goal: a self-hosted Nextcloud instance as a durable local storage point,
 initially for documentation/reports produced by other lab projects (the
@@ -12,7 +28,74 @@ initially for documentation/reports produced by other lab projects (the
 Pangolin with monitoring and a deliberately narrow blast radius — see
 Phase 3 in [plan.md](plan.md).
 
-## Current execution state (2026-09-24)
+## Authentik-via-Pangolin retired (2026-09-25)
+
+**What was built and actually worked, live:** Nextcloud published through
+Pangolin (`nextcloud.pan.gibbsgreatly.xyz`), `user_oidc` installed and
+enabled, Authentik's OAuth2 provider reconciled with both the LAN and
+Pangolin callback URLs, and Authentik itself given a `pangolin.private_host`
+route so an authenticated Pangolin client tunnel could reach it for the
+OIDC redirect without a public listener. All of it was verified end-to-end
+— see the "P3-03b"/"P3-04"/"OIDC was verified live" sections below, kept
+as historical record.
+
+**Why it was rolled back anyway:** getting this right required real,
+ongoing security discipline that never goes away once built — Authentik's
+own hardening guide identifies specific RCE-capable config endpoints
+(`/api/v3/policies/expression*`, `/api/v3/propertymappings*`,
+`/api/v3/managed/blueprints*`, `/api/v3/stages/{prompt/prompts,captcha}*`)
+that must stay blocked at the proxy indefinitely; the browser-facing path
+allowlist for the flow executor/static assets could only be established by
+live testing, not read from docs; `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS`
+had to be kept exactly scoped to the real proxy path forever, since a
+mistake there lets any client spoof its IP for every login on the
+platform; and split-DNS/issuer-identity questions added further ambiguity.
+None of that risk is proportional to "let Nextcloud's login also be SSO"
+for one internal file-storage app. Operator call: Authentik's blast radius
+if any of that discipline slips is too large — full stop, no exceptions,
+no partial/client-only exposure either.
+
+**What changed, concretely:**
+- `terraform/lxc/stacks/nextcloud-stack/edge.yaml`: `auth.mode` back to
+  `none`; `NEXTCLOUD_OIDC_CLIENT_ID`/`SECRET` annotations removed. The
+  `pangolin.public_host`/`private_host` routing (i.e. Nextcloud remaining
+  reachable through Pangolin at all) is unaffected — only its auth
+  mechanism changed.
+- `terraform/lxc/stacks/authentik-stack/edge.yaml`: the `pangolin.private_host`
+  block removed entirely. Authentik has no Pangolin route of any kind now.
+- `terraform/lxc/discover-authentik-edge.py`: the `nextcloud-stack`/`nextcloud`
+  entries removed from `OIDC_ROUTE_CLIENT_IDS`/`SECRETS`, its
+  `_oidc_redirect_uris`/`_oidc_grant_types` special cases, and the
+  now-unused dual-hostname (`pangolin_public_host`) redirect_uris logic
+  that existed only to serve it.
+- `terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml`: the
+  `user_oidc` install/enable/register-provider tasks and the
+  `allow_local_remote_servers` SSRF-trust task removed; replaced with a
+  single `occ user:add ... --group=admin steve` task.
+- `terraform/lxc/stacks/nextcloud-stack/docker-compose.yml`:
+  `NEXTCLOUD_ADMIN_USER` changed from `admin` to `steve`
+  (`NEXTCLOUD_ADMIN_PASSWORD` renamed `NEXTCLOUD_STEVE_PASSWORD` to match
+  — new SOPS key, see "Still genuinely open" below).
+- On the Authentik dashboard itself (manual, not automatable per this
+  repo's credential-creation policy): delete the `nextcloud` OAuth2
+  Provider/Application object.
+- On the running host (mutating, needs the production approval flow):
+  `occ app:disable user_oidc` + `occ app:remove user_oidc`; since it's not
+  yet holding real user data, a clean `docker compose down -v` + wipe of
+  `/var/lib/nextcloud-persistent/{data,postgres}` + redeploy is the
+  simpler path rather than patching the live instance's account list
+  (`admin`, `nxc`, and an OIDC-provisioned `Steve` account all currently
+  exist — a fresh install collapses that to just `steve`).
+
+**Standing policy, permanent, applies beyond Nextcloud:** no service
+published through Pangolin may use Authentik as its login mechanism, in
+any form — full public exposure, path-scoped exposure, or
+Pangolin-client-only exposure are all out. Each Pangolin-published service
+gets its own local/native login, or relies solely on Pangolin's own
+SSO/MFA (which is already architecturally separate from Authentik — see
+"Pangolin's own dashboard login is NOT Authentik-backed" below).
+
+## Current execution state (2026-09-24) — historical, describes the retired design above
 
 **`connector_seg` is now live on `pve`** — `nextcloud-P3-01` executed:
 zone/vnet/subnet applied via `pvesh` under the production approval flow
@@ -393,6 +476,12 @@ See [plan.md](plan.md) for the full step-by-step plan.
 
 ## Still genuinely open
 
+- **`NEXTCLOUD_STEVE_PASSWORD` SOPS key needed (added 2026-09-25).**
+  Replaces `NEXTCLOUD_ADMIN_PASSWORD` following the Authentik-via-Pangolin
+  rollback — the compose file and playbook now expect this exact name.
+  `NEXTCLOUD_OIDC_CLIENT_ID`/`SECRET` are no longer read anywhere; leaving
+  them in SOPS is harmless but they can be removed on a future SOPS
+  edit pass.
 - **Credential rotation.** The first bootstrap produced an over-verbose
   database exception log. Rotate `NEXTCLOUD_DB_PASSWORD` with a coordinated
   PostgreSQL, Compose, and SOPS update; do not treat this as a simple `.env`

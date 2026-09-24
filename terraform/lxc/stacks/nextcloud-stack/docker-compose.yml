@@ -14,8 +14,13 @@ services:
       POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
       REDIS_HOST: redis
       REDIS_HOST_PASSWORD: ${NEXTCLOUD_REDIS_PASSWORD}
-      NEXTCLOUD_ADMIN_USER: admin
-      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      # Single local account, no SSO -- operator decision, 2026-09-25 (see
+      # docs/nextcloud-stack/README.md "Authentik-via-Pangolin retired").
+      # NEXTCLOUD_ADMIN_USER only takes effect on first install; an
+      # already-installed instance is fixed up by deploy-nextcloud-stack.yml's
+      # "Ensure the steve local account exists" task instead.
+      NEXTCLOUD_ADMIN_USER: steve
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_STEVE_PASSWORD}
       # Keep first-install settings aligned with the persistent occ-managed
       # settings in deploy-nextcloud-stack.yml.
       NEXTCLOUD_TRUSTED_DOMAINS: nextcloud.${LAB_DOMAIN} ${NEXTCLOUD_PANGOLIN_PUBLIC_HOST}

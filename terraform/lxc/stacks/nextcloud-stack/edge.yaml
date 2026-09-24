@@ -3,9 +3,6 @@ kind: EdgeManifest
 metadata:
   name: nextcloud-stack-edge
   stack: nextcloud-stack
-  annotations:
-    repo.auth.oidc.client_id_env: NEXTCLOUD_OIDC_CLIENT_ID
-    repo.auth.oidc.client_secret_env: NEXTCLOUD_OIDC_CLIENT_SECRET
 spec:
   routes:
     - name: nextcloud
@@ -26,4 +23,9 @@ spec:
       tls:
         resolver: letsencrypt
       auth:
-        mode: oidc
+        # No Authentik/OIDC of any kind -- operator decision, 2026-09-25.
+        # Nextcloud's own local login is the only auth layer; Pangolin's
+        # own "nextcloud-users" role/MFA is the outer gate for the public
+        # route. See docs/nextcloud-stack/README.md "Authentik-via-Pangolin
+        # retired".
+        mode: none

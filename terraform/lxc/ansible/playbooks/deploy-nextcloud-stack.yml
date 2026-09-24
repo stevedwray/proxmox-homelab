@@ -8,7 +8,6 @@
     stack_name: nextcloud-stack
     nextcloud_stack_dir: "/opt/{{ stack_name }}"
     nextcloud_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
-    nextcloud_stack_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
     nextcloud_stack_image_tag: "{{ lookup('env', 'NEXTCLOUD_IMAGE_TAG') | mandatory('NEXTCLOUD_IMAGE_TAG must pin a supported release') }}"
     # The public hostname is intentionally distinct from LAB_DOMAIN. It is
@@ -94,7 +93,7 @@
           NEXTCLOUD_PANGOLIN_PUBLIC_HOST={{ nextcloud_pangolin_public_host }}
           NEXTCLOUD_DB_PASSWORD={{ lookup('env', 'NEXTCLOUD_DB_PASSWORD') | mandatory }}
           NEXTCLOUD_REDIS_PASSWORD={{ lookup('env', 'NEXTCLOUD_REDIS_PASSWORD') | mandatory }}
-          NEXTCLOUD_ADMIN_PASSWORD={{ lookup('env', 'NEXTCLOUD_ADMIN_PASSWORD') | mandatory }}
+          NEXTCLOUD_STEVE_PASSWORD={{ lookup('env', 'NEXTCLOUD_STEVE_PASSWORD') | mandatory }}
       no_log: true
 
     - name: Validate Nextcloud Compose configuration
@@ -119,14 +118,6 @@
         timeout: 180
       when: not ansible_check_mode
 
-    - name: Allow Nextcloud to contact internal OIDC services
-      ansible.builtin.command:
-        cmd: >-
-          docker exec --user www-data nextcloud-stack-app php occ config:system:set
-          allow_local_remote_servers --type=boolean --value=true
-      changed_when: false
-      when: not ansible_check_mode
-
     # These persistent config.php entries are required for an existing
     # installation; Compose environment variables only cover first install.
     - name: Trust the Pangolin Nextcloud hostname
@@ -145,42 +136,20 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Install Nextcloud user_oidc app
+    # No SSO/OIDC of any kind -- operator decision, 2026-09-25: Authentik
+    # must never gain any externally-reachable path, direct or through
+    # Pangolin, public or client-only. Nextcloud (and any future
+    # Pangolin-published service) authenticates with its own local/native
+    # login only. See docs/nextcloud-stack/README.md "Authentik-via-Pangolin
+    # retired" for the full rationale.
+    - name: Ensure the steve local account exists and is an admin
       ansible.builtin.command:
-        cmd: docker exec --user www-data nextcloud-stack-app php occ app:install user_oidc
-      register: occ_install_user_oidc
-      changed_when: >-
-        'already installed' not in occ_install_user_oidc.stdout and
-        'already installed' not in occ_install_user_oidc.stderr
-      failed_when: >-
-        occ_install_user_oidc.rc != 0 and
-        'already installed' not in occ_install_user_oidc.stdout and
-        'already installed' not in occ_install_user_oidc.stderr
-      when: not ansible_check_mode
-
-    - name: Enable Nextcloud user_oidc app
-      ansible.builtin.command:
-        cmd: docker exec --user www-data nextcloud-stack-app php occ app:enable user_oidc
-      register: occ_enable_user_oidc
-      changed_when: >-
-        'already enabled' not in occ_enable_user_oidc.stdout and
-        'already enabled' not in occ_enable_user_oidc.stderr
-      failed_when: >-
-        occ_enable_user_oidc.rc != 0 and
-        'already enabled' not in occ_enable_user_oidc.stdout and
-        'already enabled' not in occ_enable_user_oidc.stderr
-      when: not ansible_check_mode
-
-    - name: Register Authentik as Nextcloud OIDC provider
-      ansible.builtin.command:
-        cmd: >-
-          docker exec --user www-data nextcloud-stack-app php occ user_oidc:provider authentik
-          --clientid={{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_ID') | mandatory }}
-          --clientsecret={{ lookup('env', 'NEXTCLOUD_OIDC_CLIENT_SECRET') | mandatory }}
-          --discoveryuri=https://{{ nextcloud_stack_fqdn_authentik }}/application/o/edge-nextcloud-stack-nextcloud/.well-known/openid-configuration
-      register: occ_register_provider
-      changed_when: false
-      failed_when: occ_register_provider.rc != 0 and 'already exists' not in occ_register_provider.stderr
+        cmd: docker exec --user www-data nextcloud-stack-app php occ user:add --password-from-env --display-name=Steve --group=admin steve
+      environment:
+        OC_PASS: "{{ lookup('env', 'NEXTCLOUD_STEVE_PASSWORD') | mandatory }}"
+      register: occ_add_steve
+      changed_when: "'already exists' not in occ_add_steve.stderr"
+      failed_when: occ_add_steve.rc != 0 and 'already exists' not in occ_add_steve.stderr
       no_log: true
       when: not ansible_check_mode
 

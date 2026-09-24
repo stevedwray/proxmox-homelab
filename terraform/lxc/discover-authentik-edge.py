@@ -49,7 +49,6 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
     ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
     ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
-    ("nextcloud-stack", "nextcloud"): ("NEXTCLOUD_OIDC_CLIENT_ID", "nextcloud"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -61,7 +60,6 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
     ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
     ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
-    ("nextcloud-stack", "nextcloud"): "NEXTCLOUD_OIDC_CLIENT_SECRET",
 }
 
 
@@ -469,9 +467,6 @@ def _oidc_base_url(intent: RouteIntent) -> str:
 
 def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
     base_url = _oidc_base_url(intent)
-    base_urls = (base_url,)
-    if intent.pangolin_public_host:
-        base_urls += (f"https://{intent.pangolin_public_host}",)
     if _oidc_route_key(intent) == ("harbor-stack", "harbor"):
         return (f"{base_url}/c/oidc/callback",)
     if _oidc_route_key(intent) == ("monitoring-stack", "grafana"):
@@ -499,9 +494,6 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/authentik/callback",)
     if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
         return (f"{base_url}/auth/login",)
-    if _oidc_route_key(intent) == ("nextcloud-stack", "nextcloud"):
-        # user_oidc builds this fixed callback path for the provider code flow.
-        return tuple(f"{url}/apps/user_oidc/code" for url in base_urls)
     return ()
 
 
@@ -527,7 +519,6 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
     if _oidc_route_key(intent) in (
         ("media-stack-lab", "jellyfin"),
         ("media-stack-lab", "immich"),
-        ("nextcloud-stack", "nextcloud"),
     ):
         # Same bug, found live again 2026-09-04: both were newly-created
         # providers via this script (not pre-existing/patched), so both hit
@@ -535,9 +526,9 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # live via a real failed SSO login attempt (Authentik redirected to
         # the callback with error=invalid_request, "the request is
         # otherwise malformed"; GET on the provider showed grant_types: []).
-        # jellyfin-plugin-authentik, Immich's native OAuth, and Nextcloud's
-        # user_oidc app use the authorization-code flow (with PKCE where
-        # supported). Match the common provider baseline for consistency.
+        # jellyfin-plugin-authentik and Immich's native OAuth use the
+        # authorization-code flow (with PKCE where supported). Match the
+        # common provider baseline for consistency.
         return ("authorization_code", "client_credentials", "password")
     return ()
 
