@@ -409,6 +409,34 @@ def job_status(job_id: str):
     return entry
 
 
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str, force: bool = False):
+    """Standalone jobs (submitted via POST /jobs, not part of a suite) --
+    same force/cancel semantics as DELETE /suites/{id}, kept as a separate
+    endpoint since a standalone job has no GroupResult to restore. This is
+    also how the panel's own real jobs get cancelled/cleaned up: it's not
+    just a raw-API convenience, the discontinued "Individual jobs" section
+    at least had no delete control even when it existed, so a genuinely
+    stuck standalone job had no way to be cleared at all until this."""
+    res = AsyncResult(job_id, app=celery_app)
+    if res.state in NON_TERMINAL_STATES and not force:
+        return {
+            "error": f"job is {res.state.lower()} -- retry with force=true to cancel and delete anyway",
+            "in_progress": True,
+        }
+    cancelled = res.state in NON_TERMINAL_STATES
+    if cancelled:
+        res.revoke(terminate=True, signal="SIGTERM")
+
+    client = celery_app.backend.client
+    res.forget()
+    client.delete(f"cse_panel:job_meta:{job_id}")
+    client.lrem(RECENT_JOBS_KEY, 0, job_id)
+
+    celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": [job_id]})
+    return {"deleted": job_id, "cancelled": [job_id] if cancelled else []}
+
+
 @app.post("/suites")
 def submit_suite(body: SuiteRequest, x_authentik_username: str | None = Header(default=None)):
     unknown = [t.benchmark for t in body.tests if t.benchmark not in KNOWN_BENCHMARKS]
@@ -716,6 +744,14 @@ def index():
         const expandedJobs = new Set();
         const transcriptCache = {{}};
         let lastSuitesBody = {{suites: []}};
+        // Jobs submitted via the raw POST /jobs API rather than /suites --
+        // no suite card to show them in, but they still need to be
+        // visible and cancellable (see docs/cyberseceval-panel/README.md:
+        // the previous "Individual jobs" section was removed as pure
+        // clutter, but that also removed the only way to see/cancel a
+        // standalone job -- confirmed live 2026-09-25 when exactly this
+        // kind of job got stuck for 3 days with no way to clear it).
+        let lastStandaloneJobs = [];
 
         // Each run (suite) gets its own collapsible card instead of
         // everything sharing one continuous table -- the operator asked
@@ -726,11 +762,15 @@ def index():
         // opens whichever ones they actually want to look at.
         const openSuites = new Set();
 
-        function renderJobRow(job) {{
+        function renderJobRow(job, standalone) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
           const isOpen = expandedJobs.has(job.job_id);
           const viewLink = (job.state_label === 'Done' || job.state_label === 'Failed')
             ? `<a href="#" class="view-link" onclick="toggleJob('${{job.job_id}}'); return false;">${{isOpen ? 'hide' : 'view'}} prompts &amp; responses</a>`
+            : '';
+          const running = job.state_label === 'Queued' || job.state_label === 'Running' || job.state_label === 'Retrying';
+          const actionCell = standalone
+            ? `<td><button type="button" class="delete-run-btn" onclick="deleteJob(event, '${{job.job_id}}', ${{running}})">${{running ? 'Cancel &amp; delete' : 'Delete'}}</button></td>`
             : '';
           let html = `<tr>
             <td>${{when}}</td>
@@ -738,11 +778,33 @@ def index():
             <td>${{job.backend}}</td>
             <td class="${{stateClass(job.state_label)}}">${{job.state_label}}</td>
             <td>${{renderStats(job)}}${{viewLink}}</td>
+            ${{actionCell}}
           </tr>`;
           if (isOpen) {{
-            html += `<tr class="detail-row"><td colspan="5">${{renderJobDetail(job.job_id)}}</td></tr>`;
+            html += `<tr class="detail-row"><td colspan="${{standalone ? 6 : 5}}">${{renderJobDetail(job.job_id)}}</td></tr>`;
           }}
           return html;
+        }}
+
+        async function deleteJob(event, jobId, running) {{
+          event.preventDefault();
+          event.stopPropagation();
+          const msg = running
+            ? 'This job is still in progress. Deleting will cancel it (including a stuck/hung job) and remove its results. Continue?'
+            : 'Delete this job and its results? This cannot be undone.';
+          if (!confirm(msg)) return;
+          try {{
+            const url = `/jobs/${{jobId}}` + (running ? '?force=true' : '');
+            const res = await fetch(url, {{method: 'DELETE'}});
+            const body = await res.json();
+            if (body.error) {{ showToast('Error: ' + body.error); return; }}
+            lastStandaloneJobs = lastStandaloneJobs.filter(j => j.job_id !== jobId);
+            expandedJobs.delete(jobId);
+            renderTable();
+            showToast(body.cancelled && body.cancelled.length ? 'Job cancelled and deleted.' : 'Job deleted.');
+          }} catch (err) {{
+            showToast(`Failed to delete (${{err.message}}).`);
+          }}
         }}
 
         // A benchmark's transcript entries don't share one exact schema --
@@ -798,9 +860,10 @@ def index():
           return `<div class="detail-box">${{cached.transcript.map(renderTranscriptEntry).join('')}}</div>`;
         }}
 
-        function jobsTable(jobs) {{
-          const rows = jobs.map(renderJobRow).join('');
-          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th></tr></thead><tbody>${{rows}}</tbody></table>`;
+        function jobsTable(jobs, standalone) {{
+          const rows = jobs.map(j => renderJobRow(j, standalone)).join('');
+          const actionHeader = standalone ? '<th></th>' : '';
+          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th>${{actionHeader}}</tr></thead><tbody>${{rows}}</tbody></table>`;
         }}
 
         function onSuiteToggle(suiteId, isOpen) {{
@@ -843,9 +906,16 @@ def index():
 
         function renderTable() {{
           const suitesNewestFirst = lastSuitesBody.suites.slice().reverse();
-          const html = suitesNewestFirst
+          let html = suitesNewestFirst
             .map(suite => renderSuiteCard(suite, openSuites.has(suite.suite_id)))
             .join('');
+          if (lastStandaloneJobs.length) {{
+            const jobsNewestFirst = lastStandaloneJobs.slice().reverse();
+            html += `<details class="run-card" ${{openSuites.has('__standalone__') ? 'open' : ''}} ontoggle="onSuiteToggle('__standalone__', this.open)">
+              <summary><b>Individual jobs</b> <span class="muted">(submitted directly via the API, not part of a run)</span></summary>
+              ${{jobsTable(jobsNewestFirst, true)}}
+            </details>`;
+          }}
           document.getElementById('status').innerHTML = html || '<p class="muted">No tests run yet.</p>';
         }}
 
@@ -887,9 +957,15 @@ def index():
 
         async function refreshStatus() {{
           try {{
-            const suitesRes = await fetch('/suites');
-            if (!suitesRes.ok) throw new Error(`HTTP ${{suitesRes.status}}`);
+            const [suitesRes, jobsRes] = await Promise.all([fetch('/suites'), fetch('/jobs')]);
+            if (!suitesRes.ok || !jobsRes.ok) throw new Error(`HTTP ${{suitesRes.status}}/${{jobsRes.status}}`);
             lastSuitesBody = await suitesRes.json();
+            const allJobs = (await jobsRes.json()).jobs;
+            const inSuite = new Set();
+            for (const suite of lastSuitesBody.suites) {{
+              for (const job of suite.jobs) {{ inSuite.add(job.job_id); }}
+            }}
+            lastStandaloneJobs = allJobs.filter(j => !inSuite.has(j.job_id));
             renderTable();
           }} catch (err) {{
             document.getElementById('status').innerHTML =
