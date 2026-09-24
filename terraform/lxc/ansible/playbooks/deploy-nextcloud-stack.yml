@@ -148,8 +148,13 @@
       environment:
         OC_PASS: "{{ lookup('env', 'NEXTCLOUD_STEVE_PASSWORD') | mandatory }}"
       register: occ_add_steve
-      changed_when: "'already exists' not in occ_add_steve.stderr"
-      failed_when: occ_add_steve.rc != 0 and 'already exists' not in occ_add_steve.stderr
+      changed_when: >-
+        'already exists' not in occ_add_steve.stdout and
+        'already exists' not in occ_add_steve.stderr
+      failed_when: >-
+        occ_add_steve.rc != 0 and
+        'already exists' not in occ_add_steve.stdout and
+        'already exists' not in occ_add_steve.stderr
       no_log: true
       when: not ansible_check_mode
 
