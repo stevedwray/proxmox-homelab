@@ -223,6 +223,32 @@ spec:
             routers["authentik-private"]["rule"],
         )
 
+    def test_write_rendered_files_removes_stale_orphaned_stack_file(self):
+        # Real bug, found live 2026-09-25: authentik-stack's route was
+        # removed from EdgeManifest, but its previously-rendered
+        # authentik-stack.yml was never deleted from the generated
+        # directory, so deploy-pangolin-proxy.yml's own remove-then-
+        # republish step (which only looks at what's in this directory)
+        # would have faithfully recreated the live route on the very next
+        # redeploy.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            stale_path = output_dir / "authentik-stack.yml"
+            stale_path.write_text("http:\n  routers: {}\n", encoding="utf-8")
+
+            rendered = (
+                MODULE.RenderedStack(
+                    stack="nextcloud-stack",
+                    manifest="nextcloud.yaml",
+                    config={"http": {"routers": {}}},
+                ),
+            )
+            written = MODULE.write_rendered_files(rendered, output_dir)
+
+            self.assertFalse(stale_path.exists())
+            self.assertEqual([output_dir / "nextcloud-stack.yml"], written)
+            self.assertEqual(["nextcloud-stack.yml"], [p.name for p in output_dir.glob("*.yml")])
+
 
 if __name__ == "__main__":
     unittest.main()

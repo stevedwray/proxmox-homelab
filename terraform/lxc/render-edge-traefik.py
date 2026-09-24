@@ -477,7 +477,22 @@ def render_traefik_dry_run(manifest_paths: list[Path], legacy_playbook: Path) ->
 
 
 def write_rendered_files(rendered: tuple[RenderedStack, ...], output_dir: Path) -> list[Path]:
-    """Write per-stack rendered config files to the output directory."""
+    """Write per-stack rendered config files to the output directory.
+
+    Full-sync semantics, not additive: a stack whose EdgeManifest route no
+    longer renders (opted out, host removed, etc.) has its previously
+    written <stack>.yml removed here too. Without this, a stale local file
+    survives indefinitely and gets faithfully republished to the live host
+    on every future deploy -- confirmed live, 2026-09-25: removing
+    authentik-stack's `pangolin` route left `authentik-stack.yml` sitting
+    in the generated dir, and deploy-pangolin-proxy.yml's own
+    remove-then-republish step (which only ever looks at what's in this
+    generated dir, not at what EdgeManifest currently declares) would have
+    faithfully recreated the live route on the very next redeploy. This
+    directory is dedicated, generated-only content (`.generated/traefik/`,
+    `.generated/pangolin-traefik/`) -- safe to fully sync rather than
+    only add to.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     written_paths: list[Path] = []
@@ -488,6 +503,12 @@ def write_rendered_files(rendered: tuple[RenderedStack, ...], output_dir: Path) 
             encoding="utf-8",
         )
         written_paths.append(output_path)
+
+    written_names = {path.name for path in written_paths}
+    for existing in output_dir.glob("*.yml"):
+        if existing.name not in written_names:
+            existing.unlink()
+
     return written_paths
 
 
