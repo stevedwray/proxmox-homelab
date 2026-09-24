@@ -480,14 +480,24 @@ def suite_status(suite_id: str):
 
 
 @app.delete("/suites/{suite_id}")
-def delete_suite(suite_id: str):
+def delete_suite(suite_id: str, force: bool = False):
     result = GroupResult.restore(suite_id, app=celery_app)
     if result is None:
         return {"error": f"suite '{suite_id}' not found"}
     job_ids = [r.id for r in result.results]
-    in_progress = [j for j, r in zip(job_ids, result.results) if r.state in NON_TERMINAL_STATES]
-    if in_progress:
-        return {"error": f"can't delete -- {len(in_progress)} job(s) still running/queued, wait for the run to finish first"}
+    in_progress = [r for r in result.results if r.state in NON_TERMINAL_STATES]
+    if in_progress and not force:
+        return {
+            "error": f"{len(in_progress)} job(s) still running/queued -- retry with force=true to cancel and delete anyway",
+            "in_progress": True,
+        }
+    # terminate=True actually kills the worker process executing this task
+    # (not just marking it revoked for a still-queued copy) -- needed for a
+    # genuinely stuck job, e.g. one hung against a dead backend with no
+    # effective timeout. Celery's prefork pool respawns the killed worker
+    # process automatically, so this doesn't take the worker down.
+    for r in in_progress:
+        r.revoke(terminate=True, signal="SIGTERM")
 
     client = celery_app.backend.client
     for r in result.results:
@@ -504,7 +514,7 @@ def delete_suite(suite_id: str):
     # does the real deletion. Fire-and-forget: the UI-visible cleanup above
     # is already done, no need to block the response on it.
     celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": job_ids})
-    return {"deleted": suite_id, "jobs": job_ids}
+    return {"deleted": suite_id, "jobs": job_ids, "cancelled": [r.id for r in in_progress]}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -548,6 +558,7 @@ def index():
       .stats-list {{ margin: 0; padding-left: 0; list-style: none; font-size: 0.85rem; }}
       .stats-list li {{ display: inline-block; margin-right: 0.8rem; }}
       .muted {{ color: #888; font-size: 0.85rem; }}
+      .field-hint {{ margin: -0.3rem 0 0.6rem; }}
       .result-hint {{ color: #666; font-size: 0.78rem; font-style: italic; margin-bottom: 0.3rem; max-width: 32rem; }}
       .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
@@ -585,8 +596,12 @@ def index():
         <form id="run-form">
           <div class="benchmark-list">{benchmark_checkboxes}</div>
           <label class="field">Test cases per benchmark:
-            <input name="num_test_cases" type="number" value="2" min="1" max="50">
+            <input name="num_test_cases" type="number" value="2" min="1" max="2000">
           </label>
+          <p class="muted field-hint">50 was never a real limit on the underlying benchmarks --
+            just an old placeholder in this form. Each benchmark's actual dataset size varies
+            (roughly 250-1900 test cases); asking for more than a benchmark actually has just
+            uses its whole dataset, it won't error.</p>
           <label class="field checkbox-field">
             <input name="random_sample" type="checkbox">
             Pick a random subset each run (otherwise the same N test cases run every time)
@@ -795,9 +810,7 @@ def index():
         function renderSuiteCard(suite, isOpen) {{
           const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
           const stillRunning = suite.done < suite.total;
-          const deleteBtn = stillRunning
-            ? `<button type="button" class="delete-run-btn" disabled title="Wait for the run to finish before deleting">Delete</button>`
-            : `<button type="button" class="delete-run-btn" onclick="deleteSuite(event, '${{suite.suite_id}}')">Delete</button>`;
+          const deleteBtn = `<button type="button" class="delete-run-btn" onclick="deleteSuite(event, '${{suite.suite_id}}', ${{stillRunning}})">${{stillRunning ? 'Cancel &amp; delete' : 'Delete'}}</button>`;
           return `<details class="run-card" ${{isOpen ? 'open' : ''}} ontoggle="onSuiteToggle('${{suite.suite_id}}', this.open)">
             <summary><b>${{when}}</b> &middot; ${{suite.jobs.length}} benchmark(s) &middot;
               ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}
@@ -807,18 +820,22 @@ def index():
           </details>`;
         }}
 
-        async function deleteSuite(event, suiteId) {{
+        async function deleteSuite(event, suiteId, stillRunning) {{
           event.preventDefault();
           event.stopPropagation();
-          if (!confirm('Delete this run and all its results? This cannot be undone.')) return;
+          const msg = stillRunning
+            ? 'This run is still in progress. Deleting will cancel whatever is currently running (including a stuck/hung job) and remove all its results. Continue?'
+            : 'Delete this run and all its results? This cannot be undone.';
+          if (!confirm(msg)) return;
           try {{
-            const res = await fetch(`/suites/${{suiteId}}`, {{method: 'DELETE'}});
+            const url = `/suites/${{suiteId}}` + (stillRunning ? '?force=true' : '');
+            const res = await fetch(url, {{method: 'DELETE'}});
             const body = await res.json();
             if (body.error) {{ showToast('Error: ' + body.error); return; }}
             lastSuitesBody.suites = lastSuitesBody.suites.filter(s => s.suite_id !== suiteId);
             openSuites.delete(suiteId);
             renderTable();
-            showToast('Run deleted.');
+            showToast(body.cancelled && body.cancelled.length ? 'Run cancelled and deleted.' : 'Run deleted.');
           }} catch (err) {{
             showToast(`Failed to delete (${{err.message}}).`);
           }}

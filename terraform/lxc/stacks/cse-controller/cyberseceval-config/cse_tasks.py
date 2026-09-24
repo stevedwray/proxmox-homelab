@@ -20,6 +20,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +39,17 @@ app = Celery("cse_tasks", broker=BROKER_URL, backend=RESULT_BACKEND)
 # in-flight job instead of losing it.
 app.conf.task_acks_late = True
 app.conf.worker_prefetch_multiplier = 1
+# Redis transport's own at-least-once redelivery: an unacked message
+# becomes visible again after visibility_timeout (default 1 hour) on the
+# assumption the worker died. task_acks_late means the ack only happens
+# after a task finishes -- but benchmark runs routinely take several
+# hours, so the default silently redelivered the SAME task before it was
+# even done, and it re-executed the instant the original finished.
+# Confirmed live 2026-09-25: one mitre run looped every ~4 hours for 3
+# days straight, permanently starving this single-concurrency worker.
+# Set well past the longest realistic run (autonomous-uplift/large mitre
+# batches) so a genuinely still-running task is never mistaken for dead.
+app.conf.broker_transport_options = {"visibility_timeout": 43200}  # 12h
 
 REPO_DIR = Path("/srv/cyberseceval/repo/PurpleLlama")
 VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")
@@ -203,6 +215,45 @@ def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
     return lines[-1][:max_chars] if lines else ""
 
 
+class _ProcResult:
+    __slots__ = ("returncode", "stdout", "stderr")
+
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""  # merged into stdout already (stderr=STDOUT below)
+
+
+def _run_killable(argv: list[str], cwd: Path) -> _ProcResult:
+    """subprocess.run() only ever gets killed at the ForkPoolWorker level by
+    Celery's revoke(terminate=True) -- the actual child process it spawns
+    survives as an orphan and keeps running (or hanging) after a
+    "cancelled" job supposedly stopped. Confirmed live 2026-09-25: a
+    3-day-old stuck mitre run had no way to actually be killed from the
+    panel. Runs the child in its own process group (start_new_session) and
+    installs a SIGTERM handler that kills the whole group, so a cancel
+    from the panel's delete-runs endpoint actually stops the real
+    subprocess, not just the Python frame that was blocked on it."""
+    proc = subprocess.Popen(
+        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
+    )
+
+    def _handle_sigterm(signum, frame):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise SystemExit(143)
+
+    old_handler = signal.signal(signal.SIGTERM, _handle_sigterm)
+    try:
+        stdout, _ = proc.communicate()
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+    return _ProcResult(proc.returncode, stdout)
+
+
 def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
     gen_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator",
@@ -213,7 +264,7 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--out-file={run_dir}/prompts.json",
         f"--shots-per-run={shots}", "--runs-per-range=1",
     ]
-    gen = subprocess.run(gen_cmd, cwd=REPO_DIR, capture_output=True, text=True)
+    gen = _run_killable(gen_cmd, REPO_DIR)
     if gen.returncode != 0:
         return {"rc": gen.returncode, "stage": "generate", "log": gen.stdout + gen.stderr}
     attack_cmd = [
@@ -224,7 +275,7 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}",
     ]
-    attack = subprocess.run(attack_cmd, cwd=REPO_DIR, capture_output=True, text=True)
+    attack = _run_killable(attack_cmd, REPO_DIR)
     return {"rc": attack.returncode, "stage": "attack", "log": attack.stdout + attack.stderr}
 
 
@@ -267,7 +318,7 @@ def run_benchmark(
             else _DATASET_PATHS[benchmark]
         )
         argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec, prompt_path)
-        proc = subprocess.run(argv, cwd=REPO_DIR, capture_output=True, text=True)
+        proc = _run_killable(argv, REPO_DIR)
         log_text = proc.stdout + proc.stderr
         (run_dir / "run.log").write_text(log_text)
         result = {"rc": proc.returncode, "log_path": str(run_dir / "run.log")}
