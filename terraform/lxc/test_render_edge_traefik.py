@@ -183,6 +183,46 @@ spec:
             pangolin_result.rendered[0].config["http"]["routers"]["nextcloud"]["rule"],
         )
 
+    def test_pangolin_renderer_emits_explicit_client_only_route(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: authentik-edge
+  stack: authentik-stack
+spec:
+  routes:
+    - name: authentik
+      host: authentik.lab.gibbsgreatly.xyz
+      pangolin:
+        private_host: true
+      backend:
+        type: url
+        url: http://10.57.20.10:9000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: none
+"""
+            )
+            manifest_path = Path(handle.name)
+        try:
+            result = render_pangolin_traefik_dry_run([manifest_path])
+        finally:
+            manifest_path.unlink(missing_ok=True)
+
+        self.assertTrue(result.ok)
+        routers = result.rendered[0].config["http"]["routers"]
+        self.assertEqual(
+            "Host(`authentik.lab.gibbsgreatly.xyz`)",
+            routers["authentik-private"]["rule"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

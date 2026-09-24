@@ -573,7 +573,7 @@ def _validate_pangolin(
     manifest: str,
     issues: list[ValidationIssue],
 ) -> str | None:
-    """Validate the optional second, Pangolin-only hostname for a route."""
+    """Validate optional public and client-only Pangolin route intents."""
 
     pangolin = route.get("pangolin")
     if pangolin is None:
@@ -591,16 +591,36 @@ def _validate_pangolin(
         return None
 
     public_host = pangolin.get("public_host")
-    if not isinstance(public_host, str) or not public_host.strip():
+    private_host = pangolin.get("private_host", False)
+    private_host_valid = isinstance(private_host, bool)
+    if not private_host_valid:
+        issues.append(
+            ValidationIssue(
+                code="EMV126",
+                message="pangolin.private_host must be a boolean when provided",
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin.private_host",
+            )
+        )
+        private_host = False
+
+    has_public_host = isinstance(public_host, str) and bool(public_host.strip())
+    if not has_public_host and not private_host:
         issues.append(
             ValidationIssue(
                 code="EMV123",
-                message="pangolin.public_host is required and must be a non-empty hostname",
+                message=(
+                    "pangolin requires public_host or private_host: true"
+                ),
                 manifest=manifest,
                 route=route_name,
-                field=f"{route_key}.pangolin.public_host",
+                field=f"{route_key}.pangolin",
             )
         )
+        return None
+
+    if not has_public_host:
         return None
 
     public_host = public_host.strip().rstrip(".")

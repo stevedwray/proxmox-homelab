@@ -7,6 +7,11 @@ spec:
   routes:
     - name: authentik
       host: authentik.${LAB_DOMAIN}
+      pangolin:
+        # Required with Nextcloud's client-only route: the mobile browser
+        # follows the existing OIDC endpoints at this LAN hostname through
+        # the authenticated Pangolin client tunnel, not the public internet.
+        private_host: true
       backend:
         type: url
         url: http://${LAB_IP_AUTHENTIK}:9000

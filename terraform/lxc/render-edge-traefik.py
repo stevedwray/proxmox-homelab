@@ -253,7 +253,7 @@ def _build_route_dynamic_config_for_host(
 
 
 def render_pangolin_traefik_dry_run(manifest_paths: list[Path]) -> RenderResult:
-    """Render only explicit Pangolin opt-ins; LAN routes never appear here."""
+    """Render explicit public and client-only Pangolin route opt-ins."""
 
     validation = validate_manifests(manifest_paths)
     if not validation.ok:
@@ -278,11 +278,26 @@ def render_pangolin_traefik_dry_run(manifest_paths: list[Path]) -> RenderResult:
             pangolin = route.get("pangolin")
             if not isinstance(pangolin, dict):
                 continue
-            public_host = str(pangolin["public_host"])
-            route_name, router, service = _build_route_dynamic_config_for_host(route, public_host)
-            routers[route_name] = router
-            if service is not None:
-                services[str(router["service"])] = service
+            public_host = pangolin.get("public_host")
+            if isinstance(public_host, str) and public_host.strip():
+                route_name, router, service = _build_route_dynamic_config_for_host(
+                    route, public_host.strip()
+                )
+                routers[route_name] = router
+                if service is not None:
+                    services[str(router["service"])] = service
+
+            # A private route reuses the route's LAN hostname. It is delivered
+            # only to pangolin-proxy; publication still requires an explicit
+            # dashboard private resource and client-side alias, never public DNS.
+            if pangolin.get("private_host") is True:
+                private_name = f"{route['name']}-private"
+                _, router, service = _build_route_dynamic_config_for_host(
+                    route, str(route["host"])
+                )
+                routers[private_name] = router
+                if service is not None:
+                    services[str(router["service"])] = service
         if routers:
             rendered_http: dict[str, object] = {"routers": routers}
             if services:

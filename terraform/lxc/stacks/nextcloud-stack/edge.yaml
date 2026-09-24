@@ -12,6 +12,10 @@ spec:
       host: nextcloud.${LAB_DOMAIN}
       pangolin:
         public_host: nextcloud.pan.gibbsgreatly.xyz
+        # Client-only route using the established LAN hostname. It has no
+        # public Pangolin resource or DNS record; the private-resource alias
+        # resolves only for an authenticated Pangolin client.
+        private_host: true
       backend:
         type: url
         url: http://${LAB_IP_NEXTCLOUD_STACK}:8080

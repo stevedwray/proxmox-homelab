@@ -700,6 +700,30 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     patch: dict[str, Any] = {}
     for key, value in desired.items():
         current = existing.get(key)
+        # Authentik returns the OAuth2 provider's scope mappings in its own
+        # order. The mappings are an unordered provider association here, so
+        # avoid an otherwise perpetual no-op PATCH when the sets match.
+        if key == "property_mappings" and isinstance(current, list) and isinstance(value, list):
+            if {str(item) for item in current} == {str(item) for item in value}:
+                continue
+        # The API adds its default redirect_uri_type=authorization on reads,
+        # while create/update accepts the compact form emitted by the manifest
+        # reconciler. Compare only the declarative fields so a stable strict
+        # redirect URI does not cause a write on every edge activation.
+        if key == "redirect_uris" and isinstance(current, list) and isinstance(value, list):
+            def _redirect_identity(item: object) -> tuple[str, str] | None:
+                if not isinstance(item, dict):
+                    return None
+                mode = item.get("matching_mode")
+                url = item.get("url")
+                if isinstance(mode, str) and isinstance(url, str):
+                    return (mode, url)
+                return None
+
+            current_redirects = {_redirect_identity(item) for item in current}
+            desired_redirects = {_redirect_identity(item) for item in value}
+            if None not in current_redirects and current_redirects == desired_redirects:
+                continue
         if key in {"launch_url", "meta_launch_url"}:
             current_host = _DISCOVER._normalize_url_host(current)
             desired_host = _DISCOVER._normalize_url_host(value)
