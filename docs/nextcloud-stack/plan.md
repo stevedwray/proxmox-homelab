@@ -1285,12 +1285,200 @@ gates:
     critical: true
 ```
 
+### Sharing the service account's folder back to `steve` — automated, reusable
+
+**Design change from earlier discussion in chat (2026-09-25):** a
+service-account-owned folder isn't visible to `steve` until something
+actually creates a Nextcloud share — the manual routes (log in as
+`cse-reports` directly, or `steve` using admin "Login as another user"
+impersonation) both work but don't scale if more projects adopt this
+pattern later, which the operator specifically flagged as likely
+("this is something we may want to do for other things, and to do
+repeatedly"). So this is a new, generic, reusable Ansible role, not a
+one-off manual click — modeled directly on this repo's own
+`portainer_api` role (same `ansible.builtin.uri` + `delegate_to:
+localhost` + idempotent GET-then-POST shape), calling Nextcloud's OCS
+Share API instead of Portainer's.
+
+`delegate_to: localhost` here means these HTTP calls run from wherever
+`ansible-playbook` itself executes (the operator's own workstation via
+`provision.sh`), **not** from the `cse-controller` LXC — the workstation
+already has general LAN reachability today, so this role's own calls do
+**not** need the new `cse_seg -> apps_seg` MikroTik rule. Only the
+*runtime* push from inside the worker container
+(`_push_report_to_nextcloud`, `nextcloud-P2-04`) runs from `cse_seg` and
+needs that rule.
+
+#### nextcloud-P2-06-nextcloud-folder-share-role
+
+```yaml
+id: nextcloud-P2-06-nextcloud-folder-share-role
+title: Add a reusable Ansible role that shares a Nextcloud folder via the OCS API
+depends_on: []
+
+change: >
+  Create terraform/lxc/ansible/roles/nextcloud_folder_share/defaults/main.yml
+  containing exactly:
+
+  ---
+  nextcloud_folder_share_permissions: 1
+  nextcloud_folder_share_with_user: steve
+
+  Create terraform/lxc/ansible/roles/nextcloud_folder_share/tasks/main.yml
+  containing exactly:
+
+  # nextcloud_folder_share -- idempotent: ensures a WebDAV folder exists
+  # under a service account's own space and is shared (read-only by
+  # default) with another Nextcloud user. Generic/reusable across
+  # projects that push reports into Nextcloud under their own scoped
+  # service account -- see docs/reporting-platform/plan.md Sec5a for the
+  # first user (CyberSecEval). All HTTP calls run from wherever
+  # ansible-playbook itself executes (delegate_to: localhost), not from
+  # the managed host -- this only needs the operator's own machine to
+  # reach Nextcloud, not the target LXC.
+
+  ---
+  - name: Split the target folder into path segments
+    ansible.builtin.set_fact:
+      nextcloud_folder_share_segments: "{{ nextcloud_folder_share_folder.split('/') }}"
+
+  - name: Build cumulative folder paths
+    ansible.builtin.set_fact:
+      nextcloud_folder_share_cumulative_paths: >-
+        {{
+          nextcloud_folder_share_cumulative_paths | default([]) +
+          [ (nextcloud_folder_share_segments[:item+1] | join('/')) ]
+        }}
+    loop: "{{ range(0, nextcloud_folder_share_segments | length) | list }}"
+
+  - name: Ensure each folder level exists (MKCOL, tolerating "already exists")
+    ansible.builtin.uri:
+      url: >-
+        {{ nextcloud_folder_share_base_url }}/remote.php/dav/files/{{ nextcloud_folder_share_owner_user }}/{{ item }}
+      method: MKCOL
+      url_username: "{{ nextcloud_folder_share_owner_user }}"
+      url_password: "{{ nextcloud_folder_share_owner_password }}"
+      status_code: [201, 405]
+    loop: "{{ nextcloud_folder_share_cumulative_paths }}"
+    delegate_to: localhost
+    no_log: true
+
+  - name: Get existing shares for the target folder
+    ansible.builtin.uri:
+      url: >-
+        {{ nextcloud_folder_share_base_url }}/ocs/v2.php/apps/files_sharing/api/v1/shares?path=/{{ nextcloud_folder_share_folder }}&format=json
+      method: GET
+      url_username: "{{ nextcloud_folder_share_owner_user }}"
+      url_password: "{{ nextcloud_folder_share_owner_password }}"
+      headers:
+        OCS-APIRequest: "true"
+      status_code: 200
+    register: nextcloud_folder_share_existing
+    delegate_to: localhost
+    no_log: true
+
+  - name: Determine whether the target user already has a share
+    ansible.builtin.set_fact:
+      nextcloud_folder_share_already_shared: >-
+        {{
+          nextcloud_folder_share_existing.json.ocs.data
+          | selectattr('share_with', 'equalto', nextcloud_folder_share_with_user)
+          | list | length > 0
+        }}
+
+  - name: Create the share (folder not yet shared with the target user)
+    ansible.builtin.uri:
+      url: >-
+        {{ nextcloud_folder_share_base_url }}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json
+      method: POST
+      url_username: "{{ nextcloud_folder_share_owner_user }}"
+      url_password: "{{ nextcloud_folder_share_owner_password }}"
+      headers:
+        OCS-APIRequest: "true"
+      body_format: form-urlencoded
+      body:
+        path: "/{{ nextcloud_folder_share_folder }}"
+        shareType: 0
+        shareWith: "{{ nextcloud_folder_share_with_user }}"
+        permissions: "{{ nextcloud_folder_share_permissions }}"
+      status_code: 200
+    when: not nextcloud_folder_share_already_shared
+    delegate_to: localhost
+    no_log: true
+
+  Transcribe both files exactly as given above -- this is new,
+  repo-generic Ansible logic (not modeled on an existing file), and the
+  WebDAV/OCS Share API's specific quirks (cumulative MKCOL for nested
+  paths, `OCS-APIRequest` header, `shareType: 0` for a user share,
+  `permissions: 1` for read-only) are easy to get subtly wrong from a
+  generic pattern.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/roles/nextcloud_folder_share/
+  forbidden_actions:
+    - "Referencing cse-controller, CyberSecEval, or any other project-specific name inside this role -- it must stay generic"
+    - "Any provision.sh / terragrunt apply run -- this step creates files only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-cse-controller.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-07-wire-folder-share-into-cse-controller-deploy
+
+```yaml
+id: nextcloud-P2-07-wire-folder-share-into-cse-controller-deploy
+title: Invoke nextcloud_folder_share from deploy-cse-controller.yml
+depends_on: [nextcloud-P2-06-nextcloud-folder-share-role, nextcloud-P2-05-wire-nextcloud-reports-secrets]
+
+change: >
+  In terraform/lxc/ansible/playbooks/deploy-cse-controller.yml, add a new
+  play immediately after the existing "Enable unattended security
+  updates" play (i.e. as the new last play in the file):
+
+  - name: Share CyberSecEval's Nextcloud Reports folder with steve
+    hosts: all
+    gather_facts: false
+    vars:
+      nextcloud_reports_user: "{{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}"
+      nextcloud_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}"
+    roles:
+      - role: nextcloud_folder_share
+        when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0
+        vars:
+          nextcloud_folder_share_base_url: "http://192.168.120.10:8080"
+          nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
+          nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
+          nextcloud_folder_share_folder: "Reports/cyberseceval"
+
+  Guarded the same way `nextcloud-P2-05` guards the worker env file --
+  this play must no-op cleanly (not fail the whole deploy) when the
+  Nextcloud credential hasn't been provisioned yet.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
+  forbidden_actions:
+    - "Making this play required (must stay skippable when the credential is unset)"
+    - "Running provision.sh or any deploy -- this step is a file edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-cse-controller.yml"
+    expect: "exit 0"
+    critical: true
+```
+
 #### Operator-only actions (not step blocks — not local-model-executable)
 
 These three must happen, in this order, before `nextcloud-P2-05`'s
-values mean anything — none of them are code edits a local model can
-run unsupervised, per `docs/agent-design/step-packet-schema.md`'s
-rule that only a literal, runnable check belongs in a step block:
+values -- and `nextcloud-P2-07`'s share automation -- mean anything;
+none of them are code edits a local model can run unsupervised, per
+`docs/agent-design/step-packet-schema.md`'s rule that only a literal,
+runnable check belongs in a step block:
 
 1. **Create a scoped Nextcloud service account.** A dedicated user (e.g.
    `cse-reports`), member of no admin group, sharing access to only a
@@ -1299,7 +1487,10 @@ rule that only a literal, runnable check belongs in a step block:
    expectations ("never a credential that also grants read access to
    other projects' reports" — this account should see only its own
    folder). Generate an app password for it (Settings → Security →
-   Devices & sessions), not its real login password.
+   Devices & sessions), not its real login password. This one step still
+   needs a human hand (account creation, not covered by
+   `nextcloud-P2-06`'s role) — everything downstream of it (folder
+   creation, sharing) is now automated.
 2. **Add the three SOPS keys** to `terraform/secrets.common.enc.yaml`
    (common, not `pve-tiny`-specific — this is a Nextcloud credential, not
    a Proxmox node identity, per CLAUDE.md's Secrets Storage split):
@@ -1314,21 +1505,26 @@ rule that only a literal, runnable check belongs in a step block:
    `apps_seg`'s existing default-deny entry, then mirrored onto the
    MikroTik by hand (no automated wrapper for this device, same gap
    already flagged for other MikroTik changes in persistent memory).
-   Verify with a real request from `cse-controller` before wiring the
-   secrets in for real: `curl -f http://192.168.120.10:8080/status.php`.
+   This rule only gates the *runtime* push from `cse-controller` itself
+   — `nextcloud-P2-07`'s folder-share play runs from the operator's own
+   workstation and doesn't need it. Verify with a real request from
+   `cse-controller` before relying on the runtime push:
+   `curl -f http://192.168.120.10:8080/status.php`.
 
 #### Deploy and verify
 
-After the three code steps land and the three operator actions above are
+After the five code steps land and the three operator actions above are
 done: Preflight Summary (target `pve-tiny`, mutating, exact object =
-`cse-controller`'s worker container env/code only, out-of-scope =
-everything else) → operator "Proceed" → `export
+`cse-controller`'s worker container env/code, plus a folder-share call
+against Nextcloud made from the operator's own workstation, out-of-scope
+= everything else) → operator "Proceed" → `export
 TASK_APPROVAL="nextcloud-P2-cyberseceval-reports-push"` →
 `./with-secrets-prod-tiny scripts/provision.sh --stack cse-controller`
-→ trigger one real benchmark run and confirm `report.md` actually
-appears under the `cse-reports` account's Reports/cyberseceval/ folder
-in Nextcloud, readable via the Text app — not just that the push
-returned success.
+→ confirm the deploy's own output shows `nextcloud-P2-06`'s role
+actually created (or found already-present) the share, then trigger one
+real benchmark run and confirm `report.md` appears in `steve`'s own
+Nextcloud Files view under Reports/cyberseceval/, readable via the Text
+app — not just that the push returned success.
 
 ---
 
