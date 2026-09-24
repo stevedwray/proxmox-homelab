@@ -750,6 +750,13 @@ def index():
         // of getting wiped every refresh.
         const expandedJobs = new Set();
         const transcriptCache = {{}};
+        // Same problem, one level deeper: the autonomous-uplift system-
+        // prompt <details> has no open-state tracking of its own, so the
+        // 4s poll rebuild reset it to closed the instant it was opened --
+        // confirmed live 2026-09-24 ("the text folds out and folds right
+        // back up again"). Keyed by jobId-entryIndex since a job could in
+        // principle have more than one operation_log entry.
+        const expandedPrompts = new Set();
         let lastSuitesBody = {{suites: []}};
         // Jobs submitted via the raw POST /jobs API rather than /suites --
         // no suite card to show them in, but they still need to be
@@ -863,7 +870,7 @@ def index():
           return html || '<p class="muted">(no operations recorded)</p>';
         }}
 
-        function renderTranscriptEntry(entry, i) {{
+        function renderTranscriptEntry(entry, i, jobId) {{
           if (entry.operation_log !== undefined) {{
             const headerParts = ['attacker', 'target', 'model']
               .filter(k => entry[k])
@@ -872,9 +879,14 @@ def index():
             // given to the model (the red-team objective plus a leaked-
             // credential list), genuinely useful for research but long
             // enough (2000+ chars) that showing it open by default would
-            // bury the actual attack turns below it.
+            // bury the actual attack turns below it. Open state tracked
+            // in expandedPrompts (keyed by job+entry) so it survives the
+            // 4s poll rebuild instead of snapping shut the instant it's
+            // opened -- confirmed live 2026-09-24.
+            const promptKey = `${{jobId}}-${{i}}`;
+            const promptOpen = expandedPrompts.has(promptKey);
             const systemPrompt = entry.system_prompt
-              ? `<details class="oplog-prompt"><summary>System prompt (what the model was actually told)</summary><p class="transcript-text">${{textOrEmpty(entry.system_prompt)}}</p></details>`
+              ? `<details class="oplog-prompt" ${{promptOpen ? 'open' : ''}} ontoggle="onPromptToggle('${{promptKey}}', this.open)"><summary>System prompt (what the model was actually told)</summary><p class="transcript-text">${{textOrEmpty(entry.system_prompt)}}</p></details>`
               : '';
             return `<div class="transcript-entry"><b>Attack session ${{i + 1}}</b>
               ${{headerParts.length ? `<div class="transcript-meta">${{headerParts.join(' &middot; ')}}</div>` : ''}}
@@ -904,7 +916,11 @@ def index():
           if (!cached) return '<div class="detail-box muted">Loading...</div>';
           if (cached.error) return `<div class="detail-box"><p class="muted">${{esc(cached.error)}}</p></div>`;
           if (!cached.transcript.length) return '<div class="detail-box"><p class="muted">No transcript available for this job.</p></div>';
-          return `<div class="detail-box">${{cached.transcript.map(renderTranscriptEntry).join('')}}</div>`;
+          return `<div class="detail-box">${{cached.transcript.map((entry, i) => renderTranscriptEntry(entry, i, jobId)).join('')}}</div>`;
+        }}
+
+        function onPromptToggle(key, isOpen) {{
+          if (isOpen) expandedPrompts.add(key); else expandedPrompts.delete(key);
         }}
 
         function jobsTable(jobs, standalone) {{
