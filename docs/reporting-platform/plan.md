@@ -1,10 +1,13 @@
 # Shared reporting/artifact platform — implementation plan
 
-Status (2026-09-22): Phases 0–2 complete and deployed live. This plan
+Status (2026-09-25): Phases 0–2 complete and deployed live. This plan
 exists because two independent projects (`deep-research`, CyberSecEval)
 hit the same underlying gap from two different angles, and more similar
 projects are expected — see `README.md` for the origin story and current
-summary. Phase 3 (cross-node unification) remains deliberately deferred.
+summary. Phase 3 (cross-node unification of *this plan's own viewer*)
+remains deliberately deferred; CyberSecEval's own reports have a separate,
+decided destination instead — see §5a — which doesn't depend on Phase 3
+landing.
 
 ## 1. Goals and boundaries
 
@@ -17,12 +20,15 @@ narrower, weaker version of "where did my results go."
 
 ### Non-goals
 
-- Not a general-purpose document/file platform (Nextcloud, ownCloud).
-  Considered and explicitly rejected for this problem — see
-  `docs/deep-research/plan.md`'s equivalent research for the reasoning;
-  the summary is that it solves a much broader problem than this one at
-  a much higher infrastructure cost, and nothing here needs sync clients,
-  calendars, or office-document editing.
+- Not a general-purpose document/file platform (Nextcloud, ownCloud) *as
+  this plan's own viewer*. Considered and explicitly rejected for that —
+  see `docs/deep-research/plan.md`'s equivalent research for the
+  reasoning; the summary is that it solves a much broader problem than
+  this one at a much higher infrastructure cost, and nothing here needs
+  sync clients, calendars, or office-document editing. This does not rule
+  out a single project pushing its own reports into Nextcloud as a
+  destination it already runs — see §5a for CyberSecEval's case, decided
+  narrowly, not as a reversal of this non-goal.
 - Not a wiki/knowledge-base tool (Wiki.js, Outline, Docmost, BookStack).
   These remain a viable *alternative front end* over the storage
   convention this plan defines, later, if the purpose-built viewer
@@ -151,6 +157,50 @@ per-node instances exist and prove the convention/viewer are actually
 useful. Do not build the cross-node ingestion path speculatively before
 that.
 
+## 5a. Decided for CyberSecEval specifically: push into Nextcloud, not a second viewer instance (2026-09-25)
+
+Operator asked directly whether CyberSecEval's report data could be
+presented "in Nextcloud, in a readable, presentable format" — a fourth
+option this section's original option 1/2/3 framing didn't consider,
+because it assumed the destination would always be this plan's own
+viewer software. It doesn't have to be:
+
+**Option 4: push straight into a presentation surface the operator
+already runs.** `nextcloud-stack` is already live, already has real access
+   control (its own local login, no shared IdP — see
+   `docs/nextcloud-stack/README.md`), and its built-in Text app already
+   renders markdown (including tables) without any new software. This
+   is narrower than the viewer described in §4: no project listing, no
+   run-history browsing UI, no JSON pretty-printing — CyberSecEval's own
+   `_write_report()` folds its `manifest.json` summary into `report.md`
+   directly instead, so there's nothing left that needs a JSON viewer
+   for a human reader. It also fully sidesteps this section's original
+   option 1/2 framing: no shared ingestion endpoint, no second copy of
+   viewer software to run and maintain — just one existing project's own
+   run-completion code making one WebDAV `PUT` call.
+
+This is a narrower, single-project decision, not a reversal of the
+Non-goals section above — Nextcloud is not becoming this plan's general
+viewer or the target for every future project by default; this is
+CyberSecEval specifically, because the operator specifically asked for
+CyberSecEval's reports there. `deep-research` keeps using the shared
+viewer (§4); a third future project should default to the shared viewer
+too, and use Nextcloud only if there's a similar concrete reason to.
+
+Real facts checked directly (not assumed) before writing this:
+`cse-controller` is `192.168.100.70` on `cse_seg` (VLAN 100, `pve-tiny`);
+`nextcloud-stack` is `192.168.120.10:8080` on `apps_seg` (VLAN 120,
+`pve`). `pve-tiny.yaml` has no `policies:` section yet, so the new
+`cse_seg -> apps_seg:8080` rule's declarative home is `pve.yaml` (the
+destination zone's own file), mirroring where `apps_seg`'s existing
+inbound rules (e.g. `edge_seg -> apps_seg:8080` for Traefik) already
+live — this is a genuinely new cross-VLAN rule, not something already
+open. The real step blocks (code edits to `cse_tasks.py`, the Ansible
+env-var wiring, and the operator-only account/secret/firewall actions)
+live in `docs/nextcloud-stack/plan.md`'s Phase 2, not here, since they're
+nextcloud-side work — see that file's "CyberSecEval → Nextcloud report
+push" subsection.
+
 ## 6. Security requirements
 
 - Same posture as `deep-research`'s own routes: Authentik `forwardAuth`
@@ -269,11 +319,18 @@ information.
 
 ### Phase 3: decide on §5's cross-node question, act on it
 
-Only after Phase 2 ships and both projects have used their own
-per-node/per-convention storage for real, revisit whether the operator
-actually wants a single unified URL (§5 option 1) enough to justify the
-new firewall rule and ingestion-auth work, or whether two consistent
-URLs is good enough in practice. Do not pre-build this.
+Still deliberately deferred for *this plan's own viewer* — only after
+both projects have used their own per-node/per-convention storage for
+real, revisit whether the operator actually wants a single unified URL
+(§5 option 1) enough to justify the new firewall rule and ingestion-auth
+work, or whether two consistent URLs is good enough in practice. Do not
+pre-build this.
+
+**Not blocking CyberSecEval → Nextcloud (§5a).** That push is a separate,
+already-decided piece of cross-node work with its own firewall rule and
+its own (simpler) mechanism — it doesn't use this phase's ingestion
+endpoint and doesn't need to wait for this phase to resolve. See
+`docs/nextcloud-stack/plan.md`'s Phase 2 for its real step blocks.
 
 ### Phase 4 (future, not scoped in depth here): third+ project onboarding
 

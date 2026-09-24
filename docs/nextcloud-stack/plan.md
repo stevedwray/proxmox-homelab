@@ -1058,12 +1058,22 @@ flow, not on `pve-test-vm`. Before running this:
 
 ---
 
-## Phase 2 — reports ingestion (deep-research, same node only)
+## Phase 2 — reports ingestion (deep-research, then CyberSecEval)
 
-**Deliberately narrow.** Per README.md, CyberSecEval's `pve-tiny` push is
-out of scope until `docs/reporting-platform/plan.md` Phase 3 (cross-node
-ingestion) lands. This phase only covers `deep-research` (`pve`,
-`ai-services-stack`, `ai_seg`, same node as `nextcloud-stack`).
+Covers `deep-research` (`pve`, `ai-services-stack`, `ai_seg`, same node as
+`nextcloud-stack`) and, as of 2026-09-25, CyberSecEval (`pve-tiny`,
+`cse-controller`, `cse_seg`) too — operator asked directly whether report
+data could be presented "in Nextcloud, in a readable, presentable format."
+This **supersedes** the earlier framing that CyberSecEval was categorically
+out of scope until `docs/reporting-platform/plan.md`'s Phase 3 (a second
+viewer instance / shared ingestion endpoint) landed: pushing straight into
+Nextcloud is a different, simpler design than that Phase 3 ever
+considered — it reuses a tool the operator already runs daily instead of
+building or duplicating viewer software, and doesn't need the shared
+viewer's HTTP ingestion endpoint at all. See
+`docs/reporting-platform/plan.md` §5a for the updated decision record;
+CyberSecEval's real step blocks live here, in this file's Phase 2, not
+there, since they're nextcloud-side work.
 
 ### Step: nextcloud-P2-01-research-push-hook
 
@@ -1093,6 +1103,232 @@ literal content.** Before authoring a real step:
 Once these are resolved, write `nextcloud-P2-02-...` as a real step
 block with literal file paths and exact content, following the same
 literal-vs-constrained discipline as Phase 1 above.
+
+### CyberSecEval → Nextcloud report push
+
+Unlike `deep-research` above, this hook point is already fully
+researched (read directly, not guessed): `cse_tasks.py`'s `run_benchmark`
+task calls `_write_report(run_dir, ...)` right before returning, on every
+path (success, no-judge, outright failure). `_write_report` already
+computes everything a `manifest.json`-style summary needs — it just
+doesn't fold the derived `summary` string into `report.md` itself yet
+(only into `manifest.json`), and doesn't push anywhere. Both are small,
+precise, literal edits to one existing function in one existing file —
+no new dependency (deliberately using stdlib `urllib.request`, not
+`requests`, since `requests` isn't currently imported anywhere in this
+file and isn't worth adding for one WebDAV PUT).
+
+**Network path (corrected from earlier discussion in chat — verified
+against the real SDN var files, not assumed):** `cse-controller` is
+`192.168.100.70` on `cse_seg` (VLAN 100, pve-tiny) — not `mgmt_seg`
+(that's `cse-panel-stack`'s own zone, a different host). `nextcloud-stack`
+is `192.168.120.10:8080` on `apps_seg` (VLAN 120, pve). Per
+`terraform/lxc/network/pve.yaml`, `apps_seg`'s only existing inbound rule
+is `edge_seg -> apps_seg:8080` (Traefik). A push should hit the raw
+container port directly, the same way `nextcloud-P2-01` above already
+plans for `deep-research`'s own push (`ai_seg -> apps_seg:8080`) — not
+through Traefik/Pangolin, since this is a plain internal service-to-service
+call, and Phase 3's Newt-never-routes-to-`apps_seg`-directly rule is about
+external/published ingress, not internal backend traffic. `pve-tiny.yaml`
+has no `policies:` section yet (`cse_seg`'s cross-zone rules aren't
+Terraform-tracked from that side — confirmed, not assumed), so the new
+rule's declarative home is `pve.yaml` (the destination zone's file),
+mirroring where the existing Wazuh/Traefik `apps_seg` rules already live.
+
+#### nextcloud-P2-03-fold-summary-into-cyberseceval-report
+
+```yaml
+id: nextcloud-P2-03-fold-summary-into-cyberseceval-report
+title: Fold the manifest summary line into CyberSecEval's report.md
+depends_on: []
+
+change: >
+  In terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py,
+  inside _write_report(), move the summary derivation (currently the
+  if/elif/else block computing `summary` right before the manifest.json
+  write) to run immediately after `flattened = _flatten_stats(...)`, add
+  `summary = summary[:300]` there, and insert
+  `f"**Summary:** {summary}  ",` as a new line in the `lines` list
+  immediately after the existing `f"**Finished:** {finished_at}  ",`
+  line. Update the manifest.json write's `"summary": summary[:300]` to
+  `"summary": summary` (already truncated earlier now). Do not change
+  the rendered Markdown table logic, the Artifacts section, or any
+  other function in this file.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
+  forbidden_actions:
+    - "Any change outside _write_report()"
+    - "Any provision.sh / terragrunt apply run -- this step is a code edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "python3 -m py_compile terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-04-cyberseceval-nextcloud-webdav-push
+
+```yaml
+id: nextcloud-P2-04-cyberseceval-nextcloud-webdav-push
+title: Add a best-effort WebDAV push of report.md to Nextcloud
+depends_on: [nextcloud-P2-03-fold-summary-into-cyberseceval-report]
+
+change: >
+  In terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py,
+  add a new function `_push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None`
+  directly after `_write_report()`, using exactly this body (stdlib only,
+  imports local to the function so a missing/unreachable Nextcloud never
+  affects any other code path in this file):
+
+  def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
+      """Best-effort WebDAV push of this run's report.md into Nextcloud,
+      per docs/reporting-platform/plan.md §5a (2026-09-25). Never raises
+      -- report.md is already durable on cse-controller's own disk
+      (docs/reporting-platform/CONVENTION.md); Nextcloud being briefly
+      unreachable or a rotated credential must never fail a benchmark
+      run that has already completed."""
+      webdav_url = os.environ.get("NEXTCLOUD_REPORTS_WEBDAV_URL", "")
+      user = os.environ.get("NEXTCLOUD_REPORTS_USER", "")
+      password = os.environ.get("NEXTCLOUD_REPORTS_APP_PASSWORD", "")
+      if not (webdav_url and user and password):
+          return
+
+      import base64
+      import urllib.error
+      import urllib.request
+
+      auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+      base = webdav_url.rstrip("/")
+      for collection_url in (f"{base}/cyberseceval", f"{base}/cyberseceval/{run_dir.name}"):
+          request = urllib.request.Request(collection_url, method="MKCOL")
+          request.add_header("Authorization", auth_header)
+          try:
+              urllib.request.urlopen(request, timeout=15)
+          except urllib.error.HTTPError as exc:
+              if exc.code not in (405, 301):
+                  return
+          except urllib.error.URLError:
+              return
+
+      put_url = f"{base}/cyberseceval/{run_dir.name}/report.md"
+      request = urllib.request.Request(
+          put_url, data=(run_dir / "report.md").read_bytes(), method="PUT"
+      )
+      request.add_header("Authorization", auth_header)
+      request.add_header("Content-Type", "text/markdown")
+      try:
+          urllib.request.urlopen(request, timeout=15)
+      except (urllib.error.HTTPError, urllib.error.URLError):
+          pass
+
+  Then, in `_write_report()`, add a call `_push_report_to_nextcloud(run_dir, benchmark)`
+  as the last line of the function, after the `manifest.json` write.
+  Do not add a module-level `import requests` or any new third-party
+  dependency; do not add `curl` to the worker container.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
+  forbidden_actions:
+    - "Any new third-party dependency"
+    - "Raising an exception out of _push_report_to_nextcloud under any circumstance"
+    - "Any provision.sh / terragrunt apply run -- this step is a code edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "python3 -m py_compile terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-05-wire-nextcloud-reports-secrets
+
+```yaml
+id: nextcloud-P2-05-wire-nextcloud-reports-secrets
+title: Wire NEXTCLOUD_REPORTS_* env vars into the CyberSecEval worker
+depends_on: [nextcloud-P2-04-cyberseceval-nextcloud-webdav-push]
+
+change: >
+  In terraform/lxc/ansible/playbooks/deploy-cse-controller.yml, rename
+  the task "Write the worker's OpenAI API key env file (never logged)"
+  to "Write the worker's secrets env file (never logged)" and extend its
+  `content` to:
+
+  OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}
+  NEXTCLOUD_REPORTS_WEBDAV_URL={{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}
+  NEXTCLOUD_REPORTS_USER={{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}
+  NEXTCLOUD_REPORTS_APP_PASSWORD={{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}
+
+  These three are deliberately `default('', true)`, not `mandatory` --
+  unlike OPENAI_API_KEY (required for the worker to function at all), a
+  missing/not-yet-provisioned Nextcloud credential must not block
+  cse-controller deploys; `_push_report_to_nextcloud` already treats an
+  empty value as "skip." Do not change docker-compose.yml -- the worker
+  service's existing `env_file: /srv/cyberseceval/config/worker.env`
+  already loads whatever this task writes.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
+  forbidden_actions:
+    - "Making the three new vars mandatory"
+    - "Any change to docker-compose.yml"
+    - "Running provision.sh or any deploy -- this step is a file edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-cse-controller.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Operator-only actions (not step blocks — not local-model-executable)
+
+These three must happen, in this order, before `nextcloud-P2-05`'s
+values mean anything — none of them are code edits a local model can
+run unsupervised, per `docs/agent-design/step-packet-schema.md`'s
+rule that only a literal, runnable check belongs in a step block:
+
+1. **Create a scoped Nextcloud service account.** A dedicated user (e.g.
+   `cse-reports`), member of no admin group, sharing access to only a
+   single "Reports" folder — never `steve`'s own account or an admin
+   credential, per `docs/reporting-platform/CONVENTION.md`'s security
+   expectations ("never a credential that also grants read access to
+   other projects' reports" — this account should see only its own
+   folder). Generate an app password for it (Settings → Security →
+   Devices & sessions), not its real login password.
+2. **Add the three SOPS keys** to `terraform/secrets.common.enc.yaml`
+   (common, not `pve-tiny`-specific — this is a Nextcloud credential, not
+   a Proxmox node identity, per CLAUDE.md's Secrets Storage split):
+   `NEXTCLOUD_REPORTS_WEBDAV_URL` (e.g.
+   `http://192.168.120.10:8080/remote.php/dav/files/cse-reports`),
+   `NEXTCLOUD_REPORTS_USER=cse-reports`,
+   `NEXTCLOUD_REPORTS_APP_PASSWORD=<generated app password>`. Edit with
+   `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml`.
+3. **Add and apply the MikroTik firewall rule**: `from: cse_seg, to:
+   192.168.120.10, protocol: tcp, ports: [8080]` in
+   `terraform/lxc/network/pve.yaml`'s `policies:` list, placed before
+   `apps_seg`'s existing default-deny entry, then mirrored onto the
+   MikroTik by hand (no automated wrapper for this device, same gap
+   already flagged for other MikroTik changes in persistent memory).
+   Verify with a real request from `cse-controller` before wiring the
+   secrets in for real: `curl -f http://192.168.120.10:8080/status.php`.
+
+#### Deploy and verify
+
+After the three code steps land and the three operator actions above are
+done: Preflight Summary (target `pve-tiny`, mutating, exact object =
+`cse-controller`'s worker container env/code only, out-of-scope =
+everything else) → operator "Proceed" → `export
+TASK_APPROVAL="nextcloud-P2-cyberseceval-reports-push"` →
+`./with-secrets-prod-tiny scripts/provision.sh --stack cse-controller`
+→ trigger one real benchmark run and confirm `report.md` actually
+appears under the `cse-reports` account's Reports/cyberseceval/ folder
+in Nextcloud, readable via the Text app — not just that the push
+returned success.
 
 ---
 

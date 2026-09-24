@@ -598,9 +598,17 @@ See [plan.md](plan.md) for the full step-by-step plan.
   `deep-research`) but the actual push code has not been written or
   scoped into a literal step yet — needs a follow-up research pass
   reading that code directly before it can become a real step block.
-- **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
-  scope for this plan entirely until `docs/reporting-platform/plan.md`
-  Phase 3 (cross-node ingestion) lands upstream.
+- **CyberSecEval → Nextcloud push, scoped 2026-09-25, not yet
+  implemented.** Superseded the earlier "out of scope until
+  `docs/reporting-platform/plan.md` Phase 3 lands" framing — pushing
+  straight into Nextcloud turned out to be a simpler, separate design
+  from that plan's shared viewer, doesn't need Phase 3's cross-node
+  ingestion endpoint, and isn't blocked on it. Real step blocks are
+  written (`nextcloud-P2-03` through `-05` below), but none have been
+  executed yet: needs a new `cse_seg -> apps_seg:8080` MikroTik rule, a
+  scoped Nextcloud service account + SOPS keys, then the code/Ansible
+  edits and a `cse-controller` redeploy. See this file's Phase 2 and
+  `docs/reporting-platform/plan.md` §5a.
 - **EdgeManifest Pangolin opt-in mechanism (Phase 3) — done, live, and
   confirmed working with a real client.** `pangolin-proxy` is deployed,
   its generated `nextcloud.pan.gibbsgreatly.xyz` route serves Nextcloud,
