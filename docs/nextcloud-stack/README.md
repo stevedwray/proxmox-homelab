@@ -1,26 +1,50 @@
 # nextcloud-stack
 
-Status (2026-09-25): **Phase 1 is deployed and operational on `pve`.**
-Nextcloud is published through Pangolin at
-`https://nextcloud.pan.gibbsgreatly.xyz` and internally at
-`https://nextcloud.lab.gibbsgreatly.xyz`.
+Status (2026-09-25): **Live and working end-to-end, including real mobile
+app access.** Nextcloud is published through Pangolin at
+`https://nextcloud.pan.gibbsgreatly.xyz` (confirmed reachable from the
+public internet, not just internally) and internally at
+`https://nextcloud.lab.gibbsgreatly.xyz`. Auth is **local-account only**
+(`steve`) — no Authentik, no Pangolin SSO/MFA gate on this resource
+either. See the two retirement sections directly below before anything
+else in this file; both describe real, working designs that were tried
+and then deliberately reversed, for two different reasons.
 
-**Authentik-via-Pangolin is retired (operator decision, 2026-09-25) — read
-this before anything else in this file.** Everything below describing
-Nextcloud's `user_oidc`/Authentik SSO and Authentik's own `pangolin`
-route (`P3-03b` through `P3-05`, "OIDC was verified live", etc.) documents
-a real, working, but now-reversed design. **Authentik must never gain any
-externally reachable path, direct or via Pangolin, public or
-client-only** — the blast radius of exposing the lab's single IdP in any
-form was judged too large relative to the benefit. Nextcloud now
-authenticates with a single local account (`steve`) only; Pangolin's own
-`nextcloud-users` role/MFA remains the external gate. **New standing
-policy, applying to every future Pangolin-published service, not just
-Nextcloud: no service published through Pangolin may use Authentik as its
-login mechanism.** Each needs its own local/native auth, or Pangolin's own
-SSO/MFA as the sole gate. See "Authentik-via-Pangolin retired" below for
-the full rollback and rationale; the historical sections further down are
-kept as a record of what was built and verified, not as current state.
+**1. Authentik-via-Pangolin is retired (operator decision, 2026-09-25).**
+**Authentik must never gain any externally reachable path, direct or via
+Pangolin, public or client-only** — the blast radius of exposing the
+lab's single IdP in any form was judged too large relative to the
+benefit. **New standing policy, applying to every future
+Pangolin-published service, not just Nextcloud: no service published
+through Pangolin may use Authentik as its login mechanism**, full stop.
+
+**2. Pangolin's own SSO/MFA gate is also dropped for Nextcloud specifically
+(operator decision, 2026-09-25)** — not a blast-radius call this time, a
+hard compatibility wall: Pangolin's resource-level SSO is a
+browser-session model, and it gated `status.php`, the OCS capabilities
+endpoint, and even `/index.php/login/v2` (the endpoint the Nextcloud app
+uses to *start* its own login) uniformly, with a flat `401` before
+Nextcloud ever saw the request. The Nextcloud mobile app's sync/API
+traffic has no way to present a browser session cookie, so every
+official Nextcloud client failed outright with "malformed server
+configuration." This is not fixable by configuration on our side: it's a
+[known, currently-open Pangolin bug](https://github.com/fosrl/pangolin/issues/2551)
+— path-based "Bypass Auth" rules don't work once a resource is set to
+"Protected." Pangolin's supported alternative for headless/API clients
+(`P-Access-Token-Id`/`P-Access-Token` headers) requires client-side
+support the stock Nextcloud app doesn't have. **Revised standing
+policy**: Pangolin's own SSO/MFA is only viable for services accessed
+purely through a browser — verify this live for any future service with
+a native app/sync/API client before assuming it as an option; don't
+repeat this on the next one. Nextcloud's own login (`steve` +
+`twofactor_totp`, already installed and enabled) is the sole auth layer
+for this resource instead — see "Pangolin SSO dropped for Nextcloud"
+below for the full finding.
+
+The historical sections further down (`P3-03b` through `P3-05`, "OIDC
+was verified live", the original "Require Pangolin SSO/MFA by default"
+decision) are kept as a record of what was built and verified at each
+stage, not as current state.
 
 Goal: a self-hosted Nextcloud instance as a durable local storage point,
 initially for documentation/reports produced by other lab projects (the
@@ -93,7 +117,83 @@ any form — full public exposure, path-scoped exposure, or
 Pangolin-client-only exposure are all out. Each Pangolin-published service
 gets its own local/native login, or relies solely on Pangolin's own
 SSO/MFA (which is already architecturally separate from Authentik — see
-"Pangolin's own dashboard login is NOT Authentik-backed" below).
+"Pangolin's own dashboard login is NOT Authentik-backed" below) —
+**but confirm the latter actually works for the service's real clients
+first; see "Pangolin SSO dropped for Nextcloud" immediately below for why
+this isn't a safe default for anything with a native app/sync/API
+client.**
+
+## Pangolin SSO dropped for Nextcloud (2026-09-25)
+
+**Symptom:** the Nextcloud mobile app, pointed at
+`nextcloud.pan.gibbsgreatly.xyz`, failed immediately with "malformed
+server configuration" — not a login failure, a connection-setup failure.
+
+**Root cause, confirmed live by curling every endpoint the app calls on
+first connect**, all three came back an identical flat `401` with a
+13-byte plain-text body (`Unauthorized`), from Pangolin's own edge, before
+Nextcloud was ever reached:
+- `status.php` (server discovery — app expects JSON like
+  `{"installed":true,...}`)
+- `/ocs/v2.php/cloud/capabilities` (feature discovery)
+- `/index.php/login/v2` (the endpoint the app itself POSTs to in order to
+  *start* its own login flow)
+
+Getting a bare 401 text response where strict JSON is expected is exactly
+what produces "malformed server configuration" — the app can't parse it
+at all. Critically, the third one means the app can't even begin
+authenticating: Pangolin's resource-level SSO/MFA (`nextcloud-users` role)
+was applied uniformly across the entire hostname, gating the login
+handshake's own entry point.
+
+**Why this can't be fixed with Pangolin configuration alone:** Pangolin's
+SSO gate is a browser-session-cookie model. It works correctly for a
+person opening a web browser (confirmed earlier: hitting the same
+hostname from a plain browser-equivalent `curl` from an external network
+correctly returned `401` — the gate itself works as designed). It does
+not extend to a mobile/desktop app's background sync/WebDAV/OCS traffic,
+which has no way to carry a Pangolin browser session. Checked what
+Pangolin itself offers for this:
+- Path-based "Bypass Auth" rules exist for exactly this class of problem,
+  but there's an [open, currently-unfixed Pangolin bug (#2551)](https://github.com/fosrl/pangolin/issues/2551):
+  bypass-auth rules don't work once a resource is set to "Protected" —
+  unauthenticated requests are redirected to the auth wall regardless of
+  matching rules.
+- Pangolin's supported headless-client mechanism is Access Token auth
+  (`P-Access-Token-Id`/`P-Access-Token` request headers) — but this
+  requires the *client app* to know to send those headers. Some apps
+  (Immich is documented as one) have been specifically adapted for it;
+  the stock Nextcloud app has no such support and can't be made to add
+  it from our side.
+
+**Fix:** the Pangolin resource for `nextcloud-public` no longer requires
+SSO/MFA — the auth layer for this resource is Nextcloud's own local login
+only. Confirmed working end-to-end afterward: all three endpoints above
+return correctly, and the actual Nextcloud mobile app connects normally.
+
+**Compensating control, since Pangolin's outer MFA is gone for this
+resource:** Nextcloud ships `twofactor_totp` (authenticator-app codes)
+and `twofactor_backupcodes` (recovery codes) already installed and
+enabled — confirmed live via `occ app:list`. Enable TOTP for the `steve`
+account (Settings → Security → Enable TOTP, scan the QR code, save the
+backup codes) so there's still a real second factor. This works cleanly
+with the app because the TOTP challenge renders inside Nextcloud's own
+login page during the same Login Flow v2 browser handshake the app
+already opens — a genuine interactive browser session, not a background
+API call, so none of the session-cookie mismatch above applies to it.
+**Not yet done as of this writing — TOTP is available but not yet
+enabled for `steve`.**
+
+**Revised standing policy (supersedes the paragraph above it):**
+Pangolin's own SSO/MFA is a safe default only for services accessed
+purely through a browser (a dashboard, an admin UI with no native
+client). For anything with a mobile app, desktop sync client, or its own
+API consumers, verify live — with the actual client, not just `curl` —
+before assuming Pangolin's SSO is viable, and prefer the service's own
+native MFA (if it has one) instead. This generalizes: `nextcloud-P3-05`'s
+original "Require Pangolin SSO/MFA by default" decision is retired for
+this reason, and any future Pangolin-published service should treat this
+as a real design question up front, not a default to fall back on.
 
 ## Current execution state (2026-09-24) — historical, describes the retired design above
 
@@ -501,14 +601,37 @@ See [plan.md](plan.md) for the full step-by-step plan.
 - **CyberSecEval → Nextcloud push**, cross-node from `pve-tiny`: out of
   scope for this plan entirely until `docs/reporting-platform/plan.md`
   Phase 3 (cross-node ingestion) lands upstream.
-- **EdgeManifest Pangolin opt-in mechanism (Phase 3).** Implemented and
-  exercised for Nextcloud: `pangolin-proxy` is deployed, its generated
-  `nextcloud.pan.gibbsgreatly.xyz` route serves Nextcloud internally, and
-  Authentik reconciliation preserves both OIDC callbacks. Pangolin's
-  dashboard resource `nextcloud-public` now publishes that hostname through
-  the `lab` site and protects it with the `nextcloud-users` role. See
-  `nextcloud-P3-03c` through `nextcloud-P3-05`; the independent rollback
-  test remains a maintenance-window task.
+- **EdgeManifest Pangolin opt-in mechanism (Phase 3) — done, live, and
+  confirmed working with a real client.** `pangolin-proxy` is deployed,
+  its generated `nextcloud.pan.gibbsgreatly.xyz` route serves Nextcloud,
+  and Pangolin's dashboard resource `nextcloud-public` publishes that
+  hostname through the `lab` site. The `nextcloud-users` role/SSO
+  requirement was since removed from the resource (see "Pangolin SSO
+  dropped for Nextcloud" above) — Nextcloud's own local login is the sole
+  gate now. Confirmed end-to-end from the public internet: DNS resolves
+  to the real OCI public IP, an unauthenticated request correctly gets
+  `401` from Nextcloud's own auth (not Pangolin's), and the actual
+  Nextcloud mobile app connects and syncs normally. The independent
+  rollback test (disabling the Pangolin resource or route each
+  independently blocks access) remains a maintenance-window task.
+- **TOTP not yet enabled for `steve`.** `twofactor_totp`/
+  `twofactor_backupcodes` are installed and enabled on the instance
+  (confirmed via `occ app:list`), but nobody has actually gone through
+  Settings → Security → Enable TOTP yet. Until this is done, `steve`'s
+  local password is the only auth factor on a now-public resource.
+- **Stale-route orphan-cleanup bug, found and fixed (2026-09-25).**
+  Removing Authentik's `pangolin.private_host` route from `edge.yaml`
+  didn't clean up its previously-rendered file — `write_rendered_files()`
+  in `render-edge-traefik.py` only ever added/updated files, never
+  removed one for a stack that stopped rendering. The stale
+  `route-authentik-stack.yml` was still live on `pangolin-proxy`,
+  actually serving real `302` responses from Authentik, until manually
+  deleted; the next `provision.sh` run would have silently recreated it
+  from the equally-stale local `.generated/pangolin-traefik/` file.
+  Fixed at the source: the writer now does a full sync (add current,
+  remove anything else matching `*.yml`) rather than only adding. Applies
+  to both the LAN and Pangolin render paths. Regression test added; all
+  39 tests pass.
 - **OCI-side monitoring/logging.** Fully designed in
   `pangolin-observability-and-graylog-plan.md` but not yet implemented
   end-to-end. The shared lab Graylog TCP/514 transport and authenticated

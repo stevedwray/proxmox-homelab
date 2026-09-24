@@ -1629,22 +1629,44 @@ must contain both callback URLs before an external login is attempted.
 
 ### Step: nextcloud-P3-05-pangolin-resource-and-lab-site
 
-**Completed 2026-09-24 through the Pangolin dashboard.** Resource
-`nextcloud-public` is enabled at `https://nextcloud.pan.gibbsgreatly.xyz`,
-on site `lab`, targeting `https://192.168.30.11:443`. Its target has no path
-match or rewrite and priority 100. Pangolin reports a valid certificate and
-protected authentication. Platform SSO is enabled; the non-admin
-`nextcloud-users` role is assigned, with `steve` as its initial user, no
-direct-user exception, and PIN, passcode, email-whitelist, and basic-header
-methods disabled. This is Pangolin's own account/MFA gate, not an Authentik
-identity-provider integration; Nextcloud's separate Authentik OIDC login
-remains enabled by design.
+**Superseded 2026-09-25 — Pangolin's SSO/MFA requirement (step 2 below)
+was removed from the live resource. Keep reading before treating anything
+in this step as current.** Everything below through "Confirmed by the
+operator" describes the state as of 2026-09-24, when Pangolin's own
+account/MFA gate + Authentik OIDC were both active. That combination is
+now retired for two independent reasons: Authentik-via-Pangolin entirely
+(see README.md "Authentik-via-Pangolin retired"), and separately,
+Pangolin's own SSO/MFA gate specifically because it breaks the real
+Nextcloud mobile/desktop client — confirmed live, `status.php`/OCS
+capabilities/`login/v2` all returned a flat `401` before Nextcloud was
+ever reached, which is a known, currently-open Pangolin limitation
+(bypass-auth path rules don't work on a "Protected" resource — see
+README.md "Pangolin SSO dropped for Nextcloud" for the full finding, curl
+evidence, and the Pangolin GitHub issue). **Current state: the
+`nextcloud-public` resource has SSO/MFA disabled; Nextcloud's own local
+login (`steve` + `twofactor_totp`, TOTP not yet actually enabled) is the
+sole auth layer.** Confirmed working end-to-end with the real Nextcloud
+mobile app afterward, which the SSO-gated version never was.
 
-The complete user path was confirmed by the operator: `steve` authenticates
-through Pangolin MFA, then Authentik, then Nextcloud. A clean unauthenticated
-external request returned HTTP 401 rather than application content. The
-remaining completion item is the deliberately deferred, maintenance-window
-rollback test in item 6 below.
+**Completed 2026-09-24 through the Pangolin dashboard** (historical,
+describes the since-superseded design). Resource `nextcloud-public` was
+enabled at `https://nextcloud.pan.gibbsgreatly.xyz`, on site `lab`,
+targeting `https://192.168.30.11:443`. Its target has no path match or
+rewrite and priority 100. Pangolin reported a valid certificate and
+protected authentication. Platform SSO was enabled; the non-admin
+`nextcloud-users` role was assigned, with `steve` as its initial user, no
+direct-user exception, and PIN, passcode, email-whitelist, and basic-header
+methods disabled. This was Pangolin's own account/MFA gate, not an Authentik
+identity-provider integration; Nextcloud's separate Authentik OIDC login
+was enabled by design at the time (also since retired).
+
+The complete user path was confirmed by the operator at the time: `steve`
+authenticated through Pangolin MFA, then Authentik, then Nextcloud. A
+clean unauthenticated external request returned HTTP 401 rather than
+application content — that much (unauthenticated access being blocked)
+remains true today, just via Nextcloud's own auth instead of Pangolin's.
+The deliberately deferred, maintenance-window rollback test in item 6
+below is still outstanding, unaffected by either reversal.
 
 **Not a step block — control-plane, credential/policy-creating action,
 same category `repeatable-operations.md` explicitly reserves for manual
@@ -1659,27 +1681,42 @@ Once nextcloud-P3-04's route exists:
    the live Wazuh investigation proved it silently discarded a supplied
    `siteId`, leaving a resource unlinked from `lab`. Select the `lab` site in
    the dashboard and verify that the resulting resource reports that site.
-2. Require SSO and MFA by default (no anonymous bypass), per
-   `pangolin-architecture-plan.md` and the service onboarding contract.
+2. ~~Require SSO and MFA by default (no anonymous bypass), per
+   `pangolin-architecture-plan.md` and the service onboarding contract.~~
+   **Reversed 2026-09-25.** Requiring Pangolin SSO/MFA on this resource
+   broke every real Nextcloud client outright (see README.md "Pangolin
+   SSO dropped for Nextcloud") — `status.php`/OCS capabilities/
+   `login/v2` all returned a flat `401` before Nextcloud was reached,
+   which is a known, currently-open Pangolin bug (bypass-auth path rules
+   don't work on a "Protected" resource). Nextcloud's own login +
+   `twofactor_totp` (already installed and enabled, not yet turned on
+   for `steve`) is the auth layer instead. **Do not require Pangolin
+   SSO/MFA by default for a future service either** — verify live, with
+   the actual client, that the service is browser-only before assuming
+   this step applies unchanged; a service with its own native app/sync
+   client needs this same question asked first.
 3. Assign the non-admin `nextcloud-users` role, initially containing only
    `steve`, rather than assigning the owner account directly. Pangolin's free
    tier allows only one role per user, so this is Steve's reusable day-to-day
    role for every resource he is authorized to use—not a one-role-per-service
    pattern. Do not create further service-specific roles for Steve unless the
    plan limit changes or a genuinely separate user/access boundary is needed.
-4. Decide whether to keep Nextcloud's own Authentik OIDC login active in
-   addition to Pangolin's gate (defense in depth, the same call
-   `pangolin-observability-and-graylog-plan.md` makes for Pentagi as "an
-   administrative or AI service") — Nextcloud holds real user files, so
-   default to keeping both layers unless a documented decision says
-   otherwise.
+   Still applies regardless of the SSO/MFA reversal above — the role
+   itself isn't the problem, requiring it as an interactive challenge in
+   front of API traffic was.
+4. ~~Decide whether to keep Nextcloud's own Authentik OIDC login active in
+   addition to Pangolin's gate...~~ **Moot as of 2026-09-25** — Authentik
+   is retired from this entirely (see README.md "Authentik-via-Pangolin
+   retired"). Nextcloud's auth is local-account + `twofactor_totp` only.
 5. Run the public-edge security tests from
    `pangolin-observability-and-graylog-plan.md`'s "Public-edge security
    tests" section against `nextcloud.pan.gibbsgreatly.xyz`: clean-browser
-   and unauthorized-account access, MFA, certificate hostname, secure
-   redirects/cookies, uploads (Nextcloud is upload-heavy — this is a real
-   functional risk, not a formality), idle/long-request timeouts, and
-   confirm the home service is unreachable directly from the internet.
+   and unauthorized-account access, MFA (now Nextcloud's own
+   `twofactor_totp`, once enabled for `steve` — not Pangolin's, per the
+   reversal above), certificate hostname, secure redirects/cookies,
+   uploads (Nextcloud is upload-heavy — this is a real functional risk,
+   not a formality), idle/long-request timeouts, and confirm the home
+   service is unreachable directly from the internet.
 6. Confirm the rollback path works: disabling the Pangolin resource,
    then disabling the Traefik route, each independently blocks access.
 
