@@ -1,0 +1,101 @@
+# Bring the ARK: Survival Ascended server's gameplay-balance config under
+# IaC. Everything here was previously hand-edited live via the Panel's SFTP
+# file editor (no repo record, no way to re-derive it after a rebuild) --
+# operator explicitly asked for this to move under version control after
+# finding the settings too generous (XPMultiplier=5 meant reaching level 21
+# from a few minutes of punching trees on the beach).
+#
+# Two files, two different management styles, on purpose:
+#   - GameUserSettings.ini: only the specific gameplay-balance keys below
+#     are managed (lineinfile per key). The rest of that file is Panel/
+#     Wings/runtime-owned (session name, ports, admin password, active mod
+#     list) -- templating the whole file would fight the Panel for control
+#     of fields this playbook has no business touching.
+#   - Game.ini: this server's Game.ini *is* the engram override block and
+#     nothing else, so the whole tracked file is deployed as-is.
+#
+# Runs directly against gaming-stack-lab (not through deploy-gaming-stack-
+# lab.yml or provision.sh's --stack mechanism), matching the narrow-
+# standalone-play pattern already used for configure-pterodactyl-lab-dns-
+# records.yml -- editing one running server's config doesn't need a full
+# stack reprovision.
+---
+- name: Manage ARK Survival Ascended gameplay-balance config
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    # This server's Wings volume UUID (confirmed via the Panel's Client
+    # API, 2026-09-20) -- Wings names each server's data directory by its
+    # full UUID, not the short "identifier" shown in the Panel UI/URLs.
+    ark_server_uuid: "0f4a4119-4fa1-457d-9c48-09dbd7aa62ee"
+    ark_config_dir: "/srv/docker/pterodactyl/volumes/{{ ark_server_uuid }}/ShooterGame/Saved/Config/WindowsServer"
+
+    # Fixed 2026-09-24: XPMultiplier was 5 (5x all XP from every source),
+    # not just "less grindy" but a flat sprint to max level -- reported
+    # live as reaching level 21 from a few minutes of punching trees.
+    # Dropped to 2x: still noticeably faster than vanilla, nowhere near
+    # instant. Everything else here matches the original "less grindy
+    # taming/breeding, less punishing" ask and is intentionally kept.
+    ark_gameplay_settings:
+      XPMultiplier: 2
+      PlayerDamageMultiplier: 1.5
+      PlayerResistanceMultiplier: 1.5
+      TamingSpeedMultiplier: 10
+      HarvestAmountMultiplier: 3
+      PlayerCharacterWaterDrainMultiplier: 0.5
+      PlayerCharacterFoodDrainMultiplier: 0.5
+      PlayerCharacterStaminaDrainMultiplier: 0.5
+      MatingIntervalMultiplier: 0.1
+      EggHatchSpeedMultiplier: 10
+      BabyMatureSpeedMultiplier: 10
+      BabyCuddleIntervalMultiplier: 0.1
+      BabyImprintAmountMultiplier: 1.5
+
+  tasks:
+    - name: Confirm the ARK server's config directory exists
+      ansible.builtin.stat:
+        path: "{{ ark_config_dir }}/GameUserSettings.ini"
+      register: ark_gus_stat
+
+    - name: Fail clearly if the expected path doesn't exist
+      ansible.builtin.fail:
+        msg: >-
+          {{ ark_config_dir }}/GameUserSettings.ini not found -- the
+          server's UUID or Wings' volume path may have changed since this
+          playbook was written. Confirm via the Panel before re-running,
+          don't just retry.
+      when: not ark_gus_stat.stat.exists
+
+    - name: Apply gameplay-balance settings to GameUserSettings.ini
+      ansible.builtin.lineinfile:
+        path: "{{ ark_config_dir }}/GameUserSettings.ini"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop: "{{ ark_gameplay_settings | dict2items }}"
+      register: ark_gus_fix
+
+    - name: Deploy the tracked engram-points override (Game.ini)
+      ansible.builtin.copy:
+        src: "../../stacks/gaming-stack-lab/ark-survival-ascended/Game.ini"
+        dest: "{{ ark_config_dir }}/Game.ini"
+        mode: "0644" # nosonar: ansible:S2612 -- game config file, needs world-read like every other .ini Wings/the game process touches
+      register: ark_game_ini_fix
+
+    # ARK doesn't hot-reload these files -- restart via the Client API
+    # (not `docker restart`, which would fight Wings' own state tracking)
+    # only when something actually changed.
+    - name: Restart the ARK server if config changed
+      ansible.builtin.uri:
+        url: "http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') | mandatory('LAB_IP_PTERODACTYL_LAB env var is required') }}/api/client/servers/{{ ark_server_uuid.split('-')[0] }}/power" # nosonar: ansible:S5332 -- Panel's Client API, private game_seg only, same pattern as deploy-gaming-stack-lab.yml's Application API calls
+        headers:
+          Authorization: "Bearer {{ lookup('env', 'PTERODACTYL_LAB_CLIENT_API_KEY') | mandatory('PTERODACTYL_LAB_CLIENT_API_KEY env var is not set') }}"
+          Accept: "application/json"
+          Content-Type: "application/json"
+        method: POST
+        status_code: 204
+        body_format: json
+        body:
+          signal: restart
+      when: ark_gus_fix.changed or ark_game_ini_fix.changed # noqa: no-handler
+      no_log: true
