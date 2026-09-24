@@ -63,12 +63,16 @@
     # fresh deploy if it's missing. Confirmed live (2026-09-19): moving
     # this here from later in the play (after the venv/pip-install
     # section) was a real ordering bug, not just tidiness.
-    - name: Write the worker's OpenAI API key env file (never logged)
+    - name: Write the worker's secrets env file (never logged)
       no_log: true
       ansible.builtin.copy:
         dest: /srv/cyberseceval/config/worker.env
         mode: "0600"
-        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
+        content: |
+          OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}
+          NEXTCLOUD_REPORTS_WEBDAV_URL={{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}
+          NEXTCLOUD_REPORTS_USER={{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}
+          NEXTCLOUD_REPORTS_APP_PASSWORD={{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}
 
     # docker-compose.yml resolves ${LAB_IP_CSE_PANEL} itself (Compose
     # auto-reads a .env file in the same directory as the compose file --
@@ -490,3 +494,18 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Share CyberSecEval's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    nextcloud_reports_user: "{{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}"
+    nextcloud_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0
+      vars:
+        nextcloud_folder_share_base_url: "http://192.168.120.10:8080" # nosonar -- internal apps_seg LAN traffic, same trust model as this stack's own status.php health check
+        nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
+        nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
+        nextcloud_folder_share_folder: "Reports/cyberseceval"

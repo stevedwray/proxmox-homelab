@@ -274,12 +274,21 @@ def _write_report(
     stats_error = result.get("stats_error")
     flattened = _flatten_stats(stats) if stats is not None else []
 
+    if stats_error:
+        summary = f"{benchmark}: failed -- {stats_error}"
+    elif flattened:
+        summary = f"{benchmark}: " + ", ".join(f"{k}={v}" for k, v in flattened[:3])
+    else:
+        summary = f"{benchmark}: completed, {num_test_cases} test case(s)"
+    summary = summary[:300]
+
     lines = [
         f"# CyberSecEval: {benchmark}",
         "",
         f"**Submitted by:** {submitted_by}  ",
         f"**Started:** {started_at}  ",
         f"**Finished:** {finished_at}  ",
+        f"**Summary:** {summary}  ",
         f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
         f"**Test cases:** {num_test_cases} (random sample: {random_sample})",
         "",
@@ -311,20 +320,57 @@ def _write_report(
     ]
     (run_dir / "report.md").write_text("\n".join(lines) + "\n")
 
-    if stats_error:
-        summary = f"{benchmark}: failed -- {stats_error}"
-    elif flattened:
-        summary = f"{benchmark}: " + ", ".join(f"{k}={v}" for k, v in flattened[:3])
-    else:
-        summary = f"{benchmark}: completed, {num_test_cases} test case(s)"
-
     (run_dir / "manifest.json").write_text(json.dumps({
         "project": "cyberseceval",
         "run_id": run_dir.name,
         "started_at": started_at,
         "finished_at": finished_at,
-        "summary": summary[:300],
+        "summary": summary,
     }, indent=2))
+
+    _push_report_to_nextcloud(run_dir, benchmark)
+
+
+def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
+    """Best-effort WebDAV push of this run's report.md into Nextcloud,
+    per docs/reporting-platform/plan.md Sec5a (2026-09-25). Never raises
+    -- report.md is already durable on cse-controller's own disk
+    (docs/reporting-platform/CONVENTION.md); Nextcloud being briefly
+    unreachable or a rotated credential must never fail a benchmark
+    run that has already completed."""
+    webdav_url = os.environ.get("NEXTCLOUD_REPORTS_WEBDAV_URL", "")
+    user = os.environ.get("NEXTCLOUD_REPORTS_USER", "")
+    password = os.environ.get("NEXTCLOUD_REPORTS_APP_PASSWORD", "")
+    if not (webdav_url and user and password):
+        return
+
+    import base64
+    import urllib.error
+    import urllib.request
+
+    auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+    base = webdav_url.rstrip("/")
+    for collection_url in (f"{base}/cyberseceval", f"{base}/cyberseceval/{run_dir.name}"):
+        request = urllib.request.Request(collection_url, method="MKCOL")
+        request.add_header("Authorization", auth_header)
+        try:
+            urllib.request.urlopen(request, timeout=15)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (405, 301):
+                return
+        except urllib.error.URLError:
+            return
+
+    put_url = f"{base}/cyberseceval/{run_dir.name}/report.md"
+    request = urllib.request.Request(
+        put_url, data=(run_dir / "report.md").read_bytes(), method="PUT"
+    )
+    request.add_header("Authorization", auth_header)
+    request.add_header("Content-Type", "text/markdown")
+    try:
+        urllib.request.urlopen(request, timeout=15)
+    except urllib.error.URLError:
+        pass
 
 
 def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
