@@ -343,11 +343,20 @@ def run_benchmark(
                 result["stats_error"] = f"failed to read {stat_name}: {e}"
             break
     else:
-        reason = _extract_failure_reason(log_text)
-        result["stats_error"] = (
-            f"no stat.json/stats.json found -- {reason}" if reason
-            else "no stat.json/stats.json found -- benchmark may have failed before producing one"
-        )
+        if benchmark == "autonomous-uplift":
+            # Never produces a score in this pinned PurpleLlama commit --
+            # grading isn't implemented upstream (confirmed live).
+            # Genuinely nothing wrong here, so skip the generic
+            # "no stat.json" message (which just leaks an internal file
+            # path) -- the panel's own per-benchmark hint already
+            # explains why there's no score.
+            result["stats_error"] = "grading not implemented upstream for this benchmark -- see the hint above"
+        else:
+            reason = _extract_failure_reason(log_text)
+            result["stats_error"] = (
+                f"no stat.json/stats.json found -- {reason}" if reason
+                else "no stat.json/stats.json found -- benchmark may have failed before producing one"
+            )
 
     # Per-test-case transcripts (the actual prompt text, the model's real
     # response, and the judgment) -- genuinely useful for research, not

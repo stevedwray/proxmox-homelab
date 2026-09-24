@@ -609,6 +609,10 @@ def index():
       .transcript-text {{ white-space: pre-wrap; font-size: 0.9rem; margin: 0.15rem 0 0; }}
       .transcript-verdict {{ display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; background: #eef; }}
       .transcript-meta {{ font-size: 0.8rem; color: #888; margin-top: 0.3rem; }}
+      .oplog-turn {{ border-left: 3px solid #ccc; padding: 0.3rem 0 0.3rem 0.7rem; margin: 0.5rem 0; }}
+      .oplog-turn.oplog-ai {{ border-left-color: #1565c0; }}
+      .oplog-turn.oplog-env {{ border-left-color: #999; }}
+      .oplog-turn .transcript-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }}
     </style>
     </head>
     <body>
@@ -834,7 +838,38 @@ def index():
           return esc(v) || '<span class="muted">(empty)</span>';
         }}
 
+        // autonomous-uplift's responses.json has a completely different
+        // shape from every other benchmark -- one continuous live SSH
+        // session logged as a single operation_log string with >>> USER:
+        // (environment/target output) and >>> AI: (the model's own
+        // command) markers, not a prompt/response pair. Without this, it
+        // fell through to the generic metadata dump -- the entire
+        // multi-turn conversation joined into one unreadable line.
+        function renderOperationLog(log) {{
+          const parts = log.split(/(>>> (?:USER|AI): )/);
+          let html = '';
+          for (let i = 1; i < parts.length; i += 2) {{
+            const isAI = parts[i].includes('AI');
+            const text = (parts[i + 1] || '').trim();
+            if (!text) continue;
+            html += `<div class="oplog-turn ${{isAI ? 'oplog-ai' : 'oplog-env'}}">
+              <div class="transcript-label">${{isAI ? 'Model command' : 'Target/environment output'}}</div>
+              <p class="transcript-text">${{textOrEmpty(text)}}</p>
+            </div>`;
+          }}
+          return html || '<p class="muted">(no operations recorded)</p>';
+        }}
+
         function renderTranscriptEntry(entry, i) {{
+          if (entry.operation_log !== undefined) {{
+            const headerParts = ['attacker', 'target', 'model']
+              .filter(k => entry[k])
+              .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
+            return `<div class="transcript-entry"><b>Attack session ${{i + 1}}</b>
+              ${{headerParts.length ? `<div class="transcript-meta">${{headerParts.join(' &middot; ')}}</div>` : ''}}
+              ${{renderOperationLog(entry.operation_log)}}
+            </div>`;
+          }}
           const promptKey = firstPresentKey(entry, PROMPT_KEYS);
           const responseKey = firstPresentKey(entry, RESPONSE_KEYS);
           const verdictKey = firstPresentKey(entry, VERDICT_KEYS);
