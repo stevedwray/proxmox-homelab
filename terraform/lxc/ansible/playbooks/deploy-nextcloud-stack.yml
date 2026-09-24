@@ -120,21 +120,46 @@
 
     # These persistent config.php entries are required for an existing
     # installation; Compose environment variables only cover first install.
-    - name: Trust the Pangolin Nextcloud hostname
+    # Both are read-then-append, not a hardcoded index -- a hardcoded
+    # "index 1" clobbered the LAN hostname on a fresh install (2026-09-25):
+    # NEXTCLOUD_TRUSTED_DOMAINS already populates indices 1 AND 2 on first
+    # install, so blindly setting index 1 overwrote the LAN entry with a
+    # duplicate of the Pangolin one, breaking https://nextcloud.lab...
+    # entirely until fixed live. Confirmed occ's list output is one value
+    # per line, in index order, so its length is always the next free index.
+    - name: Get current Nextcloud trusted_domains
       ansible.builtin.command:
-        cmd: >-
-          docker exec --user www-data nextcloud-stack-app php occ config:system:set
-          trusted_domains 1 --value={{ nextcloud_pangolin_public_host }}
+        cmd: docker exec --user www-data nextcloud-stack-app php occ config:system:get trusted_domains
+      register: nextcloud_trusted_domains
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Trust the dedicated Pangolin proxy only
+    - name: Trust the Pangolin Nextcloud hostname if not already present
       ansible.builtin.command:
         cmd: >-
           docker exec --user www-data nextcloud-stack-app php occ config:system:set
-          trusted_proxies 1 --value={{ nextcloud_pangolin_proxy_ip }}
+          trusted_domains {{ nextcloud_trusted_domains.stdout_lines | length }}
+          --value={{ nextcloud_pangolin_public_host }}
+      when: >-
+        not ansible_check_mode and
+        nextcloud_pangolin_public_host not in nextcloud_trusted_domains.stdout_lines
+
+    - name: Get current Nextcloud trusted_proxies
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ config:system:get trusted_proxies
+      register: nextcloud_trusted_proxies
       changed_when: false
       when: not ansible_check_mode
+
+    - name: Trust the dedicated Pangolin proxy if not already present
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          trusted_proxies {{ nextcloud_trusted_proxies.stdout_lines | length }}
+          --value={{ nextcloud_pangolin_proxy_ip }}
+      when: >-
+        not ansible_check_mode and
+        nextcloud_pangolin_proxy_ip not in nextcloud_trusted_proxies.stdout_lines
 
     # No SSO/OIDC of any kind -- operator decision, 2026-09-25: Authentik
     # must never gain any externally-reachable path, direct or through
