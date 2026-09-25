@@ -96,6 +96,8 @@
       - "7778"  # ARK peer (game + 1)
       - "27015" # ARK query
       - "37015" # ARK RCON
+      - "3724"  # AzerothCore authserver (WoW 3.3.5a)
+      - "8085"  # AzerothCore worldserver
     wings_version: "v1.13.3"
 
   tasks:
@@ -191,15 +193,15 @@
         return_content: true
       register: pterodactyl_allocation_lookup
 
-    # Port ranges cover both known games so far: Minecraft (25565) and ARK.
+    # Port ranges cover Minecraft, ARK, and the planned AzerothCore server.
     # ARK's ports were corrected 2026-09-20 -- the smoketest used
     # azixus/ARK_Ascended_Docker's own defaults (7790 game, 32330 RCON),
     # but the actual Wings egg to be used (pelican-eggs' official
     # ark_survival_ascended, confirmed via its real README) has different
     # real defaults: 7777 game, 7778 peer (auto game+1, not separately
-    # allocatable), 27015 query, 37015 RCON. AzerothCore is not covered --
-    # its port requirements aren't researched yet, add allocations for it
-    # separately once that egg exists.
+    # allocatable), 27015 query, 37015 RCON. AzerothCore uses 3724 for
+    # authserver and 8085 for worldserver; its server is still intentionally
+    # uncreated until the interlocked egg and operator choices are ready.
     - name: Create any missing game-server allocations on this node
       ansible.builtin.uri:
         url: "{{ pterodactyl_panel_url }}/api/application/nodes/{{ pterodactyl_node_id }}/allocations"

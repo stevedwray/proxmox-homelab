@@ -7,11 +7,13 @@ surface than Portainer's UI for switching between the two (can't run both
 at once — memory). See `README.md` for the full ARK smoketest findings;
 summarized here only as much as the decisions below need.
 
-**Current state (2026-09-26):** Panel, Wings, and ARK are live. The
-Minecraft migration is now specified by the checked-in Wildworks egg,
-shared game-slot interlock, and `minecraft-migration.md` execution runbook.
-Repository authoring is complete; the production deployment/cutover phases
-have not run and remain subject to the normal production approval flow.
+**Current state (2026-09-26):** Panel, Wings, ARK, and the migrated
+`Foreverworld` Minecraft server are live. Minecraft has passed world/mod/RCON
+checks and the game-slot interlock has passed both directions: each game is
+blocked with exit 75 while the other holds the slot. The old Compose source
+and pre-copy ZFS snapshot remain as rollback assets. AzerothCore is the next
+new-server work item and remains subject to the normal production approval
+flow.
 
 ## Research this plan is based on
 
@@ -495,12 +497,15 @@ way `foreverworld`'s data is.
 
 ### Steps (AzerothCore)
 
-1. **Narrow the egg's `docker_images` field** before import — same fix
-   every egg import in this project has needed (Panel's validator
-   rejects punctuation-heavy image-tag strings).
-2. **Import the egg** via the Application API, create a new server on
-   `gaming-stack-lab` with `WORLD_PORT`/`AUTH_PORT` allocations that
-   don't collide with existing servers.
+1. **Create a checked-in interlocked egg fork** before import. Narrow its
+   `docker_images` field for Panel validation, mount `/game-slot` read-only,
+   and take the non-blocking shared `flock` before the bundled database or
+   game processes start. Verify the selected image contains `flock`.
+2. **Reconcile allocations** for `WORLD_PORT`/`AUTH_PORT` in the managed
+   gaming-stack deployment, then import the reviewed egg manually through
+   Panel Admin. Egg import is not exposed by the Application API. Associate
+   the same `game-slot-lock` mount with the new egg and create the server via
+   the Application API only after confirming the allocations are free.
 3. **Set startup variables**: `USE_PLAYERBOTS=1`,
    `MAP_UPDATE_THREADS=4`, `EXPANSION=2` (WotLK), `REALM_ADDRESS=auto`,
    plus whatever `PLAYER_LIMIT`/rate multipliers the operator wants
@@ -520,6 +525,10 @@ way `foreverworld`'s data is.
    choice once the operator has played with it — not defaulted
    silently, matching the standing lesson from ARK's XP-multiplier saga
    this session.
+7. **Before production creation**, set explicit RAM/CPU/disk limits and
+   confirm LAN firewall policy for TCP 3724/8085. The game-slot interlock
+   prevents concurrent games but does not size an AzerothCore build or decide
+   which networks may reach it.
 
 ## Not covered by this plan
 
