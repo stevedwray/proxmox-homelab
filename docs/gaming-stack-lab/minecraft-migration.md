@@ -110,6 +110,22 @@ fresh node. This permits the current 16 GiB ARK definition and a suitably
 sized Minecraft definition to coexist in Panel. It is safe only while the
 runtime interlock is mandatory for every game on the node.
 
+### Completed production stage — 2026-09-26
+
+- The host lock directory and `/srv/docker/pterodactyl/game-slot/active.lock`
+  now exist on the dedicated game-data mount as root-owned `0755`/`0444`.
+- Wings is active with `/srv/docker/pterodactyl/game-slot` in
+  `allowed_mounts`.
+- Node 1's `memory_overallocate` is now `100`; its 24,576 MiB memory and
+  500,000 MiB disk limits were preserved.
+- Allocation `25575` was created free alongside the already-free `25565`.
+  All four ARK allocations remain assigned to ARK, which remained running
+  throughout this stage.
+
+The host-side capability is now installed, but it is not an active runtime
+interlock until Phase 3 assigns the mount and updated startup definition to
+both ARK and Minecraft, then Phase 7 proves rejection in both directions.
+
 ## Phase 3: Panel-admin setup
 
 Pterodactyl does not expose egg import or server-mount assignment through the
