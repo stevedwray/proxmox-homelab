@@ -506,7 +506,9 @@ way `foreverworld`'s data is.
 1. **Create a checked-in interlocked egg fork** before import. Narrow its
    `docker_images` field for Panel validation, mount `/game-slot` read-only,
    and take the non-blocking shared `flock` before the bundled database or
-   game processes start. Verify the selected image contains `flock`.
+   game processes start. `scripts/render-azerothcore-playerbots-egg.sh`
+   renders the pinned-upstream import artifact with the agreed Playerbots
+   policy. Verify the selected image contains `flock` before import.
 2. **Reconcile allocations** for `WORLD_PORT`/`AUTH_PORT` in the managed
    gaming-stack deployment, then import the reviewed egg manually through
    Panel Admin. Egg import is not exposed by the Application API. Associate
