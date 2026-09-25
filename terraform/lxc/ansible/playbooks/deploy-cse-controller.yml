@@ -269,6 +269,35 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch2.changed
 
+    # Real recurrence found live 2026-09-25: 8192 wasn't a safe ceiling for
+    # every prompt shape either -- one of the mitre benchmark's own, more
+    # elaborate prompts (a multi-paragraph "blockchain privilege escalation"
+    # scenario) exhausted the same reasoning_content budget before ever
+    # writing to content, leaving an empty final response the judge
+    # correctly rejected ("Response cannot be empty"). Not benchmark-specific
+    # to malware_analysis as first assumed -- any sufficiently demanding
+    # prompt against this model can hit the same wall. Raised to 32768
+    # (bounds worst-case pure generation to roughly 27 minutes at this
+    # model's ~20 tok/s) -- still an idempotent, unconditional replace, not
+    # gated to first-bootstrap.
+    - name: Raise the cse-lab max_completion_tokens cap further, 8192 -> 32768 (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '8192  # cse-lab patch: raised from 2048 -- this model answers via a separate reasoning_content field and can exhaust a small cap mid-thought on long-context prompts, leaving an empty final answer \(confirmed live 2026-09-19\)'
+        replace: '32768  # cse-lab patch: raised from 8192 -- not just malware_analysis-specific, any sufficiently demanding prompt (e.g. a verbose mitre category prompt) can exhaust reasoning_content before writing content (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch3
+
+    - name: Commit the further-raised max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise max_completion_tokens 8192 -> 32768 --
+          8192 wasn't a safe ceiling for every prompt shape, not just
+          malware_analysis; a verbose mitre Privilege Escalation prompt hit
+          the same empty-content failure. Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch3.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"
