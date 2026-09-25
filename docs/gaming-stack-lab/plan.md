@@ -514,6 +514,10 @@ way `foreverworld`'s data is.
    Panel Admin. Egg import is not exposed by the Application API. Associate
    the same `game-slot-lock` mount with the new egg and create the server via
    the Application API only after confirming the allocations are free.
+   **Completed 2026-09-26:** imported egg 19 into the `World of Warcraft`
+   nest, associated it with mount 1 (`game-slot-lock`), and created unassigned
+   node-1 allocations 7 (`192.168.60.10:3724`) and 8
+   (`192.168.60.10:8085`).
 3. **Set startup variables**: `USE_PLAYERBOTS=1`,
    `MAP_UPDATE_THREADS=4`, `EXPANSION=2` (WotLK), `REALM_ADDRESS=auto`,
    and a two-human player limit. Set the three explicit no-random-bots
