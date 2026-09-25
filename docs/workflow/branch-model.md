@@ -10,20 +10,10 @@ stable                              ← validated per its tier, ready for pve
 main                                ← current production state
 ```
 
-This model replaces the `baseline/teardown-validated` intermediate branch once
-the branch, CI triggers, and operator instructions have been migrated. Until
-that migration is complete, treat this document as the target branch model and
-follow the currently active repository guardrails for actual promotions.
-
-**`pve-test-vm` is reserved for structural/high-blast-radius validation only**
-(Terraform/SDN/firewall zone work, full teardown cycles). It is no longer the
-default validation target for routine changes — Ansible task/role changes,
-Authentik/Traefik/Harbor config, and similar app-level work validate directly
-against `pve` instead, through the normal production approval flow (see
-`CLAUDE.md`'s Production Credential Controls). `CLAUDE.md`'s own Validation
-Tiers table is the current authority on which tier uses which target; treat
-this document's copy below as illustrative, not authoritative, until it's
-reconciled.
+All active validation runs directly against `pve` through the production
+approval flow in `AGENTS.md`. `pve-test-vm` is retired and is not a validation
+target. Match validation depth to risk: structural changes require a specific
+production preflight, rollback plan, and targeted regression checks.
 
 ---
 
@@ -36,13 +26,12 @@ happens on the branch before promotion. Never develop directly on `stable` or `m
 
 ### `stable`
 
-The intermediate branch. Represents: **validated per its tier — pve-test-vm
-for structural/high-blast-radius changes, pve directly (under approval)
-otherwise — cleared for incremental deploy to pve**.
+The intermediate branch. Represents: **validated directly on pve under the
+production approval flow, at the depth appropriate to the change — cleared for
+incremental deploy to pve**.
 
 The promotion gate is the appropriate validation tier for the change class
-(see below). A full teardown is only required for high-risk structural changes —
-not every promotion.
+(see below).
 
 ### `main`
 
@@ -67,9 +56,10 @@ tiers only when the change warrants it.
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on affected playbooks |
-| Ansible task or role changes | `scripts/provision.sh --stack <affected>` on pve-test-vm |
-| Terraform / network / SDN / firewall | Full teardown cycle on pve-test-vm |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test-vm |
+| Ansible task or role changes | `scripts/provision.sh --stack <affected>` directly on pve, under the production approval flow |
+| Terraform / network / SDN / firewall — additive | Review a production `terragrunt plan`; after approval, apply on pve and test the explicit source-to-target path plus affected consumers |
+| Terraform / network / SDN / firewall — modifying or removing | Review the production plan and rollback path before approval; apply on pve, then test every affected path and consumer |
+| Authentik, Traefik, or cross-stack integration changes | Redeploy directly on pve and test actual consumer login/routing paths under the production approval flow |
 
 **Ansible changes are not low-risk even when they appear comment-only.** A
 `# nosonar` comment inside a Jinja `{{ }}` expression block or a `content: |`
@@ -91,33 +81,6 @@ GitHub issue for each actionable finding or tightly related group of findings,
 link the scan evidence in the issue, and decide whether the issue blocks the
 promotion. Blocking findings must be fixed before promotion unless the operator
 explicitly accepts the risk in the issue and in the promotion notes.
-
----
-
-## Teardown Testing
-
-The goal of the new harness work is to move routine validation away from
-expensive full teardown cycles. Stack smoke tests, integration checks, syntax
-checks, and targeted pve-test-vm provisions should catch most regressions before
-promotion. The full teardown cycle (Terraform destroy → redeploy all stacks from
-scratch) is **no longer a gate on every promotion to `stable`**. It is reserved
-for changes where fresh-install correctness is what is being validated:
-
-- Run before any major structural change (Terraform, SDN, cross-stack auth)
-- Run on pve-test-vm after a cluster of related changes when there is uncertainty
-  about fresh-install behaviour
-- Run as a periodic maintenance check (roughly monthly or when pve-test-vm diverges
-  from main significantly)
-
-The teardown cycle validates: can the infrastructure be rebuilt from scratch in
-the repo's current state? This matters for disaster recovery and for catching
-provisioning-path regressions that incremental deploys mask. It does not need to
-happen on every PR.
-
-The teardown harness still matters as a disaster-recovery proof and as a check
-against regressions hidden by incremental deploys. It should remain available,
-but it should be invoked deliberately rather than as the default gate for every
-small Ansible or documentation change.
 
 ---
 
@@ -167,4 +130,3 @@ are deleted on merge. Do not let stale branches accumulate.
 - `main` is updated only after a successful incremental deploy to pve.
 - Force-pushing `main` requires explicit operator action with a documented reason.
 - If an operator explicitly names a merge target, use that target exactly.
-- `dev/pve-test-vm` is retired (archival only — do not use as a PR target).
