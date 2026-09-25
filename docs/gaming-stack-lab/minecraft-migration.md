@@ -148,6 +148,16 @@ IDs:
 
 Do not create or start Minecraft if ARK has not passed this gate.
 
+### Completed production stage — ARK egg update, 2026-09-26
+
+Egg 15 (`ARK: Survival Ascended`) now has the checked-in interlocked startup
+definition. The stored value's SHA-256 exactly matches
+`ark-survival-ascended-egg.json`, and the Panel Application API confirms both
+the `/game-slot/active.lock` prefix and `GAME SLOT BUSY` failure message. ARK
+was left running throughout, so this definition has not yet executed; mount
+assignment and the controlled restart/test above remain required before the
+interlock is active for ARK.
+
 ## Phase 4: create an unstarted Minecraft staging server
 
 Use the Application API only after the manual egg import. Create the server
