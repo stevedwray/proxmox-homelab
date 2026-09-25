@@ -331,6 +331,58 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch4.changed
 
+    # Real regression found live 2026-09-25, caused by the 32768 cap itself:
+    # that literal is sent to EVERY chat.completions.create call from this
+    # class, including calls to the real cloud gpt-4o-mini judge/expansion
+    # model, not just the local GGUF model-under-test. gpt-4o-mini hard-caps
+    # completion tokens at 16384 -- confirmed live via the debug HTTP log:
+    # every judge/expansion call was rejected with 400 Bad Request
+    # ("max_tokens is too large: 32768. This model supports at most 16384
+    # completion tokens"), and PurpleLlama's retry wrapper backed off
+    # exponentially (0.5s, 1s, 2s, ... up to 600s) against a deterministic,
+    # non-retryable error -- retrying forever. Those backoff sleeps (flat
+    # CPU, zero network for minutes at a stretch) were the "hang" seen after
+    # the earlier 32768 fix, not a deadlock. Scoping the cap by whether the
+    # model string is a local filesystem path (our GGUF models) vs a real
+    # OpenAI-hosted model name fixes this without touching the two separate
+    # concerns (local model needs 32768 headroom; cloud judge is capped by
+    # OpenAI itself at 16384).
+    - name: Compute a per-model max_completion_tokens cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '        super\(\)\.__init__\(config\)$'
+        replace: '        super().__init__(config); self._max_completion_tokens_cap = 32768 if self.model.startswith("/") else 16384  # cse-lab patch: only the local GGUF model-under-test can use headroom up to 32768; the real cloud gpt-4o-mini judge/expansion model hard-caps at 16384 and rejects anything higher with a 400 (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch5
+
+    - name: Commit the per-model max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: scope max_completion_tokens cap by model (32768 local /
+          16384 cloud) -- the flat 32768 cap broke every gpt-4o-mini
+          judge/expansion call with a 400, and the resulting infinite
+          exponential-backoff retry looked exactly like a hang.
+          Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch5.changed
+
+    - name: Point every max_completion_tokens call site at the per-model cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '32768  # cse-lab patch: raised from 8192 -- not just malware_analysis-specific, any sufficiently demanding prompt \(e\.g\. a verbose mitre category prompt\) can exhaust reasoning_content before writing content \(confirmed live 2026-09-25\)'
+        replace: 'self._max_completion_tokens_cap  # cse-lab patch: scoped per-model -- 32768 for the local GGUF model-under-test, 16384 for the real cloud gpt-4o-mini judge/expansion model, which rejects anything higher (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch6
+
+    - name: Commit pointing every call site at the per-model cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: use the per-model max_completion_tokens cap at every
+          call site instead of the flat 32768 literal.
+          Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch6.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"
