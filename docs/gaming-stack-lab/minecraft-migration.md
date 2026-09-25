@@ -220,15 +220,34 @@ configuration gates are complete.
 
    Add an exclusion only if Phase 1 classified it and recorded why. Preserve
    ACLs, xattrs, hard links, and numeric ownership during the copy.
-6. Derive the correct Wings UID:GID from an existing Wings volume, recursively
-   apply it to the destination, and prove the Java 21 container user can
-   create and remove a test file. Do not assume the source Compose UID:GID is
-   correct.
+6. Inspect the target Java image's effective `container` UID:GID, recursively
+   apply it to the destination, and prove that exact image user can create and
+   remove a test file. Do not assume the source Compose UID:GID or an existing
+   ARK volume's ownership is correct.
 7. Checksum the exact same manifest with `rsync --archive --hard-links
    --acls --xattrs --numeric-ids --checksum --dry-run` and the identical
    exclusion list. The result must contain no source-to-destination changes.
 
 Never use `--delete` against the source. Never rename or remove the source.
+
+### Completed production stage — source frozen and copied, 2026-09-26
+
+The old Foreverworld Compose project had no containers and remains stopped.
+No staging Minecraft container is running. A new rollback snapshot exists at
+`gaming/subvol-60010-disk-0@before-pterodactyl-minecraft-copy-20260926`.
+
+The complete reviewed source was copied one-way from
+`/srv/docker/minecraft/foreverworld/` into server 3's Wings volume using
+`rsync --archive --hard-links --acls --xattrs --numeric-ids`, without
+`--delete`, and with only the documented Compose/monitoring exclusions. The
+checksum dry-run reported no content changes after the copy. The source has
+3,939 files; the destination has 3,936 files after those exclusions.
+
+The Java 21 image's `container` user is UID:GID `1001:1001`, not the
+ARK-volume UID:GID. The migrated volume is therefore recursively owned by
+`1001:1001`; its `world/level.dat` remains mode `0600`. A disposable
+Java-image create/remove probe passed. The existing `eula=true` acceptance was
+preserved from the previously running source, without a new acceptance action.
 
 ## Phase 6: secrets and first start
 
