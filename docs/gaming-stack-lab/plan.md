@@ -534,10 +534,16 @@ way `foreverworld`'s data is.
    choice once the operator has played with it — not defaulted
    silently, matching the standing lesson from ARK's XP-multiplier saga
    this session.
-7. **Before production creation**, set explicit RAM/CPU/disk limits and
-   confirm LAN firewall policy for TCP 3724/8085. The game-slot interlock
-   prevents concurrent games but does not size an AzerothCore build or decide
-   which networks may reach it.
+7. **Completed 2026-09-26 — LAN firewall prerequisite:** the operator added
+   RouterOS forward rule `*B1`, allowing only `192.168.1.0/24` to reach
+   `gaming-stack-lab` (`192.168.60.10`) on TCP 3724/8085. It is before the
+   existing `game_seg` default-deny rule, has no WAN match, and was verified
+   afterward through the read-only RouterOS API. The matching declarative
+   intent is in `terraform/lxc/network/pve.yaml`.
+
+8. **Before production creation**, set the agreed explicit RAM/CPU/disk limits
+   (16 GiB / 4 CPU / 60 GiB). The game-slot interlock prevents concurrent
+   games but does not size an AzerothCore build.
 
 ## Not covered by this plan
 
