@@ -484,9 +484,81 @@ Nothing in steps 1–4 touches `foreverworld`'s data. First contact is
 step 5 (stop, no data touched); step 6 is copy-only, source untouched
 until far past operator verification in step 10.
 
+## AzerothCore (with Playerbots) — new server under Wings
+
+Written 2026-09-26, at the operator's request. Not yet started. This is a
+brand-new server, not a migration — nothing existing is at risk here the
+way `foreverworld`'s data is.
+
+### Verified facts
+
+- **The egg**: `Nazgile94/pelican-acore` (`egg-azerothcore-aio.json`) —
+  a single container bundling MySQL 8.4, authserver, worldserver, client
+  data, and module management. Confirmed by reading the actual egg JSON's
+  `variables` array directly, not a README summary.
+- **Honest caveat, not hidden**: this repo's own `AI-NOTICE.md` discloses
+  it was built with substantial ChatGPT assistance and is a
+  single-maintainer community project — a different maturity tier than
+  the `pelican-eggs`-org ARK egg already in production here. Worth
+  knowing going in, not a reason by itself to avoid it (no
+  `pelican-eggs`-org AzerothCore egg exists — checked — this is the real
+  option, not one of several).
+- **Playerbots, confirmed real and exact**: `USE_PLAYERBOTS=1` switches
+  the egg to `mod-playerbots/azerothcore-wotlk` (the correct fork —
+  standard AzerothCore will not compile against the Playerbots module,
+  confirmed from the module's own install docs) automatically.
+  `PLAYERBOTS_MODULE_BRANCH` defaults to `master`. The egg's own
+  `MAP_UPDATE_THREADS` variable description explicitly recommends `4`
+  when Playerbots is enabled (default `1` otherwise) — apply this, not
+  the default.
+- **Client data licensing**: `CLIENT_DATA_AUTO_DOWNLOAD=1` (default)
+  pulls DBC/maps/vmaps/mmaps via AzerothCore's own standard `acore.sh
+  client-data` tooling — long-established, normal practice in this
+  community, not something novel. This is *extracted data*, not
+  Blizzard's actual client executable/assets — no WoW client purchase or
+  upload needed for the server side. Running any WoW private server
+  still sits in the general legal gray area private servers always have
+  under Blizzard's EULA — worth the operator's own awareness, not a
+  decision this plan makes for them.
+- **Disk**: egg's own docs recommend 30GB+ (source compile, client data,
+  database). `gaming-stack-lab`'s `/srv/docker` mount has ~480GB free as
+  of the last check (2026-09-24) — no capacity concern.
+- **Host/allocations**: `gaming-stack-lab`, same Wings node as ARK and
+  (once migrated) Minecraft. Needs its own allocations: `WORLD_PORT`
+  (default `8085`) and `AUTH_PORT` (default `3724`, standard WoW
+  3.3.5a) — confirm neither collides with ARK's or the new Minecraft
+  server's allocations before creating it.
+
+### Steps (AzerothCore)
+
+1. **Narrow the egg's `docker_images` field** before import — same fix
+   every egg import in this project has needed (Panel's validator
+   rejects punctuation-heavy image-tag strings).
+2. **Import the egg** via the Application API, create a new server on
+   `gaming-stack-lab` with `WORLD_PORT`/`AUTH_PORT` allocations that
+   don't collide with existing servers.
+3. **Set startup variables**: `USE_PLAYERBOTS=1`,
+   `MAP_UPDATE_THREADS=4`, `EXPANSION=2` (WotLK), `REALM_ADDRESS=auto`,
+   plus whatever `PLAYER_LIMIT`/rate multipliers the operator wants
+   (Blizzlike defaults are `1` for every rate — a deliberate choice
+   question, not something to default silently given this project's
+   ARK experience with rate multipliers).
+4. **First boot**: expect a long first start (core compile + client-data
+   download + DB import) — watch the console live (same websocket
+   approach used all night), not just poll for "running", since a
+   silent early failure here would look identical to "still compiling"
+   for a long time.
+5. **Verify**: authserver/worldserver both up, realm visible, a test
+   login actually works, bots can be spawned/added. Operator
+   verification required for the "does this actually feel right"
+   parts, same as every other server in this project.
+6. **Decide on rate multipliers and player limits** as a real, explicit
+   choice once the operator has played with it — not defaulted
+   silently, matching the standing lesson from ARK's XP-multiplier saga
+   this session.
+
 ## Not covered by this plan
 
-- **AzerothCore** — not researched at all yet, deliberately deferred.
 - `terragrunt apply`, `provision.sh --stack pterodactyl-lab`, and
   health-check validation — real infrastructure steps, stay
   manual/operator-run, same as every other plan in this repo.
