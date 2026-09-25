@@ -22,6 +22,7 @@ jq \
   '
   .name = "AzerothCore WotLK Playerbots (game-slot interlocked)"
   | .uuid = $uuid
+  | .author = "stevedwray@protonmail.com"
   | .description = "Private two-human WotLK realm with party-only Playerbots. Requires the read-only /game-slot mount."
   | .startup = $startup
   | .variables |= map(
@@ -76,6 +77,7 @@ jq -e \
   '
   .meta.version == "PTDL_v2"
   and .uuid == $uuid
+  and (.author | test("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$"))
   and (.startup | contains("/game-slot/active.lock"))
   and (.startup | contains("flock -n -E 75"))
   and ([.variables[] | select(.env_variable == "USE_PLAYERBOTS").default_value] == ["1"])
