@@ -257,7 +257,9 @@ preserved from the previously running source, without a new acceptance action.
 3. Inject `MINECRAFT_FOREVERWORLD_RCON_PASSWORD` from SOPS into
    `server.properties` without printing it or placing it in the egg/API body.
 4. Confirm `run.sh` is executable and the preserved JVM arguments match the
-   approved heap and optional JVM flags.
+   approved heap and optional JVM flags. Remove the old Compose-only
+   `/data/jmx-exporter` Java-agent option when that directory is excluded;
+   retain the 16 GiB heap and GC logging.
 5. Start Minecraft from Panel while watching the live console. Stop on
    missing mods, registry errors, wrong world selection, ownership errors, or
    an unexpected new-world generation.
@@ -268,6 +270,20 @@ Required gates before cutover is considered successful:
 - TCP `25565` accepts a connection and RCON succeeds on `25575`;
 - expected mod count, world identity, representative player files, and
   pack-specific directories match;
+
+### Completed production stage — first Minecraft start, 2026-09-26
+
+ARK was stopped cleanly and released the shared lock before the first staging
+start. The copied JVM arguments initially referenced the intentionally
+excluded Compose-only `/data/jmx-exporter` Java agent, so Java exited before
+opening a port. Removing only that argument (while retaining `-Xmx16G`,
+`-Xms16G`, and GC logging) corrected the migration-specific startup issue.
+
+Minecraft then completed NeoForge startup, holds the game-slot lock, listens
+on `25565` and `25575`, and accepted an authenticated RCON `list` command.
+The preserved source and destination both have 243 mod JARs, one player-data
+file, and byte-identical `world/level.dat`. The source remains stopped and
+the rollback snapshot remains available.
 - the operator verifies world, builds, inventories, whitelist, and key mod
   behavior in-game;
 - a normal stop/start cycle succeeds;
