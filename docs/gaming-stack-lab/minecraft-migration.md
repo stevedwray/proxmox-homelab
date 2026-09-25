@@ -181,6 +181,22 @@ file and `MIGRATION_REQUIRED.txt`; it intentionally does not download another
 NeoForge server. Record the server ID, short identifier, full UUID, and exact
 Wings volume path. Assign the shared mount before any start attempt.
 
+### Completed production stage — unstarted Minecraft staging server, 2026-09-26
+
+Panel server 3, `Foreverworld (migration staging)`, is installed but has not
+been started. Its full UUID is `aa27bd44-577c-473e-94d3-d3f04a63c1c0` and its
+short identifier is `aa27bd44`. It uses egg 16, allocation 1 (`25565`) and
+allocation 6 (`25575`), with 18,432 MiB memory, zero swap, and 50,000 MiB
+disk. Its empty Wings volume is
+`/srv/docker/pterodactyl/volumes/aa27bd44-577c-473e-94d3-d3f04a63c1c0` and
+contains only the intentional installer markers `eula.txt` and
+`MIGRATION_REQUIRED.txt`.
+
+As with the pre-existing ARK server, the mount required an explicit
+`mount_server` association. Server 3 is now associated with mount 1
+(`game-slot-lock`); do not start it until the Phase 5 copy and Phase 6
+configuration gates are complete.
+
 ## Phase 5: freeze, snapshot, and copy
 
 1. Confirm ARK and the new Minecraft server are stopped.
