@@ -148,15 +148,20 @@ IDs:
 
 Do not create or start Minecraft if ARK has not passed this gate.
 
-### Completed production stage — ARK egg update, 2026-09-26
+### Completed production stage — ARK interlock verified, 2026-09-26
 
-Egg 15 (`ARK: Survival Ascended`) now has the checked-in interlocked startup
-definition. The stored value's SHA-256 exactly matches
-`ark-survival-ascended-egg.json`, and the Panel Application API confirms both
-the `/game-slot/active.lock` prefix and `GAME SLOT BUSY` failure message. ARK
-was left running throughout, so this definition has not yet executed; mount
-assignment and the controlled restart/test above remain required before the
-interlock is active for ARK.
+Egg 15 (`ARK: Survival Ascended`) and the existing ARK server's own cached
+startup both exactly match the checked-in interlocked startup (SHA-256
+`14f54377cd666b8dccd5034b9d2beba589f9e7329772d2c4c34d5c55ed664a17`).
+The existing server required an explicit association with mount 1 in
+`mount_server`; egg/node mount associations alone are not retroactive for an
+already-created server.
+
+After the controlled restart, its live container has the read-only host mount
+at `/game-slot`, completed normal startup and is advertising for join. A
+second non-blocking host lock attempt returned exit code `75`, proving that
+ARK holds the shared game-slot lock. Do not alter the ARK egg or its per-server
+startup without preserving this prefix.
 
 ## Phase 4: create an unstarted Minecraft staging server
 
