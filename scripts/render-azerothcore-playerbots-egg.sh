@@ -70,6 +70,7 @@ jq \
         rules: "required|integer|min:0|max:1000", sort: 1004, field_type: "text"
       }
     ]
+  | .variables |= map(del(.sort))
   ' "$temp_path" > "$output_path"
 
 jq -e \
@@ -78,6 +79,7 @@ jq -e \
   .meta.version == "PTDL_v2"
   and .uuid == $uuid
   and (.author | test("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$"))
+  and ([.variables[] | has("sort")] | any | not)
   and (.startup | contains("/game-slot/active.lock"))
   and (.startup | contains("flock -n -E 75"))
   and ([.variables[] | select(.env_variable == "USE_PLAYERBOTS").default_value] == ["1"])
