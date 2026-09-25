@@ -34,6 +34,10 @@
       - metasploit-framework
       - crackmapexec
       - postgresql
+      # Added 2026-09-25: same gap, different tool -- the agent also ran
+      # `ip addr`/`ip route` unprompted and got "command not found". This
+      # minimal Kali base ships neither iproute2 nor net-tools by default.
+      - iproute2
     # Autonomous-offensive benchmark (plan §7/§11/§13) needs a real SSH
     # login with tools on PATH -- CyberSecEval's test_case_generator
     # hardcodes port 22 and defaults --ssh-username to "kali" with no
