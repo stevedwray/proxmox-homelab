@@ -5,7 +5,14 @@ step-by-step plan (`docs/agent-design/step-packet-schema.md` shape); this
 file is the durable status record and where each step's hand-back gets
 written (see `docs/agent-design/README.md`'s process).
 
-## Read this first: current state (2026-09-21)
+## Read this first: current state (2026-09-25)
+
+**Merged to `stable`.** The full implementation (`task/pve-tiny-host-
+bootstrap`, 54 commits: host onboarding through the panel UI) is on
+`stable` as of commit `3e5bb15c`. Active development since then
+continues on `feat/cse-panel-delete-runs`, cut from `stable` -- 6
+commits, all deployed and live-tested on `pve-tiny`, **not yet pushed
+or merged**.
 
 **Live, deployed, browser-reachable, SSO-enforced, genuinely usable by
 a non-technical operator, and now handles all 10 benchmarks correctly
@@ -14,7 +21,30 @@ tabbed human-readable UI with per-run collapsible cards, per-test-case
 transcript viewing (real prompts/responses/verdicts), a reliability fix
 for lost in-flight jobs, and two rounds of root-causing the model's
 actual failure behavior (not hangs, not a panel bug) have all landed
-and been verified live.
+and been verified live. Since then: real task management (delete/cancel
+a stuck job, not just a finished one), a second serious reliability bug
+found and fixed (a 3-day silent redelivery loop), and dedicated
+`autonomous-uplift` transcript rendering (its `operation_log` shape is
+nothing like every other benchmark's).
+
+**Framework backend state, important to know before running anything**:
+the production `llama-server` container (`qwen38-flash-next-q4`, port
+8080) is **not currently running** -- Framework rebooted unexpectedly
+(~2026-09-23/24) and that container's `restart_policy: "no"` /
+`auto_remove: true` meant it never came back, same failure class as the
+2026-09-21 incident in
+[[reference_framework_llama_server_real_hang]]. In its place, port 8080
+is now served by a **native build of the same Nathanw fork**
+(`~/llama.cpp/build-vk` on Framework, `strix-halo-vulkan` branch,
+systemd unit `nathanw-llamacpp.service`) -- built for easier manual
+testing/debugging, deliberately put on the *same* port so it and the
+old container config can never both be loaded at once (the exact
+failure mode of the 2026-09-21 GPU double-load incident). `cse-panel`'s
+default "framework-llama-server" backend reaches this native build
+transparently, no config change needed. See "Native Nathanw-fork
+build + systemd service" below for full detail, including one known
+follow-up item (the systemd unit's baked-in `--ctx-size` is smaller
+than the value actually verified working).
 
 **The multi-hour "hangs" are fixed, twice over.** First fix: Meta's own
 PurpleLlama client never sent a token limit for locally-served models,
@@ -58,14 +88,15 @@ evidence chain on both.
   etc.), pass `backend_base_url`/`backend_model` (UI: pick "custom" and
   fill in the fields) -- the target engine must already have a model
   loaded, this does not manage model loading.
-- To reset to a clean slate (e.g. after a meaningful code change),
-  restart the worker (`docker restart cse-controller-worker` on
-  `cse-controller`) to clear any in-flight job, then `redis-cli -n 1
-  FLUSHDB` on `cse-panel-redis` (db1 is entirely celery results + the
-  panel's own tracking keys, nothing else lives there -- confirmed live
-  2026-09-19, 41/41 keys accounted for). Run directories on disk
-  (`/srv/cyberseceval/runs/panel-*`) are untouched by this, so anything
-  from before a reset is still recoverable by hand if needed.
+- To delete a run or a standalone job (on `feat/cse-panel-delete-runs`,
+  not yet merged): click "Delete" (finished) or "Cancel & delete"
+  (still running/stuck) on its card. This genuinely kills the underlying
+  work (a real process-group SIGTERM, not just a UI hide) and cleans up
+  both the Redis-tracked state and the on-disk run directory. See "Real
+  task management" below for why this replaced the old manual
+  `docker restart` + `redis-cli FLUSHDB` reset procedure -- that
+  procedure still works as a last resort but is no longer the
+  recommended path for clearing one stuck job.
 
 **Known non-blocking gaps, not yet done:**
 - No Ollama/llama.cpp presets in `GET /backends` -- no confirmed real
@@ -77,22 +108,39 @@ evidence chain on both.
   tuning needed) -- the recursive-flatten + count-cluster approach
   appears to generalize well. Not specifically eyeballed for
   `interpreter`/`instruct`/`autocomplete`/`threat_intel_reasoning`/
-  `multiturn-phishing`/`autonomous-uplift` beyond confirming they
-  produce non-empty output.
+  `multiturn-phishing` beyond confirming they produce non-empty output.
+  `autonomous-uplift` has its own dedicated rendering now (see below),
+  not this generic path.
+- The native Nathanw-fork build's systemd unit (`nathanw-llamacpp.service`
+  on Framework) still has `--ctx-size 8192` baked in from its first
+  setup -- the value actually verified working for agentic tasks like
+  `autonomous-uplift` is `65536`. Fine as long as it's being run
+  manually with the right flag (see "Native Nathanw-fork build" below),
+  but a fresh `systemctl start` reverts to the undersized context. Not
+  yet updated in the unit file itself.
 - Transcript-view field-name matching (`PROMPT_KEYS`/`RESPONSE_KEYS`/
   `VERDICT_KEYS` in `app.py`) is tuned against `mitre-frr` and
   `prompt-injection`'s real shapes; `malware_analysis`'s
   `judge_responses.json` uses `question`/`model_response` instead, which
   don't match either list, so that benchmark's transcript currently
   falls back to the generic metadata line rather than labelled
-  Prompt/Response text. Not yet fixed -- same class of gap the stats
-  formatter had before it was widened.
+  Prompt/Response text. **Fixed 2026-09-21** by widening `PROMPT_KEYS`/
+  `RESPONSE_KEYS`/`VERDICT_KEYS` to also match `question`/
+  `model_response`/`answered_correctly`, confirmed against the vendored
+  PurpleLlama source and deployed live.
 - `multiturn-phishing` cannot produce a score with `num_test_cases=1` --
   its own variance calculation needs at least 2 data points. This is a
   property of the benchmark itself, not a bug.
 - `autonomous-uplift` runs a real attack for real but never produces a
   score in this pinned PurpleLlama commit -- upstream logs "Grading is
-  not implemented yet." Also not fixable from this side.
+  not implemented yet." Also not fixable from this side. **Confirmed
+  2026-09-25 this is inherent to the benchmark's design, not specific to
+  our setup**: upstream's own docs describe `autonomous-uplift` as fully
+  target-agnostic (bring your own cyber range), and their own reference
+  environment isn't Metasploitable3 either -- a custom AWS-provisioned
+  Windows Server 2022 with hand-planted vulnerabilities. Since there's
+  no scoring either way, matching that exact environment for
+  "comparable numbers" wouldn't actually buy anything right now.
 - No automated test coverage -- every check in this doc was a real,
   hands-on verification (render the real template, `node --check` the
   extracted JS, functional-test against real API response shapes) done
@@ -719,3 +767,267 @@ was reset off the other branch, which was never pushed anywhere so
 nothing was at risk. Lesson: check `git branch --show-current` before
 committing in a repo with this many active branches, don't assume the
 checkout matches whatever branch the last session's own work was on.
+
+## Merged to stable (2026-09-21)
+
+`task/pve-tiny-host-bootstrap` (54 commits: pve-tiny onboarding through
+this control panel's UI/randomization work) merged into `stable` as
+commit `3e5bb15c` (`6f2cfa67..3e5bb15c`). Two real conflicts, both
+resolved by reading both sides' actual history rather than guessing:
+
+- `terraform/lxc/stacks/media-stack-lab/stack.yaml`: `stable` had a
+  quick Sep-8 escape-hack fix for a Terraform `templatefile()` bug; this
+  branch had a later (Sep 16), more thorough fix (declaring the
+  colliding names as real Terraform variables instead) plus live-tested
+  GPU-passthrough config `stable` didn't have at all. Took this
+  branch's version entirely.
+- `terraform/secrets.common.enc.yaml`: both branches had independently
+  rotated a *different* secret (`stable`: `GREENBONE_ADMIN_PASSWORD`;
+  this branch: `OPENAI_API_KEY`). Decrypted both sides with `sops`,
+  confirmed via a key-by-key diff those were the only two differences,
+  merged both rotations into one plaintext, re-encrypted, and
+  round-trip-verified the result decrypted back to the exact intended
+  plaintext before committing -- the only safe way to merge an encrypted
+  file, never a raw text merge.
+
+One incidental `gaming-stack-lab` planning/scaffolding commit came along
+in the history (confirmed to be planning-only, not the real gaming-
+stack-lab deployment, which stayed on its own separate branch).
+
+## Verified randomization actually works (2026-09-21)
+
+After adding `random_sample` (a per-job random subset of the benchmark's
+full dataset, instead of PurpleLlama's fixed evenly-strided slice), ran
+a real suite with `num_test_cases=1` + random sampling across all 9
+static-dataset benchmarks, then compared each actual sampled test case
+against index `[0]` of that benchmark's real dataset (what the old
+deterministic path always picks at n=1). None matched -- confirmed
+across `mitre`, `mitre-frr`, `prompt-injection`, `interpreter`,
+`instruct`, `autocomplete`, `malware_analysis`, `threat_intel_reasoning`,
+`multiturn-phishing`. `autonomous-uplift` correctly has no
+`sampled_prompts.json` (no static dataset to sample from).
+
+## Real task management: cancel a stuck job, not just delete a finished one (2026-09-24/25)
+
+Built on `feat/cse-panel-delete-runs` (cut from `stable`, not yet
+merged). Started as "add a Delete button" and uncovered a second,
+worse, silently-running bug along the way.
+
+**Delete a finished run/job** (`787dc03a`): `DELETE /suites/{suite_id}`
+-- forgets each job's Celery result, deletes the group result, clears
+the panel's own Redis meta, and dispatches a new `cse_tasks.delete_run_dirs`
+task (fire-and-forget) to actually remove the run directory on
+`cse-controller`'s filesystem, since panel-web's own container can't
+reach it directly.
+
+**Root cause of a 3-day-old stuck job, found while testing delete**: a
+`mitre` job had been executing, "succeeding," and immediately being
+*received again* under the same task ID every ~4 hours since
+2026-09-22, non-stop, completely starving the single-concurrency
+worker. Cause: `task_acks_late=True` (added 2026-09-19 to stop a worker
+restart from losing in-flight work) only acks a task after it finishes
+-- but Celery's Redis broker has a default `visibility_timeout` of 1
+hour, and these benchmark runs routinely take 4+ hours. Redis assumed
+the still-genuinely-running task's worker had died and redelivered it,
+which then re-executed the instant the original finished, forever, for
+any run over an hour. Fixed by raising
+`broker_transport_options.visibility_timeout` to 12h.
+
+**Real cancellation, not just a UI hide**: `revoke(terminate=True)`
+only ever killed the Celery ForkPoolWorker process -- the actual
+PurpleLlama `subprocess.run()` child it spawned survived as an orphan,
+continuing to run (or hang) invisibly. Added `_run_killable()` in
+`cse_tasks.py`: runs the child in its own process group
+(`start_new_session=True`) with a `SIGTERM` handler that kills the
+whole group. Confirmed live: cancelling the actual 3-day-old stuck job
+via the new `DELETE /jobs/{job_id}?force=true` genuinely killed it (a
+marker file the child would have written 20s later never appeared), and
+the worker immediately picked up the next real queued job.
+
+**Standalone jobs were completely invisible**: the stuck job turned out
+to have been submitted via the raw `POST /jobs` API, not `/suites` --
+meaning it had no suite card to show up in at all, since the earlier
+"Individual jobs" section had been removed as pure UI clutter
+(2026-09-21). That removal had accidentally deleted the *only* way to
+see or cancel a standalone job. Restored it, this time with real
+Cancel-&-delete / Delete buttons per row (`DELETE /jobs/{job_id}`,
+same `force=true` semantics as the suite endpoint), not just an
+informational dump.
+
+**Also fixed**: `num_test_cases`'s form input was capped at `max="50"`
+-- an old placeholder with zero connection to the real underlying
+datasets (250-1900 test cases each, already clamped safely server-side
+either way). Raised to 2000.
+
+## autonomous-uplift gets its own transcript rendering (2026-09-24/25)
+
+`autonomous-uplift`'s `responses.json` shape has nothing in common with
+every other benchmark -- one continuous live SSH session logged as a
+single `operation_log` string with `>>> USER:` (target/environment
+output) and `>>> AI:` (the model's own command) markers, not a
+prompt/response pair. It fell through to the generic metadata dump --
+the entire multi-turn attack conversation joined into one unreadable
+line.
+
+Added `renderOperationLog()`: parses the turns and renders them as a
+labelled, monospace conversation (`Model command` / `Target/environment
+output`), plus a collapsed-by-default `<details>` showing the actual
+`system_prompt` the model was given (the red-team objective + a leaked-
+credential list, 2000+ chars -- too long to show open by default).
+Also replaced the generic "no stat.json/stats.json found -- Wrote
+responses to /srv/.../responses.json" message with a direct one:
+`autonomous-uplift` never produces a score in this pinned PurpleLlama
+commit (grading isn't implemented upstream), so the raw file path was
+just noise on top of what the panel's own per-benchmark hint already
+explains.
+
+**Real bug found immediately after shipping this**: the system-prompt
+`<details>` had no open-state tracking of its own, so the 4s status
+poll (which rebuilds the whole transcript view from scratch) reset it
+to closed the instant it was opened -- "the text folds out and folds
+right back up again." Same class of bug `openSuites`/`expandedJobs`
+already guard against elsewhere, just not applied here. Fixed with a
+new `expandedPrompts` Set, keyed by job+entry index, verified with a
+functional test simulating open -> re-render -> still-open.
+
+**Verified the transcript is showing the real prompt, not something
+stale or mismatched**, after the operator raised suspicion of it: byte-
+for-byte SHA-256 match between the actual on-disk
+`system_prompt.txt` the live `cse-controller` checkout uses and the
+`system_prompt` value stored in a real completed run's `responses.json`
+-- both `58159f25...`, confirmed via source-code trace too
+(`autonomous_uplift_benchmark.py` passes the exact same field straight
+through to every LLM call, no transformation in between).
+
+## Framework host rebooted unexpectedly; native Nathanw-fork build + systemd service (2026-09-24/25)
+
+While investigating why two newly-submitted jobs sat "Queued" forever,
+found Framework's production `llama-server` container
+(`qwen38-flash-next-q4`, port 8080) completely gone -- not stopped, not
+present in `docker ps -a` at all, consistent with its
+`restart_policy: "no"` / `auto_remove: true`. Every *other* container on
+Framework showed "Up 26 hours", meaning the host itself had rebooted
+~26h earlier and nothing brought this one back automatically. Separate
+finding, unrelated to today's redelivery-loop bug.
+
+Operator wanted the ability to build/run the Nathanw fork natively
+(gdb, fast iteration) as a **parallel/temporary** setup, explicitly not
+replacing the container path. Built from source:
+`~/strix-halo-llamacpp` (fork docs/build scripts) +
+`~/llama.cpp` (`strix-halo-vulkan` branch, commit `b02cb35`) on
+Framework, built in `~/llama.cpp/build-vk` against the *system's*
+Vulkan/Mesa (26.0.8) and system `glslc` (shaderc 2026.1 -- already
+meets the fork's own "needs a current glslc" requirement, so this
+"quick" build likely isn't far from release-quality) rather than the
+full custom-Mesa+libdrm pipeline the fork's own `BUILD.md` describes for
+an official release tarball. Verified working end to end (correct
+answer, real GPU generation, ~24.5 tok/s) before productionizing.
+
+**Set up as a systemd service** (`nathanw-llamacpp.service`), deliberately
+on the *same port (8080)* as the production container path -- operator's
+explicit request, since it means the two can never both be loaded at
+once, closing off the exact failure mode of the 2026-09-21 GPU
+double-load incident
+([[feedback_gpu_model_double_load_hang]]) by construction, not just by
+discipline. `Restart=on-failure` (not `always`) so a deliberate
+`systemctl stop` is respected and stays stopped -- only a real crash
+triggers auto-restart -- which is what lets the operator take manual
+command-line control (`sudo systemctl stop nathanw-llamacpp`, run the
+same binary by hand, `sudo systemctl start nathanw-llamacpp` when done).
+Enabled, so it also survives a future host reboot -- closing the same
+gap that bit the old container.
+
+**Known follow-up, not yet done**: the unit file still has
+`--ctx-size 8192` from its first setup. Found insufficient the same day
+(next section) -- the operator has been running `--ctx-size 65536`
+manually since, but the systemd unit itself hasn't been updated, so a
+fresh `systemctl start` would revert to the undersized context.
+
+## Root-caused: an empty second-turn response was context size, not a bug (2026-09-24)
+
+A 1-shot `autonomous-uplift` run's second turn came back completely
+empty after a real first-turn nmap scan, ending the attack session
+early. Checked the native server's own log for that exact request:
+`n_gen` climbed to 6865 tokens of pure internal reasoning before hitting
+`n_tokens = 8191, truncated = 1` -- the request was cut off by the
+`--ctx-size 8192` ceiling before the model ever finished reasoning and
+wrote a real command. This model (Qwen3.8-Flash-Next) always answers
+via a separate `reasoning_content` field before `content` -- the exact
+same behavior already root-caused for `malware_analysis` on
+2026-09-19 -- so a mid-reasoning cutoff means `content` comes back
+empty, same failure shape, different cause (context ceiling here vs.
+`max_completion_tokens` cap there).
+
+Not a panel bug, not an infrastructure fault -- a direct consequence of
+choosing a small `--ctx-size` for a quick functional test versus
+production's `262144`. Confirmed fixed: re-ran with `--ctx-size 65536`
+and the model completed a real second turn (a deeper `-sV -sC` nmap
+scan plus HTTP probes, then a real if syntactically-broken attempt to
+brute-force SSH with the leaked credential list). A 2-shot follow-up run
+got further still -- real recon, a real (if malformed) exploitation
+attempt -- confirming the fix, not just masking the symptom.
+
+## autonomous-uplift's real target, and why matching upstream's exact environment doesn't matter here (2026-09-24/25)
+
+Operator asked whether `autonomous-uplift` is "aimed at" Metasploitable3
+specifically. Confirmed via upstream's own docs
+(`website/docs/benchmarks/autonomous_uplift.md`): no -- the benchmark is
+fully target-agnostic by design ("users are expected to supply a cyber
+range"), and upstream's own reference environment isn't Metasploitable3
+either -- it's a custom AWS EC2 Windows Server 2022 instance with
+specific hand-planted vulnerabilities (two named accounts at different
+privilege levels, two SMB shares with named "secret" files). This lab's
+`cyber_range_pairs.json` points it at `metasploitable3-win2k8` instead,
+our own substitution, made when this implementation was built.
+
+That the attack is real and actually reaches this specific VM was
+independently verified (not just assumed from naming): Proxmox's own VM
+config for VMID `70011` (`name: metasploitable3-win2k8`, on the
+`pentest_seg` bridge), the Terraform config's own comment documenting
+the hand-set static IP, `cyber_range_pairs.json`'s explicit
+`targetIP`->`targetName` mapping, and -- strongest evidence -- the
+live scan results themselves matching this exact box's known profile
+(hostname `VAGRANT-2008R2`, Windows Server 2008 R2 SP1, IIS 7.5,
+GlassFish 4.0), not a generic Windows install.
+
+Whether matching upstream's exact environment is worth doing:
+**concluded no, not right now** -- this pinned PurpleLlama commit has no
+grading implemented for `autonomous-uplift` regardless of target, so
+there's no numeric score to make "comparable" to published baselines in
+the first place. What the benchmark actually provides today is
+qualitative transcript signal, and Metasploitable3-win2k8 already serves
+that well (arguably better -- richer, more realistic CVE surface than
+upstream's narrower "weak creds + SMB shares" recipe).
+
+## cse-kali toolset gap: added Metasploit Framework + crackmapexec (2026-09-25)
+
+The `autonomous-uplift` agent reached for both `msfconsole` and
+`crackmapexec` unprompted while attacking `metasploitable3-win2k8` and
+got "command not found" -- `cse-kali`'s toolset (`deploy-cse-kali.yml`)
+was a deliberately minimal hand-picked list (`nmap`, `sqlmap`, `nikto`,
+`hydra`, ...) with neither installed. A real capability gap for a
+Windows-focused target, not a benchmark or model issue.
+
+Added both packages plus `postgresql` (Metasploit needs its own
+database to actually be usable -- it runs without one, but silently
+loses all host/cred/loot tracking between commands and warns on every
+startup). The container has no init system (`PID1` is `sleep infinity`,
+same reason `sshd` is started by hand in this same playbook), so
+Postgres gets the same by-hand start-if-not-running treatment, followed
+by `msfdb init` on first bootstrap only.
+
+**Idempotency bug found and fixed the same deploy**: the "already
+initialized, skip" check tested for `/root/.msf4/database.yml`, which
+this Kali version's `msfdb init` never actually writes (it tries to
+manage `postgresql` via `systemctl`/dbus, which don't exist in this
+init-system-less container, logs `"Can't operate"`, and silently skips
+writing that file) -- even though the real Postgres database it creates
+underneath works completely fine, confirmed via `msfconsole`'s
+`db_status` reporting `"Connected to msf"` despite those warnings. The
+package's own shipped `database.yml` under
+`/usr/share/metasploit-framework/config/` was also ruled out as a check
+target: it exists from the `apt install` alone, regardless of whether
+`msfdb init` ever actually ran. Fixed by querying Postgres directly for
+the `msf` database's existence instead of any file path -- confirmed
+live across two consecutive deploys: first one initializes, second one
+correctly skips.
