@@ -7,14 +7,11 @@ surface than Portainer's UI for switching between the two (can't run both
 at once — memory). See `README.md` for the full ARK smoketest findings;
 summarized here only as much as the decisions below need.
 
-**First pass — one step authored and ready, the rest is research +
-explicit open questions, not yet resolved into step blocks.** Unlike
-`docs/media-stack-lab/plan.md`'s finished state, this plan does not yet
-cover Wings installation/pairing, the Minecraft egg + `foreverworld`
-migration, or the ARK egg — each needs either a live `pve` check (IP/VMID)
-or further research (Pterodactyl's actual egg JSON schema, which hasn't
-been pulled into this session yet) before it can be written as literal,
-executable step content rather than a decision left for later.
+**Current state (2026-09-26):** Panel, Wings, and ARK are live. The
+Minecraft migration is now specified by the checked-in Wildworks egg,
+shared game-slot interlock, and `minecraft-migration.md` execution runbook.
+Repository authoring is complete; the production deployment/cutover phases
+have not run and remain subject to the normal production approval flow.
 
 ## Research this plan is based on
 
@@ -389,16 +386,17 @@ gates:
 **Done 2026-09-20 — see `README.md`'s hand-back for this step.** Both
 files written, both gates pass (`foreverworld-untouched` confirmed clean
 — `git diff --name-only` shows only the two intended files).
-`PTERODACTYL_LAB_API_KEY` secret and the Panel admin-user/API-key
-bootstrap itself are still required before this playbook can actually
-run — not yet done, tracked below.
+The Panel admin bootstrap and both Application/Client API keys are now live
+and SOPS-backed; this historical step is complete.
 
 ---
 
 ## `foreverworld` migration to Wings
 
 Written 2026-09-26, at the operator's request for a clear step-by-step
-plan before any execution. Not yet started — no step below has run.
+plan before any execution. Repository implementation is complete; no live
+migration phase has run. The authoritative execution and rollback procedure
+is `docs/gaming-stack-lab/minecraft-migration.md`.
 
 ### Verified facts (read-only checks, not assumptions)
 
@@ -435,54 +433,20 @@ plan before any execution. Not yet started — no step below has run.
   container per server, no sidecar model — operator explicitly deprioritized
   this when asked, treated as a separate future follow-up, not blocking.
 
-### Steps
+### Implementation correction and execution status
 
-1. **Find the right Pterodactyl egg** — a community `itzg/minecraft-
-   server`-based egg (pelican-eggs' "Vanilla Minecraft" family) that
-   exposes `TYPE`, `VERSION`, `NEOFORGE_VERSION`,
-   `OVERRIDE_SERVER_PROPERTIES`, memory, and RCON as variables.
-2. **Narrow the egg's `docker_images` field** before import — same fix
-   the ARK egg needed; Panel's import validator rejects punctuation-heavy
-   image-tag strings (see `docs/gaming-stack-lab/ark-survival-ascended-
-   egg.json` for the pattern).
-3. **Import the egg and create the server** via the Application API
-   (`PTERODACTYL_LAB_API_KEY`) on `gaming-stack-lab`'s existing Wings
-   node. Allocate `25565`/`25575` — confirm neither collides with the
-   ARK server's existing allocations first.
-4. **Set startup variables to match the verified facts above exactly**:
-   `TYPE=NEOFORGE`, `VERSION=1.21.1`, `NEOFORGE_VERSION=21.1.234`,
-   `OVERRIDE_SERVER_PROPERTIES=false`, `EULA=TRUE`, heap matching current
-   `INIT_MEMORY`/`MAX_MEMORY`.
-5. **Stop the old Portainer-managed container** (already stopped as of
-   this writing, but confirm again immediately before step 6 — don't
-   trust a stale check).
-6. **Copy — not move — the real data**: `rsync -a` `world/`, `mods/`,
-   `config/`, `server.properties`, `ops.json`, `whitelist.json` (and any
-   other runtime files present) from `/srv/docker/minecraft/foreverworld`
-   into the new Wings server's own volume path.
-7. **Checksum-verify the copy**: `rsync -avc --dry-run` between source and
-   destination, same pattern used for the Wings data-path migration —
-   must report zero differences before continuing.
-8. **Set the RCON password** to match `MINECRAFT_FOREVERWORLD_RCON_PASSWORD`
-   (pulled from SOPS) in the new server's config, so existing RCON tooling
-   keeps working.
-9. **Start the new Wings-managed server**, watching the console live
-   (same websocket approach used for the ARK server all night) for
-   mod-loading errors, not just checking that the API call succeeded.
-10. **Operator verifies in-game** — world is the right one, mods present
-    and working, builds/inventory intact. Files and logs can be checked
-    programmatically; only the operator can confirm it actually plays
-    right.
-11. **Leave the old container stopped, not deleted** — a real rollback
-    path, not just a compressed backup, until operator confidence is
-    confirmed.
-12. **Only after operator confirmation**: retire the old compose stack
-    for real, and resolve the open `portainer_agent` on/off decision
-    above.
+The maintained Pelican NeoForge egg is not `itzg`-based and does not preserve
+this pack's release-native `run.sh` path. The checked-in
+`wildworks-neoforge-egg.json` therefore deliberately uses the maintained
+Java 21 yolk while starting the already-reviewed Wildworks release directly.
+Egg import and shared-mount assignment are manual Panel-admin operations;
+server creation remains Application-API-driven.
 
-Nothing in steps 1–4 touches `foreverworld`'s data. First contact is
-step 5 (stop, no data touched); step 6 is copy-only, source untouched
-until far past operator verification in step 10.
+The node now has a repository-defined, non-blocking `flock` interlock shared
+by ARK, Minecraft, and future games. It prevents concurrent starts rather
+than relying on an operator convention. The full inventory, allocation,
+snapshot, copy-manifest, ownership, checksum, startup, two-direction
+exclusion, rollback, and retirement gates are in `minecraft-migration.md`.
 
 ## AzerothCore (with Playerbots) — new server under Wings
 

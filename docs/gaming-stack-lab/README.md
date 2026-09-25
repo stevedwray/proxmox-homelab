@@ -1,6 +1,6 @@
 # gaming-stack-lab (planning workspace)
 
-## CHECKPOINT — 2026-09-20
+## CHECKPOINT — 2026-09-26
 
 **Goal**: add ARK: Survival Ascended alongside `gaming-stack-lab`'s
 existing Minecraft (`foreverworld`), with a real start/stop/console
@@ -47,19 +47,18 @@ design work.
 | Wings (on `gaming-stack-lab`) | Live, paired with Panel as Node 1 |
 | ARK server | Live, real, permanent (id 2) — `gaming-stack-lab` `192.168.60.10:7777`, `TheIsland_WP`, casual-tuned settings |
 | `foreverworld` (Minecraft) | **Untouched** — still on its original compose-managed setup, not yet migrated to Wings. Never read, written, or put at risk by any of this work — verified by gate at every step that could have touched it. |
-| Branch | `feat/gaming-stack-lab-pterodactyl`, ~9 commits, **not pushed to origin, not merged to `stable`/`main`** |
+| Migration implementation | Repository-side interlock, custom Wildworks egg, ARK egg wrapper, additive allocations, and rollback runbook authored; no live cutover phase has run |
+| Branch | `feat/gaming-stack-lab-ark-mods`; not merged to `stable`/`main` |
 | Known, flagged-not-fixed gaps | (1) `gaming-stack-lab`'s own Terraform state doesn't resolve from its working directory (workspace-selection mismatch, not empty) — **do not run `terragrunt apply` against this stack** until diagnosed separately; the `ansible_playbook` field is live-patched directly in the gitignored `inventory.yml` as a workaround. (2) The LAN→`game_seg` UDP rule for ARK's game/peer/query ports (`7777`/`7778`/`27015`), applied live via RouterOS CLI, is **not yet mirrored into `pve.yaml`** — do that before this is considered done. (3) `MIKROTIK_USER`'s SOPS credential lacks RouterOS write permission (API returns "not enough permissions (9)") — every live firewall change this session went through manual operator CLI instead; worth fixing the credential's own permissions separately. |
 
 ### Future plans / next steps, in likely priority order
 
 1. **Mirror the LAN→ARK-ports firewall rule into `pve.yaml`** (small, no
    research needed — just hasn't been done yet).
-2. **Minecraft egg + `foreverworld` migration** — blocked on the operator
-   pulling `foreverworld`'s live compose config (mod list, loader
-   version); the actual migration is a file copy into Wings' volume, not
-   a conversion, and the old instance stays untouched until the new one
-   is verified working, matching `media-stack-lab`'s own precedent for
-   exactly this kind of cutover.
+2. **Minecraft egg + `foreverworld` migration** — execute the production
+   phases in `minecraft-migration.md`. Loader/version and the complete-copy
+   model are resolved; live preflight, approval, cutover, and operator
+   in-game verification remain.
 3. **AzerothCore** — not researched at all yet, deliberately deferred.
 4. **Diagnose `gaming-stack-lab`'s Terraform workspace problem** before
    any future `terragrunt apply` against that stack is attempted for real.
