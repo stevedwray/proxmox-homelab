@@ -66,6 +66,29 @@ Record all results in the session before asking for mutation approval:
 Any unexpected running container, missing pack directory, allocation
 collision, or unaccounted top-level source item stops the migration.
 
+### Recorded preflight — 2026-09-26
+
+- Foreverworld is stopped; ARK is the only running game container.
+- Source size is 7.4 GiB across 3,939 files, with 253 active mod files.
+  `level.dat` is owned by `1000:1000`, mode `0600`, and was last modified
+  2026-09-20 09:39 +1200.
+- The complete source includes release-critical `run.sh`,
+  `user_jvm_args.txt`, `libraries/`, `defaultconfigs/`, `config/`,
+  `dynamic-data-pack-cache/`, `moonlight-global-datapacks/`,
+  `patchouli_books/`, `villagerpacks/`, and `world.pre-regenerate/`, in
+  addition to the expected world/mod/config files. The reviewed manifest
+  must preserve these unless a later inventory explicitly classifies one.
+- `user_jvm_args.txt` sets `-Xms16G -Xmx16G`, GC logging, and the JMX
+  exporter. `run.sh` invokes NeoForge `21.1.234`'s `unix_args.txt`.
+- The source mount is ZFS dataset `gaming/subvol-60010-disk-0`, mounted at
+  `/gaming/subvol-60010-disk-0` on `pve`; it has 481 GiB available. This is
+  the exact dataset to snapshot before copying.
+- ARK is a 16,384 MiB/150,000 MiB server on node 1; its Proton 8 container
+  has `/usr/bin/flock`. Node 1 still has 0% memory over-allocation, so it
+  must be raised before the 16 GiB Minecraft definition can be created.
+- Allocation `25565` is free. Allocation `25575` is absent and will be
+  added by the targeted provision run.
+
 ## Phase 2: install the interlock infrastructure
 
 This is a production mutation and uses the normal preflight/approval flow.
