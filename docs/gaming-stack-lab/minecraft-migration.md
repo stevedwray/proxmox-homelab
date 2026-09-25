@@ -299,6 +299,15 @@ same way. Finally, stop ARK and start Minecraft normally.
 This two-direction test is mandatory. A successful single-server start does
 not prove mutual exclusion.
 
+### Completed production stage — Minecraft blocks ARK, 2026-09-26
+
+With Minecraft healthy and holding the lock, a controlled ARK start request
+exited with code `75` and the exact `GAME SLOT BUSY: another game server is
+already running on this node.` message. Minecraft remained running, retained
+the lock, and continued listening on both `25565` and `25575`. The reverse
+direction (ARK blocks Minecraft) remains required before declaring the
+two-direction test complete.
+
 ## Rollback
 
 Rollback is always stop-first:
