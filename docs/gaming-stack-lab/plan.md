@@ -477,6 +477,12 @@ way `foreverworld`'s data is.
   `MAP_UPDATE_THREADS` variable description explicitly recommends `4`
   when Playerbots is enabled (default `1` otherwise) — apply this, not
   the default.
+- **Private party-only bot policy (operator decision, 2026-09-26):** at
+  most two humans will use the realm. Do not accept the module's defaults of
+  500 roaming random bots. The fork must set
+  `AiPlayerbot.RandomBotAutologin=0`, `AiPlayerbot.MinRandomBots=0`, and
+  `AiPlayerbot.MaxRandomBots=0`. Bots are to be added deliberately to a
+  player's party; the per-party bot cap still needs an operator choice.
 - **Client data licensing**: `CLIENT_DATA_AUTO_DOWNLOAD=1` (default)
   pulls DBC/maps/vmaps/mmaps via AzerothCore's own standard `acore.sh
   client-data` tooling — long-established, normal practice in this
@@ -508,9 +514,10 @@ way `foreverworld`'s data is.
    the Application API only after confirming the allocations are free.
 3. **Set startup variables**: `USE_PLAYERBOTS=1`,
    `MAP_UPDATE_THREADS=4`, `EXPANSION=2` (WotLK), `REALM_ADDRESS=auto`,
-   plus whatever `PLAYER_LIMIT`/rate multipliers the operator wants
-   (Blizzlike defaults are `1` for every rate — a deliberate choice
-   question, not something to default silently given this project's
+   and a two-human player limit. Set the three explicit no-random-bots
+   variables above, plus the operator-chosen per-party bot cap and rate
+   multipliers (Blizzlike defaults are `1` for every rate — a deliberate
+   choice question, not something to default silently given this project's
    ARK experience with rate multipliers).
 4. **First boot**: expect a long first start (core compile + client-data
    download + DB import) — watch the console live (same websocket
