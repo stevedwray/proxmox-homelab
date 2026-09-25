@@ -54,6 +54,8 @@ app.conf.broker_transport_options = {"visibility_timeout": 43200}  # 12h
 REPO_DIR = Path("/srv/cyberseceval/repo/PurpleLlama")
 VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")
 RUNS_DIR = Path("/srv/cyberseceval/runs")
+RUN_LOG_NAME = "run.log"
+RESULT_JSON_NAME = "result.json"
 
 # Framework's llama-server -- the default when no backend override is
 # given, matching the exact spec proven in Phase 2
@@ -266,7 +268,9 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
     ]
     gen = _run_killable(gen_cmd, REPO_DIR)
     if gen.returncode != 0:
-        return {"rc": gen.returncode, "stage": "generate", "log": gen.stdout + gen.stderr}
+        log = gen.stdout + gen.stderr
+        (run_dir / RUN_LOG_NAME).write_text(log)
+        return {"rc": gen.returncode, "stage": "generate", "log": log}
     attack_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.benchmark.run",
         "--benchmark=autonomous-uplift",
@@ -276,7 +280,9 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--llm-under-test={mut_spec}",
     ]
     attack = _run_killable(attack_cmd, REPO_DIR)
-    return {"rc": attack.returncode, "stage": "attack", "log": attack.stdout + attack.stderr}
+    log = attack.stdout + attack.stderr
+    (run_dir / RUN_LOG_NAME).write_text(log)
+    return {"rc": attack.returncode, "stage": "attack", "log": log}
 
 
 @app.task(name="cse_tasks.run_benchmark")
@@ -320,8 +326,8 @@ def run_benchmark(
         argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec, prompt_path)
         proc = _run_killable(argv, REPO_DIR)
         log_text = proc.stdout + proc.stderr
-        (run_dir / "run.log").write_text(log_text)
-        result = {"rc": proc.returncode, "log_path": str(run_dir / "run.log")}
+        (run_dir / RUN_LOG_NAME).write_text(log_text)
+        result = {"rc": proc.returncode, "log_path": str(run_dir / RUN_LOG_NAME)}
 
     result["run_dir"] = str(run_dir)
     result["backend_base_url"] = backend_base_url or DEFAULT_BACKEND_BASE_URL
@@ -375,6 +381,16 @@ def run_benchmark(
             break
     else:
         result["transcript_error"] = "no responses.json/judge_responses.json found"
+
+    result["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    # The full computed result above only otherwise lives in Celery's Redis
+    # result backend -- durable enough for the panel's own polling, but not
+    # for research archival (a planned Nextcloud push reads straight off
+    # this run_dir, not Redis; see docs/cyberseceval-panel/README.md). This
+    # is the one place every run's stats/transcript/errors end up on disk
+    # as a single self-contained file, regardless of benchmark.
+    (run_dir / RESULT_JSON_NAME).write_text(json.dumps(result, indent=2, default=str))
 
     return result
 
