@@ -1,8 +1,9 @@
 # ai-stacks-pve-tiny
 
 Status: **Phases 0–2 passed and all four Phase 3 cutovers completed on
-`pve-tiny` (2026-09-27). Whole-setup functional testing, `ai-tiny-06`, and
-the soak remain.** Continue with plan.md's "How to execute this plan" section.
+`pve-tiny` (2026-09-27), and `ai-tiny-06` is complete. Whole-setup functional
+testing and the soak remain.** Continue with plan.md's "How to execute this
+plan" section.
 
 ## What this is
 
@@ -38,7 +39,7 @@ as-is.
 | Cutover: secpipe-stack | done — full enrichment sweep deferred until whole-setup test (2026-09-27) |
 | Cutover: opensearch-stack | done — application-level consumer tests deferred until whole-setup test (2026-09-27) |
 | Cutover: ai-services-stack | done — whole-setup interactive tests deferred (2026-09-27) |
-| ai-tiny-06 zone membership docs | not started |
+| ai-tiny-06 zone membership docs | done (2026-09-27) |
 | Phase 4 decommission (after ≥7-day soak) | not started |
 
 ## Hand-backs
@@ -290,3 +291,12 @@ as-is.
   chat display, new llama.cpp prompt, SearXNG query, deep-research run, and the
   broader cross-stack checks remain deferred to the operator-requested
   whole-setup test.
+
+### ai-tiny-06-zone-membership-docs — done (2026-09-27)
+
+- Recorded mcp-utility, secpipe, and ai-services under `pve-tiny`'s `ai_seg`,
+  and OpenSearch under its `infra_seg`, with VMIDs, IPs, and relocation notes.
+- Removed the three stale workload membership entries from `pve`'s `ai_seg`
+  while retaining the zone and attachment for other consumers and rollback.
+- The exact `membership-recorded` gate printed `ok`. Only the two allowed
+  network-intent files changed; attachments and policies were untouched.
