@@ -90,6 +90,17 @@
     # tracked as accepted risk in cve-remediation-assessment until a future
     # OpenSearch build rebuilds on an updated base image. Keep opensearch/
     # opensearch-dashboards in sync -- same variable drives both.
+    #
+    # Bumped 2.19.1 -> 2.19.6 (2026-09-14) to fix two CVEs surfaced by the
+    # threat-vuln-platform remediation pipeline: CVE-2026-31802 (bundled
+    # `tar` npm package, symlink-escape file overwrite) and CVE-2026-2391
+    # (bundled `qs` npm package, prototype pollution) -- both are
+    # dependency CVEs inside opensearch-dashboards' own bundle, not
+    # OpenSearch/Dashboards application code itself. Confirmed both
+    # opensearchproject/opensearch:2.19.6 and
+    # opensearchproject/opensearch-dashboards:2.19.6 are real, published
+    # Docker Hub tags (pushed 2026-07-15) before pinning here -- keep
+    # opensearch/opensearch-dashboards in sync, they share this one var.
     opensearch_image_tag: "2.19.6"
     opensearch_admin_password: >-
       {{
