@@ -1,9 +1,8 @@
 # ai-stacks-pve-tiny
 
-Status: **Phases 0 and 1 passed; Phase 2a/2b completed (2026-09-27).
-Phase 2c is paused at its duplicate-IP guard because RouterOS has dynamic
-failed/no-MAC ARP rows across the reserved high range.** Continue with
-plan.md's "How to execute this plan" section.
+Status: **Phases 0–2 passed (2026-09-27); Phase 3 per-stack cutover is next,
+starting with `mcp-utility-stack`.** Continue with plan.md's "How to execute
+this plan" section.
 
 ## What this is
 
@@ -34,7 +33,7 @@ as-is.
 | ai-tiny-05 env dirs | done (2026-09-27) |
 | ai-tiny-05b pve-tiny provision target guard | done (2026-09-27) |
 | Phase 1 read-only pve-tiny plans | done — go (2026-09-27) |
-| Phase 2 ai_seg on pve-tiny | 2a/2b done; 2c paused at ARP guard (2026-09-27) |
+| Phase 2 ai_seg on pve-tiny | done — go (2026-09-27) |
 | Cutover: mcp-utility-stack | not started |
 | Cutover: secpipe-stack | not started |
 | Cutover: opensearch-stack | not started |
@@ -176,8 +175,13 @@ as-is.
   as required. Post-run assertions confirmed `tvinfra`, `tvmgmt`, and `tvcse`
   were unchanged, the firewall file was unchanged, all pending counts remain
   zero, and the `tvai` link exists.
-- Phase 2c did not assign a temporary IP. DHCP, NetBox IPAM, repository search,
-  and ping found no `.250` owner, but RouterOS reports `.250` as dynamic
-  `failed` with no MAC. The same background-probe state exists for every
-  address `.240`–`.254`, so the runbook's literal ARP-absence gate cannot pass
-  without a documented guard correction.
+- Phase 2c found RouterOS background-probe entries across `.240`–`.254`. The
+  runbook now accepts only absent or dynamic `failed`/no-MAC ARP rows while
+  retaining hard stops for DHCP, NetBox IPAM, repository, ping, static ARP,
+  MAC-bearing ARP, and router-address ownership.
+- The reversible `.250/24` test on `tvai` received 3/3 replies from
+  `192.168.50.1`; its neighbor resolved to `04:f4:1c:ef:d3:d6` in `REACHABLE`
+  state. The exit trap removed `.250`, confirmed by a separate read-only
+  check.
+- Phase 2d required no mutation: `vm.max_map_count=1048576`, above the
+  OpenSearch minimum of 262144. Result: **GO for the first Phase 3 cutover.**
