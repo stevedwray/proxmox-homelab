@@ -3,16 +3,34 @@
 Status: **planned, not started** (2026-09-27). Branch
 `task/framework-dns-only-plan`.
 
-Goal: stop hard-coding the Framework Desktop's address (`192.168.1.8`,
-`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26) in code and config. After
-this plan, every client reaches it by name, and the one place its IP is set
-is DNS: the MikroTik static record for `framework.gibbsgreatly.xyz`, which
-Technitium also answers from. The exceptions are records that exist *to*
-record an address (IPAM and scan-asset data). Those keep the literal on
-purpose.
+The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
+was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
+NAS that is powered on only for backups, so the two collide. The goals:
 
-The executable steps are in [plan.md](plan.md). This file keeps the audit
-that motivated the plan, the port registry, and the hand-back log.
+1. **Move framework to `192.168.1.18`.** Make every client reach it by name
+   first, so the move is a single DNS record change. The IP is then
+   published in one place, the MikroTik static record, written by
+   `mikrotik-dns-framework.yml` from `LAB_IP_FRAMEWORK`.
+2. **Migrate everything that used framework's Ollama** (now removed) to the
+   Nathanw llama.cpp fork: `:8080` for chat and a new `:8085` for
+   embeddings. Bring both servers under IaC.
+
+Records that exist *to* record an address (IPAM and scan-asset data) keep
+the literal on purpose.
+
+The executable steps are in [plan.md](plan.md): Phase A is DNS-only,
+Phase C is Ollama → llama.cpp, and Phase B is the re-IP. Use the plan's
+"Execution order" table. Code changes that are more than a line or two ship
+as tested patches in [patches/](patches/). This file keeps the audit that
+motivated the plan, the port registry, and the hand-back log.
+
+**Broken right now (2026-09-27), because Ollama is gone:**
+
+- docs-rag-mcp `search_docs` (it embeds every query via Ollama).
+- The weekly CVE deep-dive (enabled; next run Sunday 23:00).
+- The `llm.${LAB_DOMAIN}` Traefik route: its LM Studio backend on `:8090`
+  is not running either.
+- The Ollama half of framework's stats collector.
 
 ## Audit (2026-09-27, repo state at `f94ed09d`)
 
@@ -24,9 +42,9 @@ listed below.
 
 | File | What | Step |
 |---|---|---|
-| `terraform/lxc/ansible/roles/cve_enrichment_sync/defaults/main.yml:42` | `cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"` (also feeds the deep-dive URL and the unit's `OLLAMA_URL`) | fwdns-04 |
-| `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py:620` | `OLLAMA_URL` fallback | fwdns-04 |
-| `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py:283` | `OLLAMA_URL` fallback | fwdns-04 |
+| `terraform/lxc/ansible/roles/cve_enrichment_sync/defaults/main.yml:42` | `cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"` (also feeds the deep-dive URL and the unit's `OLLAMA_URL`) | fwllm-02 (replaces the Ollama provider; fwdns-04 is superseded) |
+| `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py:620` | `OLLAMA_URL` fallback | fwllm-02 (replaces the Ollama provider; fwdns-04 is superseded) |
+| `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py:283` | `OLLAMA_URL` fallback | fwllm-02 (replaces the Ollama provider; fwdns-04 is superseded) |
 | `terraform/lxc/network/pve.yaml:362`, `pve-test-vm.yaml:561` | policy `ai_seg → 192.168.1.8` (8080, 11434) | fwdns-07 |
 | `terraform/lxc/network/pve.yaml:487`, `pve-test-vm.yaml:463` | policy `pentest_seg → 192.168.1.8` (PentAGI-era) | fwdns-07 (removed) |
 | `scripts/pentagi-test-harness/test_sequence*.json` | `router_url: http://192.168.1.8:8080` | fwdns-10 (removed) |
@@ -41,7 +59,7 @@ listed below.
 | `LAB_IP_LLM_GPU` | `llm-gpu-stack/edge.yaml` (Traefik `llm.` backend :8090), legacy `llm-gpu-stack/stack.yaml`, `TF_VAR_lab_ip_llm_gpu` | `LAB_FQDN_FRAMEWORK` in edge.yaml (fwdns-02); var removed (fwdns-11) |
 | `LAB_IP_COMFYUI` | `comfyui-stack/edge.yaml` (Traefik `comfyui.` backend :8188), legacy `comfyui-stack/stack.yaml`, `TF_VAR_lab_ip_comfyui` | `LAB_FQDN_FRAMEWORK` (fwdns-02); var removed (fwdns-11) |
 | `FRAMEWORK_HOST_IP` | `ansible_host` in `ansible/inventory/{inventory,dev,production}.yml` | `LAB_FQDN_FRAMEWORK` (fwdns-06); var removed (fwdns-11) |
-| `LAB_IP_FRAMEWORK` | monitoring-stack node_exporter/cadvisor scrape targets; MikroTik `ai_seg`/`cse_seg` → framework rules | clients move to `LAB_FQDN_FRAMEWORK` / the RouterOS address-list (fwdns-03, -08, -09); var **kept** as the documented IP for IP-by-nature data |
+| `LAB_IP_FRAMEWORK` | monitoring-stack node_exporter/cadvisor scrape targets; MikroTik `ai_seg`/`cse_seg` → framework rules | clients move to `LAB_FQDN_FRAMEWORK` / the RouterOS address-list (fwdns-03, -08, -09); var **kept** as the single input to `mikrotik-dns-framework.yml`, which publishes the DNS record; changes to `.18` in fwip-02 |
 
 The unset, optional `FRAMEWORK_HOST` variable (read by
 `deploy-ai-services-stack.yml` and `deploy-pentagi-stack.yml`) already
@@ -82,6 +100,25 @@ RouterOS resolves it itself. The PentAGI rules are removed, not converted.
 Other repos: `~/git/ai-code-testing/docs/` mentions the IP only in a
 "never use the bare IP" note. `~/git/oci` has nothing.
 
+## Ollama consumers (2026-09-27)
+
+Ollama `:11434` refuses connections; no Ollama container or unit remains
+on framework.
+
+| Consumer | Where | Uses | Migration |
+|---|---|---|---|
+| docs-rag-mcp | mcp-utility-stack (pve-tiny, ai_seg) | `/api/embed`, nomic-embed-text, every query + reindex | `:8085` `/v1/embeddings` + full re-embed (fwllm-03) |
+| CVE deep-dive | secpipe-stack (pve-tiny), weekly, **enabled** | `/api/generate`, laguna | `:8080` provider `llamacpp` (fwllm-02) |
+| CVE routine narrative | secpipe-stack | `ollama` provider (not the default; anthropic is) | same provider switch (fwllm-02) |
+| Ollama stats textfile collector + "Local AI" dashboard | framework / monitoring-stack | `/api/ps` | llama-server `--metrics` (fwllm-06, -07) |
+| VS Code Copilot "Framework Ollama" (4 models) | workstation `~/.config/Code/User/chatLanguageModels.json` | `:11434/v1/chat/completions` | operator edit → `:8080` |
+| OpenWebUI | ai-services-stack | already `ENABLE_OLLAMA_API=false` | none |
+| PentAGI, ollama-reliability-proxy, local-ai-canary, benchmarks | deprecated / workstation tooling | `:11434` | retirement candidates (plan.md Out of scope) |
+
+Direct `:8080` clients: OpenWebUI (already keyed), deep-research,
+cse-controller, `cse-small-batch-run.yml`, and VS Code. All of them need
+`LLM_GPU_STACK_API_KEY` once `:8080` requires it (fwllm-04 + operator).
+
 ## Port registry: Framework Desktop
 
 Inventory only (operator decision 2026-09-27): ports are part of each
@@ -90,14 +127,17 @@ one place that lists them all.
 
 | Port | Service on framework | Consumers (network path) | Notes |
 |---|---|---|---|
-| 22 | SSH | operator workstation / Ansible (LAN) | pentest_seg → :22 PentAGI harness rule removed by fwdns-08 |
-| 8080 | llama-server (Nathanw build, systemd; formerly llamacpp-router) | ai-services-stack OpenWebUI (ai_seg), cse-controller (cse_seg), deep-research-agent `config_template.yaml` | The ai_seg and cse_seg firewall rules both allow it |
-| 8083 | cAdvisor | monitoring-stack scrape (mgmt_seg) | `deploy-monitoring-stack.yml` cadvisor job |
-| 8090 | LM Studio (Vulkan) | Traefik `llm.${LAB_DOMAIN}` (edge_seg) | `llm-gpu-stack/edge.yaml` |
-| 8188 | ComfyUI | Traefik `comfyui.${LAB_DOMAIN}` (edge_seg) | `comfyui-stack/edge.yaml` |
+| 22 | SSH | operator workstation / Ansible (LAN) | The pentest_seg → :22 PentAGI harness rule is removed by fwdns-08 |
+| 8080 | llama-server chat, `nathanw-llamacpp.service` (Nathanw fork, native Vulkan) | OpenWebUI + deep-research (ai_seg), secpipe CVE (ai_seg), cse-controller (cse_seg), Traefik `llm.` (edge_seg, fwllm-05), VS Code (LAN) | API key required from fwllm-01 on; `--metrics` |
+| 8085 | llama-server embeddings, `nathanw-llamacpp-embed.service` (new, fwllm-01) | docs-rag-mcp (ai_seg) | nomic-embed-text-v1.5, no key, `--metrics` |
+| 8081 | *(legacy)* OpenWebUI container | none; superseded by ai-services-stack | Retirement candidate |
+| 8082 | *(legacy)* SearXNG container | none; superseded by ai-services-stack | Retirement candidate; why embeddings use 8085 |
+| 8083 | cAdvisor | monitoring-stack scrape (mgmt_seg) | |
+| 8090 | *(dead)* LM Studio | was Traefik `llm.` | Not running; route moves to 8080 |
+| 8188 | ComfyUI | Traefik `comfyui.${LAB_DOMAIN}` (edge_seg) | |
+| 9001 | Portainer agent | portainer-stack | The endpoint URL must be the FQDN before the re-IP (fwdns-00 item 6) |
 | 9100 | node_exporter (HTTPS, step-ca cert) | monitoring-stack scrape (mgmt_seg) | Cert SANs come from `ansible_host` + `inventory_hostname` |
-| 11434 | Ollama | secpipe-stack cve_enrichment_sync fallback (ai_seg), docs-rag-mcp embeddings, `scripts/ollama-reliability-proxy` | Ollama is no longer in active use for chat (2026-09-22), but the ai_seg rule keeps 11434 so behaviour doesn't change |
-| 8082 | *(gone)* SearXNG | none | Moved to ai-services-stack on 2026-08-02. The pentest_seg rule for it is removed by fwdns-08. |
+| 11434 | *(gone)* Ollama | none after Phase C | The ai_seg rule stops allowing it (fwdns-07/-08) |
 
 ## Hand-back log
 

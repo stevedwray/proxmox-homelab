@@ -1,4 +1,4 @@
-# framework-ip-and-port plan: DNS-only addressing for the Framework Desktop
+# framework-ip-and-port plan: get Framework off 192.168.1.8, DNS-only, Ollama → llama.cpp
 
 Written with `.github/prompts/plan-change.prompt.md`, following
 `docs/agent-design/step-packet-schema.md`. Execute one step at a time with
@@ -8,6 +8,25 @@ Written with `.github/prompts/plan-change.prompt.md`, following
 The audit behind this plan (every hit, and what is deliberately left alone)
 is in [README.md](README.md). Read that first.
 
+## Why
+
+1. **IP collision.** `192.168.1.8` belongs to **gazaar**, a NAS that is
+   usually powered off and switched on only for backups. The Framework
+   Desktop was given the same address by mistake (static, in netplan), so
+   the two collide whenever gazaar is on. Framework has to move to a new
+   address (`192.168.1.18`). Making every consumer use DNS first is what
+   makes that move a one-record change instead of a hunt through configs.
+2. **Ollama is gone.** Framework now serves models from the Nathanw
+   llama.cpp fork on `:8080`, and Ollama has been removed entirely (checked
+   live 2026-09-27: `:11434` refuses connections, and no container or unit
+   is left). Everything that still talks to Ollama is broken now, not just
+   pending migration. The worst case is docs-rag-mcp: it embeds every
+   `search_docs` query through Ollama, so docs search is currently down.
+
+The plan has three phases. **A** (DNS-only) comes first because B depends
+on it. **C** (llama.cpp) is the most urgent. **B** (re-IP) comes last. See
+"Execution order" below.
+
 ## Target state
 
 - Every client of the Framework Desktop uses **`framework.gibbsgreatly.xyz`**,
@@ -16,12 +35,18 @@ is in [README.md](README.md). Read that first.
 - MikroTik forward rules into framework match
   **`dst-address-list=framework`**. That list's single static entry is the
   FQDN, and RouterOS resolves it itself from its own static DNS record.
-- The IP is set in exactly one authoritative place: the MikroTik static DNS
-  record `framework.gibbsgreatly.xyz`. `LAB_IP_FRAMEWORK` stays in `.env` as
-  the documented value for IP-by-nature data only. Nothing in code reads it.
-- Moving Framework to another IP then means updating the DNS record (and
-  the three IPAM/asset literals listed in README.md). No playbook, edge
-  manifest, firewall rule or scrape config changes.
+- The IP is published in exactly one place: the MikroTik static DNS record
+  `framework.gibbsgreatly.xyz`, which `mikrotik-dns-framework.yml` writes
+  from `LAB_IP_FRAMEWORK`. That playbook is the only code that reads the
+  variable. The other copies of the address are IPAM/asset records: the
+  NetBox static host and the GVM `ip_to_stack.json`.
+- Framework is at **`192.168.1.18`**, and `gazaar.gibbsgreatly.xyz` keeps
+  `192.168.1.8`.
+- Every former Ollama consumer uses llama.cpp. Chat/completions go to
+  `nathanw-llamacpp.service` on `:8080`, which requires an API key.
+  Embeddings go to a new `nathanw-llamacpp-embed.service` on `:8085`. Both
+  units are managed from this repo, and both expose `/metrics` to
+  monitoring-stack.
 
 ## Decisions (resolved with operator, 2026-09-27)
 
@@ -29,16 +54,36 @@ is in [README.md](README.md). Read that first.
    All framework-bound rules move into one new playbook,
    `mikrotik-firewall-framework-fqdn.yml`. They are removed from
    `mikrotik-firewall-ai-services-stack.yml` and `mikrotik-firewall-cse-seg.yml`.
+   The ai_seg rule allows `8080,8085`; 11434 is dropped along with Ollama.
 2. **PentAGI remnants:** remove, don't convert. That covers the four
    hand-added `pentest_seg → framework` router rules (Ollama, SearXNG,
    llamacpp-router, SSH), the matching `policies:` entries, and
    `scripts/pentagi-test-harness/`. `deploy-pentagi-stack.yml` itself is out
    of scope.
-3. **Env vars:** one FQDN plus one IP. Add `LAB_FQDN_FRAMEWORK`, keep
-   `LAB_IP_FRAMEWORK` (documentation/IPAM only), and remove `LAB_IP_LLM_GPU`,
-   `LAB_IP_COMFYUI` and `FRAMEWORK_HOST_IP`.
+3. **Env vars:** one FQDN plus one IP. Add `LAB_FQDN_FRAMEWORK` and keep
+   `LAB_IP_FRAMEWORK` as the source for the DNS record only. Remove
+   `LAB_IP_LLM_GPU`, `LAB_IP_COMFYUI` and `FRAMEWORK_HOST_IP`.
 4. **Ports:** inventory only (README.md port registry). Port literals stay
    where they are.
+5. **New address:** `192.168.1.18`, set statically in framework's netplan,
+   the same way as today. It is outside the DHCP pool (`.100–.200`), has no
+   lease or static DNS record, no repo references, and no ping or ARP
+   answer (checked 2026-09-27). A powered-off device like gazaar wouldn't
+   answer either, so the lease and DNS checks are what count. Recheck them
+   just before the cutover.
+6. **Embeddings:** a second llama-server (same Nathanw build) with
+   `--embeddings`, serving `nomic-embed-text-v1.5` (f16 GGUF, 274 MB) on
+   **:8085**. Port 8082 was the proposal, but it is still in use by the
+   legacy SearXNG container on framework. docs-rag-mcp switches to
+   `/v1/embeddings` and gets a full re-embed.
+7. **`llm.${LAB_DOMAIN}` route:** repoint it from the dead LM Studio
+   (`:8090`) to `:8080`, and require `LLM_GPU_STACK_API_KEY` there
+   (`--api-key-file`). Every direct `:8080` client then sends that key.
+8. **`:8080` under IaC:** a new playbook,
+   `framework-desktop-llamacpp-native.yml`, takes over the hand-written
+   `nathanw-llamacpp.service` and adds `--alias`, `--metrics` and
+   `--api-key-file`. It keeps `--ctx-size 8192` until a measured step
+   raises it.
 
 ## Research this plan relies on
 
@@ -46,8 +91,12 @@ is in [README.md](README.md). Read that first.
   `dig framework.gibbsgreatly.xyz` returns `192.168.1.8` from the
   workstation and from Technitium (`192.168.20.15`, the resolver the LXCs
   use), checked 2026-09-27. Several consumers already use the FQDN in
-  production: ai-services-stack OpenWebUI, docs-rag-mcp, deep-research-agent,
-  ollama-reliability-proxy.
+  production: ai-services-stack OpenWebUI, docs-rag-mcp, deep-research-agent
+  and cse-controller.
+- **Framework-local config holds no copy of the IP** apart from netplan
+  (checked 2026-09-27: `grep -r 192.168.1.8` over `/etc`, `/opt` and
+  steve's config found nothing). Its containers publish on all interfaces,
+  so an address change needs no container changes.
 - **Nothing enforces `terraform/lxc/network/*.yaml` policy destinations that
   aren't zones.** `main.tf` only turns `policies` into Proxmox firewall rules
   when `policy.to` is the stack's own zone (`inbound_zone_policies`).
@@ -69,23 +118,76 @@ is in [README.md](README.md). Read that first.
   once it's exported. An unset var would be left as the literal string
   `${LAB_FQDN_FRAMEWORK}`. That is why fwdns-01 lands first, and why
   fwdns-02's gate greps the rendered output.
+- **RouterOS is 7.23.1** (router snapshot `scrape_meta`), and address-list
+  entries accept a DNS name, which the router resolves into dynamic child
+  entries. fwdns-08's playbook still asserts that a resolved IPv4 entry
+  exists before it adds any rule.
 - **The router snapshot is stale** (2026-08-13), and it predates
-  `mikrotik-firewall-cse-seg.yml`. fwdns-00 refreshes it before the router
-  step.
-- **RouterOS address-list entries accept a DNS name.** The router resolves
-  it and keeps dynamic child entries with the resolved address(es). *Treat
-  this as unverified on this router until fwdns-00's check passes.* The
-  playbook in fwdns-08 also asserts that a resolved IPv4 entry appears
-  before it adds any rule. (Per the standing rule: verify technical claims
-  before relying on them.)
+  `mikrotik-firewall-cse-seg.yml`. fwdns-00 refreshes it.
+- **What `:8080` actually is** (checked live 2026-09-27):
+  - `nathanw-llamacpp.service`, hand-written, not in the repo. It runs as
+    `steve` from `/home/steve/llama.cpp/build-vk/bin/llama-server`,
+    Nathanw fork build `b02cb35`, with `--ctx-size 8192`, auto `--parallel`
+    (4 slots sharing one unified KV cache), no API key and no `--metrics`.
+  - The only model is Qwen3.8-Flash-Next UD-Q4_K_XL (111 GB resident, 14 GB
+    MemAvailable left).
+  - It accepts any `model` string. It returns HTTP 501 for `/v1/embeddings`.
+  - It is a reasoning model: with a tiny `max_tokens`, all the output lands
+    in `reasoning_content` and `content` is empty.
+  - The fork's `--help` confirms `--metrics`, `--api-key-file`,
+    `--embeddings` and `--pooling`.
+- **Live Ollama consumers**, all broken now:
+  - docs-rag-mcp: `/api/embed` for every query and every reindex.
+  - secpipe's weekly CVE deep-dive: `/api/generate`, **enabled**, next run
+    Sunday 23:00. It fails per CVE and moves on.
+  - The routine CVE narrative's `ollama` provider (not the default).
+  - framework's Ollama textfile collector and its dashboard panels.
+  - VS Code Copilot's "Framework Ollama" models (workstation config, not
+    repo).
+- **Current `:8080` clients**, which need the key once it's required:
+  - ai-services OpenWebUI: already sends `LLM_GPU_STACK_API_KEY`.
+  - deep-research: sends `OPENAI_API_KEY` or `"dummy"`.
+  - cse-controller: sends `"not-needed"` unless a key is given.
+  - `cse-small-batch-run.yml`: `"not-needed"`.
+  - VS Code: no key.
+- **The patches in `patches/` were generated from real edits and checked**
+  (2026-09-27): syntax-check, py_compile, the docs-rag unit tests, and a
+  live call of the new `_call_llamacpp` against `:8080` (success path and
+  empty-content error path). They were cut in plan order, on top of the
+  fwdns steps they follow.
+
+## Execution order
+
+The steps are numbered by phase. Run them in this order.
+
+| # | Step(s) | Why here |
+|---|---|---|
+| 1 | fwdns-00 pre-flight; fwdns-01, -02, -03, -07, -08, -09 | Everything later names framework by FQDN and relies on the address-list firewall (ai_seg → 8080,8085) |
+| 2 | Operator: router apply (fwdns-08); edge + monitoring deploy | Opens ai_seg → :8085 before docs-rag needs it |
+| 3 | fwllm-01, -04 (code) → operator: download embeddings model, apply fwllm-01 live, then immediately redeploy the fwllm-04 consumers | Adding the key breaks unkeyed clients until they are redeployed, so keep that window short |
+| 4 | fwdns-06 (once the FQDN scrape is confirmed up in #2), fwllm-02, -03, -05, -06 (+ operator deploys), fwllm-07 | Restores docs-rag search, the CVE deep-dive, the `llm.` route and monitoring. fwllm-06's patch was cut on top of fwdns-06 |
+| 5 | Operator: measure chat context → fwllm-08 | Raises `--ctx-size` from 8192 only as far as memory allows |
+| 6 | fwdns-05, -10, -11, -12 | DNS-only clean-up |
+| 7 | fwip-01, -02 → operator: re-IP cutover → fwip-03 | Needs all of the above: no client may still hold the IP |
+
+**docs-rag `search_docs` is down until step 4 (fwllm-03).**
+`implement-step` normally fetches a step through `search_docs`. Until then,
+give the local model this plan by path (`get_document`), or have the
+operator or a frontier session run steps 1–4.
 
 ## Validation tier and approvals
 
-- Code steps fwdns-01 to -07 and -10 to -12 are validated by their own gates
-  (syntax-check, unit tests, dry-run renders).
-- The live applies below are **production mutations**. Each one needs its
-  own Preflight Summary, operator "Proceed", and `TASK_APPROVAL`. They are
+- Code steps are validated by their own gates (syntax-check, unit tests,
+  dry-run renders, `git apply --check`).
+- The live applies are **production mutations**. Each one needs its own
+  Preflight Summary, operator "Proceed", and `TASK_APPROVAL`. They are
   written as operator prose, not step blocks.
+  - Stacks on **pve-tiny**: ai-services, secpipe, mcp-utility and
+    cse-controller. Deploy them with `./with-secrets-prod-tiny`.
+  - Stacks on **pve**: proxy/Traefik and monitoring. Deploy them with
+    `./with-secrets-prod`.
+  - Framework is not a Proxmox production node; its playbooks run with
+    `PVE_ENV= ./with-secrets`.
 - **The router change needs a tier decision.** Per CLAUDE.md, *modifying or
   removing an existing cross-zone rule* maps to "full teardown cycle on
   pve-test-vm". That is not useful here: pve and pve-test-vm share the same
@@ -95,23 +197,25 @@ is in [README.md](README.md). Read that first.
   - add-before-remove ordering inside the playbook
   - its own post-apply assertions
   - live reachability checks from each real consumer (ai-services-stack →
-    :8080, secpipe-stack → :11434, cse-controller → :8080)
+    :8080, mcp-utility-stack → :8085, cse-controller → :8080)
 
   The operator confirms or overrides this at the fwdns-08 apply.
+- **The re-IP is a host network change on framework.** It is guarded by
+  `netplan try` (auto-revert). See the Phase B runbook.
 
 ---
+
+# Phase A: DNS-only addressing
 
 ## Operator pre-flight: fwdns-00 (read-only, not a step block)
 
 Run these before fwdns-02's live deploy and before fwdns-08's apply. None of
 them mutates anything.
 
-1. **Confirm the IP is pinned.** Nothing in this repo pins `192.168.1.8`
-   (no DHCP lease in the router snapshot, no netplan in the bootstrap
-   playbook). On framework, run `ip -4 addr show` and
-   `ls /etc/netplan/ && sudo cat /etc/netplan/*.yaml`. Confirm that
-   `192.168.1.8` is static or a MikroTik DHCP static lease. If it is dynamic,
-   DNS can drift from reality, so fix that first.
+1. **The IP is pinned statically** (confirmed 2026-09-27: framework's
+   `/etc/netplan/00-installer-config.yaml` has `addresses: [192.168.1.8/24]`,
+   a subiquity-written static config). Nothing to do here; Phase B changes
+   it.
 2. **Refresh the router snapshot:**
    `./with-secrets bash -c 'MIKROTIK_USER=${MIKROTIK_ADMIN:-$MIKROTIK_USER} MIKROTIK_PASSWORD=${MIKROTIK_ADMIN_PASSWORD:-$MIKROTIK_PASSWORD} router/scripts/scrape-config.sh'`
    (read-only REST GETs). Then run
@@ -119,17 +223,24 @@ them mutates anything.
    and confirm the six legacy rules listed in fwdns-08's
    `framework_legacy_rule_comments`. Record any extra rule in README.md.
    fwdns-08 will not remove it, so decide what to do with it before the
-   apply.
-3. **RouterOS version and FQDN address-list support:** read `version` from
-   the refreshed snapshot's `system_resource`. RouterOS 7.x is expected.
+   apply. Rules for **gazaar** (192.168.1.8 is its address too) must be
+   left alone.
+3. **RouterOS version:** 7.23.1 as of the last snapshot. Re-read `version`
+   from the refreshed snapshot's `system_resource`.
 4. **Resolution from each consumer network.** From ai-services-stack,
-   secpipe-stack (both now on pve-tiny, ai_seg), cse-controller (cse_seg),
-   monitoring-stack (mgmt_seg) and proxy-stack/Traefik (edge_seg), run
-   `getent hosts framework.gibbsgreatly.xyz`. Every one must print
-   `192.168.1.8`.
-5. **`gazaar.gibbsgreatly.xyz`** also points at `192.168.1.8` in router
-   static DNS and is unused by this repo. Decide whether to keep it as an
-   alias or delete it. This is not a step here.
+   secpipe-stack, mcp-utility-stack (all on pve-tiny, ai_seg),
+   cse-controller (cse_seg), monitoring-stack (mgmt_seg) and
+   proxy-stack/Traefik (edge_seg), run
+   `getent hosts framework.gibbsgreatly.xyz`. Every one must print the
+   framework address.
+5. **`gazaar.gibbsgreatly.xyz` stays.** It is the NAS's real name and
+   address. Nothing in this plan edits it.
+6. **Portainer's framework endpoint URL.** It was registered by hand, not
+   by this repo. Run a read-only
+   `GET http://<portainer>:9000/api/endpoints` (the admin token is in SOPS)
+   and note the framework endpoint's `URL`. If it is `tcp://192.168.1.8:9001`,
+   change it to `tcp://framework.gibbsgreatly.xyz:9001` in the Portainer UI
+   before Phase B.
 
 ---
 
@@ -247,11 +358,12 @@ pass. Target is `pve`, via the production approval flow.
 
 - **Traefik routes (Authentik/Traefik tier):** reconcile the llm-gpu-stack
   and comfyui-stack edge manifests onto proxy-stack by the normal edge
-  path. Then check `curl -sk -o /dev/null -w '%{http_code}' https://llm.lab.gibbsgreatly.xyz/v1/models`
-  (expect 401 without the key, or 200 with it; the point is not 502) and
-  `https://comfyui.lab.gibbsgreatly.xyz/` (expect the Authentik redirect,
-  302). A 502 means Traefik can't resolve or reach the FQDN; roll back the
-  edge.yaml change.
+  path. Then check
+  `curl -sk -o /dev/null -w '%{http_code}' https://comfyui.lab.gibbsgreatly.xyz/`.
+  Expect the Authentik redirect (302). A 502 means Traefik can't resolve or
+  reach the FQDN; roll back the edge.yaml change. The `llm.` route returns
+  502 before and after this change, because its LM Studio backend (`:8090`)
+  is dead. fwllm-05 fixes it.
 - **monitoring-stack:**
   `./with-secrets-prod scripts/provision.sh --stack monitoring-stack`. Then
   confirm that VictoriaMetrics `up{stack="framework"}` is 1 for both jobs.
@@ -265,51 +377,10 @@ scrape would start failing TLS.
 
 ### fwdns-04-cve-enrichment-fqdn
 
-```yaml
-id: fwdns-04-cve-enrichment-fqdn
-title: Replace hard-coded Ollama IP in cve_enrichment_sync role
-depends_on: [fwdns-01-env-fqdn]
-
-change: >
-  In terraform/lxc/ansible/roles/cve_enrichment_sync/defaults/main.yml replace
-  `cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"` with
-  `cve_enrichment_sync_ollama_url: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}:11434"`.
-  In both terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py
-  and terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py
-  replace the string `"http://192.168.1.8:11434"` with
-  `"http://framework.gibbsgreatly.xyz:11434"` (exactly one occurrence per file).
-
-scope:
-  allowed_paths:
-    - terraform/lxc/ansible/roles/cve_enrichment_sync/defaults/main.yml
-    - terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py
-    - terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Changing the model name, provider, or any other default"
-    - "Running provision.sh (live deploy is operator-run)"
-
-gates:
-  - id: no-ip-left
-    cmd: "git grep -c '192.168.1.8' -- terraform/lxc/ansible/roles/cve_enrichment_sync/ ; test $? -eq 1 && echo clean"
-    expect: "prints clean"
-    critical: true
-  - id: py-compile
-    cmd: "python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py"
-    expect: "exit 0"
-    critical: true
-  - id: secpipe-syntax
-    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-secpipe-stack.yml"
-    expect: "exit 0"
-    critical: true
-```
-
-The operator deploys this with secpipe-stack's next redeploy on **pve-tiny**
-(`./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`,
-production approval flow). Afterwards, check that
-`systemctl show cve-enrichment-sync -p Environment` on secpipe-stack shows
-`OLLAMA_URL=http://framework.gibbsgreatly.xyz:11434`. The default provider
-is `anthropic`, so this URL is only used on the Ollama path. No urgency.
+**Superseded by fwllm-02 — do not run.** The CVE role's hard-coded
+`http://192.168.1.8:11434` pointed at Ollama, which no longer exists.
+Changing it to an FQDN on `:11434` would still be broken. fwllm-02 replaces
+the whole Ollama provider with llama.cpp, addressed by FQDN.
 
 ### fwdns-05-ai-services-var
 
@@ -325,8 +396,8 @@ change: >
   the "fwdns-05 replacement block" below the step (4-space indent kept).
   In terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md make four
   exact-string replacements:
-  (a) "(`192.168.50.0/24 →\n  192.168.1.8`)" becomes
-  "(`192.168.50.0/24 →\n  dst-address-list framework`, resolved from `framework.gibbsgreatly.xyz` by the router)";
+  (a) "- Egress: `ai_seg → framework:8080,11434` (`192.168.50.0/24 →\n  192.168.1.8`) so OpenWebUI can reach llamacpp-router/Ollama." becomes
+  "- Egress: `ai_seg → framework:8080,8085` (`192.168.50.0/24 →\n  dst-address-list framework`, resolved from `framework.gibbsgreatly.xyz` by the router) so OpenWebUI can reach llama-server.";
   (b) "| `FRAMEWORK_HOST` (falls back to `framework.gibbsgreatly.xyz`) |" becomes
   "| `LAB_FQDN_FRAMEWORK` (falls back to `framework.gibbsgreatly.xyz`) |";
   (c) " Matches `deploy-pentagi-stack.yml`'s identical `pentagi_framework_host` pattern, the other contained zone reaching framework the same way |" becomes " |";
@@ -434,7 +505,9 @@ change: >
   In both terraform/lxc/network/pve.yaml and terraform/lxc/network/pve-test-vm.yaml,
   in the `policies:` entry whose description starts
   `ai-services-stack to framework.gibbsgreatly.xyz (llamacpp-router,`,
-  replace the line `    to: 192.168.1.8` with `    to: framework.gibbsgreatly.xyz`.
+  replace the line `    to: 192.168.1.8` with `    to: framework.gibbsgreatly.xyz`,
+  and in the same entry replace `    ports: [8080, 11434]` with
+  `    ports: [8080, 8085]` (llama-server chat + embeddings; Ollama is gone).
   In terraform/lxc/network/pve.yaml delete the whole policy entry
   (from its `  - from: pentest_seg` line through the last line of its
   description) whose `to:` is `192.168.1.8` and whose description begins
@@ -456,6 +529,10 @@ scope:
     - "Running terragrunt / provision.sh"
 
 gates:
+  - id: framework-policy-ports
+    cmd: "python3 -c \"import yaml; print([p['ports'] for f in ('terraform/lxc/network/pve.yaml','terraform/lxc/network/pve-test-vm.yaml') for p in yaml.safe_load(open(f))['policies'] if p.get('to')=='framework.gibbsgreatly.xyz'])\""
+    expect: "prints [[8080, 8085], [8080, 8085]]"
+    critical: true
   - id: yaml-parses
     cmd: "python3 -c \"import yaml; [yaml.safe_load(open(f)) for f in ('terraform/lxc/network/pve.yaml','terraform/lxc/network/pve-test-vm.yaml')]; print('ok')\""
     expect: "prints ok"
@@ -521,6 +598,8 @@ gates:
 # mikrotik-firewall-ai-services-stack.yml and mikrotik-firewall-cse-seg.yml,
 # and removes the hand-added PentAGI-era pentest_seg -> framework rules
 # (PentAGI is deprecated; those paths are removed, not converted).
+# Ports: 8080 = llama-server chat (API key), 8085 = llama-server embeddings.
+# Ollama's 11434 is gone from framework and is not re-opened.
 #
 # Order is add-before-remove: address-list, wait for it to resolve, add the
 # list-based rules ahead of the first forward drop/reject, assert, and only
@@ -557,13 +636,13 @@ gates:
     framework_address_list_comment: "framework-fqdn: Framework Desktop, resolved by RouterOS DNS"
 
     framework_firewall_rules:
-      - comment: "framework-fqdn: ai_seg to framework llama-server/ollama"
+      - comment: "framework-fqdn: ai_seg to framework llama-server chat/embeddings"
         chain: "forward"
         action: "accept"
         protocol: "tcp"
         src-address: "{{ lab_subnet_ai_cidr }}"
         dst-address-list: "{{ framework_address_list }}"
-        dst-port: "8080,11434"
+        dst-port: "8080,8085"
       - comment: "framework-fqdn: cse_seg to framework llama-server"
         chain: "forward"
         action: "accept"
@@ -859,9 +938,10 @@ Then, from each consumer:
 
 - ai-services-stack:
   `curl -s -o /dev/null -w '%{http_code}' http://framework.gibbsgreatly.xyz:8080/v1/models`
-- secpipe-stack:
-  `curl -s -o /dev/null -w '%{http_code}' http://framework.gibbsgreatly.xyz:11434/api/tags`
 - cse-controller: the same `:8080/v1/models` check
+- mcp-utility-stack → `:8085` can only be checked after fwllm-01 is live
+  (the embeddings server doesn't exist yet). It is part of the fwllm-03
+  deploy check.
 
 A non-`000` code means the path is open. On failure, the list-based rules
 are still in place, so check `/ip firewall address-list print where
@@ -912,7 +992,7 @@ change: >
   In .env delete the three lines starting `export LAB_IP_LLM_GPU=`,
   `export LAB_IP_COMFYUI=` and `export FRAMEWORK_HOST_IP=`, and replace the
   line starting `export LAB_IP_FRAMEWORK=` with
-  `export LAB_IP_FRAMEWORK='192.168.1.8'                           # Framework Desktop IPv4 -- documentation/IPAM only; nothing in code reads it. Clients use LAB_FQDN_FRAMEWORK; the authoritative IP is the MikroTik static DNS record (docs/framework-ip-and-port/plan.md)`.
+  `export LAB_IP_FRAMEWORK='192.168.1.8'                           # Framework Desktop IPv4 -- read ONLY by ansible/00-initial-setup/mikrotik-dns-framework.yml, which publishes it as the framework.gibbsgreatly.xyz DNS record; every client uses LAB_FQDN_FRAMEWORK (docs/framework-ip-and-port/plan.md)`.
   In .env.template delete the lines starting `export FRAMEWORK_HOST_IP=`,
   `export LAB_IP_LLM_GPU=`, `export LAB_IP_COMFYUI=`,
   `export TF_VAR_lab_ip_llm_gpu=` and `export TF_VAR_lab_ip_comfyui=`, and
@@ -981,6 +1061,615 @@ gates:
 
 ---
 
+---
+
+# Phase C: Ollama → llama.cpp (Nathanw fork)
+
+Every step block below applies one patch from `patches/`, generated from
+real, tested edits. The executor runs `git apply` and the gates, and does
+nothing else: there is no hand-editing and no interpretation. If
+`git apply --check` fails because a file has moved on since the patch was
+cut, **stop and hand back**. Do not hand-merge.
+
+| Former Ollama consumer | Moves to | Step |
+|---|---|---|
+| docs-rag-mcp embeddings (every `search_docs` query + reindex) | `:8085` `/v1/embeddings`, nomic-embed-text-v1.5 | fwllm-01, -03 |
+| secpipe CVE deep-dive (weekly, enabled) + routine narrative's local provider | `:8080` `/v1/chat/completions`, provider `llamacpp` | fwllm-02 |
+| framework Ollama textfile collector + "Local AI" dashboard panels | llama-server `--metrics`, scraped directly | fwllm-06, -07 |
+| Traefik `llm.${LAB_DOMAIN}` (was LM Studio `:8090`, also dead) | `:8080` | fwllm-05 |
+| VS Code Copilot "Framework Ollama" models (workstation) | `:8080` | operator, below |
+
+### fwllm-01-native-llamacpp-playbook
+
+```yaml
+id: fwllm-01-native-llamacpp-playbook
+title: Add the playbook that manages both native llama-server units on framework
+depends_on: []
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-01-native-llamacpp-playbook.patch`,
+  then `git apply docs/framework-ip-and-port/patches/fwllm-01-native-llamacpp-playbook.patch`.
+  It creates ansible/00-initial-setup/framework-desktop-llamacpp-native.yml.
+  Make no other edits.
+
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/framework-desktop-llamacpp-native.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running the playbook (the live apply is operator-run)"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-01-native-llamacpp-playbook.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml"
+    expect: "exit 0"
+    critical: true
+  - id: chat-flags
+    cmd: "grep -c -- '--metrics --api-key-file' ansible/00-initial-setup/framework-desktop-llamacpp-native.yml"
+    expect: "prints 1"
+    critical: true
+```
+
+### fwllm-02-cve-llamacpp-provider
+
+```yaml
+id: fwllm-02-cve-llamacpp-provider
+title: CVE narrative + deep-dive use llama.cpp instead of Ollama
+depends_on: [fwdns-01-env-fqdn]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-02-cve-llamacpp-provider.patch`,
+  then `git apply` the same file. It replaces the `ollama` provider with
+  `llamacpp` (`_call_llamacpp` -> /v1/chat/completions, Bearer key, content
+  only, error on empty content) in cve_enrichment_sync.py and
+  cve_deep_dive.py, and renames the role's ollama_* vars, unit Environment=
+  lines and llm-user.env entry to llamacpp_*. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/roles/cve_enrichment_sync/
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Changing cve_enrichment_sync_llm_provider's default (stays anthropic)"
+    - "Running provision.sh"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-02-cve-llamacpp-provider.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: py-compile
+    cmd: "python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py"
+    expect: "exit 0"
+    critical: true
+  - id: no-ollama-code
+    cmd: "grep -rnE 'ollama_url|ollama_model|_call_ollama|OLLAMA_' terraform/lxc/ansible/roles/cve_enrichment_sync/ ; test $? -eq 1 && echo clean"
+    expect: "prints clean"
+    critical: true
+  - id: secpipe-syntax
+    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-secpipe-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### fwllm-03-docs-rag-embeddings
+
+```yaml
+id: fwllm-03-docs-rag-embeddings
+title: docs-rag-mcp embeds via the llama.cpp embeddings server
+depends_on: [fwdns-01-env-fqdn]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-03-docs-rag-llamacpp-embeddings.patch`,
+  then `git apply` the same file. It rewrites docs_rag_mcp/embeddings.py
+  for /v1/embeddings (EMBED_BASE_URL, default framework FQDN :8085), adds
+  tests/test_embeddings.py, and changes deploy-mcp-utility-stack.yml's
+  OLLAMA_URL env to EMBED_BASE_URL. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/docs-rag-mcp/
+    - terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running provision.sh or touching the pgvector database"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-03-docs-rag-llamacpp-embeddings.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: unit-tests
+    cmd: "cd terraform/lxc/ansible/files/docs-rag-mcp && python3 -m unittest discover -s tests -p 'test_*.py'"
+    expect: "OK (3 tests)"
+    critical: true
+  - id: mcp-syntax
+    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-mcp-utility-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### fwllm-04-api-key-consumers
+
+```yaml
+id: fwllm-04-api-key-consumers
+title: Every direct :8080 client sends LLM_GPU_STACK_API_KEY
+depends_on: []
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-04-llamacpp-api-key-consumers.patch`,
+  then `git apply` the same file. It adds OPENAI_API_KEY (the OpenWebUI
+  key) to deep-research's environment in deploy-ai-services-stack.yml;
+  adds FRAMEWORK_LLM_API_KEY to cse-controller's worker.env and makes
+  cse_tasks.py fall back to it; and puts the key into
+  cse-small-batch-run.yml's model spec. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
+    - terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
+    - terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
+    - ansible/00-initial-setup/cse-small-batch-run.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running any deploy"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-04-llamacpp-api-key-consumers.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: py-compile
+    cmd: "python3 -m py_compile terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py"
+    expect: "exit 0"
+    critical: true
+  - id: syntax-check
+    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-ai-services-stack.yml playbooks/deploy-cse-controller.yml && cd ../../.. && ansible-playbook --syntax-check -i localhost, ansible/00-initial-setup/cse-small-batch-run.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### Operator: download the embeddings model (not a step block)
+
+On framework, as steve (a 274 MB download, pinned by SHA-256):
+
+```bash
+mkdir -p /mnt/nvme2/models-gguf/nomic-embed-text-v1.5
+curl -fL -o /mnt/nvme2/models-gguf/nomic-embed-text-v1.5/nomic-embed-text-v1.5.f16.gguf \
+  https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf
+echo "f7af6f66802f4df86eda10fe9bbcfc75c39562bed48ef6ace719a251cf1c2fdb  /mnt/nvme2/models-gguf/nomic-embed-text-v1.5/nomic-embed-text-v1.5.f16.gguf" | sha256sum -c
+```
+
+### Operator: apply fwllm-01 live, then redeploy the key consumers (not a step block)
+
+Prerequisites: fwllm-01 and fwllm-04 are committed, the model download
+checks out, and fwdns-08 is applied on the router (ai_seg → 8080,8085).
+
+1. `free -m` on framework. Stop if anything other than
+   `nathanw-llamacpp.service` holds a large share of memory. ComfyUI idle is
+   fine; a second LLM is not.
+2. `PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml`.
+   This restarts the chat server (the model reloads over a few minutes),
+   starts the embeddings server, and self-checks four things: `/health`
+   on both, a 401 without the key, `/metrics` with the key, and a
+   768-dimension embedding.
+3. **Straight away**, because every client without the key gets 401 from
+   here on:
+   - `./with-secrets-prod-tiny scripts/provision.sh --stack ai-services-stack`
+     (for deep-research's key; OpenWebUI already sends it)
+   - `./with-secrets-prod-tiny scripts/provision.sh --stack cse-controller`
+   - **VS Code Copilot:** in `~/.config/Code/User/chatLanguageModels.json`,
+     delete the whole "Framework Ollama" provider (4 models on `:11434`)
+     and the Nathanw `qwen3.8-flash-next-q2` model on `:8079` (nothing
+     listens there). Keep the Nathanw Q4 model on
+     `http://framework.gibbsgreatly.xyz:8080/v1/chat/completions` and set
+     its id to `qwen3.8-flash-next`. VS Code asks for the API key on first
+     use; give it `LLM_GPU_STACK_API_KEY`.
+4. Checks:
+   - OpenWebUI chat answers.
+   - A deep-research query runs.
+   - A 1-case CSE run completes (`cse-small-batch-run.yml`).
+
+### Operator: deploy fwllm-02 and fwllm-03 (not a step block)
+
+- **secpipe (pve-tiny):**
+  `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`.
+  Then, on secpipe-stack, run one deep-dive by hand (dry run, no writes):
+  `cd /opt/cve-enrichment-sync && set -a && . ./es-user.env && . ./llm-user.env && set +a && LLAMACPP_URL=http://framework.gibbsgreatly.xyz:8080 python3 cve_deep_dive.py --top-n 1 --dry-run`.
+  A `llama.cpp returned no content` warning means the prompt plus
+  `LLAMACPP_MAX_TOKENS` does not fit the context. That is the input to
+  the context measurement below.
+- **mcp-utility (pve-tiny):**
+  1. `./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`.
+  2. Force a full re-embed. Vectors from Ollama and llama.cpp are not
+     interchangeable, and the reindex skips files whose hash is unchanged.
+     On mcp-utility-stack:
+     `cd /opt/mcp-utility-stack && docker compose exec -T pgvector psql -U docs_rag -d docs_rag -c 'TRUNCATE doc_chunks, file_index;' && docker compose restart docs-rag-mcp`
+  3. Watch `docker compose logs -f docs-rag-mcp` until "startup reindex
+     completed" appears with 0 failed files.
+  4. Check that `psql ... -c 'SELECT count(*) FROM doc_chunks;'` is greater
+     than 0, and that a `search_docs` query returns hits.
+- **Post-commit hook, flagged rather than fixed:** `.git/hooks/post-commit`
+  reindexes with `./with-secrets-prod` (pve). mcp-utility-stack now lives
+  on pve-tiny, so check that the hook still targets the right node, or
+  switch it to `./with-secrets-prod-tiny`. The hook isn't tracked, so this
+  is a local edit.
+
+### fwllm-05-llm-route-to-8080
+
+```yaml
+id: fwllm-05-llm-route-to-8080
+title: Traefik llm.${LAB_DOMAIN} routes to llama-server :8080
+depends_on: [fwdns-02-edge-manifests, fwllm-01-native-llamacpp-playbook]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-05-llm-route-to-8080.patch`,
+  then `git apply` the same file. It changes llm-gpu-stack/edge.yaml's
+  backend url from `${LAB_FQDN_FRAMEWORK}:8090` to `${LAB_FQDN_FRAMEWORK}:8080`
+  and replaces the LM Studio comment. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/llm-gpu-stack/edge.yaml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running reconcile-edge.py or provision.sh"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-05-llm-route-to-8080.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: dry-run-render
+    cmd: "bash -c 'source .env && rm -rf docs/framework-ip-and-port/artifacts/edge-render && python3 terraform/lxc/render-edge-traefik.py terraform/lxc/stacks/llm-gpu-stack/edge.yaml --output-dir docs/framework-ip-and-port/artifacts/edge-render >/dev/null && grep -rh \"url:\" docs/framework-ip-and-port/artifacts/edge-render'"
+    expect: "one line: `- url: http://framework.gibbsgreatly.xyz:8080`"
+    critical: true
+```
+
+Deploy after the fwllm-01 live apply (the key must already be enforced
+before the route exposes `:8080`): reconcile the llm-gpu-stack edge onto
+proxy-stack on **pve**. Then check
+`curl -sk -o /dev/null -w '%{http_code}' https://llm.lab.gibbsgreatly.xyz/v1/chat/completions -X POST -d '{}'`.
+Expect 401. With `-H "Authorization: Bearer $LLM_GPU_STACK_API_KEY"` and a
+real body, expect 200. OpenWebUI's `llm.` connection now reaches the same
+server as its direct `:8080` connection, so the model is listed twice.
+That is harmless.
+
+### fwllm-06-monitoring-llamacpp-metrics
+
+```yaml
+id: fwllm-06-monitoring-llamacpp-metrics
+title: Scrape llama.cpp /metrics; retire the Ollama textfile collector
+depends_on: [fwdns-03-monitoring-scrape, fwdns-06-inventory-and-bootstrap]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-06-monitoring-llamacpp-metrics.patch`,
+  then `git apply` the same file. It adds a `llamacpp` scrape job
+  (framework FQDN :8080 with the API key as Bearer, and :8085) to
+  deploy-monitoring-stack.yml; in framework-desktop-bootstrap.yml it
+  replaces the Ollama collector copy task with a removal task and drops
+  its ExecStart line; and it deletes
+  ansible/00-initial-setup/files/ollama_stats_textfile.py. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
+    - ansible/00-initial-setup/framework-desktop-bootstrap.yml
+    - ansible/00-initial-setup/files/ollama_stats_textfile.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running provision.sh or the bootstrap playbook"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-06-monitoring-llamacpp-metrics.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: monitoring-syntax
+    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-monitoring-stack.yml"
+    expect: "exit 0"
+    critical: true
+  - id: bootstrap-syntax
+    cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, ansible/00-initial-setup/framework-desktop-bootstrap.yml"
+    expect: "exit 0"
+    critical: true
+  - id: collector-gone
+    cmd: "test ! -e ansible/00-initial-setup/files/ollama_stats_textfile.py && echo gone"
+    expect: "prints gone"
+    critical: true
+```
+
+Deploy:
+
+1. monitoring-stack on **pve**:
+   `./with-secrets-prod scripts/provision.sh --stack monitoring-stack`.
+   Then check that `up{job="llamacpp"}` is 1 for `server="chat"` and
+   `server="embeddings"`. If it is 0, mgmt_seg can't reach
+   `framework:8080/8085`; check the router before anything else.
+2. Re-run the framework bootstrap:
+   `ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-bootstrap.yml`.
+   That removes the dead collector and its stale `.prom` file.
+
+### fwllm-07-dashboard-llamacpp-panels
+
+Precondition (operator): fwllm-01 is live. Record the output of this
+command in the hand-back; the gate below uses it:
+`curl -s -H "Authorization: Bearer $LLM_GPU_STACK_API_KEY" http://framework.gibbsgreatly.xyz:8080/metrics | grep -oE '^llamacpp:[a-z_]+' | sort -u`.
+The panels use upstream llama.cpp's metric names. If the Nathanw fork
+names them differently, the gate fails. Stop and hand back; do not guess
+new names.
+
+```yaml
+id: fwllm-07-dashboard-llamacpp-panels
+title: Local AI dashboard shows llama.cpp instead of Ollama
+depends_on: [fwllm-06-monitoring-llamacpp-metrics]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwllm-07-dashboard-llamacpp-panels.patch`,
+  then `git apply` the same file. It retitles and repoints the Ollama row
+  and panels in monitoring-stack/dashboards/local-ai.json to
+  llamacpp:tokens_predicted_total (rate), llamacpp:requests_processing /
+  requests_deferred, and up{job="llamacpp"}, and updates one description
+  string in uvm-threat-vulnerability-overview.json. Make no other edits.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/stacks/monitoring-stack/dashboards/local-ai.json
+    - terraform/lxc/stacks/monitoring-stack/dashboards/uvm-threat-vulnerability-overview.json
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Inventing metric names not present in the live /metrics output"
+
+gates:
+  - id: live-metric-names
+    cmd: "./with-secrets bash -c 'curl -s -H \"Authorization: Bearer $LLM_GPU_STACK_API_KEY\" http://framework.gibbsgreatly.xyz:8080/metrics | grep -cE \"^llamacpp:(tokens_predicted_total|requests_processing|requests_deferred) \"'"
+    expect: "prints 3"
+    critical: true
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwllm-07-dashboard-llamacpp-panels.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: json-valid-no-ollama
+    cmd: "python3 -c \"import json; json.load(open('terraform/lxc/stacks/monitoring-stack/dashboards/local-ai.json')); json.load(open('terraform/lxc/stacks/monitoring-stack/dashboards/uvm-threat-vulnerability-overview.json')); print('ok')\" && grep -ci ollama terraform/lxc/stacks/monitoring-stack/dashboards/local-ai.json"
+    expect: "prints ok then 0"
+    critical: true
+```
+
+Deploy with the next monitoring-stack provision on **pve**.
+
+### Operator: measure chat context (not a step block)
+
+Today `--ctx-size 8192` is shared by all four slots. That is well below the
+131k tags the Ollama-era clients (Copilot agent mode, CVE deep-dive) were
+built around. On a 122 GB unified-memory APU, an oversized KV cache can
+take the whole host down (see the GPU double-load and unified-memory OOM
+memories), so raise it one measured step at a time:
+
+1. For each candidate `C` in `16384`, `32768`, `65536`, `131072`, in order:
+   1. `PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml -e framework_llamacpp_chat_ctx_size=C`.
+   2. On framework, record
+      `awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo` and the
+      `llama_kv_cache` size line from `~/llamacpp-native-test/server.log`.
+   3. **Stop at the first `C` that leaves less than 8192 MB
+      MemAvailable.** Re-run step 1.1 with the previous `C`, and don't try
+      larger values.
+2. Keep the largest `C` that passed, and re-run the deep-dive dry run
+   above to confirm it now gets content.
+3. Write the number into README.md's hand-back log. The frontier session
+   then writes fwllm-08, a one-line literal edit of the
+   `framework_llamacpp_chat_ctx_size:` default, so the measured value is
+   committed. Until then, every plain re-run of the playbook resets the
+   context to 8192.
+
+### fwllm-08-set-measured-ctx
+
+Not written yet. It is authored after the measurement above, with the
+measured number filled in, so that no judgment call is left for execution
+time.
+
+---
+
+# Phase B: move framework to 192.168.1.18
+
+### fwip-01-mikrotik-dns-playbook
+
+```yaml
+id: fwip-01-mikrotik-dns-playbook
+title: Playbook that publishes framework's address as its MikroTik DNS record
+depends_on: [fwdns-01-env-fqdn]
+
+change: >
+  Run `git apply --check docs/framework-ip-and-port/patches/fwip-01-mikrotik-dns-framework.patch`,
+  then `git apply` the same file. It creates
+  ansible/00-initial-setup/mikrotik-dns-framework.yml, which touches only the
+  LAB_FQDN_FRAMEWORK static record (address from LAB_IP_FRAMEWORK, TTL,
+  comment), flushes the router's DNS cache, and toggles the `framework`
+  address-list entry so it re-resolves. Make no other edits.
+
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/mikrotik-dns-framework.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running the playbook"
+
+gates:
+  - id: applied
+    cmd: "git apply --reverse --check docs/framework-ip-and-port/patches/fwip-01-mikrotik-dns-framework.patch && echo applied"
+    expect: "prints applied"
+    critical: true
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check -i localhost, ansible/00-initial-setup/mikrotik-dns-framework.yml"
+    expect: "exit 0"
+    critical: true
+  - id: no-ip-literal
+    cmd: "grep -c '192.168.1' ansible/00-initial-setup/mikrotik-dns-framework.yml"
+    expect: "prints 1 (only the header comment naming gazaar's 192.168.1.8)"
+    critical: true
+```
+
+### Operator: lower the TTL, one day ahead (not a step block)
+
+The framework record's TTL is currently `1d`, so caches (Technitium,
+clients) may hold the old answer for up to a day. At least 24 hours before
+the cutover, with `LAB_IP_FRAMEWORK` still `192.168.1.8`:
+
+```bash
+export TASK_APPROVAL="fwip-dns-ttl-lower"
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
+```
+
+The address doesn't change. This run takes ownership of the record (adds
+the comment) and shortens the TTL.
+
+### fwip-02-record-new-ip
+
+```yaml
+id: fwip-02-record-new-ip
+title: Record 192.168.1.18 as framework's address in env and IPAM data
+depends_on: [fwip-01-mikrotik-dns-playbook, fwdns-11-retire-ip-vars-and-comments]
+
+change: >
+  In .env and .env.template, on the line starting `export LAB_IP_FRAMEWORK=`,
+  change `'192.168.1.8'` to `'192.168.1.18'` (keep the comment).
+  In terraform/lxc/network/pve.yaml, in the `inventory:` static host entry
+  `- name: framework`, change `      ip: 192.168.1.8` to `      ip: 192.168.1.18`.
+  In terraform/lxc/ansible/roles/gvm_findings_ingest/files/assets/ip_to_stack.json
+  change the key `"192.168.1.8": null` to `"192.168.1.18": null`.
+  Change nothing else; in particular leave every gazaar reference and the
+  netbox test fixture alone.
+
+scope:
+  allowed_paths:
+    - .env
+    - .env.template
+    - terraform/lxc/network/pve.yaml
+    - terraform/lxc/ansible/roles/gvm_findings_ingest/files/assets/ip_to_stack.json
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running the DNS playbook or touching framework's netplan"
+
+gates:
+  - id: env
+    cmd: "bash -c 'source .env && test \"$LAB_IP_FRAMEWORK\" = 192.168.1.18 && echo ok' && grep -c \"^export LAB_IP_FRAMEWORK='192.168.1.18'\" .env.template"
+    expect: "prints ok then 1"
+    critical: true
+  - id: ipam
+    cmd: "python3 -c \"import json,yaml; h=[x for x in yaml.safe_load(open('terraform/lxc/network/pve.yaml'))['inventory']['static_hosts'] if x['name']=='framework'][0]; m=json.load(open('terraform/lxc/ansible/roles/gvm_findings_ingest/files/assets/ip_to_stack.json')); print(h['ip'], '192.168.1.18' in m, '192.168.1.8' in m)\""
+    expect: "prints 192.168.1.18 True False"
+    critical: true
+  - id: netbox-tests
+    cmd: "python3 -m unittest discover -s terraform/lxc/stacks/netbox-stack/integrations -p 'test_*.py'"
+    expect: "OK"
+    critical: true
+```
+
+### Operator: re-IP cutover (not a step block)
+
+Preconditions:
+
+- Phases A and C are done, and every client uses the FQDN or the
+  address-list.
+- The TTL was lowered at least 24 hours ago.
+- fwip-02 is committed but its DNS change is not yet run.
+- Portainer's endpoint is by FQDN (fwdns-00 item 6).
+- **gazaar is powered off.**
+
+1. **Recheck that .18 is still free:**
+   - `ping -c2 192.168.1.18` gets no reply.
+   - The router's DHCP leases and static DNS have no `.18`
+     (re-scrape per fwdns-00 item 2, then run
+     `jq '.. | objects | select(.address? == "192.168.1.18")' router/config/current-config.json`).
+2. **Change framework's address under an auto-revert.** Run this inside
+   tmux so it survives the SSH drop. On framework:
+   ```bash
+   sudo cp /etc/netplan/00-installer-config.yaml /root/00-installer-config.yaml.pre-reip
+   sudo sed -i 's|- 192.168.1.8/24|- 192.168.1.18/24|' /etc/netplan/00-installer-config.yaml
+   grep -n '192.168.1.18/24' /etc/netplan/00-installer-config.yaml   # exactly one line
+   tmux new -s reip 'sudo netplan try --timeout 300'
+   ```
+   The SSH session drops. From the workstation, run
+   `ssh steve@192.168.1.18 -t tmux attach -t reip` and press Enter to
+   accept. If you can't reach `.18` within 300 s, netplan reverts to `.8`
+   by itself.
+3. **Publish the new address:**
+   ```bash
+   export TASK_APPROVAL="fwip-dns-cutover"
+   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
+   ```
+   The playbook points the record at `.18`, flushes the router cache, and
+   waits until the `framework` address-list holds exactly `192.168.1.18`.
+4. **Wait out the TTL (5 min).** Then check `getent hosts framework.gibbsgreatly.xyz`
+   from the same consumer set as fwdns-00 item 4. Every one must print
+   `192.168.1.18`. If Technitium still answers `.8`, flush its cache for the
+   name.
+5. **Consumer checks:**
+   - OpenWebUI chat.
+   - docs-rag `search_docs`.
+   - `https://comfyui.lab.gibbsgreatly.xyz/` (302) and
+     `https://llm.lab.gibbsgreatly.xyz` (401 without the key).
+   - VictoriaMetrics `up{stack="framework"}` = 1 for node_exporter,
+     cadvisor and llamacpp.
+   - `ansible -i ansible/inventory/inventory.yml framework.gibbsgreatly.xyz -m ping`.
+   - The Portainer endpoint is up.
+6. **Restore the TTL:** re-run step 3 without `-e framework_dns_ttl=5m`
+   (TTL back to 1h).
+7. **Power on gazaar.** Check that `192.168.1.8` answers as the NAS, that
+   `gazaar.gibbsgreatly.xyz` still resolves to `.8`, and that a backup run
+   completes.
+8. **NetBox:** re-run the netbox-stack static-host populate so the
+   framework record shows `.18`. Re-scrape the router snapshot and commit
+   it.
+
+**Rollback** (before step 3): run `sudo cp /root/00-installer-config.yaml.pre-reip /etc/netplan/00-installer-config.yaml && sudo netplan apply`
+on framework's console. Nothing else has changed yet. **After step 3:** also
+revert fwip-02 and re-run the DNS playbook.
+
+### fwip-03-final-audit
+
+```yaml
+id: fwip-03-final-audit
+title: Confirm 192.168.1.8 now appears only as gazaar or history
+depends_on: [fwip-02-record-new-ip]
+
+change: >
+  No edits. Run the gate and record its output in README.md's hand-back log.
+  If it lists any file not in the expected set, stop and report it; do not
+  fix it in this step.
+
+scope:
+  allowed_paths:
+    - docs/framework-ip-and-port/README.md
+  forbidden_actions:
+    - "Any edit other than the README.md hand-back entry"
+
+gates:
+  - id: literal-audit
+    cmd: "git grep -lE '192\\.168\\.1\\.8([^0-9]|$)' -- ':!docs' | sort"
+    expect: >-
+      exactly: ansible/00-initial-setup/mikrotik-dns-framework.yml (gazaar
+      header comment), ansible/00-initial-setup/mikrotik-firewall-pentagi-to-ai-services-searxng.yml
+      (historical comment), router/config/current-config.json (gazaar's
+      record only, after the post-cutover re-scrape),
+      terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md (historical
+      line), terraform/lxc/stacks/netbox-stack/integrations/tests/test_populate_static_hosts.py
+      (fixture)
+    critical: true
+  - id: new-ip-sites
+    cmd: "git grep -lE '192\\.168\\.1\\.18([^0-9]|$)' -- ':!docs' | sort"
+    expect: >-
+      exactly: .env, .env.template,
+      router/config/current-config.json (after re-scrape),
+      terraform/lxc/ansible/roles/gvm_findings_ingest/files/assets/ip_to_stack.json,
+      terraform/lxc/network/pve.yaml
+    critical: true
+```
+
+
 ## Out of scope (recorded, not actioned)
 
 - **pve-tiny network intent.** ai-services, secpipe and mcp-utility now run
@@ -998,8 +1687,31 @@ gates:
 - **`configure-ai-stack-dns-records.yml`**: its hard-coded
   `192.168.50.10/.11` "-bg" records are the old ai_seg LXC addresses, not
   framework. They are stale and belong to a separate cleanup.
-- **`gazaar.gibbsgreatly.xyz`** static DNS alias: operator decision
-  (fwdns-00 item 5).
+- **Other Ollama-era artifacts. These are retirement candidates, not
+  migrated.** Nothing live depends on them once Phase C is done; the
+  operator decides whether to delete or keep each:
+  - `ansible/00-initial-setup/framework-desktop-ollama.yml` (deploys
+    Ollama).
+  - `scripts/ollama-reliability-proxy/` and `scripts/local-ai-canary/`
+    (the canary uses the proxy).
+  - `scripts/framework-ai-benchmark/`.
+  - `harbor_repull` manifest's `ollama/ollama:rocm`.
+  - PentAGI playbooks' Ollama settings.
+  - `scaffold-stack.py`'s `OPENCODE_MODEL`.
+  - `~/git/ai-code-testing/docs/ollama.md`.
+  - Stale router static DNS `ollama.gibbsgreatly.xyz` and
+    `lm.gibbsgreatly.xyz` (→ `.4`).
+- **Legacy containers still running on framework:**
+  - `openwebui` (:8081) and `searxng` (:8082), from
+    `framework-desktop-openwebui.yml`. These are superseded by
+    ai-services-stack on ai_seg, and they hold :8082.
+  - `portainer-agent`, `cadvisor` and `comfyui` are current; keep them.
+- **LM Studio (`:8090`, `framework-desktop-lmstudio.yml`)** is not running.
+  Its route moves to `:8080` in fwllm-05; the playbook itself is a
+  retirement candidate.
+- **A NetBox static-host entry for gazaar** (`192.168.1.8`, NAS), so the
+  address is visibly claimed in IPAM and this collision can't recur
+  silently. It needs a `role` value the populate script accepts.
 - **`.env` is tracked in git**, although CLAUDE.md calls it gitignored. It
   holds only non-secret config, but the mismatch is worth resolving
   separately.

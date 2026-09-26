@@ -4,8 +4,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
+      # Plan-workspace patches (git apply input) must stay byte-exact: a
+      # stripped trailing blank context line corrupts the hunk.
       - id: trailing-whitespace
+        exclude: '^docs/.*/patches/.*\.patch$'
       - id: end-of-file-fixer
+        exclude: '^docs/.*/patches/.*\.patch$'
       - id: detect-private-key
       - id: check-added-large-files
         args: ['--maxkb=1000']
