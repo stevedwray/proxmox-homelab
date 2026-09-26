@@ -258,6 +258,7 @@ zones:
     attachment: media_seg
     containers:
       - "media-stack-lab (VMID 80010) — 192.168.80.10"
+      - "torrent-stack-lab (VMID 80011) — 192.168.80.11"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
@@ -568,6 +569,27 @@ policies:
       leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
       scrape config then rejected outright. Added with place-before
       targeting the deny rule.
+  - from: edge_seg
+    to: media_seg
+    protocol: tcp
+    ports: [9696, 7878, 8989, 8686, 8080, 5055]
+    description: >-
+      Traefik to torrent-stack-lab's prowlarr/radarr/sonarr/lidarr/
+      qbittorrent(via gluetun)/jellyseerr web UIs. Added as a new rule
+      rather than widening the existing edge_seg -> media_seg
+      tcp/8096,2283 rule above (Jellyfin/Immich, untouched) -- keeps
+      this an additive change under this repo's validation tiers
+      instead of "modifying an existing cross-zone rule."
+  - from: media_seg
+    to: internet
+    protocol: udp
+    ports: [51820]
+    description: >-
+      torrent-stack-lab's gluetun WireGuard VPN tunnel egress. The
+      same real gap the superseded
+      docs/application-migration/01-torrent-stack-lab.md plan
+      identified for its abandoned dl_seg zone -- media_seg needs the
+      same rule since gluetun now lives here instead.
 
 inventory:
   proxmox_nodes:
