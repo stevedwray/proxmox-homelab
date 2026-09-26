@@ -379,3 +379,53 @@ accepted follow-ups. **The operator decides when to open and merge it.**
   individually approved tasks.
 - `main` promotion (`stable` → `main`).
 - pve-test-vm (not used).
+
+---
+
+## Outcome (2026-09-26) — executed
+
+All phases complete. Stable (via this branch) was verified against live
+before merge; details below are the durable record (per-run logs lived in
+the ignored `artifacts/` workspace).
+
+**Merged:** the 11 branches in Phase 2 plus the stash@{3} GVM MikroTik
+recovery. **SOPS:** 115 keys = stable's 105 + 10 carried forward;
+`PORTAINER_TOKEN` rotated to the live value; every carried value hash-checked
+against its source branch and (where observable) the running container.
+
+**Found and fixed during verification:**
+- torrent-stack-lab `stack.yaml` comments containing `${...}` broke
+  `templatefile()` → `terragrunt plan` for every stack (`ce16b784`).
+- Pre-merge stable would have shrunk greenbone 8192→6144 MB and ai-services
+  6144→4096 MB on apply; this branch matches live.
+- Router declarations aligned with live: gaming LAN rules (8080, ARK UDP,
+  AzerothCore) added to `mikrotik-game-seg.yml`; superseded per-zone
+  Graylog rule and never-applied torrent-UI policy removed.
+- portainer-stack and step-ca still pointed at the destroyed CoreDNS
+  (192.168.20.13); repo fixed (`2bf20302`). Authentik and portainer host DNS
+  were failing live and were corrected.
+
+**Deployed to make live == stable:** cse-controller (reporting Phase 2 +
+inert Nextcloud push), greenbone (ospd scan throttle), and `docker-base.yml`
+fleet-wide (image-prune timer + docker→rsyslog ordering; no Docker restarts).
+
+**Verification:** Terraform plans show no merge-caused drift; auth/API smoke
+test 82 pass / 0 fail (Authentik health/API/LDAP/OIDC for 10 apps, 14
+forwardAuth routes, Portainer, Harbor incl. robot, Grafana, NetBox, Graylog,
+Wazuh, Proxmox RO token, Pterodactyl, Nextcloud, Jellyfin, Immich).
+
+**Known follow-ups (not merge-caused):**
+- Pterodactyl egg 19 default `AC_AI_PLAYERBOT_ADD_CLASS_ACCOUNT_POOL_SIZE`
+  still 1 in Panel (server 4 already runs 4); plan eggs/servers/game config
+  under IaC (extend `configure-ark-survival-ascended.yml`).
+- Remove stale Portainer endpoints 4 `gaming-stack` / 5 `torrent-stack`.
+- OpenSearch yellow: single node, replica shards unassignable → replicas 0.
+- `NETBOX_SUPERUSER_API_TOKEN` in SOPS is 403 live (legacy fallback only).
+- SDN `configure_network_sdn_attachment` null_resource plans a replace on
+  most stacks (also on pre-merge stable); PentAGI / harness-target-pve absent
+  from state; Proxmox tag-only diffs on 3 containers.
+- Every Graylog deploy briefly disables its inbound rsyslog relay
+  (`lxc_base` applies `rsyslog_forward` defaults before the Graylog play).
+- Legacy management-stack / media-stack / omada excluded from the Docker
+  baseline rollout.
+- Branch/stash cleanup per Phase 7 (operator's call).
