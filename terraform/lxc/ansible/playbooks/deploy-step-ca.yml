@@ -7,7 +7,10 @@
   vars:
     step_ca_version: "0.30.2"
     step_cli_version: "0.30.2"
-    step_ca_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    # Was LAB_IP_DNS (retired CoreDNS dns-stack, destroyed 2026-09-08): a
+    # redeploy would have written that dead address into this host's
+    # /etc/resolv.conf. Technitium, same pattern as authentik/harbor/netbox.
+    step_ca_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(dns_server, true) | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required') }}"
     step_ca_install_dir: /tmp/step-ca-install
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
