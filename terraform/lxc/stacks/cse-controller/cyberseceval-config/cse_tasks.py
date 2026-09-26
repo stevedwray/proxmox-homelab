@@ -18,6 +18,9 @@ matching every benchmark run proven so far.
 import json
 import os
 import random
+import re
+import shutil
+import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,10 +39,23 @@ app = Celery("cse_tasks", broker=BROKER_URL, backend=RESULT_BACKEND)
 # in-flight job instead of losing it.
 app.conf.task_acks_late = True
 app.conf.worker_prefetch_multiplier = 1
+# Redis transport's own at-least-once redelivery: an unacked message
+# becomes visible again after visibility_timeout (default 1 hour) on the
+# assumption the worker died. task_acks_late means the ack only happens
+# after a task finishes -- but benchmark runs routinely take several
+# hours, so the default silently redelivered the SAME task before it was
+# even done, and it re-executed the instant the original finished.
+# Confirmed live 2026-09-25: one mitre run looped every ~4 hours for 3
+# days straight, permanently starving this single-concurrency worker.
+# Set well past the longest realistic run (autonomous-uplift/large mitre
+# batches) so a genuinely still-running task is never mistaken for dead.
+app.conf.broker_transport_options = {"visibility_timeout": 43200}  # 12h
 
 REPO_DIR = Path("/srv/cyberseceval/repo/PurpleLlama")
 VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")
 RUNS_DIR = Path("/srv/cyberseceval/runs")
+RUN_LOG_NAME = "run.log"
+RESULT_JSON_NAME = "result.json"
 
 # Framework's llama-server -- the default when no backend override is
 # given, matching the exact spec proven in Phase 2
@@ -387,6 +403,45 @@ def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
     return lines[-1][:max_chars] if lines else ""
 
 
+class _ProcResult:
+    __slots__ = ("returncode", "stdout", "stderr")
+
+    def __init__(self, returncode: int, stdout: str) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""  # merged into stdout already (stderr=STDOUT below)
+
+
+def _run_killable(argv: list[str], cwd: Path) -> _ProcResult:
+    """subprocess.run() only ever gets killed at the ForkPoolWorker level by
+    Celery's revoke(terminate=True) -- the actual child process it spawns
+    survives as an orphan and keeps running (or hanging) after a
+    "cancelled" job supposedly stopped. Confirmed live 2026-09-25: a
+    3-day-old stuck mitre run had no way to actually be killed from the
+    panel. Runs the child in its own process group (start_new_session) and
+    installs a SIGTERM handler that kills the whole group, so a cancel
+    from the panel's delete-runs endpoint actually stops the real
+    subprocess, not just the Python frame that was blocked on it."""
+    proc = subprocess.Popen(
+        argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
+    )
+
+    def _handle_sigterm(signum, frame):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise SystemExit(143)
+
+    old_handler = signal.signal(signal.SIGTERM, _handle_sigterm)
+    try:
+        stdout, _ = proc.communicate()
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
+    return _ProcResult(proc.returncode, stdout)
+
+
 def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
     gen_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator",
@@ -397,9 +452,11 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--out-file={run_dir}/prompts.json",
         f"--shots-per-run={shots}", "--runs-per-range=1",
     ]
-    gen = subprocess.run(gen_cmd, cwd=REPO_DIR, capture_output=True, text=True)
+    gen = _run_killable(gen_cmd, REPO_DIR)
     if gen.returncode != 0:
-        return {"rc": gen.returncode, "stage": "generate", "log": gen.stdout + gen.stderr}
+        log = gen.stdout + gen.stderr
+        (run_dir / RUN_LOG_NAME).write_text(log)
+        return {"rc": gen.returncode, "stage": "generate", "log": log}
     attack_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.benchmark.run",
         "--benchmark=autonomous-uplift",
@@ -408,8 +465,10 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}",
     ]
-    attack = subprocess.run(attack_cmd, cwd=REPO_DIR, capture_output=True, text=True)
-    return {"rc": attack.returncode, "stage": "attack", "log": attack.stdout + attack.stderr}
+    attack = _run_killable(attack_cmd, REPO_DIR)
+    log = attack.stdout + attack.stderr
+    (run_dir / RUN_LOG_NAME).write_text(log)
+    return {"rc": attack.returncode, "stage": "attack", "log": log}
 
 
 @app.task(name="cse_tasks.run_benchmark")
@@ -454,10 +513,10 @@ def run_benchmark(
             else _DATASET_PATHS[benchmark]
         )
         argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec, prompt_path)
-        proc = subprocess.run(argv, cwd=REPO_DIR, capture_output=True, text=True)
+        proc = _run_killable(argv, REPO_DIR)
         log_text = proc.stdout + proc.stderr
-        (run_dir / "run.log").write_text(log_text)
-        result = {"rc": proc.returncode, "log_path": str(run_dir / "run.log")}
+        (run_dir / RUN_LOG_NAME).write_text(log_text)
+        result = {"rc": proc.returncode, "log_path": str(run_dir / RUN_LOG_NAME)}
 
     result["run_dir"] = str(run_dir)
     result["backend_base_url"] = backend_base_url or DEFAULT_BACKEND_BASE_URL
@@ -479,11 +538,20 @@ def run_benchmark(
                 result["stats_error"] = f"failed to read {stat_name}: {e}"
             break
     else:
-        reason = _extract_failure_reason(log_text)
-        result["stats_error"] = (
-            f"no stat.json/stats.json found -- {reason}" if reason
-            else "no stat.json/stats.json found -- benchmark may have failed before producing one"
-        )
+        if benchmark == "autonomous-uplift":
+            # Never produces a score in this pinned PurpleLlama commit --
+            # grading isn't implemented upstream (confirmed live).
+            # Genuinely nothing wrong here, so skip the generic
+            # "no stat.json" message (which just leaks an internal file
+            # path) -- the panel's own per-benchmark hint already
+            # explains why there's no score.
+            result["stats_error"] = "grading not implemented upstream for this benchmark -- see the hint above"
+        else:
+            reason = _extract_failure_reason(log_text)
+            result["stats_error"] = (
+                f"no stat.json/stats.json found -- {reason}" if reason
+                else "no stat.json/stats.json found -- benchmark may have failed before producing one"
+            )
 
     # Per-test-case transcripts (the actual prompt text, the model's real
     # response, and the judgment) -- genuinely useful for research, not
@@ -503,5 +571,37 @@ def run_benchmark(
     else:
         result["transcript_error"] = "no responses.json/judge_responses.json found"
 
+    result["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    # The full computed result above only otherwise lives in Celery's Redis
+    # result backend -- durable enough for the panel's own polling, but not
+    # for research archival (a planned Nextcloud push reads straight off
+    # this run_dir, not Redis; see docs/cyberseceval-panel/README.md). This
+    # is the one place every run's stats/transcript/errors end up on disk
+    # as a single self-contained file, regardless of benchmark.
+    (run_dir / RESULT_JSON_NAME).write_text(json.dumps(result, indent=2, default=str))
+
     _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample)
     return result
+
+
+_JOB_ID_RE = re.compile(r"^[0-9a-f-]{8,64}$")
+
+
+@app.task(name="cse_tasks.delete_run_dirs")
+def delete_run_dirs(job_ids: list[str]) -> dict:
+    """Removes each job's run_dir (responses/transcripts/logs) from disk --
+    dispatched by the panel's DELETE /suites/{id} once it's already cleared
+    the job/suite out of Redis. job_ids only ever comes from real Celery
+    task ids the panel read back from its own GroupResult, but a
+    UUID-shaped sanity check costs nothing for a delete-by-path-join."""
+    removed, skipped = [], []
+    for job_id in job_ids:
+        if not _JOB_ID_RE.match(job_id):
+            skipped.append(job_id)
+            continue
+        run_dir = RUNS_DIR / f"panel-{job_id}"
+        if run_dir.is_dir():
+            shutil.rmtree(run_dir)
+            removed.append(job_id)
+    return {"removed": removed, "skipped": skipped}

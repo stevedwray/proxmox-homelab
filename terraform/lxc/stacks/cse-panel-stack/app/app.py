@@ -41,10 +41,18 @@ RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
 
 celery_app = Celery("cse_panel", broker=BROKER_URL, backend=RESULT_BACKEND)
 
-# Must match the task name registered by cse_tasks.py's worker exactly --
+# Must match the task names registered by cse_tasks.py's worker exactly --
 # Celery routes by string name, not by import, since the worker and this
 # submitter are different processes on different hosts.
 TASK_NAME = "cse_tasks.run_benchmark"
+DELETE_TASK_NAME = "cse_tasks.delete_run_dirs"
+
+# States a job can still change from -- deleting a suite while any of its
+# jobs is in one of these would either orphan a task still writing to a
+# run_dir about to be deleted out from under it, or (worse, given
+# task_acks_late) let a killed-but-redelivered task resurrect a "deleted"
+# run. Simpler and safer to just require every job be finished first.
+NON_TERMINAL_STATES = {"PENDING", "STARTED", "RETRY"}
 
 # The set of benchmarks proven to work in the 2026-09-19 small-batch run
 # (docs/cyberseceval-implementation/current-state.md) -- deliberately not
@@ -401,6 +409,34 @@ def job_status(job_id: str):
     return entry
 
 
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str, force: bool = False):
+    """Standalone jobs (submitted via POST /jobs, not part of a suite) --
+    same force/cancel semantics as DELETE /suites/{id}, kept as a separate
+    endpoint since a standalone job has no GroupResult to restore. This is
+    also how the panel's own real jobs get cancelled/cleaned up: it's not
+    just a raw-API convenience, the discontinued "Individual jobs" section
+    at least had no delete control even when it existed, so a genuinely
+    stuck standalone job had no way to be cleared at all until this."""
+    res = AsyncResult(job_id, app=celery_app)
+    if res.state in NON_TERMINAL_STATES and not force:
+        return {
+            "error": f"job is {res.state.lower()} -- retry with force=true to cancel and delete anyway",
+            "in_progress": True,
+        }
+    cancelled = res.state in NON_TERMINAL_STATES
+    if cancelled:
+        res.revoke(terminate=True, signal="SIGTERM")
+
+    client = celery_app.backend.client
+    res.forget()
+    client.delete(f"cse_panel:job_meta:{job_id}")
+    client.lrem(RECENT_JOBS_KEY, 0, job_id)
+
+    celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": [job_id]})
+    return {"deleted": job_id, "cancelled": [job_id] if cancelled else []}
+
+
 @app.post("/suites")
 def submit_suite(body: SuiteRequest, x_authentik_username: str | None = Header(default=None)):
     unknown = [t.benchmark for t in body.tests if t.benchmark not in KNOWN_BENCHMARKS]
@@ -471,6 +507,44 @@ def suite_status(suite_id: str):
     }
 
 
+@app.delete("/suites/{suite_id}")
+def delete_suite(suite_id: str, force: bool = False):
+    result = GroupResult.restore(suite_id, app=celery_app)
+    if result is None:
+        return {"error": f"suite '{suite_id}' not found"}
+    job_ids = [r.id for r in result.results]
+    in_progress = [r for r in result.results if r.state in NON_TERMINAL_STATES]
+    if in_progress and not force:
+        return {
+            "error": f"{len(in_progress)} job(s) still running/queued -- retry with force=true to cancel and delete anyway",
+            "in_progress": True,
+        }
+    # terminate=True actually kills the worker process executing this task
+    # (not just marking it revoked for a still-queued copy) -- needed for a
+    # genuinely stuck job, e.g. one hung against a dead backend with no
+    # effective timeout. Celery's prefork pool respawns the killed worker
+    # process automatically, so this doesn't take the worker down.
+    for r in in_progress:
+        r.revoke(terminate=True, signal="SIGTERM")
+
+    client = celery_app.backend.client
+    for r in result.results:
+        r.forget()
+    result.delete()
+    for job_id in job_ids:
+        client.delete(f"cse_panel:job_meta:{job_id}")
+    client.delete(f"cse_panel:suite_meta:{suite_id}")
+    client.lrem(RECENT_SUITES_KEY, 0, suite_id)
+
+    # The actual run_dir (responses.json, transcripts, logs) lives on
+    # cse-controller's own filesystem, not reachable from this container --
+    # dispatched as a task so the worker (which does have that filesystem)
+    # does the real deletion. Fire-and-forget: the UI-visible cleanup above
+    # is already done, no need to block the response on it.
+    celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": job_ids})
+    return {"deleted": suite_id, "jobs": job_ids, "cancelled": [r.id for r in in_progress]}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     benchmark_checkboxes = "".join(
@@ -512,6 +586,7 @@ def index():
       .stats-list {{ margin: 0; padding-left: 0; list-style: none; font-size: 0.85rem; }}
       .stats-list li {{ display: inline-block; margin-right: 0.8rem; }}
       .muted {{ color: #888; font-size: 0.85rem; }}
+      .field-hint {{ margin: -0.3rem 0 0.6rem; }}
       .result-hint {{ color: #666; font-size: 0.78rem; font-style: italic; margin-bottom: 0.3rem; max-width: 32rem; }}
       .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
       details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
@@ -522,6 +597,8 @@ def index():
       details.run-card[open] summary::before {{ content: "▾ "; }}
       details.run-card table {{ margin: 0; }}
       details.run-card th:first-child, details.run-card td:first-child {{ padding-left: 0.9rem; }}
+      .delete-run-btn {{ float: right; font-size: 0.8rem; padding: 0.15rem 0.6rem; color: #b71c1c; background: none; border: 1px solid #b71c1c; border-radius: 4px; cursor: pointer; }}
+      .delete-run-btn:disabled {{ color: #999; border-color: #ccc; cursor: not-allowed; }}
       #custom-backend-fields {{ display: none; }}
       .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
       tr.detail-row td {{ background: #fafafa; padding: 0; }}
@@ -532,6 +609,13 @@ def index():
       .transcript-text {{ white-space: pre-wrap; font-size: 0.9rem; margin: 0.15rem 0 0; }}
       .transcript-verdict {{ display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; background: #eef; }}
       .transcript-meta {{ font-size: 0.8rem; color: #888; margin-top: 0.3rem; }}
+      .oplog-turn {{ border-left: 3px solid #ccc; padding: 0.3rem 0 0.3rem 0.7rem; margin: 0.5rem 0; }}
+      .oplog-turn.oplog-ai {{ border-left-color: #1565c0; }}
+      .oplog-turn.oplog-env {{ border-left-color: #999; }}
+      .oplog-turn .transcript-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }}
+      .oplog-prompt {{ margin: 0.5rem 0; }}
+      .oplog-prompt summary {{ cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #555; }}
+      .oplog-prompt .transcript-text {{ margin-top: 0.3rem; }}
     </style>
     </head>
     <body>
@@ -547,8 +631,12 @@ def index():
         <form id="run-form">
           <div class="benchmark-list">{benchmark_checkboxes}</div>
           <label class="field">Test cases per benchmark:
-            <input name="num_test_cases" type="number" value="2" min="1" max="50">
+            <input name="num_test_cases" type="number" value="2" min="1" max="2000">
           </label>
+          <p class="muted field-hint">50 was never a real limit on the underlying benchmarks --
+            just an old placeholder in this form. Each benchmark's actual dataset size varies
+            (roughly 250-1900 test cases); asking for more than a benchmark actually has just
+            uses its whole dataset, it won't error.</p>
           <label class="field checkbox-field">
             <input name="random_sample" type="checkbox">
             Pick a random subset each run (otherwise the same N test cases run every time)
@@ -662,7 +750,22 @@ def index():
         // of getting wiped every refresh.
         const expandedJobs = new Set();
         const transcriptCache = {{}};
+        // Same problem, one level deeper: the autonomous-uplift system-
+        // prompt <details> has no open-state tracking of its own, so the
+        // 4s poll rebuild reset it to closed the instant it was opened --
+        // confirmed live 2026-09-24 ("the text folds out and folds right
+        // back up again"). Keyed by jobId-entryIndex since a job could in
+        // principle have more than one operation_log entry.
+        const expandedPrompts = new Set();
         let lastSuitesBody = {{suites: []}};
+        // Jobs submitted via the raw POST /jobs API rather than /suites --
+        // no suite card to show them in, but they still need to be
+        // visible and cancellable (see docs/cyberseceval-panel/README.md:
+        // the previous "Individual jobs" section was removed as pure
+        // clutter, but that also removed the only way to see/cancel a
+        // standalone job -- confirmed live 2026-09-25 when exactly this
+        // kind of job got stuck for 3 days with no way to clear it).
+        let lastStandaloneJobs = [];
 
         // Each run (suite) gets its own collapsible card instead of
         // everything sharing one continuous table -- the operator asked
@@ -673,11 +776,15 @@ def index():
         // opens whichever ones they actually want to look at.
         const openSuites = new Set();
 
-        function renderJobRow(job) {{
+        function renderJobRow(job, standalone) {{
           const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
           const isOpen = expandedJobs.has(job.job_id);
           const viewLink = (job.state_label === 'Done' || job.state_label === 'Failed')
             ? `<a href="#" class="view-link" onclick="toggleJob('${{job.job_id}}'); return false;">${{isOpen ? 'hide' : 'view'}} prompts &amp; responses</a>`
+            : '';
+          const running = job.state_label === 'Queued' || job.state_label === 'Running' || job.state_label === 'Retrying';
+          const actionCell = standalone
+            ? `<td><button type="button" class="delete-run-btn" onclick="deleteJob(event, '${{job.job_id}}', ${{running}})">${{running ? 'Cancel &amp; delete' : 'Delete'}}</button></td>`
             : '';
           let html = `<tr>
             <td>${{when}}</td>
@@ -685,11 +792,33 @@ def index():
             <td>${{job.backend}}</td>
             <td class="${{stateClass(job.state_label)}}">${{job.state_label}}</td>
             <td>${{renderStats(job)}}${{viewLink}}</td>
+            ${{actionCell}}
           </tr>`;
           if (isOpen) {{
-            html += `<tr class="detail-row"><td colspan="5">${{renderJobDetail(job.job_id)}}</td></tr>`;
+            html += `<tr class="detail-row"><td colspan="${{standalone ? 6 : 5}}">${{renderJobDetail(job.job_id)}}</td></tr>`;
           }}
           return html;
+        }}
+
+        async function deleteJob(event, jobId, running) {{
+          event.preventDefault();
+          event.stopPropagation();
+          const msg = running
+            ? 'This job is still in progress. Deleting will cancel it (including a stuck/hung job) and remove its results. Continue?'
+            : 'Delete this job and its results? This cannot be undone.';
+          if (!confirm(msg)) return;
+          try {{
+            const url = `/jobs/${{jobId}}` + (running ? '?force=true' : '');
+            const res = await fetch(url, {{method: 'DELETE'}});
+            const body = await res.json();
+            if (body.error) {{ showToast('Error: ' + body.error); return; }}
+            lastStandaloneJobs = lastStandaloneJobs.filter(j => j.job_id !== jobId);
+            expandedJobs.delete(jobId);
+            renderTable();
+            showToast(body.cancelled && body.cancelled.length ? 'Job cancelled and deleted.' : 'Job deleted.');
+          }} catch (err) {{
+            showToast(`Failed to delete (${{err.message}}).`);
+          }}
         }}
 
         // A benchmark's transcript entries don't share one exact schema --
@@ -719,7 +848,52 @@ def index():
           return esc(v) || '<span class="muted">(empty)</span>';
         }}
 
-        function renderTranscriptEntry(entry, i) {{
+        // autonomous-uplift's responses.json has a completely different
+        // shape from every other benchmark -- one continuous live SSH
+        // session logged as a single operation_log string with >>> USER:
+        // (environment/target output) and >>> AI: (the model's own
+        // command) markers, not a prompt/response pair. Without this, it
+        // fell through to the generic metadata dump -- the entire
+        // multi-turn conversation joined into one unreadable line.
+        function renderOperationLog(log) {{
+          const parts = log.split(/(>>> (?:USER|AI): )/);
+          let html = '';
+          for (let i = 1; i < parts.length; i += 2) {{
+            const isAI = parts[i].includes('AI');
+            const text = (parts[i + 1] || '').trim();
+            if (!text) continue;
+            html += `<div class="oplog-turn ${{isAI ? 'oplog-ai' : 'oplog-env'}}">
+              <div class="transcript-label">${{isAI ? 'Model command' : 'Target/environment output'}}</div>
+              <p class="transcript-text">${{textOrEmpty(text)}}</p>
+            </div>`;
+          }}
+          return html || '<p class="muted">(no operations recorded)</p>';
+        }}
+
+        function renderTranscriptEntry(entry, i, jobId) {{
+          if (entry.operation_log !== undefined) {{
+            const headerParts = ['attacker', 'target', 'model']
+              .filter(k => entry[k])
+              .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
+            // Collapsed by default -- this is the system prompt actually
+            // given to the model (the red-team objective plus a leaked-
+            // credential list), genuinely useful for research but long
+            // enough (2000+ chars) that showing it open by default would
+            // bury the actual attack turns below it. Open state tracked
+            // in expandedPrompts (keyed by job+entry) so it survives the
+            // 4s poll rebuild instead of snapping shut the instant it's
+            // opened -- confirmed live 2026-09-24.
+            const promptKey = `${{jobId}}-${{i}}`;
+            const promptOpen = expandedPrompts.has(promptKey);
+            const systemPrompt = entry.system_prompt
+              ? `<details class="oplog-prompt" ${{promptOpen ? 'open' : ''}} ontoggle="onPromptToggle('${{promptKey}}', this.open)"><summary>System prompt (what the model was actually told)</summary><p class="transcript-text">${{textOrEmpty(entry.system_prompt)}}</p></details>`
+              : '';
+            return `<div class="transcript-entry"><b>Attack session ${{i + 1}}</b>
+              ${{headerParts.length ? `<div class="transcript-meta">${{headerParts.join(' &middot; ')}}</div>` : ''}}
+              ${{systemPrompt}}
+              ${{renderOperationLog(entry.operation_log)}}
+            </div>`;
+          }}
           const promptKey = firstPresentKey(entry, PROMPT_KEYS);
           const responseKey = firstPresentKey(entry, RESPONSE_KEYS);
           const verdictKey = firstPresentKey(entry, VERDICT_KEYS);
@@ -742,12 +916,17 @@ def index():
           if (!cached) return '<div class="detail-box muted">Loading...</div>';
           if (cached.error) return `<div class="detail-box"><p class="muted">${{esc(cached.error)}}</p></div>`;
           if (!cached.transcript.length) return '<div class="detail-box"><p class="muted">No transcript available for this job.</p></div>';
-          return `<div class="detail-box">${{cached.transcript.map(renderTranscriptEntry).join('')}}</div>`;
+          return `<div class="detail-box">${{cached.transcript.map((entry, i) => renderTranscriptEntry(entry, i, jobId)).join('')}}</div>`;
         }}
 
-        function jobsTable(jobs) {{
-          const rows = jobs.map(renderJobRow).join('');
-          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th></tr></thead><tbody>${{rows}}</tbody></table>`;
+        function onPromptToggle(key, isOpen) {{
+          if (isOpen) expandedPrompts.add(key); else expandedPrompts.delete(key);
+        }}
+
+        function jobsTable(jobs, standalone) {{
+          const rows = jobs.map(j => renderJobRow(j, standalone)).join('');
+          const actionHeader = standalone ? '<th></th>' : '';
+          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th>${{actionHeader}}</tr></thead><tbody>${{rows}}</tbody></table>`;
         }}
 
         function onSuiteToggle(suiteId, isOpen) {{
@@ -756,19 +935,50 @@ def index():
 
         function renderSuiteCard(suite, isOpen) {{
           const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
+          const stillRunning = suite.done < suite.total;
+          const deleteBtn = `<button type="button" class="delete-run-btn" onclick="deleteSuite(event, '${{suite.suite_id}}', ${{stillRunning}})">${{stillRunning ? 'Cancel &amp; delete' : 'Delete'}}</button>`;
           return `<details class="run-card" ${{isOpen ? 'open' : ''}} ontoggle="onSuiteToggle('${{suite.suite_id}}', this.open)">
             <summary><b>${{when}}</b> &middot; ${{suite.jobs.length}} benchmark(s) &middot;
               ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}
-              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span></summary>
+              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span>
+              ${{deleteBtn}}</summary>
             ${{jobsTable(suite.jobs)}}
           </details>`;
         }}
 
+        async function deleteSuite(event, suiteId, stillRunning) {{
+          event.preventDefault();
+          event.stopPropagation();
+          const msg = stillRunning
+            ? 'This run is still in progress. Deleting will cancel whatever is currently running (including a stuck/hung job) and remove all its results. Continue?'
+            : 'Delete this run and all its results? This cannot be undone.';
+          if (!confirm(msg)) return;
+          try {{
+            const url = `/suites/${{suiteId}}` + (stillRunning ? '?force=true' : '');
+            const res = await fetch(url, {{method: 'DELETE'}});
+            const body = await res.json();
+            if (body.error) {{ showToast('Error: ' + body.error); return; }}
+            lastSuitesBody.suites = lastSuitesBody.suites.filter(s => s.suite_id !== suiteId);
+            openSuites.delete(suiteId);
+            renderTable();
+            showToast(body.cancelled && body.cancelled.length ? 'Run cancelled and deleted.' : 'Run deleted.');
+          }} catch (err) {{
+            showToast(`Failed to delete (${{err.message}}).`);
+          }}
+        }}
+
         function renderTable() {{
           const suitesNewestFirst = lastSuitesBody.suites.slice().reverse();
-          const html = suitesNewestFirst
+          let html = suitesNewestFirst
             .map(suite => renderSuiteCard(suite, openSuites.has(suite.suite_id)))
             .join('');
+          if (lastStandaloneJobs.length) {{
+            const jobsNewestFirst = lastStandaloneJobs.slice().reverse();
+            html += `<details class="run-card" ${{openSuites.has('__standalone__') ? 'open' : ''}} ontoggle="onSuiteToggle('__standalone__', this.open)">
+              <summary><b>Individual jobs</b> <span class="muted">(submitted directly via the API, not part of a run)</span></summary>
+              ${{jobsTable(jobsNewestFirst, true)}}
+            </details>`;
+          }}
           document.getElementById('status').innerHTML = html || '<p class="muted">No tests run yet.</p>';
         }}
 
@@ -810,9 +1020,15 @@ def index():
 
         async function refreshStatus() {{
           try {{
-            const suitesRes = await fetch('/suites');
-            if (!suitesRes.ok) throw new Error(`HTTP ${{suitesRes.status}}`);
+            const [suitesRes, jobsRes] = await Promise.all([fetch('/suites'), fetch('/jobs')]);
+            if (!suitesRes.ok || !jobsRes.ok) throw new Error(`HTTP ${{suitesRes.status}}/${{jobsRes.status}}`);
             lastSuitesBody = await suitesRes.json();
+            const allJobs = (await jobsRes.json()).jobs;
+            const inSuite = new Set();
+            for (const suite of lastSuitesBody.suites) {{
+              for (const job of suite.jobs) {{ inSuite.add(job.job_id); }}
+            }}
+            lastStandaloneJobs = allJobs.filter(j => !inSuite.has(j.job_id));
             renderTable();
           }} catch (err) {{
             document.getElementById('status').innerHTML =
