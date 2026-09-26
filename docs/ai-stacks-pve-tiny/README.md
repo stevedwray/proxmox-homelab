@@ -1,8 +1,9 @@
 # ai-stacks-pve-tiny
 
-Status: **Phases 0–2 passed and `mcp-utility-stack` cut over (2026-09-27);
-Phase 3 continues with `secpipe-stack`.** Continue with plan.md's "How to execute
-this plan" section.
+Status: **Phases 0–2 passed and `mcp-utility-stack`, `secpipe-stack`, and
+`opensearch-stack` cut over (2026-09-27); Phase 3 continues with
+`ai-services-stack`.** Continue with plan.md's "How to execute this plan"
+section.
 
 ## What this is
 
@@ -35,8 +36,8 @@ as-is.
 | Phase 1 read-only pve-tiny plans | done — go (2026-09-27) |
 | Phase 2 ai_seg on pve-tiny | done — go (2026-09-27) |
 | Cutover: mcp-utility-stack | done — known pre-existing docs-RAG AI-runtime issue deferred (2026-09-27) |
-| Cutover: secpipe-stack | not started |
-| Cutover: opensearch-stack | not started |
+| Cutover: secpipe-stack | done — full enrichment sweep deferred until whole-setup test (2026-09-27) |
+| Cutover: opensearch-stack | done — application-level consumer tests deferred until whole-setup test (2026-09-27) |
 | Cutover: ai-services-stack | not started |
 | ai-tiny-06 zone membership docs | not started |
 | Phase 4 decommission (after ≥7-day soak) | not started |
@@ -208,4 +209,52 @@ as-is.
   unprivileged and attached to `tvai` as `192.168.50.10/24`. pgvector is
   healthy, cve-mcp is healthy, and the MCP endpoints return the expected
   `8000=406` and `8001=400` signatures.
-- The correct-state plan refreshed all six resources without container,
+- The correct-state plan refreshed all six resources without container
+  changes, and all pve-tiny SDN pending counts remained zero.
+
+### Phase 3 — secpipe-stack cutover (2026-09-27)
+
+- Under approval `ai-stacks-pve-tiny-secpipe`, source CT 50012 on `pve` was
+  stopped with onboot disabled. The target was created on `pve-tiny`; apply
+  reported `5 added, 0 changed, 0 destroyed`, and Ansible completed with
+  `ok=71 changed=35 failed=0 ignored=1`.
+- Source is retained as `stopped/onboot=0`. Target is
+  `running/onboot=1`, unprivileged, attached to `tvai` as
+  `192.168.50.12/24`, with its 10G rootfs and 5G Docker mount both on
+  `nvme-lvm`.
+- The manual enrichment check was stopped at operator direction after more
+  than 25 minutes because `MAX_CVES=0` made it a sweep of the full production
+  CVE set rather than a small migration smoke test. It was processing with
+  `LLM_PROVIDER=anthropic`; stale Ollama variables remain a follow-up finding
+  but were not the selected provider for that run. Do not fix that application
+  drift in this migration pass.
+- The interrupted service's failed state was reset. Both
+  `cve-enrichment-sync.timer` and `cve-deep-dive.timer` are enabled and active,
+  while `cve-enrichment-sync.service` is inactive; no second full sweep was
+  launched. Run the full functional test after all four stacks are in place.
+- node_exporter TLS enrollment was skipped because step-ca at
+  `192.168.20.11:443` was not reachable from `tvai`; record this as a separate
+  connectivity follow-up rather than expanding the migration scope.
+
+### Phase 3 — opensearch-stack cutover (2026-09-27)
+
+- Under approval `ai-stacks-pve-tiny-opensearch`, source CT 40014 on `pve`
+  was stopped with onboot disabled and cold-exported. The retained 209M archive
+  contains 3,391 entries and was verified with SHA-256
+  `ee0ce42393347f9b2038f774a83f45dfb95fff5d6a923c2d045f5c286292efa5`.
+- The target apply reported `5 added, 0 changed, 0 destroyed`. Its 16G rootfs,
+  20G Docker mount, and 150G OpenSearch data mount are all on `nvme-lvm`; the
+  unprivileged CT is `running/onboot=1` on `tvinfra` at
+  `192.168.40.14/24`. The source remains `stopped/onboot=0` for rollback.
+- Initial provisioning completed with `ok=109 failed=0`. After the verified
+  archive was restored into the stopped target data mount, reconciliation
+  completed with `ok=91 failed=0`; OpenSearch security, cluster health, and
+  Dashboards availability checks all passed.
+- All 64 source indices are present. Document counts match exactly except
+  `security-auditlog-2026.09.26`, which increased from 8,381 to 8,397 due to
+  expected post-start audit activity. The correct-state Terragrunt plan reports
+  no changes, and pending counts for zones, VNets, and every subnet are zero.
+- The archive and checksum remain on the operator host, and the source CT was
+  not modified beyond stop/onboot state. Public Authentik login and Grafana
+  datasource checks are intentionally deferred to the operator-requested
+  whole-setup test after the remaining stack migration.

@@ -743,6 +743,15 @@ ssh root@192.168.50.12 'systemctl is-enabled cve-enrichment-sync.timer cve-deep-
 Expect both `enabled`, and the manual run to finish without error (it
 reads OpenSearch and MCP, both of which must be up).
 
+Migration execution note (2026-09-27): the manual run was deliberately
+stopped at operator direction after more than 25 minutes. `MAX_CVES=0` made it
+a full production-CVE sweep, not a bounded migration smoke test. It was using
+`LLM_PROVIDER=anthropic`; stale Ollama variables were observed but were not the
+active provider and remain out of scope for this relocation. The interrupted
+unit was reset and both timers restored to enabled/active without launching a
+second sweep. Do not repeat the full manual run during the remaining cutover;
+perform it as part of the operator-requested whole-setup test afterwards.
+
 ### opensearch-stack: fingerprint, export, import, checks
 
 Fingerprint (step 1, old CT still running):
@@ -774,6 +783,12 @@ index list, with doc counts equal (or higher, if an ingest timer fired in
 between). Also check that Dashboards login via Authentik works at the
 public `opensearch`/dashboards hostname, and that the Grafana OpenSearch
 datasource still returns data.
+
+Migration execution note (2026-09-27): the cold archive import, direct
+OpenSearch/Dashboards checks, 64-index fingerprint comparison, correct-state
+plan, and pending-SDN checks passed. Public Authentik login and the Grafana
+datasource check are deferred to the whole-setup test after the remaining
+stack migration, per operator direction.
 
 ### ai-services-stack: fingerprint, export, import, checks
 
