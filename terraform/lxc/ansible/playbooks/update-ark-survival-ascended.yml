@@ -1,0 +1,145 @@
+# Keep the ARK: Survival Ascended server's game files current, working
+# around a real, currently-unresolved Valve-side restriction (SteamDB
+# changelist 26182341-class change): anonymous SteamCMD logins get
+# "Failed to get manifest request code, 'Access Denied'" when reconciling
+# against a manifest that's no longer the branch's current one -- i.e. the
+# server's own *existing, installed* manifest, during a normal incremental
+# update. AUTO_UPDATE=1 in the egg's startup script hits this every time
+# and silently launches the OLD build anyway (found live 2026-09-23).
+#
+# The workaround, confirmed live: delete the stale appmanifest.acf before
+# restarting. With no old manifest to reconcile against, SteamCMD requests
+# only the *current* manifest (which anonymous logins can still fetch) and
+# the update completes normally. This playbook automates exactly that
+# sequence, gated on an actual version check first so routine runs (no
+# update available) are a fast no-op, not a full validate pass every time.
+#
+# Run this whenever an update is suspected (Steam client shows one) --
+# operator-triggered, not a background cron: it stops the server, which
+# interrupts anyone playing.
+---
+- name: Check for and apply ARK Survival Ascended updates
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    ark_server_uuid: "0f4a4119-4fa1-457d-9c48-09dbd7aa62ee"
+    ark_server_root: "/srv/docker/pterodactyl/volumes/{{ ark_server_uuid }}"
+    ark_steam_appid: "2430930"
+    ark_panel_url: "http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') | mandatory('LAB_IP_PTERODACTYL_LAB env var is required') }}" # nosonar: ansible:S5332 -- Panel's Client API, private game_seg only
+    ark_client_api_key: "{{ lookup('env', 'PTERODACTYL_LAB_CLIENT_API_KEY') | mandatory('PTERODACTYL_LAB_CLIENT_API_KEY env var is not set') }}"
+    ark_client_headers:
+      Authorization: "Bearer {{ ark_client_api_key }}"
+      Accept: "application/json"
+      Content-Type: "application/json"
+
+  tasks:
+    - name: Confirm the server's appmanifest exists
+      ansible.builtin.stat:
+        path: "{{ ark_server_root }}/steamapps/appmanifest_{{ ark_steam_appid }}.acf"
+      register: ark_appmanifest_stat
+
+    - name: Fail clearly if the expected path doesn't exist
+      ansible.builtin.fail:
+        msg: >-
+          {{ ark_server_root }}/steamapps/appmanifest_{{ ark_steam_appid }}.acf
+          not found -- the server's UUID or Wings' volume path may have
+          changed. Confirm via the Panel before re-running.
+      when: not ark_appmanifest_stat.stat.exists
+
+    - name: Read the currently installed build id
+      ansible.builtin.shell:
+        cmd: >-
+          grep -oP '"buildid"\s+"\K[0-9]+' {{ ark_server_root }}/steamapps/appmanifest_{{ ark_steam_appid }}.acf
+      register: ark_installed_build
+      changed_when: false
+
+    - name: Query Steam's current live build id (public API, no auth)
+      ansible.builtin.uri:
+        url: "https://api.steamcmd.net/v1/info/{{ ark_steam_appid }}"
+        method: GET
+        return_content: true
+      register: ark_steam_info
+
+    - name: Determine whether an update is actually needed
+      ansible.builtin.set_fact:
+        ark_live_build: "{{ (ark_steam_info.content | from_json).data[ark_steam_appid].depots.branches.public.buildid }}"
+        ark_current_build: "{{ ark_installed_build.stdout | trim }}"
+
+    - name: Report current state
+      ansible.builtin.debug:
+        msg: >-
+          installed build {{ ark_current_build }}, live build
+          {{ ark_live_build }} --
+          {{ 'update needed' if ark_current_build != ark_live_build else 'already current, nothing to do' }}
+
+    - name: Stop the server before touching its files
+      ansible.builtin.uri:
+        url: "{{ ark_panel_url }}/api/client/servers/{{ ark_server_uuid.split('-')[0] }}/power"
+        headers: "{{ ark_client_headers }}"
+        method: POST
+        status_code: 204
+        body_format: json
+        body:
+          signal: stop
+      when: ark_current_build != ark_live_build
+
+    - name: Wait for the server to actually reach offline (not just accept the signal)
+      ansible.builtin.uri:
+        url: "{{ ark_panel_url }}/api/client/servers/{{ ark_server_uuid.split('-')[0] }}/resources"
+        headers: "{{ ark_client_headers }}"
+        method: GET
+        return_content: true
+      register: ark_stop_poll
+      until: (ark_stop_poll.content | from_json).attributes.current_state == "offline"
+      retries: 30
+      delay: 10
+      when: ark_current_build != ark_live_build
+
+    - name: Delete the stale appmanifest so SteamCMD negotiates a fresh manifest
+      ansible.builtin.file:
+        path: "{{ ark_server_root }}/steamapps/appmanifest_{{ ark_steam_appid }}.acf"
+        state: absent
+      when: ark_current_build != ark_live_build
+
+    - name: Start the server (triggers the real update this time)
+      ansible.builtin.uri:
+        url: "{{ ark_panel_url }}/api/client/servers/{{ ark_server_uuid.split('-')[0] }}/power"
+        headers: "{{ ark_client_headers }}"
+        method: POST
+        status_code: 204
+        body_format: json
+        body:
+          signal: start
+      when: ark_current_build != ark_live_build
+
+    - name: Wait for the server to actually reach running
+      ansible.builtin.uri:
+        url: "{{ ark_panel_url }}/api/client/servers/{{ ark_server_uuid.split('-')[0] }}/resources"
+        headers: "{{ ark_client_headers }}"
+        method: GET
+        return_content: true
+      register: ark_start_poll
+      until: (ark_start_poll.content | from_json).attributes.current_state == "running"
+      retries: 60
+      delay: 15
+      when: ark_current_build != ark_live_build
+
+    - name: Re-read the installed build id to confirm the update actually applied
+      ansible.builtin.shell:
+        cmd: >-
+          grep -oP '"buildid"\s+"\K[0-9]+' {{ ark_server_root }}/steamapps/appmanifest_{{ ark_steam_appid }}.acf
+      register: ark_final_build
+      changed_when: false
+      when: ark_current_build != ark_live_build
+
+    - name: Fail loudly if the build id still doesn't match after the update attempt
+      ansible.builtin.fail:
+        msg: >-
+          Update attempted but installed build ({{ ark_final_build.stdout | trim }})
+          still doesn't match Steam's live build ({{ ark_live_build }}).
+          The Access-Denied workaround may not have been sufficient this
+          time -- check the console log directly rather than retrying blind.
+      when:
+        - ark_current_build != ark_live_build
+        - (ark_final_build.stdout | trim) != ark_live_build
