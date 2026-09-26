@@ -140,7 +140,8 @@ zones:
   infra_seg:
     description: Infrastructure services — registry, artifact cache, IPAM
     attachment: infra_seg
-    containers: []  # empty — this pass only creates the zone; harbor-stack has not moved yet
+    containers:
+      - "opensearch-stack (VMID 40014) — 192.168.40.14 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
   mgmt_seg:
     description: Management plane — identity, PKI, monitoring, logging
     attachment: mgmt_seg
@@ -155,7 +156,10 @@ zones:
   ai_seg:
     description: AI/LLM application services + external-utility MCP adapters
     attachment: ai_seg
-    containers: []  # filled in by ai-tiny-06 once each stack has cut over
+    containers:
+      - "mcp-utility-stack (VMID 50011) — 192.168.50.10 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
+      - "secpipe-stack (VMID 50012) — 192.168.50.12 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
+      - "ai-services-stack (VMID 50013) — 192.168.50.11 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
 
 inventory:
   proxmox_nodes:
