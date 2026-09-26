@@ -615,17 +615,10 @@ policies:
       leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
       scrape config then rejected outright. Added with place-before
       targeting the deny rule.
-  - from: edge_seg
-    to: media_seg
-    protocol: tcp
-    ports: [9696, 7878, 8989, 8686, 8080, 5055]
-    description: >-
-      Traefik to torrent-stack-lab's prowlarr/radarr/sonarr/lidarr/
-      qbittorrent(via gluetun)/jellyseerr web UIs. Added as a new rule
-      rather than widening the existing edge_seg -> media_seg
-      tcp/8096,2283 rule above (Jellyfin/Immich, untouched) -- keeps
-      this an additive change under this repo's validation tiers
-      instead of "modifying an existing cross-zone rule."
+  # (edge_seg -> media_seg torrent-stack-lab UI ports 9696/7878/8989/8686/
+  #  8080/5055 was planned but never applied to the router, and is not
+  #  needed: all six UIs answer 302/307 through Traefik -- verified
+  #  2026-09-26, stable-reconciliation L9/5d. Removed to match live.)
   - from: media_seg
     to: internet
     protocol: udp
