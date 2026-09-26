@@ -84,6 +84,7 @@
     greenbone_openvas_workstation_ssh_private_key: "{{ lookup('env', 'GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_start_task_name: "{{ lookup('env', 'GREENBONE_START_TASK_NAME') | default('', true) }}"
     greenbone_status_task_name: "{{ lookup('env', 'GREENBONE_STATUS_TASK_NAME') | default('', true) }}"
+    greenbone_oci_pangolin_audit_ssh_private_key: "{{ lookup('env', 'GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY env var is required') }}"
 
     # Per-user LDAP login via Authentik's existing LDAP outpost (same
     # instance graylog-stack already uses -- see
@@ -857,6 +858,87 @@
       no_log: true
       register: greenbone_scan_program_setup
       tags: [scan-program]
+
+    # Public OCI edge coverage is intentionally Discovery-only and limited to
+    # the exact service surface. It has no schedule: every execution is an
+    # approved assessment, avoiding a surprise Internet-facing scan.
+    - name: Write OCI Pangolin public-edge discovery setup script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_oci_pangolin_discovery.py"
+        dest: "{{ greenbone_compose_dir }}/setup_oci_pangolin_discovery.py"
+        mode: "0644"
+      tags: [oci-edge-scan]
+
+    - name: Create or run the OCI Pangolin public-edge discovery task
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_oci_pangolin_discovery.py:/tmp/setup_oci_pangolin_discovery.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          -e GREENBONE_START_OCI_PANGOLIN_DISCOVERY={{ (lookup('env', 'GREENBONE_START_OCI_PANGOLIN_DISCOVERY') | default('false', true) | bool) | ternary('true', 'false') }}
+          gvm-tools python3 /tmp/setup_oci_pangolin_discovery.py
+        chdir: "{{ greenbone_compose_dir }}"
+      register: greenbone_oci_edge_scan_setup
+      changed_when: >-
+        'created port list' in greenbone_oci_edge_scan_setup.stdout
+        or 'created target' in greenbone_oci_edge_scan_setup.stdout
+        or 'created task' in greenbone_oci_edge_scan_setup.stdout
+        or 'started task' in greenbone_oci_edge_scan_setup.stdout
+      no_log: true
+      tags: [oci-edge-scan]
+
+    - name: Create temporary directory for OCI Pangolin credentialed scan key
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ greenbone_compose_dir }}"
+        prefix: .oci-pangolin-credentialed-
+      register: greenbone_oci_pangolin_credentialed_tempdir
+      no_log: true
+      tags: [oci-pangolin-credentialed-scan]
+
+    - name: Create OCI Pangolin credentialed task and remove its temporary key
+      tags: [oci-pangolin-credentialed-scan]
+      block:
+        - name: Write OCI Pangolin credentialed task setup script
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_oci_pangolin_credentialed.py"
+            dest: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}/setup_oci_pangolin_credentialed.py"
+            mode: '0644'
+
+        - name: Stage the dedicated OCI Pangolin audit key for GVM
+          ansible.builtin.copy:
+            content: "{{ greenbone_oci_pangolin_audit_ssh_private_key }}"
+            dest: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}/greenbone-oci-pangolin-audit.key"
+            mode: '0644'
+          no_log: true
+
+        - name: Create or start the OCI Pangolin credentialed GVM task
+          ansible.builtin.command:
+            cmd: >-
+              docker compose run --rm --no-deps
+              -v {{ greenbone_oci_pangolin_credentialed_tempdir.path }}/setup_oci_pangolin_credentialed.py:/tmp/setup_oci_pangolin_credentialed.py:ro
+              -v {{ greenbone_oci_pangolin_credentialed_tempdir.path }}/greenbone-oci-pangolin-audit.key:/tmp/greenbone-oci-pangolin-audit.key:ro
+              -e GVM_USERNAME=admin
+              -e GVM_PASSWORD={{ greenbone_admin_password }}
+              -e GREENBONE_OCI_PANGOLIN_AUDIT_KEY_PATH=/tmp/greenbone-oci-pangolin-audit.key
+              -e GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN={{ (lookup('env', 'GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN') | default('false', true) | bool) | ternary('true', 'false') }}
+              gvm-tools python3 /tmp/setup_oci_pangolin_credentialed.py
+            chdir: "{{ greenbone_compose_dir }}"
+          register: greenbone_oci_pangolin_credentialed_setup
+          changed_when: >-
+            'created credential' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created port list' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created target' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created task' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'started task' in greenbone_oci_pangolin_credentialed_setup.stdout
+          no_log: true
+      always:
+        - name: Remove temporary OCI Pangolin credentialed scan key
+          ansible.builtin.file:
+            path: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}"
+            state: absent
+          no_log: true
 
     # Phase 4 (partial) -- operator instruction 2026-08-16: schedule only
     # the vulnerability ("full-vuln") Tasks, staggered an hour apart, LAN

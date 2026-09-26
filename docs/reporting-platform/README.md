@@ -53,3 +53,10 @@ as two separate per-node instances/URLs, not one unified URL — a
 genuinely single pane of glass needs new cross-node ingestion (a
 firewall rule, per-project write tokens), which is real, deliberate
 follow-up work, not something to build speculatively. See plan.md §5.
+
+**Decided for CyberSecEval specifically (2026-09-25):** its reports get a
+different destination entirely — a direct WebDAV push into Nextcloud,
+not this plan's shared viewer — because the operator asked for them
+presented there specifically. This doesn't resolve or depend on the
+Phase 3 question above; see plan.md §5a and
+`docs/nextcloud-stack/plan.md`'s Phase 2 for the real step blocks.

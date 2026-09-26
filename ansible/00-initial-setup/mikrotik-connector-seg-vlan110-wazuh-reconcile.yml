@@ -1,0 +1,92 @@
+---
+# Add the only connector_seg-to-infra path required by Newt's host-local
+# Wazuh agent. This is not an OCI-originated tunnel path.
+- name: Reconcile MikroTik connector_seg Wazuh agent reach
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_ADMIN') | default(lookup('env', 'MIKROTIK_USER'), true) | mandatory }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD'), true) | mandatory }}"
+    connector_wazuh_rule:
+      comment: "connector_seg Newt host Wazuh agent to manager"
+      chain: forward
+      action: accept
+      protocol: tcp
+      src-address: 192.168.110.0/24
+      dst-address: 192.168.40.15
+      dst-port: "1514,1515"
+
+  tasks:
+    - name: Read current RouterOS firewall filters
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      register: connector_firewall_filters
+      no_log: true
+
+    - name: Find the forward-chain deny anchor
+      ansible.builtin.set_fact:
+        connector_forward_drop_anchor: >-
+          {{
+            (connector_firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list | first) | default({})
+          }}
+
+    - name: Add the connector Wazuh rule before the forward deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body: "{{ connector_wazuh_rule | combine({'place-before': connector_forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - connector_forward_drop_anchor != {}
+        - >-
+          connector_firewall_filters.json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'equalto', connector_wazuh_rule.comment)
+          | list | length == 0
+      no_log: true
+
+    - name: Re-read and verify the connector Wazuh rule
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      register: connector_firewall_filters_final
+      no_log: true
+
+    - name: Assert the connector Wazuh rule exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            connector_firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', connector_wazuh_rule.comment)
+            | selectattr('src-address', 'equalto', connector_wazuh_rule['src-address'])
+            | selectattr('dst-address', 'equalto', connector_wazuh_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', connector_wazuh_rule['dst-port'])
+            | list | length == 1
+        fail_msg: Connector Wazuh manager rule was not found with its required narrow match.

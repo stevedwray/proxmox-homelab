@@ -18,6 +18,9 @@ SOURCE_DNS_TARGET = "${LAB_IP_PROXY}"
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")
 TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")
+HOSTNAME_PATTERN = re.compile(
+    r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
 TRAEFIK_SERVICE_REF_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9_.-]*$"
 )
@@ -50,6 +53,7 @@ class RouteRecord:
     stack: str
     route_name: str
     host: str
+    pangolin_public_host: str | None = None
 
 
 @dataclass(frozen=True)
@@ -549,6 +553,7 @@ def _validate_route(
     _validate_dns(route, route_key, route_name, manifest, issues)
     _validate_tls(route, route_key, route_name, manifest, issues)
     _validate_auth(route, route_key, route_name, manifest, stack, issues)
+    pangolin_public_host = _validate_pangolin(route, route_key, route_name, host, manifest, issues)
 
     return RouteRecord(
         manifest_path=manifest,
@@ -556,7 +561,92 @@ def _validate_route(
         stack=stack,
         route_name=route_name,
         host=host,
+        pangolin_public_host=pangolin_public_host,
     )
+
+
+def _validate_pangolin(
+    route: dict[str, object],
+    route_key: str,
+    route_name: str,
+    host: str,
+    manifest: str,
+    issues: list[ValidationIssue],
+) -> str | None:
+    """Validate optional public and client-only Pangolin route intents."""
+
+    pangolin = route.get("pangolin")
+    if pangolin is None:
+        return None
+    if not isinstance(pangolin, dict):
+        issues.append(
+            ValidationIssue(
+                code="EMV122",
+                message="pangolin must be a mapping when provided",
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin",
+            )
+        )
+        return None
+
+    public_host = pangolin.get("public_host")
+    private_host = pangolin.get("private_host", False)
+    private_host_valid = isinstance(private_host, bool)
+    if not private_host_valid:
+        issues.append(
+            ValidationIssue(
+                code="EMV126",
+                message="pangolin.private_host must be a boolean when provided",
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin.private_host",
+            )
+        )
+        private_host = False
+
+    has_public_host = isinstance(public_host, str) and bool(public_host.strip())
+    if not has_public_host and not private_host:
+        issues.append(
+            ValidationIssue(
+                code="EMV123",
+                message=(
+                    "pangolin requires public_host or private_host: true"
+                ),
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin",
+            )
+        )
+        return None
+
+    if not has_public_host:
+        return None
+
+    public_host = public_host.strip().rstrip(".")
+    if not HOSTNAME_PATTERN.fullmatch(public_host):
+        issues.append(
+            ValidationIssue(
+                code="EMV124",
+                message="pangolin.public_host must be a DNS hostname, not a URL",
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin.public_host",
+            )
+        )
+        return None
+    if public_host == host.rstrip("."):
+        issues.append(
+            ValidationIssue(
+                code="EMV125",
+                message="pangolin.public_host must differ from the LAN route host",
+                manifest=manifest,
+                route=route_name,
+                field=f"{route_key}.pangolin.public_host",
+            )
+        )
+        return None
+    return public_host
 
 
 def _validate_backend(
@@ -807,6 +897,8 @@ def _validate_cross_manifest(
     for record in route_records:
         if record.host:
             host_owners.setdefault(record.host, set()).add(record.manifest_name)
+        if record.pangolin_public_host:
+            host_owners.setdefault(record.pangolin_public_host, set()).add(record.manifest_name)
         if record.route_name:
             route_owners.setdefault(record.route_name, set()).add(record.manifest_name)
 

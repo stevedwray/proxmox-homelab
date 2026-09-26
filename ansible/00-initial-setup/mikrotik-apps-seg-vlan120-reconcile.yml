@@ -1,0 +1,143 @@
+---
+# Reconcile the VLAN-120 application segment. Physical downstream switch
+# tagging is an operator prerequisite; this manages only the MikroTik.
+- name: Reconcile MikroTik apps_seg VLAN120 data plane
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_ADMIN') | default(lookup('env', 'MIKROTIK_USER'), true) | mandatory }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD'), true) | mandatory }}"
+    apps_subnet: "192.168.120.0/24"
+    apps_gateway: "192.168.120.1/24"
+    apps_vlan_name: vlan120-apps
+    apps_vlan:
+      name: vlan120-apps
+      interface: bridgeLocal
+      vlan-id: "120"
+      comment: apps_seg gateway
+    apps_bridge_vlan:
+      bridge: bridgeLocal
+      vlan-ids: "120"
+      tagged: bridgeLocal,ether1,ether5
+      comment: apps_seg VLAN 120 trunk tagging
+    apps_gateway_address:
+      address: "192.168.120.1/24"
+      interface: vlan120-apps
+      comment: apps_seg gateway
+    apps_input_rules:
+      - {comment: "apps_seg ping to router", chain: input, action: accept, protocol: icmp, in-interface: vlan120-apps, src-address: "{{ apps_subnet }}"}
+      - {comment: "apps_seg DNS UDP to router", chain: input, action: accept, protocol: udp, in-interface: vlan120-apps, src-address: "{{ apps_subnet }}", dst-address: 192.168.120.1, dst-port: "53"}
+      - {comment: "apps_seg DNS TCP to router", chain: input, action: accept, protocol: tcp, in-interface: vlan120-apps, src-address: "{{ apps_subnet }}", dst-address: 192.168.120.1, dst-port: "53"}
+    apps_forward_rules:
+      - {comment: "edge_seg Traefik to Nextcloud", chain: forward, action: accept, protocol: tcp, src-address: 192.168.30.0/24, dst-address: 192.168.120.10, dst-port: "8080"}
+      - {comment: "apps_seg to Authentik OIDC", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.20.0/24, dst-port: "9443"}
+      - {comment: "apps_seg to Traefik OIDC and Harbor", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.30.10, dst-port: "443"}
+      - {comment: "apps_seg to step-ca", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.20.11, dst-port: "443"}
+      - {comment: "apps_seg to Harbor and apt-cacher", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.40.0/24, dst-port: "80,443,3142"}
+      - {comment: "apps_seg Wazuh agent to manager", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: 192.168.40.15, dst-port: "1514,1515"}
+      - {comment: "apps_seg internet package and image egress", chain: forward, action: accept, protocol: tcp, src-address: "{{ apps_subnet }}", dst-address: "!192.168.0.0/16", dst-port: "80,443"}
+      - {comment: "apps_seg default-deny to LAN and other zones", chain: forward, action: drop, src-address: "{{ apps_subnet }}"}
+
+  tasks:
+    - name: Read current RouterOS objects
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      loop: [/interface/vlan, /interface/bridge/vlan, /ip/address, /ip/firewall/filter]
+      register: routeros
+      no_log: true
+
+    - name: Set current RouterOS facts
+      ansible.builtin.set_fact:
+        vlan_interfaces: "{{ (routeros.results | selectattr('item', 'equalto', '/interface/vlan') | first).json }}"
+        bridge_vlans: "{{ (routeros.results | selectattr('item', 'equalto', '/interface/bridge/vlan') | first).json }}"
+        ip_addresses: "{{ (routeros.results | selectattr('item', 'equalto', '/ip/address') | first).json }}"
+        firewall_filters: "{{ (routeros.results | selectattr('item', 'equalto', '/ip/firewall/filter') | first).json }}"
+
+    - name: Add missing VLAN interface, trunk membership, and gateway
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}{{ item.path }}"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body: "{{ item.body }}"
+        status_code: [200, 201]
+      loop:
+        - {path: /interface/vlan/add, body: "{{ apps_vlan }}", exists: "{{ vlan_interfaces | selectattr('name', 'equalto', apps_vlan_name) | list | length > 0 }}"}
+        - {path: /interface/bridge/vlan/add, body: "{{ apps_bridge_vlan }}", exists: "{{ bridge_vlans | selectattr('vlan-ids', 'equalto', '120') | selectattr('dynamic', 'equalto', 'false') | list | length > 0 }}"}
+        - {path: /ip/address/add, body: "{{ apps_gateway_address }}", exists: "{{ ip_addresses | selectattr('address', 'equalto', apps_gateway) | list | length > 0 }}"}
+      when: not (item.exists | bool)
+      no_log: true
+
+    - name: Find deny insertion anchors
+      ansible.builtin.set_fact:
+        input_drop_anchor: "{{ (firewall_filters | selectattr('chain', 'equalto', 'input') | selectattr('action', 'in', ['drop', 'reject']) | list | first) | default({}) }}"
+        forward_drop_anchor: "{{ (firewall_filters | selectattr('chain', 'equalto', 'forward') | selectattr('action', 'in', ['drop', 'reject']) | list | first) | default({}) }}"
+
+    - name: Add missing apps input rules before input deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body: "{{ item | combine({'place-before': input_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ apps_input_rules }}"
+      when:
+        - input_drop_anchor != {}
+        - firewall_filters | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.comment) | list | length == 0
+      no_log: true
+
+    - name: Add missing apps forward rules before forward deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        body_format: json
+        body: "{{ item | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ apps_forward_rules }}"
+      when:
+        - forward_drop_anchor != {}
+        - firewall_filters | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.comment) | list | length == 0
+      no_log: true
+
+    - name: Re-read and assert apps_seg RouterOS configuration
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — private RouterOS HTTPS with self-signed certificate
+        return_content: true
+        status_code: 200
+      loop: [/interface/vlan, /interface/bridge/vlan, /ip/address, /ip/firewall/filter]
+      register: routeros_final
+      no_log: true
+
+    - name: Assert apps_seg is complete
+      ansible.builtin.assert:
+        that:
+          - (routeros_final.results | selectattr('item', 'equalto', '/interface/vlan') | first).json | selectattr('name', 'equalto', apps_vlan_name) | list | length == 1
+          - (routeros_final.results | selectattr('item', 'equalto', '/ip/address') | first).json | selectattr('address', 'equalto', apps_gateway) | list | length == 1
+          - (routeros_final.results | selectattr('item', 'equalto', '/ip/firewall/filter') | first).json | selectattr('comment', 'defined') | selectattr('comment', 'in', (apps_input_rules + apps_forward_rules) | map(attribute='comment') | list) | list | length == (apps_input_rules | length + apps_forward_rules | length)
+        fail_msg: apps_seg RouterOS configuration is incomplete after apply.

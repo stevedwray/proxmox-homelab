@@ -23,7 +23,14 @@ SPEC.loader.exec_module(MODULE)
 reconcile_authentik = MODULE.reconcile_authentik
 
 
-def _write_manifest(path: Path, stack: str, route: str, host: str, mode: str) -> None:
+def _write_manifest(
+    path: Path, stack: str, route: str, host: str, mode: str, pangolin_public_host: str | None = None
+) -> None:
+    pangolin = (
+        f"      pangolin:\n        public_host: {pangolin_public_host}\n"
+        if pangolin_public_host
+        else ""
+    )
     path.write_text(
         f"""apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
 kind: EdgeManifest
@@ -45,6 +52,7 @@ spec:
         resolver: letsencrypt
       auth:
         mode: {mode}
+{pangolin}
 """,
         encoding="utf-8",
     )

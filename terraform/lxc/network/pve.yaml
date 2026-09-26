@@ -140,6 +140,25 @@ attachments:
       gateway: "192.168.80.1"
       snat: false
 
+  # apps_seg — Application services (VLAN 120, 192.168.120.0/24)
+  apps_seg:
+    description: Application services — Nextcloud
+    type: sdn_vnet
+    bridge: tvapps
+    firewall: false
+    sdn:
+      zone: tvapps
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvapps
+      vlan_tag: 120
+      alias: pve application segment
+      subnet: "192.168.120.0/24"
+      gateway: "192.168.120.1"
+      snat: false
+
   # -------------------------------------------------------------------------
   # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
   #
@@ -220,6 +239,32 @@ attachments:
       gateway: "${lab_gw_ai}"
       snat: false
 
+  # connector_seg — Newt connector for the OCI Pangolin edge (VLAN 110, 192.168.110.0/24)
+  #
+  # Originally scoped for VLAN 100, changed 2026-09-23 after confirming on
+  # the physical switches that VLAN 100 is already live as cse_seg
+  # (terraform/lxc/network/pve-tiny.yaml). 110 is the next tag not already
+  # claimed by any zone across terraform/lxc/network/*.yaml. See
+  # docs/nextcloud-stack/plan.md nextcloud-P3-01 and
+  # docs/nextcloud-stack/README.md for the full design.
+  connector_seg:
+    description: Newt connector for the OCI Pangolin edge — lab Traefik, shared Graylog TCP syslog, and internet egress only
+    type: sdn_vnet
+    bridge: tvnewt
+    firewall: false
+    sdn:
+      zone: tvnewt
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvnewt
+      vlan_tag: 110
+      alias: pve connector segment
+      subnet: "192.168.110.0/24"
+      gateway: "192.168.110.1"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -259,6 +304,11 @@ zones:
     containers:
       - "media-stack-lab (VMID 80010) — 192.168.80.10"
       - "torrent-stack-lab (VMID 80011) — 192.168.80.11"
+  apps_seg:
+    description: Application services — Nextcloud
+    attachment: apps_seg
+    containers:
+      - "nextcloud-stack (VMID 120010) — 192.168.120.10 — live, deployed 2026-09-24"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
@@ -273,8 +323,17 @@ zones:
       - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility} — live, promoted to pve 2026-08-01 (fast-tracked directly from feat/mcp-utility-stack, not through the usual stable promotion step)"
       - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, planned by docs/ai-services-migration/plan.md, not yet deployed"
       - "secpipe-stack (VMID 50012) — ${lab_ip_secpipe} — CVE correlation/enrichment (cve_enrichment_sync), see docs/threat-vuln-platform/plan.md"
+  connector_seg:
+    description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
+    attachment: connector_seg
+    containers:
+      - "newt-connector (VMID 110010) — 192.168.110.10"
 
 policies:
+  # Shared Graylog sender policy is reconciled by
+  # ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml.
+  # It covers the normal LAN and managed service zones, while excluding
+  # intentionally hostile/test zones. Do not add per-workload :514 rules.
   - from: edge_seg
     to: ai_seg
     protocol: tcp
@@ -430,15 +489,6 @@ policies:
       endpoint -- the adviser/pentester/coder chat-completion provider as
       of 2026-07-28, replacing Ollama for that role specifically).
   - from: pentest_seg
-    to: 192.168.20.14
-    protocol: tcp
-    ports: [514]
-    description: >-
-      pentagi-stack rsyslog forwarding to Graylog. Missed on the first pass --
-      only the inbound mgmt_seg -> pentest_seg:9187 scrape rule was added;
-      this outbound leg is what rsyslog itself needs and was timing out
-      until this was added (confirmed live via journalctl on pentagi-stack).
-  - from: pentest_seg
     to: 192.168.20.11
     protocol: tcp
     ports: [443]
@@ -547,17 +597,6 @@ policies:
       explicitly, applying the lesson from the earlier input-chain
       ordering bug rather than repeating it.
   - from: media_seg
-    to: 192.168.20.14
-    protocol: tcp
-    ports: [514]
-    description: >-
-      media-stack-lab rsyslog forwarding to Graylog. Real gap found live
-      2026-09-04: every other zone with syslog forwarding (game_seg,
-      pentest_seg) had this rule, media_seg never did -- rsyslog was
-      running (via lxc_base) but every log, including plain host
-      syslog, was silently dropped at the zone boundary. Added with
-      place-before targeting the deny rule.
-  - from: media_seg
     to: 192.168.20.11
     protocol: tcp
     ports: [443]
@@ -590,6 +629,70 @@ policies:
       docs/application-migration/01-torrent-stack-lab.md plan
       identified for its abandoned dl_seg zone -- media_seg needs the
       same rule since gluetun now lives here instead.
+  - from: edge_seg
+    to: apps_seg
+    protocol: tcp
+    ports: [8080]
+    description: Traefik to Nextcloud web UI
+  - from: apps_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9443]
+    description: Nextcloud to Authentik for OIDC
+  - from: apps_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [443]
+    description: Nextcloud to Traefik for Authentik OIDC token exchange and Harbor FQDN pulls
+  - from: apps_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: Nextcloud node_exporter TLS certificate issuance from step-ca
+  - from: apps_seg
+    to: 192.168.40.15
+    protocol: tcp
+    ports: [1514, 1515]
+    description: >-
+      nextcloud-stack's Wazuh agent to wazuh-stack's manager
+      (event and enrollment ports). Scoped to the manager host rather than
+      all of infra_seg; must precede apps_seg's explicit default deny.
+  - from: apps_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — apps_seg has no reachability beyond the above plus internet egress
+  - from: connector_seg
+    to: 192.168.30.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      Newt connector to pangolin-proxy ONLY (192.168.30.11, edge_seg) — a
+      second, dedicated Traefik instance created by nextcloud-P3-03 that
+      serves only the explicit subset of routes opted into Pangolin. This
+      is deliberately NOT 192.168.30.10 (the main, LAN-facing Traefik that
+      fronts everything else) — connector_seg has no network path to it at
+      all, by construction, not by per-router policy. Per
+      pangolin-observability-and-graylog-plan.md: "Newt does NOT receive a
+      direct allow rule to the [application] address... this keeps the
+      connector policy stable as services move behind the edge proxy." Do
+      not add a connector_seg -> apps_seg (or any other app zone, or the
+      main Traefik) rule even for a single, specific service.
+  - from: connector_seg
+    to: 192.168.40.15
+    protocol: tcp
+    ports: [1514, 1515]
+    description: >-
+      newt-connector's host-local Wazuh agent to wazuh-stack's manager
+      (event and enrollment ports). This is not traffic relayed through
+      the Newt/Gerbil tunnel and does not recreate the retired OCI Wazuh
+      path; it is scoped only to the manager host and must precede the
+      connector segment's explicit default deny.
+  - from: connector_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — connector_seg has no other reachability beyond lab Traefik plus internet egress
 
 inventory:
   proxmox_nodes:

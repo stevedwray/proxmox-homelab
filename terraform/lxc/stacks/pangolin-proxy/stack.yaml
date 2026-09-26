@@ -1,0 +1,59 @@
+# pangolin-proxy — dedicated Traefik instance for Pangolin-published routes only
+# Second, independent Traefik process from the main proxy-stack (Option B,
+# operator-confirmed 2026-09-23 — see docs/nextcloud-stack/README.md and
+# plan.md nextcloud-P3-03). Reachable only from connector_seg on 443; never
+# from the internet or the LAN directly.
+hostname: pangolin-proxy
+ip_address: "192.168.30.11/24"
+gateway: "192.168.30.1"
+dns_server: "192.168.30.1"
+network:
+  zone: edge_seg
+vmid: 30011
+cores: 1
+memory: 512
+swap: 256
+rootfs_size: 8
+storage_profile: platform-zfs
+docker_storage_size: "4G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "4G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+extra_mount_path: "/opt/pangolin-proxy/certs"
+extra_mount_size: "2G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: pangolin-proxy-certs
+  path: /opt/pangolin-proxy/certs
+  size: "2G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - docker
+  - traefik
+  - pangolin
+  - edge
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: pangolin-proxy-https
+    port: 443
+    protocol: tcp
+ansible_playbook: "deploy-pangolin-proxy"
+deployment_tier: platform
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+# Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+# docs/harbor-stack/image-sourcing-enforcement.md and
+# docs/nextcloud-stack/plan.md nextcloud-02b for the same bug avoided here.
+registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | mandatory('LAB_FQDN_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
