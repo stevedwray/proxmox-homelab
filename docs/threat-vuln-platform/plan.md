@@ -3136,3 +3136,1049 @@ Added:
   `mark_cve_resolved.py` invocation, and why a resolved CVE can still
   legitimately reappear. `README.md` also refreshed -- it was still
   describing Phase 1 as "not built yet" through Phase 11.
+
+## Follow-up, same day (2026-09-07): `resolved_review_after` (time-boxed ACCEPT_RISK)
+
+Found running the actual remediation sequence against `wazuh-stack`:
+three CVEs (`CVE-2023-48795`/`golang.org/x/crypto`, `CVE-2020-8559`/
+`k8s.io/apimachinery`, `CVE-2026-33937`/`handlebars`, shared with
+`opensearch-dashboards`) all turned out to be bundled Go/Node
+dependencies that Wazuh's own dependency-update changelog never
+mentions bumping across any 4.14.x release -- an `ACCEPT_RISK` genuinely
+blocked on "no upstream fix exists yet," not a version we can bump our
+way out of. The existing `resolved`/`resolved_at_risk_score`
+carry-forward (Phase 11) only reopens a CVE when `risk_score` changes --
+which never happens for a static "no fix available" situation, so it
+would stay silently resolved forever even after upstream ships a fix
+nobody went looking for. Operator's framing: this isn't resolved until
+upstream actually ships something, and it should be revisited on a
+schedule regardless.
+
+Added `resolved_review_after` (ISO timestamp, `mark_cve_resolved.py
+--review-after-days N`): `cve_deep_dive.py`'s `upsert_assessment()` now
+also stops carrying `resolved:true` forward once this date passes, same
+mechanism as a `risk_score` change, just time-triggered instead of
+data-triggered. Index template + live-index mapping both updated (the
+live-index-needs-an-explicit-PUT lesson from Phase 6, again). Applied to
+the three CVEs above at 30 days. Documented in
+`remediation-runbook.md`.
+
+## Phase 12 (planned, not started): automated upstream-fix checking
+
+**Goal**: the situation above -- an `ACCEPT_RISK` sitting on a dashboard
+for a month with nobody re-checking whether upstream shipped a fix in
+the meantime -- is exactly what `resolved_review_after` forces a human
+to eventually do manually. Operator's direction, 2026-09-07: this is
+standard UVM-product territory (upstream advisory/release monitoring is
+a real feature in Tenable/Qualys/Rapid7-class tools), and worth
+productionizing here rather than leaving as a once-a-month manual check.
+
+### Design decisions (operator-confirmed 2026-09-07, not defaulted silently)
+
+- **Where it lives**: new code in `cve_enrichment_sync.py`'s sibling
+  scripts on `secpipe-stack` (code this repo owns, plain Python, same
+  convention as every other sync script here) -- **not** an extension to
+  `cve-mcp-server`. Confirmed during planning: `cve-mcp-server` is
+  third-party source (`github.com/mukul975/cve-mcp-server`) built from a
+  vendored copy (`mcp-utility-stack/stack.yaml`'s own comment: "built
+  directly on the host from source... not pulled"), so extending it
+  means maintaining a fork against an upstream OSS project -- a
+  materially different maintenance posture than adding to code we
+  already fully own.
+- **Data source**: [OSV.dev](https://osv.dev/) (`POST
+  https://api.osv.dev/v1/query`) -- free, unauthenticated, one unified
+  schema across Go/npm/PyPI/Maven/RubyGems/etc., confirmed live via its
+  real API docs during planning (not assumed). Response's
+  `affected[].ranges[].events[]` carries a `fixed` version directly when
+  one exists -- exactly the "has upstream shipped a fix, and what
+  version" question this needs answered, without per-ecosystem custom
+  parsing.
+  - **Known, accepted gap**: OSV.dev's ecosystem coverage is solid for
+    Go/npm/PyPI/Maven/RubyGems but uncertain for OS-level RPM packages
+    (e.g. Amazon Linux's `python3-libs`, the `opensearch-stack` Phase-11
+    accept-risk CVEs). Those get a best-effort ecosystem guess and may
+    simply never match -- that's correct "no data available," not a bug
+    to chase in this phase.
+- **Scope**: only CVEs already `resolved:true` with `resolved_review_after`
+  set -- i.e. exactly the CVEs already recorded as "no fix exists yet,"
+  not every shortlisted CVE. Most shortlisted CVEs already have a real,
+  actionable recommendation; running an upstream-fix check against those
+  too would mostly re-confirm what's already known.
+- **Cadence**: a new daily timer (`upstream-fix-check.timer`),
+  independent of the weekly `cve-deep-dive.timer`. OSV lookups are plain
+  HTTP with no LLM cost, so there's no reason to tie fix-discovery
+  latency to the weekly cadence the way the LLM-driven deep-dive needs
+  to be bounded.
+- **On a fix found**: never auto-applies or auto-resolves anything --
+  matches how every other part of this pipeline already works (it
+  recommends, a human/operator acts). Sets new fields
+  (`upstream_fix_available`, `upstream_fix_version`,
+  `upstream_fix_checked_at`) on the `cve-remediation-assessment` doc for
+  a human to see and act on via the existing `mark_cve_resolved.py`
+  workflow -- does **not** flip `resolved` back to `false` by itself
+  (that stays governed by `resolved_review_after`/`risk_score` as
+  already built).
+
+### `check_upstream_fixes.py` (new script, colocated with
+`cve_enrichment_sync.py`/`cve_deep_dive.py`, imports `ces._es_request`/
+`ces._now_iso` rather than duplicating them)
+
+```python
+#!/usr/bin/env python3
+"""Check whether upstream has shipped a fix for CVEs accepted as risk
+specifically because no fix existed yet (docs/threat-vuln-platform/
+plan.md Phase 12). Queries OSV.dev (https://osv.dev/) -- free,
+unauthenticated, one schema across ecosystems -- using the exact
+package/version pulled from the original *-findings source doc, never
+guessed. Never auto-applies or auto-resolves anything: only sets
+upstream_fix_available/upstream_fix_version/upstream_fix_checked_at for
+a human to act on via the existing mark_cve_resolved.py workflow.
+
+Scope (operator-confirmed 2026-09-07): only cve-remediation-assessment
+docs with resolved:true AND resolved_review_after set -- an ACCEPT_RISK
+made specifically because no upstream fix existed at the time. Runs
+daily (upstream-fix-check.timer), independent of the weekly
+cve-deep-dive run, since OSV lookups carry no LLM cost.
+
+Known gap, not solved here: OSV.dev's ecosystem coverage is solid for
+Go/npm/PyPI/Maven/RubyGems but uncertain for OS-level RPM packages (e.g.
+Amazon Linux's python3-libs) -- those get a best-effort ecosystem guess
+via guess_ecosystem() and may simply never match; that is correct
+"no data available," not a bug.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+import cve_enrichment_sync as ces
+
+OSV_QUERY_URL = "https://api.osv.dev/v1/query"
+
+
+def guess_ecosystem(package: str) -> str | None:
+    """Best-effort package-name-shape -> OSV ecosystem name. Deliberately
+    returns None (skip, don't guess) for anything that looks like an
+    RPM-style OS package (e.g. 'python3-libs') rather than falsely
+    reporting 'no fix available' for an ecosystem OSV likely can't answer
+    for anyway.
+
+    Live-tested against OSV.dev during planning (2026-09-07): the first
+    cut of this heuristic mislabeled 'python3-libs' as npm (it matched
+    "lowercase, no dot, alnum-once-hyphens-stripped") -- fixed by
+    excluding any name containing a digit, since RPM-style OS package
+    names commonly embed one (python3-libs, libxml2) while this
+    deliberately accepts sometimes skipping a genuinely digit-bearing
+    npm/PyPI name too, per the same "skip, don't guess" rule."""
+    if not package:
+        return None
+    first_segment = package.split("/")[0]
+    if "/" in package and "." in first_segment:
+        return "Go"  # e.g. golang.org/x/crypto, k8s.io/apimachinery
+    if any(char.isdigit() for char in package):
+        return None  # RPM-style OS package names commonly embed a digit
+    if package.replace("-", "").replace("_", "").isalnum() and package.islower() and "." not in package:
+        return "npm"  # weak heuristic; good enough as a first pass
+    return None
+
+
+def query_osv(package: str, ecosystem: str, version: str) -> dict | None:
+    body = json.dumps({
+        "package": {"name": package, "ecosystem": ecosystem},
+        "version": version,
+    }).encode()
+    req = urllib.request.Request(
+        OSV_QUERY_URL, data=body, headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # nosec B310 -- fixed OSV.dev API endpoint, never user-supplied
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+        print(f"WARN: OSV query failed for {package}@{version} ({ecosystem}): {exc}", file=sys.stderr)
+        return None
+
+
+def extract_fixed_version(osv_result: dict, cve_id: str) -> str | None:
+    """Find this CVE among osv_result['vulns'] (matched by id or alias)
+    and return the first 'fixed' event's version found in any range."""
+    for vuln in osv_result.get("vulns", []):
+        ids = {vuln.get("id")} | set(vuln.get("aliases", []))
+        if cve_id not in ids:
+            continue
+        for affected in vuln.get("affected", []):
+            for rng in affected.get("ranges", []):
+                for event in rng.get("events", []):
+                    if "fixed" in event:
+                        return event["fixed"]
+    return None
+
+
+def fetch_package_identity(es_url: str, cve_id: str, *, auth_header: str, verify_tls: bool) -> tuple[str, str] | None:
+    """Pull the real package name + installed version from whichever
+    *-findings doc actually reported this CVE -- never re-derive or
+    guess it, same rule this whole pipeline already follows elsewhere."""
+    for index in ("harbor-findings", "gvm-findings", "wazuh-findings"):
+        status, result = ces._es_request(
+            es_url, f"/{index}/_search",
+            method="POST",
+            body={"size": 1, "query": {"term": {"finding_id": cve_id}}},
+            auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if status != 200 or not result:
+            continue
+        hits = result.get("hits", {}).get("hits", [])
+        if not hits:
+            continue
+        src = hits[0]["_source"]
+        package, version = src.get("package"), src.get("package_version")
+        if package and version:
+            return package, version
+    return None
+
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--elasticsearch-url", default=os.environ.get("ELASTICSEARCH_URL", "https://127.0.0.1:9200"))
+    parser.add_argument("--es-user", default=os.environ.get("ES_FINDINGS_USER"))
+    parser.add_argument("--es-password", default=os.environ.get("ES_FINDINGS_PASSWORD"))
+    parser.add_argument("--no-verify-tls", action="store_true", default=os.environ.get("ES_FINDINGS_NO_VERIFY_TLS") == "1")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    if not args.es_user or not args.es_password:
+        print("ERROR: --es-user/--es-password (or ES_FINDINGS_USER/ES_FINDINGS_PASSWORD) are required", file=sys.stderr)
+        return 1
+
+    auth_header = "Basic " + base64.b64encode(f"{args.es_user}:{args.es_password}".encode()).decode()
+    verify_tls = not args.no_verify_tls
+
+    status, result = ces._es_request(
+        args.elasticsearch_url, "/cve-remediation-assessment/_search",
+        method="POST",
+        body={"size": 100, "query": {"bool": {"filter": [
+            {"term": {"resolved": True}},
+            {"exists": {"field": "resolved_review_after"}},
+        ]}}},
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    if status != 200 or not result:
+        print(f"ERROR: failed to query accept-risk-pending CVEs ({status}): {result}", file=sys.stderr)
+        return 1
+
+    candidates = result.get("hits", {}).get("hits", [])
+    print(f"Checking {len(candidates)} accept-risk-pending-upstream-fix CVE(s) against OSV.dev")
+
+    checked = found = errors = 0
+    for hit in candidates:
+        cve_id = hit["_id"]
+        identity = fetch_package_identity(
+            args.elasticsearch_url, cve_id, auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if not identity:
+            continue
+        package, version = identity
+        ecosystem = guess_ecosystem(package)
+        if not ecosystem:
+            continue
+        checked += 1
+        osv_result = query_osv(package, ecosystem, version)
+        if osv_result is None:
+            errors += 1
+            continue
+        fixed_version = extract_fixed_version(osv_result, cve_id)
+        update = {
+            "upstream_fix_available": bool(fixed_version),
+            "upstream_fix_version": fixed_version,
+            "upstream_fix_checked_at": ces._now_iso(),
+        }
+        if fixed_version:
+            found += 1
+            print(f"  {cve_id}: fix available upstream -- {package} {fixed_version}")
+        if not args.dry_run:
+            ces._es_request(
+                args.elasticsearch_url, f"/cve-remediation-assessment/_update/{cve_id}",
+                method="POST", body={"doc": update}, auth_header=auth_header, verify_tls=verify_tls,
+            )
+
+    print(f"Done -- candidates={len(candidates)} checked={checked} fix_found={found} errors={errors}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+### Open items / not decided yet
+
+- Exact Grafana surface for `upstream_fix_available` -- simplest is a
+  new column on `uvm-dashboard-exporter`'s existing `/remediation.json`
+  (the "Top CVEs Needing Attention" panel already renders that
+  response's fields as table columns with no code change needed on the
+  Grafana side, same as every other field there); a dedicated panel is a
+  nice-to-have, not needed for a first cut.
+- `guess_ecosystem()`'s npm heuristic is weak (any short, dotless,
+  lowercase, alnum-ish name) -- fine as a first pass since a wrong guess
+  just produces a `WARN` from a failed/empty OSV query, not a false
+  positive, but worth tightening if it produces noisy warnings once
+  live.
+- Systemd wiring (`upstream-fix-check.service`/`.timer`,
+  `cve_enrichment_sync_upstream_check_enabled` flag following the exact
+  `cve_deep_dive_enabled` pattern, `provision.sh` key-passthrough
+  addition) is straightforward given the existing `cve-deep-dive.timer`
+  role scaffold as a direct template, but not written out step-by-step
+  here yet -- do that pass immediately before implementation, following
+  this doc's own "literal, not guessed" rule, rather than leaving it as
+  something to figure out at execution time.
+
+## Phase 13 (planned, not started): scope reporting + Harbor cleanup to images actually in use
+
+### Problem
+
+`harbor_findings_sync.py` walks every Harbor project/repository/artifact
+and indexes Trivy findings for anything with a completed scan --
+including every tag ever pulled through a proxy-cache project, every
+digest a stack's since-superseded, and one-off pulls that never became a
+running container. `known_production_images.json`'s
+`in_production`/`stack` classification is a **name-based label** (which
+stack an image *belongs to*), not a live-usage check (whether the
+specific cached digest is what's actually deployed right now) -- so
+stale cache noise shows up identically to real, currently-running risk.
+
+Harbor's own retention/GC doesn't fix this either: only the
+`harbor_repull` mirror project has a retention policy
+(`terraform/lxc/ansible/roles/harbor_repull/tasks/main.yml`); every other
+project (native and proxy-cache) has none, and GC only reclaims blobs for
+*deleted* artifacts, not superseded-but-still-tagged ones. Worse, Harbor's
+native proxy-cache tag-creation is a **confirmed, still-live upstream
+bug** (`docs/harbor-stack/README.md`, ~line 103: tested directly on
+Harbor 2.15.2 -- the version this repo actually runs -- pulling genuinely
+fresh tags still leaves them untagged), so a naive retention policy
+applied directly to proxy-cache projects wouldn't reliably distinguish
+old-vs-new versions anyway.
+
+### Design decisions (operator-confirmed, 2026-09-07)
+
+- **Mirror the existing `in_production` pattern, don't replace it.**
+  `in_production` is already a derived enrichment field
+  (`cve_enrichment_sync.py`'s `entry["production_count"] > 0`), not an
+  ingestion filter. `in_use` gets the same shape: computed and stored
+  alongside it, ingestion keeps indexing everything (full audit trail
+  preserved), and the dashboard/deep-dive default to `in_use: true`.
+- **Digest-exact matching, not tag-string matching.** The whole point is
+  disambiguating an old cached digest of a floating tag (`:latest`,
+  `:stable`) from the new one that superseded it -- matching on the tag
+  string alone can't tell those apart. Requires cross-referencing each
+  endpoint's `docker/images/json` (`RepoDigests`) against
+  `docker/containers/json` (`ImageID`), not just reading a container's
+  `Image` field directly.
+  `harbor_repull_mirror_skip_projects: []` (harbor_repull's own default,
+  already covers every registry).
+- **Reuse, don't rebuild, the Portainer access path.** Every stack is
+  already a registered Portainer endpoint
+  (`register_portainer_environments` in `scripts/provision.sh`), and a
+  working `PortainerClient` already exists
+  (`terraform/lxc/stacks/netbox-stack/integrations/discover.py`,
+  `X-API-Key` auth via the `PORTAINER_TOKEN` SOPS secret already used by
+  `netbox-stack`'s own discovery). No new Portainer credential or
+  endpoint-registration work is needed.
+- **On a failed live-usage lookup, carry the prior value forward** rather
+  than defaulting to `in_use: false` -- a transient Portainer outage
+  during a sync run must not make every CVE look unused in the default
+  dashboard view. This has a real implementation consequence: the bulk
+  upsert's painless script does `ctx._source.putAll(params.doc)`, which
+  replaces the whole nested `artifact` object, not a per-field merge --
+  so sticky carry-forward needs an explicit painless-side copy-if-missing
+  step (see step 2 below), not just "omit the key and hope."
+- **Also gate `cve_deep_dive.py`'s shortlist**, not just the dashboard --
+  saves local-LLM compute on CVEs that aren't actually deployed anywhere,
+  at the cost of coupling this change to the weekly deep-dive job in the
+  same pass. `fetch_shortlist()` already filters on
+  `in_production: true`; adding `in_use: true` alongside it is a
+  one-line change.
+- **Include the `harbor_repull` manifest audit in this same plan** --
+  it needs the exact same live-usage inventory this plan already builds,
+  so doing it now avoids redoing the discovery work later.
+
+### uvm-13-01 — new live-usage lookup module
+
+New file: `terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_live_usage.py`. Literal content (stdlib-only, matching `harbor_findings_sync.py`'s own conventions):
+
+```python
+#!/usr/bin/env python3
+"""Live-usage lookup: every image manifest digest currently backing a
+running container anywhere, via Portainer.
+
+Reuses the exact PortainerClient auth pattern already proven in
+terraform/lxc/stacks/netbox-stack/integrations/discover.py (X-API-Key via
+the PORTAINER_TOKEN SOPS secret) rather than inventing a new one -- every
+stack is already a registered Portainer endpoint
+(register_portainer_environments in scripts/provision.sh).
+
+Digest-exact, not tag-exact: this is what lets a floating tag's
+superseded old digest correctly read in_use:false once a newer pull
+replaces what's actually deployed under the same tag string. Matching a
+container's Image field (the tag string) can't make that distinction --
+cross-referencing docker/containers/json's ImageID against
+docker/images/json's RepoDigests can.
+
+fetch_live_digests() returns None (never an empty set) on any
+whole-run failure to reach Portainer at all, so callers can distinguish
+"confirmed nothing is running anywhere" (never actually true on this
+platform) from "couldn't find out this run" -- see
+docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
+decision. A single unreachable *endpoint* (one stack's edge agent mid-
+restart) is a narrower, per-endpoint degrade: skip that endpoint, keep
+the rest of the run's real data.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+
+def _ssl_ctx(verify_tls: bool):
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _get(url: str, api_key: str, *, verify_tls: bool, timeout: float = 20.0):
+    req = urllib.request.Request(url, headers={"X-API-Key": api_key})
+    with urllib.request.urlopen(req, context=_ssl_ctx(verify_tls), timeout=timeout) as resp:  # nosec B310 -- internal Portainer API on private SDN
+        return json.loads(resp.read())
+
+
+def fetch_live_digests(portainer_url: str, api_key: str, *, verify_tls: bool = False) -> set[str] | None:
+    base = portainer_url.rstrip("/")
+    try:
+        endpoints = _get(f"{base}/api/endpoints", api_key, verify_tls=verify_tls)
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+        print(f"WARN: harbor_live_usage: could not list Portainer endpoints: {exc}", file=sys.stderr)
+        return None
+
+    digests: set[str] = set()
+    for endpoint in endpoints:
+        endpoint_id = endpoint.get("Id")
+        if endpoint_id is None:
+            continue
+        try:
+            containers = _get(f"{base}/api/endpoints/{endpoint_id}/docker/containers/json", api_key, verify_tls=verify_tls)
+            images = _get(f"{base}/api/endpoints/{endpoint_id}/docker/images/json", api_key, verify_tls=verify_tls)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+            print(f"WARN: harbor_live_usage: endpoint {endpoint_id} unreachable: {exc}", file=sys.stderr)
+            continue
+
+        running_image_ids = {c.get("ImageID") for c in containers if c.get("ImageID")}
+        for image in images:
+            if image.get("Id") not in running_image_ids:
+                continue
+            for repo_digest in image.get("RepoDigests") or []:
+                # "repo@sha256:...." -- keep only the digest half; Harbor's
+                # own artifact.digest field is bare "sha256:...." with no
+                # repo prefix.
+                if "@" in repo_digest:
+                    digests.add(repo_digest.rsplit("@", 1)[1])
+
+    return digests
+
+
+if __name__ == "__main__":
+    # Standalone use for the step-7 manifest audit -- prints one digest
+    # per line to stdout, warnings to stderr.
+    url = os.environ.get("PORTAINER_URL", "")
+    token = os.environ.get("PORTAINER_TOKEN", "")
+    if not url or not token:
+        print("ERROR: PORTAINER_URL and PORTAINER_TOKEN must be set", file=sys.stderr)
+        sys.exit(2)
+    result = fetch_live_digests(url, token, verify_tls=os.environ.get("PORTAINER_NO_VERIFY_TLS") != "1")
+    if result is None:
+        sys.exit(1)
+    for d in sorted(result):
+        print(d)
+```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_live_usage.py` (syntax only -- no live Portainer credential available to a local-model executor; live behavior gets proven in step 7's manifest audit, which does run against production).
+
+### uvm-13-02 — thread live usage through `harbor_findings_sync.py`
+
+File: `terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`.
+
+1. Add `import harbor_live_usage` alongside the existing stdlib imports.
+2. In `main()`, immediately after `production_registry = load_production_registry()`, add:
+   ```python
+   live_digests = None
+   portainer_url = os.environ.get("PORTAINER_URL", "")
+   portainer_token = os.environ.get("PORTAINER_TOKEN", "")
+   if portainer_url and portainer_token:
+       live_digests = harbor_live_usage.fetch_live_digests(
+           portainer_url, portainer_token, verify_tls=not args.no_verify_tls
+       )
+       if live_digests is None:
+           print("WARN: could not determine live image usage this run -- in_use carries forward from prior state", file=sys.stderr)
+   else:
+       print("WARN: PORTAINER_URL/PORTAINER_TOKEN not set -- in_use carries forward from prior state", file=sys.stderr)
+   ```
+3. Add `live_digests` as a parameter to `build_documents(...)` (default `None`) and to its one call site inside `main()`'s artifact loop.
+4. Inside `build_documents()`, replace the inline `"artifact": {...}` dict literal with a variable built the same way, then conditionally add the key:
+   ```python
+   artifact = {
+       "project": project_name,
+       "repository": repo_short_name,
+       "tag": tag,
+       "digest": digest,
+       "in_production": in_production,
+       "stack": stack,
+       "zone": zone,
+   }
+   if live_digests is not None:
+       artifact["in_use"] = digest in live_digests
+   ```
+   and use `"artifact": artifact` in the per-vulnerability doc dict instead of the old inline literal.
+5. In `bulk_upsert()`'s painless script `source` string, add a copy-if-missing step **before** the existing `putAll` line, so a doc built with `live_digests is None` (the key genuinely absent from `params.doc["artifact"]`) doesn't have its previously-recorded `in_use` wiped out by `putAll` replacing the whole `artifact` object wholesale:
+   ```python
+   "source": (
+       "if (ctx._source.artifact != null && params.doc.artifact != null "
+       "&& !params.doc.artifact.containsKey('in_use') && ctx._source.artifact.containsKey('in_use')) "
+       "{ params.doc.artifact.in_use = ctx._source.artifact.in_use } "
+       "ctx._source.putAll(params.doc); "
+       "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
+   ),
+   ```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`, plus `python3 harbor_findings_sync.py --dry-run` against real Harbor/ES/Portainer credentials (operator-run, not local-model-executable -- needs production secrets).
+
+### uvm-13-03 — `harbor-findings` mapping
+
+File: `terraform/lxc/ansible/roles/es_findings_ingest/files/assets/templates/harbor-findings.json`. Add one line inside `mappings.properties.artifact.properties`, alongside the existing `zone` field:
+
+```json
+            "zone": { "type": "keyword" },
+            "in_use": { "type": "boolean" }
+```
+
+Index templates only apply at index *creation* (established lesson, Phase 6/11) -- the already-existing live `harbor-findings` index also needs an explicit additive mapping PUT, same shape as `cve-remediation-assessment`'s `resolved_review_after` addition:
+
+```
+PUT /harbor-findings/_mapping
+{"properties": {"artifact": {"properties": {"in_use": {"type": "boolean"}}}}}
+```
+
+Gate (operator-run against production, needs ES credentials): confirm via `GET /harbor-findings/_mapping` that `artifact.properties.in_use` is present.
+
+### uvm-13-04 — thread `in_use` through `cve_enrichment_sync.py`'s correlation
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`. `in_use` only has meaning for Harbor findings (a GVM host-scan or Wazuh agent-scan has no "currently deployed digest" concept) -- so a CVE with zero Harbor instances must read `in_use: true` (nothing to suppress it on), never get force-set to `false` just because it happens to lack a Harbor angle. Five touch points, all mirroring the existing `in_production`/`production_count` pattern exactly:
+
+1. `ASSET_FIELD_SPECS`: add `"in_use_field": "artifact.in_use"` under `"harbor"` only; add `"in_use_field": None` under `"greenbone"` and `"wazuh"`.
+2. `fetch_cve_instances()`: add an `in_use_field: str | None` parameter. When not `None`, add an `in_use_count` filter sub-agg identical in shape to the existing `production_count` one (`{"filter": {"term": {in_use_field: True}}}`); when `None`, skip it and return `in_use_count: None` for that source's buckets. Thread the new param through the one call site in `main()`.
+3. In `main()`'s per-source accumulation loop (the `for cve_id, info in counts.items()` block), track two new running totals on `entry` — `harbor_total_count` and `harbor_in_use_count` — incremented only `if src["source"] == "harbor"` (using `info["count"]` and `info["in_use_count"] or 0` respectively).
+4. In the normalize loop (`entry["in_production"] = entry["production_count"] > 0`), add directly below it:
+   ```python
+   entry["in_use"] = True if entry["harbor_total_count"] == 0 else entry["harbor_in_use_count"] > 0
+   ```
+5. Thread `entry["in_use"]` everywhere `entry["in_production"]` already flows: `refresh_exposure_sources()`'s signature/body (`"in_use": in_use` alongside `"in_production": in_production`), the backfill-trigger condition (add `or existing.get("in_use") != entry["in_use"]`), and the new-doc `doc` dict in the main enrichment loop (`"in_use": entry["in_use"]` alongside `"in_production": entry["in_production"]`).
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`.
+
+### uvm-13-05 — `unified-cve-exposure` mapping
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/assets/templates/unified-cve-exposure.json`. Add one line alongside the existing `in_production` field:
+
+```json
+        "in_production": { "type": "boolean" },
+        "in_use": { "type": "boolean" },
+```
+
+Same live-index caveat as step 3:
+
+```
+PUT /unified-cve-exposure/_mapping
+{"properties": {"in_use": {"type": "boolean"}}}
+```
+
+Gate (operator-run): confirm via `GET /unified-cve-exposure/_mapping` that `in_use` is present.
+
+### uvm-13-06 — gate the deep-dive shortlist
+
+File: `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py`, `fetch_shortlist()`. One-line change to the existing filter list:
+
+```python
+"filter": [{"term": {"in_production": True}}, {"term": {"in_use": True}}],
+```
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_deep_dive.py`. No dashboard-side change needed for the "Top CVEs Needing Attention" panel -- `uvm_dashboard_exporter.py`'s `_fetch_remediation_rows()` reads `cve-remediation-assessment` directly, which will only ever contain in-use CVEs once this shortlist gate is live.
+
+### uvm-13-07 — audit and extend `harbor_repull`'s manifest against real live usage
+
+This step's exact content can't be pre-written -- it depends on live data
+from running `harbor_live_usage.py` against production, and on the state
+of `terraform/lxc/ansible/roles/harbor_repull/files/manifest.txt` at
+execution time. Procedure, not a literal diff:
+
+1. Run `harbor_live_usage.py` directly against production Portainer (needs
+   real `PORTAINER_URL`/`PORTAINER_TOKEN`) to get the live digest set.
+2. Cross-reference against `known_production_images.json`'s
+   `known_production` entries (repository names) and Harbor's own
+   artifact listing (`harbor_findings_sync.py`'s `list_projects`/
+   `list_repositories`/`list_artifacts`, or a live Harbor query) to
+   resolve each live digest back to a `<project>/<repo>:<tag>` reference.
+3. Diff that resolved list against `manifest.txt`'s existing entries.
+4. Append any missing `<project>/<repo>:<tag>` line(s) to `manifest.txt`,
+   in the same comment-grouped-by-stack format already used there (see
+   the existing `# portainer-stack` / `# proxy-stack / monitoring-stack /
+   ...` groupings).
+
+Gate: none scriptable ahead of time -- this is inherently a live-data
+reconciliation step; verify by re-running `harbor_repull.py --dry-run`
+(if it has one) or checking the next scheduled `harbor-repull.service`
+run's log shows the newly-added entries being pulled/pushed without
+error.
+
+### Open items / not decided yet
+
+- No dedicated Grafana panel/column for `in_use` beyond the free
+  narrowing described in step 6 -- if a broader always-shows-everything
+  view (e.g. a future `stack-risk-summary`-style rollup) wants to
+  surface "N findings hidden as not-in-use" as its own number, that's a
+  separate, later addition, not needed for this phase's goal.
+- `harbor_live_usage.py`'s TLS verification defaults to `False` (matching
+  `discover.py`'s existing `PortainerClient`, which already runs against
+  Portainer's self-signed cert) -- revisit once/if Portainer gets a real
+  cert, same open item already tracked for the existing client.
+- Step 7 is one-time reconciliation, not a recurring job -- if
+  `manifest.txt` drifts from live usage again later, re-running the same
+  procedure is the fix; no automation is proposed here to keep it in
+  sync continuously.
+
+## Phase 14 (uvm-14-01 through 14-06 DONE and verified live 2026-09-07, dry-run only; uvm-14-07 explicitly deferred): holistic live-usage tracking + active Harbor cleanup
+
+**uvm-14-04/05/06 status: live, verified, dry-run confirmed working
+end-to-end.** `harbor_cleanup_exempt.json` seeded with `pentagi` (the
+`dns-stack` entry the draft assumed was needed turned out unnecessary --
+CoreDNS there is a raw systemd binary, never in Harbor's catalog at
+all). `artifact.not_in_use_since` is live on `harbor-findings`
+(20,749 of 21,634 not-in-use documents now carry a real timestamp; the
+remainder are stale historical records for digests Harbor's own API no
+longer returns at all -- correctly never revisited, and correctly
+nothing for `harbor_cleanup.py` to delete there either, since Harbor's
+side is already gone). `harbor-cleanup.service`/`.timer` run daily,
+dry-run only (`es_findings_ingest_harbor_cleanup_execute: false`) --
+confirmed a real dry-run pass completes cleanly (`candidates=0`, exactly
+expected since nothing has aged past the 7-day grace period yet on the
+very first day this field exists).
+
+**One real deployment bug found and fixed live**, the second time this
+exact lesson has now bitten this pipeline: forgot the explicit additive
+`PUT /harbor-findings/_mapping` for the new `not_in_use_since` field --
+updating only the index *template* (which only applies at index
+*creation*, an already-documented lesson from Phase 6/11/13) silently
+left the live index without the field mapped at all, so the painless
+script's writes were accepted but the field was then invisible to any
+`exists`/`range` query against it. Caught by directly testing the
+painless logic against OpenSearch's `_scripts/painless/_execute` API
+(proved the script itself was correct) and then testing `bulk_upsert()`
+against one real document with request/response spied (proved the
+write really happened) before finding the actual gap via a direct
+`GET .../_mapping` check. Fixed with the explicit `PUT`; re-running
+`es-findings-ingest.service` afterward correctly backfilled the field
+onto the existing corpus.
+
+**uvm-14-01/02/03 status: live, verified, real result.** Deployed
+`docker_live_usage_reporter` to 10 of the 12 confirmed gap-list stacks
+(`harness-target` has no live inventory right now; `pentagi-upstream-control`
+was unreachable at deploy time -- neither is a code problem, both will
+pick up the role whenever next provisioned/reachable). Harbor-sourced
+CVEs correctly retained in the `in_production AND in_use` shortlist went
+from **356 -> 2,313** (out of 4,413 in-production) once the merged data
+flowed through `cve_enrichment_sync.py` -- `in_use:true` in
+`harbor-findings` itself went from 660 docs/7 images (Portainer only) to
+**5,307 docs across 26 distinct images**, now correctly including
+Wazuh's own manager/dashboard/indexer, the full GVM/Greenbone scanner
+engine, OpenSearch, Grafana, and NetBox -- exactly the security/infra
+tier `in_use` was blind to before this phase.
+
+Three real bugs found and fixed live during this rollout, not assumed
+away:
+- `scripts/provision.sh`'s `render_stack_ansible_extra_vars()` only
+  forwards a hardcoded allowlist of `stack.yaml` keys to Ansible --
+  `docker_live_usage_reporter_enabled` wasn't on it, so the role never
+  actually ran anywhere despite every `provision.sh` call reporting
+  `failed=0`. Fixed by adding a `DOCKER_LIVE_USAGE_REPORTER_KEYS` entry
+  matching the existing per-feature-flag pattern.
+- `pentagi-stack/stack.yaml`'s `ansible_playbook` is temporarily swapped
+  to `deploy-pentagi-upstream-vanilla-companion` (a clean-room
+  investigation, per its own comment) -- the role addition only landed
+  on the (currently unused) `deploy-pentagi-stack.yml` until this was
+  caught live and both files patched.
+- Un-gating `es_findings_ingest`'s copy of the shared
+  `es_findings_writer` OpenSearch role-PUT (needed so the new
+  `docker-live-usage*` grant actually reconciles on an
+  already-bootstrapped `harbor-stack`) silently wiped
+  `cve_enrichment_sync`'s/`wazuh_findings_ingest`'s own index patterns
+  the next time it ran, since their own copies of the same task are
+  still gated to "only once, at bootstrap" and never got a chance to
+  reassert theirs. This role name is shared, independently, across four
+  different roles, each with its own hardcoded "extended to X" copy of
+  the same PUT -- no merge, no single source of truth, a pre-existing
+  fragility this tripped over rather than introduced. Fixed by making
+  `es_findings_ingest`'s now-unconditional copy the full union of every
+  known consumer's needs; **flagged, not fixed**, as a real structural
+  risk for whoever adds a fifth consumer of this role next.
+
+### Problem
+
+Phase 13's original title promised "scope reporting + Harbor cleanup" but
+only the reporting half got built. Live verification on 2026-09-07 (the
+same session that fixed `in_use`'s digest-exact matching to also accept
+a tag-exact fallback -- see the fix note above the Phase 13 steps) surfaced
+that the whole approach still falls short of the operator's actual goal:
+**run Trivy centrally against images that are in use, instead of on every
+individual Docker host** -- which necessarily means images *not* in use
+get identified and cleaned up, not just hidden from a dashboard filter.
+
+Three concrete gaps, found live, not assumed:
+
+1. **`in_use` is a reporting-layer filter only.** It changes what the CVE
+   dashboard/deep-dive shortlist shows. It does not shrink Harbor's own
+   scan surface (`scanAll` still rescans every cataloged artifact,
+   in-use or not), does not reduce `harbor-findings`' size (47,173 docs
+   the day this was checked, the overwhelming majority `in_use: false`),
+   and does not delete anything from Harbor's storage. Harbor's only
+   native cleanup is a daily per-project retention schedule that prunes
+   *untagged* artifacts -- confirmed configured, **never confirmed to
+   actually delete anything** (`docs/harbor-stack/README.md`) -- and it
+   does nothing for a still-tagged artifact that's simply no longer
+   deployed (a decommissioned stack's image, an old pinned version
+   nobody rolled forward). Those sit in Harbor's catalog and get
+   rescanned forever.
+
+2. **Phase 13's founding assumption was wrong.** Its own "Design
+   decisions" section states "every stack is already a registered
+   Portainer endpoint" -- reused as the justification for making
+   Portainer the sole live-usage source. Checked live on 2026-09-07: only
+   **9 real stacks** (`ai-services-stack`, `framework.gibbsgreatly.xyz`,
+   `gaming-stack`, `gaming-stack-lab`, `management-stack`,
+   `mcp-utility-stack`, `media-stack`, `media-stack-lab`,
+   `torrent-stack`) plus Portainer's own `local` endpoint are actually
+   registered. Every security/infra-tier stack was **deliberately**
+   exempted from Portainer registration during the earlier
+   integration-gap pass this same session (operator: "technitium
+   exempt, proxy exempt, monitoring/netbox/graylog/apt-cacher exempt...
+   ci-runner exempt, harness-target exempt") -- correctly, for attack-
+   surface reasons (Portainer's agent is a shared management plane with
+   real blast radius). The practical effect: `in_use` is currently blind
+   to every Docker-running container on `harbor-stack`, `authentik-stack`,
+   `proxy-stack`, `technitium-stack`, `monitoring-stack`, `netbox-stack`,
+   `graylog-stack`, `greenbone-stack`, `opensearch-stack`,
+   `pentagi-stack`, `wazuh-stack`, `portainer-stack` itself, `ci-runner-01`,
+   and `secpipe-stack` -- i.e. blind to most of the platform's actual
+   security/infra tier, which is exactly the tier a CVE dashboard most
+   needs to be right about. Confirmed (2026-09-07, operator prompted the
+   check directly): 4 of these (`harbor-stack`, `proxy-stack`,
+   `authentik-stack`, `technitium-stack`) already run Wazuh's
+   `docker-listener` wodle (`wazuh_agent_docker_monitoring_enabled: true`
+   in their deploy playbooks) -- a second, independent per-host signal
+   already partway deployed for exactly this tier, but never connected to
+   `in_use` or to any cleanup mechanism, and not yet extended to the
+   remaining ~9 stacks in that tier that also run Docker.
+
+3. **`harbor_repull`'s `manifest.txt` is a hand-maintained substitute for
+   live-usage tracking, and it drifts.** Two real gaps were found and
+   fixed by hand in this same session (`itzg/minecraft-server`,
+   `portainer/agent` were both live and Harbor-routed but absent from the
+   manifest until the Phase 13 step-7 audit caught it). It's a separate,
+   parallel "what's in use" list from the one `in_use` now computes,
+   maintained by a different, manual process, with no automated
+   cross-check between the two.
+
+### Design decisions (operator-confirmed, 2026-09-07)
+
+- **Cleanup is active, not passive.** Confirmed not-in-use artifacts get
+  actually deleted from Harbor via its artifact API -- not merely
+  excluded from a dashboard, and not left for Harbor's own
+  unconfirmed-to-work retention schedule.
+- **Deletion requires N consecutive confirmed-absent runs before
+  acting**, not a single observation -- protects against a transient
+  Portainer/endpoint blip, a container briefly down for a restart, or a
+  host mid-redeploy. Default proposed: **7 consecutive daily
+  `es-findings-ingest.service` runs** (matches its existing `05:30 UTC`
+  daily cadence -- a full week's grace before anything is deleted).
+  Operator should confirm or adjust this number before uvm-14-05 below
+  is implemented; not treated as silently settled by this default.
+- **Portainer alone is not a holistic live-usage picture** -- explicit
+  operator correction to Phase 13's founding assumption. A second,
+  independent collection path is needed for the security/infra tier
+  Portainer deliberately doesn't reach (see gap 2 above). This phase
+  does not extend Portainer's own reach into that tier (would undo the
+  attack-surface reasoning that excluded them in the first place);
+  instead it adds a separate, narrower collector using access this repo
+  already has and already trusts for that tier: direct SSH/Ansible
+  `docker inspect` queries, the same production-approval-gated access
+  pattern used throughout this session's live verification work, not a
+  new agent or a new credential.
+- **Wazuh's `docker-listener` wodle is a secondary/future cross-check,
+  not this phase's primary mechanism for the exempt tier.** It's already
+  live on 4 of the ~13 relevant stacks, but it streams discrete container
+  lifecycle *events* into Wazuh's alert pipeline (a different index than
+  `wazuh-findings`, which this platform doesn't currently ingest at all)
+  rather than exposing a queryable "what's running right now" snapshot
+  the way Portainer's `docker/containers/json` does. Reconstructing
+  current state from an event stream is real extra work with its own
+  failure modes (a missed stop/start event drifts the reconstructed
+  state silently) for a signal a direct `docker inspect` query gets in
+  one synchronous call. Not ruled out permanently -- worth revisiting if
+  the direct-query approach turns out to have its own problems live --
+  but not the design this phase commits to.
+- **Explicit exemptions from cleanup, decided now rather than discovered
+  the hard way later:**
+  - The `pentagi` Harbor project (deliberately vulnerable pentest
+    targets, `vulhub/struts2` and `kali-linux-fixed`, both already
+    carrying hand-built CVE allowlists per `docs/harbor-stack/README.md`)
+    is fully exempt from usage-based cleanup regardless of live container
+    state -- these images are supposed to exist in Harbor whether or not
+    anything is actively running them at scan time.
+  - Any image an operator has deliberately kept for rollback/standby
+    purposes despite nothing currently running it (the precedent already
+    on record: `dns-stack`, kept live in code as the pre-cutover DNS
+    backend per `docs/dns-refactor/README.md`, "rollback-only, not the
+    active delegate") needs a real, explicit exemption list -- not an
+    inferred one. uvm-14-04 below defines where that list lives.
+- **`manifest.txt`'s auto-generation question (raised, not settled, in
+  Phase 13) stays open until uvm-14-03 lands.** The operator's objection
+  to auto-generating it from Portainer alone -- "Portainer doesn't cover
+  everything, this needs a more holistic picture" -- is exactly gap 2
+  above; auto-generating from the *combined* holistic source this phase
+  builds is worth revisiting once that source exists and has run for
+  long enough to trust, but committing to it now, before the second
+  collector exists, would repeat the same mistake Phase 13 made in
+  reverse. Tracked as uvm-14-07.
+
+### uvm-14-01 — enumerate the exact current gap (research, not code)
+
+Confirm, at execution time (state may have shifted since 2026-09-07), the
+precise list of stacks that (a) actually run Docker, (b) are not a
+registered Portainer endpoint, and (c) do not yet have
+`wazuh_agent_docker_monitoring_enabled: true`. Cross-reference:
+
+- `GET /api/endpoints` against the live Portainer instance (same
+  `PORTAINER_URL`/`PORTAINER_TOKEN` `harbor_live_usage.py` already uses)
+  for (b).
+- `grep -rn "wazuh_agent_docker_monitoring_enabled: true"
+  terraform/lxc/ansible/playbooks/` (source playbooks only, not
+  `.terragrunt-cache/` copies) for (c).
+- `terraform/lxc/ansible/roles/*/tasks/main.yml` `docker_compose`/
+  compose-file evidence, or this repo's own Stack Service Types table in
+  `CLAUDE.md`, for (a).
+
+**Confirmed (2026-09-07, this step actually executed, not a
+placeholder):** `netbox-stack`, `monitoring-stack`, `graylog-stack`,
+`greenbone-stack`, `opensearch-stack`, `pentagi-stack`, `wazuh-stack`,
+`portainer-stack`, `ci-runner-01`, `harness-target`, `harness-target-pve`,
+`pentagi-upstream-control` (12 stacks). Two corrections against the
+scoping section's earlier estimate above: **`harbor-stack` does not
+belong on this list** -- it already has
+`wazuh_agent_docker_monitoring_enabled: true` (confirmed by the same
+grep the scoping section above describes; an inconsistency in the first
+draft of this phase, caught while actually executing this step, not
+before). **`secpipe-stack` does not belong on this list either** -- its
+deploy playbook has zero `docker_compose`/`community.docker` task
+references; it's pure systemd/Python (matches `README.md`'s own
+description: "runs `cve_enrichment_sync`... and `cve_deep_dive`... as
+systemd timers"), not a Docker host at all. Two real stacks the
+scoping section's estimate missed entirely: `harness-target-pve`
+(shares `harness-target`'s own confirmed-Docker playbook, deployed to a
+different node) and `pentagi-upstream-control` (its own playbook, 4
+`docker_compose` references). `authentik-stack`, `proxy-stack`,
+`technitium-stack`, and `harbor-stack` already have the Wazuh
+docker-listener path, so all four are gap-2-solved already, not part of
+this list. `ci-runner-01`'s Docker usage is transient/CI-job-scoped
+(build/pull/push during `harbor_repull.py` and Actions runs, not
+long-lived services) -- still worth collecting, but expect its
+`docker-live-usage` reports to be noisier/less stable than a normal
+compose stack's, and treat that as expected rather than a collector
+bug.
+
+Gate: none -- output is the confirmed list feeding uvm-14-02/03.
+
+### uvm-14-02 — self-reporting local collector for the Portainer-exempt tier
+
+**Design change from the first draft of this phase (operator, 2026-09-07):
+not an Ansible-driven pull.** Every other source in this pipeline
+(`harbor_findings_sync.py`, `gvm_findings_sync.py`,
+`wazuh_findings_sync.py`, `cve_enrichment_sync.py`) is a self-contained
+script that runs locally on its own host as a systemd timer and pushes
+to OpenSearch directly -- none of them are centrally SSH-polled. An
+Ansible-pull design for this one source would be the odd one out, and
+has real problems beyond consistency: every ad-hoc `ansible -m shell`
+against production is already classified ambiguous/mutating by this
+repo's own approval flow (`CLAUDE.md`'s Command Classification table),
+so a *daily automated* job built on that transport either needs a
+standing bypass of that gate or can't run unattended at all; it also
+gets logged verbatim to syslog/Graylog (the exact mechanism that leaked
+`HARBOR_DB_PASSWORD` earlier this session); and it re-creates the same
+"one central node reaches into every host" shape the Portainer
+exemption was designed to avoid in the first place, just with a
+different puller.
+
+Instead: a new small role (e.g. `docker_live_usage_reporter`),
+provisioned **once** the normal way (`scripts/provision.sh`, same as any
+other role -- Ansible only appears at deploy time, never in the
+recurring path) onto each host in uvm-14-01's confirmed gap list. It
+installs:
+
+- a local script (`docker_live_usage_report.py`, stdlib-only, matching
+  this pipeline's existing convention) that runs `docker inspect
+  $(docker ps -q)` **locally against that host's own Docker socket** --
+  read-only, no SSH, no new agent, no Portainer-endpoint registration --
+  and extracts the same two shapes `harbor_live_usage.py` already
+  produces for Portainer-backed hosts: a digest set (`RepoDigests`
+  cross-referenced against the running container's image ID) and a
+  `(project, repository, tag)` set (via the same registry-host-agnostic
+  `parse_image_ref()` already written for Phase 13's tag-fallback fix --
+  factor it into a small shared module both roles import, don't
+  duplicate it);
+- a scoped OpenSearch write credential (same pattern as
+  `es_findings_ingest_es_user_name`/`es_findings_ingest_es_role_name` --
+  a dedicated user limited to write on one new index, never broad
+  cluster access) that the script uses to `PUT` one small per-host
+  document (e.g. `docker-live-usage/_doc/<hostname>`) containing its
+  digest set, tag-ref set, and a report timestamp;
+- a systemd timer running shortly before `es-findings-ingest.service`'s
+  existing `05:30 UTC` slot (e.g. `05:00 UTC`) so the data is fresh when
+  `harbor_findings_sync.py` reads it.
+
+Privilege model: run the script as whatever local account already
+manages that host's own Docker Compose stack (already effectively
+Docker-privileged) rather than provisioning a new docker-group grant
+purely for this -- confirm the exact existing account per stack at
+execution time rather than assuming one shape fits all 11 gap-list
+hosts.
+
+Gate: for each host in the confirmed gap list, the resulting
+`docker-live-usage/<hostname>` document's digest/tag set actually
+includes every container that host's own
+`docker ps --format '{{.Names}}\t{{.Image}}'` shows running at
+collection time (spot-check, not exhaustive); the scoped write
+credential is confirmed unable to write anywhere outside the
+`docker-live-usage` index.
+
+### uvm-14-03 — merge both live-usage sources
+
+`harbor_findings_sync.py`'s `main()` currently calls
+`harbor_live_usage.fetch_live_usage()` once (Portainer only). Extend it
+to also query the `docker-live-usage` index (all documents with a report
+timestamp inside some reasonable freshness window, e.g. the last 48
+hours -- a host whose reporter has gone stale should drop out of the
+combined set rather than have main() trust a weeks-old snapshot) and
+union every per-host digest set and tag-ref set from that query with
+Portainer's, before passing the combined result into
+`build_documents()` -- `build_documents()`'s signature (`live_digests`,
+`live_tag_refs`) doesn't need to change, only what `main()` passes into
+it. Preserve the existing sticky-carry-forward semantics: the combined
+result is `None` only if *both* sources produce nothing this run (Portainer
+totally unreachable AND the `docker-live-usage` index has no fresh
+documents at all), not if either one alone is degraded -- a single
+stale/missing host's report should just be absent from the union, not
+collapse the whole run to "found nothing."
+
+Gate: `python3 -m py_compile terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py`; live run shows the previously-blind gap-list stacks' images now resolving `in_use: true` where genuinely running (e.g. Wazuh's own container image on `wazuh-stack`, Grafana's on `monitoring-stack`).
+
+### uvm-14-04 — cleanup exemption list
+
+New file, shape TBD at execution time but likely a small YAML sibling to
+`known_production_images.json` (e.g.
+`terraform/lxc/ansible/roles/es_findings_ingest/files/assets/harbor_cleanup_exempt.yaml`)
+listing `project/repository` (or `project/repository:tag` where the
+exemption is narrower than the whole repository) entries that active
+cleanup (uvm-14-06) must never delete regardless of live-usage state.
+Seed it with the two categories already decided above: the `pentagi`
+project (whole-project exemption), and `dns-stack`'s rollback-standby
+image(s) (confirm the exact current image reference at execution time --
+`docs/dns-refactor/README.md` names the stack, not necessarily today's
+exact tag).
+
+Gate: none scriptable -- this is a literal, reviewed list, not derived
+data. Have the operator review the seeded list before uvm-14-06 can act
+on it.
+
+### uvm-14-05 — track consecutive not-in-use runs
+
+`harbor-findings`' `artifact.in_use` is currently a plain boolean,
+recomputed fresh (not incrementally) every ingest run -- there's no
+memory of *how long* something has been `false`. Add
+`artifact.not_in_use_since` (ISO timestamp, set the first run an artifact
+is observed `in_use: false`, cleared back to `null` the moment it's ever
+seen `true` again) to `harbor-findings.json`'s mapping and to
+`build_documents()`'s `artifact_fields`, computed via the same
+copy-if-missing painless pattern already proven for `in_use`'s carry-
+forward (Phase 13, `bulk_upsert()`). uvm-14-06's deletion gate becomes
+"`in_use: false` AND `not_in_use_since` is more than N days ago" (N from
+the operator-confirmed default in the Design decisions section above).
+
+Gate: `PUT /harbor-findings/_mapping` adds the field cleanly; after one
+ingest run, spot-check a known not-in-use artifact shows a real
+`not_in_use_since` timestamp, and a known in-use one shows `null`.
+
+### uvm-14-06 — active deletion job
+
+New script, likely `harbor_cleanup.py` colocated with
+`harbor_findings_sync.py` (shares its Harbor auth/API-call helpers --
+import, don't duplicate). Queries `harbor-findings` for artifacts where
+`artifact.in_use: false` and `artifact.not_in_use_since` exceeds the
+configured grace period, excludes anything matching uvm-14-04's
+exemption list, and calls Harbor's artifact delete endpoint (`DELETE
+/api/v2.0/projects/{project}/repositories/{repository}/artifacts/{digest}`)
+for the rest. Ships with a `--dry-run` default (matching every other
+script in this pipeline's convention) that only logs what *would* be
+deleted -- the operator should run dry-run for at least one full grace
+period before enabling real deletion, not enable it in the same pass
+this script is first deployed.
+
+Gate: `python3 -m py_compile`; a dry-run against production lists a
+plausible, small set of genuinely-stale artifacts (spot-check a few by
+hand against Harbor's own UI/API before trusting the list); the
+`pentagi` project and `dns-stack`'s exempted image never appear in a
+dry-run's delete list.
+
+### uvm-14-07 — revisit `manifest.txt` auto-generation
+
+Once uvm-14-03's combined holistic source has run in production for a
+reasonable stretch (operator's call on how long counts as "trust this
+now" -- not pre-decided here), re-raise the auto-generation question
+from Phase 13 with the operator: generate `manifest.txt` from the same
+combined live-usage set `in_use` now uses, instead of hand-maintaining
+it, now that the "Portainer doesn't cover everything" objection has an
+actual fix behind it. Not committed to either outcome by this phase --
+explicitly deferred, not defaulted.
+
+### Open items / not decided yet
+
+- Exact local privilege model for `docker_live_usage_reporter` (uvm-14-02)
+  varies across the 11 gap-list hosts -- confirm per-host at execution
+  time rather than assuming one account shape fits all.
+- Whether Wazuh's `docker-listener` data ever gets connected to this
+  pipeline as a genuine third source (rather than staying an unconnected,
+  partially-deployed parallel signal) -- explicitly deferred per the
+  Design decisions section above, not ruled out permanently.
+- The 7-day default grace period (uvm-14-05/06) is a proposal, not an
+  operator-confirmed final number -- confirm before implementing.
+- Harbor's own daily untagged-artifact retention schedule was never
+  confirmed to actually delete anything (`docs/harbor-stack/README.md`).
+  This phase doesn't depend on it working, but if it turns out *not* to
+  work, `harbor-findings`' size problem is worse than currently measured
+  (untagged historical digests piling up too, not just stale-but-tagged
+  ones) -- worth a dedicated verification pass independent of this
+  phase.

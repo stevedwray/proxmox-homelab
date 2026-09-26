@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "description": "Harbor projects/repositories that active usage-based cleanup (docs/threat-vuln-platform/plan.md Phase 14, uvm-14-06/harbor_cleanup.py) must never delete, regardless of live-usage state or how long artifact.not_in_use_since has been set. Exact match on artifact.project (whole-project exemption) or artifact.project/artifact.repository (narrower, one repository within an otherwise-cleanable project). An unmatched project/repository is NOT exempt by default -- add it here explicitly, never inferred.",
+    "operator_decisions_2026-09-07": [
+      "dns-stack's CoreDNS (kept live in code as the pre-cutover DNS backend, docs/dns-refactor/README.md) does NOT need an entry here -- confirmed while building this list: dns-stack runs CoreDNS as a raw systemd binary (terraform/lxc/ansible/playbooks/deploy-coredns.yml downloads the GitHub release binary directly), not a Docker container. It's never in Harbor's catalog at all, so there's nothing for cleanup to threaten. The Phase 14 plan draft assumed otherwise before this was checked."
+    ]
+  },
+  "exempt_projects": [
+    {
+      "project": "pentagi",
+      "reason": "Deliberately vulnerable pentest targets (kali-linux-fixed, per docs/harbor-stack/README.md's CVE allowlist for this project) -- supposed to exist in Harbor whether or not anything is actively running them at cleanup time."
+    }
+  ],
+  "exempt_repositories": []
+}

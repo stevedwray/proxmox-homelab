@@ -1,0 +1,152 @@
+# Grant greenbone-stack direct SSH access to the MikroTik router's OWN
+# management plane (the `input` chain), narrowly scoped to its single IP --
+# needed for the credentialed scan added in
+# docs/greenbone-stack/network-scan-rollout-plan.md's Phase 3 extension.
+#
+# This is a distinct gap from Phase 1's rules
+# (mikrotik-firewall-greenbone-lan-scan-reach.yml): those are `forward`-chain
+# rules, covering traffic passing THROUGH the router to other hosts in each
+# zone. Reaching the router's own address goes through the separate `input`
+# chain, which has its own, much narrower ruleset -- every VLAN zone
+# (including mgmt_seg) gets ICMP+DNS-only access to the router itself;
+# only the flat LAN (via a blanket `bridgeLocal` rule) gets unrestricted
+# access. This was discovered live 2026-09-03 when the credentialed scan's
+# SSH-based RouterOS detection NVT failed while every other (ICMP/DNS-based)
+# check on the same host succeeded -- confirmed via a raw TCP connect test
+# timing out from greenbone-stack's own host, not just inside a container.
+#
+# Deliberately scoped to greenbone-stack's single IP (192.168.70.11/32), not
+# the whole vlan70-pentest zone -- mirrors Phase 1's own "scope by specific
+# source IP" precedent, and keeps every other zone's router-input-chain
+# posture (ICMP/DNS only) unchanged. This makes greenbone-stack the only
+# VLAN-segmented source with direct SSH to the router's control plane --
+# a real, deliberate widening, called out explicitly rather than silently
+# folded in.
+#
+# Same idempotent read-check-insert-before-anchor-reread-assert pattern as
+# the other mikrotik-firewall-*.yml playbooks. The input chain's anchor is
+# the single global "Drop all other unhandled input traffic" rule (no
+# per-zone input deny exists, unlike the forward chain's pentest_seg-
+# specific anchor) -- matched by its exact comment text, not by
+# interface/address, since it has neither set.
+#
+# Run intentionally against the live router:
+#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-greenbone-router-ssh-input.yml
+
+- name: Ensure greenbone-stack -> router SSH (input chain) firewall reach exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    lab_ip_greenbone: "{{ lookup('env', 'LAB_IP_GREENBONE') | mandatory('LAB_IP_GREENBONE env var is required') }}"
+    greenbone_router_ssh_comment: "greenbone-stack: SSH credentialed scan of router itself"
+    input_chain_final_drop_comment: "Drop all other unhandled input traffic"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read MikroTik input-chain firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter?chain=input"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: input_filters
+      no_log: true
+
+    - name: Find the input-chain final-drop anchor
+      ansible.builtin.set_fact:
+        input_drop_anchor: >-
+          {{
+            (input_filters.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', input_chain_final_drop_comment)
+              | list)
+            | first | default({})
+          }}
+
+    - name: Assert the input-chain final-drop anchor exists
+      ansible.builtin.assert:
+        that:
+          - input_drop_anchor != {}
+        fail_msg: >-
+          No input-chain rule with comment '{{ input_chain_final_drop_comment }}'
+          found -- this is the anchor confirmed live 2026-09-03 (see this
+          file's header). If it's genuinely gone or renamed, add this rule
+          manually and update this playbook's assumption.
+
+    - name: Add greenbone-stack -> router SSH input-chain rule, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          comment: "{{ greenbone_router_ssh_comment }}"
+          chain: "input"
+          action: "accept"
+          in-interface: "vlan70-pentest"
+          src-address: "{{ lab_ip_greenbone }}"
+          protocol: "tcp"
+          dst-port: "22"
+          place-before: "{{ input_drop_anchor['.id'] }}"
+        status_code: [200, 201]
+      when: >-
+        (input_filters.json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'equalto', greenbone_router_ssh_comment)
+          | list) | length == 0
+      no_log: true
+
+    - name: Re-read input-chain firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter?chain=input"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: input_filters_final
+      no_log: true
+
+    - name: Assert the new rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            (input_filters_final.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', greenbone_router_ssh_comment)
+              | selectattr('chain', 'equalto', 'input')
+              | selectattr('action', 'equalto', 'accept')
+              | selectattr('src-address', 'equalto', lab_ip_greenbone)
+              | selectattr('dst-port', 'equalto', '22')
+              | list) | length > 0
+        fail_msg: "Expected greenbone-stack -> router SSH input-chain rule was not found after apply."
+
+    - name: Report the firewall rule is present
+      ansible.builtin.debug:
+        msg: >-
+          greenbone-stack -> router SSH (input chain) reach confirmed
+          present. Manually re-verify rule ORDER (placed before the final
+          drop) before trusting this live, same as every other
+          mikrotik-firewall-*.yml playbook.

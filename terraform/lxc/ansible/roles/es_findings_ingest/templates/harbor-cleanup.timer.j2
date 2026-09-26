@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for harbor-cleanup.service
+
+[Timer]
+OnCalendar={{ es_findings_ingest_harbor_cleanup_on_calendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

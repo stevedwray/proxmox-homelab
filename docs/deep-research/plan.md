@@ -1,8 +1,25 @@
 # Local deep-research implementation plan
 
-Status: Phase 0 complete (2026-09-21). Stage A (Phase 1) scaffold built and
-first real end-to-end query succeeded (2026-09-21); eval harness and
-broader Phase 2 measurement not yet run.
+Status (2026-09-22): Phase 0 complete. Stage A ran, was measured, and is
+now decommissioned (VMID 50014 destroyed 2026-09-22) — its findings fed
+directly into Phase 4. **Stage B (Phase 4) is live**: `deep-research`/
+`deep-research-files` real Docker Compose services in `ai-services-stack`,
+non-root, Authentik `forwardAuth`, verified end-to-end with a real query.
+`deep-research-files` was further generalized into a shared reports
+viewer — see `docs/reporting-platform/plan.md`. Broader Phase 2/3
+measurement (eval harness, job-model decoupling, quota fix, `cve-mcp`
+wiring) not yet done — see Phase 5 for what's confirmed but unbuilt.
+
+**Same day, later:** `web_search` switched from DDGS scraping to Tavily's
+real API after a genuine production incident, and two rounds of real
+production hangs were fully root-caused and fixed — a subprocess
+hard-kill mechanism for `fetch_url_to_workspace`/`grep_workspace_file`,
+every other tool converted to `async def` to escape `agent_framework`'s
+own unkillable-thread tool wrapping, and (the actual trigger, found only
+after the first two fixes didn't stop a live recurrence) an O(n²)
+session-log bug in `engine/tui.py` fixed by throttling `_write_log()`.
+Verified live with a 30,408x speedup on the same workload. Full
+narrative in `docs/deep-research/current-state.md`'s 2026-09-22 entries.
 
 This plan delivers in two stages. **Stage A** reproduces Donato Capitella's
 own design as literally as practical — Local Agent Builder skill, Microsoft
@@ -956,9 +973,18 @@ produced real Phase 2 signal, not just a UI smoke test:
   type (unlike the earlier over-fetching finding on a trivial fact).
 - Individual `web_search` calls took **145–147 seconds each** in the
   TUI's own tool-timing display — dramatically worse than any earlier
-  isolated test (sub-second to a few seconds). This is real evidence that
-  DDGS degrades under sustained use from this network, feeding directly
-  into Phase 2's open DDGS-reliability question.
+  isolated test (sub-second to a few seconds). Attributed at the time to
+  DDGS degrading under sustained use. **Reinterpreted 2026-09-22**: this
+  is very likely (not confirmed retroactively — the session data behind
+  it wasn't kept) a symptom of the O(n²) `_write_log()` bug fixed that
+  day (see `docs/deep-research/current-state.md`'s 2026-09-22 entries),
+  not DDGS itself — the TUI's own tool-timing display measures wall-clock
+  time including the post-call session-log write, and a growing
+  multi-source research session would have made every later tool call
+  look progressively slower for reasons having nothing to do with the
+  network. Kept here rather than deleted, both as the historical record
+  and because DDGS's own reliability turned out to be a real, separate
+  problem anyway (see the 2026-09-22 entry on replacing it with Tavily).
 - **The quota-exhaustion design worked correctly under real pressure**: once
   the Searcher's `web_search` quota was exhausted, the agent did not loop
   or hang — it explicitly stated *"Searcher quotas are exhausted. Writing

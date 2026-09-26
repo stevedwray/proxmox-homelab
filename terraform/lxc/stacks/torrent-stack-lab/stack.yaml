@@ -1,0 +1,143 @@
+hostname: torrent-stack-lab
+ip_address: 192.168.80.11/24
+gateway: 192.168.80.1
+dns_server: 192.168.80.1
+network:
+  zone: media_seg
+vmid: 80011
+cores: 2
+memory: 4096
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 20G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+- docker
+- media
+- torrent
+depends_on: []
+provides:
+- service: qbittorrent
+  port: 8080
+  protocol: tcp
+- service: prowlarr
+  port: 9696
+  protocol: tcp
+- service: radarr
+  port: 7878
+  protocol: tcp
+- service: sonarr
+  port: 8989
+  protocol: tcp
+- service: lidarr
+  port: 8686
+  protocol: tcp
+- service: jellyseerr
+  port: 5055
+  protocol: tcp
+ansible_playbook: deploy-torrent-stack-lab
+deployment_tier: apps
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
+portainer_stacks:
+- name: torrent-stack-lab
+  compose_file: docker-compose.yml
+  env:
+  - name: LAB_DOMAIN
+    # Single dollar, not Terraform's $${...} escape -- this field is never
+    # touched by Terraform (confirmed: portainer_stacks doesn't appear
+    # anywhere in the .tf files), it's read directly by provision.sh's
+    # own resolve_placeholders() as plain YAML, which only understands
+    # $${...}. A $${...} value here leaves a stray leading "$" in the
+    # resolved output (its regex matches just the inner ${lab_domain}),
+    # producing a broken value like "$lab.gibbsgreatly.xyz" -- caught
+    # live 2026-09-12 via a real "invalid reference format" deploy
+    # failure. media-stack-lab's stack.yaml has the identical latent bug
+    # (copied from there), never triggered because its Portainer stacks
+    # already exist -- flagged, not fixed here, separate stack.
+    value: "${lab_domain}"
+  # Same "invalid reference format" failure mode as the Ansible-driven
+  # deploy path's own REGISTRY_HOST gap (see deploy-torrent-stack-lab.yml)
+  # but a genuinely separate instance of it: Portainer deploys this stack
+  # via its own stacks API using ONLY the env vars listed here, so every
+  # $${REGISTRY_HOST}/... image reference in docker-compose.yml resolves
+  # blank unless it's declared here too. Found live 2026-09-12 -- same
+  # root cause pattern, different code path, needed its own fix.
+  - name: REGISTRY_HOST
+    value: "${lab_fqdn_harbor}"
+
+# Documentation/consistency only -- NOT applied by Terraform (bind-type
+# mount points are root@pam-only on Proxmox, same restriction
+# media-stack-lab's host_bind_mounts already documents).
+#
+# CORRECTED 2026-09-12 after a real live mistake: these MUST be applied
+# starting at mp1, never mp0. mp0 is Terraform's OWN docker_storage_size
+# mount_point resource (the provider assigns it index 0 automatically,
+# confirmed live on media-stack-lab: mp0 is its 30G /var/lib/docker
+# volume, its own host_bind_mounts start at mp1). A first attempt here
+# used `pct set 80011 -mp0 ...` for the first bind mount, which
+# silently OVERWROTE Terraform's docker-storage mount_point instead of
+# adding a new one -- Docker's storage then ran on the container's
+# plain 8G rootfs instead of its own dedicated 20G volume, and
+# `docker compose up -d` failed partway through pulling 8 images (very
+# likely disk space exhaustion). Container was destroyed and recreated
+# clean after this was found; do not repeat the mistake.
+#
+# mp1 reuses the SAME host path media-stack-lab already has mounted on
+# pve (/mnt/nas-media, itself NFS-mounted from 192.168.1.3) --
+# backup=0, same reasoning as mp2 below: media-stack-lab's own
+# container already backs up this content, a second container
+# re-backing up the identical NFS-mounted tree would be redundant. No
+# new NFS setup needed on the pve host, just a bind-mount-point
+# pointing at the same already-mounted directory. mp2's host_path
+# (/storage/ct-100/incoming) is legacy torrent-stack's own real
+# /incoming storage, confirmed live 2026-09-12 via `pct config 100` on
+# pve (mp2 there: "/storage/ct-100/incoming,mp=/incoming,backup=1,
+# size=1T") -- a plain host directory (BIND mount), not a
+# Proxmox-managed volume, so it's safe to add as a second mp elsewhere;
+# contrast VMID 100's own mp0
+# ("apps-containers:subvol-100-disk-1,mp=/var/lib/docker,size=20G"),
+# which IS a storage-pool-backed volume and could NOT be safely
+# double-mounted this way. Shared (not owned) so both stacks'
+# qBittorrent instances write to the same real directory, operator
+# request 2026-09-12 -- see plan.md's Operator-only actions for the
+# accepted concurrency risk. backup=0 here deliberately, unlike VMID
+# 100's own backup=1 on the same directory -- one backup job covering
+# it (legacy's) is enough; a second container backing up the identical
+# 1TB tree would be redundant. Apply both via direct root SSH `pct set
+# 80011 -mp1 /mnt/nas-media,mp=/nas-media,backup=0 -mp2
+# /storage/ct-100/incoming,mp=/incoming,backup=0` (operator-only, see
+# plan.md "Operator-only actions") -- NEVER -mp0 -- then confirm live
+# via `pvesh get /nodes/pve/lxc/80011/config` that mp0 is still the
+# docker-storage volume and mp1/mp2 are the two bind mounts.
+#
+# mp3/mp4/mp5 added 2026-09-12, real live finding: mp1's raw NFS mount
+# shows every file owned by NFS's anonymous-squash uid 65534 at 755 --
+# radarr/sonarr/lidarr (uid 1000, non-root by design) can't write to it
+# at all. media-stack-lab already solved this for its own writable
+# subpath (immich-photos) via a `bindfs` shim on the host
+# (/mnt/nas-media-ct80010) that remaps NFS's anonymous ownership to the
+# unprivileged LXC's own uid 1000 (map=1000/101000:@100/@101000) --
+# confirmed generic to any unprivileged container on the standard
+# subuid range, not tied to VMID 80010 specifically, so reused directly
+# rather than creating a redundant third shim. Each shadows just that
+# one subtree of mp1's raw mount, same pattern media-stack-lab already
+# uses for immich-photos/pictures. Applied via `pct set 80011 -mp3
+# /mnt/nas-media-ct80010/video/movies,mp=/nas-media/video/movies,backup=0
+# -mp4 /mnt/nas-media-ct80010/video/tv,mp=/nas-media/video/tv,backup=0
+# -mp5 /mnt/nas-media-ct80010/music,mp=/nas-media/music,backup=0`, then
+# radarr/sonarr/lidarr were recreated (docker compose rm -sf + up -d)
+# so they'd pick up the new mounts -- Docker resolves bind mounts at
+# container-creation time, not on restart.
+host_bind_mounts:
+- host_path: /mnt/nas-media
+  lxc_path: /nas-media
+- host_path: /storage/ct-100/incoming
+  lxc_path: /incoming
+- host_path: /mnt/nas-media-ct80010/video/movies
+  lxc_path: /nas-media/video/movies
+- host_path: /mnt/nas-media-ct80010/video/tv
+  lxc_path: /nas-media/video/tv
+- host_path: /mnt/nas-media-ct80010/music
+  lxc_path: /nas-media/music

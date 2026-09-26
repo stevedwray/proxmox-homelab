@@ -18,6 +18,14 @@
 # (mcp-utility-stack, also ai_seg). Replaces the Stage A throwaway LXC
 # (VMID 50014), which is disposed of, not migrated. See
 # docs/deep-research/plan.md Phase 4 for the full design.
+#
+# Memory 4096 -> 6144 (2026-09-16, recovered here 2026-09-22 -- see
+# fix/deep-research-web-search-mcp): web-search-mcp (a headless-Chromium
+# Playwright MCP server fronted by mcpo) needs real, persistent memory
+# this LXC didn't carry before. This bump was applied live via `pct set`
+# back on 2026-09-16 (terragrunt plan hit unrelated drift at the time) but
+# was never brought back into this tracked file until now -- the live LXC
+# has been running at 6144 the whole time this said 4096.
 
 hostname: ai-services-stack
 ip_address: "${lab_ip_ai_services}/24"
@@ -27,7 +35,7 @@ network:
   zone: ai_seg
 vmid: 50013
 cores: 2
-memory: 4096
+memory: 6144
 swap: 1024
 rootfs_size: 16
 storage_profile: platform-default
@@ -46,6 +54,7 @@ tags:
   - openwebui
   - searxng
   - deep-research
+  - web-search-mcp
   - docker
 depends_on:
   - apt-cacher-stack
@@ -61,7 +70,8 @@ provides:
     protocol: tcp
 ansible_playbook: "deploy-ai-services-stack"
 deployment_tier: ai
-portainer_agent: false
+portainer_agent: true
+register_portainer_env: true
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"

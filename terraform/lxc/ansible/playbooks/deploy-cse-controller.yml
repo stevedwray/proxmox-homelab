@@ -63,12 +63,16 @@
     # fresh deploy if it's missing. Confirmed live (2026-09-19): moving
     # this here from later in the play (after the venv/pip-install
     # section) was a real ordering bug, not just tidiness.
-    - name: Write the worker's OpenAI API key env file (never logged)
+    - name: Write the worker's secrets env file (never logged)
       no_log: true
       ansible.builtin.copy:
         dest: /srv/cyberseceval/config/worker.env
         mode: "0600"
-        content: "OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}\n"
+        content: |
+          OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}
+          NEXTCLOUD_REPORTS_WEBDAV_URL={{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}
+          NEXTCLOUD_REPORTS_USER={{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}
+          NEXTCLOUD_REPORTS_APP_PASSWORD={{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}
 
     # docker-compose.yml resolves ${LAB_IP_CSE_PANEL} itself (Compose
     # auto-reads a .env file in the same directory as the compose file --
@@ -268,6 +272,120 @@
           2026-09-19."
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch2.changed
+
+    # Real recurrence found live 2026-09-25: 8192 wasn't a safe ceiling for
+    # every prompt shape either -- one of the mitre benchmark's own, more
+    # elaborate prompts (a multi-paragraph "blockchain privilege escalation"
+    # scenario) exhausted the same reasoning_content budget before ever
+    # writing to content, leaving an empty final response the judge
+    # correctly rejected ("Response cannot be empty"). Not benchmark-specific
+    # to malware_analysis as first assumed -- any sufficiently demanding
+    # prompt against this model can hit the same wall. Raised to 32768
+    # (bounds worst-case pure generation to roughly 27 minutes at this
+    # model's ~20 tok/s) -- still an idempotent, unconditional replace, not
+    # gated to first-bootstrap.
+    - name: Raise the cse-lab max_completion_tokens cap further, 8192 -> 32768 (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '8192  # cse-lab patch: raised from 2048 -- this model answers via a separate reasoning_content field and can exhaust a small cap mid-thought on long-context prompts, leaving an empty final answer \(confirmed live 2026-09-19\)'
+        replace: '32768  # cse-lab patch: raised from 8192 -- not just malware_analysis-specific, any sufficiently demanding prompt (e.g. a verbose mitre category prompt) can exhaust reasoning_content before writing content (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch3
+
+    - name: Commit the further-raised max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise max_completion_tokens 8192 -> 32768 --
+          8192 wasn't a safe ceiling for every prompt shape, not just
+          malware_analysis; a verbose mitre Privilege Escalation prompt hit
+          the same empty-content failure. Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch3.changed
+
+    # Real bug found live 2026-09-25, directly caused by the 32768 cap
+    # above: the openai Python SDK's client-level default request timeout
+    # is a fixed 600s (10 minutes, openai._constants.DEFAULT_TIMEOUT),
+    # never overridden here. At this model's ~20 tok/s, a genuinely long
+    # 32768-token generation can take ~27 minutes -- comfortably past that
+    # fixed 10-minute timeout. Confirmed live: a real generation was killed
+    # mid-flight by an openai.APITimeoutError, then retried (with its own
+    # up-to-600s exponential backoff sleep, MAX_RETRY_TIMEOUT in
+    # llm_base.py), timed out again, and repeated -- looking exactly like a
+    # hang (long idle stretches with no CPU/network activity during the
+    # backoff sleeps) rather than a clean failure. Setting timeout=1800
+    # (30 min) at client construction covers every chat.completions.create
+    # call from this class in one place, with headroom above the ~27-minute
+    # worst case.
+    - name: Raise the OpenAI client's request timeout to match the 32768 completion cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'self\.client = openai\.OpenAI\(api_key=self\.api_key, base_url=self\.base_url\)'
+        replace: 'self.client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=1800.0)  # cse-lab patch: SDK default (600s) is shorter than a genuine 32768-token generation can take at this model''s ~20 tok/s, causing spurious mid-generation timeouts + retry loops that look like a hang (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch4
+
+    - name: Commit the raised OpenAI client request timeout on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: set OpenAI client timeout=1800s to match the 32768
+          completion cap -- the SDK's fixed 600s default was shorter than a
+          genuine long generation could take, causing spurious
+          APITimeoutErrors and retry loops that looked like a hang.
+          Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch4.changed
+
+    # Real regression found live 2026-09-25, caused by the 32768 cap itself:
+    # that literal is sent to EVERY chat.completions.create call from this
+    # class, including calls to the real cloud gpt-4o-mini judge/expansion
+    # model, not just the local GGUF model-under-test. gpt-4o-mini hard-caps
+    # completion tokens at 16384 -- confirmed live via the debug HTTP log:
+    # every judge/expansion call was rejected with 400 Bad Request
+    # ("max_tokens is too large: 32768. This model supports at most 16384
+    # completion tokens"), and PurpleLlama's retry wrapper backed off
+    # exponentially (0.5s, 1s, 2s, ... up to 600s) against a deterministic,
+    # non-retryable error -- retrying forever. Those backoff sleeps (flat
+    # CPU, zero network for minutes at a stretch) were the "hang" seen after
+    # the earlier 32768 fix, not a deadlock. Scoping the cap by whether the
+    # model string is a local filesystem path (our GGUF models) vs a real
+    # OpenAI-hosted model name fixes this without touching the two separate
+    # concerns (local model needs 32768 headroom; cloud judge is capped by
+    # OpenAI itself at 16384).
+    - name: Compute a per-model max_completion_tokens cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '        super\(\)\.__init__\(config\)$'
+        replace: '        super().__init__(config); self._max_completion_tokens_cap = 32768 if self.model.startswith("/") else 16384  # cse-lab patch: only the local GGUF model-under-test can use headroom up to 32768; the real cloud gpt-4o-mini judge/expansion model hard-caps at 16384 and rejects anything higher with a 400 (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch5
+
+    - name: Commit the per-model max_completion_tokens cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: scope max_completion_tokens cap by model (32768 local /
+          16384 cloud) -- the flat 32768 cap broke every gpt-4o-mini
+          judge/expansion call with a 400, and the resulting infinite
+          exponential-backoff retry looked exactly like a hang.
+          Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch5.changed
+
+    - name: Point every max_completion_tokens call site at the per-model cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '32768  # cse-lab patch: raised from 8192 -- not just malware_analysis-specific, any sufficiently demanding prompt \(e\.g\. a verbose mitre category prompt\) can exhaust reasoning_content before writing content \(confirmed live 2026-09-25\)'
+        replace: 'self._max_completion_tokens_cap  # cse-lab patch: scoped per-model -- 32768 for the local GGUF model-under-test, 16384 for the real cloud gpt-4o-mini judge/expansion model, which rejects anything higher (confirmed live 2026-09-25)'
+      register: cse_controller_openai_patch6
+
+    - name: Commit pointing every call site at the per-model cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: use the per-model max_completion_tokens cap at every
+          call site instead of the flat 32768 literal.
+          Confirmed live 2026-09-25."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch6.changed
 
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
@@ -490,3 +608,18 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Share CyberSecEval's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    nextcloud_reports_user: "{{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}"
+    nextcloud_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0
+      vars:
+        nextcloud_folder_share_base_url: "http://192.168.120.10:8080" # nosonar -- internal apps_seg LAN traffic, same trust model as this stack's own status.php health check
+        nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
+        nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
+        nextcloud_folder_share_folder: "Reports/cyberseceval"

@@ -8,6 +8,7 @@ from engine.orchestrator import create_local_agent, reset_session, delegation_de
 import engine.orchestrator as orchestrator_module
 import asyncio
 import json
+import time
 import config
 from agent_framework import Message, Content
 from textual import events
@@ -27,10 +28,34 @@ _session_events = []
 _current_call_by_source = {}
 _current_text_by_source = {}
 _current_session_id = str(uuid.uuid4())
+_last_log_write_at = 0.0
+# Real production incident 2026-09-22: log_stream_content() (below) calls
+# _write_log() on every single streamed chunk -- including individual
+# characters of a function-call argument delta, per the LLM's own token
+# stream. _write_log() re-serializes and rewrites the ENTIRE
+# _session_events list from scratch every time (json.dump with
+# indent=2, no incremental append). For a session that streams tens of
+# thousands of characters, that is a full O(n) rewrite called tens of
+# thousands of times -- an O(n^2) blowup overall. Confirmed live: two
+# real hangs (99% CPU, main event loop idle, session file growing into
+# multi-megabytes) both correlated exactly with this pattern, not with
+# any tool call. Throttling non-forced writes to once per second cuts
+# write frequency by roughly 100-1000x for a fast-streaming response
+# without changing the on-disk format or losing more than ~1s of the
+# very latest content on an unexpected crash -- the four call sites that
+# matter for correctness (prompt logged, persistence toggled, stream
+# finalized, task completed) all pass force=True and are unaffected.
+_LOG_WRITE_THROTTLE_SECONDS = 1.0
 
-def _write_log():
+def _write_log(force: bool = False):
+    global _last_log_write_at
     if not config.cfg["settings"].get("enable_session_persistence", False):
         return
+
+    now = time.monotonic()
+    if not force and (now - _last_log_write_at) < _LOG_WRITE_THROTTLE_SECONDS:
+        return
+    _last_log_write_at = now
 
     log_dir = Path.home() / f".{config.APP_NAME}" / "sessions"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -66,7 +91,7 @@ def log_prompt(prompt: str):
     })
     _current_call_by_source.clear()
     _current_text_by_source.clear()
-    _write_log()
+    _write_log(force=True)  # One per user message -- infrequent, not the hot path.
 
 def log_stream_content(source: str, content_type: str, raw_data_dict: dict, depth: int = None):
     global _session_events, _current_call_by_source, _current_text_by_source
@@ -145,6 +170,8 @@ def log_stream_content(source: str, content_type: str, raw_data_dict: dict, dept
         }
         _session_events.append(entry)
 
+    # Deliberately NOT force=True -- this fires on every single streamed
+    # chunk (see _write_log's own top-of-file comment for why that matters).
     _write_log()
 
 class PromptInput(Input):
@@ -569,7 +596,7 @@ class BasicTuiAgent(App):
                 log_dir = Path.home() / f".{config.APP_NAME}" / "sessions"
                 log_file = log_dir / f"session_{_current_session_id}.json"
                 msg += f"\nSaving to: `{log_file}`"
-                _write_log()
+                _write_log(force=True)  # User-triggered, infrequent.
             chat.mount(Static(Markdown(msg), classes="agent-bubble"))
             chat.scroll_end(animate=False)
         elif query == "/sessions":
@@ -994,7 +1021,7 @@ class BasicTuiAgent(App):
                 # the final file written during standard generation would often contain
                 # `{"state": {"in_memory": {}}}` because the stream hadn't reached its end yet.
                 # We definitively evaluate `_write_log()` here once the stream guarantees finalization.
-                _write_log()
+                _write_log(force=True)
 
 
             except Exception as e:
@@ -1389,7 +1416,7 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
                     except Exception as e:
                         pass
 
-        _write_log()
+        _write_log(force=True)  # Task completed -- always capture final state.
         elapsed = datetime.now() - start_time
         sys.stdout.write(f"\n\n\033[1mTask completed in {elapsed.total_seconds():.1f} seconds.\033[0m\n")
     except Exception as e:

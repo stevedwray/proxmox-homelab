@@ -1,9 +1,22 @@
 from typing import Dict, List
 import os
 import re
+import asyncio
 import contextvars
 from agent_framework import tool
-from tools.core import with_quota, _get_tool_rule
+from tools.core import with_quota, _get_tool_rule, run_with_hard_kill
+
+# Every @tool below is declared `async def`, not plain `def` -- see
+# tools/core.py's run_with_hard_kill comment for why: agent_framework
+# itself wraps every synchronous tool in asyncio.to_thread() before
+# calling it, and its own source comments admit that thread "cannot be
+# interrupted" if the call hangs. `async def` bypasses that wrapping
+# entirely. Most of these tools' bodies are fast, non-blocking dict/file
+# I/O with nothing worth isolating further; grep_workspace_file is the
+# one exception (an LLM-chosen regex against arbitrary fetched content
+# is a genuine ReDoS/catastrophic-backtracking risk), so its actual
+# matching step also runs in a hard-killable subprocess via
+# run_with_hard_kill, not just an async wrapper.
 
 # --- WORKSPACE FILE SYSTEM ---
 _IN_MEMORY_FS: Dict[str, str] = {}
@@ -72,7 +85,7 @@ def get_workspace_file_content(filename: str) -> str | None:
 
 @tool
 @with_quota
-def read_workspace_file(filename: str, start_line: int = 1, end_line: int = -1) -> str:
+async def read_workspace_file(filename: str, start_line: int = 1, end_line: int = -1) -> str:
     """Read a stored text file. Use start_line and end_line bounds to read large files safely. Both bounds are 1-indexed."""
     try:
         content = get_workspace_file_content(filename)
@@ -99,7 +112,7 @@ def read_workspace_file(filename: str, start_line: int = 1, end_line: int = -1) 
 
 @tool
 @with_quota
-def write_workspace_file(filename: str, content: str) -> str:
+async def write_workspace_file(filename: str, content: str) -> str:
     """Save content to your workspace."""
     try:
         path = _get_safe_path(filename)
@@ -120,7 +133,7 @@ def write_workspace_file(filename: str, content: str) -> str:
 
 @tool
 @with_quota
-def list_workspace_files() -> str:
+async def list_workspace_files() -> str:
     """List all files in your workspace, showing line and character counts."""
     files = get_workspace_files()
     if not files: return "Workspace empty."
@@ -130,17 +143,19 @@ def list_workspace_files() -> str:
         res.append(f"{k} (Lines: {len(content.splitlines())}, Chars: {len(content)})")
     return "\n".join(res)
 
-@tool
-@with_quota
-def grep_workspace_file(filename: str, pattern: str, context_lines: int = 2) -> str:
-    """Search for a regex pattern within a file, returning matching lines with surrounding context."""
+_GREP_TIMEOUT_SECONDS = 15
+
+
+def _grep_worker(lines: list, pattern: str, max_matches: int, context_lines: int, result_queue) -> None:
+    """Module-level so it's picklable for the spawned subprocess -- see
+    this module's top-of-file comment for why grep specifically needs
+    this: the regex pattern comes from the LLM itself, and an arbitrary
+    LLM-chosen pattern against arbitrary fetched-web-page content is a
+    genuine catastrophic-backtracking (ReDoS) risk, not a hypothetical
+    one -- fetched HTML/text is exactly the kind of adversarial-shaped
+    input that triggers pathological regex engine behavior.
+    """
     try:
-        content = get_workspace_file_content(filename)
-        if content is None: return f"Error: '{filename}' not found."
-
-        lines = content.splitlines()
-        max_matches = _get_tool_rule("grep_workspace_file", "max_matches", 10)
-
         compiled = re.compile(pattern, re.IGNORECASE)
         matches = []
         for i, line in enumerate(lines):
@@ -149,7 +164,9 @@ def grep_workspace_file(filename: str, pattern: str, context_lines: int = 2) -> 
                 if len(matches) >= max_matches:
                     break
 
-        if not matches: return f"No matches found for '{pattern}'."
+        if not matches:
+            result_queue.put(("ok", f"No matches found for '{pattern}'."))
+            return
 
         out = []
         for match_idx in matches:
@@ -160,14 +177,36 @@ def grep_workspace_file(filename: str, pattern: str, context_lines: int = 2) -> 
                 prefix = "> " if j == match_idx else "  "
                 out.append(f"{j + 1:04d}{prefix}{lines[j]}")
 
-        return "\n".join(out)
+        result_queue.put(("ok", "\n".join(out)))
+    except Exception as e:
+        import traceback
+        result_queue.put(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
+
+
+@tool
+@with_quota
+async def grep_workspace_file(filename: str, pattern: str, context_lines: int = 2) -> str:
+    """Search for a regex pattern within a file, returning matching lines with surrounding context."""
+    try:
+        content = get_workspace_file_content(filename)
+        if content is None: return f"Error: '{filename}' not found."
+
+        lines = content.splitlines()
+        max_matches = _get_tool_rule("grep_workspace_file", "max_matches", 10)
+
+        try:
+            return await run_with_hard_kill(_grep_worker, (lines, pattern, max_matches, context_lines), _GREP_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            return f"Grep Error: pattern '{pattern}' timed out after {_GREP_TIMEOUT_SECONDS}s -- likely a pathological regex against this file's content. Try a simpler pattern."
+        except RuntimeError as e:
+            return f"Grep Error: {e}"
     except Exception as e:
         import traceback
         return f"Grep Error: {e}\n\nTraceback:\n{traceback.format_exc()}"
 
 @tool
 @with_quota
-def remove_workspace_file(filename: str) -> str:
+async def remove_workspace_file(filename: str) -> str:
     """A destructive action that mandates human oversight. Deletes a file."""
     try:
         path = _get_safe_path(filename)

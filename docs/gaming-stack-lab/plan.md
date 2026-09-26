@@ -7,14 +7,14 @@ surface than Portainer's UI for switching between the two (can't run both
 at once — memory). See `README.md` for the full ARK smoketest findings;
 summarized here only as much as the decisions below need.
 
-**First pass — one step authored and ready, the rest is research +
-explicit open questions, not yet resolved into step blocks.** Unlike
-`docs/media-stack-lab/plan.md`'s finished state, this plan does not yet
-cover Wings installation/pairing, the Minecraft egg + `foreverworld`
-migration, or the ARK egg — each needs either a live `pve` check (IP/VMID)
-or further research (Pterodactyl's actual egg JSON schema, which hasn't
-been pulled into this session yet) before it can be written as literal,
-executable step content rather than a decision left for later.
+**Current state (2026-09-26):** Panel, Wings, ARK, and the migrated
+`Foreverworld` Minecraft server are live. Minecraft has passed world/mod/RCON
+checks and the game-slot interlock has passed both directions: each game is
+blocked with exit 75 while the other holds the slot. The old Compose source
+and pre-copy ZFS snapshot remain as rollback assets. AzerothCore Playerbots is
+also live under Wings; its first real LAN login and deliberate `addclass` bot
+creation have passed. Party behaviour remains the final operator gameplay
+check.
 
 ## Research this plan is based on
 
@@ -135,13 +135,9 @@ executable step content rather than a decision left for later.
   the smoketest's own `azixus`-image defaults (`7790`/`32330`) that had
   been hardcoded into `gaming-lab-03`'s Wings allocations by mistake;
   fixed in the real playbook, see its hand-back below.
-- **Minecraft egg content for `foreverworld`'s modpack**: Pterodactyl's
-  Forge/NeoForge egg JSON schema hasn't been pulled into this session yet.
-  Given `foreverworld` is described as "a very detailed modpack" (the
-  operator's own words), this is exactly the kind of content that needs
-  the literal-transcription treatment from `step-packet-schema.md`
-  (exact loader version, exact startup command), not generic "model this
-  on a Forge egg" prose — needs its own research pass before it's a step.
+- **Minecraft egg content for `foreverworld`'s modpack**: RESOLVED
+  2026-09-26 — see "`foreverworld` migration to Wings" below for the real,
+  verified facts (loader/version/host/data path) and the step-by-step plan.
 - **AzerothCore**: mentioned as a future addition, not researched at all
   yet. Deliberately out of scope for this plan's steps — worth its own
   research pass (does it need a persistent MySQL/game data volume with
@@ -393,25 +389,178 @@ gates:
 **Done 2026-09-20 — see `README.md`'s hand-back for this step.** Both
 files written, both gates pass (`foreverworld-untouched` confirmed clean
 — `git diff --name-only` shows only the two intended files).
-`PTERODACTYL_LAB_API_KEY` secret and the Panel admin-user/API-key
-bootstrap itself are still required before this playbook can actually
-run — not yet done, tracked below.
+The Panel admin bootstrap and both Application/Client API keys are now live
+and SOPS-backed; this historical step is complete.
 
 ---
 
+## `foreverworld` migration to Wings
+
+Written 2026-09-26, at the operator's request for a clear step-by-step
+plan before any execution. Repository implementation is complete; no live
+migration phase has run. The authoritative execution and rollback procedure
+is `docs/gaming-stack-lab/minecraft-migration.md`.
+
+### Verified facts (read-only checks, not assumptions)
+
+- **Host**: `gaming-stack-lab` (same host Wings/ARK already run on — not
+  the legacy `gaming-stack`/CT 103 host `terraform/lxc/stacks/gaming-stack/`
+  describes, which the operator confirmed is unused, kept only for
+  research).
+- **Data path**: `/srv/docker/minecraft/foreverworld` — already on the
+  500GB dedicated `gaming-containers` mount (the same one Wings itself
+  was migrated onto), not the cramped rootfs.
+- **Currently**: Portainer-managed (`docker compose`), not Wings-managed.
+  Confirmed stopped as of 2026-09-26 (memory contention with the running
+  ARK server — the exact problem this whole project exists to solve).
+- **World**: `level.dat` last modified 2026-09-20 09:39, ~6 days before
+  this plan was written — real, recently-played data, not abandoned.
+- **Base image**: `itzg/minecraft-server:java21` (pulled via Harbor) —
+  same image family Pterodactyl's community `itzg`-based eggs are built
+  around.
+- **Loader/version**: `TYPE=NEOFORGE`, `VERSION=1.21.1`,
+  `NEOFORGE_VERSION=21.1.234`. Modpack is "Wildworks" — a pre-built
+  NeoForge server release extracted onto disk (own `run.sh`, `mods/`,
+  `config/`), not declared via any `CURSEFORGE_*` env var, so there is no
+  mod list to transcribe — the mods are the files on disk.
+  `OVERRIDE_SERVER_PROPERTIES=false`, so the container just runs what's
+  already there.
+  Source: `terraform/lxc/ansible/playbooks/deploy-minecraft-wildworks.yml`
+  (real, current — `terraform/lxc/stacks/gaming-stack/foreverworld-docker-
+  compose.yml`'s `TYPE=FORGE`/`1.20.1` is stale, superseded by this
+  playbook per its own git history).
+- **Ports**: `25565` game, `25575` RCON. RCON password is the SOPS
+  secret `MINECRAFT_FOREVERWORLD_RCON_PASSWORD`.
+- **Not carried into this migration**: the `minecraft-monitor` (mc-monitor
+  → Prometheus) sidecar from the current compose project. Wings runs one
+  container per server, no sidecar model — operator explicitly deprioritized
+  this when asked, treated as a separate future follow-up, not blocking.
+
+### Implementation correction and execution status
+
+The maintained Pelican NeoForge egg is not `itzg`-based and does not preserve
+this pack's release-native `run.sh` path. The checked-in
+`wildworks-neoforge-egg.json` therefore deliberately uses the maintained
+Java 21 yolk while starting the already-reviewed Wildworks release directly.
+Egg import and shared-mount assignment are manual Panel-admin operations;
+server creation remains Application-API-driven.
+
+The node now has a repository-defined, non-blocking `flock` interlock shared
+by ARK, Minecraft, and future games. It prevents concurrent starts rather
+than relying on an operator convention. The full inventory, allocation,
+snapshot, copy-manifest, ownership, checksum, startup, two-direction
+exclusion, rollback, and retirement gates are in `minecraft-migration.md`.
+
+## AzerothCore (with Playerbots) — new server under Wings
+
+Written 2026-09-26, at the operator's request. Not yet started. This is a
+brand-new server, not a migration — nothing existing is at risk here the
+way `foreverworld`'s data is.
+
+### Verified facts
+
+- **The egg**: `Nazgile94/pelican-acore` (`egg-azerothcore-aio.json`) —
+  a single container bundling MySQL 8.4, authserver, worldserver, client
+  data, and module management. Confirmed by reading the actual egg JSON's
+  `variables` array directly, not a README summary.
+- **Honest caveat, not hidden**: this repo's own `AI-NOTICE.md` discloses
+  it was built with substantial ChatGPT assistance and is a
+  single-maintainer community project — a different maturity tier than
+  the `pelican-eggs`-org ARK egg already in production here. Worth
+  knowing going in, not a reason by itself to avoid it (no
+  `pelican-eggs`-org AzerothCore egg exists — checked — this is the real
+  option, not one of several).
+- **Playerbots, confirmed real and exact**: `USE_PLAYERBOTS=1` switches
+  the egg to `mod-playerbots/azerothcore-wotlk` (the correct fork —
+  standard AzerothCore will not compile against the Playerbots module,
+  confirmed from the module's own install docs) automatically.
+  `PLAYERBOTS_MODULE_BRANCH` defaults to `master`. The egg's own
+  `MAP_UPDATE_THREADS` variable description explicitly recommends `4`
+  when Playerbots is enabled (default `1` otherwise) — apply this, not
+  the default.
+- **Private party-only bot policy (operator decision, 2026-09-26):** at
+  most two humans will use the realm. Do not accept the module's defaults of
+  500 roaming random bots. The fork must set
+  `AiPlayerbot.RandomBotAutologin=0`, `AiPlayerbot.MinRandomBots=0`, and
+  `AiPlayerbot.MaxRandomBots=0`. Bots are to be added deliberately to a
+  player's party; the per-party bot cap still needs an operator choice.
+- **Client data licensing**: `CLIENT_DATA_AUTO_DOWNLOAD=1` (default)
+  pulls DBC/maps/vmaps/mmaps via AzerothCore's own standard `acore.sh
+  client-data` tooling — long-established, normal practice in this
+  community, not something novel. This is *extracted data*, not
+  Blizzard's actual client executable/assets — no WoW client purchase or
+  upload needed for the server side. Running any WoW private server
+  still sits in the general legal gray area private servers always have
+  under Blizzard's EULA — worth the operator's own awareness, not a
+  decision this plan makes for them.
+- **Disk**: egg's own docs recommend 30GB+ (source compile, client data,
+  database). `gaming-stack-lab`'s `/srv/docker` mount has ~480GB free as
+  of the last check (2026-09-24) — no capacity concern.
+- **Host/allocations**: `gaming-stack-lab`, same Wings node as ARK and
+  (once migrated) Minecraft. Needs its own allocations: `WORLD_PORT`
+  (default `8085`) and `AUTH_PORT` (default `3724`, standard WoW
+  3.3.5a) — confirm neither collides with ARK's or the new Minecraft
+  server's allocations before creating it.
+
+### Steps (AzerothCore)
+
+1. **Create a checked-in interlocked egg fork** before import. Narrow its
+   `docker_images` field for Panel validation, mount `/game-slot` read-only,
+   and take the non-blocking shared `flock` before the bundled database or
+   game processes start. `scripts/render-azerothcore-playerbots-egg.sh`
+   renders the pinned-upstream import artifact with the agreed Playerbots
+   policy. Verify the selected image contains `flock` before import.
+2. **Reconcile allocations** for `WORLD_PORT`/`AUTH_PORT` in the managed
+   gaming-stack deployment, then import the reviewed egg manually through
+   Panel Admin. Egg import is not exposed by the Application API. Associate
+   the same `game-slot-lock` mount with the new egg and create the server via
+   the Application API only after confirming the allocations are free.
+   **Completed 2026-09-26:** imported egg 19 into the `World of Warcraft`
+   nest, associated it with mount 1 (`game-slot-lock`), and created unassigned
+   node-1 allocations 7 (`192.168.60.10:3724`) and 8
+   (`192.168.60.10:8085`).
+3. **Set startup variables**: `USE_PLAYERBOTS=1`,
+   `MAP_UPDATE_THREADS=4`, `EXPANSION=2` (WotLK), `REALM_ADDRESS=auto`,
+   and a two-human player limit. Set the three explicit no-random-bots
+   variables above, plus the operator-chosen per-party bot cap and rate
+   multipliers (Blizzlike defaults are `1` for every rate — a deliberate
+   choice question, not something to default silently given this project's
+   ARK experience with rate multipliers). **Completed 2026-09-26:** the live
+   server has the agreed values: two human slots, four map-update threads,
+   Playerbots enabled, all configured rates at `1`, random-bot
+   autologin/minimum/maximum at `0`, a maximum of four deliberately added
+   bots, and four offline AddClass accounts for dependable class/faction
+   selection. Those prepared characters do not autologin or roam.
+4. **First boot**: expect a long first start (core compile + client-data
+   download + DB import) — watch the console live (same websocket
+   approach used all night), not just poll for "running", since a
+   silent early failure here would look identical to "still compiling"
+   for a long time.
+5. **Verify**: authserver/worldserver both up, realm visible, a test
+   login actually works, bots can be spawned/added. **Completed 2026-09-26:**
+   both services are listening on `192.168.60.10:3724`/`:8085`; operator
+   account `gibbs` logged in as human paladin `Aldred` from the LAN and
+   successfully added an on-demand Playerbot. The remaining operator check is
+   that the bot joins/follows/assists Aldred's party as desired. Operator
+   verification is still required for the "does this actually feel right"
+   gameplay parts, same as every other server in this project.
+6. **Decide on rate multipliers and player limits** as a real, explicit
+   choice once the operator has played with it — not defaulted
+   silently, matching the standing lesson from ARK's XP-multiplier saga
+   this session.
+7. **Completed 2026-09-26 — LAN firewall prerequisite:** the operator added
+   RouterOS forward rule `*B1`, allowing only `192.168.1.0/24` to reach
+   `gaming-stack-lab` (`192.168.60.10`) on TCP 3724/8085. It is before the
+   existing `game_seg` default-deny rule, has no WAN match, and was verified
+   afterward through the read-only RouterOS API. The matching declarative
+   intent is in `terraform/lxc/network/pve.yaml`.
+
+8. **Before production creation**, set the agreed explicit RAM/CPU/disk limits
+   (16 GiB / 4 CPU / 60 GiB). The game-slot interlock prevents concurrent
+   games but does not size an AzerothCore build.
+
 ## Not covered by this plan
 
-- **The Minecraft (Forge/NeoForge) egg and `foreverworld`'s actual
-  migration** — world/mods/config copy, ownership/UID fix, loader-jar
-  version pinning. Same literal-transcription treatment
-  `media-lab-07-bring-across-existing-users` got for Jellyfin's user data,
-  not yet written.
-- **The ARK egg itself** — the two fixes from the smoketest
-  (`cap_add: SYS_PTRACE`, `-nosteam`) are known; the actual Pterodactyl
-  egg JSON that encodes them is not yet authored.
-- **AzerothCore** — not researched at all yet, deliberately deferred.
-- **Decommissioning or flipping `portainer_agent` on `gaming-stack-lab`**
-  once Wings takes over — open question above, not decided.
 - `terragrunt apply`, `provision.sh --stack pterodactyl-lab`, and
   health-check validation — real infrastructure steps, stay
   manual/operator-run, same as every other plan in this repo.

@@ -7,6 +7,10 @@ spec:
   routes:
     - name: authentik
       host: authentik.${LAB_DOMAIN}
+      # No Pangolin route of any kind (public or private_host) -- operator
+      # decision, 2026-09-25: Authentik must never gain any externally
+      # reachable path, direct or via Pangolin. See
+      # docs/nextcloud-stack/README.md "Authentik-via-Pangolin retired".
       backend:
         type: url
         url: http://${LAB_IP_AUTHENTIK}:9000

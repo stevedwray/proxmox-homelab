@@ -9,6 +9,14 @@ source of truth for unresolved judgment calls.
 
 ## Status (2026-09-19): Phase 1 complete; Phase 2 started; Phase 3 (secure coding) verified functional; Phase 4 (CyberSOCEval) dataset installed and verified complete; Phase 6 (spear phishing) victim/judge model configured and state machine verified; Phase 7's full clone/configure/test/generate-pair-json/destroy cycle built and run for real; cse-kali has real autonomous-agent SSH access; cse_seg (dedicated isolation zone) built and verified live; cse-code-eval (Phase 5) deployed and verified live; a web control panel for triggering/monitoring runs is live, see `docs/cyberseceval-panel/README.md`
 
+**Update, 2026-09-22:** every benchmark run's results now durably
+survive independent of Redis/Celery TTLs -- `cse_tasks.py`'s
+`run_benchmark` writes `report.md`/`manifest.json` into its
+already-on-disk `run_dir` per `docs/reporting-platform/CONVENTION.md`.
+See that workspace's `plan.md` Phase 2 for the fix and
+`docs/cyberseceval-panel/README.md`'s TTL-storage note for the
+corrected understanding of what was and wasn't actually at risk.
+
 The plan splits into two independent tracks (§1a): `pve-test` (cyber range)
 and `pve-tiny` (compute/orchestration). Only the first has started.
 

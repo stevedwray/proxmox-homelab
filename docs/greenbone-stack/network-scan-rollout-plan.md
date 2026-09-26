@@ -2,10 +2,12 @@
 
 Status: **Phases 1, 2, and 4 (weekly full-vuln scheduling) done and live in
 production, confirmed by a successful unattended overnight run 2026-08-17.**
-Phase 4's daily-discovery half, Phase 3 (deferred by decision), Phase 5, and
-Phase 6 remain open — see each phase's own status line below. Decisions
-below were made with the operator 2026-08-16; this file is the plan to
-implement them. Read
+Phase 3's first pass (Linux/workstation/Pi hosts) has been designed since
+2026-08-19 but not yet run against production; a MikroTik-router extension
+to it was added 2026-09-03, also not yet run. Phase 4's daily-discovery
+half, Phase 5, and Phase 6 remain open — see each phase's own status line
+below. Decisions below were made with the operator 2026-08-16; this file is
+the plan to implement them. Read
 [README.md](./README.md) and [pentagi-integration.md](./pentagi-integration.md)
 first — this project extends the same `greenbone-stack`, but is a genuinely
 different mission from both of those: this is *standing, scheduled,
@@ -18,6 +20,36 @@ Turn `greenbone-stack`'s GVM/OpenVAS instance from "a scanner that can hit
 one authorized target when asked" into a routine discovery + vulnerability
 scanning program covering the whole home network and lab: every Proxmox SDN
 zone on `pve`, plus the flat `192.168.1.0/24` LAN.
+
+## OCI public-edge discovery
+
+The OCI Pangolin edge is not in a home-lab CIDR and must never be folded into
+the broad LAN/VLAN targets. `setup_oci_pangolin_discovery.py` creates one
+separate, unscheduled Greenbone **Discovery** task for `192.9.191.163`,
+restricted to TCP 22/80/443 and UDP 51820/21820. Starting it requires the
+explicit `GREENBONE_START_OCI_PANGOLIN_DISCOVERY=true` opt-in. It performs no
+credentialed or Full-and-fast vulnerability scan. This is the initial,
+low-impact public surface check; schedule or promote it only after reviewing
+its first result.
+
+### Credentialed OCI Pangolin audit (live; first run complete)
+
+After the public discovery result is reviewed, the separate
+`setup_oci_pangolin_credentialed.py` program creates one explicit-host GVM
+task using the `greenbone-audit` account. Its private key is SOPS-backed,
+bind-mounted only into the throwaway `gvm-tools` process, and is distinct
+from the normal OCI administrator key. It remains unscheduled and requires
+`GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN=true` for the first run.
+The OCI Ansible role owns creation and revocation of the account/key; GVM
+object revocation is paired with account removal. The first manual run
+completed on 2026-09-23 and authenticated successfully. It remains
+unscheduled while its package/library remediation and the web-finding
+validation are completed. The alleged osCommerce upload/SQLi findings were
+checked against the live service and are Next.js fallback/404 false positives,
+not evidence of a web-shell upload. The follow-up manual authenticated scan
+completed after the OCI package/Gradle cleanup and SSH MAC tightening: it
+confirmed SSH login and package checks, with only low-severity TCP timestamps
+remaining in the latest report.
 
 ## Why this isn't just "add a few more targets"
 
@@ -296,6 +328,54 @@ normal test-hypervisor validation path. Do not apply it to `pve` without the
 standard production-mutation preflight and explicit operator approval. First
 run each credentialed Task manually; attach a schedule only after confirming
 that it authenticates and has acceptable impact.
+
+### Phase 3 extension — credentialed scan of the MikroTik router (2026-09-03)
+
+Unlike the rest of Phase 3, this target has no reusable admin SSH identity
+to borrow — RouterOS's user/policy model is per-account, not "root plus
+sudo." This required actually provisioning a new, dedicated, least-privilege
+identity on the live router, decided with the operator 2026-09-03:
+
+- **New RouterOS group `gvm-scan`**, purpose-built rather than reusing the
+  existing `api-ro` user (RouterOS's stock `read` group, which unusually
+  also carries `reboot`/`sniff`/`sensitive`/`winbox` policy bits, and was
+  provisioned for a different trust boundary — Terraform's own read-only
+  REST API access). `gvm-scan`'s policy is explicit allow/deny, mirroring
+  the existing `dns-api` group precedent: only `ssh` (log in at all) and
+  `read` (run read-only diagnostic/print commands — what OpenVAS's SSH
+  detection NVTs need) are granted; every other bit — including `reboot`,
+  `sniff`, `sensitive`, and every other transport — is explicitly denied.
+- **New RouterOS user `gvm-scan`** in that group. Auth is SSH-key only
+  (GMP `usk` credential type, consistent with every other Phase 3
+  credential); the account also gets a strong random password
+  (`MIKROTIK_GVM_SCAN_PASSWORD`, SOPS) purely because RouterOS's `/user/add`
+  requires a password field — GVM's stored credential never uses it.
+- **New Ansible playbook**: `ansible/00-initial-setup/mikrotik-gvm-scan-user.yml`
+  — idempotent group/user/SSH-key creation, same read-check-write-reread-
+  assert style as the other `mikrotik-*.yml` playbooks. The public key is
+  staged as a temp file via `POST /rest/file/add` with an inline `contents`
+  field (confirmed live this works with no FTP/SCP transfer needed), then
+  `/user/ssh-keys/import` references it by filename, then the temp file is
+  removed. Run intentionally against the live router, same caution as
+  `mikrotik-game-seg.yml`.
+- **New SOPS secrets** (`terraform/secrets.common.enc.yaml`):
+  `MIKROTIK_GVM_SCAN_USER`, `MIKROTIK_GVM_SCAN_PASSWORD`, and
+  `GREENBONE_MIKROTIK_SSH_PRIVATE_KEY` (the private half of the ed25519
+  keypair; the public half is a non-secret literal in the playbook itself).
+- **No new firewall rule needed** — Phase 1's existing rules already give
+  `greenbone-stack` reach to `192.168.1.1`.
+- Wired into the same `setup_credentials.py`/`credential-program` tag as
+  the rest of Phase 3: a 4th named credential (`mikrotik-gvm-scan`, login
+  `gvm-scan`) and a new single-host Target (`192.168.1.1`), unscheduled, to
+  be run manually first — same "prove it authenticates before scheduling"
+  rule as the rest of Phase 3.
+- The router is currently Tier A (discovery-only) per Phase 2's table.
+  This extension adds a credentialed detection Task; it does not by itself
+  promote the router to the scheduled full-vuln tier.
+- **Not yet run** as of 2026-09-03 — the RouterOS-side playbook and the
+  `credential-program` tag both still need to be executed against the live
+  router and production `pve` under the standard production-mutation
+  preflight.
 
 ## Phase 4 — Scheduling
 

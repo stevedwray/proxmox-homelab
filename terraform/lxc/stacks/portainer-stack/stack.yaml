@@ -40,7 +40,11 @@ network:
 ansible_playbook: "deploy-portainer-stack"
 deployment_tier: platform
 apt_cacher_host: ""
-dns_server: "${lab_ip_dns}"
+# Was $${lab_ip_dns} (retired CoreDNS dns-stack, destroyed 2026-09-08): left
+# this LXC's own /etc/resolv.conf pointing at a dead resolver (host DNS
+# failing live, found 2026-09-26). Same mgmt-gateway resolver as its mgmt_seg
+# peers (authentik, graylog, monitoring, step-ca).
+dns_server: "${lab_gw_mgmt}"
 portainer_agent: false
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
@@ -49,3 +53,8 @@ docker_socket_proxy_bind_addr: "${lab_ip_portainer}"
 docker_socket_proxy_listen_port: 2375
 docker_socket_proxy_targets:
   - "${lab_ip_portainer}"
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

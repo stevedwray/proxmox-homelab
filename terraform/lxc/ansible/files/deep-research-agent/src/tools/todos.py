@@ -1,3 +1,8 @@
+# Declared `async def`, not plain `def` -- see tools/core.py's
+# run_with_hard_kill comment / tools/fs.py's top-of-file comment for why:
+# agent_framework wraps every synchronous tool in an unkillable
+# asyncio.to_thread(). These bodies are fast, non-blocking file I/O with
+# nothing worth isolating further; `async def` alone is enough here.
 import os
 from agent_framework import tool
 from tools.core import with_quota
@@ -5,7 +10,7 @@ from tools.fs import _get_workspace_type, _get_workspace_dir, get_workspace_file
 
 @tool
 @with_quota
-def write_todos(todos: str) -> str:
+async def write_todos(todos: str) -> str:
     """Write or update a todo list for the orchestrator task.
 
     Use this to track your plan and mark items as completed.
@@ -41,7 +46,7 @@ def write_todos(todos: str) -> str:
 
 @tool
 @with_quota
-def read_todos() -> str:
+async def read_todos() -> str:
     """Read the current todo list to review progress.
 
     Use this before continuing work to see which tasks are done ([x])

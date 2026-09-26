@@ -82,8 +82,10 @@
     greenbone_admin_password: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory('GREENBONE_ADMIN_PASSWORD env var is required') }}"
     greenbone_steve_ssh_private_key: "{{ lookup('env', 'GREENBONE_STEVE_SSH_PRIVATE_KEY') | mandatory('GREENBONE_STEVE_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_openvas_workstation_ssh_private_key: "{{ lookup('env', 'GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY env var is required') }}"
+    greenbone_mikrotik_ssh_private_key: "{{ lookup('env', 'GREENBONE_MIKROTIK_SSH_PRIVATE_KEY') | mandatory('GREENBONE_MIKROTIK_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_start_task_name: "{{ lookup('env', 'GREENBONE_START_TASK_NAME') | default('', true) }}"
     greenbone_status_task_name: "{{ lookup('env', 'GREENBONE_STATUS_TASK_NAME') | default('', true) }}"
+    greenbone_oci_pangolin_audit_ssh_private_key: "{{ lookup('env', 'GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY env var is required') }}"
 
     # Per-user LDAP login via Authentik's existing LDAP outpost (same
     # instance graylog-stack already uses -- see
@@ -442,6 +444,25 @@
                   "/var/lib/notus/advisories",
                   "-m",
                   "666",
+                  # Both default to disabled/unbounded upstream. Confirmed
+                  # live 2026-09-14: resuming 13 stalled tasks at once (after
+                  # the OOM-storm recovery -- see stack.yaml's memory/swap
+                  # comment) launched them all concurrently with zero
+                  # backpressure, OOM-killing ospd-openvas itself a second
+                  # time even at the new 6144MB ceiling. gvmd's own
+                  # Running/Queued/Requested task states already expect this
+                  # kind of throttling to happen on the scanner side -- these
+                  # two flags are what actually makes that real instead of
+                  # gvmd handing ospd-openvas everything at once.
+                  # min-free-mem-scan-queue reads /proc/meminfo, which inside
+                  # this LXC's own cgroup already correctly reports the
+                  # container's real ceiling (confirmed: free -h shows 6.0Gi,
+                  # not the pve host's 125GB), so the threshold below is
+                  # meaningful here, not fooled by host-wide free memory.
+                  "--min-free-mem-scan-queue",
+                  "1500",
+                  "--max-scans",
+                  "3",
                 ]
               volumes:
                 - gpg_data_vol:/etc/openvas/gnupg
@@ -839,6 +860,87 @@
       register: greenbone_scan_program_setup
       tags: [scan-program]
 
+    # Public OCI edge coverage is intentionally Discovery-only and limited to
+    # the exact service surface. It has no schedule: every execution is an
+    # approved assessment, avoiding a surprise Internet-facing scan.
+    - name: Write OCI Pangolin public-edge discovery setup script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_oci_pangolin_discovery.py"
+        dest: "{{ greenbone_compose_dir }}/setup_oci_pangolin_discovery.py"
+        mode: "0644"
+      tags: [oci-edge-scan]
+
+    - name: Create or run the OCI Pangolin public-edge discovery task
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_oci_pangolin_discovery.py:/tmp/setup_oci_pangolin_discovery.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          -e GREENBONE_START_OCI_PANGOLIN_DISCOVERY={{ (lookup('env', 'GREENBONE_START_OCI_PANGOLIN_DISCOVERY') | default('false', true) | bool) | ternary('true', 'false') }}
+          gvm-tools python3 /tmp/setup_oci_pangolin_discovery.py
+        chdir: "{{ greenbone_compose_dir }}"
+      register: greenbone_oci_edge_scan_setup
+      changed_when: >-
+        'created port list' in greenbone_oci_edge_scan_setup.stdout
+        or 'created target' in greenbone_oci_edge_scan_setup.stdout
+        or 'created task' in greenbone_oci_edge_scan_setup.stdout
+        or 'started task' in greenbone_oci_edge_scan_setup.stdout
+      no_log: true
+      tags: [oci-edge-scan]
+
+    - name: Create temporary directory for OCI Pangolin credentialed scan key
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ greenbone_compose_dir }}"
+        prefix: .oci-pangolin-credentialed-
+      register: greenbone_oci_pangolin_credentialed_tempdir
+      no_log: true
+      tags: [oci-pangolin-credentialed-scan]
+
+    - name: Create OCI Pangolin credentialed task and remove its temporary key
+      tags: [oci-pangolin-credentialed-scan]
+      block:
+        - name: Write OCI Pangolin credentialed task setup script
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_oci_pangolin_credentialed.py"
+            dest: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}/setup_oci_pangolin_credentialed.py"
+            mode: '0644'
+
+        - name: Stage the dedicated OCI Pangolin audit key for GVM
+          ansible.builtin.copy:
+            content: "{{ greenbone_oci_pangolin_audit_ssh_private_key }}"
+            dest: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}/greenbone-oci-pangolin-audit.key"
+            mode: '0644'
+          no_log: true
+
+        - name: Create or start the OCI Pangolin credentialed GVM task
+          ansible.builtin.command:
+            cmd: >-
+              docker compose run --rm --no-deps
+              -v {{ greenbone_oci_pangolin_credentialed_tempdir.path }}/setup_oci_pangolin_credentialed.py:/tmp/setup_oci_pangolin_credentialed.py:ro
+              -v {{ greenbone_oci_pangolin_credentialed_tempdir.path }}/greenbone-oci-pangolin-audit.key:/tmp/greenbone-oci-pangolin-audit.key:ro
+              -e GVM_USERNAME=admin
+              -e GVM_PASSWORD={{ greenbone_admin_password }}
+              -e GREENBONE_OCI_PANGOLIN_AUDIT_KEY_PATH=/tmp/greenbone-oci-pangolin-audit.key
+              -e GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN={{ (lookup('env', 'GREENBONE_START_OCI_PANGOLIN_CREDENTIALED_SCAN') | default('false', true) | bool) | ternary('true', 'false') }}
+              gvm-tools python3 /tmp/setup_oci_pangolin_credentialed.py
+            chdir: "{{ greenbone_compose_dir }}"
+          register: greenbone_oci_pangolin_credentialed_setup
+          changed_when: >-
+            'created credential' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created port list' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created target' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'created task' in greenbone_oci_pangolin_credentialed_setup.stdout
+            or 'started task' in greenbone_oci_pangolin_credentialed_setup.stdout
+          no_log: true
+      always:
+        - name: Remove temporary OCI Pangolin credentialed scan key
+          ansible.builtin.file:
+            path: "{{ greenbone_oci_pangolin_credentialed_tempdir.path }}"
+            state: absent
+          no_log: true
+
     # Phase 4 (partial) -- operator instruction 2026-08-16: schedule only
     # the vulnerability ("full-vuln") Tasks, staggered an hour apart, LAN
     # segment last, first run 22:00 local time, recurring weekly. Separate
@@ -909,6 +1011,13 @@
             mode: "0644"
           no_log: true
 
+        - name: Write MikroTik gvm-scan SSH private key for credential-program
+          ansible.builtin.copy:
+            content: "{{ greenbone_mikrotik_ssh_private_key }}"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key"
+            mode: "0644"
+          no_log: true
+
         - name: Create credentialed targets and unscheduled tasks
           ansible.builtin.command:
             cmd: >-
@@ -916,10 +1025,12 @@
               -v {{ greenbone_credential_program_tempdir.path }}/setup_credentials.py:/tmp/setup_credentials.py:ro
               -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key:/tmp/mikrotik-gvm-scan.key:ro
               -e GVM_USERNAME
               -e GVM_PASSWORD
               -e GREENBONE_STEVE_KEY_PATH
               -e GREENBONE_OPENVAS_WORKSTATION_KEY_PATH
+              -e GREENBONE_MIKROTIK_KEY_PATH
               -e GREENBONE_START_TASK_NAME
               -e GREENBONE_STATUS_TASK_NAME
               gvm-tools python3 /tmp/setup_credentials.py
@@ -929,6 +1040,7 @@
             GVM_PASSWORD: "{{ greenbone_admin_password }}"
             GREENBONE_STEVE_KEY_PATH: /tmp/steve.key
             GREENBONE_OPENVAS_WORKSTATION_KEY_PATH: /tmp/openvas-workstation.key
+            GREENBONE_MIKROTIK_KEY_PATH: /tmp/mikrotik-gvm-scan.key
             GREENBONE_START_TASK_NAME: "{{ greenbone_start_task_name }}"
             GREENBONE_STATUS_TASK_NAME: "{{ greenbone_status_task_name }}"
           register: greenbone_credential_program_setup
@@ -974,6 +1086,21 @@
   roles:
     - role: gvm_findings_ingest
       when: gvm_findings_ingest_enabled | default(false) | bool
+
+- name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive: a new role, new files under its own directory, a new
+  # systemd timer, and a new dedicated (shared) OpenSearch user -- does not
+  # touch this stack's own compose deployment or any other role's state.
+  # See docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02) -- this stack
+  # is one of the confirmed gap-list hosts Portainer deliberately doesn't
+  # reach. Gated the same way es_findings_ingest/harbor_repull are: explicit
+  # opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: docker_live_usage_reporter
+      when: docker_live_usage_reporter_enabled | default(false) | bool
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

@@ -1,6 +1,6 @@
 # gaming-stack-lab (planning workspace)
 
-## CHECKPOINT — 2026-09-20
+## CHECKPOINT — 2026-09-26
 
 **Goal**: add ARK: Survival Ascended alongside `gaming-stack-lab`'s
 existing Minecraft (`foreverworld`), with a real start/stop/console
@@ -46,26 +46,23 @@ design work.
 | `pterodactyl-lab` (Panel) | Live at `http://192.168.60.20` / `https://pterodactyl.lab.gibbsgreatly.xyz`, Traefik+Authentik-fronted, admin bootstrapped |
 | Wings (on `gaming-stack-lab`) | Live, paired with Panel as Node 1 |
 | ARK server | Live, real, permanent (id 2) — `gaming-stack-lab` `192.168.60.10:7777`, `TheIsland_WP`, casual-tuned settings |
-| `foreverworld` (Minecraft) | **Untouched** — still on its original compose-managed setup, not yet migrated to Wings. Never read, written, or put at risk by any of this work — verified by gate at every step that could have touched it. |
-| Branch | `feat/gaming-stack-lab-pterodactyl`, ~9 commits, **not pushed to origin, not merged to `stable`/`main`** |
+| `Foreverworld` (Minecraft) | Live under Wings as server 3, with world/mod/RCON and two-direction interlock checks passed. The old Compose source is stopped and the pre-copy snapshot is retained for the confidence period. |
+| Migration implementation | Completed production migration with checked-in eggs, shared interlock, additive allocations, full-copy rollback path, and operator in-game verification. |
+| Branch | `feat/gaming-stack-lab-ark-mods`; not merged to `stable`/`main` |
 | Known, flagged-not-fixed gaps | (1) `gaming-stack-lab`'s own Terraform state doesn't resolve from its working directory (workspace-selection mismatch, not empty) — **do not run `terragrunt apply` against this stack** until diagnosed separately; the `ansible_playbook` field is live-patched directly in the gitignored `inventory.yml` as a workaround. (2) The LAN→`game_seg` UDP rule for ARK's game/peer/query ports (`7777`/`7778`/`27015`), applied live via RouterOS CLI, is **not yet mirrored into `pve.yaml`** — do that before this is considered done. (3) `MIKROTIK_USER`'s SOPS credential lacks RouterOS write permission (API returns "not enough permissions (9)") — every live firewall change this session went through manual operator CLI instead; worth fixing the credential's own permissions separately. |
 
 ### Future plans / next steps, in likely priority order
 
 1. **Mirror the LAN→ARK-ports firewall rule into `pve.yaml`** (small, no
    research needed — just hasn't been done yet).
-2. **Minecraft egg + `foreverworld` migration** — blocked on the operator
-   pulling `foreverworld`'s live compose config (mod list, loader
-   version); the actual migration is a file copy into Wings' volume, not
-   a conversion, and the old instance stays untouched until the new one
-   is verified working, matching `media-stack-lab`'s own precedent for
-   exactly this kind of cutover.
-3. **AzerothCore** — not researched at all yet, deliberately deferred.
-4. **Diagnose `gaming-stack-lab`'s Terraform workspace problem** before
+2. **AzerothCore** — implement the interlocked egg fork,
+   allocation/firewall reconciliation, and explicit resource/gameplay
+   decisions in `plan.md`.
+3. **Diagnose `gaming-stack-lab`'s Terraform workspace problem** before
    any future `terragrunt apply` against that stack is attempted for real.
-5. **Decide on `stable`/`main` promotion** for this branch — an operator
+4. **Decide on `stable`/`main` promotion** for this branch — an operator
    call, not something to do unprompted.
-6. Optional, explicitly deferred by the operator: port-forwarding +
+5. Optional, explicitly deferred by the operator: port-forwarding +
    hairpin NAT to make ARK's in-game "Join" button work directly from the
    public server-browser listing, instead of the console/Favorites
    workaround already confirmed working.
@@ -80,8 +77,8 @@ design work.
 | ARK feasibility | **Confirmed live 2026-09-19** — runs under Proton inside `gaming-stack-lab`'s Docker-in-LXC nesting, with two fixes (see below). No fundamental nesting/bubblewrap wall. |
 | Control-plane choice | Pterodactyl (Panel + Wings), chosen over continuing with bare Portainer, specifically because the operator wants proper per-game start/stop/console UX and is already planning a third game (AzerothCore) |
 | Topology | Panel: new LXC, `game_seg`. Wings: **must** run on `gaming-stack-lab` itself (same host as the Docker daemon it manages — Wings doesn't support a remote Docker daemon out of the box) |
-| Migration model | Existing `foreverworld` Minecraft data (world, mods, config, whitelist/ops) gets copied into Wings' managed volume, not lost — this is a file copy, not a conversion. Old compose-managed instance runs in parallel until verified, then retired. |
-| AzerothCore | Not researched yet. Out of scope for this plan's steps — noted as a future addition once Panel/Wings exist. |
+| Migration model | `Foreverworld` was copied into a Wings-managed volume and passed operator in-game verification. The old Compose source remains stopped with a rollback snapshot through the confidence period. |
+| AzerothCore Playerbots | Live under Wings as server 4: interlocked rendered egg, LAN-only TCP 3724/8085 RouterOS rule (`*B1`), 16 GiB/4 CPU/60 GiB limits, first LAN login, and deliberate Playerbot creation all verified. One operator gameplay check remains: party join/follow/assist behaviour. |
 
 ## ARK: Survival Ascended smoketest — findings (2026-09-19)
 

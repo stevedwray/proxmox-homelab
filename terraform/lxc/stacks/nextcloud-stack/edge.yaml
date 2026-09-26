@@ -1,0 +1,31 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: nextcloud-stack-edge
+  stack: nextcloud-stack
+spec:
+  routes:
+    - name: nextcloud
+      host: nextcloud.${LAB_DOMAIN}
+      pangolin:
+        public_host: nextcloud.pan.gibbsgreatly.xyz
+        # Client-only route using the established LAN hostname. It has no
+        # public Pangolin resource or DNS record; the private-resource alias
+        # resolves only for an authenticated Pangolin client.
+        private_host: true
+      backend:
+        type: url
+        url: http://${LAB_IP_NEXTCLOUD_STACK}:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # No Authentik/OIDC of any kind -- operator decision, 2026-09-25.
+        # Nextcloud's own local login is the only auth layer; Pangolin's
+        # own "nextcloud-users" role/MFA is the outer gate for the public
+        # route. See docs/nextcloud-stack/README.md "Authentik-via-Pangolin
+        # retired".
+        mode: none

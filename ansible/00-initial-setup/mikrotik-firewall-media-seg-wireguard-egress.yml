@@ -1,0 +1,177 @@
+---
+# torrent-stack-lab (docs/torrent-stack-modernization/plan.md,
+# torrent-lab-09) needs gluetun's WireGuard tunnel to reach the
+# internet on udp/51820 from media_seg (VLAN 80, 192.168.80.0/24) --
+# the same real gap the superseded
+# docs/application-migration/01-torrent-stack-lab.md plan identified
+# for its abandoned dl_seg zone; media_seg needs the equivalent rule
+# since gluetun now lives here instead.
+#
+# CONFIRMED live 2026-09-12 via a read-only GET against
+# /ip/firewall/filter (operator-directed -- this session does have API
+# read access): media_seg's real containment anchor is rule *8A,
+# chain=forward, action=drop, comment "media_seg default-deny to LAN
+# and other zones" -- matched on src-address=192.168.80.0/24, with NO
+# in-interface set at all. This is a real, concrete difference from
+# pentest_seg's anchor (in-interface=vlan70-pentest, per
+# mikrotik-firewall-greenbone-lan-scan-reach.yml) and from this file's
+# own first draft, which guessed the anchor would be
+# in-interface=vlan80-media -- that name is real and confirmed
+# correct (used by rule *85, "media_seg to Authentik for OIDC"), but
+# it's the WRONG rule: matching on it would have found no forward
+# drop/reject, fallen into a since-removed "append without
+# place-before" fallback, and landed the new accept rule AFTER *8A in
+# rule order -- permanently dead, since RouterOS evaluates top to
+# bottom and *8A's catch-all deny would fire first. Exactly the
+# rule-ordering gotcha this file's own greenbone precedent warns about
+# for "a rule appended after an existing catch-all." Fixed before this
+# playbook was ever run for real. Also confirmed live: the
+# established "internet" convention for this zone (rule *89, "media_seg
+# internet package and image egress") scopes destination as
+# dst-address=!192.168.0.0/16 (not private space), not an unscoped
+# match -- this rule follows the same convention rather than matching
+# any destination.
+#
+# Same idempotent read-check-insert-before-anchor-reread-assert pattern
+# as mikrotik-firewall-greenbone-lan-scan-reach.yml, single rule
+# instead of a per-destination loop, anchor now a confirmed constant
+# rather than a runtime lookup with a fallback -- there is exactly one
+# way this needs to be inserted, not two.
+
+- name: Ensure media_seg -> internet udp/51820 (torrent-stack-lab gluetun WireGuard) firewall reach exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    media_seg_cidr: "{{ lookup('env', 'LAB_SUBNET_MEDIA_CIDR') | default('192.168.80.0/24', true) }}"
+    media_seg_internet_dst: "!192.168.0.0/16"
+    rule_comment: "media_seg -> internet udp/51820 (torrent-stack-lab gluetun WireGuard)"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find the confirmed media_seg default-deny anchor for ordered insertion
+      ansible.builtin.set_fact:
+        media_seg_deny_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'equalto', 'drop')
+              | selectattr('src-address', 'defined')
+              | selectattr('src-address', 'equalto', media_seg_cidr)
+              | list)
+            | first | default({})
+          }}
+
+    - name: Assert the media_seg default-deny anchor exists
+      ansible.builtin.assert:
+        that:
+          - media_seg_deny_anchor != {}
+        fail_msg: >-
+          No forward-chain drop rule with src-address={{ media_seg_cidr }}
+          found -- this is the actual media_seg containment mechanism
+          (confirmed live 2026-09-12 via a read-only GET against
+          /ip/firewall/filter, rule *8A, comment "media_seg default-deny
+          to LAN and other zones" -- see this file's header), not an
+          in-interface match. If it's genuinely gone or renamed, add this
+          rule manually and update this playbook's assumption.
+
+    - name: Add the media_seg -> internet udp/51820 accept rule, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          comment: "{{ rule_comment }}"
+          chain: "forward"
+          action: "accept"
+          protocol: "udp"
+          src-address: "{{ media_seg_cidr }}"
+          dst-address: "{{ media_seg_internet_dst }}"
+          dst-port: "51820"
+          place-before: "{{ media_seg_deny_anchor['.id'] }}"
+        status_code: [200, 201]
+      when: (firewall_filters.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', rule_comment) | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert the rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            (firewall_filters_final.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', rule_comment)
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'equalto', 'accept')
+              | selectattr('protocol', 'equalto', 'udp')
+              | selectattr('src-address', 'equalto', media_seg_cidr)
+              | selectattr('dst-address', 'equalto', media_seg_internet_dst)
+              | selectattr('dst-port', 'equalto', '51820')
+              | list) | length > 0
+        fail_msg: "Expected MikroTik forward allow rule for media_seg -> internet udp/51820 was not found after apply."
+
+    - name: Assert the new rule is positioned before the media_seg default-deny anchor
+      ansible.builtin.set_fact:
+        media_seg_comment_order: "{{ firewall_filters_final.json | map(attribute='comment', default='') | list }}"
+    - ansible.builtin.set_fact:
+        media_seg_new_rule_position: "{{ media_seg_comment_order.index(rule_comment) }}"
+        media_seg_deny_position: "{{ media_seg_comment_order.index('media_seg default-deny to LAN and other zones') }}"
+
+    - name: Assert order (new accept rule must come before the default-deny)
+      ansible.builtin.assert:
+        that:
+          - media_seg_new_rule_position | int < media_seg_deny_position | int
+        fail_msg: >-
+          The new rule was added AFTER media_seg's default-deny in
+          array order -- it would be dead. place-before did not work
+          as expected; do not trust this rule live until fixed.
+
+    - name: Report the firewall rule is present and correctly ordered
+      ansible.builtin.debug:
+        msg: >-
+          media_seg -> internet udp/51820 (torrent-stack-lab gluetun WireGuard)
+          confirmed present AND positioned before the media_seg default-deny
+          anchor (*8A) -- verified by array order, not just presence.

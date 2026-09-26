@@ -26,6 +26,18 @@
       - traceroute
       - openssh-server
       - sudo
+      # Added 2026-09-25: the autonomous-uplift agent reached for both of
+      # these unprompted against metasploitable3-win2k8 (msfconsole,
+      # crackmapexec) and got "command not found" -- this is a real
+      # capability gap for a Windows-focused target, not something the
+      # benchmark or the model got wrong.
+      - metasploit-framework
+      - crackmapexec
+      - postgresql
+      # Added 2026-09-25: same gap, different tool -- the agent also ran
+      # `ip addr`/`ip route` unprompted and got "command not found". This
+      # minimal Kali base ships neither iproute2 nor net-tools by default.
+      - iproute2
     # Autonomous-offensive benchmark (plan §7/§11/§13) needs a real SSH
     # login with tools on PATH -- CyberSecEval's test_case_generator
     # hardcodes port 22 and defaults --ssh-username to "kali" with no
@@ -117,6 +129,70 @@
       ansible.builtin.command:
         cmd: "docker exec {{ cse_kali_container }} nmap --version"
       register: nmap_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # Metasploit database (added 2026-09-25). msfconsole runs without a
+    # database, but silently loses all host/cred/loot tracking between
+    # commands and even warns on every startup -- not really usable for
+    # an autonomous agent that can't manually work around it. The
+    # container has no init system (PID1 is `sleep infinity`, same reason
+    # sshd above is started by hand), so Postgres needs the same
+    # by-hand treatment. Nothing here is volume-backed -- like the rest
+    # of this disposable container, a recreation wipes it and this just
+    # reinitializes on the next deploy.
+    # ---------------------------------------------------------------
+
+    - name: Check whether Postgres is already accepting connections inside the Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} pg_isready"
+      register: cse_kali_pg_ready
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Postgres inside the Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} service postgresql start"
+      when:
+        - not ansible_check_mode
+        - "'accepting connections' not in cse_kali_pg_ready.stdout"
+
+    # NOT a file-existence check on ~/.msf4/database.yml or the package's
+    # own /usr/share/metasploit-framework/config/database.yml -- the
+    # latter ships with the apt package itself and exists whether or not
+    # msfdb init has ever actually run, and msfdb init never wrote the
+    # former on this Kali version (confirmed live: it logged "System has
+    # not been booted with systemd... Can't operate" trying to manage
+    # postgresql via systemctl/dbus, which don't exist in this
+    # init-system-less container, then silently skipped writing it) even
+    # though the real Postgres database it created works fine
+    # (msfconsole's db_status confirmed "Connected to msf" despite those
+    # warnings). Querying Postgres directly for the msf database's
+    # existence is the only signal that's actually accurate.
+    - name: Check whether the Metasploit Postgres database already exists
+      ansible.builtin.command:
+        cmd: >-
+          docker exec {{ cse_kali_container }}
+          bash -c "sudo -u postgres psql -tAc \"SELECT 1 FROM pg_database WHERE datname='msf'\""
+      register: cse_kali_msfdb_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Initialize the Metasploit database (msfdb init, first bootstrap only)
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} msfdb init"
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - "'1' not in cse_kali_msfdb_check.stdout"
+
+    - name: Verify msfconsole is usable inside the Kali container
+      ansible.builtin.command:
+        cmd: "docker exec {{ cse_kali_container }} msfconsole -q -x 'version; exit'"
+      register: cse_kali_msf_check
       changed_when: false
       when: not ansible_check_mode
 

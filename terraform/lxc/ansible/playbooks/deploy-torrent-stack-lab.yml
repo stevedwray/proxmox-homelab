@@ -1,0 +1,313 @@
+---
+- name: Deploy torrent-stack-lab
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: torrent-stack-lab
+    torrent_stack_lab_dir: "/opt/stacks/{{ stack_name }}"
+    torrent_stack_lab_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    # Must match docker-compose.yml's networks.default.ipam.config.subnet
+    # exactly -- this is what qBittorrent's own WebUI is told to trust
+    # with no login, so radarr/sonarr/lidarr can reach it as a download
+    # client without ever needing a real password (same idea as Radarr's
+    # own "Disabled for Local Addresses" setting).
+    qbittorrent_trusted_subnet: "172.30.80.0/24"
+    qbittorrent_conf_path: "/var/lib/docker/volumes/{{ stack_name }}_qbittorrent-config/_data/qBittorrent/qBittorrent.conf"
+    qbittorrent_categories_path: "/var/lib/docker/volumes/{{ stack_name }}_qbittorrent-config/_data/qBittorrent/categories.json"
+
+  roles:
+    # gluetun needs /dev/net/tun, which does not exist in a fresh LXC by
+    # default -- real gap found via live deploy 2026-09-12 ("error
+    # gathering device information while adding custom device
+    # \"/dev/net/tun\": no such file or directory"). This role already
+    # existed (terraform/lxc/ansible/roles/lxc_tun_device) but was never
+    # wired into any playbook -- it adds the same two lxc.conf lines
+    # legacy torrent-stack's own live config already has
+    # (lxc.cgroup2.devices.allow, lxc.mount.entry), idempotently, with a
+    # stop/start cycle. Must run before docker_base/the compose deploy.
+    - lxc_tun_device
+    - lxc_base
+    - docker_base
+    - portainer_agent
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+  tasks:
+    - name: Trust Harbor HTTP registry and forward Docker container logs to Graylog
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: torrent_stack_lab_docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create torrent-stack-lab directory
+      ansible.builtin.file:
+        path: "{{ torrent_stack_lab_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ torrent_stack_lab_compose_content }}"
+        dest: "{{ torrent_stack_lab_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write compose env file
+      ansible.builtin.copy:
+        dest: "{{ torrent_stack_lab_dir }}/.env"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          REGISTRY_HOST={{ docker_registry_host }}
+      no_log: true
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ torrent_stack_lab_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    # Compose would otherwise get whatever subnet Docker's IPAM pool
+    # happens to hand out next, which is exactly what bit us 2026-09-12
+    # -- a hand-run qBittorrent auth-bypass fix silently broke on the
+    # next recreate because the "trusted" subnet had drifted.
+    #
+    # Real bug found the same day fixing this properly: docker_network's
+    # force:true recreate (disconnect running containers, delete,
+    # recreate, reconnect) failed outright against this already-running
+    # stack -- "failed to set gateway while updating gateway: network is
+    # unreachable" on reconnect, almost certainly gluetun's own
+    # WireGuard routing state getting confused by a live network
+    # detach/reattach under it. A full `docker compose down` (stops and
+    # removes containers *and* the network compose owns, but never
+    # named volumes -- config/download state is untouched) followed by
+    # a normal `up -d` recreates everything cleanly instead of trying
+    # to perform surgery on a live network. Only actually happens when
+    # the subnet genuinely doesn't match -- a no-op on every other run.
+    - name: Check the compose network's current subnet and ownership
+      community.docker.docker_network_info:
+        name: "{{ stack_name }}_default"
+      register: torrent_stack_lab_network_info
+      when: not ansible_check_mode
+
+    # Real bug found fixing this live, in two parts:
+    # 1) An earlier attempt (force:true on community.docker.docker_network,
+    #    since reverted) failed outright reconnecting containers to a
+    #    freshly recreated network -- "network is unreachable" -- almost
+    #    certainly gluetun's own WireGuard routing state getting confused
+    #    by a live network detach/reattach under it. Fixed by checking
+    #    first and only ever recreating via a full `docker compose down`
+    #    + `up -d` (never surgery on a live network).
+    # 2) That same failed attempt still got far enough to delete and
+    #    recreate the network via the raw Docker API before erroring, so
+    #    it now has the CORRECT subnet but is missing the
+    #    com.docker.compose.network label compose stamps on networks it
+    #    creates itself -- `docker compose down` silently skips removing
+    #    a network it doesn't think it owns, and `up -d` then refuses to
+    #    attach to it at all ("exists but was not created by compose").
+    #    So this must check subnet OR ownership label, not subnet alone.
+    - name: Determine whether the network needs a clean recreate
+      ansible.builtin.set_fact:
+        torrent_stack_lab_network_needs_reset: >-
+          {{
+            torrent_stack_lab_network_info.exists and (
+              (torrent_stack_lab_network_info.network.IPAM.Config | selectattr('Subnet', 'equalto', qbittorrent_trusted_subnet) | list | length == 0)
+              or
+              ((torrent_stack_lab_network_info.network.Labels['com.docker.compose.network'] | default('', true)) | length == 0)
+            )
+          }}
+      when: not ansible_check_mode
+
+    - name: Recreate the whole stack if the network is stale
+      ansible.builtin.command:
+        cmd: docker compose down
+        chdir: "{{ torrent_stack_lab_dir }}"
+      when: not ansible_check_mode and torrent_stack_lab_network_needs_reset | default(false)
+
+    # All containers are already stopped by the `down` above (whether or
+    # not compose itself removed the network), so removing it directly
+    # here is safe -- nothing is attached to reconfigure gateways under.
+    - name: Remove the stale network directly if compose didn't own it
+      community.docker.docker_network:
+        name: "{{ stack_name }}_default"
+        state: absent
+      failed_when: false
+      when: not ansible_check_mode and torrent_stack_lab_network_needs_reset | default(false)
+
+    - name: Start torrent-stack-lab via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ torrent_stack_lab_dir }}"
+      register: torrent_stack_lab_compose_up
+      changed_when: "'Started' in torrent_stack_lab_compose_up.stdout or 'Created' in torrent_stack_lab_compose_up.stdout"
+      when: not ansible_check_mode
+
+    # qBittorrent has no concept of "forwardAuth already gated this at
+    # the edge" -- without this, radarr/sonarr/lidarr would each need a
+    # real qBittorrent password wired into their own download-client
+    # config. Instead, trust requests from this stack's own internal
+    # compose network (only reachable from inside this LXC), the same
+    # "Disabled for Local Addresses" idea already used for the arr apps
+    # themselves. Must stop/start (not just edit-in-place) -- qBittorrent
+    # rewrites this file from memory on its own, so an edit made while
+    # it's running can get silently clobbered.
+    - name: Wait for qBittorrent to write its default config (first boot only)
+      ansible.builtin.wait_for:
+        path: "{{ qbittorrent_conf_path }}"
+        timeout: 60
+      when: not ansible_check_mode
+
+    - name: Stop qBittorrent before editing its WebUI trust config
+      ansible.builtin.command:
+        cmd: docker compose stop qbittorrent
+        chdir: "{{ torrent_stack_lab_dir }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    # One-time cleanup: an earlier hand-run sed command (2026-09-12,
+    # before this was moved into the playbook) botched its own insert
+    # and left ~40 duplicate garbage lines missing the required
+    # backslash (a key qBittorrent doesn't recognize and silently
+    # ignores, but junk in tracked-equivalent state regardless). Safe to
+    # run on every deploy -- absent on a clean file, no-op.
+    - name: Remove any stray malformed auth-bypass lines from a prior manual fix
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUIAuthSubnetWhitelistEnabled=true$'
+        state: absent
+      when: not ansible_check_mode
+
+    - name: Trust the compose network subnet in qBittorrent's WebUI (no password needed)
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\AuthSubnetWhitelist='
+        line: 'WebUI\AuthSubnetWhitelist={{ qbittorrent_trusted_subnet }}'
+      when: not ansible_check_mode
+
+    - name: Enable qBittorrent's subnet auth-bypass flag
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\AuthSubnetWhitelistEnabled='
+        line: 'WebUI\AuthSubnetWhitelistEnabled=true'
+        insertafter: '^\[Preferences\]$'
+      when: not ansible_check_mode
+
+    # Required for gluetun's VPN_PORT_FORWARDING_UP_COMMAND (see
+    # docker-compose.yml) to work at all -- that command runs from true
+    # loopback (127.0.0.1) inside the container's own shared network
+    # namespace, which is a different source address than the
+    # trusted-subnet bypass above (that only covers the Docker bridge,
+    # 172.30.80.0/24, not 127.0.0.1 itself). Without this, every
+    # attempt to push the real forwarded port into qBittorrent fails
+    # silently (gluetun logs it as a plain wget non-2xx exit, easy to
+    # miss), leaving qBittorrent stuck on its static default listen
+    # port -- confirmed live 2026-09-12 this is exactly what was
+    # happening, and that legacy torrent-stack has the identical unset
+    # gap, never fixed there either.
+    - name: Trust true loopback in qBittorrent's WebUI (for gluetun's port-forward hook)
+      ansible.builtin.lineinfile:
+        path: "{{ qbittorrent_conf_path }}"
+        regexp: '^WebUI\\LocalHostAuth='
+        line: 'WebUI\LocalHostAuth=false'
+        insertafter: '^\[Preferences\]$'
+      when: not ansible_check_mode
+
+    # Real gap found 2026-09-12: qBittorrent auto-created these three
+    # categories (one per arr app) the first time each app's download
+    # client connection was tested, but with an empty save_path -- so
+    # every download from all three apps (and legacy torrent-stack's
+    # own separate qBittorrent, sharing this same /incoming directory)
+    # was landing flat in one directory with no folder separation at
+    # all. Setting a category's own save_path is the standard, well-
+    # documented fix (a category assigned on add is automatically
+    # torrent-managed for that category's path) -- no need to touch
+    # qBittorrent's global Automatic Torrent Management setting or
+    # authenticate to its API to get there, avoiding the exact class of
+    # guessed-internal-setting risk that caused the earlier sed mistake.
+    - name: Give each arr app's qBittorrent category its own save path
+      ansible.builtin.copy:
+        dest: "{{ qbittorrent_categories_path }}"
+        mode: "0644"
+        content: |
+          {
+              "lidarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/lidarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              },
+              "radarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/radarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              },
+              "tv-sonarr": {
+                  "download_path": null,
+                  "inactive_seeding_time_limit": -2,
+                  "ratio_limit": -2,
+                  "save_path": "/downloads/tv-sonarr",
+                  "seeding_time_limit": -2,
+                  "share_limit_action": "Default"
+              }
+          }
+      when: not ansible_check_mode
+
+    - name: Start qBittorrent back up with the trusted-subnet config applied
+      ansible.builtin.command:
+        cmd: docker compose start qbittorrent
+        chdir: "{{ torrent_stack_lab_dir }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Wait for qBittorrent (via gluetun) to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        timeout: 120
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Wait for Prowlarr to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 9696
+        timeout: 120
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Register torrent-stack-lab endpoint with infra Portainer
+  hosts: all
+  roles:
+    - portainer_api
+    - portainer_stack

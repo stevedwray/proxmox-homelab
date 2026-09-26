@@ -160,6 +160,7 @@ class RouteIntent:
     stack: str
     route: str
     host: str
+    pangolin_public_host: str | None
     auth_mode: str
     app_name: str
     app_slug: str
@@ -341,6 +342,12 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
         for route in doc["spec"]["routes"]:
             route_name = str(route["name"])
             host = str(route["host"])
+            pangolin = route.get("pangolin")
+            pangolin_public_host = (
+                str(pangolin["public_host"]).strip().rstrip(".")
+                if isinstance(pangolin, dict) and isinstance(pangolin.get("public_host"), str)
+                else None
+            )
             auth_mode = str(route["auth"]["mode"])
             name_base = _slugify(f"{stack}-{route_name}")
             intents.append(
@@ -349,6 +356,7 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
                     stack=stack,
                     route=route_name,
                     host=host,
+                    pangolin_public_host=pangolin_public_host,
                     auth_mode=auth_mode,
                     app_name=f"{OWNED_NAME_PREFIX}{name_base}-app",
                     app_slug=f"{OWNED_NAME_PREFIX}{name_base}",
@@ -518,9 +526,9 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # live via a real failed SSO login attempt (Authentik redirected to
         # the callback with error=invalid_request, "the request is
         # otherwise malformed"; GET on the provider showed grant_types: []).
-        # jellyfin-plugin-authentik and Immich's native OAuth both only use
-        # authorization_code (with PKCE for jellyfin), but matching the
-        # common baseline for consistency, same as opensearch/wazuh above.
+        # jellyfin-plugin-authentik and Immich's native OAuth use the
+        # authorization-code flow (with PKCE where supported). Match the
+        # common provider baseline for consistency.
         return ("authorization_code", "client_credentials", "password")
     return ()
 

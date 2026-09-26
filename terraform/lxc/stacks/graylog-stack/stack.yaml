@@ -1,4 +1,21 @@
 # Graylog stack — production log platform on mgmt_seg (live on pve-test-vm and pve)
+#
+# docker_storage_size grown 40G -> 150G live on pve, 2026-09-14: real
+# OpenSearch/datanode log data (33G of 37G used) filled the 40G quota,
+# triggering flood-stage watermark -> 5 indices blocked read-only ->
+# index rotation itself failing ("Could not create new target index
+# gl-docker_23") -- same disk-vs-legitimate-growth mismatch pattern as
+# greenbone-stack. Underlying `gaming` ZFS pool has 1.5TB+ free.
+# Confirmed live: freeing real disk space alone let Graylog's own
+# scheduled rotation recover on its own (gl-docker_23 now exists and is
+# the live write target) -- no manual index-unblock needed, since
+# read_only_allow_delete still permits deletion, it only blocks new
+# writes/index creation, which is disk-allocation-gated and
+# self-clears once usage drops.
+#
+# swap corrected 1024 -> 0: `pve` itself has zero configured swap
+# devices (confirmed live, same finding as greenbone-stack), so this
+# was dead configuration implying a cushion that doesn't exist.
 hostname: graylog-stack
 ip_address: "${lab_ip_graylog}/24"
 gateway: "${lab_gw_mgmt}"
@@ -8,14 +25,14 @@ network:
 vmid: 20014
 cores: 2
 memory: 10240
-swap: 1024
+swap: 0
 rootfs_size: 8
 storage_profile: platform-gaming-zfs
-docker_storage_size: "40G"
+docker_storage_size: "150G"
 docker_mount:
   logical_name: docker-data
   path: /var/lib/docker
-  size: "40G"
+  size: "150G"
   backup_policy: include
   resize_control_plane: operational
   mutation_policy: grow-only
@@ -46,3 +63,8 @@ portainer_agent: false
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

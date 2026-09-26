@@ -161,10 +161,13 @@ reconcile_all_edge() {
   fi
 
   local generated_traefik_dir
+  local generated_pangolin_traefik_dir
   if [[ -n "${PVE_ENV:-}" ]]; then
     generated_traefik_dir="${ENV_ROOT}/.generated/traefik"
+    generated_pangolin_traefik_dir="${ENV_ROOT}/.generated/pangolin-traefik"
   else
     generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
+    generated_pangolin_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/pangolin-traefik"
   fi
 
   [[ -f "$proxy_inventory" ]] || { log "SKIP edge reconcile: proxy-stack inventory not found"; return 0; }
@@ -193,6 +196,24 @@ reconcile_all_edge() {
       -e "@${proxy_extra_vars_file}" \
       -e "traefik_generated_source_dir=${generated_traefik_dir}"
     rm -f "$proxy_extra_vars_file"
+
+    local pangolin_proxy_inventory
+    if [[ -f "${ENV_ROOT}/pangolin-proxy/inventory.yml" ]]; then
+      pangolin_proxy_inventory="${ENV_ROOT}/pangolin-proxy/inventory.yml"
+    else
+      pangolin_proxy_inventory="${stacks_dir}/pangolin-proxy/inventory.yml"
+    fi
+    if [[ -f "$pangolin_proxy_inventory" ]]; then
+      local pangolin_proxy_extra_vars_file
+      pangolin_proxy_extra_vars_file="$(mktemp "/tmp/pangolin-proxy.ansible-extra-vars.XXXXXX.yml")"
+      render_stack_ansible_extra_vars "pangolin-proxy" "$pangolin_proxy_extra_vars_file"
+
+      log "Push generated Pangolin Traefik config to pangolin-proxy"
+      ansible-playbook -i "$pangolin_proxy_inventory" -u root "${ANSIBLE_DIR}/playbooks/deploy-pangolin-proxy.yml" \
+        -e "@${pangolin_proxy_extra_vars_file}" \
+        -e "pangolin_traefik_generated_source_dir=${generated_pangolin_traefik_dir}"
+      rm -f "$pangolin_proxy_extra_vars_file"
+    fi
   fi
 }
 
@@ -363,6 +384,10 @@ WAZUH_FINDINGS_INGEST_KEYS = (
     "wazuh_findings_ingest_enabled",
 )
 
+DOCKER_LIVE_USAGE_REPORTER_KEYS = (
+    "docker_live_usage_reporter_enabled",
+)
+
 CVE_ENRICHMENT_SYNC_KEYS = (
     "cve_enrichment_sync_enabled",
 )
@@ -442,6 +467,10 @@ for key in GVM_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in WAZUH_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in DOCKER_LIVE_USAGE_REPORTER_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
