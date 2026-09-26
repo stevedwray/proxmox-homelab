@@ -1,8 +1,9 @@
 # ai-stacks-pve-tiny
 
-Status: **Phases 0 and 1 passed (2026-09-27); Phase 2 ai_seg setup on
-pve-tiny is next.** Continue with plan.md's "How to execute this plan"
-section.
+Status: **Phases 0 and 1 passed; Phase 2a/2b completed (2026-09-27).
+Phase 2c is paused at its duplicate-IP guard because RouterOS has dynamic
+failed/no-MAC ARP rows across the reserved high range.** Continue with
+plan.md's "How to execute this plan" section.
 
 ## What this is
 
@@ -33,7 +34,7 @@ as-is.
 | ai-tiny-05 env dirs | done (2026-09-27) |
 | ai-tiny-05b pve-tiny provision target guard | done (2026-09-27) |
 | Phase 1 read-only pve-tiny plans | done — go (2026-09-27) |
-| Phase 2 ai_seg on pve-tiny | not started |
+| Phase 2 ai_seg on pve-tiny | 2a/2b done; 2c paused at ARP guard (2026-09-27) |
 | Cutover: mcp-utility-stack | not started |
 | Cutover: secpipe-stack | not started |
 | Cutover: opensearch-stack | not started |
@@ -162,3 +163,21 @@ as-is.
   no warning or error.
 - Result: **GO for Phase 2.** All production access was read-only and changed
   no live state.
+
+### Phase 2a/2b — trunk verification and tvai creation (2026-09-27)
+
+- Operator confirmed VLAN 50 is tagged on the physical-switch port connected
+  to `pve-tiny`. The MikroTik read-only API confirmed VLAN 50 is tagged on
+  `bridgeLocal,ether1,ether5`, with no untagged ports.
+- Under approval `ai-stacks-pve-tiny-sdn`, the scoped playbook created only
+  the `tvai` VLAN zone, VLAN-50 VNet, and `192.168.50.0/24` subnet with gateway
+  `192.168.50.1` and SNAT disabled. Recap: `ok=24 changed=3 failed=0`.
+- The in-run pending-state guard passed. The cluster-firewall task was skipped
+  as required. Post-run assertions confirmed `tvinfra`, `tvmgmt`, and `tvcse`
+  were unchanged, the firewall file was unchanged, all pending counts remain
+  zero, and the `tvai` link exists.
+- Phase 2c did not assign a temporary IP. DHCP, NetBox IPAM, repository search,
+  and ping found no `.250` owner, but RouterOS reports `.250` as dynamic
+  `failed` with no MAC. The same background-probe state exists for every
+  address `.240`–`.254`, so the runbook's literal ARP-absence gate cannot pass
+  without a documented guard correction.
