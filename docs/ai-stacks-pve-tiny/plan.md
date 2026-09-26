@@ -614,11 +614,15 @@ and diff them against the captured preflight output before continuing.
 
 **2c. Prove VLAN 50 end-to-end before any CT moves:**
 
-First confirm `.250` is absent from the MikroTik ARP table, DHCP leases and
-any static IP allocation record. Ping is a secondary check only: a host that
-blocks ICMP can still own the address. Then run this as one conditional block;
-the SSH assignment is in the `else`, so an occupied address cannot fall
-through into a duplicate assignment:
+First confirm `.250` is absent from DHCP leases, NetBox IPAM and repository
+static allocations. In the MikroTik ARP table, either no row or a dynamic
+`status=failed` row with no MAC address is acceptable: background neighbor
+probing on this network creates failed/no-MAC rows across otherwise unused
+addresses. Any static row, any row with a MAC, or any status other than
+`failed` is a hard stop. Ping is a secondary check only: a host that blocks
+ICMP can still own the address. Then run this as one conditional block; the
+SSH assignment is in the `else`, so an occupied address cannot fall through
+into a duplicate assignment:
 
 ```bash
 if ping -c2 -W1 192.168.50.250; then
