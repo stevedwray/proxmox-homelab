@@ -720,9 +720,12 @@ destroyed and absence verified.
 ```bash
 for p in 8000 8001; do curl -s -o /dev/null -w "$p %{http_code}\n" http://192.168.50.10:$p/mcp; done
 ```
-Expect 200/401/405/406 on both, which matches the playbook's own health
-check. Then run one real `search_docs` call from VS Code (docs-rag
-reindexes on provision, so the first call may be slow).
+Expect 200/401/405/406 on port 8000. On port 8001, also accept 400: current
+FastMCP returns 400 `Missing session ID` for a bare GET after its
+streamable-HTTP endpoint is ready, and the docs-RAG-only playbook health
+checks intentionally accept that live signature. Then run one real
+`search_docs` call from VS Code (docs-rag reindexes on provision, so the
+first call may be slow).
 
 ### secpipe-stack checks
 ```bash
