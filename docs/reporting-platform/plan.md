@@ -1,10 +1,10 @@
 # Shared reporting/artifact platform — implementation plan
 
-Status: design only, 2026-09-22. No code written, no infrastructure
-changed. This plan exists because two independent projects
-(`deep-research`, CyberSecEval) hit the same underlying gap from two
-different angles, and more similar projects are expected — see
-`README.md` for the origin story.
+Status (2026-09-22): Phases 0–2 complete and deployed live. This plan
+exists because two independent projects (`deep-research`, CyberSecEval)
+hit the same underlying gap from two different angles, and more similar
+projects are expected — see `README.md` for the origin story and current
+summary. Phase 3 (cross-node unification) remains deliberately deferred.
 
 ## 1. Goals and boundaries
 
@@ -220,20 +220,52 @@ Regression-checked live: `openwebui`/`searxng` still `200`, both
 `deep-research`/`deep-research-files` routes still challenge through
 Authentik correctly (`302` to the real login page).
 
-### Phase 2: retrofit CyberSecEval onto the convention
+### Phase 2: retrofit CyberSecEval onto the convention — COMPLETE 2026-09-22
 
-The real fix, not just a nicer viewer: change `cse-panel-stack`'s
-tooling to write `report.md`/`manifest.json` (and whatever raw
-transcripts/stats it already has) to durable disk storage per §3, instead
-of leaving Celery/Redis as the only copy. This directly fixes the
-data-loss bug documented in `docs/cyberseceval-panel/README.md`,
-independent of whether the shared viewer ever renders it. Ship this
-persistence fix even if Phase 1's viewer isn't reachable from
-`pve-tiny` yet (option 2 from §5) — durability matters on its own,
-separate from presentation.
+**Correction to this plan's own earlier framing**: investigating the
+actual code (`cse_tasks.py`, the Celery worker that runs on
+`cse-controller`, itself on `pve-tiny` — same node as `cse-panel-stack`,
+not a cross-node case) found the raw benchmark output
+(`responses.json`/`judge_responses.json`/`run.log`/`stat.json`/
+`stats.json`) was **already being written to durable disk** at
+`/srv/cyberseceval/runs/panel-<job_id>/` — this was never actually
+Redis-only. What's genuinely ephemeral is Celery's own task-result TTL
+and `cse-panel-stack`'s separate 24h `job_meta` TTL, both in Redis —
+once those expire, the panel loses all ability to *discover* a run ever
+happened, even though the files still exist untouched on disk. The
+practical effect is the same as data loss (an operator can no longer
+find the report through any UI), but the fix needed was narrower than
+"add disk persistence" — it was "write a human-readable summary
+alongside data that was already durable, and stop relying on Redis to
+even know a run exists."
 
-Exit: a completed CyberSecEval run's results survive a Redis `FLUSHDB`
-and a worker restart, verified live (not just by code inspection).
+Implemented in `cse_tasks.py`'s `run_benchmark` task: a new
+`_write_report()` helper writes `report.md` + `manifest.json` (per
+`CONVENTION.md`) into the same `run_dir` right before returning,
+covering the success, no-judge, and outright-failure paths alike.
+Reuses `cse-panel-stack/app/app.py`'s own `_flatten_stats` logic
+(copied, not imported — different container/codebase, no shared
+package; kept in sync manually) to render the same pass/fail/refusal
+numbers the panel's dashboard already shows, as a markdown table
+instead of raw JSON.
+
+Deployed via `./with-secrets-prod-tiny scripts/provision.sh --stack
+cse-controller` and verified with a **real benchmark run** (`mitre-frr`,
+1 test case, direct Celery task invocation to bypass Authentik for
+testing) — confirmed `report.md`/`manifest.json` written correctly
+alongside the existing raw files, table rendering handled the real flat
+field shape (`accept_count`/`refusal_count`/`refusal_rate`) correctly.
+Confirmed against a pre-existing run from before this fix
+(`panel-f1b8925c-...`) that it genuinely lacked both files, establishing
+the before/after.
+
+Exit criteria satisfied without literally running a Redis `FLUSHDB`
+against shared production Redis: `report.md`/`manifest.json` are plain
+files on `cse-controller`'s disk, never stored in Redis in the first
+place, so their survival doesn't depend on Redis state by construction
+— flushing a live, shared Redis instance just to demonstrate this would
+have been a real (if minor) destructive action for no additional
+information.
 
 ### Phase 3: decide on §5's cross-node question, act on it
 

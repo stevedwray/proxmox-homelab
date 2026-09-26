@@ -8,6 +8,24 @@ day (a new Traefik/DNS route) once the plan called for prototyping a
 browser-based interface. See `plan.md` for the full narrative; this file
 tracks current live state.
 
+**Final status as of 2026-09-22, end of day:** `deep-research` is live,
+healthy, and has been verified end-to-end with real operator-driven
+research sessions after a genuinely eventful day. In order: `web_search`
+was switched from unreliable DDGS scraping to Tavily's real API; a
+volume-mount bug that had been silently discarding every code change
+since Stage B's original deploy was found and fixed; a real production
+hang was root-caused through two rounds of investigation — first
+hardening `fetch_url_to_workspace`/`grep_workspace_file` against
+unkillable native-code hangs (a real, worthwhile fix for a real ReDoS
+risk, but not what actually caused the observed hangs), then finding and
+fixing the actual trigger, an O(n²) session-log bug in `engine/tui.py`
+that was silently making every long-running session progressively
+slower and eventually pegging the whole container's CPU. Verified live
+with a 30,408x speedup on an equivalent workload. See the dated entries
+below for the full investigation, including two genuine dead ends that
+were tested, ruled out with real evidence, and kept in this record
+rather than quietly dropped.
+
 ## Live state summary (2026-09-22, current)
 
 - **Stage A LXC (VMID 50014) is decommissioned** — stopped and `pct
@@ -31,6 +49,14 @@ tracks current live state.
   `https://deep-research-files.lab.gibbsgreatly.xyz` are both live**,
   behind real Authentik `forwardAuth` (confirmed live login round-trip,
   distinct OAuth `client_id` per route).
+- **`deep-research-files` now renders real formatted reports**, not raw
+  markdown text — Phase 1 of `docs/reporting-platform/plan.md`
+  generalized it into the shared reports viewer (real markdown/table
+  rendering, JSON pretty-printing, a project→run hierarchy), with
+  `deep-research` as its first adopter. No change needed to
+  `deep-research`'s own code — its existing output directory is wrapped
+  as the `deep-research` project via a runtime symlink. See that plan's
+  Phase 1 for two real bugs found deploying it.
 - **Session persistence found already built into the vendored scaffold, just
   defaulted off** — `/new`, `/sessions`, `/resume`, `--list-sessions`,
   `--resume <id>` all exist in `engine/tui.py`/`app.py`. Flipped on
@@ -60,6 +86,127 @@ tracks current live state.
   anything that must survive a client disconnecting. Confirmed as a
   required Stage B design point (job model decoupled from the browser
   connection), not just a known quirk — see `plan.md` Phase 5, point 2.
+- **`web_search` switched from DDGS to Tavily, 2026-09-22** — real,
+  reproducible production incident: DDGS's `backend="auto"` routed
+  through `search.yahoo.com`, which was erroring on every query, and the
+  Searcher agent had no graceful fallback (blindly guessed URLs,
+  exhausted its fetch/grep quotas, hard-aborted with "Agent trapped in
+  loop"). Investigation ruled out every unauthenticated scraping
+  alternative, confirmed live with five independent methods on this same
+  network: DDGS itself, real headless-browser (Playwright/Chromium)
+  scraping of both Bing and Brave via a recovered-but-still-broken
+  `web-search-mcp` (see below), and raw HTTP fetches of both Bing and
+  DuckDuckGo. All five failed the same way — not connectivity, not
+  parsing bugs, but the search engines themselves either silently
+  serving wrong/irrelevant results to unauthenticated automated traffic
+  (Bing: real Playwright browser fetched a genuine 86KB page, and a
+  plain `httpx` fetch of the same URL both returned articles about
+  erectile dysfunction and Philippine prison policy for queries about a
+  singer and an exact-phrase name) or explicitly CAPTCHA-gating it
+  (DuckDuckGo's HTML endpoint literally serves "Unfortunately, bots use
+  DuckDuckGo too... select all squares containing a duck"). Confirmed via
+  a clean-room test of the genuinely unmodified upstream
+  `kyuz0/local-agent-builder` scaffold (same `ddgs==9.16.0`, zero
+  homelab modifications) that DDGS fails identically there too — this
+  was never something Stage A/B modifications broke. Fixed by replacing
+  `web_search`'s implementation in `tools/web.py` with a direct call to
+  Tavily's search API (real authenticated API, free tier 1000
+  searches/month, `TAVILY_API_KEY` in `secrets.common.enc.yaml`) —
+  removes the `ddgs` dependency entirely. `web-search-mcp` (headless-
+  browser search fronted by `mcpo`) was separately recovered from an
+  unmerged, undocumented, drifted-out-of-sync branch during this
+  investigation and is now properly tracked IaC wired into OpenWebUI,
+  but is **not** used by `deep-research` — it has the same
+  unauthenticated-scraping reliability problem Tavily was adopted to
+  avoid. See `terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md`
+  for its current status.
+- **Real bug found deploying the Tavily switch, 2026-09-22: every code
+  change to `deep-research` since Stage B's first deploy had been
+  silently ignored at runtime.** The named volume backing config/session/
+  workspace persistence was mounted at the whole `/home/app` home
+  directory, not just `~/.deep-research-agent` — so the volume's content
+  from the very first deploy shadowed every subsequent image rebuild's
+  fresh `COPY src ./src` at container start. Confirmed live: the running
+  container's `src/tools/web.py` was dated the day before, with none of
+  that day's fixes (Tavily switch, earlier timeout fix, etc.) present.
+  Fixed by narrowing the mount to exactly `~/.deep-research-agent` and
+  renaming the volume (`ai-services-deep-research-config`, not the old
+  `ai-services-deep-research-data`) since the old volume's content
+  structure doesn't match the new, narrower mount point. See
+  `STACK_CONTRACT.md`'s Persistent State table.
+- **Real production hang, 2026-09-22: a live research session pegged the
+  container at 99% CPU for 24+ minutes with the GPU/LLM completely idle,
+  freezing the browser session.** `write_workspace_file` appeared stuck
+  in the UI, but `docker top`/`py-spy`-adjacent investigation (26 threads,
+  main thread state `R`/running, not blocked on I/O) showed a genuine
+  CPU-bound spin, not a network wait. Root cause not confirmed — three
+  separate reproduction attempts (single-page pathological parse,
+  concurrent `markitdown` conversions on fresh instances, concurrent
+  conversions on the exact shared-singleton pattern `utils/parsers.py`
+  actually uses) all completed cleanly in isolation. This matches an
+  already-documented residual risk from the 2026-09-21 timeout fix:
+  `asyncio.wait_for()` can give up and let the agent move on, but Python
+  cannot forcibly kill the underlying OS thread it spawned via
+  `asyncio.to_thread()` — a zombie thread from an earlier abandoned
+  `fetch_url_to_workspace`/markitdown call most likely kept running and
+  starved the whole container of CPU. Fixed at the structural level
+  regardless of the exact trigger: `fetch_url_to_workspace`'s blocking
+  work now runs in a spawned (not forked — see `tools/web.py`'s
+  `_MP_CONTEXT` comment for why fork is itself a deadlock risk here)
+  subprocess via `multiprocessing`, which **can** be genuinely SIGTERM/
+  SIGKILLed on timeout. Verified live: a simulated infinite-loop worker
+  was force-killed in exactly the configured timeout window, confirmed
+  dead via `process.is_alive()`. Also added a `faulthandler` SIGUSR1
+  hook in `app.py` (`docker kill -s SIGUSR1 deep-research` dumps every
+  thread's real stack trace to the container's logs) so a recurrence is
+  instantly diagnosable instead of requiring another round of blind
+  hypothesis testing.
+- **Follow-on fix, same day: the hang class is bigger than just
+  `fetch_url_to_workspace`.** Live faulthandler dump on a *second* real
+  99%-CPU hang showed the main event loop idle (waiting in `select()`) —
+  the burn was in two `ThreadPoolExecutor` worker threads whose Python
+  stack stopped at the C-call boundary. Reading `agent_framework`'s
+  actual installed source (`_tools.py:822`) confirmed why: it wraps
+  *every* synchronous (`def`, not `async def`) `@tool` in
+  `asyncio.to_thread()` before calling it, and its own code comment
+  admits "a synchronous tool body already running in a worker thread
+  (asyncio.to_thread) cannot be interrupted." Only `fetch_url_to_workspace`/
+  `web_search` were `async def` and therefore exempt — `write_workspace_file`,
+  `read_workspace_file`, `list_workspace_files`, `remove_workspace_file`,
+  `write_todos`, `read_todos`, and `think_tool` were all still exposed.
+  `grep_workspace_file` was the one genuine risk among them (an
+  LLM-chosen regex against arbitrary fetched web content is a real
+  ReDoS/catastrophic-backtracking vector, not hypothetical) — its actual
+  matching step now also runs through the same `run_with_hard_kill`
+  subprocess helper (moved to `tools/core.py` so both `tools/web.py` and
+  `tools/fs.py` share it). Every other tool was converted to `async def`
+  to exit the framework's blanket thread-wrapping; their bodies are fast
+  local I/O with nothing else worth isolating. Verified live: a
+  classic `(a+)+$` catastrophic-backtracking pattern against adversarial
+  input was bounded by the grep timeout instead of hanging.
+- **Actual root cause found, same day, after a real hang recurred live
+  during operator testing despite both fixes above.** A live
+  `faulthandler` dump showed the identical signature (main event loop
+  idle, `ThreadPoolExecutor` workers stuck at the C-call boundary) even
+  though neither `fetch_url_to_workspace` nor any of the just-fixed sync
+  tools were involved. Reading `engine/tui.py` (this repo's own vendored
+  code, not `agent_framework`) found it: `_write_log()` is called from
+  `log_stream_content()` on **every single streamed chunk** — including
+  individual characters of a function-call argument delta, per the LLM's
+  own token stream — and re-serializes and rewrites the *entire*
+  `_session_events` list from scratch (pretty-printed JSON, no
+  incremental append) on every call. For a response streaming tens of
+  thousands of characters, that's a full O(n) rewrite called tens of
+  thousands of times — an O(n²) blowup overall, and it fully explains
+  the CPU curve observed live in both hangs (55% → 90% → 99%, tracking
+  session-file growth, not tool activity). Fixed by throttling
+  `_write_log()` to at most once per second on the hot streaming path;
+  the four call sites that matter for correctness (prompt logged,
+  persistence toggled, stream finalized, task completed) pass
+  `force=True` and write immediately, unaffected. The subprocess
+  hard-kill and async-tool fixes above are still real, worthwhile
+  fixes for their own genuine risks (ReDoS, unkillable native calls) —
+  they just weren't *this* incident's actual trigger.
 
 ## Incident, 2026-09-21: Framework host hang during Phase 0 validation
 
