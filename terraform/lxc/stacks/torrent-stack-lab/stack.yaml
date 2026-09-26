@@ -49,7 +49,7 @@ portainer_stacks:
     # touched by Terraform (confirmed: portainer_stacks doesn't appear
     # anywhere in the .tf files), it's read directly by provision.sh's
     # own resolve_placeholders() as plain YAML, which only understands
-    # ${...}. A $${...} value here leaves a stray leading "$" in the
+    # $${...}. A $${...} value here leaves a stray leading "$" in the
     # resolved output (its regex matches just the inner ${lab_domain}),
     # producing a broken value like "$lab.gibbsgreatly.xyz" -- caught
     # live 2026-09-12 via a real "invalid reference format" deploy
@@ -61,7 +61,7 @@ portainer_stacks:
   # deploy path's own REGISTRY_HOST gap (see deploy-torrent-stack-lab.yml)
   # but a genuinely separate instance of it: Portainer deploys this stack
   # via its own stacks API using ONLY the env vars listed here, so every
-  # ${REGISTRY_HOST}/... image reference in docker-compose.yml resolves
+  # $${REGISTRY_HOST}/... image reference in docker-compose.yml resolves
   # blank unless it's declared here too. Found live 2026-09-12 -- same
   # root cause pattern, different code path, needed its own fix.
   - name: REGISTRY_HOST
