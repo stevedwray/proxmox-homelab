@@ -1,8 +1,8 @@
 # ai-stacks-pve-tiny
 
-Status: **Phase 0 passed and Phase 1 repository steps completed
-(2026-09-27); read-only pve-tiny plans are next.** Continue with plan.md's
-"How to execute this plan" section.
+Status: **Phases 0 and 1 passed (2026-09-27); Phase 2 ai_seg setup on
+pve-tiny is next.** Continue with plan.md's "How to execute this plan"
+section.
 
 ## What this is
 
@@ -32,6 +32,7 @@ as-is.
 | ai-tiny-04 stack storage profiles | done (2026-09-27) |
 | ai-tiny-05 env dirs | done (2026-09-27) |
 | ai-tiny-05b pve-tiny provision target guard | done (2026-09-27) |
+| Phase 1 read-only pve-tiny plans | done — go (2026-09-27) |
 | Phase 2 ai_seg on pve-tiny | not started |
 | Cutover: mcp-utility-stack | not started |
 | Cutover: secpipe-stack | not started |
@@ -143,3 +144,21 @@ as-is.
   and exited 0.
 - All critical gates passed. `provision.sh` was not run, and no live or
   production command was run.
+
+### Phase 1 — read-only pve-tiny plans (2026-09-27)
+
+- Confirmed live `nvme-lvm` is an active LVM-thin storage restricted to
+  `pve-tiny`, supports `rootdir,images`, and has about 1.78 TiB available.
+- All four production read-only plans exited 0 and contain exactly one new
+  container: VMIDs 50011, 50012, 40014, and 50013 respectively. Their total
+  add counts (6, 5, 5, and 6) also include the expected generated inventory,
+  SDN attachment, epoch, and applicable cleanup support resources.
+- Every rootfs and Docker mount resolves to `nvme-lvm`; OpenSearch's 150 GB
+  data mount also resolves to `nvme-lvm`. Every plan reports zero changes and
+  zero destroys.
+- The first OpenSearch plan exposed an incompatible ZFS-only `operational`
+  extra-mount resize contract. The manifest and `ai-tiny-04` gate were
+  corrected to require provider-managed resizing on LVM-thin; the rerun has
+  no warning or error.
+- Result: **GO for Phase 2.** All production access was read-only and changed
+  no live state.
