@@ -363,6 +363,10 @@ WAZUH_FINDINGS_INGEST_KEYS = (
     "wazuh_findings_ingest_enabled",
 )
 
+DOCKER_LIVE_USAGE_REPORTER_KEYS = (
+    "docker_live_usage_reporter_enabled",
+)
+
 CVE_ENRICHMENT_SYNC_KEYS = (
     "cve_enrichment_sync_enabled",
 )
@@ -442,6 +446,10 @@ for key in GVM_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in WAZUH_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in DOCKER_LIVE_USAGE_REPORTER_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 

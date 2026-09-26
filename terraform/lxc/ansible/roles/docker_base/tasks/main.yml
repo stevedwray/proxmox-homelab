@@ -6,6 +6,54 @@
     delay: 5
     timeout: 300
 
+# Root-cause fix for a real outage (2026-09-07, docs/threat-vuln-platform
+# investigation led here): every stack's own deploy playbook configures
+# Docker's daemon-wide default log-driver as syslog to 127.0.0.1:10514 (a
+# local rsyslog listener), but docker.service has no ordering dependency
+# on rsyslog.service -- confirmed live via journalctl timestamps that at
+# boot, dockerd starts and tries to auto-start restart:unless-stopped
+# containers 1-2 seconds before rsyslog finishes binding to that port,
+# and any container that loses that race fails outright ("failed to
+# create task for container: failed to initialize logging driver") and
+# does NOT get retried by Docker's own restart policy. This took down
+# technitium-stack's actual DNS server container for about an hour after
+# a routine host reboot, which in turn took down resolution for the
+# entire lab.gibbsgreatly.xyz zone -- not a technitium-specific bug, a
+# platform-wide race any stack's restart:unless-stopped containers can
+# lose on any reboot. Fixed centrally here (not in each playbook's own
+# daemon.json task) since every playbook that sets log-driver:syslog
+# already includes this shared role, and an unconditional Docker-after-
+# rsyslog ordering is harmless even for a stack that doesn't use syslog
+# logging (rsyslog is a base-image service present on every LXC and
+# starts fast).
+- name: Ensure a systemd drop-in directory exists for docker.service
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Order docker.service after rsyslog.service (fixes syslog log-driver boot race)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/rsyslog-order.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (docker_base role) - do not edit by hand.
+      # See docs/threat-vuln-platform/plan.md's 2026-09-07 DNS-outage
+      # root-cause writeup for why this exists.
+      [Unit]
+      After=rsyslog.service
+      Wants=rsyslog.service
+  register: docker_rsyslog_order_dropin
+
+- name: Reload systemd after adding the docker/rsyslog ordering drop-in
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: docker_rsyslog_order_dropin.changed
+
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
     name: docker

@@ -73,17 +73,46 @@ was actually done for a `PATCH`/`UPGRADE`/`ISOLATE` call.
 To undo a mistaken resolution: same command with `--reopen` instead of
 `--note`.
 
+### `ACCEPT_RISK` blocked on an upstream fix: use `--review-after-days`
+
+A real patch/upgrade only needs the plain `--note` above — a changed
+`risk_score` is the right signal to reopen it (see below). But an
+`ACCEPT_RISK` made specifically because **no upstream fix exists yet**
+(confirmed 2026-09-07: `wazuh-stack`'s `golang.org/x/crypto`/
+`k8s.io/apimachinery`/`handlebars` CVEs — none tracked in Wazuh's own
+dependency-update changelog across every 4.14.x release) is different:
+`risk_score` may never change on its own, so the CVE would stay silently
+resolved forever even after upstream ships a fix nobody went looking
+for. Add `--review-after-days N` (e.g. `30` for "revisit in a month") to
+force it back onto the panel after that many days regardless of score,
+so a future session (or the operator) does a real check for an upstream
+fix rather than trusting an assumption that's gone stale:
+
+```bash
+python3 mark_cve_resolved.py CVE-XXXX-XXXXX \
+  --elasticsearch-url https://<opensearch-stack IP>:9200 --no-verify-tls \
+  --note "ACCEPT_RISK: no upstream fix yet, see docs/threat-vuln-platform/plan.md" \
+  --review-after-days 30
+```
+
 ### Why resolved CVEs can still reappear
 
-`cve_deep_dive.py` only carries a `resolved` flag forward to its next
-weekly run if the CVE's `risk_score` hasn't changed since it was marked
-resolved. If the score *has* changed — new instances showed up, or the
-underlying triage data shifted — the CVE reappears on the panel
-unresolved, on purpose: something material changed, so the earlier
-resolution no longer has enough context to keep trusting it silently.
-This is a deliberate blind spot in the *automatic* carry-forward (a
-resolved flag never auto-expires just from time passing) — resolving
-something quiets it only for stable numbers.
+Two independent triggers, both handled the same way by
+`cve_deep_dive.py`'s `upsert_assessment()` — the carry-forward simply
+stops applying and the CVE reappears unresolved:
+
+1. **`risk_score` changed** since it was marked resolved — new instances
+   showed up, or the underlying triage data shifted. Something material
+   changed, so the earlier resolution no longer has enough context to
+   keep trusting it silently.
+2. **`resolved_review_after` has passed** (only set when
+   `--review-after-days` was used) — a bounded, time-triggered recheck
+   for an `ACCEPT_RISK` that was never going to un-resolve itself on
+   score alone.
+
+A plain resolution (no `--review-after-days`) still never auto-expires
+from time passing alone — that remains correct for an actual
+patch/upgrade, where the score is the only signal that matters.
 
 ## Where the raw data lives, if you need to go deeper
 

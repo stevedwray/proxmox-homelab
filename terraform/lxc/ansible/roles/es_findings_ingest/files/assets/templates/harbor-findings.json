@@ -29,7 +29,9 @@
             "digest": { "type": "keyword" },
             "in_production": { "type": "boolean" },
             "stack": { "type": "keyword" },
-            "zone": { "type": "keyword" }
+            "zone": { "type": "keyword" },
+            "in_use": { "type": "boolean" },
+            "not_in_use_since": { "type": "date" }
           }
         },
         "scan_time": { "type": "date" },

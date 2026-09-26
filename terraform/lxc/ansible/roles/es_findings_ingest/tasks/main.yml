@@ -70,6 +70,14 @@
         group: root
         mode: "0750"
 
+    - name: Copy harbor_live_usage.py
+      ansible.builtin.copy:
+        src: harbor_live_usage.py
+        dest: "{{ es_findings_ingest_dir }}/harbor_live_usage.py"
+        owner: root
+        group: root
+        mode: "0750"
+
     - name: Copy known-production-images classifier registry
       ansible.builtin.copy:
         src: "assets/known_production_images.json"
@@ -181,6 +189,29 @@
       no_log: true
 
     # ---------------------------------------------------------------
+    # Portainer live-usage credential (Phase 13,
+    # docs/threat-vuln-platform/plan.md) -- a static SOPS secret already
+    # used elsewhere (netbox-stack's discovery), not a per-role-minted
+    # robot credential like the Harbor one above, so no create-API-call
+    # step is needed: just write whatever's in the environment. Always
+    # rewritten (not stat-guarded like harbor-robot.env) since there's
+    # nothing to mint once and preserve -- a rotated PORTAINER_TOKEN
+    # should land on the next deploy. Deliberately non-mandatory: an
+    # empty/missing value here degrades to harbor_findings_sync.py's own
+    # documented WARN + sticky carry-forward, not a failed deploy.
+    - name: Write Portainer live-usage credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/portainer.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # es-findings-ingest Portainer live-usage credential - managed by Ansible, do not edit by hand
+          PORTAINER_URL={{ es_findings_ingest_portainer_url }}
+          PORTAINER_TOKEN={{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}
+      no_log: true
+
+    # ---------------------------------------------------------------
     # Scoped OpenSearch internal user -- limited to create_index/write/
     # read on the findings indices, never the admin superuser. Bootstrapped
     # once with the admin superuser credential, then only the scoped
@@ -224,6 +255,20 @@
         - not (es_findings_ingest_es_reachable.failed | default(true))
       no_log: true
 
+    # Deliberately NOT gated on "credential file doesn't exist yet" like the
+    # user-generation tasks below it -- role *permissions* need to converge
+    # every run (e.g. Phase 14's docker-live-usage* read grant, added to an
+    # already-bootstrapped harbor-stack), whereas the *password* below is
+    # generated exactly once. A separate, ungated reachability check keeps
+    # this from depending on the credential-generation gate at all.
+    - name: Check if OpenSearch is reachable for role-permission reconciliation
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: es_findings_ingest_es_reachable_for_role
+      ignore_errors: true
+
     - name: Ensure es_findings_writer role exists in OpenSearch
       ansible.builtin.uri:
         url: "{{ es_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ es_findings_ingest_es_role_name }}"
@@ -246,18 +291,58 @@
             # just never matched the index being written to. Also fixed
             # in the harbor-findings.json index template's own
             # index_patterns for the same reason.
+            # This role name (es_findings_writer) is shared, independently,
+            # across FOUR different roles -- es_findings_ingest,
+            # gvm_findings_ingest, cve_enrichment_sync, wazuh_findings_ingest
+            # -- each with its own hardcoded, manually-kept-in-sync "extended
+            # to X" copy of this same PUT, no merge, no single source of
+            # truth. Confirmed live 2026-09-07, the hard way: making just
+            # this role's copy of the task un-gated (see the comment above
+            # this task) to fix Phase 14's docker-live-usage grant silently
+            # wiped cve_enrichment_sync's/wazuh_findings_ingest's own patterns
+            # the next time this task ran, since their own copies of this
+            # task are still gated to "only once, if the credential file
+            # doesn't already exist" and never got a chance to re-assert
+            # theirs. This list is now the full union of every consumer's
+            # needs (matching cve_enrichment_sync's own list, the most
+            # complete of the four) specifically BECAUSE this is now the one
+            # copy of the four that reconciles unconditionally every run --
+            # if a fifth consumer is ever added, add its pattern here too,
+            # not just to its own role's copy of this task.
+            #
+            # No trailing hyphen before the wildcard -- the actual index
+            # name harbor_findings_sync.py writes to is the literal flat
+            # "harbor-findings" (see docs/opensearch-stack/README.md's
+            # storage model), which "harbor-findings-*" does NOT match
+            # (glob requires a literal "-" after "findings"). Confirmed
+            # live 2026-08-17: this exact mismatch caused every bulk
+            # upsert to 403 with "no permissions for [indices:admin/create]"
+            # even though the role listed create_index -- the pattern
+            # just never matched the index being written to. Also fixed
+            # in the harbor-findings.json index template's own
+            # index_patterns for the same reason.
             - index_patterns:
                 - "harbor-findings*"
                 - "gvm-findings*"
                 - "es-findings-sync-state"
+                - "unified-cve-exposure*"
+                - "wazuh-findings*"
+                - "stack-risk-summary*"
+                - "cve-remediation-assessment*"
               allowed_actions:
                 - "create_index"
                 - "write"
                 - "read"
+            # Read-only -- Phase 14 (docs/threat-vuln-platform/plan.md,
+            # uvm-14-03). es_findings_ingest never writes here; that's
+            # docker_live_usage_reporter's own scoped role, on the hosts
+            # that role is deployed to.
+            - index_patterns:
+                - "docker-live-usage*"
+              allowed_actions:
+                - "read"
         status_code: [200, 201]
-      when:
-        - not es_findings_ingest_es_credential_stat.stat.exists
-        - not (es_findings_ingest_es_reachable.failed | default(true))
+      when: not (es_findings_ingest_es_reachable_for_role.failed | default(true))
       delegate_to: localhost
 
     - name: Ensure scoped OpenSearch user exists
@@ -360,3 +445,142 @@
         enabled: true
         state: started
       when: not ansible_check_mode
+
+    # ---------------------------------------------------------------
+    # Active usage-based cleanup (Phase 14, uvm-14-06). Own robot
+    # credential (delete-scoped), own service/timer -- see
+    # es_findings_ingest_harbor_cleanup_enabled's own comment in
+    # defaults/main.yml for why this isn't folded into
+    # es-findings-ingest.service itself.
+    # ---------------------------------------------------------------
+
+    - name: Copy harbor_cleanup.py
+      ansible.builtin.copy:
+        src: harbor_cleanup.py
+        dest: "{{ es_findings_ingest_dir }}/harbor_cleanup.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Copy Harbor cleanup exemption list
+      ansible.builtin.copy:
+        src: "assets/harbor_cleanup_exempt.json"
+        dest: "{{ es_findings_ingest_dir }}/assets/harbor_cleanup_exempt.json"
+        owner: root
+        group: root
+        mode: "0640"
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Check for existing Harbor cleanup robot credential
+      ansible.builtin.stat:
+        path: "{{ es_findings_ingest_dir }}/harbor-cleanup-robot.env"
+      register: es_findings_ingest_harbor_cleanup_credential_stat
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+
+    - name: Generate a unique name for the Harbor cleanup robot
+      ansible.builtin.set_fact:
+        es_findings_ingest_harbor_cleanup_robot_suffix: "{{ now(fmt='%s') }}-{{ 9999 | random }}"
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+
+    - name: Check if the Harbor admin API is reachable before creating the cleanup robot
+      ansible.builtin.wait_for:
+        host: "{{ es_findings_ingest_harbor_admin_host }}"
+        port: "{{ es_findings_ingest_harbor_admin_port }}"
+        timeout: 5
+      register: es_findings_ingest_harbor_cleanup_reachable
+      ignore_errors: true
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+
+    - name: Warn and skip Harbor cleanup robot creation when Harbor is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          Harbor admin API at {{ es_findings_ingest_harbor_admin_host }}:{{ es_findings_ingest_harbor_admin_port }}
+          is not reachable (timeout). Skipping harbor-cleanup robot creation --
+          re-run provision (or wait for the next scheduled run) once harbor-stack is reachable.
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - es_findings_ingest_harbor_cleanup_reachable.failed | default(true)
+
+    - name: Create system-level delete-scoped Harbor robot for cleanup
+      ansible.builtin.uri:
+        url: "{{ es_findings_ingest_harbor_url }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ es_findings_ingest_harbor_admin_user }}"
+        url_password: "{{ es_findings_ingest_harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ es_findings_ingest_harbor_cleanup_robot_name_prefix }}-{{ es_findings_ingest_harbor_cleanup_robot_suffix }}"
+          description: "harbor_cleanup.py (harbor-stack) -- Phase 14 active usage-based cleanup, delete-scoped, fully independent of es-findings-ingest's own read-only robot"
+          duration: -1
+          level: "system"
+          permissions:
+            - kind: "project"
+              namespace: "*"
+              access:
+                - resource: "repository"
+                  action: "delete"
+                - resource: "repository"
+                  action: "pull"
+        status_code: 201
+      register: es_findings_ingest_harbor_cleanup_robot_create
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_cleanup_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write Harbor cleanup robot credential file
+      ansible.builtin.copy:
+        dest: "{{ es_findings_ingest_dir }}/harbor-cleanup-robot.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # harbor_cleanup.py Harbor robot credential - managed by Ansible, do not edit by hand
+          HARBOR_ROBOT_USER={{ es_findings_ingest_harbor_cleanup_robot_create.json.name }}
+          HARBOR_ROBOT_PASSWORD={{ es_findings_ingest_harbor_cleanup_robot_create.json.secret }}
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not es_findings_ingest_harbor_cleanup_credential_stat.stat.exists
+        - not (es_findings_ingest_harbor_cleanup_reachable.failed | default(true))
+      no_log: true
+
+    - name: Write harbor-cleanup systemd service
+      ansible.builtin.template:
+        src: harbor-cleanup.service.j2
+        dest: /etc/systemd/system/harbor-cleanup.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+      notify: Reload systemd
+
+    - name: Write harbor-cleanup systemd timer
+      ansible.builtin.template:
+        src: harbor-cleanup.timer.j2
+        dest: /etc/systemd/system/harbor-cleanup.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      when: es_findings_ingest_harbor_cleanup_enabled | bool
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling the cleanup timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start harbor-cleanup timer
+      ansible.builtin.systemd:
+        name: harbor-cleanup.timer
+        enabled: true
+        state: started
+      when:
+        - es_findings_ingest_harbor_cleanup_enabled | bool
+        - not ansible_check_mode
