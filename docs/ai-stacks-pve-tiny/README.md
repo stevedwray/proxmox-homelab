@@ -1,7 +1,7 @@
 # ai-stacks-pve-tiny
 
-Status: **Phases 0–2 passed (2026-09-27); Phase 3 per-stack cutover is next,
-starting with `mcp-utility-stack`.** Continue with plan.md's "How to execute
+Status: **Phases 0–2 passed and `mcp-utility-stack` cut over (2026-09-27);
+Phase 3 continues with `secpipe-stack`.** Continue with plan.md's "How to execute
 this plan" section.
 
 ## What this is
@@ -34,7 +34,7 @@ as-is.
 | ai-tiny-05b pve-tiny provision target guard | done (2026-09-27) |
 | Phase 1 read-only pve-tiny plans | done — go (2026-09-27) |
 | Phase 2 ai_seg on pve-tiny | done — go (2026-09-27) |
-| Cutover: mcp-utility-stack | not started |
+| Cutover: mcp-utility-stack | done — known pre-existing docs-RAG AI-runtime issue deferred (2026-09-27) |
 | Cutover: secpipe-stack | not started |
 | Cutover: opensearch-stack | not started |
 | Cutover: ai-services-stack | not started |
@@ -185,3 +185,27 @@ as-is.
   check.
 - Phase 2d required no mutation: `vm.max_map_count=1048576`, above the
   OpenSearch minimum of 262144. Result: **GO for the first Phase 3 cutover.**
+
+### Phase 3 — mcp-utility-stack cutover (2026-09-27)
+
+- Under approval `ai-stacks-pve-tiny-mcp-utility`, source CT 50011 on `pve`
+  was stopped with onboot disabled. The target was created and provisioned on
+  `pve-tiny`; apply reported `6 added, 0 changed, 0 destroyed` and Ansible
+  completed with `failed=0`.
+- The first functional check exposed a pre-existing application dependency:
+  docs-RAG still calls the retired Framework Ollama `/api/embed` endpoint on
+  port 11434, while the platform now uses NathanW llama.cpp. A rollback
+  restored the source before the cause was classified. The source exhibited
+  the same `search_docs` failure, proving it was not introduced by relocation.
+- Per operator direction, Ollama-to-llama.cpp compatibility work is deferred
+  from this migration pass. The same stale-runtime audit is required for
+  `secpipe-stack`; record such findings but do not mix their fixes into this
+  relocation.
+- Under approval `ai-stacks-pve-tiny-mcp-utility-retry`, source CT 50011 was
+  stopped again and target CT 50011 was enabled and started. Source is now
+  `stopped/onboot=0`; target is `running/onboot=1`.
+- Target rootfs (10G) and `/var/lib/docker` (15G) are both on `nvme-lvm`; it is
+  unprivileged and attached to `tvai` as `192.168.50.10/24`. pgvector is
+  healthy, cve-mcp is healthy, and the MCP endpoints return the expected
+  `8000=406` and `8001=400` signatures.
+- The correct-state plan refreshed all six resources without container,

@@ -727,6 +727,15 @@ checks intentionally accept that live signature. Then run one real
 `search_docs` call from VS Code (docs-rag reindexes on provision, so the
 first call may be slow).
 
+Migration observation (2026-09-27): the source and target currently fail the
+real `search_docs` call because docs-RAG still targets the retired Framework
+Ollama `/api/embed` endpoint on port 11434, while the active platform runtime
+is NathanW llama.cpp. This is a pre-existing application compatibility issue,
+not relocation drift. Per operator direction, record it and continue this
+migration pass; do not restart Ollama or redesign the embedding pipeline here.
+Audit `secpipe-stack` for the same stale Ollama assumption, but keep any
+runtime/API remediation in a separate follow-up change.
+
 ### secpipe-stack checks
 ```bash
 ssh root@192.168.50.12 'systemctl is-enabled cve-enrichment-sync.timer cve-deep-dive.timer; systemctl start cve-enrichment-sync.service; systemctl status --no-pager cve-enrichment-sync.service | tail -5'
