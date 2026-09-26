@@ -456,8 +456,12 @@ change: >
   `storage_profile: platform-nvme`, `extra_mount_profile: durable-zfs` with
   `extra_mount_profile: durable-nvme`, and the indented
   `  profile: durable-zfs` (inside the `extra_mount:` block) with
-  `  profile: durable-nvme`. Change no other line (sizes, IPs, vmids and
-  zones all stay exactly as they are).
+  `  profile: durable-nvme`. In that same `extra_mount:` block, replace
+  `  resize_control_plane: operational` with
+  `  resize_control_plane: provider`; provider-managed resizing is required
+  for the LVM-thin `nvme-lvm` backend, while operational resizing is supported
+  only for ZFS-backed extra mounts. Change no other line (sizes, IPs, vmids
+  and zones all stay exactly as they are).
 
 scope:
   allowed_paths:
@@ -472,11 +476,11 @@ scope:
 gates:
   - id: profiles-resolve-on-pve-tiny
     cmd: |
-      python3 -c "import yaml;m=yaml.safe_load(open('terraform/lxc/storage/pve-tiny.yaml'));ss=['ai-services-stack','mcp-utility-stack','secpipe-stack','opensearch-stack'];ds=[yaml.safe_load(open('terraform/lxc/stacks/%s/stack.yaml'%s)) for s in ss];assert all(d['storage_profile']=='platform-nvme' and d['storage_profile'] in m['profiles'] for d in ds);o=ds[3];assert o['extra_mount_profile']=='durable-nvme' and o['extra_mount']['profile']=='durable-nvme' and 'durable-nvme' in m['extra_mount_profiles'];print('ok')"
+      python3 -c "import yaml;m=yaml.safe_load(open('terraform/lxc/storage/pve-tiny.yaml'));ss=['ai-services-stack','mcp-utility-stack','secpipe-stack','opensearch-stack'];ds=[yaml.safe_load(open('terraform/lxc/stacks/%s/stack.yaml'%s)) for s in ss];assert all(d['storage_profile']=='platform-nvme' and d['storage_profile'] in m['profiles'] for d in ds);o=ds[3];assert o['extra_mount_profile']=='durable-nvme' and o['extra_mount']['profile']=='durable-nvme' and o['extra_mount']['resize_control_plane']=='provider' and 'durable-nvme' in m['extra_mount_profiles'];print('ok')"
     expect: "prints ok, exit 0"
     critical: true
-  - id: diff-is-profile-lines-only
-    cmd: "git diff -U0 -- terraform/lxc/stacks/ | grep -E '^[+-][^+-]' | grep -v -E '^[+-] *(storage_profile|extra_mount_profile|profile): ' | wc -l"
+  - id: diff-is-storage-lines-only
+    cmd: "git diff -U0 -- terraform/lxc/stacks/ | grep -E '^[+-][^+-]' | grep -v -E '^[+-] *(storage_profile|extra_mount_profile|profile|resize_control_plane): ' | wc -l"
     expect: "0"
     critical: true
 ```

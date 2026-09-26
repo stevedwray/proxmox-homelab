@@ -113,9 +113,10 @@ as-is.
   `platform-default` to `platform-nvme`.
 - Changed `opensearch-stack` from `platform-monitoring-zfs` to
   `platform-nvme`, and both of its durable mount profile references from
-  `durable-zfs` to `durable-nvme`.
+  `durable-zfs` to `durable-nvme`. Its extra mount uses provider-managed
+  resizing, as required for the LVM-thin backend.
 - Gate `profiles-resolve-on-pve-tiny` printed `ok`; gate
-  `diff-is-profile-lines-only` printed `0`. Both exited 0.
+  `diff-is-storage-lines-only` printed `0`. Both exited 0.
 - All critical gates passed. IPs, VMIDs, network zones, compute allocations,
   and storage sizes were unchanged. No live or production command was run.
 

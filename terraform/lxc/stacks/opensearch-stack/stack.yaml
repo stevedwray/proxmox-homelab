@@ -64,7 +64,7 @@ extra_mount:
   size: "150G"
   profile: durable-nvme
   backup_policy: include
-  resize_control_plane: operational
+  resize_control_plane: provider
   mutation_policy: grow-only
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
