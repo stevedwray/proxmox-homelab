@@ -442,6 +442,25 @@
                   "/var/lib/notus/advisories",
                   "-m",
                   "666",
+                  # Both default to disabled/unbounded upstream. Confirmed
+                  # live 2026-09-14: resuming 13 stalled tasks at once (after
+                  # the OOM-storm recovery -- see stack.yaml's memory/swap
+                  # comment) launched them all concurrently with zero
+                  # backpressure, OOM-killing ospd-openvas itself a second
+                  # time even at the new 6144MB ceiling. gvmd's own
+                  # Running/Queued/Requested task states already expect this
+                  # kind of throttling to happen on the scanner side -- these
+                  # two flags are what actually makes that real instead of
+                  # gvmd handing ospd-openvas everything at once.
+                  # min-free-mem-scan-queue reads /proc/meminfo, which inside
+                  # this LXC's own cgroup already correctly reports the
+                  # container's real ceiling (confirmed: free -h shows 6.0Gi,
+                  # not the pve host's 125GB), so the threshold below is
+                  # meaningful here, not fooled by host-wide free memory.
+                  "--min-free-mem-scan-queue",
+                  "1500",
+                  "--max-scans",
+                  "3",
                 ]
               volumes:
                 - gpg_data_vol:/etc/openvas/gnupg
