@@ -82,6 +82,7 @@
     greenbone_admin_password: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory('GREENBONE_ADMIN_PASSWORD env var is required') }}"
     greenbone_steve_ssh_private_key: "{{ lookup('env', 'GREENBONE_STEVE_SSH_PRIVATE_KEY') | mandatory('GREENBONE_STEVE_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_openvas_workstation_ssh_private_key: "{{ lookup('env', 'GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY env var is required') }}"
+    greenbone_mikrotik_ssh_private_key: "{{ lookup('env', 'GREENBONE_MIKROTIK_SSH_PRIVATE_KEY') | mandatory('GREENBONE_MIKROTIK_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_start_task_name: "{{ lookup('env', 'GREENBONE_START_TASK_NAME') | default('', true) }}"
     greenbone_status_task_name: "{{ lookup('env', 'GREENBONE_STATUS_TASK_NAME') | default('', true) }}"
     greenbone_oci_pangolin_audit_ssh_private_key: "{{ lookup('env', 'GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OCI_PANGOLIN_AUDIT_SSH_PRIVATE_KEY env var is required') }}"
@@ -1010,6 +1011,13 @@
             mode: "0644"
           no_log: true
 
+        - name: Write MikroTik gvm-scan SSH private key for credential-program
+          ansible.builtin.copy:
+            content: "{{ greenbone_mikrotik_ssh_private_key }}"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key"
+            mode: "0644"
+          no_log: true
+
         - name: Create credentialed targets and unscheduled tasks
           ansible.builtin.command:
             cmd: >-
@@ -1017,10 +1025,12 @@
               -v {{ greenbone_credential_program_tempdir.path }}/setup_credentials.py:/tmp/setup_credentials.py:ro
               -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key:/tmp/mikrotik-gvm-scan.key:ro
               -e GVM_USERNAME
               -e GVM_PASSWORD
               -e GREENBONE_STEVE_KEY_PATH
               -e GREENBONE_OPENVAS_WORKSTATION_KEY_PATH
+              -e GREENBONE_MIKROTIK_KEY_PATH
               -e GREENBONE_START_TASK_NAME
               -e GREENBONE_STATUS_TASK_NAME
               gvm-tools python3 /tmp/setup_credentials.py
@@ -1030,6 +1040,7 @@
             GVM_PASSWORD: "{{ greenbone_admin_password }}"
             GREENBONE_STEVE_KEY_PATH: /tmp/steve.key
             GREENBONE_OPENVAS_WORKSTATION_KEY_PATH: /tmp/openvas-workstation.key
+            GREENBONE_MIKROTIK_KEY_PATH: /tmp/mikrotik-gvm-scan.key
             GREENBONE_START_TASK_NAME: "{{ greenbone_start_task_name }}"
             GREENBONE_STATUS_TASK_NAME: "{{ greenbone_status_task_name }}"
           register: greenbone_credential_program_setup

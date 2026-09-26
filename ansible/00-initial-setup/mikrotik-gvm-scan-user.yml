@@ -1,0 +1,265 @@
+# Create a dedicated, narrowly-scoped RouterOS identity for greenbone-stack's
+# first credentialed (SSH) scan of the MikroTik router itself -- see
+# docs/greenbone-stack/network-scan-rollout-plan.md's Phase 3 extension.
+#
+# Deliberately NOT a reuse of the existing api-ro user: api-ro is in
+# RouterOS's stock "read" group, which -- unusually -- also carries reboot,
+# sniff, sensitive, and winbox policy bits (RouterOS's own factory default
+# for "read", not something this repo added). api-ro was provisioned for a
+# different trust boundary (Terraform's own read-only REST API access), and
+# this repo's convention for a new automation purpose is a purpose-built
+# group with an explicit allow/deny list -- see the "dns-api" group
+# (MIKROTIK_ADMIN/dns-user) for the existing precedent this mirrors.
+#
+# Auth is SSH-key only (GMP "usk" credential type, matching every other
+# Phase 3 credential -- see setup_credentials.py). The account also gets a
+# strong random password (MIKROTIK_GVM_SCAN_PASSWORD, SOPS-backed) purely
+# because RouterOS's /user/add requires a password field; GVM's stored
+# credential never uses it.
+#
+# Same idempotent read-check-write-reread-assert pattern as the other
+# mikrotik-*.yml playbooks in this directory. Three separate resources are
+# each individually idempotent: the group, the user, and the imported SSH
+# key (RouterOS ties an imported key to a user via /user/ssh-keys/import,
+# which needs the public key staged as a file on router storage first --
+# confirmed live that POST /rest/file/add accepts an inline `contents` field
+# directly, no FTP/SCP transfer needed -- the temp file is removed again
+# immediately after import).
+#
+# Run intentionally against the live router, same caution as
+# mikrotik-game-seg.yml:
+#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-gvm-scan-user.yml
+
+- name: Ensure greenbone-stack's dedicated MikroTik gvm-scan RouterOS identity exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    gvm_scan_group_name: "gvm-scan"
+    gvm_scan_user_name: "{{ lookup('env', 'MIKROTIK_GVM_SCAN_USER') | mandatory('MIKROTIK_GVM_SCAN_USER env var is required') }}"
+    gvm_scan_password: "{{ lookup('env', 'MIKROTIK_GVM_SCAN_PASSWORD') | mandatory('MIKROTIK_GVM_SCAN_PASSWORD env var is required') }}"
+    # Public half only -- not secret, safe to commit. Pairs with the private
+    # key stored as GREENBONE_MIKROTIK_SSH_PRIVATE_KEY in SOPS, consumed by
+    # setup_credentials.py's "mikrotik-gvm-scan" GMP credential.
+    gvm_scan_ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPOpk/MvP++XYPJymFZoNXiLoEN5OhbC23GQzy6/tHTX gvm-scan@greenbone-stack"
+    gvm_scan_ssh_key_filename: "gvm-scan-import-tmp.pub"
+
+    # Explicit allow/deny, mirroring the dns-api group's style. Only ssh
+    # (log in at all) and read (run read-only diagnostic/print commands,
+    # what OpenVAS's SSH-based detection/LSC NVTs need) are granted;
+    # everything else -- including reboot, sniff, sensitive, and every
+    # other transport (telnet/ftp/web/winbox/api/rest-api/romon) -- is
+    # explicitly denied.
+    gvm_scan_group_policy: "ssh,read,!local,!telnet,!ftp,!reboot,!write,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!api,!romon,!rest-api"
+
+  pre_tasks:
+    - name: Assert MikroTik full-privilege credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    # --- Group ---
+    - name: Read MikroTik user groups
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/group"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: mikrotik_groups
+      no_log: true
+
+    - name: Create gvm-scan group, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/group/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          name: "{{ gvm_scan_group_name }}"
+          policy: "{{ gvm_scan_group_policy }}"
+        status_code: [200, 201]
+      when: >-
+        (mikrotik_groups.json | selectattr('name', 'equalto', gvm_scan_group_name) | list) | length == 0
+      no_log: true
+
+    # --- User ---
+    - name: Read MikroTik users
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: mikrotik_users
+      no_log: true
+
+    - name: Create gvm-scan user, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          name: "{{ gvm_scan_user_name }}"
+          group: "{{ gvm_scan_group_name }}"
+          password: "{{ gvm_scan_password }}"
+          comment: "greenbone-stack: dedicated SSH-key credentialed scan identity"
+        status_code: [200, 201]
+      when: >-
+        (mikrotik_users.json | selectattr('name', 'equalto', gvm_scan_user_name) | list) | length == 0
+      no_log: true
+
+    # --- SSH key import ---
+    - name: Read imported SSH keys
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/ssh-keys"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: mikrotik_ssh_keys
+      no_log: true
+
+    - name: Import gvm-scan public key, if not already present
+      when: >-
+        (mikrotik_ssh_keys.json | selectattr('user', 'defined') | selectattr('user', 'equalto', gvm_scan_user_name) | list) | length == 0
+      block:
+        - name: Stage the public key as a temporary file on router storage
+          ansible.builtin.uri:
+            url: "{{ mikrotik_rest_base_url }}/file/add"
+            method: POST
+            user: "{{ mikrotik_user }}"
+            password: "{{ mikrotik_password }}"
+            force_basic_auth: true
+            validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+            body_format: json
+            body:
+              name: "{{ gvm_scan_ssh_key_filename }}"
+              contents: "{{ gvm_scan_ssh_public_key }}"
+            status_code: [200, 201]
+          no_log: true
+
+        - name: Import the staged public key for gvm-scan
+          ansible.builtin.uri:
+            url: "{{ mikrotik_rest_base_url }}/user/ssh-keys/import"
+            method: POST
+            user: "{{ mikrotik_user }}"
+            password: "{{ mikrotik_password }}"
+            force_basic_auth: true
+            validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+            body_format: json
+            body:
+              user: "{{ gvm_scan_user_name }}"
+              public-key-file: "{{ gvm_scan_ssh_key_filename }}"
+            status_code: [200, 201]
+          no_log: true
+      always:
+        - name: Remove the temporary public key file from router storage
+          ansible.builtin.uri:
+            url: "{{ mikrotik_rest_base_url }}/file"
+            method: GET
+            user: "{{ mikrotik_user }}"
+            password: "{{ mikrotik_password }}"
+            force_basic_auth: true
+            validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+            return_content: true
+            status_code: 200
+          register: mikrotik_files_after_import
+          no_log: true
+
+        - name: Delete the temporary public key file by id, if it still exists
+          ansible.builtin.uri:
+            url: "{{ mikrotik_rest_base_url }}/file/remove"
+            method: POST
+            user: "{{ mikrotik_user }}"
+            password: "{{ mikrotik_password }}"
+            force_basic_auth: true
+            validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+            body_format: json
+            body:
+              ".id": "{{ (mikrotik_files_after_import.json | selectattr('name', 'equalto', gvm_scan_ssh_key_filename) | list | first)['.id'] }}"
+            status_code: [200, 201]
+          when: >-
+            (mikrotik_files_after_import.json | selectattr('name', 'equalto', gvm_scan_ssh_key_filename) | list) | length > 0
+          no_log: true
+
+    # --- Final verification ---
+    - name: Re-read group, user, and ssh-keys to confirm final state
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      loop:
+        - user/group
+        - user
+        - user/ssh-keys
+      loop_control:
+        label: "{{ item }}"
+      register: mikrotik_final_state
+      no_log: true
+
+    - name: Assert the gvm-scan group exists with the expected policy
+      ansible.builtin.assert:
+        that:
+          - >-
+            (mikrotik_final_state.results[0].json
+              | selectattr('name', 'equalto', gvm_scan_group_name)
+              | selectattr('policy', 'equalto', gvm_scan_group_policy)
+              | list) | length > 0
+        fail_msg: "gvm-scan group missing or policy drifted from expected value."
+
+    - name: Assert the gvm-scan user exists in the gvm-scan group
+      ansible.builtin.assert:
+        that:
+          - >-
+            (mikrotik_final_state.results[1].json
+              | selectattr('name', 'equalto', gvm_scan_user_name)
+              | selectattr('group', 'equalto', gvm_scan_group_name)
+              | list) | length > 0
+        fail_msg: "gvm-scan user missing or not in the gvm-scan group."
+
+    - name: Assert an SSH key is imported for gvm-scan
+      ansible.builtin.assert:
+        that:
+          - >-
+            (mikrotik_final_state.results[2].json
+              | selectattr('user', 'defined')
+              | selectattr('user', 'equalto', gvm_scan_user_name)
+              | list) | length > 0
+        fail_msg: "No SSH key found imported for gvm-scan after import step."
+
+    - name: Report final state
+      ansible.builtin.debug:
+        msg: >-
+          MikroTik gvm-scan group/user/SSH-key confirmed present. Manually
+          test 'ssh gvm-scan@{{ mikrotik_host }} -i <private key>' once
+          before relying on GVM's own authenticated scan to prove it first.
