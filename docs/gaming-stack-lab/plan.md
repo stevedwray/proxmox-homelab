@@ -528,8 +528,9 @@ way `foreverworld`'s data is.
    ARK experience with rate multipliers). **Completed 2026-09-26:** the live
    server has the agreed values: two human slots, four map-update threads,
    Playerbots enabled, all configured rates at `1`, random-bot
-   autologin/minimum/maximum at `0`, and a maximum of four deliberately added
-   bots.
+   autologin/minimum/maximum at `0`, a maximum of four deliberately added
+   bots, and four offline AddClass accounts for dependable class/faction
+   selection. Those prepared characters do not autologin or roam.
 4. **First boot**: expect a long first start (core compile + client-data
    download + DB import) — watch the console live (same websocket
    approach used all night), not just poll for "running", since a

@@ -64,9 +64,9 @@ jq \
       },
       {
         name: "AddClass account pool size",
-        description: "One account pool is sufficient for this private realm and its deliberate party bots.",
+        description: "Four offline AddClass accounts provide reliable class/faction choices for two players without enabling roaming bots.",
         env_variable: "AC_AI_PLAYERBOT_ADD_CLASS_ACCOUNT_POOL_SIZE",
-        default_value: "1", user_viewable: true, user_editable: false,
+        default_value: "4", user_viewable: true, user_editable: false,
         rules: "required|integer|min:0|max:1000", sort: 1004, field_type: "text"
       }
     ]
@@ -85,6 +85,7 @@ jq -e \
   and ([.variables[] | select(.env_variable == "USE_PLAYERBOTS").default_value] == ["1"])
   and ([.variables[] | select(.env_variable == "AC_AI_PLAYERBOT_RANDOM_BOT_AUTOLOGIN").default_value] == ["0"])
   and ([.variables[] | select(.env_variable == "AC_AI_PLAYERBOT_MAX_ADDED_BOTS").default_value] == ["4"])
+  and ([.variables[] | select(.env_variable == "AC_AI_PLAYERBOT_ADD_CLASS_ACCOUNT_POOL_SIZE").default_value] == ["4"])
   ' "$output_path" >/dev/null
 
 printf 'Rendered %s\n' "$output_path"
