@@ -819,6 +819,15 @@ returns 200; log in at `https://openwebui.<LAB_DOMAIN>` via Authentik and
 confirm an old chat opens and a new prompt reaches the Framework model;
 one SearXNG query; one deep-research run.
 
+Migration execution note (2026-09-27): the cold archive import, exact
+`users 1 chats 38` fingerprint comparison, container/application readiness,
+NathanW llama.cpp model discovery, correct-state plan, and pending-SDN checks
+passed. The clean pre-import provision exposed a harmless ordering dependency:
+the OpenWebUI settings reconciler expects the `config` table that exists in the
+migrated database, so it failed against the disposable empty database and
+passed after the planned restore. The public Authentik and interactive
+cross-stack checks are deferred to the operator-requested whole-setup test.
+
 ---
 
 ## Phase 4 — Soak and decommission (operator)

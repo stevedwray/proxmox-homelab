@@ -1,9 +1,8 @@
 # ai-stacks-pve-tiny
 
-Status: **Phases 0–2 passed and `mcp-utility-stack`, `secpipe-stack`, and
-`opensearch-stack` cut over (2026-09-27); Phase 3 continues with
-`ai-services-stack`.** Continue with plan.md's "How to execute this plan"
-section.
+Status: **Phases 0–2 passed and all four Phase 3 cutovers completed on
+`pve-tiny` (2026-09-27). Whole-setup functional testing, `ai-tiny-06`, and
+the soak remain.** Continue with plan.md's "How to execute this plan" section.
 
 ## What this is
 
@@ -38,7 +37,7 @@ as-is.
 | Cutover: mcp-utility-stack | done — known pre-existing docs-RAG AI-runtime issue deferred (2026-09-27) |
 | Cutover: secpipe-stack | done — full enrichment sweep deferred until whole-setup test (2026-09-27) |
 | Cutover: opensearch-stack | done — application-level consumer tests deferred until whole-setup test (2026-09-27) |
-| Cutover: ai-services-stack | not started |
+| Cutover: ai-services-stack | done — whole-setup interactive tests deferred (2026-09-27) |
 | ai-tiny-06 zone membership docs | not started |
 | Phase 4 decommission (after ≥7-day soak) | not started |
 
@@ -258,3 +257,36 @@ as-is.
   not modified beyond stop/onboot state. Public Authentik login and Grafana
   datasource checks are intentionally deferred to the operator-requested
   whole-setup test after the remaining stack migration.
+
+### Phase 3 — ai-services-stack cutover (2026-09-27)
+
+- Under approval `ai-stacks-pve-tiny-ai-services`, source CT 50013 on `pve`
+  was stopped with onboot disabled. Its three named Docker volumes were
+  cold-exported into a retained 1,015M archive containing 243 entries, verified
+  with SHA-256
+  `a049ca2dcfb7570aecd9a3520c96c197c0ef685b7cbef9d02eac771fe09461c9`.
+- The target apply reported `6 added, 0 changed, 0 destroyed`. Its 16G rootfs
+  and 24G Docker mount are both on `nvme-lvm`; the unprivileged CT is
+  `running/onboot=1` on `tvai` at `192.168.50.11/24`. The source remains
+  `stopped/onboot=0` for rollback.
+- The clean pre-import provision reached all application containers, then its
+  OpenWebUI settings reconciler failed because the brand-new empty database had
+  not yet created the `config` table. This was a sequencing observation only:
+  the required volume paths existed, so the verified archive was restored into
+  the stopped target as planned. Post-restore reconciliation completed with
+  `ok=67 failed=0 ignored=1`.
+- The OpenWebUI fingerprint matches exactly at `users 1 chats 38`. OpenWebUI,
+  SearXNG, deep-research, deep-research-files, web-search-mcp, and the Portainer
+  agent are running; application health checks passed. OpenWebUI model discovery
+  passed against the managed routes, including NathanW llama.cpp at `:8080/v1`,
+  with Ollama disabled.
+- Direct HTTP checks returned 200 for OpenWebUI, SearXNG, and the files service;
+  deep-research's deployment readiness check passed, while our `/health` probe
+  returned 404. The correct-state Terragrunt plan reports no changes, and all
+  pending SDN counts are zero.
+- node_exporter TLS enrollment again skipped because step-ca at
+  `192.168.20.11:443` is unreachable from `tvai`; this remains the already
+  recorded cross-zone connectivity follow-up. Interactive Authentik login, old
+  chat display, new llama.cpp prompt, SearXNG query, deep-research run, and the
+  broader cross-stack checks remain deferred to the operator-requested
+  whole-setup test.
