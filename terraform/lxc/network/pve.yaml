@@ -435,6 +435,13 @@ policies:
     protocol: tcp
     ports: [9001]
     description: Lab Portainer management plane to the gaming-stack-lab agent
+  - from: lan
+    to: game_seg
+    protocol: tcp
+    ports: [3724, 8085]
+    description: >-
+      LAN-only access to the planned private AzerothCore Playerbots realm:
+      authserver (3724) and worldserver (8085). No WAN forwarding.
   - from: game_seg
     to: "192.168.30.10"
     protocol: tcp

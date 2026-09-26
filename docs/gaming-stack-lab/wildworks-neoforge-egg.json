@@ -1,0 +1,35 @@
+{
+    "_comment": "Checked-in PTDL_v2 egg for the existing Foreverworld Wildworks release. Import manually in the Panel; do not add secrets to this file.",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-09-26T09:30:00+12:00",
+    "name": "Wildworks NeoForge (game-slot interlocked)",
+    "author": "stevedwray@protonmail.com",
+    "description": "Runs the pre-built Wildworks NeoForge 1.21.1 server through its release-native run.sh. Requires the shared /game-slot read-only mount documented in minecraft-migration.md.",
+    "features": [
+        "eula",
+        "java_version",
+        "pid_limit"
+    ],
+    "docker_images": {
+        "Java 21": "ghcr.io/pelican-eggs/yolks:java_21"
+    },
+    "file_denylist": [],
+    "startup": "exec 9</game-slot/active.lock; if ! flock -n -E 75 9; then echo 'GAME SLOT BUSY: another game server is already running on this node.'; exit 75; fi; test -x ./run.sh || { echo 'Wildworks run.sh is missing or not executable; migration is incomplete.'; exit 66; }; exec ./run.sh nogui",
+    "config": {
+        "files": "{\r\n    \"server.properties\": {\r\n        \"parser\": \"properties\",\r\n        \"find\": {\r\n            \"server-ip\": \"0.0.0.0\",\r\n            \"server-port\": \"{{server.build.default.port}}\",\r\n            \"query.port\": \"{{server.build.default.port}}\"\r\n        }\r\n    }\r\n}",
+        "startup": "{\r\n    \"done\": \")! For help, type\"\r\n}",
+        "logs": "{}",
+        "stop": "stop"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\nset -euo pipefail\nmkdir -p /mnt/server\ncat > /mnt/server/MIGRATION_REQUIRED.txt <<'EOF'\nThis server intentionally has no downloadable base installation.\nCopy the reviewed Foreverworld manifest into this volume before first start.\nSee docs/gaming-stack-lab/minecraft-migration.md in the infrastructure repository.\nEOF\nprintf 'eula=false\\n' > /mnt/server/eula.txt\necho 'Wildworks staging volume created; complete the documented migration before starting.'",
+            "container": "ghcr.io/pelican-eggs/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": []
+}

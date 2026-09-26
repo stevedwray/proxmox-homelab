@@ -89,6 +89,15 @@
       Content-Type: "application/json"
     pterodactyl_location_short: "game-servers"
     pterodactyl_node_name: "gaming-stack-lab"
+    pterodactyl_required_ports:
+      - "25565" # Minecraft game
+      - "25575" # Minecraft RCON
+      - "7777"  # ARK game
+      - "7778"  # ARK peer (game + 1)
+      - "27015" # ARK query
+      - "37015" # ARK RCON
+      - "3724"  # AzerothCore authserver (WoW 3.3.5a)
+      - "8085"  # AzerothCore worldserver
     wings_version: "v1.13.3"
 
   tasks:
@@ -154,7 +163,11 @@
           behind_proxy: false
           maintenance_mode: false
           memory: 24576
-          memory_overallocate: 0
+          # Servers on this node are intentionally overallocated because the
+          # shared game-slot lock below admits exactly one at runtime. 100%
+          # leaves room for the current 16GB ARK + 16GB Minecraft definitions
+          # on a 24GB node without pretending they can run concurrently.
+          memory_overallocate: 100
           disk: 500000
           disk_overallocate: 0
           upload_size: 100
@@ -180,16 +193,16 @@
         return_content: true
       register: pterodactyl_allocation_lookup
 
-    # Port ranges cover both known games so far: Minecraft (25565) and ARK.
+    # Port ranges cover Minecraft, ARK, and the planned AzerothCore server.
     # ARK's ports were corrected 2026-09-20 -- the smoketest used
     # azixus/ARK_Ascended_Docker's own defaults (7790 game, 32330 RCON),
     # but the actual Wings egg to be used (pelican-eggs' official
     # ark_survival_ascended, confirmed via its real README) has different
     # real defaults: 7777 game, 7778 peer (auto game+1, not separately
-    # allocatable), 27015 query, 37015 RCON. AzerothCore is not covered --
-    # its port requirements aren't researched yet, add allocations for it
-    # separately once that egg exists.
-    - name: Create allocations for this node if none exist yet
+    # allocatable), 27015 query, 37015 RCON. AzerothCore uses 3724 for
+    # authserver and 8085 for worldserver; its server is still intentionally
+    # uncreated until the interlocked egg and operator choices are ready.
+    - name: Create any missing game-server allocations on this node
       ansible.builtin.uri:
         url: "{{ pterodactyl_panel_url }}/api/application/nodes/{{ pterodactyl_node_id }}/allocations"
         headers: "{{ pterodactyl_api_headers }}"
@@ -198,8 +211,12 @@
         body_format: json
         body:
           ip: "{{ ansible_host }}"
-          ports: ["25565", "7777", "7778", "27015", "37015"]
-      when: (pterodactyl_allocation_lookup.content | from_json).data | length == 0
+          ports: ["{{ item }}"]
+      loop: "{{ pterodactyl_required_ports }}"
+      when: >-
+        item | int not in
+        ((pterodactyl_allocation_lookup.content | from_json).data |
+         map(attribute='attributes.port') | map('int') | list)
 
     - name: Check whether Wings binary is already installed
       ansible.builtin.stat:
@@ -243,7 +260,7 @@
       when: not pterodactyl_wings_config.stat.exists
       no_log: true
 
-    # Three real, live-found fixes to Wings' own generated config.yml,
+    # Four real, live-found fixes to Wings' own generated config.yml,
     # applied unconditionally (not gated on first-configure) so they
     # self-heal even against an already-existing file:
     #
@@ -302,6 +319,59 @@
         pterodactyl_wings_dns_fix.changed or
         pterodactyl_wings_dns_fix2.changed
 
+    # 4. system.data defaults to /var/lib/pterodactyl/volumes, on this
+    #    host's 16GB rootfs -- not the dedicated 500GB gaming-containers
+    #    mount at /srv/docker that's provisioned specifically for game
+    #    data (see this stack's extra_mount in stack.yaml). Every
+    #    server's data was piling onto the small disk, discovered live
+    #    2026-09-23 when the rootfs hit 72% and blocked an ARK update
+    #    mid-download. Existing data was migrated by hand (rsync,
+    #    checksum-verified) before this fix landed; a fresh deploy just
+    #    gets the right path from the start.
+    - name: Ensure the game-data volumes directory exists on the dedicated mount
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/volumes
+        state: directory
+        mode: "0755"
+
+    # Every game on this node is deliberately sized on the assumption that it
+    # runs alone. A shared, read-only lock file lets each egg use flock(1) as
+    # an atomic admission check: the winning server holds the lock for its
+    # entire process lifetime and every concurrent start exits immediately.
+    # The Panel mount that exposes this directory inside servers is created
+    # separately because Pterodactyl has no Application API for mounts.
+    - name: Ensure the shared game-slot lock directory exists
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/game-slot
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure the shared game-slot lock file exists
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/game-slot/active.lock
+        state: touch
+        owner: root
+        group: root
+        mode: "0444"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Allow Wings to expose the shared game-slot lock mount
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^allowed_mounts:"
+        line: "allowed_mounts: ['/srv/docker/pterodactyl/game-slot']"
+      register: pterodactyl_wings_allowed_mounts_fix
+
+    - name: Fix Wings config -- store server data on the dedicated game-data mount
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^  data: .*"
+        line: "  data: /srv/docker/pterodactyl/volumes"
+      register: pterodactyl_wings_data_path_fix
+
     - name: Restart Wings if any config fix actually changed something
       ansible.builtin.systemd:
         name: wings
@@ -310,7 +380,9 @@
         pterodactyl_wings_origins_fix.changed or
         pterodactyl_wings_dns_fix.changed or
         pterodactyl_wings_dns_fix2.changed or
-        pterodactyl_wings_subnet_fix.changed
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_data_path_fix.changed or
+        pterodactyl_wings_allowed_mounts_fix.changed
 
     - name: Install Wings systemd unit
       ansible.builtin.copy:
