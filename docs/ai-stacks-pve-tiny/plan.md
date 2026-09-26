@@ -160,6 +160,9 @@ pvesh get /cluster/sdn/zones --output-format json
 for vnet in tvinfra tvmgmt tvcse tvai; do pvesh get /cluster/sdn/vnets/$vnet/subnets --output-format json 2>/dev/null || true; done
 cat /etc/pve/firewall/cluster.fw 2>/dev/null
 cat /etc/pve/jobs.cfg 2>/dev/null
+echo "== pending SDN changes (count of objects carrying a pending state; must be 0)"
+for p in zones vnets; do echo "$p: $(pvesh get /cluster/sdn/$p --pending 1 --output-format json | grep -o "\"state\"" | wc -l)"; done
+for vnet in tvinfra tvmgmt tvcse; do echo "subnets/$vnet: $(pvesh get /cluster/sdn/vnets/$vnet/subnets --pending 1 --output-format json 2>/dev/null | grep -o "\"state\"" | wc -l)"; done
 '
 
 # workstation: staging space and the cve-mcp-server source clone
@@ -175,6 +178,16 @@ df -h ~ ; test -d /home/steve/git/cve-mcp-server && echo cve-mcp-src-ok
 - `nvme-lvm` free ≥ 300G
 - workstation free space > (OpenSearch `du` + OpenWebUI `du`) × 1.2
 - `cve-mcp-src-ok` printed
+- every "pending SDN changes" line shows `0`. The playbook's final
+  `pvesh set /cluster/sdn` applies **all** pending SDN config on the node,
+  not just `tvai`, so any unrelated pending edit would be applied with it
+  in 2b. If any count is non-zero, run the same `pvesh get … --pending 1`
+  command without the `grep` to see what is pending. Then resolve it
+  (apply deliberately under its own approval, or revert it in the GUI's
+  SDN panel) before Phase 2. This check was written from the Proxmox API
+  docs (pending objects carry a `state` of new/changed/deleted) and hasn't
+  been run live yet. If the first run errors or the output looks
+  different, read the raw JSON instead of trusting the count.
 
 Record whether pve's `jobs.cfg` covers 40014/50013 and whether pve-tiny has
 any backup job. That decides the backup follow-up in Phase 4.
@@ -528,6 +541,15 @@ cluster firewall. The approved scope here is only the tvai zone, VNet and
 subnet plus the final SDN apply; tvinfra/tvmgmt/tvcse and
 `/etc/pve/firewall/cluster.fw` are explicitly out of scope.
 
+Immediately before running it, repeat the Phase 0 pending-SDN check. The
+node's pending state may have changed since preflight, and the playbook's
+final `pvesh set /cluster/sdn` would apply whatever is pending. Every count
+must still be `0`:
+
+```bash
+ssh root@pve-tiny.gibbsgreatly.xyz 'for p in zones vnets; do echo "$p: $(pvesh get /cluster/sdn/$p --pending 1 --output-format json | grep -o "\"state\"" | wc -l)"; done'
+```
+
 ```bash
 export TASK_APPROVAL="ai-stacks-pve-tiny-sdn"
 ./with-secrets-prod-tiny ansible-playbook -i 'pve-tiny.gibbsgreatly.xyz,' -u root \
@@ -553,7 +575,7 @@ if ping -c2 -W1 192.168.50.250; then
 else
   ssh root@pve-tiny.gibbsgreatly.xyz '
     set -e
-    ! ip -4 addr show dev tvai | grep -qw 192.168.50.250/24
+    if ip -4 addr show dev tvai | grep -qw 192.168.50.250/24; then echo "STOP: .250 already assigned on tvai" >&2; exit 1; fi
     ip addr add 192.168.50.250/24 dev tvai
     trap "ip addr del 192.168.50.250/24 dev tvai" EXIT
     ping -c3 -W2 192.168.50.1
