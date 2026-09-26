@@ -78,7 +78,7 @@ design work.
 | Control-plane choice | Pterodactyl (Panel + Wings), chosen over continuing with bare Portainer, specifically because the operator wants proper per-game start/stop/console UX and is already planning a third game (AzerothCore) |
 | Topology | Panel: new LXC, `game_seg`. Wings: **must** run on `gaming-stack-lab` itself (same host as the Docker daemon it manages — Wings doesn't support a remote Docker daemon out of the box) |
 | Migration model | `Foreverworld` was copied into a Wings-managed volume and passed operator in-game verification. The old Compose source remains stopped with a rollback snapshot through the confidence period. |
-| AzerothCore Playerbots | Prepared as the next interlocked game: custom rendered egg, Playerbots policy, and LAN-only TCP 3724/8085 RouterOS rule (`*B1`) are complete. Egg import, mount association, server creation, and first boot remain. |
+| AzerothCore Playerbots | Live under Wings as server 4: interlocked rendered egg, LAN-only TCP 3724/8085 RouterOS rule (`*B1`), 16 GiB/4 CPU/60 GiB limits, first LAN login, and deliberate Playerbot creation all verified. One operator gameplay check remains: party join/follow/assist behaviour. |
 
 ## ARK: Survival Ascended smoketest — findings (2026-09-19)
 

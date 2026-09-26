@@ -11,9 +11,10 @@ summarized here only as much as the decisions below need.
 `Foreverworld` Minecraft server are live. Minecraft has passed world/mod/RCON
 checks and the game-slot interlock has passed both directions: each game is
 blocked with exit 75 while the other holds the slot. The old Compose source
-and pre-copy ZFS snapshot remain as rollback assets. AzerothCore is the next
-new-server work item and remains subject to the normal production approval
-flow.
+and pre-copy ZFS snapshot remain as rollback assets. AzerothCore Playerbots is
+also live under Wings; its first real LAN login and deliberate `addclass` bot
+creation have passed. Party behaviour remains the final operator gameplay
+check.
 
 ## Research this plan is based on
 
@@ -524,16 +525,24 @@ way `foreverworld`'s data is.
    variables above, plus the operator-chosen per-party bot cap and rate
    multipliers (Blizzlike defaults are `1` for every rate — a deliberate
    choice question, not something to default silently given this project's
-   ARK experience with rate multipliers).
+   ARK experience with rate multipliers). **Completed 2026-09-26:** the live
+   server has the agreed values: two human slots, four map-update threads,
+   Playerbots enabled, all configured rates at `1`, random-bot
+   autologin/minimum/maximum at `0`, and a maximum of four deliberately added
+   bots.
 4. **First boot**: expect a long first start (core compile + client-data
    download + DB import) — watch the console live (same websocket
    approach used all night), not just poll for "running", since a
    silent early failure here would look identical to "still compiling"
    for a long time.
 5. **Verify**: authserver/worldserver both up, realm visible, a test
-   login actually works, bots can be spawned/added. Operator
-   verification required for the "does this actually feel right"
-   parts, same as every other server in this project.
+   login actually works, bots can be spawned/added. **Completed 2026-09-26:**
+   both services are listening on `192.168.60.10:3724`/`:8085`; operator
+   account `gibbs` logged in as human paladin `Aldred` from the LAN and
+   successfully added an on-demand Playerbot. The remaining operator check is
+   that the bot joins/follows/assists Aldred's party as desired. Operator
+   verification is still required for the "does this actually feel right"
+   gameplay parts, same as every other server in this project.
 6. **Decide on rate multipliers and player limits** as a real, explicit
    choice once the operator has played with it — not defaulted
    silently, matching the standing lesson from ARK's XP-multiplier saga
