@@ -11,7 +11,7 @@ step blocks.
 | Phase | Who runs it | How | Production approval |
 |---|---|---|---|
 | 0 — preflight | Operator, from a terminal at the repo root | Paste the commands in Phase 0 and paste the output back into a Claude Code session for the go/no-go | None (read-only) |
-| 1 — step blocks `ai-tiny-01`…`05` | Local model | VS Code Copilot, **Repo Tools** agent mode: `/implement-step` with "run implement-step against docs/ai-stacks-pve-tiny/plan.md, step ai-tiny-01-storage-profile" (then `-02`, `-03`, `-04`, `-05`, one per invocation). `.github/prompts/implement-step.prompt.md` governs it: do the one step, run its gates, write a hand-back into `README.md`, stop. A Claude Code session can also run a step by being told "execute step <id> from docs/ai-stacks-pve-tiny/plan.md exactly as written, then run its gates". | None (repo edits only) |
+| 1 — step blocks `ai-tiny-01`…`05` plus `ai-tiny-05b` | Local model | VS Code Copilot, **Repo Tools** agent mode: `/implement-step` with "run implement-step against docs/ai-stacks-pve-tiny/plan.md, step ai-tiny-01-storage-profile" (then `-02`, `-03`, `-04`, `-05`, and `-05b`, one per invocation). `.github/prompts/implement-step.prompt.md` governs it: do the one step, run its gates, write a hand-back into `README.md`, stop. A Claude Code session can also run a step by being told "execute step <id> from docs/ai-stacks-pve-tiny/plan.md exactly as written, then run its gates". | None (repo edits only) |
 | 1 — review + commit | Operator (or Claude Code) | Read each hand-back in `README.md`, or re-run the step's gates if it's missing (see `docs/agent-design/README.md` §3), then `git commit` on `task/ai-stacks-pve-tiny`. Then run the read-only `terragrunt plan` loop at the end of Phase 1. | None (`terragrunt plan` is on the read-only allowlist) |
 | 2 — ai_seg on pve-tiny | Operator | Switch/MikroTik by hand, then the commands in 2b–2d | Yes: `TASK_APPROVAL=ai-stacks-pve-tiny-sdn` |
 | 3 — cutovers | Operator, one stack per session/approval | Generic procedure plus that stack's section | Yes: one `TASK_APPROVAL` per stack (table in Phase 3) |
@@ -90,8 +90,10 @@ decommission separately).
   with `pct destroy` rather than `terragrunt destroy`, because the changed
   `storage_profile` no longer resolves against `storage/pve.yaml`. That's
   the same way `dns-stack` was removed.
-- **Cold copy through `pct mount`.** Both CTs are unprivileged with the
-  default 100000 idmap, so a host-side `tar --numeric-owner` from the old
+- **Cold copy through `pct mount`.** The cutover is allowed to proceed only
+  after Phase 0 confirms both old stateful CTs are unprivileged and have no
+  custom `lxc.idmap` entries (therefore they use the default 100000 idmap).
+  A host-side `tar --numeric-owner` from the old
   CT's mounted filesystem, restored into the new CT's mounted filesystem,
   keeps ownership correct without any uid shifting. The archive is staged
   on the workstation, which also gives an offline copy of the data until
@@ -129,7 +131,7 @@ decommission separately).
 
 ## Not verified live (Claude's production reads are blocked). Phase 0 covers these.
 
-Old CTs actually unprivileged; real data sizes; pve-tiny free RAM, cores
+Old CTs actually unprivileged and using the default idmap; real data sizes; pve-tiny free RAM, cores
 and `nvme-lvm` space; `vm.max_map_count` on pve-tiny; existing backup jobs
 on both nodes; whether VLAN 50 reaches pve-tiny's switch port.
 
@@ -143,7 +145,7 @@ They're all read-only.
 ```bash
 # pve: old CT config, data sizes, backup jobs
 ssh root@pve.gibbsgreatly.xyz '
-for id in 50011 50012 50013 40014; do echo "== $id"; pct config $id | grep -E "^(hostname|memory|cores|rootfs|mp[0-9]|net0|unprivileged|onboot)"; done
+for id in 50011 50012 50013 40014; do echo "== $id"; pct config $id | grep -E "^(hostname|memory|cores|rootfs|mp[0-9]|net0|unprivileged|onboot|lxc\.idmap)"; done
 pct exec 50013 -- du -sh /var/lib/docker/volumes/ai-services-openwebui-data/_data /var/lib/docker/volumes/ai-services-searxng-data/_data /var/lib/docker/volumes/ai-services-deep-research-config/_data
 pct exec 40014 -- du -sh /var/lib/opensearch-data
 cat /etc/pve/jobs.cfg 2>/dev/null
@@ -154,6 +156,9 @@ ssh root@pve-tiny.gibbsgreatly.xyz '
 pct list; nproc; free -g; pvesm status; lvs
 sysctl vm.max_map_count
 pvesh get /cluster/sdn/vnets --output-format json
+pvesh get /cluster/sdn/zones --output-format json
+for vnet in tvinfra tvmgmt tvcse tvai; do pvesh get /cluster/sdn/vnets/$vnet/subnets --output-format json 2>/dev/null || true; done
+cat /etc/pve/firewall/cluster.fw 2>/dev/null
 cat /etc/pve/jobs.cfg 2>/dev/null
 '
 
@@ -163,8 +168,9 @@ df -h ~ ; test -d /home/steve/git/cve-mcp-server && echo cve-mcp-src-ok
 ```
 
 **Go/no-go:**
-- every old CT shows `unprivileged: 1`; if any shows privileged, stop,
-  because the copy commands below assume it
+- every old CT shows `unprivileged: 1`, and 40014/50013 show no
+  `lxc.idmap` lines; if either stateful CT has a custom mapping, stop and
+  redesign the copy/ownership conversion before proceeding
 - pve-tiny `free -g` "available" ≥ 16
 - `nvme-lvm` free ≥ 300G
 - workstation free space > (OpenSearch `du` + OpenWebUI `du`) × 1.2
@@ -177,7 +183,7 @@ any backup job. That decides the backup follow-up in Phase 4.
 
 ## Phase 1 — Repo changes (step blocks, local model)
 
-All five steps are pure repo edits. They can land before any cutover:
+All six steps (`01`…`05` plus `05b`) are pure repo edits. They can land before any cutover:
 nothing reads them until the operator runs `terragrunt`/`provision.sh`
 under `./with-secrets-prod-tiny`. Commit them on `task/ai-stacks-pve-tiny`.
 
@@ -313,17 +319,37 @@ gates:
 
 ```yaml
 id: ai-tiny-03-sdn-playbook-vars
-title: Give proxmox-sdn-setup.yml a subnet/gateway for the tvai vnet
+title: Add tvai vars and a scoped SDN reconciliation mode
 depends_on: []
 
 change: >
   In ansible/00-initial-setup/proxmox-sdn-setup.yml, directly after the
   existing line `    sdn_gw_tvcse: "{{ lookup('env', 'lab_gw_cse') }}"`
-  insert exactly these two lines (4-space indent), and change nothing else:
+  insert these two lines (4-space indent):
       sdn_subnet_tvai: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') }}"
       sdn_gw_tvai: "{{ lookup('env', 'LAB_GW_AI') }}"
   Uppercase is deliberate: `.env` defines the ai_seg values only as
   LAB_SUBNET_AI_CIDR/LAB_GW_AI, not in lowercase like the other zones.
+  Directly after the "Load network intent for target environment" task,
+  insert LITERAL_1. On the existing "Disable Proxmox cluster firewall"
+  task, add LITERAL_2 at task level directly after `changed_when: true`.
+  Change nothing else. This preserves the playbook's existing default
+  behavior for other callers, while Phase 2 can reconcile only tvai and
+  explicitly leave the production firewall file untouched.
+
+  LITERAL_1 (4-space task indentation, as shown):
+    - name: Limit SDN reconciliation to explicitly requested VNets
+      ansible.builtin.set_fact:
+        proxmox_sdn_attachments: >-
+          {{
+            proxmox_sdn_attachments
+            | selectattr('value.sdn.vnet', 'in', requested_sdn_vnets)
+            | list
+          }}
+      when: requested_sdn_vnets | default([]) | length > 0
+
+  LITERAL_2 (6-space indentation):
+      when: manage_cluster_firewall | default(true) | bool
 
 scope:
   allowed_paths:
@@ -331,6 +357,7 @@ scope:
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Renaming or lower-casing the env var names above"
+    - "Changing the default behavior when requested_sdn_vnets/manage_cluster_firewall are not passed"
     - "Running the playbook (syntax-check only)"
 
 gates:
@@ -338,6 +365,11 @@ gates:
     cmd: |
       grep -c -F -e "sdn_subnet_tvai: \"{{ lookup('env', 'LAB_SUBNET_AI_CIDR') }}\"" -e "sdn_gw_tvai: \"{{ lookup('env', 'LAB_GW_AI') }}\"" ansible/00-initial-setup/proxmox-sdn-setup.yml
     expect: "2"
+    critical: true
+  - id: scoped-mode-present
+    cmd: |
+      python3 -c "p=open('ansible/00-initial-setup/proxmox-sdn-setup.yml').read();assert \"selectattr('value.sdn.vnet', 'in', requested_sdn_vnets)\" in p;assert 'when: requested_sdn_vnets | default([]) | length > 0' in p;assert 'when: manage_cluster_firewall | default(true) | bool' in p;print('ok')"
+    expect: "prints ok, exit 0"
     critical: true
   - id: syntax-check
     cmd: "ansible-playbook --syntax-check -i localhost, ansible/00-initial-setup/proxmox-sdn-setup.yml"
@@ -430,7 +462,42 @@ gates:
     critical: true
 ```
 
-**After ai-tiny-01…05 land (operator):** commit on
+### ai-tiny-05b-provision-target-guard
+
+```yaml
+id: ai-tiny-05b-provision-target-guard
+title: Extend provision.sh's inventory target guard to pve-tiny
+depends_on: []
+
+change: >
+  In scripts/provision.sh, update the usage text's --target-env value list
+  from `<pve-test-vm|pve>` to `<pve-test-vm|pve|pve-tiny>`. In
+  expected_pve_host_for_env(), directly after the pve case, add exactly:
+      pve-tiny) printf 'pve-tiny.gibbsgreatly.xyz' ;;
+  Change nothing else. This makes the existing stale/wrong-inventory
+  incident guard active for pve-tiny instead of silently returning an
+  empty expected host.
+
+scope:
+  allowed_paths:
+    - scripts/provision.sh
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any provision.sh, ansible-playbook, terragrunt or ssh run"
+
+gates:
+  - id: shell-syntax
+    cmd: "bash -n scripts/provision.sh"
+    expect: "exit 0"
+    critical: true
+  - id: pve-tiny-mapping-present
+    cmd: |
+      python3 -c "p=open('scripts/provision.sh').read();assert \"pve-tiny) printf 'pve-tiny.gibbsgreatly.xyz' ;;\" in p;assert '--target-env <pve-test-vm|pve|pve-tiny>' in p;print('ok')"
+    expect: "prints ok, exit 0"
+    critical: true
+```
+
+**After ai-tiny-01…05 and ai-tiny-05b land (operator):** commit on
 `task/ai-stacks-pve-tiny` and run a read-only plan for each new env to
 confirm it resolves: one container create, with rootfs, docker mount and
 (for OpenSearch) the extra mount all on `nvme-lvm`, and nothing else.
@@ -454,23 +521,47 @@ vlan-ids=50`). The cse_seg work found every existing VLAN tagged on
 bridge+ether1+ether5, but check rather than assume, because `ether1` has
 ingress filtering and drops untagged-set VLANs silently.
 
-**2b. Create the tvai zone/vnet** (preflight summary → approval first):
+**2b. Create the tvai zone/vnet** (preflight summary → approval first).
+The filter and firewall flag are mandatory: without them this shared
+playbook reconciles every declared VNet and rewrites/restarts the Proxmox
+cluster firewall. The approved scope here is only the tvai zone, VNet and
+subnet plus the final SDN apply; tvinfra/tvmgmt/tvcse and
+`/etc/pve/firewall/cluster.fw` are explicitly out of scope.
 
 ```bash
 export TASK_APPROVAL="ai-stacks-pve-tiny-sdn"
 ./with-secrets-prod-tiny ansible-playbook -i 'pve-tiny.gibbsgreatly.xyz,' -u root \
-  -e target_hosts=all ansible/00-initial-setup/proxmox-sdn-setup.yml
+  -e '{"target_hosts":"all","requested_sdn_vnets":["tvai"],"manage_cluster_firewall":false}' \
+  ansible/00-initial-setup/proxmox-sdn-setup.yml
 ```
-Expect: 0 failed, with `tvai` created and the existing tvinfra/tvmgmt/tvcse
-unchanged.
+Expect: 0 failed, only `tvai` created, no firewall task, and the existing
+tvinfra/tvmgmt/tvcse unchanged. Re-run the Phase 0 SDN/subnet/firewall reads
+and diff them against the captured preflight output before continuing.
 
 **2c. Prove VLAN 50 end-to-end before any CT moves:**
 
+First confirm `.250` is absent from the MikroTik ARP table, DHCP leases and
+any static IP allocation record. Ping is a secondary check only: a host that
+blocks ICMP can still own the address. Then run this as one conditional block;
+the SSH assignment is in the `else`, so an occupied address cannot fall
+through into a duplicate assignment:
+
 ```bash
-ping -c2 -W1 192.168.50.250 && echo "STOP: .250 in use, pick another free ai_seg IP"
-ssh root@pve-tiny.gibbsgreatly.xyz 'ip addr add 192.168.50.250/24 dev tvai && ping -c3 -W2 192.168.50.1; rc=$?; ip neigh show 192.168.50.1 dev tvai; ip addr del 192.168.50.250/24 dev tvai; exit $rc'
+if ping -c2 -W1 192.168.50.250; then
+  echo "STOP: .250 replied; pick and re-check another reserved ai_seg IP" >&2
+  false
+else
+  ssh root@pve-tiny.gibbsgreatly.xyz '
+    set -e
+    ! ip -4 addr show dev tvai | grep -qw 192.168.50.250/24
+    ip addr add 192.168.50.250/24 dev tvai
+    trap "ip addr del 192.168.50.250/24 dev tvai" EXIT
+    ping -c3 -W2 192.168.50.1
+    ip neigh show 192.168.50.1 dev tvai
+  '
+fi
 ```
-Pass: replies from 192.168.50.1, or at least a resolved MAC in `ip neigh`.
+Pass: replies from 192.168.50.1 and a resolved MAC in `ip neigh`.
 If it fails, the trunk isn't passing VLAN 50. Fix 2a before going further.
 
 **2d. OpenSearch host prerequisite** (only if Phase 0 showed < 262144):
@@ -517,7 +608,7 @@ Set `S=<stack> ID=<vmid> IP=<ip>` and `export TASK_APPROVAL=<from table>`.
    with no destroys.
 6. **Deploy the app:**
    ```bash
-   ./with-secrets-prod-tiny scripts/provision.sh --stack $S
+   ./with-secrets-prod-tiny scripts/provision.sh --target-env pve-tiny --stack $S
    ```
    `SKIP edge reconcile` / `SKIP portainer env registration` lines are
    expected, and so are `SKIP <dep>: inventory file not found` lines for
@@ -531,10 +622,21 @@ Set `S=<stack> ID=<vmid> IP=<ip>` and `export TASK_APPROVAL=<from table>`.
 
 **Rollback (any time before Phase 4):** `ssh root@pve-tiny.gibbsgreatly.xyz
 "pct shutdown $ID"`, then `ssh root@pve.gibbsgreatly.xyz "pct set $ID
---onboot 1 && pct start $ID"`. Anything written on the new CT in between
-is lost (for example, new OpenWebUI chats). To abandon a stack's move
-permanently, restore its pve `terragrunt.hcl` and `stack.yaml` from
-`4c4212fe`, and `git rm` its pve-tiny env dir.
+--onboot 1 && pct start $ID"`. Verify the old service before doing anything
+else. Anything written on the new CT in between is lost (for example, new
+OpenWebUI chats).
+
+To abandon a stack's move permanently, get a separate approval named
+`ai-stacks-pve-tiny-abandon-<stack>`. While the pve-tiny stack definition
+and state still exist, review
+`terragrunt plan -destroy --working-dir terraform/lxc/environments/pve-tiny/$S`,
+then run `terragrunt destroy` through `./with-secrets-prod-tiny`. Confirm
+VMID `$ID` is absent on pve-tiny. Only then restore that stack's pve
+`terragrunt.hcl` and `stack.yaml` from the recorded migration-base commit
+(`4c4212fe` for this plan), remove its tracked pve-tiny
+`terragrunt.hcl`, and remove the target environment's generated/state
+directory. Never delete the target state before its target CT has been
+destroyed and absence verified.
 
 ### mcp-utility-stack checks
 ```bash
@@ -565,14 +667,16 @@ Export (step 3, old CT stopped):
 set -o pipefail
 ssh root@pve.gibbsgreatly.xyz 'pct mount 40014 >/dev/null && trap "pct unmount 40014" EXIT && tar -C /var/lib/lxc/40014/rootfs/var/lib/opensearch-data --numeric-owner -cpf - .' > ~/pve-tiny-migration/opensearch-stack.tar && echo export-ok
 tar -tf ~/pve-tiny-migration/opensearch-stack.tar | wc -l
+sha256sum ~/pve-tiny-migration/opensearch-stack.tar | tee ~/pve-tiny-migration/opensearch-stack.tar.sha256
 ```
 
 Import (step 7, after the first provision):
 ```bash
+sha256sum -c ~/pve-tiny-migration/opensearch-stack.tar.sha256
 ssh root@pve-tiny.gibbsgreatly.xyz 'pct shutdown 40014 --timeout 180 && pct mount 40014 >/dev/null && trap "pct unmount 40014" EXIT && D=/var/lib/lxc/40014/rootfs/var/lib/opensearch-data && test -d $D && find $D -mindepth 1 -delete && tar -C $D --numeric-owner -xpf -' < ~/pve-tiny-migration/opensearch-stack.tar && echo import-ok
 ssh root@pve-tiny.gibbsgreatly.xyz 'pct start 40014'
 ```
-Then re-run `provision.sh --stack opensearch-stack`.
+Then repeat generic step 6 exactly for `opensearch-stack`.
 
 Checks: run the fingerprint command again into `opensearch-after.txt`,
 then `diff opensearch-before.txt opensearch-after.txt`. Expect the same
@@ -592,14 +696,17 @@ Export (step 3):
 ```bash
 set -o pipefail
 ssh root@pve.gibbsgreatly.xyz 'pct mount 50013 >/dev/null && trap "pct unmount 50013" EXIT && tar -C /var/lib/lxc/50013/rootfs/var/lib/docker/volumes --numeric-owner -cpf - ai-services-openwebui-data/_data ai-services-searxng-data/_data ai-services-deep-research-config/_data' > ~/pve-tiny-migration/ai-services-stack.tar && echo export-ok
+tar -tf ~/pve-tiny-migration/ai-services-stack.tar | wc -l
+sha256sum ~/pve-tiny-migration/ai-services-stack.tar | tee ~/pve-tiny-migration/ai-services-stack.tar.sha256
 ```
 
 Import (step 7):
 ```bash
+sha256sum -c ~/pve-tiny-migration/ai-services-stack.tar.sha256
 ssh root@pve-tiny.gibbsgreatly.xyz 'pct shutdown 50013 --timeout 180 && pct mount 50013 >/dev/null && trap "pct unmount 50013" EXIT && cd /var/lib/lxc/50013/rootfs/var/lib/docker/volumes && for v in ai-services-openwebui-data ai-services-searxng-data ai-services-deep-research-config; do test -d $v/_data || exit 1; find $v/_data -mindepth 1 -delete; done && tar --numeric-owner -xpf -' < ~/pve-tiny-migration/ai-services-stack.tar && echo import-ok
 ssh root@pve-tiny.gibbsgreatly.xyz 'pct start 50013'
 ```
-Then re-run `provision.sh --stack ai-services-stack`.
+Then repeat generic step 6 exactly for `ai-services-stack`.
 
 Checks: re-run the fingerprint into `openwebui-after.txt` (users and chats
 equal); `curl -s -o /dev/null -w '%{http_code}\n' http://192.168.50.11:8081/`
@@ -613,16 +720,30 @@ one SearXNG query; one deep-research run.
 
 Leave each old CT stopped on pve for at least 7 days after its cutover.
 
-**Before destroying 40014 or 50013:** make sure pve-tiny has a backup job
-covering the new CTs. If Phase 0 showed none, add one first; that's a
-follow-up outside this plan. Until then, the stopped CTs on pve and
-`~/pve-tiny-migration/*.tar` are the only other copies of that data.
+**Before destroying 40014 or 50013, all of these are mandatory:**
+
+1. A pve-tiny backup job covers the CT and includes its Docker/data mount.
+   If Phase 0 showed no such job, adding one is a prerequisite follow-up
+   outside this plan.
+2. At least one backup taken *after the import and final provision* completed
+   successfully. Record its task/log and backup volume ID; merely having a
+   configured job is not evidence.
+3. The backup artifact is present on its intended independent datastore and
+   its embedded CT configuration is readable. Confirm the mount entries are
+   included rather than marked `backup=0`.
+4. Re-run the application checks from Phase 3 immediately before
+   decommission.
+
+If any item fails, keep both the old CT and the workstation archive. The
+archive and its `.sha256` file remain after old-CT decommission too; retire
+them only after a later restore rehearsal (to a non-conflicting VMID, never
+started on the production IP) proves the pve-tiny backup usable, or after a
+second independently verified backup generation exists.
 
 Per stack, with approval `ai-stacks-pve-tiny-decommission-<stack>`:
 ```bash
 ssh root@pve.gibbsgreatly.xyz "pct status $ID && pct destroy $ID --purge"
 rm -rf terraform/lxc/environments/pve/$S      # untracked state only; terragrunt.hcl was git-rm'd in ai-tiny-05
-rm -f ~/pve-tiny-migration/$S.tar
 ```
 pve's `tvai` zone stays in place. Removing an existing zone is a
 full-teardown-tier change, and it isn't needed for this move.

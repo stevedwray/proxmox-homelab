@@ -11,7 +11,8 @@ Relocating `mcp-utility-stack`, `secpipe-stack`, `opensearch-stack` and
 IaC at the **same IP**. Only the real state is cold-copied: OpenSearch's
 data dir, and OpenWebUI/SearXNG/deep-research's Docker volumes. The old
 CT stays stopped on pve as a rollback until decommission. See `plan.md`
-for the decisions, the step blocks (`ai-tiny-01`…`06`) and the operator
+for the decisions, the step blocks (`ai-tiny-01`…`06`, plus the
+`ai-tiny-05b` production-target guard) and the operator
 cutover runbook.
 
 Consequence to keep in mind: this uses most of pve-tiny's remaining RAM
@@ -27,9 +28,10 @@ as-is.
 | Phase 0 preflight | not started |
 | ai-tiny-01 storage profile | not started |
 | ai-tiny-02 network ai_seg | not started |
-| ai-tiny-03 SDN playbook vars | not started |
+| ai-tiny-03 scoped SDN playbook mode + tvai vars | not started |
 | ai-tiny-04 stack storage profiles | not started |
 | ai-tiny-05 env dirs | not started |
+| ai-tiny-05b pve-tiny provision target guard | not started |
 | Phase 2 ai_seg on pve-tiny | not started |
 | Cutover: mcp-utility-stack | not started |
 | Cutover: secpipe-stack | not started |
