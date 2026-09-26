@@ -43,7 +43,14 @@
       # REST endpoint. This intentionally mirrors the router's existing
       # established/related rule, but is ordered before game_seg's deny.
       - { comment: "game_seg established and related", chain: forward, action: accept, connection-state: established, related }
-      - { comment: "game-stack LAN administration and Minecraft", chain: forward, action: accept, protocol: tcp, src-address: 192.168.1.0/24, dst-address: "{{ game_stack_ip }}", dst-port: "22,25565" }
+      # 8080 = Wings API/websocket (browser console via the Panel); added
+      # live by hand, source-controlled 2026-09-26 (stable-reconciliation L10).
+      - { comment: "game-stack LAN administration and Minecraft", chain: forward, action: accept, protocol: tcp, src-address: 192.168.1.0/24, dst-address: "{{ game_stack_ip }}", dst-port: "22,25565,8080" }
+      # Live as *9C / *B1 (added by hand; see docs/gaming-stack-lab/). LAN
+      # only, no WAN forwarding. Comments must match the live rules exactly:
+      # this playbook adds a rule only when no rule with its comment exists.
+      - { comment: "game-stack LAN ARK game/peer/query UDP", chain: forward, action: accept, protocol: udp, src-address: 192.168.1.0/24, dst-address: "{{ game_stack_ip }}", dst-port: "7777,7778,27015" }
+      - { comment: "game-stack LAN AzerothCore auth/world TCP", chain: forward, action: accept, protocol: tcp, src-address: 192.168.1.0/24, dst-address: "{{ game_stack_ip }}", dst-port: "3724,8085" }
       - { comment: "mgmt_seg Portainer to game-stack agent", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_PORTAINER') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9001" }
       - { comment: "monitoring-stack scrapes game-stack metrics", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9100,8080" }
       - { comment: "monitoring-stack scrapes Minecraft status", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "8081" }
