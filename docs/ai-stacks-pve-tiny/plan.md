@@ -6,6 +6,45 @@ one at a time with `.github/prompts/implement-step.prompt.md`. Everything
 that touches a live node is written as plain operator instructions, not
 step blocks.
 
+## How to execute this plan
+
+| Phase | Who runs it | How | Production approval |
+|---|---|---|---|
+| 0 — preflight | Operator, from a terminal at the repo root | Paste the commands in Phase 0 and paste the output back into a Claude Code session for the go/no-go | None (read-only) |
+| 1 — step blocks `ai-tiny-01`…`05` | Local model | VS Code Copilot, **Repo Tools** agent mode: `/implement-step` with "run implement-step against docs/ai-stacks-pve-tiny/plan.md, step ai-tiny-01-storage-profile" (then `-02`, `-03`, `-04`, `-05`, one per invocation). `.github/prompts/implement-step.prompt.md` governs it: do the one step, run its gates, write a hand-back into `README.md`, stop. A Claude Code session can also run a step by being told "execute step <id> from docs/ai-stacks-pve-tiny/plan.md exactly as written, then run its gates". | None (repo edits only) |
+| 1 — review + commit | Operator (or Claude Code) | Read each hand-back in `README.md`, or re-run the step's gates if it's missing (see `docs/agent-design/README.md` §3), then `git commit` on `task/ai-stacks-pve-tiny`. Then run the read-only `terragrunt plan` loop at the end of Phase 1. | None (`terragrunt plan` is on the read-only allowlist) |
+| 2 — ai_seg on pve-tiny | Operator | Switch/MikroTik by hand, then the commands in 2b–2d | Yes: `TASK_APPROVAL=ai-stacks-pve-tiny-sdn` |
+| 3 — cutovers | Operator, one stack per session/approval | Generic procedure plus that stack's section | Yes: one `TASK_APPROVAL` per stack (table in Phase 3) |
+| 4 — soak/decommission | Operator | Commands in Phase 4, then step block `ai-tiny-06` via `/implement-step` as in Phase 1 | Yes: `ai-stacks-pve-tiny-decommission-<stack>` |
+
+**Production approval flow (CLAUDE.md, Production Credential Controls)**
+for every approval-marked row above:
+1. A Claude Code session posts a Preflight Summary: target node
+   (`pve-tiny`, plus `pve` for the stop/export/destroy commands), whether
+   it mutates, exact CTs/VMIDs, exact commands from this plan, and what's
+   out of scope.
+2. The operator says "Proceed" in chat.
+3. The operator runs `export TASK_APPROVAL=<name>` and the commands.
+4. The session posts an After-Action Summary and updates the Progress
+   table in `README.md`.
+
+**Tooling notes:**
+- Wrapper: `./with-secrets-prod-tiny` (node `pve-tiny`), **not**
+  `./with-secrets-prod`. The latter sets `PVE_ENV=pve`, so `provision.sh`
+  silently SKIPs with "inventory file not found".
+- Plain `ssh root@pve…`/`ssh root@pve-tiny…` commands (`pct …`, `tar`)
+  need no wrapper. Claude Code's auto-mode classifier blocks them even
+  when read-only, so the operator runs them from their own terminal.
+- If Claude Code runs `ansible-playbook` or `provision.sh` through its
+  Bash tool and hits `Ansible requires blocking IO`, wrap the command as
+  `script -qec "<command>" /dev/null`. This doesn't apply in a normal
+  terminal.
+- `terragrunt` commands take `--working-dir terraform/lxc/environments/pve-tiny/<stack>`,
+  run from the repo root.
+- Workstation staging directory for data archives (outside the repo,
+  since it holds real user data): create it once, before the first
+  cutover, with `mkdir -m 700 -p ~/pve-tiny-migration`.
+
 ## Goal
 
 Move four AI-related LXCs from `pve` to `pve-tiny`:
@@ -119,6 +158,7 @@ cat /etc/pve/jobs.cfg 2>/dev/null
 '
 
 # workstation: staging space and the cve-mcp-server source clone
+mkdir -m 700 -p ~/pve-tiny-migration
 df -h ~ ; test -d /home/steve/git/cve-mcp-server && echo cve-mcp-src-ok
 ```
 
@@ -517,8 +557,8 @@ Fingerprint (step 1, old CT still running):
 ```bash
 ./with-secrets-prod-tiny bash -c 'printf "user = \"admin:%s\"\n" "$OPENSEARCH_ADMIN_PASSWORD" | ssh root@192.168.40.14 "curl -sk -K - \"https://127.0.0.1:9200/_cat/indices?h=index,docs.count&s=index\""' > ~/pve-tiny-migration/opensearch-before.txt
 ```
-(`mkdir -m 700 -p ~/pve-tiny-migration` first. Workstation staging lives
-outside the repo because it holds real data.)
+(`~/pve-tiny-migration` must already exist; see "Tooling notes" at the
+top.)
 
 Export (step 3, old CT stopped):
 ```bash

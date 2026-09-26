@@ -1,6 +1,6 @@
 # ai-stacks-pve-tiny
 
-Status: **planned, no steps run yet (2026-09-26).** Phase 0 (read-only
+Status: **planned, no steps run yet (2026-09-26).** Start with plan.md's "How to execute this plan" section. Phase 0 (read-only
 preflight) is next. It has to be run by the operator, because Claude's
 production reads are blocked.
 
