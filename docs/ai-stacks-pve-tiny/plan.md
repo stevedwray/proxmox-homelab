@@ -161,8 +161,20 @@ for vnet in tvinfra tvmgmt tvcse tvai; do pvesh get /cluster/sdn/vnets/$vnet/sub
 cat /etc/pve/firewall/cluster.fw 2>/dev/null
 cat /etc/pve/jobs.cfg 2>/dev/null
 echo "== pending SDN changes (count of objects carrying a pending state; must be 0)"
-for p in zones vnets; do echo "$p: $(pvesh get /cluster/sdn/$p --pending 1 --output-format json | grep -o "\"state\"" | wc -l)"; done
-for vnet in tvinfra tvmgmt tvcse; do echo "subnets/$vnet: $(pvesh get /cluster/sdn/vnets/$vnet/subnets --pending 1 --output-format json 2>/dev/null | grep -o "\"state\"" | wc -l)"; done
+pending_rc=0
+check_pending() {
+  label="$1"; shift
+  if ! json=$("$@"); then echo "$label: ERROR reading pending state" >&2; return 1; fi
+  if ! count=$(printf "%s\n" "$json" | python3 -c "import json,sys;d=json.load(sys.stdin);assert isinstance(d,list) and all(isinstance(x,dict) for x in d);print(sum(1 for x in d if \"state\" in x))"); then echo "$label: ERROR parsing pending JSON" >&2; return 1; fi
+  echo "$label: $count"
+  [ "$count" -eq 0 ]
+}
+check_pending zones pvesh get /cluster/sdn/zones --pending 1 --output-format json || pending_rc=1
+check_pending vnets pvesh get /cluster/sdn/vnets --pending 1 --output-format json || pending_rc=1
+if ! current_vnets_json=$(pvesh get /cluster/sdn/vnets --output-format json); then echo "ERROR reading current VNets" >&2; pending_rc=1; current_vnets_json="[]"; fi
+if ! current_vnets=$(printf "%s\n" "$current_vnets_json" | python3 -c "import json,sys;d=json.load(sys.stdin);assert isinstance(d,list) and all(isinstance(x,dict) and isinstance(x.get(\"vnet\"),str) for x in d);print(\" \".join(x[\"vnet\"] for x in d))"); then echo "ERROR parsing current VNets" >&2; pending_rc=1; current_vnets=""; fi
+for vnet in $current_vnets; do check_pending "subnets/$vnet" pvesh get /cluster/sdn/vnets/$vnet/subnets --pending 1 --output-format json || pending_rc=1; done
+[ "$pending_rc" -eq 0 ] || exit 1
 '
 
 # workstation: staging space and the cve-mcp-server source clone
@@ -178,16 +190,19 @@ df -h ~ ; test -d /home/steve/git/cve-mcp-server && echo cve-mcp-src-ok
 - `nvme-lvm` free ≥ 300G
 - workstation free space > (OpenSearch `du` + OpenWebUI `du`) × 1.2
 - `cve-mcp-src-ok` printed
-- every "pending SDN changes" line shows `0`. The playbook's final
+- the pending-SDN block exits 0 and every count line shows `0`. Any API
+  error, malformed JSON or non-zero count makes the remote preflight exit
+  non-zero. The playbook's final
   `pvesh set /cluster/sdn` applies **all** pending SDN config on the node,
   not just `tvai`, so any unrelated pending edit would be applied with it
-  in 2b. If any count is non-zero, run the same `pvesh get … --pending 1`
-  command without the `grep` to see what is pending. Then resolve it
+  in 2b. If any count is non-zero, run the corresponding
+  `pvesh get … --pending 1 --output-format json` command directly to see
+  what is pending. Then resolve it
   (apply deliberately under its own approval, or revert it in the GUI's
   SDN panel) before Phase 2. This check was written from the Proxmox API
   docs (pending objects carry a `state` of new/changed/deleted) and hasn't
-  been run live yet. If the first run errors or the output looks
-  different, read the raw JSON instead of trusting the count.
+  been run live yet; an API-shape mismatch is therefore a hard stop, not a
+  zero count.
 
 Record whether pve's `jobs.cfg` covers 40014/50013 and whether pve-tiny has
 any backup job. That decides the backup follow-up in Phase 4.
@@ -344,11 +359,13 @@ change: >
   Uppercase is deliberate: `.env` defines the ai_seg values only as
   LAB_SUBNET_AI_CIDR/LAB_GW_AI, not in lowercase like the other zones.
   Directly after the "Load network intent for target environment" task,
-  insert LITERAL_1. On the existing "Disable Proxmox cluster firewall"
-  task, add LITERAL_2 at task level directly after `changed_when: true`.
+  insert LITERAL_1. Directly after the existing "Read current SDN VNets"
+  task, insert LITERAL_2. On the existing "Disable Proxmox cluster firewall"
+  task, add LITERAL_3 at task level directly after `changed_when: true`.
   Change nothing else. This preserves the playbook's existing default
-  behavior for other callers, while Phase 2 can reconcile only tvai and
-  explicitly leave the production firewall file untouched.
+  behavior for other callers, while Phase 2 can reject all pre-existing
+  pending zone/VNet/subnet changes, reconcile only tvai, and explicitly
+  leave the production firewall file untouched.
 
   LITERAL_1 (4-space task indentation, as shown):
     - name: Limit SDN reconciliation to explicitly requested VNets
@@ -361,7 +378,40 @@ change: >
           }}
       when: requested_sdn_vnets | default([]) | length > 0
 
-  LITERAL_2 (6-space indentation):
+  LITERAL_2 (4-space task indentation, as shown):
+    - name: Read pending SDN zones before scoped mutation
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --pending 1 --output-format json
+      register: proxmox_sdn_pending_zones_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Read pending SDN VNets before scoped mutation
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --pending 1 --output-format json
+      register: proxmox_sdn_pending_vnets_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Read pending subnets on every current VNet before scoped mutation
+      ansible.builtin.command:
+        cmd: "pvesh get /cluster/sdn/vnets/{{ item }}/subnets --pending 1 --output-format json"
+      loop: "{{ proxmox_sdn_vnets_result.stdout | from_json | map(attribute='vnet') | list }}"
+      register: proxmox_sdn_pending_subnets_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Refuse to apply unrelated pending SDN changes
+      ansible.builtin.assert:
+        that:
+          - (proxmox_sdn_pending_zones_result.stdout | from_json | selectattr('state', 'defined') | list | length) == 0
+          - (proxmox_sdn_pending_vnets_result.stdout | from_json | selectattr('state', 'defined') | list | length) == 0
+          - (proxmox_sdn_pending_subnets_result.results | map(attribute='stdout') | map('from_json') | flatten | selectattr('state', 'defined') | list | length) == 0
+        fail_msg: "Unrelated pending SDN changes exist; resolve them under their own approval before this scoped run."
+        success_msg: "No pre-existing pending SDN changes exist."
+      when: reject_pending_sdn_changes | default(false) | bool
+
+  LITERAL_3 (6-space indentation):
       when: manage_cluster_firewall | default(true) | bool
 
 scope:
@@ -370,7 +420,7 @@ scope:
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Renaming or lower-casing the env var names above"
-    - "Changing the default behavior when requested_sdn_vnets/manage_cluster_firewall are not passed"
+    - "Changing the default behavior when requested_sdn_vnets/reject_pending_sdn_changes/manage_cluster_firewall are not passed"
     - "Running the playbook (syntax-check only)"
 
 gates:
@@ -381,7 +431,7 @@ gates:
     critical: true
   - id: scoped-mode-present
     cmd: |
-      python3 -c "p=open('ansible/00-initial-setup/proxmox-sdn-setup.yml').read();assert \"selectattr('value.sdn.vnet', 'in', requested_sdn_vnets)\" in p;assert 'when: requested_sdn_vnets | default([]) | length > 0' in p;assert 'when: manage_cluster_firewall | default(true) | bool' in p;print('ok')"
+      python3 -c "p=open('ansible/00-initial-setup/proxmox-sdn-setup.yml').read();assert \"selectattr('value.sdn.vnet', 'in', requested_sdn_vnets)\" in p;assert 'when: requested_sdn_vnets | default([]) | length > 0' in p;assert p.count('when: reject_pending_sdn_changes | default(false) | bool')==4;assert '/cluster/sdn/zones --pending 1' in p;assert '/cluster/sdn/vnets --pending 1' in p;assert \"selectattr('state', 'defined')\" in p;assert 'when: manage_cluster_firewall | default(true) | bool' in p;print('ok')"
     expect: "prints ok, exit 0"
     critical: true
   - id: syntax-check
@@ -541,19 +591,17 @@ cluster firewall. The approved scope here is only the tvai zone, VNet and
 subnet plus the final SDN apply; tvinfra/tvmgmt/tvcse and
 `/etc/pve/firewall/cluster.fw` are explicitly out of scope.
 
-Immediately before running it, repeat the Phase 0 pending-SDN check. The
-node's pending state may have changed since preflight, and the playbook's
-final `pvesh set /cluster/sdn` would apply whatever is pending. Every count
-must still be `0`:
-
-```bash
-ssh root@pve-tiny.gibbsgreatly.xyz 'for p in zones vnets; do echo "$p: $(pvesh get /cluster/sdn/$p --pending 1 --output-format json | grep -o "\"state\"" | wc -l)"; done'
-```
+The `reject_pending_sdn_changes=true` flag is mandatory. Inside the same
+playbook run, immediately before its first mutation, it reads pending zones,
+VNets, and subnets for every currently existing VNet. An API error, malformed
+JSON, or any object carrying a pending `state` fails the play before tvai is
+created. This closes the time and coverage gap that a separate shortened
+shell recheck would leave.
 
 ```bash
 export TASK_APPROVAL="ai-stacks-pve-tiny-sdn"
 ./with-secrets-prod-tiny ansible-playbook -i 'pve-tiny.gibbsgreatly.xyz,' -u root \
-  -e '{"target_hosts":"all","requested_sdn_vnets":["tvai"],"manage_cluster_firewall":false}' \
+  -e '{"target_hosts":"all","requested_sdn_vnets":["tvai"],"reject_pending_sdn_changes":true,"manage_cluster_firewall":false}' \
   ansible/00-initial-setup/proxmox-sdn-setup.yml
 ```
 Expect: 0 failed, only `tvai` created, no firewall task, and the existing
