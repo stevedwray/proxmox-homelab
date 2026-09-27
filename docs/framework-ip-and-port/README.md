@@ -185,3 +185,16 @@ ai_seg policy is now `to: framework.gibbsgreatly.xyz`, `ports: [8080,
 (9 lines in pve.yaml, 5 in pve-test-vm.yaml). Gates: ports
 `[[8080, 8085], [8080, 8085]]`; yaml parses; only `pve.yaml:712 ip:
 192.168.1.8` left; netbox integration tests OK; zone-members tests OK.
+
+### fwdns-08-mikrotik-framework-playbook
+
+Created `ansible/00-initial-setup/mikrotik-firewall-framework-fqdn.yml`,
+copied exactly from the plan's content block (293 lines). Gates:
+syntax-check exit 0; no-ip-literal `0`.
+
+### fwdns-09-trim-legacy-mikrotik-entries
+
+Removed the `lab_ip_framework` var and the framework rule entry from
+`mikrotik-firewall-ai-services-stack.yml` and `mikrotik-firewall-cse-seg.yml`,
+and repointed both header comments to the new playbook. Gates: syntax-check
+exit 0; no-framework-ip `0` / `0`.

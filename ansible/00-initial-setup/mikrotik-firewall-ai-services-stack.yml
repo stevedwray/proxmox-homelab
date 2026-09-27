@@ -11,7 +11,7 @@
 # `policies:` block, which this playbook makes real:
 #
 #   1. edge_seg -> ai_seg:8081,8082   (Traefik to OpenWebUI/SearXNG, ingress)
-#   2. ai_seg -> framework:8080,11434  (llamacpp-router, Ollama, egress)
+#   2. ai_seg -> framework:8080,11434 -- moved to mikrotik-firewall-framework-fqdn.yml (FQDN address-list)
 #   3. ai_seg -> edge_seg:443    (LM Studio backend route -- llm.${LAB_DOMAIN}
 #      resolves to Traefik's edge_seg IP, confirmed from llm-gpu-stack's
 #      own edge.yaml `dns.target` field. Not in the original plan.md
@@ -68,7 +68,6 @@
 
     lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | mandatory('LAB_SUBNET_EDGE_CIDR env var is required') }}"
     lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
-    lab_ip_framework: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
     lab_ip_ai_services: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
     lab_ip_authentik: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
 
@@ -87,13 +86,6 @@
         src-address: "{{ lab_subnet_edge_cidr }}"
         dst-address: "{{ lab_subnet_ai_cidr }}"
         dst-port: "8082"
-      - comment: "ai-services-stack: ai_seg to framework llamacpp-router/ollama"
-        chain: "forward"
-        action: "accept"
-        protocol: "tcp"
-        src-address: "{{ lab_subnet_ai_cidr }}"
-        dst-address: "{{ lab_ip_framework }}"
-        dst-port: "8080,11434"
       - comment: "ai-services-stack: ai_seg to edge_seg (Traefik) for OIDC + LM Studio route"
         chain: "forward"
         action: "accept"
