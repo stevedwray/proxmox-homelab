@@ -35,3 +35,8 @@ repos:
         entry: "terraform/secrets.*.enc.yaml are frozen: OpenBao is authoritative. Write secrets with scripts/openbao_write.py (docs/secrets-refactor/)."
         language: fail
         files: ^terraform/secrets\..*\.enc\.yaml$
+        # Commit-time only: the pre-push run checks every file in the pushed
+        # range, which would reject the pre-freeze commits that legitimately
+        # touched these files. New edits are caught at commit time (here) and
+        # in PRs (validate.yml sops-freeze).
+        stages: [pre-commit]
