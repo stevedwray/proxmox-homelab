@@ -910,6 +910,81 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             payload["redirect_uris"],
         )
 
+    def _harbor_oidc_run(self, client):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
+                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
+                return reconcile_authentik([manifest], client, apply=True)
+
+    def test_oidc_create_defaults_grant_types_when_route_has_no_entry(self):
+        # harbor-stack has no _oidc_grant_types entry; a created provider must
+        # still get a non-empty grant_types (Authentik's create default [] rejects
+        # every login).
+        client = FakeClient()
+        result = self._harbor_oidc_run(client)
+        self.assertTrue(result.ok)
+        creates = [e[2] for e in client.writes if e[0] == "provider" and e[1] == "create"]
+        self.assertEqual(1, len(creates))
+        self.assertEqual(["authorization_code"], creates[0]["grant_types"])
+
+    def test_oidc_update_never_touches_grant_types_without_entry(self):
+        # An existing provider's (larger) grant_types must never be narrowed.
+        client = FakeClient(
+            oauth2_providers=[
+                {
+                    "pk": 402,
+                    "name": "edge-harbor-stack-harbor-provider",
+                    "client_id": "harbor",
+                    "grant_types": ["authorization_code", "client_credentials", "password"],
+                    "redirect_uris": [
+                        {"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}
+                    ],
+                }
+            ],
+        )
+        result = self._harbor_oidc_run(client)
+        self.assertTrue(result.ok)
+        for kind, op, payload in client.writes:
+            if kind == "provider":
+                self.assertEqual("update", op)
+                self.assertNotIn("grant_types", payload)
+        self.assertEqual(
+            ["authorization_code", "client_credentials", "password"],
+            client.oauth2_providers[0]["grant_types"],
+        )
+
+    def test_oidc_explicit_grant_types_entry_wins_over_default(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "opensearch.yaml"
+            _write_manifest(
+                manifest,
+                stack="opensearch-stack",
+                route="dashboards",
+                host="opensearch.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+            with patch.dict(MODULE.os.environ, {"OPENSEARCH_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=True)
+        self.assertTrue(result.ok, result)
+        creates = [e[2] for e in client.writes if e[0] == "provider" and e[1] == "create"]
+        self.assertEqual(1, len(creates))
+        self.assertEqual(["authorization_code", "client_credentials", "password"], creates[0]["grant_types"])
+
     def test_harbor_oidc_apply_updates_existing_application_launch_url(self):
         # When HARBOR_EXTERNAL_URL is an internal IP (non-prod), launch_url must still
         # use the public FQDN (intent.host) — Authentik rejects bare IP launch_urls.
