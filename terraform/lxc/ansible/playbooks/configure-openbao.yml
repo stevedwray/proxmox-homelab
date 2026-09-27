@@ -144,6 +144,18 @@
       changed_when: true
       no_log: true
 
+    - name: Show the OIDC method as a tab on the UI login page
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/sys/auth/oidc/tune"
+        method: POST
+        ca_path: "{{ openbao_ca }}"
+        headers: { X-Vault-Token: "{{ openbao_token }}" }
+        body_format: json
+        body: { listing_visibility: unauth, description: "Authentik OIDC (humans: UI + writes)" }
+        status_code: [200, 204]
+      changed_when: false
+      no_log: true
+
     # ---- Policies ---------------------------------------------------------
     - name: Write static policies from policies/*.hcl
       ansible.builtin.uri:
