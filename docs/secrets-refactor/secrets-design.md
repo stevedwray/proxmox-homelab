@@ -1368,13 +1368,41 @@ The NAS is on the same site as `pve`, so this is not off-site protection. Site-l
 Secret changes are infrequent, so there are two triggers and no continuous mechanism:
 
 1. **After every write made through the helper.** The write/rotation helper (§13.1) finishes each successful write by taking a snapshot and copying it off `pve`. Normal dev work that creates or rotates a secret is therefore backed up within seconds. If the snapshot or the copy fails, the helper reports the write as done but the backup as failed. It does not silently succeed.
-2. **A nightly timer on the OpenBao LXC.** This is the safety net for writes made outside the helper, such as UI edits or a raw `bao kv put`. The timer always takes a snapshot rather than trying to skip when nothing has changed: AppRole logins and token expiry also change the underlying Raft storage, so a reliable "nothing changed" test isn't available cheaply. Old snapshots are pruned by age; the retention period is fixed in the plan.
+2. **A nightly timer on the OpenBao LXC.** This is the safety net for writes made outside the helper, such as UI edits or a raw `bao kv put`. The timer always takes a snapshot rather than trying to skip when nothing has changed: AppRole logins and token expiry also change the underlying Raft storage, so a reliable "nothing changed" test isn't available cheaply. Old snapshots are pruned according to the retention policy in §27.0.1.
 
 A write-triggered hook driven by the audit log was considered and rejected. It is one more service to run and monitor, and the helper plus the nightly run already cover the rare write rate.
 
 Snapshots are taken by a dedicated **snapshot identity**. Its only permission is reading `sys/storage/raft/snapshot`. Its credentials live only on the OpenBao LXC, never on the workstation, because a snapshot is effectively a full copy of the store, even though that copy is encrypted.
 
-Snapshots and KV v2 versions cover different failures. **KV v2 history** handles a bad value (`bao kv rollback`). **Snapshots** handle losing OpenBao entirely.
+Snapshots and KV v2 versions cover different failures. **KV v2 history** handles a bad value (`bao kv rollback`). **Snapshots** handle losing OpenBao entirely, and mistakes found long after they were made: a deleted or destroyed secret, or a broken policy or auth configuration.
+
+## 27.0.1 Retention
+
+| Tier | Source | Keep |
+| --- | --- | --- |
+| Post-write | Snapshot taken by the write helper | 90 days |
+| Daily | Nightly timer | 14 days |
+| Weekly | Sunday's nightly, promoted | 8 weeks |
+| Monthly | 1st-of-month nightly, promoted | 12 months |
+
+That is roughly 35–45 files on the NAS, and at most a few tens of MB.
+
+Rationale:
+
+- **14 dailies** allow a return to the exact day a mistake was made, once someone notices it.
+- **8 weeklies and 12 monthlies** cover mistakes found much later. A rarely redeployed stack can fail months after the secret it depends on was changed. The `HARBOR_DB_PASSWORD` wipe sat unnoticed for five days on a stack that is redeployed often.
+- **90 days for post-write snapshots.** They are the most useful restore points, each capturing the state right after a deliberate change, and there are few of them.
+
+Safety rules. These take precedence over the table:
+
+1. **Pruning never deletes the newest 7 snapshots, however old they are.** Pruning purely by age would, after a month of silent nightly failures, delete the last good snapshots.
+2. **An alert fires when the newest snapshot on the NAS is more than 36 hours old**, through the existing Grafana/VictoriaMetrics alerting. This catches a broken timer, a NAS outage, or a failed share login.
+
+Knock-on rules:
+
+- **Seal-key retention:** after the seal key is rotated, the previous key is kept (on USB B) for at least 12 months, the longest snapshot retention, so every retained snapshot remains restorable. This makes §9's "until dependent backups have expired" concrete.
+- **KV v2 `max_versions` = 20** per entry, instead of the default 10. At this write rate it costs nothing, and more bad values can be undone without a snapshot restore.
+- **Compromise-driven rotation:** snapshots taken before a rotation still contain the old value, encrypted. That is acceptable, since they are unreadable without the seal key. The rotation runbook notes it: if the seal key is *also* believed compromised, snapshots from before the rotation must be treated as exposed and deleted early.
 
 ---
 
