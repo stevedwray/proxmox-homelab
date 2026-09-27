@@ -41,10 +41,10 @@ do not modify any files or run any commands that change state.**
    — Focus on the `proxmox_token_id` and `proxmox_token_secret` Ansible vars
      (look for `PROXMOX_READONLY_TOKEN_ID` fallback chain, ~line 359).
 
-2. `terraform/secrets.enc.yaml`
-   — List every key name that contains `PROXMOX` or `pm_api_token`. Do not
-     attempt to decrypt values. SOPS-encrypted values look like `ENC[AES256_GCM,...]`.
-     Just report the key names present.
+2. `secrets/manifest.json`
+   — List every field name that contains `PROXMOX` or `pm_api_token`, and the
+     `hosts/<node>` entry each belongs to. Values live in OpenBao; never try to
+     read them. Just report the field names present.
 
 3. `terraform/lxc/stacks/netbox-stack/integrations/proxmox_client.py`
    — Show how the token ID and secret are read from environment variables and

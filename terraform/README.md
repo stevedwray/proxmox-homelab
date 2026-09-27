@@ -13,10 +13,6 @@ terraform/
 ├── README.md
 ├── lxc/                         # Active Terraform + Ansible pipeline
 ├── PRODUCTION_NODES             # Declared list of production-trust Proxmox nodes
-├── secrets.common.enc.yaml      # SOPS-encrypted secrets shared by every environment
-├── secrets.pve.enc.yaml         # pve-only secrets delta (its own Proxmox tokens etc.)
-├── secrets.pve-test-vm.enc.yaml # pve-test-vm-only secrets delta
-├── SECRETS_PVE_TEMPLATE.md      # Template structure for the pve delta file
 └── terraform-providers/         # Local provider mirror/cache
 ```
 
@@ -85,41 +81,15 @@ Related docs:
 
 ## Secret Management
 
-Secrets are split common-vs-per-node, not dev-vs-prod — see
-`docs/reference/secrets-management.md` for the full model and the rule for
-where a new secret belongs.
-
-### Common secrets (every environment)
-- **File:** `terraform/secrets.common.enc.yaml`
-- **Use:** Every secret that's genuinely the same everywhere — the large majority
-- **Loading:** Merged in automatically by both `./with-secrets` and every
-  `./with-secrets-prod*` wrapper
-
-### Per-node secrets
-- **File:** `terraform/secrets.<node>.enc.yaml` (e.g. `secrets.pve.enc.yaml`,
-  `secrets.pve-test-vm.enc.yaml`) — operator-managed, separate per node
-- **Use:** Only secrets structurally tied to that node's own Proxmox API
-  identity (its read-only/Terraform tokens, its LXC root password)
-- **Loading:** `./with-secrets` for `pve-test-vm`; the matching
-  `./with-secrets-prod*` wrapper for a production node — always merged on
-  top of `secrets.common.enc.yaml`
-- **Template:** See `SECRETS_PVE_TEMPLATE.md` for the `pve` delta's expected structure
-- **Commit policy:** Keep these files encrypted; do not commit plaintext
-  during production enablement work
-
-### Separation Rationale
-
-Secrets are stored in two separate SOPS-encrypted files to prevent accidental production
-credential exposure. The `./with-secrets` wrapper cannot load production secrets even
-with `ALLOW_PVE=true`, and the `./with-secrets-prod` wrapper loads production secrets only.
-
-The production secret file is intentionally separate from the dev path and can
-be created locally from `SECRETS_PVE_TEMPLATE.md` when the operator is ready to
-enable production access.
-
-As of May 22, 2026, the production Proxmox API token stored in
-`terraform/secrets.pve.enc.yaml` has been validated successfully with a
-read-only API call to `pve.gibbsgreatly.xyz`.
+Secret values live in OpenBao (`openbao-stack`), not in this directory. The
+wrappers read them with a read-only AppRole per environment; which entries and
+fields each environment gets is declared in `../secrets/manifest.json`.
+Per-node values (a node's own Proxmox API tokens and LXC root password) are the
+`hosts/<node>` entries; everything else is shared. See
+`docs/reference/secrets-management.md` for day-to-day use, and
+`docs/secrets-refactor/secrets-design.md` for the design. The old
+`secrets.*.enc.yaml` SOPS files were retired in 2026-09 (still in Git history,
+not authoritative).
 
 For details on credential controls, approval flows, and environment targeting, see:
 - [`docs/reference/production-credentials.md`](../docs/reference/production-credentials.md)

@@ -35,9 +35,6 @@ fi
 
 SCRIPT_DIR="${REPO_ROOT}"
 PROD_NODES_FILE="${SCRIPT_DIR}/terraform/PRODUCTION_NODES"
-BASE_SECRETS_FILE="${SCRIPT_DIR}/terraform/secrets.common.enc.yaml"
-PROD_SECRETS_FILE="${SCRIPT_DIR}/terraform/secrets.${PVE_PROD_NODE}.enc.yaml"
-AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
 BASE_ENV_FILE="${SCRIPT_DIR}/.env"
 PROD_ENV_FILE="${SCRIPT_DIR}/.env.${PVE_PROD_NODE}"
 
@@ -51,29 +48,6 @@ if [[ ! -f "${PROD_NODES_FILE}" ]] || ! grep -qxF "${PVE_PROD_NODE}" <(grep -v '
     exit 1
 fi
 
-# Secrets backend: "openbao" (default since the cutover, docs/secrets-refactor/)
-# or "sops" -- the legacy Git-tracked files, a rollback path that is valid
-# only until the first secret is rotated in OpenBao after the cutover.
-SECRETS_BACKEND="${SECRETS_BACKEND:-openbao}"
-if [[ "${SECRETS_BACKEND}" != "sops" && "${SECRETS_BACKEND}" != "openbao" ]]; then
-    echo "ERROR: SECRETS_BACKEND must be 'sops' or 'openbao' (got '${SECRETS_BACKEND}')" >&2
-    exit 1
-fi
-
-if [[ "${SECRETS_BACKEND}" == "sops" && ! -f "${AGE_KEY_FILE}" ]]; then
-    echo "ERROR: age private key not found at ${AGE_KEY_FILE}" >&2
-    echo "Retrieve from Bitwarden: 'proxmox-homelab age private key'" >&2
-    echo "Then: mkdir -p ~/.config/sops/age && install -m 600 /dev/stdin ${AGE_KEY_FILE}" >&2
-    exit 1
-fi
-
-if [[ "${SECRETS_BACKEND}" == "sops" && ! -f "${PROD_SECRETS_FILE}" ]]; then
-    echo "ERROR: production secrets file not found at ${PROD_SECRETS_FILE}" >&2
-    echo "Production secrets must be stored separately from dev secrets." >&2
-    echo "Ensure terraform/secrets.${PVE_PROD_NODE}.enc.yaml exists and is encrypted with SOPS." >&2
-    exit 1
-fi
-
 if [[ $# -eq 0 ]]; then
     echo "Usage: $(basename "$0") <command> [args...]" >&2
     exit 1
@@ -81,7 +55,7 @@ fi
 
 # Load shared non-secret config first, then this node's production
 # overrides. Keeps every production node on the same baseline while each
-# still uses its own separate SOPS secrets.
+# still reads its own deploy-<node> AppRole's secrets from OpenBao.
 if [[ -f "${BASE_ENV_FILE}" ]]; then
     set -a
     # shellcheck source=/dev/null
@@ -238,18 +212,6 @@ fi
 
 normalize_lab_tfvars
 
-if [[ "${SECRETS_BACKEND}" == "openbao" ]]; then
-    # This node's read-only deploy AppRole (deploy-<node>); fails closed on any
-    # missing or empty value. See scripts/secrets_env.py and secrets/manifest.json.
-    exec python3 "${SCRIPT_DIR}/scripts/secrets_env.py" --profile "${PVE_PROD_NODE}" -- "$@"
-fi
-
-# Load this node's production secrets overlaying the base (dev) secrets,
-# then execute the command. Decrypts both SOPS files to JSON and sources
-# them as shell exports (without writing plaintext to disk), in order, so
-# this node's values override the shared base.
-if [[ -f "${BASE_SECRETS_FILE}" ]]; then
-    exec env SOPS_AGE_KEY_FILE="${AGE_KEY_FILE}" bash "${SCRIPT_DIR}/scripts/merge-sops-env.sh" "${BASE_SECRETS_FILE}" "${PROD_SECRETS_FILE}" -- "$@"
-else
-    exec env SOPS_AGE_KEY_FILE="${AGE_KEY_FILE}" bash "${SCRIPT_DIR}/scripts/merge-sops-env.sh" "${PROD_SECRETS_FILE}" -- "$@"
-fi
+# This node's read-only deploy AppRole (deploy-<node>); fails closed on any
+# missing or empty value. See scripts/secrets_env.py and secrets/manifest.json.
+exec python3 "${SCRIPT_DIR}/scripts/secrets_env.py" --profile "${PVE_PROD_NODE}" -- "$@"

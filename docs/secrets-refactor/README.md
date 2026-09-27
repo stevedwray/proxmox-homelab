@@ -326,6 +326,25 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   breakglass AppRole is LAN-bound and the scratch CT had no network. A real
   rebuild at 192.168.20.16 uses the breakglass AppRole (proven in B4).
   **Acceptance criterion "Backup" met.**
+- **Block F (SOPS retirement), code part, on branch `task/retire-sops`.**
+  Step 15 applied: netbox-populate uses GitHub OIDC, and the
+  sops-decrypt-check job is removed. It only takes effect on `main`. Both
+  wrappers lost the SOPS path and `SECRETS_BACKEND` (the rollback is gone).
+  Router scripts `cutover.sh` and `provision-hap-ax3.sh` no longer call
+  `sops -d`; they were already broken, since `hAPax3_ADMIN` was never in
+  SOPS. Agent instructions (AGENTS.md, copilot-instructions.md, both 401
+  Copilot prompts) now describe OpenBao. `SOPS_AGE_KEY_FILE` was removed
+  from `.env` and `.env.template`; SOPS wording was removed from `.env*`,
+  the `with-secrets-prod*` headers, provision.sh, setup-dev-env.sh,
+  README.md and terraform/README.md; `sops_source` was dropped from the
+  manifest. Deleted: merge-sops-env.sh, check-required-sops-keys.sh,
+  openbao_import_from_sops.py, secrets_parity_check.py,
+  SECRETS_PVE_TEMPLATE.md. Checks: shellcheck clean, loader tests OK, all 4
+  wrappers read OpenBao, no dangling references. **Operator:** `git rm` the
+  six `terraform/secrets.*.enc.yaml` and `.sops.yaml` (the classifier blocks
+  Claude from deleting them). **Follow-ups:** about 30 passing SOPS mentions
+  in stack contracts and playbook comments; delete the `SOPS_AGE_KEY`
+  GitHub secret after `main` is promoted.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
