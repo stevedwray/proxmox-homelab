@@ -1,10 +1,12 @@
 # framework-ip-and-port (planning workspace)
 
-Status: **Phases A and C complete; Phase B prepared, cutover pending**
-(2026-09-27). The TTL was lowered to 5m at Sun 27 Sep 16:30 NZDT, so the
-cutover can run from Mon 28 Sep 16:30 NZDT with gazaar powered off.
-Next: fwip-02, then the "Operator: re-IP cutover" runbook, then fwip-03.
-Branch `task/framework-dns-only-plan`.
+Status: **Phases A and C complete and merged to `stable` (#432,
+2026-09-28); Phase B prepared, cutover pending.** The cutover window opens
+Mon 28 Sep 16:30 NZDT, with gazaar powered off. Run it from
+**`task/framework-reip-cutover`**, cut from `origin/stable`: fwip-02, then
+plan.md's "Operator: re-IP cutover" runbook, then fwip-03.
+`task/framework-dns-only-plan` is fully merged and must not be used for the
+cutover (it has the pre-OpenBao wrappers).
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
 was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
@@ -461,3 +463,47 @@ Read-back after 20 s: the new URL, `Status: 1` (up).
 fwip-02 is deliberately held until cutover day. Committing `.18` early
 would let any re-run of the DNS playbook repoint the name before framework
 moves.
+
+### Pre-cutover review, 2026-09-28 (read-only, plus plan updates)
+
+Live state at 12:44 NZDT:
+- MikroTik answers `framework.gibbsgreatly.xyz` A `192.168.1.8` with TTL
+  300 (playbook-owned). gazaar is A `192.168.1.8`, TTL 1d, untouched.
+- `.18` doesn't answer ping.
+- Chat `:8080/health` and embeddings `:8085/health` both return 200.
+
+Findings, all folded into plan.md's Phase B:
+
+- **Technitium still held a one-day answer** (TTL 4683 s at 12:44, so it
+  expires about 14:02 NZDT). It was fetched just before the TTL was
+  lowered. The runbook now checks both resolvers' TTLs as a precondition.
+- **Technitium flush.** `technitium-framework-forwarder.yml` deleted
+  Technitium's cached answer only when it created the zone. It now does so
+  on every run, so re-running it is the cutover's "flush Technitium and
+  assert it matches the MikroTik" step. Syntax-checked; it takes effect the
+  first time it runs, during the cutover.
+- **Wrappers after the OpenBao switch.**
+  - `PVE_ENV= ./with-secrets` fails ("unknown profile ''"), so the framework
+    playbook commands in the plan and in both playbook headers now use
+    `TASK_APPROVAL=<task> ./with-secrets-prod`. A read-only
+    `ansible-inventory` through it resolves framework, and the `pve`
+    profile lists every field Phase B needs.
+  - Plain `./with-secrets` (dev profile) still loads the MikroTik
+    credentials for the router re-scrape.
+- **node_exporter cert** SANs are `DNS:framework.gibbsgreatly.xyz,
+  IP Address:192.168.1.8`, valid to 2026-12-22. `step ca renew` keeps its
+  SANs, so the runbook's new step 6 deletes the cert and re-runs the
+  bootstrap to reissue it with DNS only.
+- **NetBox:** the daily populate workflow runs from `main`. The runbook
+  now dispatches it against the cutover branch, falling back to the first
+  scheduled run after `main` is promoted.
+- **Other runbook changes:**
+  - inline approvals throughout;
+  - a guard that `.env` says `.18` before the DNS cutover and the TTL
+    restore;
+  - commit the hand-back only after the checks (the post-commit hook);
+  - rollback-after-step-3 now reverts fwip-02 and re-runs the Technitium
+    flush.
+- fwip-02 was simulated on a scratch worktree of `origin/stable` (not
+  committed). All three of its gates pass (NetBox tests 128 OK), and the
+  resulting `.8`/`.18` file sets match fwip-03's expected lists.

@@ -62,9 +62,11 @@
 # node_exporter/rsyslog_forward roles below resolve -- this playbook family
 # has no ansible.cfg of its own, unlike terraform/lxc/ansible/ which
 # provision.sh points ANSIBLE_CONFIG at):
-#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets \
-#     ansible-playbook -i ansible/inventory/ \
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
 #     ansible/00-initial-setup/framework-desktop-bootstrap.yml
+# (pve's OpenBao profile: step-ca and node_exporter secrets. Plain
+# ./with-secrets now defaults to the pve-test-vm profile and overlay.)
 
 - name: Bootstrap Framework Desktop for AI/LLM workloads
   hosts: framework

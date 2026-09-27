@@ -66,12 +66,17 @@
       when: framework_fqdn not in (framework_fwd_zone_list.content | from_json).response.zones | map(attribute='name') | list
       no_log: true
 
-    - name: Drop any cached (negative) answer for the Framework FQDN
+    # Every run, not only on zone creation: re-running this playbook is also
+    # how a Framework re-IP flushes Technitium's cached answer and then proves
+    # (assertion below) that Technitium agrees with the MikroTik
+    # (docs/framework-ip-and-port/plan.md, re-IP cutover step 4). Deleting one
+    # cached name is harmless when nothing changed.
+    - name: Drop any cached answer for the Framework FQDN
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/cache/delete?domain={{ framework_fqdn }}&token={{ framework_fwd_token }}"
         method: POST
         status_code: [200]
-      when: framework_fwd_create is changed
+      changed_when: false
       no_log: true
 
     - name: Ask the MikroTik for the Framework FQDN

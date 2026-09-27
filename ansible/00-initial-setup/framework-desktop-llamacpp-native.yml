@@ -24,8 +24,12 @@
 # framework_llamacpp_min_available_mb. Restarting the chat unit is a stop
 # then a start of the same model (never two copies at once).
 #
-# Run (framework is not a Proxmox production node, so plain ./with-secrets):
-#   PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml \
+# Run (framework is not a Proxmox node, but it needs pve's OpenBao profile --
+# LLM_GPU_STACK_API_KEY -- so it goes through the prod wrapper with an inline
+# approval; the older `PVE_ENV= ./with-secrets` form fails with an empty
+# profile since the OpenBao switch):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
+#     -i ansible/inventory/inventory.yml \
 #     ansible/00-initial-setup/framework-desktop-llamacpp-native.yml
 
 - name: Manage native llama.cpp servers on the Framework Desktop
