@@ -70,7 +70,7 @@ operator, because the harness classifier blocks them for Claude.
 - the recommended follow-ups (alerting, rotating secrets whose old values
   sit in Git history), listed in [README.md](README.md#next-steps).
 
-Done since: the `task/retire-sops` PR into `stable` (PR __PR__), the
+Done since: the `task/retire-sops` PR into `stable` (PR #432), the
 `artifacts/` close-out, the reconciler `grant_types` default on create,
 and the tidy-ups.
 

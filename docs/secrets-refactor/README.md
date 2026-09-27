@@ -33,13 +33,13 @@ are deleted (Git history keeps old, non-authoritative copies).
 | Bootstrap kit | Bitwarden note "openbao bootstrap kit" plus a passphrase-encrypted `kit.age` on USB B (SanDisk). 10 values, including the recovery key and the breakglass AppRole |
 | Monitoring | Grafana "OpenBao" dashboard: snapshot age and last run, LXC up, secret entries and fields per category, a per-entry version and last-changed table, changes in the last 7 days, manifest drift. The inventory comes from a `metrics` AppRole that can read KV **metadata only**; the audit log shows its value reads denied. **No alerting yet** |
 | Validation | Post-cutover real deploys (graylog, harbor, cse-panel, monitoring); a 28-stack `--check` sweep with no missing secrets; 10 live service logins with OpenBao credentials; all 5 profiles read in full |
-| Git | Cutover merged to `stable` (PR #431, `93939d61`); retirement, tests, inventory, the reconciler fix and the tidy-up merged to `stable` from `task/retire-sops` (PR __PR__). **`main` is not promoted** |
+| Git | Cutover merged to `stable` (PR #431, `93939d61`); retirement, tests, inventory, the reconciler fix and the tidy-up merged to `stable` from `task/retire-sops` (PR #432). **`main` is not promoted** |
 
 ## Next steps
 
 **To finish this project:**
 
-1. ~~PR `task/retire-sops` → `stable`~~ — merged (PR __PR__).
+1. ~~PR `task/retire-sops` → `stable`~~ — merged (PR #432).
 2. **Promote `stable` → `main`** when the operator decides. It is currently
    deferred, and `main` carries 3 weeks of other work. Then:
    - The CI `sops-freeze` check will flag `321c5549`. That is expected: it
