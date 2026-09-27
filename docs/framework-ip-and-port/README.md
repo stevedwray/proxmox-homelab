@@ -149,15 +149,16 @@ each gate's actual result.
 - Item 2, router snapshot: refreshed on the workstation. Exactly six rules
   have `dst-address=192.168.1.8`: `*55` (ai_seg 8080,11434), `*90` (cse_seg
   8080), `*36` (pentest 11434), `*37` (pentest 8082), `*45` (pentest 8080)
-  and `*48` (pentest 22). No extra rules and no gazaar-specific rules. The
-  pasted comment on `*55` read `ai_segto` (no space); **check the exact
-  bytes before the fwdns-08 apply**, because the playbook matches comments
-  exactly. Static DNS: `framework` and `gazaar` are both A `192.168.1.8`,
+  and `*48` (pentest 22). No extra rules and no gazaar-specific rules. `*55`'s
+  comment was checked byte for byte (`od -c`) and matches fwdns-08's
+  `ai-services-stack: ai_seg to framework llamacpp-router/ollama` exactly
+  (an earlier paste had lost the space). Static DNS: `framework` and `gazaar` are both A `192.168.1.8`,
   TTL 1d.
 - Item 3, RouterOS: **7.24.2** (was 7.23.1 at the 2026-08-13 snapshot).
-- Item 4, resolution from consumers: **not yet run**. The workstation's
-  `~/.ssh/config` line 44 contains a non-breaking space, so ssh refused to
-  run.
+- Item 4, resolution from consumers: **pass**. `getent hosts
+  framework.gibbsgreatly.xyz` returns `192.168.1.8` from ai-services
+  (.50.11), secpipe (.50.12), mcp-utility (.50.10), cse-controller
+  (.100.70), monitoring (.20.12) and proxy (.30.10).
 - Item 6, Portainer: endpoint Id 9 (`framework.gibbsgreatly.xyz`) URL is
   `tcp://192.168.1.8:9001`. **Change it to the FQDN before Phase B.**
 
