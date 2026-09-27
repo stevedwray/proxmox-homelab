@@ -345,6 +345,30 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   Claude from deleting them). **Follow-ups:** about 30 passing SOPS mentions
   in stack contracts and playbook comments; delete the `SOPS_AGE_KEY`
   GitHub secret after `main` is promoted.
+- **SOPS files deleted (operator, `e2b26541`).** Post-retirement test
+  battery (Claude), all green:
+  - Static: loader, snapshot and edge unit tests OK; shellcheck clean on
+    every wrapper and touched script; **67/67 playbooks** pass
+    `--syntax-check`. The `terraform/lxc` suite has 8 failures, the **same
+    8 as on `stable`** (6 in test_reconcile_edge, 1 in
+    test_render_edge_coredns, pre-existing). Note: CLAUDE.md's repo-wide
+    `unittest discover -s .` finds 0 tests (no packages), a pre-existing
+    gap.
+  - Secrets path: all 5 profiles read every field (`--check`: 119/117/119/
+    118/118); boundary check OK; live logins with OpenBao-sourced creds
+    10/10 × 200 (Graylog, Harbor admin + robot, Grafana, NetBox, Portainer,
+    Authentik API, MikroTik read-only, OpenSearch, Proxmox API token);
+    OpenBao unsealed; TLS-renew and nightly-snapshot timers scheduled; last
+    snapshot OK.
+  - Tooling: `terragrunt plan` authenticates via OpenBao creds.
+    openbao-stack and graylog-stack: no changes. harbor-stack (stack dir):
+    3 add / 1 destroy, where the destroy is only a `null_resource` SDN
+    re-attachment plus generated local files (a pre-existing
+    per-env-dir-vs-stack-dir state split, container untouched, **do not
+    apply**). Edge reconcile dry-run: 51 noop, only the known EGR211.
+    MikroTik preflight PASS.
+  - Only cosmetic leftovers remain (error/hint strings naming old file
+    paths).
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
