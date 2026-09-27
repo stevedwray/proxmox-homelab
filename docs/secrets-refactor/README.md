@@ -284,6 +284,19 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   20:04:22Z with exactly their own policies. **OpenBao is now
   authoritative.** Rollback: `SECRETS_BACKEND=sops`, valid only until the
   first rotation.
+- **Post-cutover validation done.** The operator ran graylog-stack and
+  harbor-stack on pve, and cse-panel-stack on pve-tiny, all via the OpenBao
+  backend ("looks fine"). Claude re-verified with OpenBao-sourced
+  credentials: Graylog root 200, Harbor admin 200, Harbor robot token 200,
+  Harbor health 200, both UIs 200. The audit log shows deploy-pve and
+  deploy-pve-tiny logins. The MikroTik preflight, now bootstrapped through
+  `./with-secrets-prod`: 18/18 PASS.
+- **Step 16 applied.** CLAUDE.md and `docs/reference/secrets-management.md`
+  now describe the OpenBao model (`secrets/manifest.json` ×3 in CLAUDE.md,
+  0 SOPS edit instructions).
+- **Remaining:** step 15 (CI via GitHub OIDC) is only testable after a merge
+  to `main`, so it is held for the operator's merge decision. Then block E
+  (recovery test) and block F (SOPS retirement).
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
