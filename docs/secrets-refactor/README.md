@@ -310,6 +310,22 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
 - **Not yet promoted to main (operator: "not yet").** Step 15 (CI via
   GitHub OIDC) stays unapplied until `main` is promoted; `netbox-populate`
   keeps failing until then, as it already did.
+- **Block E recovery test: PASS (`artifacts/e-recovery-test.sh`, 3rd run).**
+  Throwaway LXC 20099 (no network, 127.0.0.1-only listener, destroyed
+  after). A fresh OpenBao 2.7.0 + seal key from USB B + the newest NAS
+  snapshot `openbao-20260927T200311Z-postwrite.snap` → `raft snapshot
+  restore -force` → restored data auto-unsealed (`initialized True sealed
+  False`) → root token recovered with the ORIGINAL recovery key (policies
+  `['root']`) → 22 `services/*` entries, and the `GRAYLOG_ROOT_PASSWORD`
+  sha256 matches live (`683313f7…`). Findings from runs 1–2 (fixed in the
+  script): `pct exec` has no `/usr/local/bin` on PATH; and
+  `bao operator generate-root -decode` calls the authenticated status
+  endpoint (403), so decoding is done locally (base64(token XOR otp)).
+  Test-only deviation: the scratch listener set
+  `disable_unauthed_generate_root_endpoints = false`, because the
+  breakglass AppRole is LAN-bound and the scratch CT had no network. A real
+  rebuild at 192.168.20.16 uses the breakglass AppRole (proven in B4).
+  **Acceptance criterion "Backup" met.**
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
