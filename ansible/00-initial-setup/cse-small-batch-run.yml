@@ -35,7 +35,9 @@
     # (confirmed live from the Phase 2 smoke test's own stat file) --
     # the OPENAI provider just forwards whatever string is given, and
     # llama.cpp's server ignores it beyond echoing it back.
-    cse_batch_mut_spec: "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::not-needed::http://framework.gibbsgreatly.xyz:8080/v1"
+    # Key: framework's llama-server requires LLM_GPU_STACK_API_KEY since
+    # docs/framework-ip-and-port/plan.md.
+    cse_batch_mut_spec: "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY must be set') }}::http://framework.gibbsgreatly.xyz:8080/v1"
     cse_batch_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set (via ./with-secrets-prod-tiny) to run the judge-requiring benchmarks in this batch') }}"
     cse_batch_num_cases: 2
     cse_batch_phishing_cases: 1

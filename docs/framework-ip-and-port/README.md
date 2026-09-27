@@ -198,3 +198,55 @@ Removed the `lab_ip_framework` var and the framework rule entry from
 `mikrotik-firewall-ai-services-stack.yml` and `mikrotik-firewall-cse-seg.yml`,
 and repointed both header comments to the new playbook. Gates: syntax-check
 exit 0; no-framework-ip `0` / `0`.
+
+### Operator apply: router (fwdns-08), 2026-09-27
+
+Validation tier: the operator approved the narrower checks (add-before-remove,
+the playbook's assertions, live reachability) instead of a pve-test-vm
+teardown. The playbook finished with `failed=0`, and a re-scrape confirmed
+the result:
+- The `framework` list holds the FQDN plus a dynamic `192.168.1.8` entry.
+- The new rules are `*B2` (ai_seg 8080,8085) and `*B3` (cse_seg 8080).
+- 0 rules with a literal `dst-address=192.168.1.8` remain.
+
+From ai-services (.50.11) and cse-controller (.100.70),
+`:8080/v1/models` returned 200. The post-apply snapshot is committed
+with this entry.
+
+### Operator deploy: monitoring-stack (fwdns-03), 2026-09-27
+
+`provision.sh --stack monitoring-stack`: `failed=0`. The smoke test failed
+because it still required `dns-stack`, whose target was dropped on
+2026-09-08; fixed in `6157817d`, after which the smoke test passes. The FQDN
+targets were first **down**: VictoriaMetrics resolves through Docker's DNS,
+which on monitoring (and on authentik, netbox, graylog, opensearch and
+wazuh) is Technitium. Technitium is authoritative only for `LAB_DOMAIN`, so
+it recursed `framework.gibbsgreatly.xyz` to the public internet and got
+NXDOMAIN. The plan's research note saying Technitium resolved the name was
+wrong. With the operator's approval, the new
+`technitium-framework-forwarder.yml` (`65a4cb50`, also imported by
+`deploy-technitium-stack.yml`) adds a conditional forwarder zone for the
+FQDN, pointing at the MikroTik (`LAB_GW_MGMT`). The IP is still published
+only on the MikroTik. Applied with `failed=0 changed=1`. Both
+`framework.gibbsgreatly.xyz:8083` and `:9100` (HTTPS, cert SAN verified)
+are now `up`.
+
+### Operator deploy: Traefik edge (fwdns-02), 2026-09-27
+
+`reconcile-edge.py` dry-run: validation and render passed, and the Authentik
+reconcile planned 0 writes. The overall status was `failed` only because of
+EGR211: a pre-existing, unrelated drift on `nextcloud-stack` (its route
+needs no Authentik objects, but some exist). A diff of the rendered files
+against the live `/opt/proxy-stack/dynamic/` showed only the `llm-gpu` and
+`comfyui` backend changes, apart from end-of-file newlines.
+`provision.sh --stack proxy-stack`: `failed=0`, smoke test passed. Route
+checks: comfyui 302, grafana 302, portainer 200.
+
+### fwllm-01-native-llamacpp-playbook
+
+Applied the patch. Gates: applied; syntax-check exit 0; chat-flags `1`.
+
+### fwllm-04-api-key-consumers
+
+Applied the patch. Gates: applied; py-compile OK; syntax-check exit 0 (all
+three playbooks).

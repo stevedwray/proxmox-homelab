@@ -89,8 +89,12 @@ on it. **C** (llama.cpp) is the most urgent. **B** (re-IP) comes last. See
 
 - **DNS already resolves everywhere that matters.**
   `dig framework.gibbsgreatly.xyz` returns `192.168.1.8` from the
-  workstation and from Technitium (`192.168.20.15`, the resolver the LXCs
-  use), checked 2026-09-27. Several consumers already use the FQDN in
+  workstation and from each consumer LXC's own resolver (the MikroTik
+  gateway). **Correction (2026-09-27, during execution):** Technitium
+  (`192.168.20.15`) did *not* resolve it. It is the Docker-daemon resolver on
+  monitoring and five other stacks, so containers there couldn't resolve the
+  name. `technitium-framework-forwarder.yml` now forwards the FQDN to the
+  MikroTik; see the README hand-back log. Several consumers already use the FQDN in
   production: ai-services-stack OpenWebUI, docs-rag-mcp, deep-research-agent
   and cse-controller.
 - **Framework-local config holds no copy of the IP** apart from netplan

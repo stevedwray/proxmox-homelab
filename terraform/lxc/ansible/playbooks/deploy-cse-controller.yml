@@ -70,6 +70,7 @@
         mode: "0600"
         content: |
           OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}
+          FRAMEWORK_LLM_API_KEY={{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY must be set to deploy the worker') }}
           NEXTCLOUD_REPORTS_WEBDAV_URL={{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}
           NEXTCLOUD_REPORTS_USER={{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}
           NEXTCLOUD_REPORTS_APP_PASSWORD={{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}

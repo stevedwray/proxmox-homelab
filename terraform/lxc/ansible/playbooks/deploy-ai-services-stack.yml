@@ -526,6 +526,10 @@
               environment:
                 OPENAI_API_BASE: "{{ ai_services_deep_research_openai_api_base }}"
                 OPENAI_MODEL: local-model
+                # Framework's llama-server requires its API key
+                # (docs/framework-ip-and-port/plan.md) -- same key
+                # OpenWebUI's OPENAI_API_KEYS already sends.
+                OPENAI_API_KEY: "{{ ai_services_openwebui_llm_api_key }}"
                 # Real authenticated search API, not scraping -- switched
                 # 2026-09-22 after confirming live that every
                 # unauthenticated scraping path (DDGS's backend="auto",
