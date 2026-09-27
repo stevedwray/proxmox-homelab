@@ -8,9 +8,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PROD_SECRETS_FILE="${REPO_ROOT}/terraform/secrets.pve.enc.yaml"
-AGE_KEY_FILE="${HOME}/.config/sops/age/keys.txt"
-PROD_ENV_FILE="${REPO_ROOT}/.env.pve"
 PYTHON_IMPL="${SCRIPT_DIR}/preflight-production-mikrotik.py"
 
 if [[ ! -f "${PYTHON_IMPL}" ]]; then
@@ -54,33 +51,14 @@ if [[ "${needs_bootstrap}" == true ]]; then
         while IFS= read -r item; do
             echo "  - ${item}" >&2
         done < <(missing_required_vars)
-        echo "Expected source: terraform/secrets.pve.enc.yaml and/or .env.pve" >&2
+        echo "Expected source: ./with-secrets-prod (.env, .env.pve and the pve secrets profile)" >&2
         exit 1
     fi
 
-    if [[ ! -f "${AGE_KEY_FILE}" ]]; then
-        echo "ERROR: age private key not found at ${AGE_KEY_FILE}" >&2
-        exit 1
-    fi
-
-    if [[ ! -f "${PROD_SECRETS_FILE}" ]]; then
-        echo "ERROR: production secrets file not found at ${PROD_SECRETS_FILE}" >&2
-        exit 1
-    fi
-
-    if [[ -f "${PROD_ENV_FILE}" ]]; then
-        set -a
-        # shellcheck source=/dev/null
-        source "${PROD_ENV_FILE}"
-        set +a
-    fi
-
-    export PVE_ENV="pve"
-    export TF_VAR_proxmox_node="${TF_VAR_proxmox_node:-pve}"
-    export "${REEXEC_GUARD_VAR}=1"
-
-    exec env SOPS_AGE_KEY_FILE="${AGE_KEY_FILE}" \
-        sops exec-env "${PROD_SECRETS_FILE}" "$(printf '%q ' "$0" "$@")"
+    # Bootstrap through the production wrapper so secrets come from whichever
+    # backend it uses (OpenBao since docs/secrets-refactor/ cutover). python3
+    # is on with-secrets-prod's read-only allowlist.
+    exec env "${REEXEC_GUARD_VAR}=1" "${REPO_ROOT}/with-secrets-prod" python3 "${PYTHON_IMPL}" "$@"
 fi
 
 exec python3 "${PYTHON_IMPL}" "$@"

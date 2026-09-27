@@ -865,7 +865,7 @@ gates:
     expect: "exit 0, no output"
     critical: true
   - id: default-is-openbao
-    cmd: "grep -c 'SECRETS_BACKEND=\"${SECRETS_BACKEND:-openbao}\"' with-secrets scripts/with-secrets-prod-lib.sh"
+    cmd: "grep -cF 'SECRETS_BACKEND=\"${SECRETS_BACKEND:-openbao}\"' with-secrets scripts/with-secrets-prod-lib.sh"
     expect: "each file :1"
     critical: true
   - id: no-direct-sops

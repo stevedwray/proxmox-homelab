@@ -266,6 +266,24 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   Grafana admin, NetBox API token, Portainer admin, Authentik superuser API
   token, MikroTik read-only, OpenSearch admin: **all 200**. Greenbone admin
   was not checked (GMP); its provision after the cutover covers it.
+- **D2 done (operator, OIDC write token).** Dry run `30 entries, 129 fields`,
+  then 30× `created` (HTTP 200), no FAILED or DIFFERS. A post-import
+  snapshot is on the NAS (79390 bytes).
+- **D3 done (Claude).** Parity, all fields matching by SHA-256:
+  pve 119/119, pve-tiny 118/118, pve-framework 118/118, pve-test-vm 119/119,
+  pve-test 117/117. The boundary check is OK with real data: 105 permitted
+  reads 200, cross-host 403, writes 403.
+- **Steps 13–14 applied (Claude).** Freeze: the hook blocks a staged
+  `terraform/secrets.common.enc.yaml` ("are frozen") and skips other
+  files ✓. Default backend: shellcheck clean; `SECRETS_BACKEND` defaults to
+  `openbao` in both wrappers (the plan gate is corrected to `grep -F`; the
+  regex form mis-matched `${...}`); no `sops exec-env` in the mikrotik
+  preflight ✓. Live read: `./with-secrets`, `./with-secrets-prod` and
+  `./with-secrets-prod-tiny` print their PVE_ENV. The OpenBao audit log
+  shows AppRole logins deploy-dev, deploy-pve and deploy-pve-tiny at
+  20:04:22Z with exactly their own policies. **OpenBao is now
+  authoritative.** Rollback: `SECRETS_BACKEND=sops`, valid only until the
+  first rotation.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).

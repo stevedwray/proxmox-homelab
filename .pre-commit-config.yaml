@@ -26,9 +26,12 @@ repos:
 
   - repo: local
     hooks:
-      - id: check-required-sops-keys
-        name: Check required SOPS keys
-        entry: bash scripts/check-required-sops-keys.sh
-        language: system
-        pass_filenames: false
-        files: ^terraform/secrets\.common\.enc\.yaml$
+      # OpenBao is authoritative since the cutover (docs/secrets-refactor/).
+      # A change to a SOPS file could only reintroduce a stale value, so any
+      # staged change to one fails. Deletions (SOPS retirement) are allowed:
+      # pre-commit does not pass deleted files to hooks.
+      - id: block-sops-secret-edits
+        name: Block edits to frozen SOPS secrets files
+        entry: "terraform/secrets.*.enc.yaml are frozen: OpenBao is authoritative. Write secrets with scripts/openbao_write.py (docs/secrets-refactor/)."
+        language: fail
+        files: ^terraform/secrets\..*\.enc\.yaml$

@@ -51,9 +51,10 @@ if [[ ! -f "${PROD_NODES_FILE}" ]] || ! grep -qxF "${PVE_PROD_NODE}" <(grep -v '
     exit 1
 fi
 
-# Secrets backend: "sops" (legacy Git-tracked files) or "openbao"
-# (docs/secrets-refactor/). The default flips to openbao at the cutover.
-SECRETS_BACKEND="${SECRETS_BACKEND:-sops}"
+# Secrets backend: "openbao" (default since the cutover, docs/secrets-refactor/)
+# or "sops" -- the legacy Git-tracked files, a rollback path that is valid
+# only until the first secret is rotated in OpenBao after the cutover.
+SECRETS_BACKEND="${SECRETS_BACKEND:-openbao}"
 if [[ "${SECRETS_BACKEND}" != "sops" && "${SECRETS_BACKEND}" != "openbao" ]]; then
     echo "ERROR: SECRETS_BACKEND must be 'sops' or 'openbao' (got '${SECRETS_BACKEND}')" >&2
     exit 1

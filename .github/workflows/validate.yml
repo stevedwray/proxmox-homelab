@@ -273,6 +273,28 @@ jobs:
             -not -path './.venv/*' \
             | xargs bandit -ll -q
 
+  sops-freeze:
+    name: SOPS secrets files are frozen
+    # No decryption happens here -- it only inspects which paths a PR changes.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fail if a PR adds or modifies terraform/secrets.*.enc.yaml
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          changed="$(git diff --name-only --diff-filter=AM "origin/${BASE_REF}...HEAD" -- 'terraform/secrets.*.enc.yaml')"
+          if [ -n "${changed}" ]; then
+            echo "These SOPS files are frozen since the OpenBao cutover (docs/secrets-refactor/):"
+            echo "${changed}"
+            exit 1
+          fi
+          echo "No frozen SOPS files changed."
+
   sops-decrypt-check:
     name: SOPS decrypt verification
     # Self-hosted, not ubuntu-latest -- operator policy (2026-09-07): no
