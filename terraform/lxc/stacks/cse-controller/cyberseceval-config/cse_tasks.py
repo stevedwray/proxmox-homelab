@@ -76,7 +76,10 @@ def _build_mut_spec(
     name and base_url actually change."""
     base_url = backend_base_url or DEFAULT_BACKEND_BASE_URL
     model = backend_model or DEFAULT_BACKEND_MODEL
-    key = backend_api_key or "not-needed"
+    # Framework's llama-server requires an API key since
+    # docs/framework-ip-and-port/plan.md; worker.env supplies it. An
+    # explicit backend_api_key (another server) still wins.
+    key = backend_api_key or os.environ.get("FRAMEWORK_LLM_API_KEY") or "not-needed"
     return f"OPENAI::{model}::{key}::{base_url}"
 
 

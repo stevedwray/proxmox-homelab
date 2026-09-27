@@ -9,7 +9,7 @@ spec:
       host: comfyui.${LAB_DOMAIN}
       backend:
         type: url
-        url: http://${LAB_IP_COMFYUI}:8188
+        url: http://${LAB_FQDN_FRAMEWORK}:8188
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}

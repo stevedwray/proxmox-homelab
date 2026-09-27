@@ -35,12 +35,17 @@ cve_enrichment_sync_triage_depth: standard
 cve_enrichment_sync_llm_provider: anthropic
 cve_enrichment_sync_anthropic_api_key: "{{ lookup('env', 'ANTHROPIC_API_KEY') | default('', true) }}"
 cve_enrichment_sync_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('', true) }}"
-# framework.gibbsgreatly.xyz's Ollama endpoint -- confirmed live and
-# reachable from secpipe-stack's network 2026-09-01. laguna-s-2.1 MUST
-# run on Ollama, not llama.cpp, for usable output quality (17-point BFCL
-# accuracy gap, confirmed -- see project_laguna_ollama_runtime memory).
-cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"
-cve_enrichment_sync_ollama_model: "laguna-s-2.1:q4_k_m-ctx131k"
+# Framework's llama-server (Nathanw llama.cpp fork), which replaced Ollama
+# on framework in 2026-09 -- docs/framework-ip-and-port/plan.md. By name,
+# never by IP. The key is the same LLM_GPU_STACK_API_KEY the server is
+# started with; it lands in llm-user.env, never in a unit's Environment=.
+cve_enrichment_sync_llamacpp_url: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}:8080"
+cve_enrichment_sync_llamacpp_model: qwen3.8-flash-next
+cve_enrichment_sync_llamacpp_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | default('', true) }}"
+# Output cap per call. The prompt plus this must fit the server's context
+# (framework_llamacpp_chat_ctx_size); the reasoning model spends part of it
+# thinking before any content appears.
+cve_enrichment_sync_llamacpp_max_tokens: 4096
 
 # Caps CVEs processed per run (0 = unlimited, the standing scheduled
 # timer's behavior). Set to a small number (e.g. 10-20) for a fast manual
@@ -99,11 +104,7 @@ cve_enrichment_sync_deep_dive_on_calendar: "Sun *-*-* 23:00:00"
 # in_production:true) get a full architecture-aware assessment per run.
 cve_enrichment_sync_deep_dive_top_n: 15
 
-# Same Framework Ollama endpoint cve_enrichment_sync_ollama_url/_model
-# already point at (confirmed reachable from secpipe-stack's network,
-# confirmed loaded/idle 2026-09-03) -- kept as its own variable rather
-# than reusing cve_enrichment_sync_ollama_url/_model directly so this can
-# move independently once the routine narrative's own provider migration
-# happens.
-cve_enrichment_sync_deep_dive_ollama_url: "{{ cve_enrichment_sync_ollama_url }}"
-cve_enrichment_sync_deep_dive_ollama_model: "{{ cve_enrichment_sync_ollama_model }}"
+# Same Framework llama-server endpoint as the routine narrative -- kept as
+# its own variables so the deep-dive can move independently.
+cve_enrichment_sync_deep_dive_llamacpp_url: "{{ cve_enrichment_sync_llamacpp_url }}"
+cve_enrichment_sync_deep_dive_llamacpp_model: "{{ cve_enrichment_sync_llamacpp_model }}"

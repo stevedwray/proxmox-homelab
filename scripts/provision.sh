@@ -12,7 +12,7 @@ ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${PVE_ENV:-}"
 usage() {
   cat <<'EOF'
 Usage: scripts/provision.sh [--tier <platform|apps|all>] [--stack <name>]
-                            [--target-env <pve-test-vm|pve>] [--check]
+                            [--target-env <pve-test-vm|pve|pve-tiny>] [--check]
 
 Options:
   --tier        Limit orchestration to a deployment tier (default: all).
@@ -45,6 +45,7 @@ expected_pve_host_for_env() {
   # deliberately exempt — see assert_inventory_matches_env below.
   case "${PVE_ENV:-}" in
     pve) printf 'pve.gibbsgreatly.xyz' ;;
+    pve-tiny) printf 'pve-tiny.gibbsgreatly.xyz' ;;
     pve-test-vm|"") printf 'pve-test-vm.gibbsgreatly.xyz' ;;
     *) printf '' ;;
   esac

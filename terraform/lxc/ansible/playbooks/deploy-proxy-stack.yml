@@ -110,6 +110,15 @@
             dashboard: true
             insecure: false
 
+          # Verify HTTPS backends against system CAs + the homelab step-ca
+          # root (the same combined bundle lego uses, built below). Needed
+          # for OpenBao's UI route, whose backend is OpenBao's own
+          # step-ca-issued TLS listener -- docs/secrets-refactor/secrets-design.md
+          # 6.1. Plain-HTTP backends (every other route) are unaffected.
+          serversTransport:
+            rootCAs:
+              - /certs/combined-ca.crt
+
           entryPoints:
             web:
               address: ":80"

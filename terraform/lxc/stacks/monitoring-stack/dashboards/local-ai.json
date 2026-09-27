@@ -12,7 +12,7 @@
   "annotations": {
     "list": []
   },
-  "description": "GPU utilization/memory and Ollama loaded-model stats for framework.gibbsgreatly.xyz, via node_exporter's textfile collector (neither AMDGPU nor Ollama expose Prometheus metrics natively)",
+  "description": "GPU utilization/memory (node_exporter textfile collector -- AMDGPU has no native Prometheus metrics) and llama.cpp server metrics (--metrics, scraped directly) for framework.gibbsgreatly.xyz",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -178,17 +178,17 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
       "id": 8,
-      "title": "Ollama",
+      "title": "llama.cpp",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-      "description": "Per-model VRAM/GTT usage for whatever Ollama currently has loaded -- from /api/ps, polled every 15s (Ollama has no native Prometheus endpoint)",
+      "description": "Generated tokens per second, per llama.cpp server (5m rate of llamacpp:tokens_predicted_total) -- the embeddings server generates none",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 1, "fillOpacity": 10, "drawStyle": "line", "lineInterpolation": "stepAfter" },
-          "unit": "bytes"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -197,22 +197,22 @@
       "options": { "legend": { "calcs": ["last"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "ollama_model_vram_bytes",
-          "legendFormat": "{{model}}",
+          "expr": "rate(llamacpp:tokens_predicted_total[5m])",
+          "legendFormat": "{{server}}",
           "refId": "A"
         }
       ],
-      "title": "Ollama Loaded Model Memory",
+      "title": "llama.cpp Generation Throughput",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-      "description": "Countdown until Ollama unloads each model if it stays idle -- a gap in the line means the model unloaded",
+      "description": "Requests being processed and requests queued (deferred) waiting for a free slot, per llama.cpp server",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 1, "fillOpacity": 10, "drawStyle": "line", "lineInterpolation": "stepAfter" },
-          "unit": "s",
+          "unit": "short",
           "min": 0
         },
         "overrides": []
@@ -222,19 +222,24 @@
       "options": { "legend": { "calcs": ["last"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "ollama_model_expires_in_seconds",
-          "legendFormat": "{{model}}",
+          "expr": "llamacpp:requests_processing",
+          "legendFormat": "{{server}} processing",
           "refId": "A"
+        },
+        {
+          "expr": "llamacpp:requests_deferred",
+          "legendFormat": "{{server}} deferred",
+          "refId": "B"
         }
       ],
-      "title": "Ollama Model Time To Unload",
+      "title": "llama.cpp Requests In Flight",
       "type": "timeseries"
     },
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
       "id": 11,
-      "title": "Textfile Collector Health",
+      "title": "Collector / Scrape Health",
       "type": "row"
     },
     {
@@ -274,7 +279,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-      "description": "Whether the last periodic poll of Ollama's /api/ps succeeded -- distinct from the node_exporter scrape itself being up",
+      "description": "Whether VictoriaMetrics' last scrape of each llama.cpp server's /metrics succeeded (job llamacpp)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -299,12 +304,12 @@
       "options": { "colorMode": "background", "graphMode": "none", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto" },
       "targets": [
         {
-          "expr": "ollama_scrape_up",
-          "legendFormat": "Ollama stats",
+          "expr": "up{job=\"llamacpp\"}",
+          "legendFormat": "{{server}}",
           "refId": "A"
         }
       ],
-      "title": "Ollama Stats Collector",
+      "title": "llama.cpp Servers Up",
       "type": "stat"
     }
   ],

@@ -1,0 +1,46 @@
+# OpenBao secrets store -- mgmt_seg zone. Native .deb + systemd, no Docker.
+# Design: docs/secrets-refactor/secrets-design.md. Plan: docs/secrets-refactor/plan.md.
+hostname: openbao
+ip_address: "192.168.20.16/24"
+gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
+vmid: 20016
+cores: 1
+memory: 1024
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - openbao
+  - secrets
+  - infrastructure
+depends_on:
+  - apt-cacher-stack
+  - step-ca-stack
+provides:
+  - service: openbao-api
+    port: 8200
+    protocol: tcp
+
+network:
+  zone: mgmt_seg
+
+ansible_playbook: "deploy-openbao"
+deployment_tier: platform
+portainer_agent: false
+
+portainer_server_ip: "${lab_ip_portainer}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Documentation/consistency only -- NOT applied by Terraform. Bind mounts are
+# root@pam-only on Proxmox, so these are applied by the operator with
+# `pct set` over root SSH (docs/secrets-refactor/plan.md, operator block A).
+# mp0: USB seal key, read-only. mp1: NAS snapshot directory (pve's NFS mount).
+# Proxmox vzdump never includes bind mounts, which is what keeps the seal key
+# out of LXC backups (design doc 8.1).
+host_bind_mounts:
+  - host_path: /mnt/openbao-seal
+    lxc_path: /srv/openbao-seal
+  - host_path: /mnt/nas-backup/openbao-snapshots
+    lxc_path: /srv/openbao-snapshots

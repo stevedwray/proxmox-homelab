@@ -112,11 +112,36 @@ attachments:
       gateway: "${lab_gw_cse}"
       snat: false
 
+  # ai_seg — AI/LLM application services + MCP adapters (VLAN 50,
+  # 192.168.50.0/24). Same physical VLAN/subnet/gateway as pve's ai_seg
+  # (terraform/lxc/network/pve.yaml) — pve-tiny joins it so the relocated
+  # ai-services-stack/mcp-utility-stack/secpipe-stack keep their existing
+  # IPs, MikroTik firewall rules and Traefik backends unchanged
+  # (docs/ai-stacks-pve-tiny/plan.md).
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters
+    type: sdn_vnet
+    bridge: tvai
+    firewall: false
+    sdn:
+      zone: tvai
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-tiny
+      vnet: tvai
+      vlan_tag: 50
+      alias: pve-tiny AI segment
+      subnet: "${lab_subnet_ai_cidr}"
+      gateway: "${lab_gw_ai}"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — registry, artifact cache, IPAM
     attachment: infra_seg
-    containers: []  # empty — this pass only creates the zone; harbor-stack has not moved yet
+    containers:
+      - "opensearch-stack (VMID 40014) — 192.168.40.14 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
   mgmt_seg:
     description: Management plane — identity, PKI, monitoring, logging
     attachment: mgmt_seg
@@ -128,6 +153,13 @@ zones:
     containers:
       - "cse-controller (LXC, VMID 40070) — 192.168.100.70"
       - "cse-code-eval (LXC, VMID 100071) — 192.168.100.71"
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters
+    attachment: ai_seg
+    containers:
+      - "mcp-utility-stack (VMID 50011) — 192.168.50.10 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
+      - "secpipe-stack (VMID 50012) — 192.168.50.12 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
+      - "ai-services-stack (VMID 50013) — 192.168.50.11 — relocated from pve, docs/ai-stacks-pve-tiny/plan.md"
 
 inventory:
   proxmox_nodes:

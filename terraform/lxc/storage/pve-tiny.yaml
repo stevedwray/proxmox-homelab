@@ -46,6 +46,17 @@ profiles:
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
 
+  # Rootfs + Docker both on the 2TB NVMe pool (nvme-lvm), not the boot
+  # SSD's local-lvm. Added for the AI-stack relocation from pve
+  # (docs/ai-stacks-pve-tiny/plan.md): those four stacks alone
+  # thin-allocate ~116GB of rootfs+docker, more than the boot SSD's pool
+  # can safely carry alongside the cse-* stacks already on it.
+  platform-nvme:
+    rootfs_storage: nvme-lvm
+    docker_storage: nvme-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
 extra_mount_profiles:
   durable-default:
     storage: local-lvm

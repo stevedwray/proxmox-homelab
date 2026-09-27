@@ -319,10 +319,7 @@ zones:
   ai_seg:
     description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg
-    containers:
-      - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility} — live, promoted to pve 2026-08-01 (fast-tracked directly from feat/mcp-utility-stack, not through the usual stable promotion step)"
-      - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, planned by docs/ai-services-migration/plan.md, not yet deployed"
-      - "secpipe-stack (VMID 50012) — ${lab_ip_secpipe} — CVE correlation/enrichment (cve_enrichment_sync), see docs/threat-vuln-platform/plan.md"
+    containers: []  # mcp-utility/ai-services/secpipe relocated to pve-tiny at the same IPs (network/pve-tiny.yaml, docs/ai-stacks-pve-tiny/plan.md); tvai zone left in place
   connector_seg:
     description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
     attachment: connector_seg
@@ -362,9 +359,9 @@ policies:
       edge, plain HTTP to the backend). SearXNG is an intentionally
       unauthenticated network service; Traefik supplies HTTPS and routing.
   - from: ai_seg
-    to: 192.168.1.8
+    to: framework.gibbsgreatly.xyz
     protocol: tcp
-    ports: [8080, 11434]
+    ports: [8080, 8085]
     description: >-
       ai-services-stack to framework.gibbsgreatly.xyz (llamacpp-router,
       Ollama) — docs/ai-services-migration/plan.md Step 2/3. The one real
@@ -486,15 +483,6 @@ policies:
       pentagi-stack image pulls (Harbor) — harbor.$${LAB_DOMAIN} resolves to
       Traefik's edge_seg IP, not Harbor's own infra_seg IP (same gotcha hit
       live on pve-test-vm — see docs/pentagi-stack/plan.md).
-  - from: pentest_seg
-    to: 192.168.1.8
-    protocol: tcp
-    ports: [11434, 8082, 8080]
-    description: >-
-      pentagi-stack to framework.gibbsgreatly.xyz (Ollama for embeddings,
-      SearXNG, and llamacpp-router's native multi-model OpenAI-compatible
-      endpoint -- the adviser/pentester/coder chat-completion provider as
-      of 2026-07-28, replacing Ollama for that role specifically).
   - from: pentest_seg
     to: 192.168.20.11
     protocol: tcp

@@ -142,6 +142,7 @@
           # cve-enrichment-sync LLM provider credential - managed by Ansible, do not edit by hand
           ANTHROPIC_API_KEY={{ cve_enrichment_sync_anthropic_api_key }}
           OPENAI_API_KEY={{ cve_enrichment_sync_openai_api_key }}
+          LLAMACPP_API_KEY={{ cve_enrichment_sync_llamacpp_api_key }}
       no_log: true
 
     # ---------------------------------------------------------------

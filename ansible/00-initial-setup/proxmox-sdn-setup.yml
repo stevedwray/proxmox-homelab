@@ -20,6 +20,8 @@
     sdn_gw_tvpent: "{{ lookup('env', 'lab_gw_pentest') }}"
     sdn_subnet_tvcse: "{{ lookup('env', 'lab_subnet_cse_cidr') }}"
     sdn_gw_tvcse: "{{ lookup('env', 'lab_gw_cse') }}"
+    sdn_subnet_tvai: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') }}"
+    sdn_gw_tvai: "{{ lookup('env', 'LAB_GW_AI') }}"
     proxmox_sdn_attachments: >-
       {{
         attachments
@@ -32,6 +34,16 @@
     - name: Load network intent for target environment
       ansible.builtin.include_vars:
         file: "../../terraform/lxc/network/{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}.yaml"
+
+    - name: Limit SDN reconciliation to explicitly requested VNets
+      ansible.builtin.set_fact:
+        proxmox_sdn_attachments: >-
+          {{
+            proxmox_sdn_attachments
+            | selectattr('value.sdn.vnet', 'in', requested_sdn_vnets)
+            | list
+          }}
+      when: requested_sdn_vnets | default([]) | length > 0
 
     - name: Inject resolved subnet and gateway into SDN attachments
       ansible.builtin.set_fact:
@@ -67,6 +79,38 @@
         cmd: pvesh get /cluster/sdn/vnets --output-format json
       register: proxmox_sdn_vnets_result
       changed_when: false
+
+    - name: Read pending SDN zones before scoped mutation
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --pending 1 --output-format json
+      register: proxmox_sdn_pending_zones_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Read pending SDN VNets before scoped mutation
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --pending 1 --output-format json
+      register: proxmox_sdn_pending_vnets_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Read pending subnets on every current VNet before scoped mutation
+      ansible.builtin.command:
+        cmd: "pvesh get /cluster/sdn/vnets/{{ item }}/subnets --pending 1 --output-format json"
+      loop: "{{ proxmox_sdn_vnets_result.stdout | from_json | map(attribute='vnet') | list }}"
+      register: proxmox_sdn_pending_subnets_result
+      changed_when: false
+      when: reject_pending_sdn_changes | default(false) | bool
+
+    - name: Refuse to apply unrelated pending SDN changes
+      ansible.builtin.assert:
+        that:
+          - (proxmox_sdn_pending_zones_result.stdout | from_json | selectattr('state', 'defined') | list | length) == 0
+          - (proxmox_sdn_pending_vnets_result.stdout | from_json | selectattr('state', 'defined') | list | length) == 0
+          - (proxmox_sdn_pending_subnets_result.results | map(attribute='stdout') | map('from_json') | flatten | selectattr('state', 'defined') | list | length) == 0
+        fail_msg: "Unrelated pending SDN changes exist; resolve them under their own approval before this scoped run."
+        success_msg: "No pre-existing pending SDN changes exist."
+      when: reject_pending_sdn_changes | default(false) | bool
 
     - name: Create missing SDN VLAN zones
       ansible.builtin.command:
@@ -171,6 +215,7 @@
       args:
         executable: /bin/bash
       changed_when: true
+      when: manage_cluster_firewall | default(true) | bool
       notify: Restart pve-firewall
 
     - name: Apply pending SDN changes

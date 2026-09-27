@@ -21,7 +21,7 @@
 #      were silently dropped). Matches every other zone's identical
 #      input-chain baseline (e.g. infra_seg's *15/*16/*17).
 #   4. cse_seg -> Traefik/Harbor pull-through (edge_seg, 192.168.30.10)
-#   5. cse_seg -> framework:8080      (llama-server -- the one LAN service this zone needs, not a blanket LAN allow)
+#   5. cse_seg -> framework:8080 -- moved to mikrotik-firewall-framework-fqdn.yml (FQDN address-list)
 #   6. cse-controller -> cse-kali agent:22  (cross-zone into pve-test's pentest_seg -- genuinely new, didn't
 #      exist before since infra_seg had no restrictions to need it worked around)
 #   7. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
@@ -47,7 +47,6 @@
       }}
 
     lab_subnet_cse_cidr: "{{ lookup('env', 'lab_subnet_cse_cidr') | mandatory('lab_subnet_cse_cidr env var is required') }}"
-    lab_ip_framework: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
     # harbor.lab.gibbsgreatly.xyz (LAB_FQDN_HARBOR, what every stack's
     # docker-compose.yml actually pulls through -- confirmed live
     # 2026-09-19 via getent) resolves to Traefik's edge_seg IP, NOT a
@@ -96,13 +95,6 @@
         src-address: "{{ lab_subnet_cse_cidr }}"
         dst-address: "{{ lab_ip_harbor_traefik }}"
         dst-port: "80,443"
-      - comment: "cse_seg to framework llama-server"
-        chain: "forward"
-        action: "accept"
-        protocol: "tcp"
-        src-address: "{{ lab_subnet_cse_cidr }}"
-        dst-address: "{{ lab_ip_framework }}"
-        dst-port: "8080"
       - comment: "cse-controller to cse-kali agent SSH (pentest_seg, cross-node)"
         chain: "forward"
         action: "accept"

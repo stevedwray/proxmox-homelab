@@ -30,7 +30,7 @@ not a mode flag on it:
     shortlisted CVE, not a write-back onto unified-cve-exposure itself).
 
 Colocated with cve_enrichment_sync.py on secpipe-stack and imports its
-ES/Ollama helpers directly (_es_request, _call_ollama) rather than
+ES/LLM helpers directly (_es_request, _call_llamacpp) rather than
 duplicating them -- both scripts already live in the same directory on
 disk, so this isn't the cross-role shared-library refactor that's
 deliberately deferred (see plan.md's "Not built / not decided yet").
@@ -280,11 +280,12 @@ def main() -> int:
         help="Path to the generated stack-architecture.json snapshot (see generate-stack-architecture.py).",
     )
     parser.add_argument(
-        "--ollama-url", default=os.environ.get("OLLAMA_URL", "http://192.168.1.8:11434"),
+        "--llamacpp-url", default=os.environ.get("LLAMACPP_URL", "http://framework.gibbsgreatly.xyz:8080"),
     )
     parser.add_argument(
-        "--ollama-model", default=os.environ.get("OLLAMA_MODEL", "laguna-s-2.1:q4_k_m-ctx131k"),
+        "--llamacpp-model", default=os.environ.get("LLAMACPP_MODEL", "qwen3.8-flash-next"),
     )
+    parser.add_argument("--llamacpp-api-key", default=os.environ.get("LLAMACPP_API_KEY", ""))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -305,7 +306,7 @@ def main() -> int:
         cve_id = cve.get("_id")
         prompt = build_prompt(cve, architecture)
         try:
-            raw = ces._call_ollama(args.ollama_url, args.ollama_model, prompt)
+            raw = ces._call_llamacpp(args.llamacpp_url, args.llamacpp_model, prompt, api_key=args.llamacpp_api_key)
         except Exception as exc:  # noqa: BLE001 -- one bad call shouldn't kill the whole batch
             print(f"WARN: deep-dive LLM call failed for {cve_id}: {exc}", file=sys.stderr)
             errors += 1
@@ -322,8 +323,8 @@ def main() -> int:
             "recommended_action": action or "INVESTIGATE",
             "assessment": assessment_text or raw.strip(),
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "llm_provider": "ollama",
-            "llm_model": args.ollama_model,
+            "llm_provider": "llamacpp",
+            "llm_model": args.llamacpp_model,
             # Default for a first-ever insert -- upsert_assessment() carries
             # forward a real resolved:true from a prior run when applicable.
             "resolved": False,

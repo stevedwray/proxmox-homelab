@@ -8,9 +8,10 @@ set -euo pipefail
 # monitoring-stack's own smoke test.
 max_attempts=8
 sleep_between=15
+# dns-stack was dropped 2026-09-08 along with its scrape target (it has been
+# destroyed on pve); technitium-stack has no scrape target to require instead.
 required_stacks=(
   authentik-stack
-  dns-stack
   harbor-stack
   monitoring-stack
   proxy-stack
