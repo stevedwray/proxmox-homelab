@@ -397,6 +397,17 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   `openbao_snapshot_last_run_success{kind="postwrite"}` = 1, and
   snapshot age ≈ 3.0 h (the nightly job first runs at 03:30). The Grafana
   dashboard `openbao` is present with 3 panels. Step 07 is now live.
+- **Secrets inventory on the dashboard (`b13e45b1`).** A `metrics` AppRole
+  (policy: list+read `kv/metadata/*` only, LXC-bound), with a 15-minute
+  exporter taking field counts from the manifest. The operator ran
+  configure, the openbao-stack provision, `artifacts/inventory-setup.sh`
+  and the monitoring-stack provision (all `failed=0`). **No-values proof,
+  from the audit log** (every request by a `metrics`-policy token):
+  `kv/data` read DENIED, `kv/data` update DENIED, `kv/metadata` delete
+  DENIED; the only successes were `kv/metadata` list ×5 and read ×31, plus
+  login/revoke. Live: entries services 22 / shared 3 / hosts 5; fields
+  96 / 20 / 13 (129); drift 0; 30 entries changed in the last 7 days (all
+  imported today). Grafana `openbao` dashboard: 8 panels.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
