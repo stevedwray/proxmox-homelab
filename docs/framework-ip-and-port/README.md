@@ -368,9 +368,11 @@ value.
 Committing `9603847d` triggered the untracked `.git/hooks/post-commit`,
 which runs `./with-secrets-prod scripts/provision.sh --stack
 mcp-utility-stack` in the background. That targets **pve**, but the stack
-has lived on pve-tiny since the AI-stack move. It was not blocked: a
-leftover exported `TASK_APPROVAL` (`fwllm-06-07-monitoring`) satisfied the
-wrapper. The stale `terraform/lxc/environments/pve/mcp-utility-stack/`
+has lived on pve-tiny since the AI-stack move. It was not blocked because
+the hook sets its own standing approval
+(`TASK_APPROVAL=docs-rag-mcp-housekeeping-reindex`, confirmed from the next
+run's log). A leftover exported `TASK_APPROVAL` (`fwllm-06-07-monitoring`)
+was also in the shell, but it was not what let the run through. The stale `terraform/lxc/environments/pve/mcp-utility-stack/`
 inventory still points at `192.168.50.10`, so the run hit the real LXC and
 copied at least one file (`cve-mcp-server` `Dockerfile`, `changed`).
 
@@ -385,8 +387,10 @@ Remediation:
 
 The `Timeout when waiting for 192.168.20.11:443` fatal is a pre-existing
 ignored task (`ignored=1`) in every ai-services/mcp-utility deploy.
-Follow-up: remove the stale `environments/pve/mcp-utility-stack/`
-inventory.
+Follow-ups: remove the stale `environments/pve/mcp-utility-stack/`
+inventory, and decide whether the hook's standing approval should stay:
+CLAUDE.md asks for a per-task approval for every production mutation. The
+next commit's hook run (`0e241012`) went to pve-tiny as intended.
 
 ### fwdns-05-ai-services-var
 
@@ -426,3 +430,8 @@ the expected set:
 - `terraform/lxc/stacks/netbox-stack/integrations/tests/test_populate_static_hosts.py`
 
 Phase A (DNS-only) is complete.
+
+### fwip-01-mikrotik-dns-playbook
+
+Applied the patch. Gates: applied; syntax-check exit 0; no-ip-literal `1`
+(the header comment naming gazaar's `192.168.1.8`).
