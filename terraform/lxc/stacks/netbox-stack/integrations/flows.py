@@ -413,16 +413,16 @@ DATA_STORES = [
         "contents": "CA root and intermediate private keys for lab.gibbsgreatly.xyz.",
     },
     {
-        "id": "ds-sops-secrets",
-        "name": "SOPS-encrypted secrets",
-        "host": "pve-host",
-        "type": "filesystem",
+        "id": "ds-openbao-secrets",
+        "name": "OpenBao secrets store",
+        "host": "p-openbao",
+        "type": "openbao",
         "data_classification": "secret",
         "contents": (
-            "terraform/secrets.common.enc.yaml and per-node secrets.<node>.enc.yaml "
-            "(e.g. secrets.pve.enc.yaml). "
+            "KV v2 at kv/ (services/*, shared/*, hosts/<node>; see secrets/manifest.json). "
             "DB passwords, API tokens, OIDC client secrets. "
-            "Encrypted with age key at ~/.config/sops/age/keys.txt."
+            "Raft storage sealed by a static key on a USB stick in pve; "
+            "snapshots on the NAS."
         ),
         "encryption_at_rest": True,
     },

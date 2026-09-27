@@ -103,7 +103,7 @@ ENV BROWSER_TYPES=chromium \
 EXPOSE 8000
 
 # --api-key is passed via $MCPO_API_KEY (set at container run time from
-# this compose file's own env, sourced from SOPS) rather than baked in
+# this compose file's own env, sourced from OpenBao) rather than baked in
 # here, so the key never lands in image layers/history.
 #
 # Confirmed live (local build+run, 2026-09-15): web-search-mcp writes a

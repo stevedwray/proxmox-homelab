@@ -19,8 +19,8 @@ SPEC.loader.exec_module(MODULE)
 
 MANIFEST = {
     "entries": {
-        "services/a": {"sops_source": "common", "fields": ["A_ONE", "SHARED_X"]},
-        "hosts/n1": {"sops_source": "n1", "fields": ["SHARED_X", "HOST_TOKEN"]},
+        "services/a": {"fields": ["A_ONE", "SHARED_X"]},
+        "hosts/n1": {"fields": ["SHARED_X", "HOST_TOKEN"]},
     },
     "profiles": {
         "n1": {"auth": "approle", "role": "deploy-n1", "entries": ["services/a", "hosts/n1"]},

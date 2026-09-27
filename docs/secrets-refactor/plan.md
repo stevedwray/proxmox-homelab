@@ -65,13 +65,14 @@ operator, because the harness classifier blocks them for Claude.
 
 **Still open:**
 
-- the PR `task/retire-sops` → `stable`;
 - promotion to `main`, then the `netbox-populate` OIDC run and deletion of
   the `SOPS_AGE_KEY` GitHub secret;
-- close-out of `artifacts/`;
 - the recommended follow-ups (alerting, rotating secrets whose old values
-  sit in Git history, the reconciler `grant_types` fix, tidy-ups), listed in
-  [README.md](README.md#next-steps).
+  sit in Git history), listed in [README.md](README.md#next-steps).
+
+Done since: the `task/retire-sops` PR into `stable` (PR __PR__), the
+`artifacts/` close-out, the reconciler `grant_types` default on create,
+and the tidy-ups.
 
 The steps below are the original plan, kept for the record.
 

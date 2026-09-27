@@ -113,12 +113,8 @@ version history without values.
    (a copy of `with-secrets-prod-tiny` with `PVE_PROD_NODE` changed).
 3. Re-run `configure-openbao.yml`, which generates `deploy-host-<node>` and
    the `deploy-<node>` AppRole from `PRODUCTION_NODES`. Then issue its
-   credentials:
-
-   ```bash
-   bao read -field=role_id auth/approle/role/deploy-<node>/role-id | install -m 0600 /dev/stdin ~/.config/openbao/deploy-<node>.role-id
-   bao write -f -field=secret_id auth/approle/role/deploy-<node>/secret-id | install -m 0600 /dev/stdin ~/.config/openbao/deploy-<node>.secret-id
-   ```
+   credentials with `bash scripts/openbao-issue-credentials.sh` (admin
+   `BAO_TOKEN` exported; existing SecretIDs are left alone).
 
 4. Write the node's tokens with `openbao_write.py hosts/<node> ...`.
 
@@ -207,6 +203,11 @@ Recovery key and breakglass credentials: the bootstrap kit.
      `bao operator raft snapshot restore -force <newest.snap>`. The restored
      data auto-unseals.
   5. Get a root token with the breakglass AppRole and the kit's recovery key.
+  6. Re-issue the LXC's `snapshot` and `metrics` credentials (the new LXC
+     has none; the restored data still holds the AppRoles):
+     `bash scripts/openbao-issue-credentials.sh`. It also proves `metrics`
+     cannot read values, runs one snapshot and one inventory export, and
+     runs the boundary check.
 
 ## Monitoring
 

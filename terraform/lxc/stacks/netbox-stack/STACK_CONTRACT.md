@@ -50,12 +50,12 @@ For scheduled, production-style runs (the GitHub Actions scheduled job defined i
 
 - `.github/workflows/netbox-populate.yml`: `DOCKER_SOCKET_PROXY_URL_TEMPLATE: ${{ secrets.DOCKER_SOCKET_PROXY_URL_TEMPLATE }}` and `DOCKER_SOCKET_PROXY_URL: ${{ secrets.DOCKER_SOCKET_PROXY_URL }}`
 
-For operator-driven local or host-side execution (for example using `with-secrets-prod`), provide the same variables via the production SOPS overlay `terraform/secrets.pve.enc.yaml` (preferred for secret values) or as non-secret entries in `.env.pve`. `with-secrets-prod` injects the SOPS-backed production overlay into the command environment; it does not read GitHub Actions secrets. Do not commit `.env.pve` or plaintext secrets to the repository.
+For operator-driven local or host-side execution (for example using `with-secrets-prod`), provide the same variables via OpenBao (`kv/services/netbox`, listed in `secrets/manifest.json`; preferred for secret values) or as non-secret entries in `.env.pve`. `with-secrets-prod` injects the production profile from OpenBao into the command environment; it does not read GitHub Actions secrets. Do not commit `.env.pve` or plaintext secrets to the repository.
 
 This ensures:
 
 - CI/scheduled runs receive the proxy config from GitHub Actions secrets.
-- Local/operator runs receive the proxy config from production SOPS or `.env.pve`.
+- Local/operator runs receive the proxy config from OpenBao or `.env.pve`.
 
 Note on current status:
 

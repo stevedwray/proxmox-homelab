@@ -46,9 +46,9 @@ apply to this stack too, unmodified.
 | `LAB_DOMAIN` | `.env` | Already exists — used for all six Traefik route hostnames. |
 | `LAB_IP_TORRENT_STACK_LAB` | `.env` | `192.168.80.11`, added by `torrent-lab-01-env-ip`. |
 
-No SOPS secrets. WireGuard credentials are placed manually on the LXC
+No OpenBao secrets. WireGuard credentials are placed manually on the LXC
 (`/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf`), never
-committed or SOPS'd — same rule legacy torrent-stack already follows.
+committed or stored in OpenBao — same rule legacy torrent-stack already follows.
 None of the six web services template any Authentik/OIDC credential —
 five use `forwardAuth` (auth happens entirely at the Traefik/Authentik
 edge, invisible to the container), and Jellyseerr uses `auth.mode:
@@ -122,7 +122,7 @@ Nothing yet. A leaf stack.
   decommissioned or the overlap proves actively troublesome.
 - WireGuard credentials at
   `/opt/stacks/torrent-stack-lab/gluetun/wireguard/wg0.conf` are never
-  committed or SOPS'd.
+  committed or stored in OpenBao.
 - Legacy torrent-stack (VMID 100) is never stopped, restarted, or has
   its own config/database written to by anything in this stack's
   deploy path — sharing `/incoming`'s files is the one deliberate

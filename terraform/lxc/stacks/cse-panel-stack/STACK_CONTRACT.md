@@ -38,7 +38,7 @@ design (narrow egress allows, never inbound).
 
 ## Inputs
 
-None via `.env`/SOPS beyond the standard `lab_ip_cse_panel`/`lab_gw_mgmt`
+None via `.env`/OpenBao beyond the standard `lab_ip_cse_panel`/`lab_gw_mgmt`
 template variables. `panel-web` trusts the `X-Authentik-Username`/
 `X-Authentik-Email` headers Traefik's forward-auth adds (same pattern as
 `netbox-stack`'s `REMOTE_AUTH_HEADER`) for attributing who submitted a

@@ -33,14 +33,13 @@ are deleted (Git history keeps old, non-authoritative copies).
 | Bootstrap kit | Bitwarden note "openbao bootstrap kit" plus a passphrase-encrypted `kit.age` on USB B (SanDisk). 10 values, including the recovery key and the breakglass AppRole |
 | Monitoring | Grafana "OpenBao" dashboard: snapshot age and last run, LXC up, secret entries and fields per category, a per-entry version and last-changed table, changes in the last 7 days, manifest drift. The inventory comes from a `metrics` AppRole that can read KV **metadata only**; the audit log shows its value reads denied. **No alerting yet** |
 | Validation | Post-cutover real deploys (graylog, harbor, cse-panel, monitoring); a 28-stack `--check` sweep with no missing secrets; 10 live service logins with OpenBao credentials; all 5 profiles read in full |
-| Git | Cutover merged to `stable` (PR #431, `93939d61`). Retirement, tests and inventory are on `task/retire-sops`, awaiting their PR. **`main` is not promoted** |
+| Git | Cutover merged to `stable` (PR #431, `93939d61`); retirement, tests, inventory, the reconciler fix and the tidy-up merged to `stable` from `task/retire-sops` (PR __PR__). **`main` is not promoted** |
 
 ## Next steps
 
 **To finish this project:**
 
-1. **PR `task/retire-sops` → `stable`** and merge it: SOPS retirement, step
-   15, the test records, and the inventory feature.
+1. ~~PR `task/retire-sops` → `stable`~~ — merged (PR __PR__).
 2. **Promote `stable` → `main`** when the operator decides. It is currently
    deferred, and `main` carries 3 weeks of other work. Then:
    - The CI `sops-freeze` check will flag `321c5549`. That is expected: it
@@ -49,8 +48,12 @@ are deleted (Git history keeps old, non-authoritative copies).
      GitHub OIDC → OpenBao login and populate work (plan step 15's live
      test).
    - Delete the `SOPS_AGE_KEY` GitHub Actions secret.
-3. **Close out the workspace:** empty `artifacts/` (scratch scripts and the
-   sweep summary), per `docs/workflow/documentation-workspaces.md`.
+3. ~~Close out the workspace~~ — done 2026-09-28. `artifacts/` is empty;
+   the reusable scripts are in `scripts/` (`openbao-recovery-test.sh`,
+   `openbao-breakglass-test.sh`, `secrets-check-sweep.sh`,
+   `openbao-issue-credentials.sh`), and the one-off bootstrap scripts
+   (USB seal prep, init and kit build) were deleted, as their results are
+   recorded in the log below and the runbook.
 
 **Recommended follow-ups (separate work):**
 
@@ -63,16 +66,29 @@ are deleted (Git history keeps old, non-authoritative copies).
   with the Proxmox API tokens, Authentik superuser, Harbor admin and robot,
   the MikroTik admin, and the Cloudflare DNS token. After that, the age key
   can be retired from Bitwarden.
-- **Edge reconciler:** set `grant_types` on *create* for every OIDC
-  provider (4 stacks so far have been bitten by the create-time `[]`
-  default).
-- **Tidy-ups:**
-  - about 30 passing "SOPS" mentions in stack contracts, playbook comments
-    and error strings;
-  - decide whether to delete `kv/services/legacy-unused` (7 fields with no
-    consumer);
-  - decide whether `pve-framework` stays in `PRODUCTION_NODES` (it is no
-    longer a Proxmox node).
+- ~~**Edge reconciler `grant_types`**~~ — done 2026-09-28 (`f6c24381`).
+  A provider the reconciler *creates* now gets `("authorization_code",)`
+  when its route has no explicit `_oidc_grant_types` entry. Updates are
+  unchanged, so existing providers' larger sets are never narrowed.
+  Existing live providers are unaffected (no create happens for them).
+- ~~**Tidy-ups**~~ — done 2026-09-28:
+  - the "SOPS" mentions in stack contracts, playbook comments and error
+    strings, scripts, the router README and `scrape-config.sh` now point
+    at OpenBao (`kv/<entry>`). The only ones left are deliberate: history
+    notes, the freeze hook, and `.gitignore`/`.gitleaks.toml` guards;
+  - NetBox's threat-model data store `ds-sops-secrets` is replaced by
+    `ds-openbao-secrets` (`flows.py` and `docs/threat-model/model.yaml`).
+    It shows in NetBox after the next populate run;
+  - CLAUDE.md, AGENTS.md and copilot-instructions list `pve-tiny` as a
+    production node (it was missing);
+  - **kept** `kv/services/legacy-unused` (7 fields, no consumer). It is
+    harmless, documented and snapshotted. Deleting it needs a human OIDC
+    write, and nothing gains from it until those values are rotated or
+    confirmed dead;
+  - **kept** `pve-framework` in `PRODUCTION_NODES`. `llm-gpu-stack` and
+    `comfyui-stack` still declare it as their node, so removing it is part
+    of decommissioning the old Framework node (see
+    `docs/framework-ip-and-port/`), not a secrets tidy-up.
 - **Existing issues found along the way (not caused by this work):**
   - harbor-stack's Terraform state split between the environment directory
     and the stack directory (its plan wants to re-run the SDN attachment);
@@ -478,6 +494,15 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   login/revoke. Live: entries services 22 / shared 3 / hosts 5; fields
   96 / 20 / 13 (129); drift 0; 30 entries changed in the last 7 days (all
   imported today). Grafana `openbao` dashboard: 8 panels.
+- **Reconciler fix, tidy-up and close-out (2026-09-28).** The edge
+  reconciler defaults `grant_types` to `authorization_code` when it creates
+  an OIDC provider (3 new unit tests; the create test fails without the
+  fix). SOPS mentions were reworded to OpenBao across 46 files, and the
+  NetBox threat-model data store now describes OpenBao. Checks: `--syntax-check` on the 8
+  touched playbooks, NetBox integration tests 128/128, reconciler 35/35,
+  loader 12/12. The metrics- and snapshot-credential steps from
+  `artifacts/` were promoted to `scripts/openbao-issue-credentials.sh`
+  (needed after a real rebuild), and `artifacts/` was emptied.
 - **Note (applies throughout):** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).

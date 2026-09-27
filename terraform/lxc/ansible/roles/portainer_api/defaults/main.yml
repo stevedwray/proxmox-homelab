@@ -10,7 +10,7 @@ portainer_api_server_ip: >-
 portainer_api_server_port: "9000"
 
 portainer_api_admin_user: "admin"
-# TF_VAR_portainer_admin_password is the canonical name in SOPS/with-secrets
+# TF_VAR_portainer_admin_password is the canonical name in OpenBao/with-secrets
 portainer_api_admin_password: >-
   {{
     lookup('env', 'TF_VAR_portainer_admin_password')

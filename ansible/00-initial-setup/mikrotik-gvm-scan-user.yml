@@ -13,7 +13,7 @@
 #
 # Auth is SSH-key only (GMP "usk" credential type, matching every other
 # Phase 3 credential -- see setup_credentials.py). The account also gets a
-# strong random password (MIKROTIK_GVM_SCAN_PASSWORD, SOPS-backed) purely
+# strong random password (MIKROTIK_GVM_SCAN_PASSWORD, in OpenBao) purely
 # because RouterOS's /user/add requires a password field; GVM's stored
 # credential never uses it.
 #
@@ -44,7 +44,7 @@
     gvm_scan_user_name: "{{ lookup('env', 'MIKROTIK_GVM_SCAN_USER') | mandatory('MIKROTIK_GVM_SCAN_USER env var is required') }}"
     gvm_scan_password: "{{ lookup('env', 'MIKROTIK_GVM_SCAN_PASSWORD') | mandatory('MIKROTIK_GVM_SCAN_PASSWORD env var is required') }}"
     # Public half only -- not secret, safe to commit. Pairs with the private
-    # key stored as GREENBONE_MIKROTIK_SSH_PRIVATE_KEY in SOPS, consumed by
+    # key stored as GREENBONE_MIKROTIK_SSH_PRIVATE_KEY in OpenBao, consumed by
     # setup_credentials.py's "mikrotik-gvm-scan" GMP credential.
     gvm_scan_ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPOpk/MvP++XYPJymFZoNXiLoEN5OhbC23GQzy6/tHTX gvm-scan@greenbone-stack"
     gvm_scan_ssh_key_filename: "gvm-scan-import-tmp.pub"

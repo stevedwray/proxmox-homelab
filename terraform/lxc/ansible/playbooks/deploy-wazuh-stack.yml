@@ -218,12 +218,12 @@
     wazuh_indexer_admin_password: >-
       {{
         lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD')
-        | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+        | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required -- OpenBao kv/services/wazuh, see STACK_CONTRACT.md Inputs')
       }}
     wazuh_api_password: >-
       {{
         lookup('env', 'WAZUH_API_PASSWORD')
-        | mandatory('WAZUH_API_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+        | mandatory('WAZUH_API_PASSWORD env var is required -- OpenBao kv/services/wazuh, see STACK_CONTRACT.md Inputs')
       }}
     # Shared secret for wazuh-authd auto-enrollment (agent pilot rollout,
     # 2026-08-29): every wazuh_agent-role host registers itself against
@@ -232,7 +232,7 @@
     wazuh_agent_authd_password: >-
       {{
         lookup('env', 'WAZUH_AGENT_AUTHD_PASSWORD')
-        | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+        | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required -- OpenBao kv/services/wazuh, see STACK_CONTRACT.md Inputs')
       }}
     wazuh_runtime_images:
       - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-manager:{{ wazuh_image_tag }}"
@@ -1002,7 +1002,7 @@
     # MANAGER CONTAINER gets rebuilt independently of this host-side
     # staging file (e.g. `docker compose down -v` to rule out corrupted
     # state, then a redeploy) -- the staging file's content is unchanged
-    # (same SOPS secret), so .changed is False, so every step here got
+    # (same OpenBao secret), so .changed is False, so every step here got
     # skipped even though the fresh container had no authd.pass at all.
     # Every one of the 5 pilot agents then failed enrollment with
     # "Invalid password" (authd validating against a nonexistent file
@@ -1093,7 +1093,7 @@
     wazuh_oidc_client_secret: >-
       {{
         lookup('env', 'WAZUH_OIDC_CLIENT_SECRET')
-        | mandatory('WAZUH_OIDC_CLIENT_SECRET env var is required -- new SOPS secret')
+        | mandatory('WAZUH_OIDC_CLIENT_SECRET env var is required -- OpenBao kv/services/wazuh')
       }}
     wazuh_dashboard_public_url: "https://wazuh.{{ wazuh_lab_domain }}"
     wazuh_indexer_admin_password: >-

@@ -143,11 +143,11 @@ check_prerequisites() {
     log_info "Set PVE_ENV=$PVE_ENV_VALUE for with-secrets commands"
   fi
 
-  # Check for SOPS secrets
+  # Check the secrets load from OpenBao
   if ./with-secrets env | grep -q "AUTHENTIK_SECRET_KEY"; then
-    log_success "SOPS secrets accessible"
+    log_success "OpenBao secrets accessible"
   else
-    log_error "Cannot read SOPS secrets"
+    log_error "Cannot read secrets from OpenBao (see docs/reference/secrets-management.md)"
     prereqs_ok=false
   fi
 

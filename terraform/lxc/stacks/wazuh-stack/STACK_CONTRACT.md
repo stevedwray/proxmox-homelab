@@ -24,12 +24,12 @@ and phase scope. Not a resurrection of the separate, unrelated
 |-------|--------|-------|
 | `LAB_IP_HARBOR` | env var (mandatory) | Registry host — images pull via the existing `dockerhub` proxy-cache project; no dedicated Wazuh Harbor project needed |
 | `LAB_IP_APT_CACHER` | `apt_cacher_host` (stack.yaml) | apt proxy during provisioning |
-| `WAZUH_INDEXER_ADMIN_PASSWORD` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Replaces the indexer's demo `admin` password on first bootstrap |
-| `WAZUH_API_PASSWORD` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Replaces the manager/dashboard's shared `wazuh-wui` API service-account password |
-| `WAZUH_OIDC_CLIENT_SECRET` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Authentik OAuth2 client secret for the dashboard's OIDC login |
+| `WAZUH_INDEXER_ADMIN_PASSWORD` | OpenBao `kv/services/wazuh`, mandatory | Replaces the indexer's demo `admin` password on first bootstrap |
+| `WAZUH_API_PASSWORD` | OpenBao `kv/services/wazuh`, mandatory | Replaces the manager/dashboard's shared `wazuh-wui` API service-account password |
+| `WAZUH_OIDC_CLIENT_SECRET` | OpenBao `kv/services/wazuh`, mandatory | Authentik OAuth2 client secret for the dashboard's OIDC login |
 | `LAB_IP_AUTHENTIK` | env var (mandatory) | Authentik host, for the OIDC discovery URL |
 | `LAB_IP_WAZUH` | `.env` | This stack's own IP |
-| `WAZUH_AGENT_AUTHD_PASSWORD` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Shared wazuh-authd auto-enrollment password; every `wazuh_agent`-role host registers against this manager's :1515 with it (agent pilot rollout, 2026-08-29) |
+| `WAZUH_AGENT_AUTHD_PASSWORD` | OpenBao `kv/services/wazuh`, mandatory | Shared wazuh-authd auto-enrollment password; every `wazuh_agent`-role host registers against this manager's :1515 with it (agent pilot rollout, 2026-08-29) |
 
 ## Provides
 
@@ -66,7 +66,7 @@ and phase scope. Not a resurrection of the separate, unrelated
   `generate-indexer-certs.yml` helper), run before the main compose's
   first `up` — not a service inside the main stack.
 - `WAZUH_INDEXER_ADMIN_PASSWORD` and `WAZUH_API_PASSWORD` are only
-  consulted on first bootstrap. Rotating the SOPS secret later does not
+  consulted on first bootstrap. Rotating the OpenBao secret later does not
   change the live password without running Wazuh's own
   password-rotation tool.
 - `vm.max_map_count` on the host must be `262144` (verified already true

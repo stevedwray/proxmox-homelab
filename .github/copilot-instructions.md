@@ -128,7 +128,7 @@ but every node goes through the same controls, not a bespoke copy per node.
 ### Production Nodes
 
 Declared in `terraform/PRODUCTION_NODES` (one node name per line) — currently
-`pve` and `pve-framework`. This file is the single source of truth for
+`pve`, `pve-tiny` and `pve-framework`. This file is the single source of truth for
 "which nodes are production"; both `./with-secrets`'s safety rail and the
 `with-secrets-prod*` wrappers read it. Adding a node here, plus its own
 `.env.<node>`, a `hosts/<node>` entry and profile in `secrets/manifest.json`,

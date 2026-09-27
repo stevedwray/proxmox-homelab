@@ -2,8 +2,8 @@
 # Scrapes the current MikroTik router config via REST API and writes structured JSON.
 # Usage: MIKROTIK_HOST=router.example.test MIKROTIK_USER=api-user MIKROTIK_PASSWORD=xxx ./scrape-config.sh [host]
 #
-# Credentials can also be sourced from SOPS:
-#   eval "$(sops -d terraform/secrets.common.enc.yaml | grep MIKROTIK | sed 's/: /=/;s/^/export /')"
+# Credentials can also come from OpenBao (kv/services/mikrotik):
+#   ./with-secrets ./router/scripts/scrape-config.sh 192.168.1.1
 
 set -euo pipefail
 

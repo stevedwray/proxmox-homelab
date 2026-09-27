@@ -765,7 +765,7 @@
   delegate_to: localhost
   no_log: true
 
-- name: Display new robot credentials — operator must capture and store in SOPS
+- name: Display new robot credentials — operator must capture and store in OpenBao
   ansible.builtin.debug:
     msg:
       - "================================================================"
@@ -784,7 +784,7 @@
   ansible.builtin.debug:
     msg:
       - "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists."
-      - "Credentials were captured at initial creation and stored in SOPS."
+      - "Credentials were captured at initial creation and stored in OpenBao."
   when: harbor_postconfigure_robot_exists is defined
   delegate_to: localhost
 

@@ -1236,7 +1236,7 @@ def _resolve_token(token_env: str) -> tuple[str | None, DiscoveryIssue | None]:
         code="AKD001",
         message=(
             f"missing Authentik token in environment variable {token_env}. "
-            "Run with ./with-secrets so SOPS-backed secrets are injected "
+            "Run with ./with-secrets so secrets from OpenBao are injected "
             "(example: ./with-secrets terraform/lxc/discover-authentik-edge.py --json)."
         ),
     )

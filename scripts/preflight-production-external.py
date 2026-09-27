@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Production external infrastructure preflight.
 
-Verifies that production SOPS secrets are present (env vars injected by
+Verifies that production secrets (from OpenBao) are present (env vars injected by
 with-secrets-prod) and that all external systems are reachable with the
 configured credentials. Covers systems that exist independently of the
 infrastructure stack being deployed.
@@ -53,7 +53,7 @@ class CheckResult:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify production SOPS secrets are present and all external infrastructure "
+            "Verify production secrets are present and all external infrastructure "
             "systems (Proxmox, MikroTik, Cloudflare, SSH, GitHub) are reachable."
         )
     )
@@ -107,7 +107,7 @@ def check_required_env_vars() -> list[CheckResult]:
         # Non-secret config (from .env / .env.pve)
         "PROXMOX_HOST": "Proxmox hostname — needed for API and SSH",
         "MIKROTIK_HOST": "MikroTik hostname — needed for VLAN/topology preflight",
-        # Secrets (from SOPS after with-secrets-prod merge)
+        # Secrets (from OpenBao, loaded by with-secrets-prod)
         "TF_VAR_pm_api_token_id": "Proxmox API token ID — needed for Terraform",
         "TF_VAR_pm_api_token_secret": "Proxmox API token secret — needed for Terraform",
         "MIKROTIK_USER": "MikroTik read-only user — needed for netbox-populate",

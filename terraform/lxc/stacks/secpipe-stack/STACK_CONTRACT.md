@@ -39,9 +39,9 @@ for exactly this purpose.
 
 | Input | Source | Notes |
 |-------|--------|-------|
-| `ANTHROPIC_API_KEY` | SOPS `terraform/secrets.common.enc.yaml` | **New secret**, added 2026-08-18. Temporary LLM provider while the local LLM is occupied with benchmarking work — recovered from `wazuh-analysis/.env`'s exposed plaintext copy, operator confirmed no rotation needed. |
-| `OPENAI_API_KEY` | SOPS `terraform/secrets.common.enc.yaml` | **New secret**, added 2026-08-18. Same as above, recovered from `tpotce-analysis/.env`. |
-| `OPENSEARCH_ADMIN_PASSWORD` | SOPS `terraform/secrets.common.enc.yaml` | Already exists (opensearch-stack's own admin credential) — used to bootstrap this role's own scoped `es_findings_writer`-based user, same pattern as `es_findings_ingest`/`gvm_findings_ingest`. |
+| `ANTHROPIC_API_KEY` | OpenBao `kv/shared/external-apis` | **New secret**, added 2026-08-18. Temporary LLM provider while the local LLM is occupied with benchmarking work — recovered from `wazuh-analysis/.env`'s exposed plaintext copy, operator confirmed no rotation needed. |
+| `OPENAI_API_KEY` | OpenBao `kv/shared/external-apis` | **New secret**, added 2026-08-18. Same as above, recovered from `tpotce-analysis/.env`. |
+| `OPENSEARCH_ADMIN_PASSWORD` | OpenBao `kv/services/opensearch` | Already exists (opensearch-stack's own admin credential) — used to bootstrap this role's own scoped `es_findings_writer`-based user, same pattern as `es_findings_ingest`/`gvm_findings_ingest`. |
 | `LAB_IP_OPENSEARCH` | `.env` | Already exists. |
 | `LAB_IP_MCP_UTILITY` | `.env` | Already exists — `cve-mcp-server`'s address, same zone. |
 | `LAB_IP_SECPIPE` | `.env` | **New.** This stack's own IP. |

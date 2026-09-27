@@ -41,7 +41,7 @@ docker_live_usage_reporter_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH
 # generate a different random password and overwrite each other's via
 # the idempotent PUT to /_plugins/_security/api/internalusers -- a real
 # design bug caught during planning, not discovered live. The password
-# is instead a genuine SOPS common secret
+# is instead a genuine OpenBao secret
 # (terraform/secrets.common.enc.yaml, DOCKER_LIVE_USAGE_ES_PASSWORD),
 # same "same secret everywhere" model PORTAINER_TOKEN already uses, read
 # directly from the environment in tasks/main.yml (not a role default,

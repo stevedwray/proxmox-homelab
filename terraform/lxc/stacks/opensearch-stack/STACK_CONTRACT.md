@@ -32,8 +32,8 @@ and out of scope. Not a resurrection of Wazuh/Security Onion/TPOTCE.
 |-------|--------|-------|
 | Harbor registry | `registry_host` (`LAB_IP_HARBOR`) | Image pulls via the existing `dockerhub` proxy-cache project — `opensearchproject/opensearch` and `opensearchproject/opensearch-dashboards` are OpenSearch's own official Docker Hub publish targets |
 | apt-cacher | `apt_cacher_host:3142` | apt proxy during provisioning |
-| `OPENSEARCH_ADMIN_PASSWORD` | SOPS `terraform/secrets.common.enc.yaml` | **New secret.** Sets `OPENSEARCH_INITIAL_ADMIN_PASSWORD` — mandatory as of OpenSearch 2.12+, the security plugin refuses to start without it. |
-| `OPENSEARCH_OIDC_CLIENT_SECRET` | SOPS `terraform/secrets.common.enc.yaml` | **New secret, added at Stage 4 (OIDC).** Authentik OAuth2 client secret for Dashboards' real SSO login. |
+| `OPENSEARCH_ADMIN_PASSWORD` | OpenBao `kv/services/opensearch` | **New secret.** Sets `OPENSEARCH_INITIAL_ADMIN_PASSWORD` — mandatory as of OpenSearch 2.12+, the security plugin refuses to start without it. |
+| `OPENSEARCH_OIDC_CLIENT_SECRET` | OpenBao `kv/services/opensearch` | **New secret, added at Stage 4 (OIDC).** Authentik OAuth2 client secret for Dashboards' real SSO login. |
 | `LAB_IP_OPENSEARCH` | `.env` | **New.** Needed for `edge.yaml`'s `${LAB_IP_OPENSEARCH}` interpolation. |
 
 ## Provides
@@ -71,7 +71,7 @@ standing this stack up. See the migration plan's revised sequencing.
   first confirming the OpenSearch 2.12+ bug is actually fixed in whatever
   version is running.
 - `OPENSEARCH_INITIAL_ADMIN_PASSWORD` is only consulted on first bootstrap
-  (empty data directory) — rotating the SOPS secret later does not change
+  (empty data directory) — rotating the OpenBao secret later does not change
   the live admin password; that needs OpenSearch's own user-management API.
 
 ## Playbook
