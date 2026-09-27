@@ -42,8 +42,10 @@ are deleted (Git history keeps old, non-authoritative copies).
 1. ~~PR `task/retire-sops` → `stable`~~ — merged (PR #432).
 2. **Promote `stable` → `main`** when the operator decides. It is currently
    deferred, and `main` carries 3 weeks of other work. Then:
-   - The CI `sops-freeze` check will flag `321c5549`. That is expected: it
-     was the last legitimate pre-freeze SOPS edit.
+   - The CI `sops-freeze` check should pass. It flags only *added or
+     modified* `secrets.*.enc.yaml` files, and those files are now deleted
+     (checked locally against `origin/main` on 2026-09-28). The pre-freeze
+     edit `321c5549` shows up as a deletion, not a modification.
    - Run `gh workflow run netbox-populate.yml --ref main` and confirm the
      GitHub OIDC → OpenBao login and populate work (plan step 15's live
      test).
@@ -392,7 +394,8 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   sops). The pre-push run of the freeze hook blocked the push of the
   pre-freeze commit `321c5549`, so the hook is now `stages: [pre-commit]`.
   validate.yml runs PR checks only for PRs into `main`, so `sops-freeze`
-  will first run, and flag `321c5549` as expected, on the stable → main PR.
+  will first run on the stable → main PR. (Corrected later: since the
+  files were deleted, it passes there too; see Next steps.)
 - **Not yet promoted to main (operator: "not yet").** Step 15 (CI via
   GitHub OIDC) stays unapplied until `main` is promoted; `netbox-populate`
   keeps failing until then, as it already did.

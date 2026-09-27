@@ -24,7 +24,8 @@ export BAO_CACERT="${BAO_CACERT:-$PWD/certs/homelab-root.crt}"
 LXC=root@192.168.20.16
 
 # issue ROLE DEST_DIR RUNNER: role-id always refreshed, secret-id only if missing.
-# RUNNER is "local" or "ssh" (the LXC).
+# RUNNER is "local" or "ssh" (the LXC). Paths expand client-side on purpose.
+# shellcheck disable=SC2029
 issue() {
   local role=$1 dir=$2 where=$3 name=${4:-}
   local rid="$dir/${name}role-id" sid="$dir/${name}secret-id"
