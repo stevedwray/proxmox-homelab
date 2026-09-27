@@ -28,7 +28,7 @@ for the full migration record and query conventions.
 |---|---|---|
 | `LAB_IP_HARBOR` | env var | Docker registry host used for image pull config |
 | `LAB_IP_APT_CACHER` | stack.yaml / env | Apt cache path for host bootstrap |
-| `LAB_IP_DNS` | env var | Docker daemon DNS setting |
+| `LAB_IP_TECHNITIUM` | env var | Docker daemon DNS setting (Technitium; was `LAB_IP_DNS`/dns-stack before the 2026-09-08 decommission) |
 | `LAB_IP_AUTHENTIK` | env var | LDAP outpost host for Graylog's LDAP auth backend |
 | `LAB_FQDN_GRAYLOG` | env var | Public FQDN for the published Graylog route |
 | `LAB_FQDN_HARBOR` | env var | Registry FQDN used for image pull auth |
