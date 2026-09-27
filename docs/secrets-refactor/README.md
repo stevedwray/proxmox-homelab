@@ -258,6 +258,14 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
 - **Block C** (read-path and boundary proof) was already satisfied by the
   B3 boundary check (all roles OK, reads 404 before import). **Blocks A–C
   complete.**
+- **D1 reconcile done (Claude, read-only).** Branch scan: only
+  `prod/pve-infra` (stale, excluded) and this branch (the one new
+  `OPENBAO_OIDC_CLIENT_SECRET`, `321c5549`) differ from `stable` in
+  `terraform/secrets.*`. Live authenticated spot-checks with SOPS values,
+  status only: Graylog root, Harbor admin, Harbor robot (registry token),
+  Grafana admin, NetBox API token, Portainer admin, Authentik superuser API
+  token, MikroTik read-only, OpenSearch admin: **all 200**. Greenbone admin
+  was not checked (GMP); its provision after the cutover covers it.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
