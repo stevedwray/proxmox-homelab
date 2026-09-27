@@ -392,6 +392,11 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   deployed, so monitoring-stack needs one real provision to show the
   OpenBao panel. Side finding: `portainer_agent` removes and restarts the
   agent container on every run (not idempotent; pre-existing).
+- **monitoring-stack deployed (operator, `failed=0`, smoke test passed).**
+  Verified: VictoriaMetrics has `up{stack="openbao-stack"}` = 1,
+  `openbao_snapshot_last_run_success{kind="postwrite"}` = 1, and
+  snapshot age ≈ 3.0 h (the nightly job first runs at 03:30). The Grafana
+  dashboard `openbao` is present with 3 panels. Step 07 is now live.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
