@@ -228,6 +228,10 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   with no Traefik or DNS change. Follow-up worth doing: default
   `grant_types` on *create* for every OIDC route, so a new stack can't hit
   this a fifth time.
+- **B4 browser login done.** After the operator's reconcile `--apply`
+  (1 update, 50 noop; provider 28 `grant_types` now `['authorization_code']`),
+  the UI OIDC login works. The audit log shows the callback token with
+  policies `['default', 'openbao-admin']`, TTL 3600s, role `homelab-admin`.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
