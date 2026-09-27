@@ -445,8 +445,26 @@ OpenBao cannot hold the secrets needed to rebuild OpenBao itself. The OpenBao LX
 A small, explicitly enumerated **bootstrap kit** is therefore kept outside OpenBao:
 
 - It contains only what is needed to recreate the OpenBao LXC and restore a snapshot onto it: the `pve` Proxmox API token, the LXC root password, and the OpenBao recovery keys (§19). The exact list is fixed in the implementation plan and reviewed whenever OpenBao's own deployment changes.
-- It is age-encrypted to the operator's key and never committed to Git.
-- It is stored with the offline seal-key copy (USB B), with a second copy in Bitwarden.
+- It is never committed to Git.
+- It exists as **two copies, each with its own independent way in**. Neither copy depends on a key file.
+
+| Copy | Location | How it is opened |
+| --- | --- | --- |
+| Primary | Bitwarden secure note ("openbao bootstrap kit") | Bitwarden master password + 2FA. Bitwarden is already the root of trust for the age key. |
+| Offline | `kit.age` on USB B, alongside the offline seal key | `age -d kit.age` with a **passphrase** (created with `age -p`). The passphrase is memorised, or kept written down separately from USB B. |
+
+The kit is deliberately **not** encrypted to the operator's age key. The age key's own backup lives in Bitwarden, so an age-key-encrypted kit would add a step without adding an independent path. Its offline copy would also be unopenable exactly when Bitwarden is unavailable.
+
+The kit is used only during an OpenBao rebuild:
+
+```bash
+# 1. Load the kit into this shell only; never write it to disk
+set -a; source <(age -d /media/usb-b/kit.age); set +a    # or paste from the Bitwarden note
+# 2. Recreate only the OpenBao LXC on pve (Terraform scoped to that stack)
+# 3. Attach USB B; OpenBao auto-unseals; restore the latest Raft snapshot (§27)
+# 4. Close the shell; normal with-secrets (AppRole) takes over
+```
+
 - The values it holds also exist in OpenBao, and OpenBao is authoritative for them. Whenever one of them is rotated, the kit must be regenerated. The rotation runbook for those specific secrets includes that step.
 
 The bootstrap kit is a recovery artifact, not a second deployment path. `with-secrets` never reads it.
@@ -957,9 +975,11 @@ If Authentik is unavailable or its OIDC configuration is damaged, OpenBao still 
 
 Because the static seal is an auto-unseal mechanism, `bao operator init` produces **recovery keys**, not unseal keys. The recovery keys cannot unseal OpenBao. They authorize privileged operations such as `bao operator generate-root`.
 
+With a single operator, splitting the recovery key into several shares adds no protection. Initialization therefore uses `-recovery-shares=1 -recovery-threshold=1`. The single recovery key goes into the bootstrap kit (§9.1).
+
 The break-glass procedure is therefore:
 
-1. At initialization, the recovery keys are stored in the bootstrap kit (§9.1) and in Bitwarden.
+1. At initialization, the recovery key is stored in the bootstrap kit (§9.1), which covers both the Bitwarden and USB B copies.
 2. The initial root token is used only to apply the first configuration (auth methods, policies, mounts), and is then **revoked**. No standing root token exists.
 3. If Authentik is unavailable and an administrative change is needed, a new root token is generated with `generate-root` and the recovery keys. It is used for the minimum change needed, then revoked.
 
@@ -1105,6 +1125,10 @@ The inventory also covers **code** that references SOPS, not only keys. Today th
 The implementation plan regenerates this list with a `grep` at execution time, rather than trusting this snapshot.
 
 **Reconciliation.** The value to import for each key is established from the running service where that can be checked (a login or API call using the value), not assumed from the SOPS copy on any one branch. Before import, `stable`'s decrypted values are compared against every other live branch that touches `terraform/secrets.*.enc.yaml`, and any disagreement is resolved explicitly by the operator.
+
+**Excluded from reconciliation:** `prod/pve-infra`, the protected historical branch. Its last commit is from 2026-05-25. It carries a pre-split `terraform/secrets.pve.enc.yaml` with about 45 keys from before the common/per-node split. Its `TF_VAR_pm_api_token_secret` has since been rotated. It is a stale snapshot, not unmerged work, and must not be used as a value source. It is also a concrete example of the failure mode this design removes: checking it out and running `with-secrets` today would load the old credentials.
+
+A check on 2026-09-28 found that every other local and remote branch, and both agent worktrees, had no secrets-file changes that were not already on `stable`. The stash list was empty. The plan re-runs this check immediately before import.
 
 ---
 
