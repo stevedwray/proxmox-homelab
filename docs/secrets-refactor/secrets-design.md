@@ -447,7 +447,7 @@ OpenBao cannot hold the secrets needed to rebuild OpenBao itself. The OpenBao LX
 
 A small, explicitly enumerated **bootstrap kit** is therefore kept outside OpenBao:
 
-- It contains only what is needed to recreate the OpenBao LXC and restore a snapshot onto it: the `pve` Proxmox API token, the LXC root password, and the OpenBao recovery keys (§19). The exact list is fixed in the implementation plan and reviewed whenever OpenBao's own deployment changes.
+- It contains only what is needed to recreate the OpenBao LXC and restore a snapshot onto it: the `pve` Proxmox API token, the LXC root password, the OpenBao recovery key, and the `breakglass` AppRole credentials (§19). The exact list is fixed in the implementation plan and reviewed whenever OpenBao's own deployment changes.
 - It is never committed to Git.
 - It exists as **two copies, each with its own independent way in**. Neither copy depends on a key file.
 
@@ -989,7 +989,9 @@ The break-glass procedure is therefore:
 
 1. At initialization, the recovery key is stored in the bootstrap kit (§9.1), which covers both the Bitwarden and USB B copies.
 2. The initial root token is used only to apply the first configuration (auth methods, policies, mounts), and is then **revoked**. No standing root token exists.
-3. If Authentik is unavailable and an administrative change is needed, a new root token is generated with `generate-root` and the recovery keys. It is used for the minimum change needed, then revoked.
+3. If Authentik is unavailable and an administrative change is needed, a new root token is generated with `generate-root` and the recovery key. It is used for the minimum change needed, then revoked.
+
+**OpenBao ≥ 2.5.3 detail (found in execution, 2026-09-28):** the unauthenticated `sys/generate-root/*` endpoints are disabled by default (`disable_unauthed_generate_root_endpoints`), and the replacement `sys/generate-root-token/*` requires a token. So break-glass uses a dedicated **`breakglass` AppRole**: its policy allows only `sys/generate-root-token/*`, its tokens last 15 minutes, and it is bound to the workstation LAN. Its RoleID and SecretID live in `~/.config/openbao/` and in the bootstrap kit. Minting root still needs the recovery key as well, so the AppRole alone cannot read or change any secret. The unauthenticated endpoints stay disabled.
 
 Most Authentik outages do not need break-glass at all. Deploy-time reads continue through AppRole (§14.1), so redeploying Authentik works normally. Break-glass is only for administrative changes to OpenBao itself while OIDC is unavailable, for example repairing the OIDC auth configuration.
 

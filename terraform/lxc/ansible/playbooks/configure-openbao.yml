@@ -32,6 +32,7 @@
       - deploy-common
       - snapshot
       - ci-netbox-populate
+      - breakglass
     # terraform/PRODUCTION_NODES is the single source of truth for production
     # nodes (CLAUDE.md); one deploy-<node> AppRole is generated per line.
     openbao_production_nodes: >-
@@ -232,6 +233,24 @@
       changed_when: false
       no_log: true
 
+    - name: Write breakglass AppRole (generate-root-token only; design doc 19)
+      ansible.builtin.uri:
+        url: "{{ openbao_addr }}/v1/auth/approle/role/breakglass"
+        method: POST
+        ca_path: "{{ openbao_ca }}"
+        headers: { X-Vault-Token: "{{ openbao_token }}" }
+        body_format: json
+        body:
+          token_policies: [breakglass]
+          token_ttl: 15m
+          token_max_ttl: 15m
+          secret_id_ttl: 0
+          secret_id_bound_cidrs: "{{ openbao_workstation_cidrs }}"
+          token_bound_cidrs: "{{ openbao_workstation_cidrs }}"
+        status_code: [200, 204]
+      changed_when: false
+      no_log: true
+
     # ---- JWT (GitHub Actions) ---------------------------------------------
     - name: Configure jwt-github against GitHub's Actions OIDC issuer
       ansible.builtin.uri:
@@ -315,5 +334,5 @@
       ansible.builtin.debug:
         msg: >-
           Configured AppRoles deploy-dev, {{ openbao_production_nodes | map('regex_replace', '^', 'deploy-') | join(', ') }},
-          snapshot; JWT role ci-netbox-populate; OIDC role homelab-admin.
+          snapshot, breakglass; JWT role ci-netbox-populate; OIDC role homelab-admin.
           SecretIDs are NOT created here -- see plan operator block B.
