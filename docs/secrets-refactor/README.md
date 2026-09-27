@@ -369,6 +369,29 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
     MikroTik preflight PASS.
   - Only cosmetic leftovers remain (error/hint strings naming old file
     paths).
+- **Check-mode sweep (operator ran `artifacts/check-mode-sweep.sh`,
+  2026-09-28): 28 stacks (21 pve, 7 pve-tiny) via `provision.sh --check`
+  through the OpenBao-only wrappers.** Every stack reached a PLAY RECAP, and
+  there were **zero missing or empty secret lookups anywhere** (no
+  `mandatory()` failures). The cse-panel, cse-controller and cse-code-eval
+  stacks were fully clean. All failures are check-mode artifacts: tasks
+  reading results of uri/shell steps that check mode skips (Portainer
+  token ×4, docker-live-usage index ×3, Technitium API token, Wazuh bcrypt
+  hash, Greenbone and NetBox health waits, mcp-utility directory parse,
+  secpipe temp file, OpenBao health report). The 4 possibly secret-bearing
+  "changed" tasks were checked:
+  - SearXNG seed: a run-once container that writes `settings.yml` only if
+    absent;
+  - pterodactyl `docker-compose.yml` and the NetBox bootstrap script: no
+    secrets in them (the pterodactyl env file did **not** change);
+  - VictoriaMetrics scrape config: the live file lacks the openbao-stack
+    target (0 matches), and the scrape password in the live file hashes
+    identically to the OpenBao value (`f99d7378…`), so the diff is only
+    the new target.
+  **Gap found:** step 07's scrape target and dashboard were never
+  deployed, so monitoring-stack needs one real provision to show the
+  OpenBao panel. Side finding: `portainer_agent` removes and restarts the
+  agent container on every run (not idempotent; pre-existing).
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
