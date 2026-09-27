@@ -460,8 +460,8 @@ ssh root@pve pct reboot 20016; sleep 20
 curl -s --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health | python3 -m json.tool | grep -E 'initialized|sealed'
 # initialized true, sealed false -- unattended unseal works
 ssh root@pve 'install -d -m 0755 /var/tmp/openbao-vzdump-test && vzdump 20016 --mode snapshot --dumpdir /var/tmp/openbao-vzdump-test --compress zstd'
-ssh root@pve 'f=$(ls /var/tmp/openbao-vzdump-test/*.tar.zst); zstdcat "$f" | tar -t | grep -c -E "openbao-seal|homelab-2026-1.key"; rm -rf /var/tmp/openbao-vzdump-test'
-# must print 0
+ssh root@pve 'f=$(ls /var/tmp/openbao-vzdump-test/*.tar.zst); zstdcat "$f" | tar -t | grep -c "homelab-2026-1\.key"; rm -rf /var/tmp/openbao-vzdump-test'
+# must print 0 (the empty ./srv/openbao-seal/ mount-point dir is always present; only the key file matters)
 ssh root@pve 'umount /mnt/openbao-seal && pct reboot 20016'; sleep 20
 ssh root@pve pct exec 20016 -- systemctl is-active openbao   # not active: fails closed without the key
 ssh root@pve 'mount /mnt/openbao-seal && pct reboot 20016'; sleep 20

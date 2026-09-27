@@ -184,6 +184,14 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   the route shows initialized/unsealed; the Authentik discovery issuer is
   `https://authentik.lab.gibbsgreatly.xyz/application/o/edge-openbao-stack-openbao/`;
   the other routes are unchanged from the baseline.
+- **A10 done (operator run).** `vzdump 20016` rc=0. The archive contains only
+  the empty mount-point dir `./srv/openbao-seal/` and **0 key-file entries**,
+  so the bind-mounted seal key is excluded from backups. (A first, too-broad
+  grep counted that dir as "1"; the plan's check is now tightened to the key
+  filename.) Without the key: `openbao` = `failed`, closed as designed. With
+  the key re-mounted and the LXC rebooted: `active`, `"sealed":false`.
+  Unattended unseal after an LXC restart was already shown in the replug
+  incident. **Block A complete.**
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
