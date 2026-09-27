@@ -297,6 +297,19 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
 - **Remaining:** step 15 (CI via GitHub OIDC) is only testable after a merge
   to `main`, so it is held for the operator's merge decision. Then block E
   (recovery test) and block F (SOPS retirement).
+- **Merged to stable: PR #431 → `93939d61` (2026-09-28).** Operator's
+  choice: merge the whole branch, including the 33 framework-dns /
+  ai-stacks-pve-tiny commits it was cut on top of. CI triage: all 4 failing
+  jobs are pre-existing (ruff in deep-research-agent/es_findings_ingest;
+  Harbor-only violations in pterodactyl-lab/cse-*; 193 ansible-lint
+  violations, none on this PR's lines; the self-hosted runner can't install
+  sops). The pre-push run of the freeze hook blocked the push of the
+  pre-freeze commit `321c5549`, so the hook is now `stages: [pre-commit]`.
+  validate.yml runs PR checks only for PRs into `main`, so `sops-freeze`
+  will first run, and flag `321c5549` as expected, on the stable → main PR.
+- **Not yet promoted to main (operator: "not yet").** Step 15 (CI via
+  GitHub OIDC) stays unapplied until `main` is promoted; `netbox-populate`
+  keeps failing until then, as it already did.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
