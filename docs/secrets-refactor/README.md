@@ -91,3 +91,65 @@ was clean.
 | 12 | compile ok ✓. **import-dry-run: expected failure.** Its only complaint is `services/openbao:OPENBAO_OIDC_CLIENT_SECRET missing`. That is the operator prerequisite, which has not been done yet; re-run after it. |
 
 Steps 13–16 are cutover-time and deliberately not applied yet.
+
+### 2026-09-28 — operator block A (in progress)
+
+- **A1 done.** `/mnt/nas-backup` on `pve` is NFS4
+  `192.168.1.3:/volume1/ProxmoxBackup`. Created
+  `/mnt/nas-backup/openbao-snapshots`; `chown` over NFS was accepted, and
+  `stat` shows `100000:100000 700`. The container's ability to write there
+  is tested at A5.
+- **Baseline before A2:** authentik 302, harbor 200, grafana 302, portainer
+  200, netbox 302, jellyfin 302.
+- **A2 done (operator run).** proxy-stack `failed=0`, and the smoke test
+  passed. The live `/opt/proxy-stack/traefik.yml` has
+  `serversTransport.rootCAs: [/certs/combined-ca.crt]`, and Traefik
+  restarted. After the redeploy, every route matches the baseline (authentik
+  302, harbor 200, grafana 302, portainer 200, netbox 302, jellyfin 302).
+- **A3, first attempt:** `provision.sh` logged "SKIP openbao-stack: inventory
+  file not found". This was a plan gap: A3 was missing the `terragrunt apply`
+  that creates the LXC and writes `inventory.yml`. The plan is fixed. New
+  stacks such as `media-stack-lab` keep their state in the stack directory
+  under workspace `pve`, not under `environments/pve/`, and that is correct
+  here too.
+- **A3 done (operator run).** `terragrunt apply`: 5 added, LXC 20016
+  `openbao` at 192.168.20.16 on `mgmt_seg`/`tvmgmt`, target `pve`.
+  `provision.sh`: `failed=0`. Verified: the inventory's `ansible_host` is
+  192.168.20.16; in-container `openbao` is uid 999 / gid 991 (host
+  100999:100991); the step-ca cert has SANs `DNS:openbao.lab.gibbsgreatly.xyz,
+  IP:192.168.20.16` and is valid to 2026-10-27; the provisioner password file
+  was removed; `openbao.service` is enabled but inactive (no seal key yet, as
+  expected); the TLS-renew and nightly-snapshot timers are scheduled.
+- **USB devices already on `pve` before A4. Do not touch either:**
+  `sdd` is a 931.5G Samsung PSSD T7 (no partitions or mounts), and `sde` is a
+  3.6T WD mounted at `/mnt/pve/usb-backup`.
+- **A4 sticks.** The Samsung T7 was unplugged. A first "USBest"
+  (`1307:0163`) stick reported 0 bytes and was replaced. The final sticks
+  are: USB A = ADATA USB Flash Drive, serial `2783009100070000` (was a Ventoy
+  stick, wiped with the operator's OK), label `BAOSEAL`; USB B = SanDisk
+  Cruzer Blade, serial `432171079EA39474` (had a vfat partition, wiped),
+  label `BAOSEAL-B`.
+- **A4 done (operator ran `artifacts/a4-seal-usb.sh`, by-id paths only).**
+  Result: `copies-match`; both keys are 32 bytes, 100999:100991, mode 0400;
+  fstab has `LABEL=BAOSEAL /mnt/openbao-seal ext4 ro,nofail,...`; mounted
+  `/dev/sdg1 ro,relatime`. USB B is still plugged in, waiting for kit.age (A8).
+- **A5 done (operator run).** `pct set 20016` mp0 (seal, ro, backup=0) and
+  mp1 (snapshots, backup=0), then reboot. In the container, the key is
+  `-r-------- 999 991 32`; `openbao-can-read-key`; `snapshots-writable` (the
+  NFS write as container root works).
+- **A7 done.** `bao` v2.7.0 installed to `~/.local/bin`, with the tarball
+  sha256 verified.
+- **A6 done (operator run).** provision `failed=0`; `bao status`: Seal Type
+  `static`, Recovery Seal Type `shamir`, `initialized=false`, as expected before init.
+- **A8 done.** `bao operator init -recovery-shares=1` → `Initialized true`,
+  `Sealed false` (static auto-unseal works). The first kit write failed:
+  mismatched passphrases left an empty `kit.age`, because the pipeline lacked
+  `pipefail`, and the verify step caught it. Retried with
+  `artifacts/a8b-kit-retry.sh` (pipefail, encrypt to a tmp file and verify
+  before copying): 8 names verified; `kit.age` is 752 bytes, sha256
+  `5b501751161a929fc5abdaa2d69b219a20d80e1f22cf55cfb15ffe404491f69c`, the
+  same locally and on USB B. `/dev/shm/bao-init.json` shredded. The initial
+  root token is held only in the operator's shell, for block B.
+- **A2/A3:** Claude Code's auto-mode classifier blocks production
+  `provision.sh` runs, even with chat approval, so the operator runs them.
+  The pve proxy-stack inventory targets `192.168.30.10` (checked).

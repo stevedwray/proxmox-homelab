@@ -354,6 +354,9 @@ OpenBao. OpenBao stays stopped because there is no seal key yet.
 ```bash
 export TASK_APPROVAL="secrets-refactor-openbao-provision"
 ./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/openbao-stack -no-color | grep -E '^Plan:'
+# provision.sh only runs Ansible against an existing inventory; the apply creates the
+# LXC and writes terraform/lxc/stacks/openbao-stack/inventory.yml (workspace pve).
+./with-secrets-prod terragrunt apply --working-dir terraform/lxc/stacks/openbao-stack
 ./with-secrets-prod scripts/provision.sh --stack openbao-stack
 grep ansible_host terraform/lxc/stacks/openbao-stack/inventory.yml   # must be 192.168.20.16 (env-isolation check)
 ```
@@ -421,7 +424,8 @@ bao status | grep -E 'Initialized|Sealed'            # Initialized true, Sealed 
 mount LABEL=BAOSEAL-B /mnt/usb-b   # on pve -- or plug USB B into the workstation and use its mount point
 { ./with-secrets-prod python3 -c 'import os,shlex
 for k in ("TF_VAR_pm_api_token_secret","TF_VAR_lxc_password","PROXMOX_READONLY_TOKEN_ID","PROXMOX_READONLY_TOKEN_SECRET","STEP_CA_PROVISIONER_PASSWORD","NODE_EXPORTER_SCRAPE_PASSWORD","NODE_EXPORTER_SCRAPE_PASSWORD_HASH"): print(f"{k}={shlex.quote(os.environ[k])}")'
-  printf 'OPENBAO_RECOVERY_KEY=%s\n' "$RK"; } | age -p -o <usb-b-mount>/kit.age
+  printf 'OPENBAO_RECOVERY_KEY=%s\n' "$RK"; } | age -p -o /dev/shm/kit.age   # with set -o pipefail; verify before copying to USB B
+# (as executed: docs/secrets-refactor/artifacts/a8b-kit-retry.sh -- a bare pipe hid an age failure once)
 age -d <usb-b-mount>/kit.age | cut -d= -f1          # must list the 8 names -- names only
 shred -u /dev/shm/bao-init.json; unset RK
 ```
