@@ -5,63 +5,133 @@ that a branch checkout, merge or rebase can never again silently restore an
 old password.
 
 - **Design:** [secrets-design.md](secrets-design.md). It holds the decisions
-  and their reasoning.
-- **Plan:** [plan.md](plan.md). It holds the step blocks for the local model,
-  plus the operator-only blocks.
-- **Patches:** [patches/](patches/). There are 16 pre-built, pre-verified
-  patches, one per step.
+  and reasoning, and has an as-built status section at the top.
+- **Plan:** [plan.md](plan.md). It holds the original step plan, annotated
+  with what was actually executed and how it deviated.
+- **Operating it day to day:**
+  [docs/reference/secrets-management.md](../reference/secrets-management.md).
+  It covers using, adding and rotating secrets, break-glass, recovery, the
+  USB seal key, and monitoring.
+- **Patches:** [patches/](patches/). These are the 16 step patches as
+  applied (historical once merged).
+- **Execution record:** the hand-back log below. Every gate result, finding
+  and fix is there, in order.
 
-## Status
+## Status (2026-09-28)
 
-**2026-09-28: design and plan complete. No step has been executed.**
-Nothing live has changed.
+**Done and live.** OpenBao is the only source of secrets. The SOPS files
+are deleted (Git history keeps old, non-authoritative copies).
 
-All 16 patches were generated and applied cleanly, in order, on top of
-`d41be395`. Python tools pass their unit tests, playbooks pass
-`--syntax-check` and `ansible-lint`, and shell passes `shellcheck`. SOPS
-retirement (plan block F) is deliberately not pre-generated. It is written
-against the branch as it is after the recovery test.
+| Area | State |
+| --- | --- |
+| OpenBao | LXC 20016, `192.168.20.16` (`mgmt_seg`), v2.7.0 native `.deb`. Static-seal auto-unseal from USB A (ADATA) on `pve`, bind-mounted read-only and verified absent from `vzdump`. step-ca TLS with a daily `step ca renew`. Declarative audit log. UI at `https://openbao.lab.gibbsgreatly.xyz` through Traefik; API direct by IP |
+| Data | KV v2 at `kv/`: 30 entries, 129 fields (services 22/96, shared 3/20, hosts 5/13). `secrets/manifest.json` is the names-only inventory |
+| Reads | `./with-secrets` and `./with-secrets-prod*` read only from OpenBao, via one read-only AppRole per environment, and fail closed. The SOPS path and the `SECRETS_BACKEND` rollback are removed |
+| Writes | Humans only: Authentik OIDC (`bao login -method=oidc -no-store`) plus `scripts/openbao_write.py` |
+| Break-glass | The `breakglass` AppRole (policy: `sys/generate-root-token/*` only) plus the recovery key. No standing root token |
+| Backups | Raft snapshots to the NAS, post-write and nightly at 03:30; retention 90d/14d/8w/12m. **Recovery test passed** (fresh instance + USB B + snapshot + recovery key) |
+| Bootstrap kit | Bitwarden note "openbao bootstrap kit" plus a passphrase-encrypted `kit.age` on USB B (SanDisk). 10 values, including the recovery key and the breakglass AppRole |
+| Monitoring | Grafana "OpenBao" dashboard: snapshot age and last run, LXC up, secret entries and fields per category, a per-entry version and last-changed table, changes in the last 7 days, manifest drift. The inventory comes from a `metrics` AppRole that can read KV **metadata only**; the audit log shows its value reads denied. **No alerting yet** |
+| Validation | Post-cutover real deploys (graylog, harbor, cse-panel, monitoring); a 28-stack `--check` sweep with no missing secrets; 10 live service logins with OpenBao credentials; all 5 profiles read in full |
+| Git | Cutover merged to `stable` (PR #431, `93939d61`). Retirement, tests and inventory are on `task/retire-sops`, awaiting their PR. **`main` is not promoted** |
+
+## Next steps
+
+**To finish this project:**
+
+1. **PR `task/retire-sops` → `stable`** and merge it: SOPS retirement, step
+   15, the test records, and the inventory feature.
+2. **Promote `stable` → `main`** when the operator decides. It is currently
+   deferred, and `main` carries 3 weeks of other work. Then:
+   - The CI `sops-freeze` check will flag `321c5549`. That is expected: it
+     was the last legitimate pre-freeze SOPS edit.
+   - Run `gh workflow run netbox-populate.yml --ref main` and confirm the
+     GitHub OIDC → OpenBao login and populate work (plan step 15's live
+     test).
+   - Delete the `SOPS_AGE_KEY` GitHub Actions secret.
+3. **Close out the workspace:** empty `artifacts/` (scratch scripts and the
+   sweep summary), per `docs/workflow/documentation-workspaces.md`.
+
+**Recommended follow-ups (separate work):**
+
+- **Alerting.** Monitoring has no alert rules or contact points. At
+  minimum: snapshot age > 36 h, last snapshot run failed, manifest drift
+  > 0, OpenBao LXC down or sealed.
+- **Rotate the high-value secrets over time.** Old values remain in Git
+  history as SOPS ciphertext, readable by anyone holding the age key.
+  Rotating (with `openbao_write.py`) makes those copies worthless. Start
+  with the Proxmox API tokens, Authentik superuser, Harbor admin and robot,
+  the MikroTik admin, and the Cloudflare DNS token. After that, the age key
+  can be retired from Bitwarden.
+- **Edge reconciler:** set `grant_types` on *create* for every OIDC
+  provider (4 stacks so far have been bitten by the create-time `[]`
+  default).
+- **Tidy-ups:**
+  - about 30 passing "SOPS" mentions in stack contracts, playbook comments
+    and error strings;
+  - decide whether to delete `kv/services/legacy-unused` (7 fields with no
+    consumer);
+  - decide whether `pve-framework` stays in `PRODUCTION_NODES` (it is no
+    longer a Proxmox node).
+- **Existing issues found along the way (not caused by this work):**
+  - harbor-stack's Terraform state split between the environment directory
+    and the stack directory (its plan wants to re-run the SDN attachment);
+  - `portainer_agent` restarts the agent on every run;
+  - the 8 failing `terraform/lxc` unit tests (the same on `stable`);
+  - CLAUDE.md's repo-wide `unittest discover -s .` finds 0 tests;
+  - the CI lint baseline (ruff, ansible-lint, Harbor-only images);
+  - the nextcloud EGR211 edge drift;
+  - `netbox-populate` was failing nightly before this work.
+- **Later, if needed:** seal-key rotation (static seal `previous_key`
+  procedure, documented in the runbook); per-workload OpenBao identities
+  for stacks that should fetch their own secrets (design §15); HA (design
+  §28).
 
 ## Decisions (operator, 2026-09-28)
 
 | Topic | Decision |
 | --- | --- |
 | Deploy-time auth (`with-secrets`, agents) | Read-only AppRole per environment, workstation-held; no Authentik dependency |
-| Human auth | Authentik OIDC, for the UI and writes only; break-glass via the recovery key and `generate-root` |
+| Human auth | Authentik OIDC, for the UI and writes only |
+| Break-glass | `breakglass` AppRole (generate-root-token only) plus the recovery key. Added in execution: OpenBao ≥2.5.3 disables unauthenticated generate-root |
 | USB seal key | Stays inserted in `pve`; unattended unseal; host bind mount, so `vzdump` never includes it |
 | Bootstrap kit | Two copies: a Bitwarden secure note, and a passphrase `kit.age` on USB B. Not age-key encrypted |
-| Cutover | Reconcile against live, bulk import, parity check, freeze SOPS, flip the default |
-| CI | GitHub OIDC → OpenBao `jwt-github` |
+| Cutover | Reconcile against live, bulk import, parity check, freeze SOPS, flip the default; then retire SOPS after the recovery test |
+| CI | GitHub OIDC → OpenBao `jwt-github` (live once `main` is promoted) |
 | KV layout | KV v2; one entry per service/host; field names = env var names; `max_versions` 20 |
 | Snapshots | After each helper write, plus nightly; to `nas.gibbsgreatly.xyz` through pve's existing NFS mount (`/mnt/nas-backup`) |
 | Retention | 90d post-write / 14 daily / 8 weekly / 12 monthly; never fewer than the newest 7 |
 | UI route | Through Traefik (EdgeManifest + edge reconciler); Traefik trusts the homelab CA for HTTPS backends |
 | Install | Native pinned `.deb` + systemd (like step-ca); no Docker or Harbor dependency |
 | OpenBao config | Ansible playbook against the API, with an explicit admin token; SecretIDs made by hand |
-| Alerting | Metric + Grafana panel now; real alerting is a separate project (monitoring has none today) |
+| Dashboard inventory | `metrics` AppRole with KV metadata only; field counts from the manifest |
+| Alerting | Metric + Grafana panel now; real alerting is a separate project |
+| Merge | Whole branch into `stable`; `main` promotion deferred |
+| Execution | Claude executes directly (no local model). Production runs are done by the operator, because the harness classifier blocks them for Claude |
 
 ## Findings along the way (not part of this plan)
 
-- **`netbox-populate` has failed every night since at least 2026-09-23**:
+- **`netbox-populate` had failed every night since at least 2026-09-23**:
   `sudo apt-get install sops` needs a password on the self-hosted runner.
-  Step 15 removes the SOPS dependency. Even when that step worked, the job
-  loaded only `secrets.pve.enc.yaml`, not the common file its script also
-  needs (`NETBOX_API_TOKEN`, `MIKROTIK_*`). The new `ci-netbox-populate`
-  profile includes them.
-- **`preflight-production-mikrotik.sh`** also loaded only the pve SOPS
-  file, although its `MIKROTIK_*` checks need common values. Step 14 routes
-  it through `./with-secrets-prod`.
+  Step 15 removes the SOPS dependency. Even when it worked, the job loaded
+  only `secrets.pve.enc.yaml`, not the common values its script needs
+  (`NETBOX_API_TOKEN`, `MIKROTIK_*`). The `ci-netbox-populate` profile
+  includes them.
+- **`preflight-production-mikrotik.sh`** loaded only the pve SOPS file,
+  although its `MIKROTIK_*` checks need common values. It now bootstraps
+  through `./with-secrets-prod` (18/18 PASS).
+- **The router scripts** (`cutover.sh`, `provision-hap-ax3.sh`) needed
+  `hAPax3_ADMIN`, which was never in SOPS. They now take it from the
+  environment.
 - **`prod/pve-infra`** (protected, last commit 2026-05-25) carries a stale
-  pre-split `secrets.pve.enc.yaml`. It is excluded from reconciliation.
-- **Keys with no consumer in the repo** are imported, not dropped, into
+  pre-split `secrets.pve.enc.yaml`. It was excluded from reconciliation.
+- **Keys with no consumer in the repo** were imported, not dropped, into
   `kv/services/legacy-unused`: `NPM_DB_PASSWORD`, `OMADA_*` (4) and
   `TF_VAR_dayz_steam_*` (2). `GOOGLE_CSE_*` and `CURSEFORGE_API_KEY` also
-  have no code consumer but were placed with their likely owners. These are
-  candidates for deletion after the cutover.
-- **`pve-framework`** is still in `PRODUCTION_NODES` and still has a secrets
-  file, although the Framework is no longer a Proxmox node. The plan
-  preserves it as-is (`hosts/pve-framework`, `deploy-pve-framework`).
-  Removing it is a separate decision.
+  have no code consumer but were placed with their likely owners.
+- **`pve-framework`** is still in `PRODUCTION_NODES`, with `hosts/pve-framework`
+  and `deploy-pve-framework`, although the Framework is no longer a Proxmox
+  node.
 
 ## Hand-back log
 
@@ -92,7 +162,7 @@ was clean.
 
 Steps 13–16 are cutover-time and deliberately not applied yet.
 
-### 2026-09-28 — operator block A (in progress)
+### 2026-09-28 — operator blocks A–F and follow-on work (chronological)
 
 - **A1 done.** `/mnt/nas-backup` on `pve` is NFS4
   `192.168.1.3:/volume1/ProxmoxBackup`. Created
@@ -408,6 +478,6 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   login/revoke. Live: entries services 22 / shared 3 / hosts 5; fields
   96 / 20 / 13 (129); drift 0; 30 entries changed in the last 7 days (all
   imported today). Grafana `openbao` dashboard: 8 panels.
-- **A2/A3:** Claude Code's auto-mode classifier blocks production
+- **Note (applies throughout):** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).

@@ -248,6 +248,7 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on both `pve` and `pve-test-vm` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
 | `dns-stack` | systemd (CoreDNS) | **Removed from `pve`, 2026-09-08** (`pct destroy`, not just stopped) — was rollback-only since the cutover documented in `docs/dns-refactor/README.md`, decommissioned after fixing 8 stacks' hardcoded Docker-daemon-level dependency on it (see `reference_dns_stack_docker_daemon_dependency`). `pve-test-vm` still has its own separate instance, kept as a rollback point there — don't assume the same reasoning applies to it without re-checking its own dependents first. |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `openbao-stack` | systemd (OpenBao, native `.deb`) | **The secrets store** (192.168.20.16). `curl --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health` must show `"sealed":false`. Runbook: `docs/reference/secrets-management.md` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
 | `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
 | `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
