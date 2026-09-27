@@ -298,3 +298,67 @@ Every patch applied cleanly in order. Gates:
   `requests_processing` and `requests_deferred` (15 `llamacpp:` series in
   all; the fork uses upstream names); JSON valid; 0 `ollama` in
   `local-ai.json`.
+
+### Operator deploys: step 4, 2026-09-27
+
+- **mcp-utility-stack (fwllm-03):** deploy `failed=0`. The first full
+  re-embed hit HTTP 500s: the embeddings server rejects inputs over 2048
+  tokens (`input (2677 tokens) is too large`), and docs-rag's 6000-char
+  chunks ran ~2.2 chars/token on this repo's YAML/code-dense markdown.
+  Ollama had silently truncated them. Fixed in `6de94488`: `chunking.py` now
+  assumes 2 chars/token (3000-char cap) and hard-splits oversized
+  paragraphs and lines. Unit tests cover this, and over the repo's 480
+  docs the largest chunk is 2999 chars. After a redeploy and a second wipe
+  (container stopped first), the reindex summary was
+  `{'total_files': 455, 'changed': 455, 'failed': []}`, with 7163 chunks.
+  `rebuild_ivfflat_index` runs at the end of the reindex, so the
+  low-recall notice after TRUNCATE needs no action.
+- **secpipe-stack (fwllm-02):** deploy `failed=0`. A manual deep-dive dry
+  run (`--top-n 1`, with the unit's own `Environment=` loaded via
+  `systemctl show -p Environment`; the plan's command lacked
+  `ELASTICSEARCH_URL`) gave `assessed=1 errors=0`.
+- **proxy-stack (fwllm-05):** rendered diff = only `llm-gpu-stack.yml`
+  `:8090` -> `:8080`. Deploy `failed=0`, smoke test passed.
+  `https://llm.lab.gibbsgreatly.xyz/v1/chat/completions`: 401 without the
+  key, 200 with it.
+- **monitoring-stack (fwllm-06/-07):** deploy `failed=0`, smoke test
+  passed. The `llamacpp` job's `:8080` (chat) and `:8085` (embeddings)
+  targets are both up.
+- **framework bootstrap (fwllm-06):** `failed=0 changed=7`. It removed
+  `ollama_stats_textfile.py` and `ollama_stats.prom`. The `docker`/
+  `containerd` directory tasks reported `changed` for mode only (now 711);
+  the bind mounts from `vg0-containers` are intact, and all 5 containers
+  were still up (3 days).
+
+### Operator: measure chat context, 2026-09-27
+
+MemAvailable (MB) after each `-e framework_llamacpp_chat_ctx_size=C` apply:
+8192 -> 14966 (baseline), 16384 -> 14000, 32768 -> 13500,
+65536 -> 12235, 131072 -> 9788. Every value stayed above the 8192 floor, so
+**131072** is kept (`n_ctx_slot = 131072`, `kv_unified = 'true'`). Deep-dive
+dry run at 131072: `finish_reason='length'`, i.e. the model spent its
+4096-token output budget reasoning. That is tuning, not context (see
+follow-ups).
+
+### fwllm-08-set-measured-ctx
+
+`framework_llamacpp_chat_ctx_size` default 8192 -> 131072, with the
+measurements in the comment, so a plain playbook re-run keeps the measured
+value.
+
+### Follow-ups (operator-deferred, not part of this plan)
+
+- **docs-rag ranking quality (pre-existing, also true under Ollama).**
+  nomic-embed-text wants `search_query: ` / `search_document: ` prefixes;
+  docs-rag sends neither. Measured: the relevant-vs-distractor cosine gap
+  was 0.07 without prefixes and 0.18 with them. The search also uses
+  ivfflat `lists = 100` with the default `probes = 1`, so each query scans
+  ~1% of rows. Fix: add both prefixes, set `ivfflat.probes` (~10) per
+  search, then do a full re-embed.
+- **CVE deep-dive output budget.** `LLAMACPP_MAX_TOKENS=4096` can be used up
+  by reasoning (`finish_reason='length'`). Raise it (context is now 131072)
+  or limit reasoning.
+- **VS Code limits.** `chatLanguageModels.json` still has 6144/2048; raise
+  them now that the context is 131072.
+- **nextcloud-stack Authentik drift (EGR211).** Its route needs no
+  Authentik objects, but some exist. Unrelated to this plan.

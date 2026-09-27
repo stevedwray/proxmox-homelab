@@ -46,10 +46,13 @@
     framework_llamacpp_chat_model: /mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
     framework_llamacpp_chat_alias: qwen3.8-flash-next
     framework_llamacpp_chat_port: 8080
-    # Total KV context shared by all slots. 8192 is what the hand-written
-    # unit ran with. Raise it only to a value measured per plan.md
-    # "Operator: measure chat context".
-    framework_llamacpp_chat_ctx_size: 8192
+    # Total KV context shared by all slots (unified KV, so one request can
+    # use all of it). Measured per plan.md "Operator: measure chat context"
+    # on 2026-09-27: MemAvailable 14966 MB at 8192, 14000 at 16384, 13500 at
+    # 32768, 12235 at 65536, 9788 at 131072 -- every step above the 8192 MB
+    # floor, so the largest candidate is kept. Don't raise it past that
+    # without re-measuring.
+    framework_llamacpp_chat_ctx_size: 131072
 
     framework_llamacpp_embed_model: /mnt/nvme2/models-gguf/nomic-embed-text-v1.5/nomic-embed-text-v1.5.f16.gguf
     framework_llamacpp_embed_alias: nomic-embed-text
