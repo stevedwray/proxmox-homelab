@@ -232,6 +232,20 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   (1 update, 50 noop; provider 28 `grant_types` now `['authorization_code']`),
   the UI OIDC login works. The audit log shows the callback token with
   policies `['default', 'openbao-admin']`, TTL 3600s, role `homelab-admin`.
+- **B4 CLI login done.** `bao login -method=oidc -no-store -token-only`
+  returned a token via the localhost:8250 callback; `~/.vault-token` does
+  not exist (§13.1).
+- **B4 break-glass: design gap found and fixed.** OpenBao ≥ 2.5.3 disables
+  the unauthenticated `sys/generate-root/*` endpoints (403), and
+  `sys/generate-root-token/*` needs a token, so §19's recovery-key-only
+  break-glass could not work. Operator decision: a `breakglass` AppRole
+  whose policy allows only `sys/generate-root-token/*` (15-minute tokens,
+  LAN-bound), with credentials in `~/.config/openbao/` and the bootstrap
+  kit. The design §19 and §9.1 are updated. After a configure re-run
+  (`failed=0`) and issuing the credentials, the test **passed**: breakglass
+  login (`['breakglass','default']`) plus the recovery key → root token
+  `['root']` works, and it and the breakglass token were both revoked and
+  verified invalid.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
