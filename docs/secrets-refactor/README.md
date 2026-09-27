@@ -69,4 +69,25 @@ Each executed step appends an entry here: the step id, the date, what
 changed, and every gate's actual result. See
 `.github/prompts/implement-step.prompt.md`.
 
-_(none yet)_
+### 2026-09-28 — steps 01–12 (repo-only), branch `feat/secrets-openbao`
+
+Executed by Claude directly (operator decision: no local model for this
+plan). Patches 01–12 were applied in order, and each `git apply --check`
+was clean.
+
+| Step | Gate results |
+| --- | --- |
+| 01 | values: `192.168.20.16 openbao.lab.gibbsgreatly.xyz` ✓ |
+| 02 | yaml: `20016 192.168.20.16/24 mgmt_seg` ✓. plan-create-only: `Plan: 5 to add, 0 to change, 0 to destroy.`, target_node `pve`, bridge `tvmgmt` ✓ |
+| 03 | 7 tests OK ✓ |
+| 04 | syntax-check rc=0 ✓. pinned-deb 1 ✓ |
+| 05 | syntax-check rc=0 ✓ |
+| 06 | edge tests OK ✓. edge-validate passed ✓ |
+| 07 | `openbao 3` ✓. syntax-check rc=0 ✓ |
+| 08 | syntax-check rc=0 ✓ |
+| 09 | `unmapped: []` ✓ |
+| 10 | 12 tests OK, no skips ✓. field-count 119 ✓ |
+| 11 | shellcheck clean ✓. `./with-secrets printenv PVE_ENV` → `pve-test-vm` (sops path unchanged) ✓. bogus backend rc=1 ✓ |
+| 12 | compile ok ✓. **import-dry-run: expected failure.** Its only complaint is `services/openbao:OPENBAO_OIDC_CLIENT_SECRET missing`. That is the operator prerequisite, which has not been done yet; re-run after it. |
+
+Steps 13–16 are cutover-time and deliberately not applied yet.

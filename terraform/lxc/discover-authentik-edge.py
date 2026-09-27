@@ -49,6 +49,7 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
     ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
     ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
+    ("openbao-stack", "openbao"): ("OPENBAO_OIDC_CLIENT_ID", "openbao"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -60,6 +61,7 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
     ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
     ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
+    ("openbao-stack", "openbao"): "OPENBAO_OIDC_CLIENT_SECRET",
 }
 
 
@@ -494,6 +496,13 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/authentik/callback",)
     if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
         return (f"{base_url}/auth/login",)
+    if _oidc_route_key(intent) == ("openbao-stack", "openbao"):
+        # UI login callback (auth/oidc mounted at the default "oidc" path),
+        # plus the `bao login -method=oidc` CLI listener on localhost:8250.
+        return (
+            f"{base_url}/ui/vault/auth/oidc/oidc/callback",
+            "http://localhost:8250/oidc/callback",
+        )
     return ()
 
 

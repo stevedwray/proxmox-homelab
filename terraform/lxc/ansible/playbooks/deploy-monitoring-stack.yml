@@ -225,6 +225,8 @@
                   labels: {stack: gaming-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:9100"]
                   labels: {stack: media-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_OPENBAO') }}:9100"]
+                  labels: {stack: openbao-stack}
 
             # Framework's native llama.cpp servers (--metrics), which
             # replaced Ollama's textfile collector --
