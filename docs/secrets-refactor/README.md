@@ -246,6 +246,11 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   login (`['breakglass','default']`) plus the recovery key → root token
   `['root']` works, and it and the breakglass token were both revoked and
   verified invalid.
+- **Kit updated (`artifacts/a8c-kit-add-breakglass.sh`).** 10 names verified
+  (the 8 before plus `OPENBAO_BREAKGLASS_ROLE_ID/SECRET_ID`); `kit.age`
+  sha256 `5b5aef7181b39edf2a4d2055ec32622ffe3bc0307b633e0f2d5e3b3f076e4d6a`
+  is the same locally and on USB B. The operator updates the Bitwarden note
+  and unplugs USB B.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
