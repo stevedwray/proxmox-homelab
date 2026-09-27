@@ -27,7 +27,7 @@
     vanilla_framework_host: framework.gibbsgreatly.xyz
     vanilla_ollama_model: qwen3.6-35b-a3b-ud:q4_k_m
     vanilla_embedding_model: nomic-embed-text
-    # Shared SOPS-backed secret. Upstream disables API-token creation when
+    # Shared OpenBao secret. Upstream disables API-token creation when
     # this is omitted and it falls back to the insecure literal "salt".
     vanilla_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
     vanilla_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"

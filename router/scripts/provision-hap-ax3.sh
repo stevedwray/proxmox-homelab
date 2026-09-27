@@ -17,7 +17,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="${SCRIPT_DIR}/../.."
 CONFIG="${SCRIPT_DIR}/../config/current-config.json"
 
 TARGET_IP="${MIKROTIK_TARGET:-${MIKROTIK_HOST:?MIKROTIK_HOST not set}}"
@@ -25,13 +24,11 @@ TARGET="https://${TARGET_IP}"
 LAN_GW_CIDR="${MIKROTIK_LAN_GW_CIDR:?MIKROTIK_LAN_GW_CIDR not set}"
 MGMT_CIDR="${MIKROTIK_MGMT_CIDR:?MIKROTIK_MGMT_CIDR not set}"
 
-# Load credentials from SOPS
-eval "$(sops -d "${REPO_ROOT}/terraform/secrets.common.enc.yaml" \
-  | grep -E '^(hAPax3_ADMIN|MIKROTIK_USER):' \
-  | sed 's/: /=/;s/^/export /')"
-AUTH_USER="${MIKROTIK_USER}"
-# shellcheck disable=SC2154  # hAPax3_ADMIN is injected by with-secrets from SOPS
-AUTH_PASS="${hAPax3_ADMIN}"
+# Credentials come from the environment: run via ./with-secrets-prod (OpenBao).
+# hAPax3_ADMIN is not in the secret store (historical migration credential);
+# export it by hand if this script is ever re-run.
+AUTH_USER="${MIKROTIK_USER:?run via ./with-secrets-prod}"
+AUTH_PASS="${hAPax3_ADMIN:?hAPax3_ADMIN not set (not in the secret store; export it for this run)}"
 
 # ---------------------------------------------------------------------------
 # Helpers

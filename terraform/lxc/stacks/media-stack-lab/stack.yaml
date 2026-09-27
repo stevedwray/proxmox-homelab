@@ -44,7 +44,7 @@ portainer_server_ip: "${lab_ip_portainer}"
 # REGISTRY_HOST env var resolve empty, producing an "invalid reference
 # format" 500 on cadvisor's image). Values below use the same $${VAR}
 # placeholder resolution as portainer_server_ip above -- provision.sh
-# substitutes from the real environment (SOPS-backed for the DB
+# substitutes from the real environment (OpenBao-backed for the DB
 # password), nothing here is a literal secret. NOTE: this whole file is
 # rendered through Terraform's templatefile() (see main.tf), which
 # means dollar-brace syntax ANYWHERE in this file -- including plain

@@ -4,7 +4,7 @@ running container anywhere, via Portainer.
 
 Reuses the exact PortainerClient auth pattern already proven in
 terraform/lxc/stacks/netbox-stack/integrations/discover.py (X-API-Key via
-the PORTAINER_TOKEN SOPS secret) rather than inventing a new one -- every
+the PORTAINER_TOKEN OpenBao secret) rather than inventing a new one -- every
 stack is already a registered Portainer endpoint
 (register_portainer_environments in scripts/provision.sh).
 

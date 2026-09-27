@@ -105,7 +105,7 @@
     opensearch_admin_password: >-
       {{
         lookup('env', 'OPENSEARCH_ADMIN_PASSWORD')
-        | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+        | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required -- OpenBao kv/services/opensearch, see STACK_CONTRACT.md Inputs')
       }}
     # Same heap formula elasticsearch-stack/Graylog's Data Node use — half
     # the container's real memory, floor, minimum 1GB.
@@ -136,7 +136,7 @@
     opensearch_oidc_client_secret: >-
       {{
         lookup('env', 'OPENSEARCH_OIDC_CLIENT_SECRET')
-        | mandatory('OPENSEARCH_OIDC_CLIENT_SECRET env var is required -- new SOPS secret')
+        | mandatory('OPENSEARCH_OIDC_CLIENT_SECRET env var is required -- OpenBao kv/services/opensearch')
       }}
     opensearch_dashboards_public_url: "https://dashboards.{{ opensearch_lab_domain }}"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Production external infrastructure preflight.
 #
-# Tests that all production SOPS secrets are present and that external systems
+# Tests that all production secrets are present and that external systems
 # (Proxmox, MikroTik, Cloudflare, SSH, GitHub CLI) are reachable with the
 # configured credentials.
 #
@@ -30,10 +30,10 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # Self-bootstrap: re-exec under with-secrets-prod if not already running inside it.
-# with-secrets-prod loads .env + .env.pve + both SOPS files (base + pve overlay).
+# with-secrets-prod loads .env + .env.pve + the pve profile from OpenBao.
 if [[ "${!REEXEC_GUARD_VAR:-}" != "1" ]]; then
-    # with-secrets-prod checks its own backend's prerequisites (OpenBao
-    # AppRole credentials, or the age key for SECRETS_BACKEND=sops).
+    # with-secrets-prod checks its own prerequisites (the deploy-pve
+    # AppRole credentials in ~/.config/openbao/).
     exec env "${REEXEC_GUARD_VAR}=1" "${REPO_ROOT}/with-secrets-prod" "$0" "$@"
 fi
 

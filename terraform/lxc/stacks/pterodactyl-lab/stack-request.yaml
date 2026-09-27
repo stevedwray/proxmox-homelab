@@ -37,7 +37,7 @@ compose_requirements: |
   restart: unless-stopped on all three. Adapted from the real, official
   pterodactyl/panel docker-compose.example.yml (fetched 2026-09-20), not
   reconstructed from memory — only the parts genuinely specific to this
-  repo change (secrets via SOPS/env, no direct 80/443 host port bind
+  repo change (secrets via OpenBao/env, no direct 80/443 host port bind
   since Traefik fronts this like every other stack, image tag pinned
   instead of :latest).
 

@@ -4,9 +4,38 @@
 
 **Decision:** Adopt OpenBao as the authoritative secrets store.
 
-**Current state:** SOPS-encrypted YAML files stored in the main Git repository.
+**Current state (2026-09-28): implemented and live.** OpenBao on LXC 20016 is the only source of secret values. The SOPS files are deleted (old copies remain in Git history, not authoritative). The as-executed record is in [README.md](README.md); operations are in `docs/reference/secrets-management.md`.
 
 **Target state:** Secret values exist only in OpenBao. Git contains configuration and secret references, but never authoritative secret values.
+
+## As-built changes to this design
+
+Found during execution and adopted; the sections below are updated where noted.
+
+- **§19 break-glass:** OpenBao ≥ 2.5.3 disables the unauthenticated generate-root endpoints, so break-glass is a `breakglass` AppRole (policy: `sys/generate-root-token/*` only) plus the recovery key. Its credentials are in the bootstrap kit (§9.1).
+- **Audit device:** OpenBao 2.x rejects API-created audit devices, so the file audit device is declared in `openbao.hcl`.
+- **§12 identities:** added `metrics` (list+read `kv/metadata/*` only), used by the dashboard's secrets inventory. KV metadata carries versions and timestamps, never values, and its value reads are denied (verified in the audit log). Field counts come from the names-only manifest.
+- **§16:** the `SECRETS_BACKEND=sops` rollback was removed at SOPS retirement, after the recovery test passed.
+- **§14.2 CI:** implemented, but live only once `stable` is promoted to `main` (the role is bound to `refs/heads/main`).
+- **§27.0.1 alerting:** still a known gap; the metrics and panels exist.
+
+## Acceptance criteria status (§31)
+
+| Criterion | Status | Evidence |
+| --- | --- | --- |
+| Secret authority | ✅ | SOPS files deleted; all 30 entries / 129 fields in OpenBao; wrappers OpenBao-only |
+| Branch independence | ✅ | Values are not in Git; the manifest holds names only |
+| Deployment isolation | ✅ | Boundary check: every deploy role write → 403 |
+| Host isolation | ✅ | deploy-dev denied all prod `hosts/*`; each deploy-<node> denied the other nodes' entries |
+| Service isolation | n/a | No per-workload identities yet (§15; optional) |
+| Authentik independence of deploys | ✅ | Deploy path is AppRole only; break-glass independent of OIDC |
+| Human authentication | ✅ | UI OIDC login (policies `default`, `openbao-admin`); CLI `-no-store` leaves no token file |
+| CI | ⏳ | Implemented; live test after the `main` promotion |
+| Break-glass recovery | ✅ | Drill passed (breakglass AppRole + recovery key → root token, revoked) |
+| Seal operation | ✅ | Unattended unseal after LXC restart; fail-closed without the key; key absent from `vzdump` |
+| Fail-closed | ✅ | Loader refuses missing or empty fields (unit-tested; parity and sweep) |
+| Backup | ✅ | Recovery test passed: fresh instance + USB B + NAS snapshot + recovery key → data identical to live |
+| Existing workflows | ✅ | 28-stack `--check` sweep with no missing secrets; real deploys of graylog, harbor, cse-panel and monitoring |
 
 This design covers:
 

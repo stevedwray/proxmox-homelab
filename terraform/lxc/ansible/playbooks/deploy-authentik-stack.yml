@@ -689,7 +689,7 @@
         msg: >-
           Authentik is healthy at http://{{ ansible_host }}:9000/.
           AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
-          injected from SOPS via .env. The akadmin account and API token are
+          injected from OpenBao via ./with-secrets. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
       when: not ansible_check_mode
 
@@ -700,7 +700,7 @@
           Authentik is healthy at http://{{ ansible_host }}:9000/.
           Internal direct TLS is available at https://{{ authentik_internal_tls_fqdn }}:9443/.
           AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
-          injected from SOPS via .env. The akadmin account and API token are
+          injected from OpenBao via ./with-secrets. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
 
     - name: Check if lab admin user exists in Authentik

@@ -39,7 +39,7 @@ harbor_postconfigure_proxy_registries:
 # safe, and scan-tracked -- mirrors how the pentagi project already works.
 # The push credential is managed entirely by the harbor_repull role itself
 # (a project-scoped robot with a unique generated name, persisted only on
-# ci-runner-01) -- not here, and not through SOPS, specifically to avoid
+# ci-runner-01) -- not here, and not through OpenBao, specifically to avoid
 # the kind of stale-credential drift already seen with the shared
 # robot$ci-runner account (HARBOR_ROBOT_PASSWORD).
 harbor_postconfigure_mirror_project_name: "mirror"

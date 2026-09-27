@@ -39,7 +39,7 @@ would need to change for PentAGI (or anything else) to call in.
 |------------------------------|-------------------------------------|-------|
 | `LAB_IP_HARBOR`              | env var (mandatory)                 | Registry host for proxying the ~15 upstream Greenbone images |
 | `LAB_IP_APT_CACHER`          | `apt_cacher_host` (stack.yaml)       | apt proxy during provisioning |
-| `GREENBONE_ADMIN_PASSWORD`   | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Initial `gvmd` admin password, set on first deploy |
+| `GREENBONE_ADMIN_PASSWORD`   | OpenBao `kv/services/greenbone`, mandatory | Initial `gvmd` admin password, set on first deploy |
 | `LAB_IP_AUTHENTIK`           | env var (mandatory)                 | Authentik's LDAP outpost host (`:3389`), for per-user LDAP login |
 
 ## Provides

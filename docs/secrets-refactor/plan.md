@@ -9,6 +9,73 @@ The design, and every decision behind this plan, is in
 [secrets-design.md](secrets-design.md). Read it first. This plan does not
 re-argue it.
 
+## As executed (2026-09-28) -- read this first
+
+**Status: complete except plan step 15's live CI test, which waits on a
+`stable` → `main` promotion.** The full record, with every gate result, is
+the hand-back log in [README.md](README.md). Day-to-day operation is in
+`docs/reference/secrets-management.md`.
+
+Execution was done by Claude directly, not a local model: steps 01–16 were
+applied from the patches and gated. Production runs were done by the
+operator, because the harness classifier blocks them for Claude.
+
+| Part | Result |
+| --- | --- |
+| Steps 01–12 | Applied and gated. The step 12 dry-run passed once the OIDC-secret prerequisite existed |
+| Block A | Done. Deviations below |
+| Block B | Done, plus the breakglass AppRole (below) |
+| Block C | Covered by the B3 boundary check |
+| Block D | D1 reconcile (9/9 live logins), D2 import (30 entries / 129 fields), D3 parity (every field, 5 profiles), then steps 13–14 (freeze, default openbao). Post-cutover deploys were validated |
+| Step 15 | Applied on `task/retire-sops`; live only after `main` is promoted |
+| Step 16 | Applied |
+| Block E | Recovery test PASSED (`scripts/openbao-recovery-test.sh`) |
+| Block F | SOPS code paths removed (Claude); SOPS data files deleted (operator); tested with a live battery plus a 28-stack `--check` sweep |
+| Added | Secrets inventory on the dashboard (`metrics` AppRole, metadata only) |
+
+**Deviations from the plan as written** (all fixed in the repo):
+
+1. **A3:** `terragrunt apply` was missing before the first `provision.sh`
+   (the inventory is written by the apply). The plan text is fixed.
+2. **A8:** the kit pipeline lacked `pipefail`, so mismatched passphrases
+   produced an empty `kit.age`. The verify step caught it; the retry script
+   encrypts to a tmp file and verifies before copying.
+3. **B1:** OpenBao 2.x rejects API-created audit devices, so the audit
+   device is declared in `openbao.hcl` (deploy playbook) and
+   `configure-openbao.yml` only asserts it exists.
+4. **B4:** OpenBao ≥ 2.5.3 disables unauthenticated generate-root, so the
+   design §19 break-glass could not work. Added the `breakglass` AppRole
+   (generate-root-token only) and its credentials in the kit.
+   `bao operator generate-root -decode` also needs a token, so the drills
+   decode locally.
+5. **A9/B4:** the edge reconciler created the OIDC provider with
+   `grant_types: []`, which rejects every login. Patch 06 missed the 4th
+   per-stack table, `_oidc_grant_types`; it is now fixed.
+6. **Step 13:** the freeze hook also ran at pre-push and blocked the
+   legitimate pre-freeze commit, so it is now `stages: [pre-commit]`.
+   `validate.yml` runs PR checks only for PRs into `main`, so `sops-freeze`
+   first runs on the promotion PR.
+7. **Step 14's gate** used a regex `grep` that `${...}` breaks; it is now
+   `grep -F`.
+8. **Monitoring:** step 07's scrape target and dashboard needed a
+   `monitoring-stack` deploy, which the plan omitted. It has been done.
+9. **Block F** reached further than planned: the router scripts, agent and
+   Copilot instructions, `.env` `SOPS_AGE_KEY_FILE`, and the
+   `with-secrets-prod*` headers.
+
+**Still open:**
+
+- promotion to `main`, then the `netbox-populate` OIDC run and deletion of
+  the `SOPS_AGE_KEY` GitHub secret;
+- the recommended follow-ups (alerting, rotating secrets whose old values
+  sit in Git history), listed in [README.md](README.md#next-steps).
+
+Done since: the `task/retire-sops` PR into `stable` (PR #432), the
+`artifacts/` close-out, the reconciler `grant_types` default on create,
+and the tidy-ups.
+
+The steps below are the original plan, kept for the record.
+
 ## How the steps work
 
 Every code change is a pre-built patch in [patches/](patches/). Each patch

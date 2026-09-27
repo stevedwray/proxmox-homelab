@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Load secrets for one profile from OpenBao and exec a command with them.
 
-Replaces the SOPS decrypt step inside ./with-secrets and ./with-secrets-prod*
+Loads secrets from OpenBao for ./with-secrets and ./with-secrets-prod*
 when SECRETS_BACKEND=openbao. Standard library only (runs on the workstation
 and on the self-hosted CI runner).
 

@@ -43,8 +43,8 @@ proxmox-homelab/
 ├── scripts/                     # Local helper and validation scripts
 ├── terraform/
 │   ├── lxc/                     # Active Terraform + Ansible LXC pipeline
-│   ├── secrets.common.enc.yaml         # SOPS-encrypted infrastructure secrets
 │   └── terraform-providers/     # Local provider mirror/cache
+├── secrets/manifest.json        # Secret references (values live in OpenBao)
 ├── .env.template                # Local environment template
 ├── AGENTS.md                    # Codex workflow instructions
 └── CLAUDE.md                    # Claude workflow notes
@@ -104,8 +104,8 @@ stack-owned edge route tasks, see
 ## Secrets management
 
 Use `./with-secrets` for `pve-test-vm` work and `./with-secrets-prod` for `pve`.
-Secrets are managed through SOPS-backed files and wrapper scripts, not plaintext
-tracked files.
+Secret values live in OpenBao; the wrappers read them with read-only
+identities, and Git holds only references (`secrets/manifest.json`).
 
 See [`docs/reference/secrets-management.md`](./docs/reference/secrets-management.md)
 for the current workflow.

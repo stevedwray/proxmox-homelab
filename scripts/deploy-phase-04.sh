@@ -7,7 +7,7 @@
 # - Harbor with Trivy
 # - apt-cacher-ng accessible
 # - SDN zones configured
-# - Secrets in SOPS (terraform/secrets.common.enc.yaml)
+# - Secrets in OpenBao (loaded by ./with-secrets)
 
 set -euo pipefail
 
@@ -135,7 +135,7 @@ deploy_ansible() {
     return 1
   fi
 
-  # Run ansible-playbook with secrets from SOPS
+  # Run ansible-playbook with secrets from OpenBao
   if ! ./with-secrets ansible-playbook -i "terraform/lxc/stacks/${service}/inventory.yml" "$playbook_path"; then
     log_error "Ansible deployment failed for $service"
     return 1

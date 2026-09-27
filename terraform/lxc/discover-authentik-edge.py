@@ -510,7 +510,10 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
     # Deliberately narrow: only routes listed here get grant_types set in
     # the provider payload at all (see _oidc_provider_payload's comment in
     # reconcile-authentik-edge.py for why leaving it unset elsewhere is
-    # required, not just simpler).
+    # required, not just simpler). A route NOT listed here still gets
+    # ("authorization_code",) when the reconciler creates its provider
+    # (DEFAULT_OIDC_CREATE_GRANT_TYPES), so a new stack no longer needs an
+    # entry just to avoid Authentik's create-time grant_types: [] default.
     if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
         # Matches the common baseline already used by 6 of the other
         # providers in this Authentik instance. authorization_code is all
@@ -1233,7 +1236,7 @@ def _resolve_token(token_env: str) -> tuple[str | None, DiscoveryIssue | None]:
         code="AKD001",
         message=(
             f"missing Authentik token in environment variable {token_env}. "
-            "Run with ./with-secrets so SOPS-backed secrets are injected "
+            "Run with ./with-secrets so secrets from OpenBao are injected "
             "(example: ./with-secrets terraform/lxc/discover-authentik-edge.py --json)."
         ),
     )

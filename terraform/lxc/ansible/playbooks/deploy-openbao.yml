@@ -336,6 +336,64 @@
             [Install]
             WantedBy=timers.target
 
+    # ---- Secrets inventory for the dashboard (metadata only) -------------
+    # AppRole "metrics" can list/read kv/metadata/* only -- entry names,
+    # versions and timestamps, never values. Field counts come from the
+    # repo manifest (field NAMES only). Credentials placed by the operator.
+    - name: Create inventory exporter directory
+      ansible.builtin.file:
+        path: /etc/openbao-metrics
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Install secrets manifest (names only) for field counts and drift
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../secrets/manifest.json"
+        dest: /etc/openbao-metrics/manifest.json
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Install inventory exporter
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/openbao/openbao_inventory.py"
+        dest: /usr/local/sbin/openbao_inventory.py
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Write inventory exporter service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: "{{ item.content }}"
+      loop:
+        - name: openbao-inventory.service
+          content: |
+            [Unit]
+            Description=OpenBao secrets inventory (metadata only) for Grafana
+            After=openbao.service network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/python3 /usr/local/sbin/openbao_inventory.py
+        - name: openbao-inventory.timer
+          content: |
+            [Unit]
+            Description=Refresh the OpenBao secrets inventory every 15 minutes
+
+            [Timer]
+            OnCalendar=*:0/15
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+
     - name: Reload systemd units
       ansible.builtin.systemd:
         daemon_reload: true
@@ -348,6 +406,7 @@
       loop:
         - openbao-tls-renew.timer
         - openbao-snapshot-nightly.timer
+        - openbao-inventory.timer
 
     # ---- Start only when the seal key is present --------------------------
     - name: Check for the seal key (bind-mounted from the USB on pve)

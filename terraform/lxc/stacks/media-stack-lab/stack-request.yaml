@@ -10,7 +10,7 @@
 #     never included one. Modeled on stack-request.example.yaml's
 #     minecraft-stack exemplar (lxc_base + docker_base roles, write compose,
 #     validate, up -d, wait_for) plus deploy-netbox-stack.yml's secrets-.env
-#     pattern (a stack-local .env file templated from SOPS-backed env vars,
+#     pattern (a stack-local .env file templated from OpenBao-backed env vars,
 #     no_log: true, mode 0600 -- not a literal password in any tracked file).
 #   - DB_PASSWORD renamed to MEDIA_STACK_LAB_DB_PASSWORD throughout (compose
 #     requirements and playbook) -- every other stack in this repo namespaces
@@ -101,7 +101,7 @@ compose_requirements: |
   top-level volumes: block declaring jellyfin-config, model-cache,
   immich-db-data as named Docker volumes.
 
-  MEDIA_STACK_LAB_DB_PASSWORD must be a real SOPS-backed secret referenced
+  MEDIA_STACK_LAB_DB_PASSWORD must be a real OpenBao-backed secret referenced
   as ${MEDIA_STACK_LAB_DB_PASSWORD} (env-file substitution -- the deploy
   playbook templates a stack-local .env file from this env var, matching
   this repo's existing with-secrets/deploy-netbox-stack.yml pattern) --
@@ -127,7 +127,7 @@ contract_facts: |
   - OAuth/SSO configured in media-lab-04/05/06, not at first boot
   - Watch history brought across in media-lab-07, not at first boot
   - Secret: MEDIA_STACK_LAB_DB_PASSWORD must exist in
-    terraform/secrets.common.enc.yaml (SOPS) before first real deploy --
+    OpenBao (kv/services/media-stack-lab) before first real deploy --
     not added by this step, this step only references the env var name
   - Implementation files: terraform/lxc/stacks/media-stack-lab/
     stack.yaml, terragrunt.hcl, docker-compose.yml,

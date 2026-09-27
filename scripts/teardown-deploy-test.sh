@@ -144,7 +144,7 @@ Usage:
 Phases:
   source-preflight    Run non-destructive source-only validation.
   live-preflight      Run non-destructive live read-only validation.
-  external-preflight  Verify production SOPS secrets and external system connectivity (pve only).
+  external-preflight  Verify production secrets and external system connectivity (pve only).
   approval-preflight  Run clean-tree source + live preflight under one stamp.
   preflight           Backwards-compatible alias for source-preflight + live-preflight.
   plan                Show inventory-derived deploy/destroy stack plans.

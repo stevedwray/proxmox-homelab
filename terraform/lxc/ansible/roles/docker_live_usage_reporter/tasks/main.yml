@@ -31,12 +31,12 @@
 # every gap-list host (see defaults/main.yml's comment for why this
 # can't be the "generate randomly on first run" pattern
 # es_findings_ingest uses). Bootstrapped idempotently every run against
-# the SOPS-sourced password, not gated behind a "does the local
+# the OpenBao-sourced password, not gated behind a "does the local
 # credential file already exist" check the way es_findings_ingest's
 # role is, since there's no local secret generation step to skip here.
 # ---------------------------------------------------------------------
 
-- name: Read the DOCKER_LIVE_USAGE_ES_PASSWORD SOPS secret from the environment
+- name: Read the DOCKER_LIVE_USAGE_ES_PASSWORD OpenBao secret from the environment
   ansible.builtin.set_fact:
     docker_live_usage_reporter_es_password: "{{ lookup('env', 'DOCKER_LIVE_USAGE_ES_PASSWORD') | mandatory('DOCKER_LIVE_USAGE_ES_PASSWORD env var not set -- see terraform/secrets.common.enc.yaml') }}"
   no_log: true

@@ -98,6 +98,6 @@ es_findings_ingest_harbor_cleanup_grace_days: 7
 # Same HTTPS/9443 + X-API-Key convention as the existing PortainerClient in
 # terraform/lxc/stacks/netbox-stack/integrations/discover.py -- reused, not
 # reinvented. PORTAINER_TOKEN itself is read directly from the environment
-# in tasks/main.yml (already a SOPS secret, terraform/secrets.common.enc.yaml),
+# in tasks/main.yml (already an OpenBao secret, kv/services/opensearch),
 # not a role default, since there's nothing role-specific about its value.
 es_findings_ingest_portainer_url: "https://{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var not set') }}:9443"

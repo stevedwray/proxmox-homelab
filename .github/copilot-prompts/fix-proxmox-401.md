@@ -14,8 +14,8 @@ It is currently failing with `GET /nodes → 401: Authentication failed`.
 
 Credentials are managed through `with-secrets`:
 - `.env` and `.env.pve-test` hold **non-secret** config (hostnames, token IDs, node names)
-- `terraform/secrets.enc.yaml` holds **SOPS-encrypted secrets** (token secrets, passwords)
-- `with-secrets` loads both and injects them into the subprocess env; SOPS values override
+- Secret values (token secrets, passwords) live in **OpenBao** (`hosts/<node>` holds each node's Proxmox tokens; see `secrets/manifest.json`)
+- `with-secrets` loads both and injects them into the subprocess env; OpenBao values override
 
 The Ansible playbook (`deploy-netbox-stack.yml`) resolves the Proxmox token ID with this
 fallback chain: `PROXMOX_READONLY_TOKEN_ID` → `PROXMOX_TOKEN_ID` → `TF_VAR_pm_api_token_id`.
@@ -75,7 +75,7 @@ Based on Steps 1–3, choose the correct path:
 ### Path A: Token exists on Proxmox but ID/secret are mismatched
 
 If `automation@pve!terraform` exists in the token list (Step 2) but the curl test (Step 3)
-still returns 401, the SOPS secret is stale. Regenerate it:
+still returns 401, the secret stored in OpenBao is stale. Regenerate it:
 
 ```bash
 # Regenerate the token on the Proxmox node and capture the new secret
@@ -86,20 +86,28 @@ ssh root@pve-test.gibbsgreatly.xyz \
 
 Capture the `value` field from the JSON output — that is the new token secret.
 
-Update the SOPS file with the new secret:
+Store the new secret in OpenBao:
+Agents cannot write secrets (read-only deploy identities). Hand the operator
+this exact command -- it prompts for the value(s) and needs their Authentik login:
 ```bash
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-  sops --set '["TF_VAR_pm_api_token_secret"] "PASTE_NEW_SECRET_HERE"' \
-  terraform/secrets.enc.yaml
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py hosts/<node> TF_VAR_pm_api_token_secret
+unset BAO_TOKEN
 ```
+(`<node>` = the PVE_ENV being fixed, e.g. `pve-test`; see docs/reference/secrets-management.md.)
 
 If `PROXMOX_READONLY_TOKEN_SECRET` is a separate key from `TF_VAR_pm_api_token_secret`,
 update it too:
+Agents cannot write secrets (read-only deploy identities). Hand the operator
+this exact command -- it prompts for the value(s) and needs their Authentik login:
 ```bash
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-  sops --set '["PROXMOX_READONLY_TOKEN_SECRET"] "PASTE_NEW_SECRET_HERE"' \
-  terraform/secrets.enc.yaml
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py hosts/<node> PROXMOX_READONLY_TOKEN_SECRET
+unset BAO_TOKEN
 ```
+(`<node>` = the PVE_ENV being fixed, e.g. `pve-test`; see docs/reference/secrets-management.md.)
 
 ### Path B: Token does not exist on Proxmox
 
@@ -118,12 +126,16 @@ Capture the `value` field. Then:
    PROXMOX_READONLY_TOKEN_ID=automation@pve!terraform-readonly
    ```
 
-2. Update SOPS with the secret:
+2. Store the secret in OpenBao:
+   Agents cannot write secrets (read-only deploy identities). Hand the operator
+   this exact command -- it prompts for the value(s) and needs their Authentik login:
    ```bash
-   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-     sops --set '["PROXMOX_READONLY_TOKEN_SECRET"] "PASTE_NEW_SECRET_HERE"' \
-     terraform/secrets.enc.yaml
+   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+   LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py hosts/<node> PROXMOX_READONLY_TOKEN_SECRET
+   unset BAO_TOKEN
    ```
+   (`<node>` = the PVE_ENV being fixed, e.g. `pve-test`; see docs/reference/secrets-management.md.)
 
 ### Path C: PROXMOX_READONLY_TOKEN_ID is missing, token exists and secret is correct
 
@@ -194,7 +206,7 @@ Write `docs/netbox-stack/artifacts/proxmox-401-fix.md` with these sections:
 (what was actually wrong)
 
 ## Changes made
-(files edited, tokens created/rotated, SOPS keys updated — no secret values)
+(files edited, tokens created/rotated, OpenBao fields updated by the operator — no secret values)
 
 ## Provision result
 (ok/changed/failed counts from ansible run)

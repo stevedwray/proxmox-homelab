@@ -190,7 +190,7 @@
 
     # ---------------------------------------------------------------
     # Portainer live-usage credential (Phase 13,
-    # docs/threat-vuln-platform/plan.md) -- a static SOPS secret already
+    # docs/threat-vuln-platform/plan.md) -- a static OpenBao secret already
     # used elsewhere (netbox-stack's discovery), not a per-role-minted
     # robot credential like the Harbor one above, so no create-API-call
     # step is needed: just write whatever's in the environment. Always

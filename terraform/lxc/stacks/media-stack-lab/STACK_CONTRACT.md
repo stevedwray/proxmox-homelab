@@ -31,9 +31,9 @@ not a zone).
 
 | Input | Source | Notes |
 |-------|--------|-------|
-| `MEDIA_STACK_LAB_DB_PASSWORD` | SOPS `terraform/secrets.common.enc.yaml` | Added 2026-09-04 via `sops --set` (random 48-char hex). Immich's Postgres password. |
-| `IMMICH_OAUTH_CLIENT_ID` / `IMMICH_OAUTH_CLIENT_SECRET` | SOPS | Added by `media-lab-04`, consumed by `media-lab-05`'s `immich-config.json.j2` template. Not present yet. |
-| `JELLYFIN_OAUTH_CLIENT_ID` / `JELLYFIN_OAUTH_CLIENT_SECRET` | SOPS | Added by `media-lab-04`, typed into Jellyfin's Authentik SSO plugin manually in `media-lab-06`. Not present yet. |
+| `MEDIA_STACK_LAB_DB_PASSWORD` | OpenBao `kv/services/media-stack-lab` | Added 2026-09-04 (random 48-char hex). Immich's Postgres password. |
+| `IMMICH_OAUTH_CLIENT_ID` / `IMMICH_OAUTH_CLIENT_SECRET` | Secret in OpenBao `kv/services/media-stack-lab`; the client ID is not secret | Added by `media-lab-04`, consumed by `media-lab-05`'s `immich-config.json.j2` template. Not present yet. |
+| `JELLYFIN_OAUTH_CLIENT_ID` / `JELLYFIN_OAUTH_CLIENT_SECRET` | Secret in OpenBao `kv/services/media-stack-lab`; the client ID is not secret | Added by `media-lab-04`, typed into Jellyfin's Authentik SSO plugin manually in `media-lab-06`. Not present yet. |
 | `LAB_DOMAIN` | `.env` | Already exists — used for Jellyfin's `JELLYFIN_PublishedServerUrl` and both Traefik routes. |
 | `IMMICH_VERSION` | `.env` (optional) | Defaults to `release` (Immich's own rolling-stable tag) if unset. |
 | NFS: `/nas-media/video/movies`, `/nas-media/video/tv`, `/nas-media/music`, `/nas-media/immich-photos` | NAS `192.168.1.3` | Manual, not IaC-managed — same gap as legacy `media-stack`'s own NFS mounts. Must already be mounted on the LXC before first `docker compose up`. |
@@ -77,7 +77,7 @@ Nothing yet. A leaf stack.
   `/config/jellyfin` bind mount (`media-lab-07`) — starting this stack
   fresh before that copy runs means an empty library with no users.
 - `MEDIA_STACK_LAB_DB_PASSWORD` must never be written literally into
-  `docker-compose.yml`, `stack.yaml`, or this file — SOPS only.
+  `docker-compose.yml`, `stack.yaml`, or this file — OpenBao only.
 - Legacy `media-stack` (VMID 102) is never stopped, restarted, or
   written to by anything in this stack's deploy path.
 
