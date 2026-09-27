@@ -150,6 +150,40 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   `5b501751161a929fc5abdaa2d69b219a20d80e1f22cf55cfb15ffe404491f69c`, the
   same locally and on USB B. `/dev/shm/bao-init.json` shredded. The initial
   root token is held only in the operator's shell, for block B.
+- **After A8:** the operator stored the kit in Bitwarden. USB B is unplugged
+  (checked: no SanDisk device on `pve`).
+- **Prerequisite done (operator, `artifacts/prereq-oidc-secret.sh`, via
+  `sops set --value-stdin`).** Commit `321c5549` adds
+  `OPENBAO_OIDC_CLIENT_SECRET` (64 chars). The step 12 import-dry-run gate now
+  passes: `dry-run OK: 30 entries, 129 fields` ✓.
+- **A9 dry run** (`reconcile-edge.py`, no `--apply`, run by Claude,
+  read-only): Authentik has 2 `create` actions (the openbao-stack app and
+  provider), 49 noop, and 2 `delete-report` (nextcloud-stack, report-only:
+  the known EGR211 drift behind the overall `failed`). The Technitium diff
+  adds only `openbao` → 192.168.30.10.
+- **USB A replug incident (operator moved it to another port).** OpenBao
+  kept running unsealed (the key is only read at start). But the host mount
+  `/mnt/openbao-seal` dropped: the fstab entry mounts at boot, not on
+  hotplug. The container's bind mount went stale (`Input/output error`), and
+  the device came back as `sdd1` instead of `sdg1`. The next OpenBao restart
+  would have stayed sealed. Fixed with `mount /mnt/openbao-seal` and
+  `pct reboot 20016`: the key is back on the host (100999:100991) and in the
+  container (999:991), and after the restart `"sealed":false`. **This also
+  satisfies A10's "LXC restart unseals unattended" check.**
+  **Runbook rule:** after any replug of USB A, run
+  `mount /mnt/openbao-seal && pct reboot 20016` on `pve`, and confirm
+  `sealed=false`. A full `pve` reboot self-heals (the fstab entry mounts by label).
+- **A9 done (operator run).** `reconcile-edge.py --apply`: 2 creates
+  (openbao-stack app, and provider id 28), 1 update (embedded outpost
+  "missing provider links", which added provider 28 in the same way as the 9
+  existing OAuth2 providers, the reconciler's normal convention), 2
+  nextcloud `delete-report` (report-only, EGR211). proxy-stack and
+  technitium-stack `failed=0`, smoke tests passed. Verified: `dig
+  openbao.lab.gibbsgreatly.xyz` → 192.168.30.10; `/ui/` 200 through Traefik
+  (backend TLS verified against the homelab CA); `/v1/sys/health` through
+  the route shows initialized/unsealed; the Authentik discovery issuer is
+  `https://authentik.lab.gibbsgreatly.xyz/application/o/edge-openbao-stack-openbao/`;
+  the other routes are unchanged from the baseline.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
