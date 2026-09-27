@@ -1352,7 +1352,16 @@ The backup model consists of:
 
 Snapshots and seal keys must not be stored together as a single uncontrolled backup artifact.
 
-A snapshot is useless without the seal key, so it can go to ordinary backup storage. It must be copied off `pve`; the destination is fixed in the implementation plan.
+A snapshot is useless without the seal key, so it can go to ordinary backup storage. It must be copied off `pve`.
+
+**Destination: the NAS at `nas.gibbsgreatly.xyz`** (always on; not gazaar, which is usually powered off). It is referenced by FQDN, per the repo's DNS-only addressing convention.
+
+- The OpenBao LXC writes through a dedicated share user that can write only to the snapshot folder.
+- That share credential lives only on the OpenBao LXC, and is **not** stored in OpenBao. A restore must never depend on OpenBao to fetch its own backup.
+- The firewall must allow the OpenBao LXC's zone to reach the NAS. The plan verifies this path.
+- `pve-tiny` was considered and rejected as the destination. It is a production Proxmox node inside the same automation blast radius, and copying there would give the OpenBao LXC a login on it.
+
+The NAS is on the same site as `pve`, so this is not off-site protection. Site-level loss is covered by USB B and the Bitwarden copy of the bootstrap kit. Snapshots can be regenerated as long as OpenBao's data survives somewhere, but the seal key cannot.
 
 ## 27.0 When snapshots are taken
 
