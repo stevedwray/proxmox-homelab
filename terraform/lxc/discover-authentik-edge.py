@@ -539,6 +539,13 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # authorization-code flow (with PKCE where supported). Match the
         # common provider baseline for consistency.
         return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) == ("openbao-stack", "openbao"):
+        # Fourth occurrence of the same create-time grant_types: [] bug,
+        # found live 2026-09-28 (Authentik log: "Invalid grant_type for
+        # provider", grant_type=authorization_code). OpenBao's UI and
+        # `bao login -method=oidc` use only the authorization-code flow
+        # (with PKCE), so nothing broader is granted.
+        return ("authorization_code",)
     return ()
 
 

@@ -214,6 +214,20 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   import) and is denied 3 prod host entries (403); each deploy-<prod-node>
   reads 26 and is denied 4; every write attempt is 403. That proves §31
   "Deployment isolation" and "Host isolation".
+- **B4 browser login failed:** "The callback from the provider did not
+  supply all of the required parameters". Root cause, from Authentik's
+  server log: `Invalid grant_type for provider: authorization_code`.
+  Provider 28 was created with `grant_types: []`. Authentik's API defaults
+  an omitted `grant_types` to empty on create, and
+  `reconcile-authentik-edge.py` sets it only for routes listed in
+  `discover-authentik-edge.py`'s `_oidc_grant_types` table: a fourth
+  per-stack OIDC table, which patch 06 missed. This is the **fourth
+  recurrence** of the same bug (opensearch, wazuh, jellyfin/immich, now
+  openbao). Fix: an openbao entry `("authorization_code",)`; edge tests OK;
+  the reconcile dry-run now plans exactly 1 `update` (the openbao provider),
+  with no Traefik or DNS change. Follow-up worth doing: default
+  `grant_types` on *create* for every OIDC route, so a new stack can't hit
+  this a fifth time.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
