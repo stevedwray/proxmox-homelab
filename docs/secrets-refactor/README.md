@@ -200,6 +200,20 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   deploy-openbao.yml writes, with the configure task replaced by an assertion
   that `file/` exists. Needs an openbao-stack re-provision (the config change
   restarts OpenBao, which auto-unseals), then a configure re-run.
+- **B1 done.** openbao-stack re-provisioned (`failed=0`); OpenBao restarted
+  with the declarative audit block and came back `"sealed":false`;
+  `bao audit list` shows `file/`. `configure-openbao.yml` ran with
+  `failed=0`, and a re-run gave `changed=0` (idempotent). Auth methods:
+  `approle/`, `jwt-github/`, `oidc/`.
+- **B2/B3 done (`artifacts/b2-b3-identities.sh`).** 8 files in
+  `~/.config/openbao/`, all 0600. The snapshot identity is installed on the
+  LXC. The first snapshot, `openbao-20260927T193524Z-postwrite.snap` (40473
+  bytes), is on the NAS, and the metric
+  `openbao_snapshot_last_run_success{kind="postwrite"} 1`. Full boundary
+  check, run by Claude, **OK**: deploy-dev reads 27 entries (404 before
+  import) and is denied 3 prod host entries (403); each deploy-<prod-node>
+  reads 26 and is denied 4; every write attempt is 403. That proves §31
+  "Deployment isolation" and "Host isolation".
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
