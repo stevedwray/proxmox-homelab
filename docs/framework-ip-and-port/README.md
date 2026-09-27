@@ -1,6 +1,6 @@
 # framework-ip-and-port (planning workspace)
 
-Status: **planned, not started** (2026-09-27). Branch
+Status: **in progress** (Phase A, execution-order step 1; 2026-09-27). Branch
 `task/framework-dns-only-plan`.
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
@@ -144,4 +144,43 @@ one place that lists them all.
 Each step's executor appends an entry here: the step id, the edit made, and
 each gate's actual result.
 
-_(none yet)_
+### fwdns-00 pre-flight (operator-run, 2026-09-27)
+
+- Item 2, router snapshot: refreshed on the workstation. Exactly six rules
+  have `dst-address=192.168.1.8`: `*55` (ai_seg 8080,11434), `*90` (cse_seg
+  8080), `*36` (pentest 11434), `*37` (pentest 8082), `*45` (pentest 8080)
+  and `*48` (pentest 22). No extra rules and no gazaar-specific rules. The
+  pasted comment on `*55` read `ai_segto` (no space); **check the exact
+  bytes before the fwdns-08 apply**, because the playbook matches comments
+  exactly. Static DNS: `framework` and `gazaar` are both A `192.168.1.8`,
+  TTL 1d.
+- Item 3, RouterOS: **7.24.2** (was 7.23.1 at the 2026-08-13 snapshot).
+- Item 4, resolution from consumers: **not yet run**. The workstation's
+  `~/.ssh/config` line 44 contains a non-breaking space, so ssh refused to
+  run.
+- Item 6, Portainer: endpoint Id 9 (`framework.gibbsgreatly.xyz`) URL is
+  `tcp://192.168.1.8:9001`. **Change it to the FQDN before Phase B.**
+
+### fwdns-01-env-fqdn
+
+Added the `LAB_FQDN_FRAMEWORK` line after `LAB_FQDN_HARBOR` in `.env` and
+`.env.template`. Gates: env-value `ok`; template-has-var `1`.
+
+### fwdns-02-edge-manifests
+
+llm-gpu and comfyui edge.yaml backends now use `${LAB_FQDN_FRAMEWORK}`.
+Gates: dry-run-render gives exactly
+`http://framework.gibbsgreatly.xyz:8090` and `:8188`; edge-manifest-tests OK.
+
+### fwdns-03-monitoring-scrape
+
+Both scrape targets use `LAB_FQDN_FRAMEWORK`. Gates: syntax-check exit 0;
+no-ip-var `0`; fqdn-var `2`.
+
+### fwdns-07-network-intent
+
+ai_seg policy is now `to: framework.gibbsgreatly.xyz`, `ports: [8080,
+8085]` in both files. Deleted the pentest_seg → 192.168.1.8 entries
+(9 lines in pve.yaml, 5 in pve-test-vm.yaml). Gates: ports
+`[[8080, 8085], [8080, 8085]]`; yaml parses; only `pve.yaml:712 ip:
+192.168.1.8` left; netbox integration tests OK; zone-members tests OK.

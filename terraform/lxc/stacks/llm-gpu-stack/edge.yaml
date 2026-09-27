@@ -15,7 +15,7 @@ spec:
         # as an available dev backend (docs/framework-ubuntu/plan.md §5),
         # not the one the platform's public llm.${LAB_DOMAIN} route
         # should point at. Deliberate choice, not a copied-over default.
-        url: http://${LAB_IP_LLM_GPU}:8090
+        url: http://${LAB_FQDN_FRAMEWORK}:8090
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}

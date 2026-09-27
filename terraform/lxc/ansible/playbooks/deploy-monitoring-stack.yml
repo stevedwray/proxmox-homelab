@@ -217,7 +217,7 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:9100"]
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
                   labels: {stack: pentagi-stack}
@@ -242,7 +242,7 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:8080"]
                   labels: {stack: graylog-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:8083"]
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8083"]
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
                   labels: {stack: pentagi-stack}
