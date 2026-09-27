@@ -251,6 +251,13 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   sha256 `5b5aef7181b39edf2a4d2055ec32622ffe3bc0307b633e0f2d5e3b3f076e4d6a`
   is the same locally and on USB B. The operator updates the Bitwarden note
   and unplugs USB B.
+- **B5 done.** The initial root token was revoked (audit: `revoke-self`,
+  policies `['root']`, 2026-09-27T20:01:01Z, no error). There is no standing
+  root token. Admin access is via OIDC; break-glass is the breakglass
+  AppRole plus the recovery key.
+- **Block C** (read-path and boundary proof) was already satisfied by the
+  B3 boundary check (all roles OK, reads 404 before import). **Blocks A–C
+  complete.**
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).
