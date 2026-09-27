@@ -192,6 +192,14 @@ Steps 13–16 are cutover-time and deliberately not applied yet.
   the key re-mounted and the LXC rebooted: `active`, `"sealed":false`.
   Unattended unseal after an LXC restart was already shown in the replug
   incident. **Block A complete.**
+- **B1, first attempt:** `configure-openbao.yml` mounted `kv/` (KV v2), then
+  failed at "Enable file audit device" with HTTP 400. Cause: OpenBao 2.x
+  rejects API-created audit devices unless `unsafe_allow_api_audit_creation`
+  is set (documented in `configuration/index.mdx` at v2.7.0). Fix: a
+  declarative `audit "file" "file"` block in the `openbao.hcl` that
+  deploy-openbao.yml writes, with the configure task replaced by an assertion
+  that `file/` exists. Needs an openbao-stack re-provision (the config change
+  restarts OpenBao, which auto-unseals), then a configure re-run.
 - **A2/A3:** Claude Code's auto-mode classifier blocks production
   `provision.sh` runs, even with chat approval, so the operator runs them.
   The pve proxy-stack inventory targets `192.168.30.10` (checked).

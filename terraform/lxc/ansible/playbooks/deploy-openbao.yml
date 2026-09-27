@@ -264,6 +264,16 @@
             current_key_id = "{{ openbao_seal_key_id }}"
             current_key    = "file://{{ openbao_seal_key_path }}"
           }
+
+          # Declarative audit device. OpenBao refuses API-created audit
+          # devices unless unsafe_allow_api_audit_creation is set, so it is
+          # defined here instead (enabled on start and on SIGHUP).
+          audit "file" "file" {
+            description = "Homelab audit log (logrotate: /etc/logrotate.d/openbao)"
+            options {
+              file_path = "/var/log/openbao/audit.log"
+            }
+          }
       notify: Restart openbao
 
     - name: Write logrotate config for the OpenBao audit log

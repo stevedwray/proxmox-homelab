@@ -106,18 +106,16 @@
       changed_when: false
       no_log: true
 
-    - name: Enable file audit device
-      ansible.builtin.uri:
-        url: "{{ openbao_addr }}/v1/sys/audit/file"
-        method: PUT
-        ca_path: "{{ openbao_ca }}"
-        headers: { X-Vault-Token: "{{ openbao_token }}" }
-        body_format: json
-        body: { type: file, options: { file_path: /var/log/openbao/audit.log } }
-        status_code: [200, 204]
-      when: "'file/' not in openbao_audit.json.data"
-      changed_when: true
-      no_log: true
+    # The audit device itself is declared in openbao.hcl (deploy-openbao.yml):
+    # OpenBao rejects API-created audit devices by default
+    # (unsafe_allow_api_audit_creation = false). This only verifies it exists.
+    - name: Assert the declarative file audit device is enabled
+      ansible.builtin.assert:
+        that:
+          - "'file/' in openbao_audit.json.data"
+        fail_msg: >-
+          No file/ audit device. Re-run provision.sh --stack openbao-stack so
+          openbao.hcl carries the audit "file" "file" block, then re-run this.
 
     # ---- Auth methods -----------------------------------------------------
     - name: Read enabled auth methods
