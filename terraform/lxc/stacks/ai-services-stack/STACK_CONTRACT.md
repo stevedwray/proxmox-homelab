@@ -60,8 +60,8 @@ Needs two cross-zone rules beyond the zone's existing egress allowlist
 (which is scoped narrowly to `mcp-utility-stack`'s CVE/threat-intel API
 hosts — not sufficient here):
 
-- Egress: `ai_seg → framework:8080,11434` (`192.168.50.0/24 →
-  192.168.1.8`) so OpenWebUI can reach llamacpp-router/Ollama.
+- Egress: `ai_seg → framework:8080,8085` (`192.168.50.0/24 →
+  dst-address-list framework`, resolved from `framework.gibbsgreatly.xyz` by the router) so OpenWebUI can reach llama-server.
 - Ingress: `edge_seg → ai_seg:8081,8082` so Traefik can reach OpenWebUI and
   the SearXNG browser UI — the zone's generic `edge_seg →
   ai_seg:[80,443]` entry is not enough on its own, same pattern
@@ -75,7 +75,7 @@ hosts — not sufficient here):
 | Input | Source | Notes |
 |-------|--------|-------|
 | `LAB_FQDN_HARBOR` (falls back to `harbor.${LAB_DOMAIN}`) | env var, optional | Registry host — both app images and the SearXNG-settings-seed helper image are pulled through Harbor's proxy-cache, not directly from ghcr.io/Docker Hub. FQDN via Traefik/`edge_seg`, not `LAB_IP_HARBOR`'s raw `infra_seg` IP: `ai_seg` is a contained zone (like `pentest_seg`) with no direct route to `infra_seg` — confirmed live 2026-08-02, a raw-IP pull timed out. Reuses the same `ai_seg -> edge_seg:443` rule the LM Studio route needs |
-| `FRAMEWORK_HOST` (falls back to `framework.gibbsgreatly.xyz`) | env var, optional | framework's FQDN — OpenWebUI's llama.cpp/Ollama routes point here, not `LAB_IP_AI_SERVICES` (this stack's own address) or `host.docker.internal` (only valid same-host, which this LXC no longer is). Matches `deploy-pentagi-stack.yml`'s identical `pentagi_framework_host` pattern, the other contained zone reaching framework the same way |
+| `LAB_FQDN_FRAMEWORK` (falls back to `framework.gibbsgreatly.xyz`) | env var, optional | framework's FQDN — OpenWebUI's llama.cpp/Ollama routes point here, not `LAB_IP_AI_SERVICES` (this stack's own address) or `host.docker.internal` (only valid same-host, which this LXC no longer is). |
 | `LAB_DOMAIN` | env var (mandatory) | Public hostname base (`openwebui.${LAB_DOMAIN}`) |
 | `LAB_FQDN_AUTHENTIK_INTERNAL` (falls back to `authentik-int.${LAB_DOMAIN}`) | env var, optional | OIDC discovery URL — deliberately the step-ca-issued **internal** direct-TLS endpoint (`mgmt_seg`), not the public `authentik.${LAB_DOMAIN}` route. That route's cert is Let's Encrypt staging on `pve-test-vm` (untrusted by design), which breaks `authlib`'s backend-side discovery fetch even though a human can click through it in a browser. See `docs/design/lessons-learned.md`'s Authentik section. Needs its own `ai_seg -> 192.168.20.110(Authentik):443` firewall rule — the first cross-zone rule into `mgmt_seg` from a contained zone. |
 | `OPENWEBUI_OIDC_CLIENT_SECRET` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Authentik app `edge-ai-services-stack-openwebui`, reused as-is — public hostname doesn't change, only its backend IP |
@@ -130,8 +130,8 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
 - **`LAB_IP_AI_SERVICES` names this stack's own `ai_seg` address, not
   framework's.** Before 2026-08-02 this variable held framework's flat-LAN
   IP (`192.168.1.8`) — reusing it for OpenWebUI's backend routes would
-  point OpenWebUI at itself. Use `FRAMEWORK_HOST`/`framework.gibbsgreatly.xyz`
-  (FQDN, not `LAB_IP_FRAMEWORK`'s raw IP) for anything that needs to reach
+  point OpenWebUI at itself. Use `LAB_FQDN_FRAMEWORK`/`framework.gibbsgreatly.xyz`
+  (FQDN, never an IP) for anything that needs to reach
   framework's own services.
 - **The llama.cpp router enforces no authentication on `:8080`** (checked
   live 2026-08-02 — a request with no key and a request with a

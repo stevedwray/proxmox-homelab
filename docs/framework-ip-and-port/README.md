@@ -362,3 +362,67 @@ value.
   them now that the context is 131072.
 - **nextcloud-stack Authentik drift (EGR211).** Its route needs no
   Authentik objects, but some exist. Unrelated to this plan.
+
+### Incident: post-commit hook redeployed mcp-utility against `pve`, 2026-09-27
+
+Committing `9603847d` triggered the untracked `.git/hooks/post-commit`,
+which runs `./with-secrets-prod scripts/provision.sh --stack
+mcp-utility-stack` in the background. That targets **pve**, but the stack
+has lived on pve-tiny since the AI-stack move. It was not blocked: a
+leftover exported `TASK_APPROVAL` (`fwllm-06-07-monitoring`) satisfied the
+wrapper. The stale `terraform/lxc/environments/pve/mcp-utility-stack/`
+inventory still points at `192.168.50.10`, so the run hit the real LXC and
+copied at least one file (`cve-mcp-server` `Dockerfile`, `changed`).
+
+Remediation:
+- `unset TASK_APPROVAL`; approvals now go inline per command
+  (`TASK_APPROVAL=... ./with-secrets-prod-tiny ...`).
+- Hook line 41 -> `./with-secrets-prod-tiny`, backup at
+  `post-commit.bak`. The hook stays default-deny without an approval.
+- `TASK_APPROVAL=mcp-utility-restore-after-hook ./with-secrets-prod-tiny
+  scripts/provision.sh --stack mcp-utility-stack`: `failed=0`. All three
+  containers up; reindex `changed: 1, failed: []`.
+
+The `Timeout when waiting for 192.168.20.11:443` fatal is a pre-existing
+ignored task (`ignored=1`) in every ai-services/mcp-utility deploy.
+Follow-up: remove the stale `environments/pve/mcp-utility-stack/`
+inventory.
+
+### fwdns-05-ai-services-var
+
+Replaced the `ai_services_framework_host` block with the plan's replacement
+block (`LAB_FQDN_FRAMEWORK`), and made the four STACK_CONTRACT.md
+replacements (each matched once). Gates: syntax-check exit 0; no-old-var
+`0` / `0`; only the historical "before 2026-08-02" line (132) keeps the IP.
+No redeploy: the resolved value is unchanged.
+
+### fwdns-10-remove-pentagi-harness
+
+`git rm -r scripts/pentagi-test-harness` (4 files). Gates: gone; no-code-refs
+clean.
+
+### fwdns-11-retire-ip-vars-and-comments
+
+`.env` drops `LAB_IP_LLM_GPU`/`LAB_IP_COMFYUI`/`FRAMEWORK_HOST_IP`, and
+`LAB_IP_FRAMEWORK` gets the "read ONLY by mikrotik-dns-framework.yml"
+comment. `.env.template` drops those plus `TF_VAR_lab_ip_llm_gpu`/
+`TF_VAR_lab_ip_comfyui` (both variables default to `""` in `variables.tf`,
+so Terraform is unaffected) and gains `LAB_IP_FRAMEWORK` after
+`LAB_FQDN_FRAMEWORK`. The two usage comments now use `-i
+"framework.gibbsgreatly.xyz,"`. Gates: vars-gone clean; env-sources ok;
+edge-still-renders shows both urls on `framework.gibbsgreatly.xyz` (`llm`
+on `:8080` since fwllm-05).
+
+### fwdns-12-final-audit
+
+`git grep -lE '192\.168\.1\.8([^0-9]|$)' -- ':!docs' | sort` returns exactly
+the expected set:
+- `.env`, `.env.template`
+- `ansible/00-initial-setup/mikrotik-firewall-pentagi-to-ai-services-searxng.yml`
+- `router/config/current-config.json`
+- `terraform/lxc/ansible/roles/gvm_findings_ingest/files/assets/ip_to_stack.json`
+- `terraform/lxc/network/pve.yaml`
+- `terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md`
+- `terraform/lxc/stacks/netbox-stack/integrations/tests/test_populate_static_hosts.py`
+
+Phase A (DNS-only) is complete.

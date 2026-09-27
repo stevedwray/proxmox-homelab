@@ -98,14 +98,12 @@
     # reaches llamacpp-router/ollama across a real ai_seg -> framework
     # subnet hop, not a same-host Docker gateway -- see plan.md Step 3 and
     # the ai_seg -> framework:8080,11434 egress rule it requires.
-    # FQDN, not LAB_IP_FRAMEWORK's raw IP -- matches the established
-    # precedent for the other contained zone reaching framework the same
-    # way: deploy-pentagi-stack.yml's pentagi_framework_host, same
-    # FRAMEWORK_HOST env var / framework.gibbsgreatly.xyz default, same
-    # :8080/:11434 ports. DNS resolution from containers on this LXC is
-    # already proven live (Harbor's own hostname pull succeeded the same
-    # way during this deployment).
-    ai_services_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
+    # FQDN, never an IP -- LAB_FQDN_FRAMEWORK is the platform-wide name for
+    # the Framework Desktop (docs/framework-ip-and-port/plan.md). DNS
+    # resolution from containers on this LXC is already proven live
+    # (Harbor's own hostname pull succeeded the same way during this
+    # deployment).
+    ai_services_framework_host: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}"
     # Ollama/Laguna is no longer in active use on this platform (operator,
     # 2026-09-22: Nathanw/llama.cpp has proven better performance and
     # reliability here) -- default model switched from Laguna's Ollama tag
