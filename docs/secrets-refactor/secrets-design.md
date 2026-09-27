@@ -283,9 +283,12 @@ This design does not prevent additional OpenBao nodes from being introduced late
 ## 6.1 Placement and network dependencies
 
 - **Host:** `pve`. The USB seal key must be physically attached to the host that runs the LXC.
-- **Access path:** clients connect to the OpenBao HTTPS listener directly. It must **not** be routed through Traefik or Authentik forward-auth. Otherwise a Traefik or Authentik outage would block the secrets reads needed to redeploy Traefik or Authentik.
-- **Addressing:** `BAO_ADDR` must work by IP as well as by FQDN, so that a Technitium outage does not block secret reads. Clients pin the CA that issued the listener certificate.
-- **TLS certificate:** issued by step-ca, with renewal that does not depend on any secret stored in OpenBao. The exact issuance mechanism will be defined in the implementation plan.
+- **Zone and address:** `mgmt_seg`, `192.168.20.16`, VMID `20016`, alongside step-ca and Authentik. This was checked unused on 2026-09-28. `mgmt_seg`, `edge_seg` and `build_seg` have no default-deny rules on the MikroTik, and LAN → `mgmt_seg` already works from the workstation, so no new firewall rules are expected. The plan's gates confirm each path.
+- **API path (machines):** `with-secrets`, CI and the snapshot job connect to the OpenBao HTTPS listener **directly, by IP** (`https://192.168.20.16:8200`, from `LAB_IP_OPENBAO`). They pin the homelab root CA (`certs/homelab-root.crt`). The API path never goes through Traefik, Authentik or Technitium, so an outage of any of them cannot block the secret reads needed to redeploy it.
+- **UI path (humans):** `https://openbao.lab.gibbsgreatly.xyz` goes through Traefik, using an EdgeManifest route with `auth.mode: oidc`. The existing edge reconciler creates the Authentik OIDC provider. Traefik reaches the backend over HTTPS, and verifies the backend certificate against the homelab root CA. This needs a one-line Traefik static-config change: a global `serversTransport.rootCAs` pointing at the `combined-ca.crt` bundle Traefik already builds. If Traefik is down, only the UI is down.
+- **OIDC discovery:** OpenBao validates the issuer, so it must use Authentik's **public** URL (`https://authentik.lab.gibbsgreatly.xyz/application/o/edge-openbao-stack-openbao/`), the same one browsers see. That is the same pattern Harbor uses.
+- **TLS certificate:** issued by step-ca with SANs for the IP and the UI FQDN, following the same `step ca certificate` pattern as Authentik's direct-TLS listener. Renewal uses `step ca renew`, which authenticates with the existing certificate, so the step-ca provisioner password is used only at deploy time and is deleted from the LXC afterwards.
+- **Install:** OpenBao's pinned upstream `.deb` from GitHub (`openbao_2.7.0_linux_amd64.deb`), running as a native systemd service, as step-ca is. There is no Docker and no Harbor dependency, so rebuilding OpenBao never waits on Harbor.
 
 Every dependency OpenBao needs in order to start must either avoid OpenBao-held secrets or be covered by the bootstrap kit (§9.1).
 
@@ -348,7 +351,7 @@ running OpenBao
 
 The USB device is mounted by the Proxmox host (`pve`), not managed directly by OpenBao.
 
-The key reaches the OpenBao LXC through a **host bind mount** (`mpN: /host/path,mp=/container/path`) that exposes only the key file's directory, read-only. It is never copied onto the container's own rootfs or volumes. Implementation notes:
+The key reaches the OpenBao LXC through a **host bind mount** that exposes only the key file's directory, read-only: the host's `/mnt/openbao-seal` appears in the LXC at `/srv/openbao-seal`. It is mounted under `/srv`, not `/etc/openbao`, because the package's `postinst` recursively `chown`s `/etc/openbao`, and would fail on a read-only mount. It is never copied onto the container's own rootfs or volumes. Implementation notes:
 
 - A bind mount into an LXC can only be configured as `root@pam` over SSH (`pct set`), not through an API token.
 - In an unprivileged LXC, the key file must be readable by the container's mapped UID (subuid 100000 + the OpenBao service UID), not by host root.
@@ -496,7 +499,7 @@ the distinction becomes OpenBao path structure.
 
 The secrets engine is **KV version 2**, mounted at `kv/`. KV v2 keeps a version history for every entry. That turns recovery from a bad rotation into an explicit `bao kv rollback`, instead of the Git archaeology the September 2026 Graylog incidents required. KV v2's check-and-set option also prevents lost updates when two operators write the same entry.
 
-**One KV entry per service, with field names equal to the existing environment variable names.** The current keys already group cleanly by prefix (HARBOR ×9, NETBOX ×8, MIKROTIK ×8, NEXTCLOUD ×6, …). For example:
+**One KV entry per service, with field names equal to the existing environment variable names.** `kv/shared` is split into `shared/platform`, `shared/external-apis` and `shared/dev-tooling`. The complete key-to-entry mapping lives in the manifest (§11), which is created in the plan. The current keys already group cleanly by prefix (HARBOR ×9, NETBOX ×8, MIKROTIK ×8, NEXTCLOUD ×6, …). For example:
 
 ```text
 kv/services/harbor      → { HARBOR_DB_PASSWORD: …, HARBOR_ADMIN_PASSWORD: …, HARBOR_ROBOT_USER: …, … }
@@ -525,7 +528,10 @@ kv/
 │   ├── pve-test
 │   └── ...
 │
-└── shared
+└── shared/
+    ├── platform
+    ├── external-apis
+    └── dev-tooling
 ```
 
 These represent three different scopes.
@@ -597,26 +603,28 @@ Many values that are currently "common" because they were convenient to place in
 
 Git will retain only references to secrets.
 
-The references live in a single tracked manifest. It tells `with-secrets` which KV entries to read for each environment:
+The references live in a single tracked manifest, `secrets/manifest.json`. It is JSON so that the loader and CI need only Python's standard library. It lists every KV entry and **the exact field names each entry must contain**, plus one profile per environment:
 
-```yaml
-# secrets/manifest.yaml (illustrative; exact location fixed in the plan)
-common:            # read for every environment
-  - services/authentik
-  - services/graylog
-  - services/harbor
-  - shared
-  # ...
-environments:
-  pve:         [hosts/pve]
-  pve-tiny:    [hosts/pve-tiny]
-  pve-test-vm: [hosts/pve-test-vm]
-  pve-test:    [hosts/pve-test]
+```json
+{
+  "entries": {
+    "services/graylog": {"sops_source": "common", "fields": ["GRAYLOG_PASSWORD_SECRET", "GRAYLOG_ROOT_PASSWORD", "GRAYLOG_ROOT_PASSWORD_SHA2"]},
+    "hosts/pve":        {"sops_source": "pve",    "fields": ["PROXMOX_READONLY_TOKEN_ID", "PROXMOX_READONLY_TOKEN_SECRET", "TF_VAR_lxc_password", "TF_VAR_pm_api_token_secret"]}
+  },
+  "profiles": {
+    "pve":         {"auth": "approle", "role": "deploy-pve", "entries": ["<every services/* and shared/* entry>", "hosts/pve"]},
+    "pve-test-vm": {"auth": "approle", "role": "deploy-dev", "entries": ["<every services/* and shared/* entry>", "hosts/pve-test-vm"]}
+  }
+}
 ```
 
-This reproduces today's "common, plus the per-node file merged on top" behaviour, with no separate name-mapping layer. The exported variable names are the KV field names, so `TF_VAR_*` naming continues unchanged.
+(Excerpt. The real file is written in the plan.)
 
-The manifest is branch-dependent, and that is fine. A branch can change *which* entries are read. It cannot change the values in them.
+This reproduces today's behaviour of loading the common values with the per-node values merged on top: host entries come last and override shared ones. There is no separate name-mapping layer. The exported variable names are the KV field names, so `TF_VAR_*` naming continues unchanged.
+
+The loader exports **only the fields the manifest lists**, and fails closed if any listed field is missing or empty. Fields present in OpenBao but not in the manifest are ignored. So when a secret is added to OpenBao for a feature branch, it is visible only on branches whose manifest lists it, and branches that don't know about it are not broken.
+
+The manifest is branch-dependent, and that is fine. A branch can change *which* entries and fields are read. It cannot change the values in them.
 
 Git must not contain:
 
@@ -639,11 +647,11 @@ The initial identities follow the boundary that actually exists today: **one rea
 
 ```text
 deploy-dev            (used by ./with-secrets)
-READ:      kv/services/*, kv/shared, kv/hosts/pve-test-vm, kv/hosts/pve-test
+READ:      kv/services/*, kv/shared/*, kv/hosts/pve-test-vm, kv/hosts/pve-test
 NO ACCESS: kv/hosts/<any production node>
 
 deploy-<prod-node>    (one per line in terraform/PRODUCTION_NODES; used by that node's ./with-secrets-prod* wrapper)
-READ:      kv/services/*, kv/shared, kv/hosts/<prod-node>
+READ:      kv/services/*, kv/shared/*, kv/hosts/<prod-node>
 NO ACCESS: kv/hosts/<every other node>
 
 ci-netbox-populate    (GitHub Actions via JWT, §14.2)
@@ -1005,16 +1013,20 @@ Instead:
 
 ---
 
-## Phase 0 — Verification spikes
+## Phase 0 — Verification (done 2026-09-28, against v2.7.0 docs)
 
-Before building anything, confirm the claims this design depends on against the actual OpenBao release to be deployed:
+- `static` seal with a `file://` 32-byte key: **supported**, documented in `website/content/docs/configuration/seal/static.mdx` at tag `v2.7.0`.
+- `bao login -no-store`: **supported**, documented in `commands/login.mdx`.
+- Built-in automated snapshots: **not present**. The docs have only a Kubernetes cronjob example, so the nightly timer in §27.0 stays.
+- Package layout, from inspecting `openbao_2.7.0_linux_amd64.deb` (sha256 `7412233fef6bbe0e5093aa5461f493dd3a0f6193c8d5a5ba3a7ff475f96f34a2`):
+  - `/usr/bin/bao`;
+  - `openbao.service`, which runs `bao server -config=/etc/openbao/openbao.hcl` as user `openbao`, with `ProtectSystem=full`;
+  - a `preinst` that creates the `openbao` system user;
+  - a `postinst` that generates a throwaway self-signed certificate under `/opt/openbao/tls` and `chown -R`s `/etc/openbao` to `openbao`.
 
-- the `static` seal accepts a `file://` key (§7);
-- `login -no-store`, or its equivalent, exists in the `bao` CLI (§13.1);
-- JWT auth works against GitHub's Actions OIDC issuer (§14.2);
-- whether OpenBao has a built-in automated-snapshot feature. If it does, it may replace the nightly timer in §27.0, but not the post-write snapshot.
+  That last step is why the seal key is bind-mounted under `/srv`, not `/etc` (§8).
 
-This can be done in a throwaway LXC on `pve`.
+JWT auth against GitHub's Actions OIDC issuer is verified live during the CI step of the plan, not in advance.
 
 ---
 
@@ -1354,11 +1366,11 @@ Snapshots and seal keys must not be stored together as a single uncontrolled bac
 
 A snapshot is useless without the seal key, so it can go to ordinary backup storage. It must be copied off `pve`.
 
-**Destination: the NAS at `nas.gibbsgreatly.xyz`** (always on; not gazaar, which is usually powered off). It is referenced by FQDN, per the repo's DNS-only addressing convention.
+**Destination: the NAS at `nas.gibbsgreatly.xyz`** (`192.168.1.3`, always on; not gazaar, which is usually powered off). The NAS exports are reached the way this repo already reaches them: `pve` mounts the NAS over NFS, and the directory is bind-mounted into the LXC. This is the same pattern `media-stack-lab` uses for `/nas-media`.
 
-- The OpenBao LXC writes through a dedicated share user that can write only to the snapshot folder.
-- That share credential lives only on the OpenBao LXC, and is **not** stored in OpenBao. A restore must never depend on OpenBao to fetch its own backup.
-- The firewall must allow the OpenBao LXC's zone to reach the NAS. The plan verifies this path.
+- `pve` already mounts `192.168.1.3:/volume1/ProxmoxBackup` at `/mnt/nas-backup`.
+- A subdirectory, `/mnt/nas-backup/openbao-snapshots`, is bind-mounted into the OpenBao LXC at `/srv/openbao-snapshots`.
+- There is no NAS share credential on the LXC and no new MikroTik rule. A restore never depends on OpenBao to fetch its own backup.
 - `pve-tiny` was considered and rejected as the destination. It is a production Proxmox node inside the same automation blast radius, and copying there would give the OpenBao LXC a login on it.
 
 The NAS is on the same site as `pve`, so this is not off-site protection. Site-level loss is covered by USB B and the Bitwarden copy of the bootstrap kit. Snapshots can be regenerated as long as OpenBao's data survives somewhere, but the seal key cannot.
@@ -1396,7 +1408,9 @@ Rationale:
 Safety rules. These take precedence over the table:
 
 1. **Pruning never deletes the newest 7 snapshots, however old they are.** Pruning purely by age would, after a month of silent nightly failures, delete the last good snapshots.
-2. **An alert fires when the newest snapshot on the NAS is more than 36 hours old**, through the existing Grafana/VictoriaMetrics alerting. This catches a broken timer, a NAS outage, or a failed share login.
+2. **Snapshot age is exported as a metric.** The snapshot job writes `openbao_snapshot_last_success_timestamp_seconds` through node_exporter's textfile collector, and a Grafana panel shows its age with a 36-hour threshold. This catches a broken timer or a NAS outage.
+
+   **Known gap:** the monitoring stack has no alert rules or contact points at all (checked 2026-09-28), so nothing notifies anyone yet. Alerting belongs to a separate monitoring project. Until then, the panel and the write helper's loud failure are the only signals.
 
 Knock-on rules:
 
