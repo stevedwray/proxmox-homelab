@@ -428,10 +428,10 @@
                 # Traefik hostname route exists yet for this service.
                 DOCS_RAG_ALLOWED_HOSTS: "{{ docs_rag_allowed_hosts }}"
                 DATABASE_URL: "postgresql://docs_rag:{{ docs_rag_postgres_password }}@pgvector:5432/docs_rag"
-                # Reuses ai-services-stack's existing egress path and
-                # nomic-embed-text pull -- no new model, no new firewall
-                # rule (see docs/coding-stack/plan.md "Embedding pipeline").
-                OLLAMA_URL: "http://framework.gibbsgreatly.xyz:11434"
+                # Framework's llama.cpp embeddings server (Ollama is gone
+                # from framework) -- docs/framework-ip-and-port/plan.md.
+                # By name, never by IP.
+                EMBED_BASE_URL: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}:8085"
                 EMBED_MODEL: nomic-embed-text
                 CORPUS_DIR: /corpus
               volumes:

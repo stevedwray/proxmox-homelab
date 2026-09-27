@@ -226,6 +226,21 @@
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:9100"]
                   labels: {stack: media-stack-lab}
 
+            # Framework's native llama.cpp servers (--metrics), which
+            # replaced Ollama's textfile collector --
+            # docs/framework-ip-and-port/plan.md. The chat server requires
+            # its API key on /metrics; the embeddings server has no key and
+            # ignores the header.
+            - job_name: llamacpp
+              scheme: http
+              authorization:
+                credentials: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8080"]
+                  labels: {stack: framework, server: chat}
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8085"]
+                  labels: {stack: framework, server: embeddings}
+
             - job_name: cadvisor
               static_configs:
                 - targets: ["{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:8080"]

@@ -250,3 +250,51 @@ Applied the patch. Gates: applied; syntax-check exit 0; chat-flags `1`.
 
 Applied the patch. Gates: applied; py-compile OK; syntax-check exit 0 (all
 three playbooks).
+
+### Operator: embeddings model + fwllm-01 live apply, 2026-09-27
+
+The model download checked out (`sha256sum -c` OK). Before the apply,
+MemAvailable was 14966 MB with only `llama-server` holding significant
+memory. `framework-desktop-llamacpp-native.yml`: `failed=0 changed=7`, with
+all four self-checks passing (both `/health`, 401 without the key,
+`/metrics` with the key, and a 768-dim embedding).
+
+Consumers were redeployed immediately afterwards, on pve-tiny:
+- `ai-services-stack`: `failed=0`.
+- `cse-controller`: `failed=0`.
+
+Keyed `:8080` checks all replied `OK`:
+- OpenWebUI (browser).
+- Inside the `deep-research` container, using its own
+  `OPENAI_API_BASE`/`OPENAI_API_KEY`.
+- Inside `cse-controller-worker`, using `FRAMEWORK_LLM_API_KEY`.
+- From the workstation, via curl.
+
+The 1-case CSE batch was not run: it spans 9 benchmarks with a paid judge,
+and the in-container check covers the key path fwllm-04 changed.
+
+VS Code: `chatLanguageModels.json` was backed up and rewritten. The Ollama
+provider and the `:8079` model are gone. The `:8080` model id is now
+`qwen3.8-flash-next`, with the key inline. Input/output limits are
+6144/2048 for now. Copilot still fails locally ("No lowest priority node
+found") because its own prompt doesn't fit, so VS Code is blocked until
+fwllm-08 raises `--ctx-size`. Raise the VS Code limits then.
+
+### fwdns-06-inventory-and-bootstrap
+
+The three inventories now use `LAB_FQDN_FRAMEWORK`. Deleted the 27-line
+IP-SAN reissue block from `framework-desktop-bootstrap.yml`. Gates:
+inventory-resolves-fqdn gives `"ansible_host": "framework.gibbsgreatly.xyz"`;
+no-old-var clean; bootstrap-syntax exit 0; san-block-gone `0`.
+
+### fwllm-02 / -03 / -05 / -06 / -07
+
+Every patch applied cleanly in order. Gates:
+- 02: py-compile OK; no-ollama-code clean; secpipe syntax exit 0.
+- 03: unit tests OK (3 tests); mcp-utility syntax exit 0.
+- 05: render gives `- url: http://framework.gibbsgreatly.xyz:8080`.
+- 06: monitoring and bootstrap syntax exit 0; collector gone.
+- 07: live-metric-names finds `llamacpp:tokens_predicted_total`,
+  `requests_processing` and `requests_deferred` (15 `llamacpp:` series in
+  all; the fork uses upstream names); JSON valid; 0 `ollama` in
+  `local-ai.json`.

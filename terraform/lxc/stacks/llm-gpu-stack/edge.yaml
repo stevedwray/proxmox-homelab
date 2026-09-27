@@ -9,13 +9,11 @@ spec:
       host: llm.${LAB_DOMAIN}
       backend:
         type: url
-        # Port 8090 (LM Studio, Vulkan), not 8080 (native llama-router,
-        # HIP) -- findings-plan.md established LM Studio + Qwen3-Coder as
-        # the validated production endpoint; native llama-router is kept
-        # as an available dev backend (docs/framework-ubuntu/plan.md §5),
-        # not the one the platform's public llm.${LAB_DOMAIN} route
-        # should point at. Deliberate choice, not a copied-over default.
-        url: http://${LAB_FQDN_FRAMEWORK}:8090
+        # Port 8080: the Nathanw llama.cpp fork (nathanw-llamacpp.service,
+        # managed by ansible/00-initial-setup/framework-desktop-llamacpp-native.yml).
+        # LM Studio (:8090) and Ollama are no longer run on framework --
+        # docs/framework-ip-and-port/plan.md.
+        url: http://${LAB_FQDN_FRAMEWORK}:8080
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}

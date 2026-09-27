@@ -346,13 +346,13 @@ def call_cve_mcp_triage(mcp_url: str, cve_id: str, *, depth: str = "standard", t
     raise RuntimeError(f"unexpected cve-mcp-server response for {cve_id}: {raw[:300]}")
 
 
-# --- LLM narrative (Anthropic/OpenAI/Ollama -- see module docstring for
+# --- LLM narrative (Anthropic/OpenAI/llama.cpp -- see module docstring for
 # the local-LLM migration this is moving toward) --------------------------
 
 
 def synthesize_narrative(
     provider: str, api_key: str, cve_id: str, triage_text: str, sources: list[dict], total_instances: int,
-    *, ollama_url: str = "", ollama_model: str = "",
+    *, llamacpp_url: str = "", llamacpp_model: str = "", llamacpp_api_key: str = "",
 ) -> str:
     prompt = (
         f"You are a security analyst. Given this automated CVE triage for {cve_id}, "
@@ -365,8 +365,8 @@ def synthesize_narrative(
         return _call_anthropic(api_key, prompt)
     if provider == "openai":
         return _call_openai(api_key, prompt)
-    if provider == "ollama":
-        return _call_ollama(ollama_url, ollama_model, prompt)
+    if provider == "llamacpp":
+        return _call_llamacpp(llamacpp_url, llamacpp_model, prompt, api_key=llamacpp_api_key)
     raise ValueError(f"unknown LLM provider: {provider}")
 
 
@@ -400,27 +400,45 @@ def _call_openai(api_key: str, prompt: str, *, model: str = "gpt-4o-mini", timeo
     return result["choices"][0]["message"]["content"].strip()
 
 
-def _call_ollama(ollama_url: str, model: str, prompt: str, *, timeout: int = 120) -> str:
-    """Local Framework LLM via Ollama's /api/generate -- confirmed live
-    2026-09-01: framework.gibbsgreatly.xyz:11434, reachable from
-    secpipe-stack's network, laguna-s-2.1:q4_k_m-ctx131k confirmed loaded
-    (see docs/threat-vuln-platform/plan.md). No API key -- Ollama has none.
-    Longer default timeout than Anthropic/OpenAI (120s not 30s): a local
-    117B-param model genuinely takes longer per call than a hosted API,
-    confirmed by this project's own BFCL numbers for this exact model
-    (project_laguna_ollama_runtime memory)."""
-    if not ollama_url or not model:
-        raise ValueError("ollama provider requires both --ollama-url and --ollama-model")
-    body = {"model": model, "prompt": prompt, "stream": False}
+def _call_llamacpp(
+    base_url: str, model: str, prompt: str, *, api_key: str = "", max_tokens: int = 0, timeout: int = 600,
+) -> str:
+    """Local Framework LLM via the Nathanw llama.cpp fork's llama-server
+    (OpenAI-compatible /v1/chat/completions) -- replaced Ollama on
+    framework in 2026-09 (docs/framework-ip-and-port/plan.md). The served
+    model is a reasoning model: the answer is message.content, and
+    message.reasoning_content is deliberately dropped. A reply that ran out
+    of tokens before producing any content is an error, not an empty
+    narrative. Long timeout: generation on the local ~177B MoE model is
+    slower than a hosted API."""
+    if not base_url:
+        raise ValueError("llamacpp provider requires --llamacpp-url")
+    max_tokens = max_tokens or int(os.environ.get("LLAMACPP_MAX_TOKENS", "4096"))
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "max_tokens": max_tokens,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
-        f"{ollama_url.rstrip('/')}/api/generate",
+        f"{base_url.rstrip('/')}/v1/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/llama.cpp/MikroTik), never user-supplied; scheme is always http(s)
         result = json.loads(resp.read())
-    return (result.get("response") or "").strip()
+    choice = (result.get("choices") or [{}])[0]
+    content = ((choice.get("message") or {}).get("content") or "").strip()
+    if not content:
+        raise RuntimeError(
+            f"llama.cpp returned no content (finish_reason={choice.get('finish_reason')!r}) -- "
+            "raise LLAMACPP_MAX_TOKENS or the server's --ctx-size"
+        )
+    return content
 
 
 # --- write-back ------------------------------------------------------------
@@ -612,18 +630,19 @@ def main() -> int:
     parser.add_argument("--cve-mcp-url", default=os.environ.get("CVE_MCP_URL", "http://127.0.0.1:8000/mcp"))
     parser.add_argument(
         "--llm-provider", default=os.environ.get("LLM_PROVIDER", "anthropic"),
-        choices=["anthropic", "openai", "ollama", "none"],
+        choices=["anthropic", "openai", "llamacpp", "none"],
     )
     parser.add_argument("--anthropic-api-key", default=os.environ.get("ANTHROPIC_API_KEY"))
     parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument(
-        "--ollama-url", default=os.environ.get("OLLAMA_URL", "http://192.168.1.8:11434"),
-        help="local Framework Ollama endpoint (see docs/threat-vuln-platform/plan.md)",
+        "--llamacpp-url", default=os.environ.get("LLAMACPP_URL", "http://framework.gibbsgreatly.xyz:8080"),
+        help="Framework llama-server base URL (see docs/framework-ip-and-port/plan.md)",
     )
     parser.add_argument(
-        "--ollama-model", default=os.environ.get("OLLAMA_MODEL", "laguna-s-2.1:q4_k_m-ctx131k"),
-        help="Ollama model tag -- Laguna S 2.1 must run on Ollama not llama.cpp for this task, see project_laguna_ollama_runtime memory",
+        "--llamacpp-model", default=os.environ.get("LLAMACPP_MODEL", "qwen3.8-flash-next"),
+        help="model name sent to llama-server (its --alias)",
     )
+    parser.add_argument("--llamacpp-api-key", default=os.environ.get("LLAMACPP_API_KEY", ""))
     parser.add_argument("--triage-depth", default=os.environ.get("TRIAGE_DEPTH", "standard"))
     parser.add_argument(
         "--max-cves", type=int, default=int(os.environ.get("MAX_CVES", "0")) or None,
@@ -701,15 +720,15 @@ def main() -> int:
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
-    # Ollama needs no API key (it's a local, unauthenticated endpoint) --
-    # only anthropic/openai are gated on one being present.
+    # llama.cpp's key is optional here (the call just omits the header
+    # without one) -- only anthropic/openai are gated on a key being present.
     llm_api_key = None
     if args.llm_provider == "anthropic":
         llm_api_key = args.anthropic_api_key
     elif args.llm_provider == "openai":
         llm_api_key = args.openai_api_key
     llm_ready = (
-        args.llm_provider == "ollama"
+        args.llm_provider == "llamacpp"
         or (args.llm_provider in ("anthropic", "openai") and bool(llm_api_key))
     )
     if args.llm_provider != "none" and not llm_ready:
@@ -790,7 +809,8 @@ def main() -> int:
                 narrative = synthesize_narrative(
                     args.llm_provider, llm_api_key, cve_id, triage_text,
                     entry["sources"], entry["total_instances"],
-                    ollama_url=args.ollama_url, ollama_model=args.ollama_model,
+                    llamacpp_url=args.llamacpp_url, llamacpp_model=args.llamacpp_model,
+                    llamacpp_api_key=args.llamacpp_api_key,
                 )
                 llm_provider_used = args.llm_provider
             except Exception as exc:  # noqa: BLE001
