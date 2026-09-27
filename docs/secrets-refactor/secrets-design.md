@@ -1011,7 +1011,8 @@ Before building anything, confirm the claims this design depends on against the 
 
 - the `static` seal accepts a `file://` key (§7);
 - `login -no-store`, or its equivalent, exists in the `bao` CLI (§13.1);
-- JWT auth works against GitHub's Actions OIDC issuer (§14.2).
+- JWT auth works against GitHub's Actions OIDC issuer (§14.2);
+- whether OpenBao has a built-in automated-snapshot feature. If it does, it may replace the nightly timer in §27.0, but not the post-write snapshot.
 
 This can be done in a throwaway LXC on `pve`.
 
@@ -1351,7 +1352,20 @@ The backup model consists of:
 
 Snapshots and seal keys must not be stored together as a single uncontrolled backup artifact.
 
-Snapshots are taken on a schedule (the frequency is fixed in the plan) and copied off `pve`. A snapshot is useless without the seal key, so it can go to ordinary backup storage.
+A snapshot is useless without the seal key, so it can go to ordinary backup storage. It must be copied off `pve`; the destination is fixed in the implementation plan.
+
+## 27.0 When snapshots are taken
+
+Secret changes are infrequent, so there are two triggers and no continuous mechanism:
+
+1. **After every write made through the helper.** The write/rotation helper (§13.1) finishes each successful write by taking a snapshot and copying it off `pve`. Normal dev work that creates or rotates a secret is therefore backed up within seconds. If the snapshot or the copy fails, the helper reports the write as done but the backup as failed. It does not silently succeed.
+2. **A nightly timer on the OpenBao LXC.** This is the safety net for writes made outside the helper, such as UI edits or a raw `bao kv put`. The timer always takes a snapshot rather than trying to skip when nothing has changed: AppRole logins and token expiry also change the underlying Raft storage, so a reliable "nothing changed" test isn't available cheaply. Old snapshots are pruned by age; the retention period is fixed in the plan.
+
+A write-triggered hook driven by the audit log was considered and rejected. It is one more service to run and monitor, and the helper plus the nightly run already cover the rare write rate.
+
+Snapshots are taken by a dedicated **snapshot identity**. Its only permission is reading `sys/storage/raft/snapshot`. Its credentials live only on the OpenBao LXC, never on the workstation, because a snapshot is effectively a full copy of the store, even though that copy is encrypted.
+
+Snapshots and KV v2 versions cover different failures. **KV v2 history** handles a bad value (`bao kv rollback`). **Snapshots** handle losing OpenBao entirely.
 
 ---
 
