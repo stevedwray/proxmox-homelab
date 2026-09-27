@@ -1,7 +1,10 @@
 # framework-ip-and-port (planning workspace)
 
-Status: **in progress** (Phase A, execution-order step 1; 2026-09-27). Branch
-`task/framework-dns-only-plan`.
+Status: **Phases A and C complete; Phase B prepared, cutover pending**
+(2026-09-27). The TTL was lowered to 5m at Sun 27 Sep 16:30 NZDT, so the
+cutover can run from Mon 28 Sep 16:30 NZDT with gazaar powered off.
+Next: fwip-02, then the "Operator: re-IP cutover" runbook, then fwip-03.
+Branch `task/framework-dns-only-plan`.
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
 was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
@@ -24,13 +27,16 @@ Phase C is Ollama → llama.cpp, and Phase B is the re-IP. Use the plan's
 as tested patches in [patches/](patches/). This file keeps the audit that
 motivated the plan, the port registry, and the hand-back log.
 
-**Broken right now (2026-09-27), because Ollama is gone:**
+**Broken at the start (2026-09-27), because Ollama was gone. All fixed the
+same day by Phase C:**
 
-- docs-rag-mcp `search_docs` (it embeds every query via Ollama).
-- The weekly CVE deep-dive (enabled; next run Sunday 23:00).
-- The `llm.${LAB_DOMAIN}` Traefik route: its LM Studio backend on `:8090`
-  is not running either.
-- The Ollama half of framework's stats collector.
+- docs-rag-mcp `search_docs`, which embedded every query via Ollama (now
+  llama.cpp `:8085`).
+- The weekly CVE deep-dive (now llama.cpp `:8080`).
+- The `llm.${LAB_DOMAIN}` Traefik route, whose LM Studio backend on `:8090`
+  was dead (now `:8080`).
+- The Ollama half of framework's stats collector (now llama.cpp
+  `/metrics`).
 
 ## Audit (2026-09-27, repo state at `f94ed09d`)
 
@@ -435,3 +441,23 @@ Phase A (DNS-only) is complete.
 
 Applied the patch. Gates: applied; syntax-check exit 0; no-ip-literal `1`
 (the header comment naming gazaar's `192.168.1.8`).
+
+### Operator: lower the TTL (Phase B prep), 2026-09-27
+
+`TASK_APPROVAL=fwip-dns-ttl-lower ./with-secrets-prod ansible-playbook
+ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m`
+gave `framework.gibbsgreatly.xyz -> 192.168.1.8 (ttl 5m); address-list
+'framework' re-resolved`, `failed=0`, at **Sun 27 Sep 16:30 NZDT**. The
+record is now owned by the playbook (comment added); the address is
+unchanged. The cutover is possible from Mon 28 Sep 16:30 NZDT.
+
+### Portainer endpoint by FQDN (fwdns-00 item 6), 2026-09-27
+
+Endpoint Id 9 (`framework.gibbsgreatly.xyz`) was changed from
+`tcp://192.168.1.8:9001` to `tcp://framework.gibbsgreatly.xyz:9001` via
+`PUT /api/endpoints/9` (`{"URL": ...}` only); the UI edit had not saved.
+Read-back after 20 s: the new URL, `Status: 1` (up).
+
+fwip-02 is deliberately held until cutover day. Committing `.18` early
+would let any re-run of the DNS playbook repoint the name before framework
+moves.

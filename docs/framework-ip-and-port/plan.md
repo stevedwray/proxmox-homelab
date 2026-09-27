@@ -1283,7 +1283,10 @@ checks out, and fwdns-08 is applied on the router (ai_seg → 8080,8085).
 - **secpipe (pve-tiny):**
   `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`.
   Then, on secpipe-stack, run one deep-dive by hand (dry run, no writes):
-  `cd /opt/cve-enrichment-sync && set -a && . ./es-user.env && . ./llm-user.env && set +a && LLAMACPP_URL=http://framework.gibbsgreatly.xyz:8080 python3 cve_deep_dive.py --top-n 1 --dry-run`.
+  `cd /opt/cve-enrichment-sync && export $(systemctl show -p Environment --value cve-deep-dive.service) && set -a && . ./es-user.env && . ./llm-user.env && set +a && python3 cve_deep_dive.py --top-n 1 --dry-run`.
+  Loading the unit's own `Environment=` is required: without it the script
+  falls back to `ELASTICSEARCH_URL=https://127.0.0.1:9200` and fails with
+  "Connection refused" (found during execution, 2026-09-27).
   A `llama.cpp returned no content` warning means the prompt plus
   `LLAMACPP_MAX_TOKENS` does not fit the context. That is the input to
   the context measurement below.
@@ -1292,16 +1295,22 @@ checks out, and fwdns-08 is applied on the router (ai_seg → 8080,8085).
   2. Force a full re-embed. Vectors from Ollama and llama.cpp are not
      interchangeable, and the reindex skips files whose hash is unchanged.
      On mcp-utility-stack:
-     `cd /opt/mcp-utility-stack && docker compose exec -T pgvector psql -U docs_rag -d docs_rag -c 'TRUNCATE doc_chunks, file_index;' && docker compose restart docs-rag-mcp`
-  3. Watch `docker compose logs -f docs-rag-mcp` until "startup reindex
-     completed" appears with 0 failed files.
+     `cd /opt/mcp-utility-stack && docker compose stop docs-rag-mcp && docker compose exec -T pgvector psql -U docs_rag -d docs_rag -c 'TRUNCATE doc_chunks, file_index;' && docker compose start docs-rag-mcp`
+     Stop the container first, so a reindex that is already running can't
+     write into the table mid-wipe. The ivfflat "low recall" notice after
+     TRUNCATE is expected; the reindex rebuilds that index at the end.
+  3. Watch `docker compose logs -f docs-rag-mcp` for the `reindex summary`
+     line and check that it shows `'failed': []`. ("startup reindex
+     completed" is only logged when files **failed**.) Every chunk has to
+     fit the embeddings server's 2048-token limit; see the chunking fix in
+     README.md's hand-back log.
   4. Check that `psql ... -c 'SELECT count(*) FROM doc_chunks;'` is greater
      than 0, and that a `search_docs` query returns hits.
-- **Post-commit hook, flagged rather than fixed:** `.git/hooks/post-commit`
-  reindexes with `./with-secrets-prod` (pve). mcp-utility-stack now lives
-  on pve-tiny, so check that the hook still targets the right node, or
-  switch it to `./with-secrets-prod-tiny`. The hook isn't tracked, so this
-  is a local edit.
+- **Post-commit hook:** `.git/hooks/post-commit` reindexed with
+  `./with-secrets-prod` (pve), under its own standing approval. It was
+  switched to `./with-secrets-prod-tiny` on 2026-09-27, after it redeployed
+  mcp-utility against pve once (see README.md "Incident"). The hook isn't
+  tracked, so a fresh clone needs the same local edit.
 
 ### fwllm-05-llm-route-to-8080
 
@@ -1471,9 +1480,10 @@ memories), so raise it one measured step at a time:
 
 ### fwllm-08-set-measured-ctx
 
-Not written yet. It is authored after the measurement above, with the
-measured number filled in, so that no judgment call is left for execution
-time.
+**Done (2026-09-27, `9603847d`).** Measured 131072 (MemAvailable 9788 MB,
+above the 8192 MB floor). `framework_llamacpp_chat_ctx_size: 131072` in
+`ansible/00-initial-setup/framework-desktop-llamacpp-native.yml`, with the
+full measurement series in the comment. See README.md's hand-back log.
 
 ---
 
