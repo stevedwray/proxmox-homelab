@@ -157,6 +157,13 @@ No secret values are committed here. All sensitive values must come from the env
   the API rejects edits to them; `deploy-technitium-stack.yml` reconciles
   them only while standalone and asserts them when clustered. See
   `docs/lan-dns-technitium/plan.md` Phase 1.
+- Observability: node_exporter (lxc_base, :9100 TLS), cAdvisor
+  (/opt/cadvisor, :8080, separate compose project so it never recreates
+  the Technitium container), Technitium metrics
+  (`/api/dashboard/metrics/text`, token of the `metrics` user), server log
+  to console -> Docker syslog -> Graylog, and every DNS query via the Log
+  Exporter app -> Graylog "DNS Queries" index set. See
+  `docs/lan-dns-technitium/plan.md`.
 
 ## Playbook
 

@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. Phase 1 (`lan-dns-02`–`05`) done 2026-09-29 as file changes — not yet deployed anywhere.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. Next: operator creates the Technitium `metrics` token and writes it to OpenBao, then `lan-dns-11`, then the approved graylog-stack and technitium-stack deploys.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -88,3 +88,28 @@ literal blocks verbatim.
 (`test_reconcile_edge` ×7, `test_render_edge_coredns` ×1), so pre-existing
 and unrelated. Real validation of Phase 1 happens at the Phase 2
 `provision.sh --stack technitium-stack` run on pve (standalone path).
+
+### 2026-09-29 — lan-dns-06..10 (Phase 2 file steps), executed by Claude in-session
+
+File changes only; nothing run against any host. Applied from the plan's
+literal blocks verbatim.
+
+- **lan-dns-06-rsyslog-structured-data** — `GraylogForward` now forwards
+  `%STRUCTURED-DATA%` (was a literal `-`), plus the two comment lines.
+  Gates: `template-updated` PASS, `single-template-definition` PASS.
+- **lan-dns-07-graylog-dns-queries** — created
+  `playbooks/configure-graylog-dns-queries.yml`; imported at the end of
+  `deploy-graylog-stack.yml` (additions only). Gates: `syntax-standalone`,
+  `syntax-graylog-deploy`, `import-is-last` all PASS.
+- **lan-dns-08-resolver-playbook** — created
+  `playbooks/configure-technitium-lan-resolver.yml`. Gates: `syntax-check`,
+  `blocklists-present`, `bypass-excludes-lan` all PASS.
+- **lan-dns-09-node-observability** — created
+  `playbooks/technitium-node-observability.yml`; observability bullet added
+  to `technitium-stack/STACK_CONTRACT.md`. Gates: `syntax-check`,
+  `separate-compose-project`, `contract-bullet` all PASS.
+- **lan-dns-10-import-into-deploy** — three imports appended to
+  `deploy-technitium-stack.yml` (additions only, verified with `git diff`).
+  Gates: `syntax-check` PASS, `import-order` PASS.
+
+Unit tests: same 8 pre-existing failures as before Phase 1, nothing new.

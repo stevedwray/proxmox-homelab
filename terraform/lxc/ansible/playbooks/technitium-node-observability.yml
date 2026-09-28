@@ -1,0 +1,105 @@
+---
+# Per-node observability for a Technitium node (technitium-stack or
+# technitium-tiny-stack). docs/lan-dns-technitium/plan.md.
+#
+# - cAdvisor on :8080 for container metrics, as its own compose project
+#   (/opt/cadvisor) so adding or updating it never recreates the Technitium
+#   container. Same image/tag and mounts as every other stack's cAdvisor.
+# - Technitium's server/audit log also to the console, so Docker's syslog
+#   driver ships it to Graylog (Docker Chatter stream) instead of it only
+#   living in a file inside the container. loggingType is a per-node
+#   setting (not cluster-synced), so it is set on each node's own API.
+#
+# node_exporter, rsyslog forwarding and the Wazuh agent come from lxc_base /
+# the deploy playbooks and are not repeated here. Imported at the end of
+# both deploy-technitium-stack.yml and deploy-technitium-tiny-stack.yml.
+
+- name: Technitium node observability
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    technitium_obs_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
+    technitium_obs_cadvisor_image: "{{ technitium_obs_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+    technitium_obs_cadvisor_dir: /opt/cadvisor
+    technitium_obs_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_obs_api: "http://{{ ansible_host }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ technitium_obs_cadvisor_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ technitium_obs_cadvisor_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          name: cadvisor
+          services:
+            cadvisor:
+              image: {{ technitium_obs_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+
+    - name: Start cAdvisor
+      community.docker.docker_compose_v2:
+        project_src: "{{ technitium_obs_cadvisor_dir }}"
+        state: present
+      when: not ansible_check_mode
+
+    - name: Wait for cAdvisor metrics
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:8080/metrics"  # nosonar: ansible:S5332 — cAdvisor metrics, private mgmt_seg only
+        method: GET
+        status_code: [200]
+      register: technitium_obs_cadvisor_ready
+      retries: 20
+      delay: 3
+      until: technitium_obs_cadvisor_ready is success
+      when: not ansible_check_mode
+
+    - name: Log in to this node's Technitium API
+      ansible.builtin.uri:
+        url: "{{ technitium_obs_api }}/user/login?user=admin&pass={{ technitium_obs_admin_password | urlencode }}"
+        method: GET
+        return_content: true
+      register: technitium_obs_login
+      retries: 10
+      delay: 3
+      until: technitium_obs_login.status == 200
+      become: false
+      no_log: true
+
+    - name: Read this node's logging setting
+      ansible.builtin.uri:
+        url: "{{ technitium_obs_api }}/settings/get?token={{ (technitium_obs_login.content | from_json).token }}"
+        method: GET
+        return_content: true
+      register: technitium_obs_settings
+      become: false
+      no_log: true
+
+    - name: Log to file and console
+      ansible.builtin.uri:
+        url: "{{ technitium_obs_api }}/settings/set?loggingType=FileAndConsole&token={{ (technitium_obs_login.content | from_json).token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: technitium_obs_logging_set
+      changed_when: true
+      failed_when: (technitium_obs_logging_set.content | from_json).status | default('') != 'ok'
+      when: (technitium_obs_settings.content | from_json).response.loggingType | default('') != 'FileAndConsole'
+      become: false
+      no_log: true

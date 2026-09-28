@@ -760,3 +760,12 @@
 
 - name: Forward the Framework Desktop FQDN to the MikroTik
   ansible.builtin.import_playbook: technitium-framework-forwarder.yml
+
+- name: Configure Technitium as the LAN resolver (docs/lan-dns-technitium/)
+  ansible.builtin.import_playbook: configure-technitium-lan-resolver.yml
+
+- name: Technitium node observability (docs/lan-dns-technitium/)
+  ansible.builtin.import_playbook: technitium-node-observability.yml
+
+- name: Adopt all zones into the Technitium cluster catalog (docs/lan-dns-technitium/)
+  ansible.builtin.import_playbook: technitium-cluster-adopt-zones.yml
