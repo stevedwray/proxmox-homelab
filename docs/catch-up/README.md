@@ -22,7 +22,7 @@ command.
 
 | # | Plan | When | Effort | Value | Depends on | Status |
 |---|---|---|---|---|---|---|
-| 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | not started |
+| 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | **done 2026-09-28** (browser spot-check pending) |
 | 02 | [Repo hygiene](02-repo-hygiene.md) | today | 45 min | Medium | — | not started |
 | 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | not started |
 | 04 | [Secrets refactor close-out](04-secrets-closeout.md) | 2026-09-29, after the 02:40 UTC run | 15 min | High | — | not started |
@@ -112,4 +112,18 @@ Why this order, and what changed from the first draft of the list:
 
 ## Hand-backs
 
-(None yet.)
+### 01 — arr UI port lockdown (2026-09-28)
+
+- `catchup-01-lockdown-playbook`: playbook committed (`ae374066`, branch
+  `task/catch-up-01-arr-lockdown`); gates syntax-check, ansible-lint
+  (0 failures, 0 warnings) and literal-values all passed.
+- Pre-check: direct `7878/8989/8686/9696` → `200`, `8080` → `401`; all five
+  Traefik routes `302`.
+- Apply (`TASK_APPROVAL=catchup-01-arr-lockdown`): `failed=0`, both the
+  match-criteria and order asserts passed (rule sits before `*8A`). The admin
+  credential had write access; the RouterOS CLI fallback wasn't needed.
+- Verify: direct access from the LAN now `000` on all five ports; Traefik
+  routes still `302`; from the proxy host (`192.168.30.10`) the backends
+  still answer (`200` ×4, `401` qBittorrent), so Traefik → backend works.
+  Jellyseerr (`5055`, out of scope) is unchanged (`307`).
+- Open: operator browser spot-check (log in via Authentik, open each app).

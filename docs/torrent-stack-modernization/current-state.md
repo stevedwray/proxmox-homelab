@@ -26,8 +26,10 @@ decision — no local-model handoff for this stack).
   (`192.168.80.11:7878/8989/8686/9696`) with no login redirect. The
   Traefik routes are still forwardAuth-gated (`302` to Authentik), but
   anything that can reach `media_seg` directly bypasses that gate.
-  **Open decision**: re-enable built-in auth, or restrict direct access to
-  those ports at the firewall.
+  **Closed 2026-09-28**: direct access is now dropped at the MikroTik
+  (only Traefik may connect), via
+  `ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml`
+  (docs/catch-up/01-arr-port-lockdown.md).
 - **Legacy `torrent-stack` (CT 100) is stopped** on `pve` (not destroyed),
   so the `/incoming` sharing risk (item 5) is dormant while it stays off.
 - This workspace and `torrent-stack-lab` are on `main` (as of #434).
