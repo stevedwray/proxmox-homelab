@@ -769,6 +769,17 @@ gates:
     critical: true
 ```
 
+**Correction after Phase 2's deploy (2026-09-29): this step turned out to
+be unnecessary for Technitium.** The Log Exporter double-wraps its output
+— its formatter builds a full RFC 5424 line (structured data included) and
+its syslog sink wraps that whole line as the *message body* of a second
+envelope with no structured data — so the fields reach Graylog as text,
+and `configure-graylog-dns-queries.yml`'s rule extracts them with regexes.
+The change is kept: it is byte-identical for all existing traffic and
+already deployed on graylog-stack and technitium-stack, and it makes the
+relays transparent for any future sender that does use structured data.
+The original reasoning follows.
+
 Why this step exists: the Log Exporter sends the client IP, response type
 (`Blocked`, `Cached`, …), qname and answers as RFC 5424 **structured
 data**; the message text only carries `QNAME…; RCODE…; ANSWER…`
@@ -836,6 +847,12 @@ gates:
    # dns-queries pipeline on the Default Stream. Nothing else in the fleet
    # logs at local6.
    #
+   # The Log Exporter double-wraps its output: the message body is itself a
+   # complete RFC 5424 line whose structured data ([meta clientIp="..." ...])
+   # is plain text by the time it reaches Graylog. The rule therefore extracts
+   # the useful fields with regexes into dns_* fields (dns_client_ip,
+   # dns_response_type, dns_qname, ...) as well as routing the message.
+   #
    # Runs on graylog-stack against its local API. Imported at the end of
    # deploy-graylog-stack.yml; gated on GRAYLOG_DEPLOY_RUNTIME exactly like
    # that playbook's own index-set/stream work. Standalone:
@@ -854,6 +871,22 @@ gates:
        graylog_dns_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
        graylog_dns_title: "DNS Queries"
        graylog_dns_default_stream: "000000000000000000000001"
+       graylog_dns_rule_source: |-
+         rule "route-dns-queries"
+         when
+           to_string($message.facility) == "local6"
+         then
+           let body = to_string($message.message);
+           let q = regex("clientIp=\"([^\"]*)\" protocol=\"([^\"]*)\" responseType=\"([^\"]*)\" responseRtt=\"([^\"]*)\" rCode=\"([^\"]*)\"", body, ["dns_client_ip", "dns_protocol", "dns_response_type", "dns_rtt_ms", "dns_rcode"]);
+           set_fields(q);
+           let n = regex("qName=\"([^\"]*)\" qType=\"([^\"]*)\"", body, ["dns_qname", "dns_qtype"]);
+           set_fields(n);
+           let a = regex("ANSWER: \\[(.*)\\]\\s*$", body, ["dns_answers"]);
+           set_fields(a);
+           route_to_stream(id: "{{ graylog_dns_stream_id }}");
+           remove_from_stream(id: "{{ graylog_dns_default_stream }}");
+         end
+       graylog_dns_rule_description: "Extract dns_* fields from Technitium Log Exporter query logs (facility local6) and move them into the DNS Queries stream/index set."
 
      tasks:
        - name: Check existing Graylog index sets
@@ -999,6 +1032,11 @@ gates:
          when: graylog_dns_enabled
          no_log: true
 
+       - name: Find the existing route-dns-queries rule
+         ansible.builtin.set_fact:
+           graylog_dns_rule_existing: "{{ graylog_dns_rules.json | default([]) | selectattr('title', 'eq', 'route-dns-queries') | list | first | default({}) }}"
+         when: graylog_dns_enabled
+
        - name: Create the route-dns-queries rule
          ansible.builtin.uri:
            url: "{{ graylog_dns_api }}/system/pipelines/rule"
@@ -1012,22 +1050,43 @@ gates:
            body_format: json
            body:
              title: "route-dns-queries"
-             description: "Move Technitium Log Exporter query logs (facility local6) into the DNS Queries stream/index set."
-             source: |-
-               rule "route-dns-queries"
-               when
-                 to_string($message.facility) == "local6"
-               then
-                 route_to_stream(id: "{{ graylog_dns_stream_id }}");
-                 remove_from_stream(id: "{{ graylog_dns_default_stream }}");
-               end
+             description: "{{ graylog_dns_rule_description }}"
+             source: "{{ graylog_dns_rule_source }}"
            status_code: [200, 201]
            return_content: true
          register: graylog_dns_rule_create
          failed_when: graylog_dns_rule_create.json.errors | default(none) is not none
          when:
            - graylog_dns_enabled
-           - (graylog_dns_rules.json | default([]) | selectattr('title', 'eq', 'route-dns-queries') | list | length) == 0
+           - graylog_dns_rule_existing | length == 0
+         no_log: true
+
+       # Reconcile on drift, not just existence, so a changed rule reaches the
+       # live Graylog on the next run.
+       - name: Update the route-dns-queries rule when its source differs
+         ansible.builtin.uri:
+           url: "{{ graylog_dns_api }}/system/pipelines/rule/{{ graylog_dns_rule_existing.id }}"
+           method: PUT
+           url_username: admin
+           url_password: "{{ graylog_dns_admin_password }}"
+           force_basic_auth: true
+           headers:
+             Content-Type: application/json
+             X-Requested-By: ansible
+           body_format: json
+           body:
+             title: "route-dns-queries"
+             description: "{{ graylog_dns_rule_description }}"
+             source: "{{ graylog_dns_rule_source }}"
+           status_code: [200]
+           return_content: true
+         register: graylog_dns_rule_update
+         changed_when: true
+         failed_when: graylog_dns_rule_update.json.errors | default(none) is not none
+         when:
+           - graylog_dns_enabled
+           - graylog_dns_rule_existing | length > 0
+           - (graylog_dns_rule_existing.source | default('') | trim) != (graylog_dns_rule_source | trim)
          no_log: true
 
        - name: Check existing pipelines
@@ -1864,14 +1923,14 @@ gates:
 
 In Graylog: the "DNS Queries" stream shows messages from `technitium-stack`
 within a minute of a lookup from your workstation, and a message has
-`clientIp`, `qName`, `responseType` fields (the structured data survived
-both relays). Look up `googlesyndication.com` and confirm a `responseType:
-Blocked` message. Technitium's own server log appears in the "Docker
-Chatter" stream as `application_name: docker-technitium`. If the fields
-are missing but the message text is there, the structured data was
-dropped: check that both graylog-stack and technitium-stack were provisioned
-after `lan-dns-06` (`grep STRUCTURED-DATA /etc/rsyslog.d/90-log-forwarding.conf`
-on each).
+`dns_client_ip`, `dns_qname`, `dns_response_type`, `dns_rcode` fields
+(extracted by the `route-dns-queries` rule). Look up
+`googlesyndication.com` and confirm a `dns_response_type: Blocked`
+message. Technitium's own server log appears in the "Docker
+Chatter" stream as `application_name: docker-technitium`. If the `dns_*`
+fields are missing but the message text contains `[meta clientIp=…`, the
+rule is the old, route-only version: re-run
+`configure-graylog-dns-queries.yml` (it updates the rule on drift).
 
 ---
 
@@ -2568,8 +2627,9 @@ gates:
   **active** agents in the Wazuh dashboard (the primary was enrolled in the
   2026-08-29 pilot; tiny enrolls via its deploy playbook — mgmt_seg →
   `192.168.40.15:1514/1515` is already allowed at the MikroTik).
-- **Graylog:** "DNS Queries" has messages from **both** hosts (the Log
-  Exporter config is cluster-synced; each node ships via its own rsyslog).
+- **Graylog:** "DNS Queries" has messages from **both** hosts with
+  `dns_*` fields (the Log Exporter config is cluster-synced; each node
+  ships via its own rsyslog).
 - **Grafana:** the "Technitium DNS" dashboard shows both nodes UP; the old
   "CoreDNS" dashboard is gone.
 - **GVM:** `192.168.20.17` appears in the next scheduled mgmt_seg scan

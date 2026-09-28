@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done 2026-09-29 (operator edit). Next: approved graylog-stack, then technitium-stack deploys on pve.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Pending: Graylog rule update so DNS query logs get `dns_*` fields, then Phase 3.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -123,3 +123,43 @@ Unit tests: same 8 pre-existing failures as before Phase 1, nothing new.
 - **lan-dns-11-metrics-token-manifest** — edited by the operator (Claude's
   permissions deny `secrets/`). Gates, run by the operator:
   `field-declared` PASS ("manifest ok"), `wrapper-resolves-it` PASS.
+
+### 2026-09-29 — Phase 2 production deploys (pve), run by the operator
+
+Claude's harness blocks production deploys even after chat approval, so
+the operator ran each approved command; Claude verified afterwards.
+
+- **graylog-stack** (`TASK_APPROVAL=lan-dns-graylog`): `failed=0`,
+  `changed=9`, smoke PASS. Verified read-only via the Graylog API: "DNS
+  Queries" index set (`gl-dns`, P30D) and stream (running) exist; rule
+  `route-dns-queries`; pipeline `dns-queries` added to the Default Stream
+  beside `log-segmentation` and `source-identity-fixups`; 8 other stacks'
+  logs still arriving with unchanged `application_name`s. Only rsyslog
+  noise: brief "connection refused" from forwarders during the relay
+  restart, all reconnected.
+- **technitium-stack, run 1** (`lan-dns-technitium-primary`): failed at
+  "Probe blocking from the LAN" after the settings/apps had applied.
+  Cause: the probe used `doubleclick.net`, which Hagezi Pro deliberately
+  does not block (it lists subdomains such as `g.doubleclick.net`).
+  Blocking itself worked (380,970 block-list zones loaded). Fixed in
+  af06595f (probe `googlesyndication.com`, a listed domain); all remaining
+  probes pre-checked by hand before the rerun.
+- **technitium-stack, run 2**: `failed=0`, `changed=6`, smoke
+  (`verify-parity.sh`) PASS.
+- **lan-dns-12-verify-primary**: all 9 critical gates PASS
+  (`blocks-ads`, `resolves-public`, `lab-zone`, `router-owned-name`,
+  `lan-ptr`, `rebinding-protection`, `split-horizon-still-private`,
+  `cadvisor-up`, `standalone-ns-unchanged`).
+- **Graylog DNS logs**: 253 query logs in 15 min, all in "DNS Queries",
+  facility `local6`; Technitium server log in Docker Chatter as
+  `docker-technitium`. **But no per-query fields**: the Log Exporter
+  double-wraps (its formatter emits a full RFC 5424 line which the sink
+  wraps again), so `[meta clientIp=... responseType=... qName=...]` is
+  text in the message body. `lan-dns-06` was therefore unnecessary for
+  this (kept; byte-identical). Fix: `route-dns-queries` now extracts
+  `dns_client_ip`, `dns_protocol`, `dns_response_type`, `dns_rtt_ms`,
+  `dns_rcode`, `dns_qname`, `dns_qtype`, `dns_answers`, and the playbook
+  updates the rule on drift. Regexes tested against real messages; rule
+  source accepted by Graylog's parse-only endpoint; Ansible-rendered source
+  byte-identical to the parsed one. Needs an approved run of
+  `configure-graylog-dns-queries.yml` on graylog-stack.
