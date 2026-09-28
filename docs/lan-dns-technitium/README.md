@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). **Phase 3 complete** (failover drill PASS). `lan-dns-19`/`20` written. Next: Phase 4 cutover preflight + approved MikroTik changes.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). **Phase 3 complete** (failover drill PASS). **LAN cut over to Technitium 2026-09-29 ~12:45 NZDT.** Soak until ~2026-10-06 (argon-02 kept as fallback), then Phase 5.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -341,3 +341,23 @@ Unit tests: same 8 pre-existing failures.
   asserts the list is exact; plan commands use `./with-secrets-prod`.
   Logic tested against the live address list (removes only `.115`, adds
   `.15`).
+
+### 2026-09-29 — Phase 4 cutover, attempt 2 (live)
+
+- Operator re-ran both playbooks via `./with-secrets-prod`
+  (`TASK_APPROVAL=lan-dns-cutover`); resolver recap `failed=0`,
+  `changed=2`.
+- Router verified (GET): DHCP `dns-server` = `192.168.20.15,192.168.20.17`;
+  `bridgeLocal` ND `advertise-dns=no` (dns list kept for rollback);
+  `technitium-dns` address list exactly `.15` + `.17`; the 4
+  `technitium-lan:` rules in order (udp/53, tcp/53, garuda, drop-new).
+- garuda: `nmcli device reapply` doesn't renew the lease; its T1 renewal
+  picked up `192.168.20.15`/`.17` within the minute. System-resolver
+  checks: `googlesyndication.com` → 0.0.0.0, `github.com` resolves,
+  `nas.gibbsgreatly.xyz` and `traefik.lab…` via getent, HTTPS to github OK.
+- Other clients switch at their own lease renewal (30 min lease).
+- **Soak (7 days):** watch argon-02's Pi-hole query log for clients with
+  hard-coded DNS; Technitium dashboard for SERVFAIL and `dropped`
+  (QPM limit 600/min per client); over-blocking reports → allow entries in
+  `configure-technitium-lan-resolver.yml`. Rollback:
+  `./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole`.
