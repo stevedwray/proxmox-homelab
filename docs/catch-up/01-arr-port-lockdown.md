@@ -1,0 +1,320 @@
+# 01 — Arr UI port lockdown
+
+**When:** today · **Effort:** 45 min · **Value:** High (live exposure)
+**Approval name:** `catchup-01-arr-lockdown`
+
+## Problem (verified 2026-09-28)
+
+`torrent-stack-lab` (VMID 80011, `192.168.80.11`, `media_seg`) publishes its
+UIs on host ports: qBittorrent `8080` (via gluetun), Prowlarr `9696`, Radarr
+`7878`, Sonarr `8989`, Lidarr `8686`
+(`terraform/lxc/stacks/torrent-stack-lab/docker-compose.yml`). Through Traefik
+each route is gated by Authentik forwardAuth (`302` to Authentik). But a direct
+request from the LAN (`curl http://192.168.80.11:7878/`) returned `200` with no
+login: the arr apps treat private addresses as "local" and skip their own
+auth.
+
+Nothing on the router stops it. The live MikroTik config
+(`router/config/current-config.json`, snapshot 2026-09-28) has no rule
+restricting LAN → `media_seg`. Zone containment is `*8A` "media_seg
+default-deny to LAN and other zones", which matches only traffic *from*
+`192.168.80.0/24`.
+
+## Fix (operator decision)
+
+Add one MikroTik forward rule: **drop** TCP to `192.168.80.11` ports
+`7878,8989,8686,9696,8080` from any source except Traefik (`192.168.30.10`).
+After it:
+
+- Traefik → arr keeps working (it's the one allowed source).
+- LAN and other zones → arr: dropped.
+- Same-VLAN traffic (media-stack-lab `192.168.80.10`, containers inside 80.11,
+  e.g. Jellyseerr → Radarr, Prowlarr → Sonarr) is switched, not routed, so
+  the rule never sees it.
+- Jellyseerr (`5055`) is left alone: it has its own login and its route is
+  `auth.mode: none` by design.
+
+**Validation tier:** this is a firewall change, but there is only one router,
+shared by every environment, so there's no pve-test-vm equivalent to try it
+on. Validation is the playbook's own read-back and order asserts plus the live
+checks below, under the production approval flow. The operator accepted this
+tier by choosing this fix.
+
+## Steps
+
+### catchup-01-lockdown-playbook
+
+```yaml
+id: catchup-01-lockdown-playbook
+title: Add the MikroTik playbook that restricts torrent-stack-lab UI ports to Traefik
+depends_on: []
+
+change: |
+  Create ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml
+  with exactly the LITERAL content below (transcribe it; do not model it on
+  another playbook). Change no other file.
+
+  LITERAL:
+  ---
+  # torrent-stack-lab (192.168.80.11, media_seg) publishes its web UIs on
+  # host ports: qBittorrent 8080 (via gluetun), Prowlarr 9696, Radarr 7878,
+  # Sonarr 8989, Lidarr 8686. Traefik (proxy-stack, 192.168.30.10) fronts
+  # each one with Authentik forwardAuth
+  # (terraform/lxc/stacks/torrent-stack-lab/edge.yaml), but the arr apps
+  # treat private source addresses as "local" and skip their own login, so
+  # a direct request from the LAN got the UI with no auth at all (found
+  # 2026-09-28, docs/catch-up/01-arr-port-lockdown.md). MikroTik's zone
+  # rules only deny traffic *leaving* a zone; LAN -> zone is allowed by
+  # default, so nothing blocked it.
+  #
+  # This rule drops TCP to those five ports on 192.168.80.11 from every
+  # source except Traefik. Same-VLAN traffic (media-stack-lab at
+  # 192.168.80.10, containers inside 80.11) is switched, not routed, so the
+  # rule never sees it. Jellyseerr (5055) keeps its own login and is left
+  # out on purpose.
+  #
+  # Same read / insert-before-anchor / re-read / assert-order pattern as
+  # mikrotik-firewall-media-seg-wireguard-egress.yml. Credentials use the
+  # admin fallback from mikrotik-firewall-cse-seg.yml, because MIKROTIK_USER
+  # lacks firewall write permission (docs/gaming-stack-lab/README.md).
+  #
+  # Run:
+  #   TASK_APPROVAL=catchup-01-arr-lockdown ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml
+
+  - name: Ensure torrent-stack-lab UI ports are reachable only through Traefik
+    hosts: localhost
+    gather_facts: false
+
+    vars:
+      mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+      mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+      mikrotik_user: >-
+        {{
+          lookup('env', 'MIKROTIK_ADMIN')
+          | default(lookup('env', 'MIKROTIK_USER'), true)
+        }}
+      mikrotik_password: >-
+        {{
+          lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+          | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+        }}
+
+      media_seg_cidr: "{{ lookup('env', 'LAB_SUBNET_MEDIA_CIDR') | default('192.168.80.0/24', true) }}"
+      media_seg_deny_comment: "media_seg default-deny to LAN and other zones"
+      torrent_lab_ip: "{{ lookup('env', 'LAB_IP_TORRENT_STACK_LAB') | mandatory('LAB_IP_TORRENT_STACK_LAB env var is required') }}"
+      traefik_ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      torrent_lab_ui_ports: "7878,8989,8686,9696,8080"
+      rule_src: "!{{ traefik_ip }}"
+      rule_comment: "torrent-stack-lab: UI ports reachable only via Traefik (drop direct access)"
+
+    pre_tasks:
+      - name: Assert MikroTik credentials are present
+        ansible.builtin.assert:
+          that:
+            - mikrotik_user | length > 0
+            - mikrotik_password | length > 0
+          fail_msg: Set MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD (or MIKROTIK_USER/MIKROTIK_PASSWORD) via with-secrets-prod.
+
+    tasks:
+      - name: Read MikroTik firewall filter rules
+        ansible.builtin.uri:
+          url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+          method: GET
+          user: "{{ mikrotik_user }}"
+          password: "{{ mikrotik_password }}"
+          force_basic_auth: true
+          validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+          return_content: true
+          status_code: 200
+        register: firewall_filters
+        no_log: true
+
+      - name: Find the media_seg default-deny anchor for ordered insertion
+        ansible.builtin.set_fact:
+          media_seg_deny_anchor: >-
+            {{
+              (firewall_filters.json
+                | selectattr('chain', 'defined')
+                | selectattr('chain', 'equalto', 'forward')
+                | selectattr('action', 'defined')
+                | selectattr('action', 'equalto', 'drop')
+                | selectattr('src-address', 'defined')
+                | selectattr('src-address', 'equalto', media_seg_cidr)
+                | list)
+              | first | default({})
+            }}
+
+      - name: Assert the media_seg default-deny anchor exists
+        ansible.builtin.assert:
+          that:
+            - media_seg_deny_anchor != {}
+          fail_msg: >-
+            No forward-chain drop rule with src-address={{ media_seg_cidr }}
+            found (expected rule *8A, "{{ media_seg_deny_comment }}"). Do not
+            add the rule until the anchor is understood.
+
+      - name: Add the torrent-stack-lab UI lockdown drop rule, if missing
+        ansible.builtin.uri:
+          url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+          method: POST
+          user: "{{ mikrotik_user }}"
+          password: "{{ mikrotik_password }}"
+          force_basic_auth: true
+          validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+          body_format: json
+          body:
+            comment: "{{ rule_comment }}"
+            chain: "forward"
+            action: "drop"
+            protocol: "tcp"
+            src-address: "{{ rule_src }}"
+            dst-address: "{{ torrent_lab_ip }}"
+            dst-port: "{{ torrent_lab_ui_ports }}"
+            place-before: "{{ media_seg_deny_anchor['.id'] }}"
+          status_code: [200, 201]
+        when: (firewall_filters.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', rule_comment) | list) | length == 0
+        no_log: true
+
+      - name: Re-read MikroTik firewall filter rules after apply
+        ansible.builtin.uri:
+          url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+          method: GET
+          user: "{{ mikrotik_user }}"
+          password: "{{ mikrotik_password }}"
+          force_basic_auth: true
+          validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+          return_content: true
+          status_code: 200
+        register: firewall_filters_final
+        no_log: true
+
+      - name: Assert the rule exists with the expected match criteria
+        ansible.builtin.assert:
+          that:
+            - >-
+              (firewall_filters_final.json
+                | selectattr('comment', 'defined')
+                | selectattr('comment', 'equalto', rule_comment)
+                | selectattr('chain', 'equalto', 'forward')
+                | selectattr('action', 'equalto', 'drop')
+                | selectattr('protocol', 'equalto', 'tcp')
+                | selectattr('src-address', 'equalto', rule_src)
+                | selectattr('dst-address', 'equalto', torrent_lab_ip)
+                | selectattr('dst-port', 'equalto', torrent_lab_ui_ports)
+                | list) | length == 1
+          fail_msg: "Expected exactly one torrent-stack-lab UI lockdown rule after apply; found none or duplicates."
+
+      - name: Record rule positions for the order check
+        ansible.builtin.set_fact:
+          lockdown_comment_order: "{{ firewall_filters_final.json | map(attribute='comment', default='') | list }}"
+
+      - name: Compute the lockdown rule and anchor positions
+        ansible.builtin.set_fact:
+          lockdown_rule_position: "{{ lockdown_comment_order.index(rule_comment) }}"
+          media_seg_deny_position: "{{ lockdown_comment_order.index(media_seg_deny_comment) }}"
+
+      - name: Assert the lockdown rule sits before the media_seg default-deny
+        ansible.builtin.assert:
+          that:
+            - lockdown_rule_position | int < media_seg_deny_position | int
+          fail_msg: >-
+            The lockdown rule landed after the media_seg default-deny anchor;
+            place-before did not work as expected. Check rule order by hand.
+
+      - name: Report the lockdown rule is present and ordered
+        ansible.builtin.debug:
+          msg: >-
+            torrent-stack-lab UI ports {{ torrent_lab_ui_ports }} on
+            {{ torrent_lab_ip }} now accept new connections only from
+            {{ traefik_ip }}; rule confirmed present and positioned before
+            the media_seg default-deny.
+
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running the playbook (that is an operator action under approval, below)"
+    - "Any ssh, curl or with-secrets-prod command"
+
+gates:
+  - id: syntax-check
+    cmd: "cd ansible && ansible-playbook --syntax-check 00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml"
+    expect: "exit 0"
+    critical: true
+  - id: ansible-lint
+    cmd: "cd ansible && ansible-lint 00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml"
+    expect: "exit 0 (warnings allowed, no failures)"
+    critical: true
+  - id: literal-values
+    cmd: >-
+      python3 -c "import yaml;p=yaml.safe_load(open('ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml'))[0];v=p['vars'];assert v['torrent_lab_ui_ports']=='7878,8989,8686,9696,8080';assert v['rule_src']=='!{{ traefik_ip }}';add=[t for t in p['tasks'] if t['name'].startswith('Add the torrent-stack-lab')][0];assert add['ansible.builtin.uri']['body']['action']=='drop';print('ok')"
+    expect: "prints ok"
+    critical: true
+```
+
+### Operator: pre-check (read-only)
+
+Confirm the exposure still exists and Traefik routes are healthy before
+changing anything:
+
+```bash
+for p in 7878 8989 8686 9696 8080; do curl -s -m5 -o /dev/null -w "direct $p: %{http_code}\n" http://192.168.80.11:$p/; done
+for a in radarr sonarr lidarr prowlarr qbittorrent; do curl -s -m8 -o /dev/null -w "$a via traefik: %{http_code}\n" https://$a.lab.gibbsgreatly.xyz/; done
+```
+
+Expect: direct answers (`200`/`302`/`401`, not `000`); every Traefik route `302`.
+
+### Operator: apply (production, approval `catchup-01-arr-lockdown`)
+
+Preflight to report before running: target is the MikroTik (shared by all
+environments); mutating; adds one forward-chain drop rule, positioned before
+`*8A`; out of scope: any other rule, Jellyseerr `5055`, the torrent-lab
+containers.
+
+```bash
+TASK_APPROVAL=catchup-01-arr-lockdown ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml
+```
+
+Expect `failed=0`, the order assert passing, and the final debug message.
+
+**Fallback if the REST call is refused** (`not enough permissions`), run on
+the router CLI:
+
+```
+/ip firewall filter add chain=forward action=drop protocol=tcp dst-address=192.168.80.11 dst-port=7878,8989,8686,9696,8080 src-address=!192.168.30.10 comment="torrent-stack-lab: UI ports reachable only via Traefik (drop direct access)" place-before=[find where comment="media_seg default-deny to LAN and other zones"]
+```
+
+Then re-run the playbook. It finds the rule by comment, skips the add, and its
+asserts still verify match criteria and order.
+
+### Operator: verify (read-only, plus one check from proxy-stack)
+
+```bash
+# 1. Direct access now blocked from the workstation (expect 000 on every port):
+for p in 7878 8989 8686 9696 8080; do curl -s -m5 -o /dev/null -w "direct $p: %{http_code}\n" http://192.168.80.11:$p/; done
+# 2. Traefik routes still gated (expect 302 each):
+for a in radarr sonarr lidarr prowlarr qbittorrent; do curl -s -m8 -o /dev/null -w "$a via traefik: %{http_code}\n" https://$a.lab.gibbsgreatly.xyz/; done
+```
+
+3. **The check that matters:** Traefik can still reach the backends. Log in
+   through Authentik in a browser and open Radarr, Sonarr, Lidarr, Prowlarr and
+   qBittorrent. Each must load its UI, not a Traefik `502`/`504`.
+4. In Jellyseerr, Settings → Services: Radarr and Sonarr show as connected
+   (confirms same-host traffic is unaffected).
+
+### Rollback
+
+```
+/ip firewall filter remove [find where comment="torrent-stack-lab: UI ports reachable only via Traefik (drop direct access)"]
+```
+
+## Done when
+
+- `catchup-01-lockdown-playbook` gates pass and the file is committed.
+- The operator apply shows `failed=0`, and verify checks 1–4 pass.
+- The hand-back is in `README.md`, and `router/config/current-config.json`
+  is refreshed by the next NetBox populate run. Don't hand-edit it.
+- `docs/torrent-stack-modernization/current-state.md`'s "arr built-in auth
+  appears to be off" open decision is updated to "closed by
+  `mikrotik-firewall-torrent-lab-ui-lockdown.yml`".
