@@ -29,7 +29,9 @@ using the already-planned `docs/dhcp-refactor/` Stage E/F.
    IPv4 only. No new firewall rule is needed: the live forward chain has
    no drop for `bridgeLocal -> mgmt_seg`, and UDP+TCP/53 from the LAN to
    `192.168.20.15` was confirmed working live on 2026-09-29.
-2. **Pis: cold fallback, then retire.** `argon-02` keeps running Pi-hole
+2. **Pis: cold fallback, then retire.** No Pi-hole config is carried
+   over — no local records or custom lists need keeping; Technitium gets
+   its own blocklists (Phase 1). `argon-02` keeps running Pi-hole
    untouched through a 7-day soak as the rollback target; both Pis are
    then decommissioned. `argon-01` is already broken (below).
 3. **Upstream: DoH forwarding.** Cloudflare + Quad9 over HTTPS, matching
@@ -87,6 +89,31 @@ using the already-planned `docs/dhcp-refactor/` Stage E/F.
   keeps the deferred "second DHCP relay target" option (dhcp-refactor
   Deferred section) open without a later redeploy.
 
+## Failover behavior (what "two synced servers" means here)
+
+Both nodes are **full, independent resolvers** — each one forwards over
+DoH, applies the same blocklists, and serves the same lab/reverse zones.
+Neither proxies through the other at query time. LAN clients get both IPs
+from DHCP and fail over on their own (OS resolvers retry the second
+server on timeout; many query both).
+
+| Situation | What still works | What doesn't |
+|---|---|---|
+| pve (primary) down | tiny answers everything: DoH forwarding, blocking, router-forwarded LAN names, and its Secondary copies of the lab/reverse zones (they keep answering until their SOA expire passes without contact — 30 days for `lab.gibbsgreatly.xyz`, whose SOA the deploy playbook sets; the reverse zones use Technitium's default) | Config changes (settings, allow/block lists, apps) — those are only accepted on the primary. Either wait for pve, or promote tiny to primary if pve is gone for good. Containers resolving `lab` via the MikroTik also fail — the router's FWD rule points only at .20.15 (listed in follow-ups) |
+| pve-tiny (secondary) down | pve answers everything, exactly as today | nothing client-visible |
+| Both down | nothing; rollback is `mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole` during the soak | — |
+
+"Synced" happens by two mechanisms, split by what they can safely carry:
+
+- **Clustering** (primary -> secondary, config): settings (DoH forwarders,
+  blocking on/off, blocklist URLs, bypass list), the Allowed/Blocked
+  lists, installed apps, admin users. You configure the primary once and
+  the secondary picks it up — so tiny *does* do DoH and blocklists, it
+  just never gets configured directly.
+- **Zone transfer** (primary -> secondary, zone data): the
+  `lab.gibbsgreatly.xyz`, `tech.lab...` and reverse zones. Why not the
+  cluster for these too: see "Sync = Technitium clustering…" above.
+
 ## Live facts this plan is grounded in (checked 2026-09-29)
 
 - **`argon-01` (`192.168.1.22`) answers ping but not DNS** (queries time
@@ -109,81 +136,6 @@ using the already-planned `docs/dhcp-refactor/` Stage E/F.
 
 ---
 
-## Phase 0 — Inventory the Pi-hole
-
-### Operator: export argon-02's Pi-hole config
-
-No automation has SSH access to the Pis. From the workstation (argon-02
-is Pi-hole v5, so the gravity DB is SQLite at `/etc/pihole/gravity.db`):
-
-```bash
-D=docs/lan-dns-technitium/artifacts/pihole-export; mkdir -p "$D"
-ssh pi@192.168.1.23 'sudo sqlite3 -separator "|" /etc/pihole/gravity.db "select enabled,address,comment from adlist;"' > "$D/adlists.txt"
-ssh pi@192.168.1.23 'sudo sqlite3 -separator "|" /etc/pihole/gravity.db "select type,enabled,domain,comment from domainlist;"' > "$D/domainlist.txt"
-ssh pi@192.168.1.23 'sudo sqlite3 -separator "|" /etc/pihole/gravity.db "select id,name,enabled from \"group\";"' > "$D/groups.txt"
-ssh pi@192.168.1.23 'sudo sqlite3 -separator "|" /etc/pihole/gravity.db "select id,ip,comment from client;"' > "$D/clients.txt"
-ssh pi@192.168.1.23 'sudo cat /etc/pihole/custom.list' > "$D/custom.list"
-ssh pi@192.168.1.23 'sudo cat /etc/dnsmasq.d/05-pihole-custom-cname.conf 2>/dev/null' > "$D/cname.conf"
-ssh pi@192.168.1.23 'sudo grep -E "^(PIHOLE_DNS_|REV_SERVER|CONDITIONAL|DNSSEC|BLOCKING_ENABLED)" /etc/pihole/setupVars.conf' > "$D/setupvars.txt"
-```
-
-(`domainlist.type`: 0 = exact allow, 1 = exact deny, 2 = regex allow,
-3 = regex deny.) Adjust the SSH user if it isn't `pi`. Optional: decide
-whether argon-01 is worth reviving — nothing in this plan depends on it.
-
-### lan-dns-01-pihole-inventory
-
-```yaml
-id: lan-dns-01-pihole-inventory
-title: Transcribe the Pi-hole export into a tracked inventory doc
-depends_on: []   # requires the operator export above to exist
-
-change: >
-  Create docs/lan-dns-technitium/pihole-inventory.md from the files in
-  docs/lan-dns-technitium/artifacts/pihole-export/. It must contain exactly
-  these level-2 headings in this order: "## Adlists (enabled)", "## Adlists
-  (disabled)", "## Exact allow", "## Exact deny", "## Regex rules",
-  "## Local records", "## Groups and clients", "## Upstreams". Under each,
-  list the entries one per line as markdown bullets (adlists: the URL only;
-  domainlist rows: the domain, type 0 -> Exact allow, 1 -> Exact deny, 2 or
-  3 -> Regex rules prefixed "allow:" or "deny:"; enabled=0 rows are listed
-  with a trailing " (disabled)"; custom.list and cname.conf lines verbatim
-  under Local records; groups.txt and clients.txt rows verbatim under
-  Groups and clients; setupvars.txt lines verbatim under Upstreams). Write
-  "- none" under any heading with no entries. Do not interpret or filter.
-
-scope:
-  allowed_paths:
-    - docs/lan-dns-technitium/pihole-inventory.md
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Copying any password or API token from setupvars.txt"
-    - "Committing anything under docs/lan-dns-technitium/artifacts/"
-
-gates:
-  - id: headings-present
-    cmd: "test $(grep -cE '^## (Adlists \\(enabled\\)|Adlists \\(disabled\\)|Exact allow|Exact deny|Regex rules|Local records|Groups and clients|Upstreams)$' docs/lan-dns-technitium/pihole-inventory.md) -eq 8"
-    expect: "exit 0"
-    critical: true
-  - id: adlist-count-matches
-    cmd: "test $(awk '/^## Adlists \\(enabled\\)$/{f=1;next} /^## /{f=0} f && /^- http/' docs/lan-dns-technitium/pihole-inventory.md | wc -l) -eq $(grep -c '^1|' docs/lan-dns-technitium/artifacts/pihole-export/adlists.txt)"
-    expect: "exit 0"
-    critical: true
-  - id: no-password
-    cmd: "! grep -qiE 'WEBPASSWORD|API_KEY|TOKEN' docs/lan-dns-technitium/pihole-inventory.md"
-    expect: "exit 0"
-    critical: true
-```
-
-**Frontier review point:** read `pihole-inventory.md` before
-`lan-dns-02`. If "Regex rules" or "Groups and clients" is non-trivial
-(per-client policy, regex deny lists), built-in Technitium blocking can't
-reproduce it — that needs the Advanced Blocking app and a revised
-`lan-dns-02`. If "Local records" holds names the MikroTik statics don't
-already cover, add them as records (not forwarders) in a follow-up step.
-
----
-
 ## Phase 1 — Make the primary a LAN-grade resolver
 
 No LAN client uses Technitium yet, so this phase has no client-facing
@@ -196,17 +148,12 @@ upstream and the router-forwarded `gibbsgreatly.xyz` view.
 ```yaml
 id: lan-dns-02-resolver-playbook
 title: Add configure-technitium-lan-resolver.yml
-depends_on: [lan-dns-01-pihole-inventory]
+depends_on: []
 
 change: >
   Create terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml
-  with exactly the literal content (with its 3-space indent stripped) in the plan section "Literal content:
-  configure-technitium-lan-resolver.yml", then replace the single example
-  entry in lan_resolver_block_list_urls with every URL listed under
-  "## Adlists (enabled)" in docs/lan-dns-technitium/pihole-inventory.md (same
-  order), fill lan_resolver_allowed_domains from "## Exact allow" and
-  lan_resolver_blocked_domains from "## Exact deny" (skip entries marked
-  "(disabled)"; leave [] when the section says "- none").
+  with exactly the literal content (with its 3-space indent stripped) in the
+  plan section "Literal content: configure-technitium-lan-resolver.yml".
 
 scope:
   allowed_paths:
@@ -214,15 +161,14 @@ scope:
   forbidden_actions:
     - "Any change outside allowed_paths"
     - "Running the playbook against any host"
-    - "Adding regex entries to either domain list"
 
 gates:
   - id: syntax-check
     cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/configure-technitium-lan-resolver.yml'"
     expect: "exit 0"
     critical: true
-  - id: blocklists-transcribed
-    cmd: "test $(grep -cE '^      - \"?https?://' terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml) -ge 1 && ! grep -q 'EXAMPLE-REPLACE' terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml"
+  - id: blocklists-present
+    cmd: "test $(grep -c 'raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/' terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml) -eq 2"
     expect: "exit 0"
     critical: true
   - id: bypass-excludes-lan
@@ -265,9 +211,14 @@ gates:
          - "https://cloudflare-dns.com/dns-query (1.1.1.1)"
          - "https://dns.quad9.net/dns-query (9.9.9.9)"
 
-       # Transcribed from docs/lan-dns-technitium/pihole-inventory.md.
+       # Hagezi Pro (ads/trackers/telemetry, ~230k domains) + Hagezi Threat
+       # Intelligence Feeds "mini" (malware/phishing/scam). The full TIF list
+       # is ~40MB, too heavy for a 2GB LXC. Both URLs checked 2026-09-29.
        lan_resolver_block_list_urls:
-         - "https://EXAMPLE-REPLACE/hosts"
+         - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
+         - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+       # Exceptions and extra blocks live here, not in the web UI, so a
+       # rebuild keeps them. Synced to the secondary via clustering.
        lan_resolver_allowed_domains: []
        lan_resolver_blocked_domains: []
 
@@ -594,10 +545,6 @@ gates:
     cmd: "dig +short @192.168.20.15 -x 192.168.1.104 | grep -q garuda"
     expect: "exit 0"
     critical: true
-  - id: same-verdict-as-pihole
-    cmd: "for d in doubleclick.net googleadservices.com ads.yahoo.com; do test \"$(dig +short @192.168.20.15 $d A | head -1)\" = \"$(dig +short @192.168.1.23 $d A | head -1)\" || exit 1; done"
-    expect: "exit 0"
-    critical: false
 ```
 
 ---
@@ -1306,6 +1253,19 @@ gates:
     critical: false
 ```
 
+### Operator: failover drill (before the LAN depends on it)
+
+Prove the table in "Failover behavior" rather than assume it. With
+approval, on pve: `pct exec 20015 -- docker stop technitium`, then from
+the workstation re-run `lan-dns-09`'s gates against `192.168.20.17` —
+blocking, `traefik.lab.gibbsgreatly.xyz`, `pve.gibbsgreatly.xyz` and
+`github.com` must all still answer. Then
+`pct exec 20015 -- docker start technitium` and confirm the primary's
+Cluster page shows the secondary `Connected`. Nothing on the LAN uses
+either node yet, so the drill has no client impact; the router's `lab`
+FWD rule does briefly lose its target, so keep it short (under a
+minute) and do it outside CI runs.
+
 ---
 
 ## Phase 3 — Point the LAN at Technitium
@@ -1742,6 +1702,3 @@ after Stage F as its own decision.
   Technitium-owned zone, is separate work.
 - **`docs/environment-isolation/`** (moving `technitium-stack` itself to
   the per-environment layout) is unchanged and still open.
-- **Pi-hole regex / per-client group policy**, if `lan-dns-01` finds any —
-  needs the Advanced Blocking app (see the review point after
-  `lan-dns-01`).

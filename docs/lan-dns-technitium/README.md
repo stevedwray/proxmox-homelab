@@ -18,7 +18,8 @@ recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
 (Cloudflare + Quad9), and a new secondary stack on pve-tiny rather than
-re-homing the live primary's Terraform state first.
+re-homing the live primary's Terraform state first. No Pi-hole config is
+carried over (operator, 2026-09-29) — Technitium gets its own blocklists.
 
 Found while planning (live, 2026-09-29): **argon-01 answers ping but not
 DNS**, and the MikroTik already hands out only `192.168.1.23` — so the
@@ -30,9 +31,8 @@ reason; `lan-dns-13` fixes that.
 
 | Phase | What | Client impact |
 |---|---|---|
-| 0 | Export and transcribe the Pi-hole config (`lan-dns-01`) | none |
-| 1 | Primary becomes a LAN-grade resolver: DoH, blocklists, router forwarders, query-log app (`lan-dns-02`–`04`) | none (no LAN client uses it yet; SDN subnets bypass blocking) |
-| 2 | `technitium-tiny-stack` on pve-tiny, clustered, zones replicated (`lan-dns-05`–`09`) | none |
+| 1 | Primary becomes a LAN-grade resolver: DoH, Hagezi Pro + TIF-mini blocklists, router forwarders, query-log app (`lan-dns-02`–`04`) | none (no LAN client uses it yet; SDN subnets bypass blocking) |
+| 2 | `technitium-tiny-stack` on pve-tiny, clustered (inherits DoH/blocklists), zones replicated, failover drill (`lan-dns-05`–`09`) | none |
 | 3 | MikroTik DHCP hands out both Technitium nodes; 7-day soak (`lan-dns-10`–`11`) | **cutover** — one-command rollback |
 | 4 | Retire the Pis (`lan-dns-12`) | none after soak |
 | 5 | DHCP to Technitium — existing dhcp-refactor Stage E/F, decoupled by `lan-dns-13` | separate window |
@@ -45,8 +45,7 @@ authoritative.
 
 - [plan.md](./plan.md) — decisions, research, and the step blocks
   (`docs/agent-design/step-packet-schema.md` shape)
-- `pihole-inventory.md` — created by `lan-dns-01`
-- `artifacts/` — gitignored; holds the raw Pi-hole export
+- `artifacts/` — gitignored scratch, not created yet
 
 ## Hand-back log
 
