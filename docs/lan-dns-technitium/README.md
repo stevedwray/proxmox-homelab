@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. Next: operator creates the Technitium `metrics` token and writes it to OpenBao, then `lan-dns-11`, then the approved graylog-stack and technitium-stack deploys.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done 2026-09-29 (operator edit). Next: approved graylog-stack, then technitium-stack deploys on pve.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -113,3 +113,13 @@ literal blocks verbatim.
   Gates: `syntax-check` PASS, `import-order` PASS.
 
 Unit tests: same 8 pre-existing failures as before Phase 1, nothing new.
+
+### 2026-09-29 — metrics token + lan-dns-11
+
+- Operator created Technitium user `metrics` (removed from Everyone,
+  Dashboard: View only), an API token `victoriametrics`, and wrote it to
+  OpenBao `services/technitium` field `TECHNITIUM_METRICS_TOKEN` with
+  `scripts/openbao_write.py` (write + snapshot reported OK).
+- **lan-dns-11-metrics-token-manifest** — edited by the operator (Claude's
+  permissions deny `secrets/`). Gates, run by the operator:
+  `field-declared` PASS ("manifest ok"), `wrapper-resolves-it` PASS.
