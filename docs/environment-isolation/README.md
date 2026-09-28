@@ -18,6 +18,13 @@ failure — this workspace is for the actual fix, not the guardrail.
 own planned task rather than done in the same session as the incident that
 motivated it — see the operator's own call in that session.
 
+**Re-verified 2026-09-28: still not started.** `technitium-stack` still
+keeps its state in stack-level Terraform workspaces
+(`terraform/lxc/stacks/technitium-stack/terraform.tfstate.d/{pve,pve-test-vm}/`).
+Its `terraform/lxc/environments/{pve,pve-test-vm}/technitium-stack/`
+directories hold only `inventory.yml`, with no `terragrunt.hcl` or state,
+unlike the migrated stacks.
+
 **Scope finding (2026-07-07):** of the 11 stacks not on the per-environment
 layout, only **`technitium-stack`** is a genuine dual-environment gap.
 `dhcp-test-client-01` has an SDN zone too, but it is Stage A's disposable

@@ -88,6 +88,17 @@ code/doc cleanup), not just a stub. The immediate incident fixes (delegate
 repointed, stray records reverted, `LAB_IP_TECHNITIUM` made the primary
 var) are already done; Phase 6 itself has not been started.
 
+**Update 2026-09-28:** that sentence is historical. Phase 6a (freeze) was
+done 2026-08-27, and `dns-stack` was destroyed on `pve` 2026-09-08
+(`pve-test-vm` still runs its own copy at `.113`). Its hidden role as
+Docker daemon DNS is gone on `pve`, verified live 2026-09-28: every
+`/etc/docker/daemon.json` on harbor, portainer, netbox, authentik,
+monitoring, graylog and wazuh has `"dns": ["192.168.20.15"]` (Technitium).
+The static audit behind this is `daemon-json-audit.md` on branch
+`task/dns-stack-daemon-json-audit` (not merged yet). The remaining Phase 6
+work is code/doc cleanup of the non-resolver `LAB_IP_DNS` references that
+audit lists.
+
 One follow-up
 was identified immediately after cutover: the Technitium browser route
 returned a Traefik `404`, which traced back to unpublished production edge

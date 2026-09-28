@@ -10,6 +10,15 @@ viewer — see `docs/reporting-platform/plan.md`. Broader Phase 2/3
 measurement (eval harness, job-model decoupling, quota fix, `cve-mcp`
 wiring) not yet done — see Phase 5 for what's confirmed but unbuilt.
 
+**Re-verified 2026-09-28:** both edge routes (`deep-research`,
+`deep-research-files`) return `302` to Authentik (auth done). Still
+unbuilt, confirmed from the source in
+`terraform/lxc/ansible/files/deep-research-agent/`: there's no job layer
+(runs still tied to the `textual-serve` session), and no `cve-mcp` or
+`docs-rag` tool wiring, although `cve-mcp` itself is live at
+`192.168.50.10:8000/mcp`. `ai-services-stack` now runs on `pve-tiny`
+(`docs/ai-stacks-pve-tiny/`), not `pve`.
+
 **Same day, later:** `web_search` switched from DDGS scraping to Tavily's
 real API after a genuine production incident, and two rounds of real
 production hangs were fully root-caused and fixed — a subprocess
@@ -931,8 +940,9 @@ otherwise, was judged the lower-effort path).
   2. `scripts/provision.sh --stack technitium-stack` — separately required to actually publish the new DNS record to the live authoritative Technitium server. This one **is** self-contained (it regenerates zone records from all EdgeManifests and pushes them as part of its own normal per-stack apply), unlike step 1.
 - Verified after both steps: `dig @192.168.20.15 +short deep-research.lab.gibbsgreatly.xyz` → `192.168.30.10`; `https://deep-research.lab.gibbsgreatly.xyz/` → `200`. Regression-checked `openwebui`/`searxng` routes still `200` — no disruption to existing routes.
 
-**Not yet done (step 2):** add the Authentik OIDC app/provider for this
-route, deliberately deferred to a separate, smaller change per the
+**~~Not yet done (step 2)~~ — superseded:** Authentik `forwardAuth` is
+live on both routes (Stage B, verified again 2026-09-28). Original note:
+add the Authentik OIDC app/provider for this route, deliberately deferred to a separate, smaller change per the
 operator's own two-step preference — currently `auth.mode: none` means this
 route is unauthenticated on the open internet-facing edge, same posture as
 `searxng` today. Do not leave this route in this state long-term.

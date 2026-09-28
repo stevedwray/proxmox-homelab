@@ -9,6 +9,15 @@ This document tree is the working area for the stack lifecycle refactor:
 
 Use this tree as the durable context for future work. Do not rely on chat history.
 
+**Status refresh, 2026-09-28:** this workspace hasn't been updated since
+2026-07-25. The "netbox-stack as a deferred Stage 4 candidate" item
+(`stage-03-exemplar-scope.md`, `plan.md`) has been overtaken:
+`netbox-stack` now has the same contract shape as the exemplars
+(`stack.yaml`, `STACK_CONTRACT.md`, `edge.yaml`, `smoke-test.sh`,
+per-environment `environments/pve/netbox-stack/terragrunt.hcl`), and
+31 of 59 stack directories carry a `STACK_CONTRACT.md`. Treat the stage
+files here as historical unless this workspace is restarted.
+
 ## Working Files
 
 - [decisions.md](./decisions.md): confirmed decisions, defaults, and open questions
