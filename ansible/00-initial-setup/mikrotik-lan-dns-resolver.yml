@@ -10,8 +10,11 @@
 #     pre-cutover live value) and RA advertises the Pi-hole ULAs again.
 #
 # Usage (run from the repo root):
-#   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
-#   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole
+#
+# Must be the prod wrapper: ./with-secrets loads pve-test-vm's
+# LAB_IP_TECHNITIUM (192.168.20.115). A pre-task enforces PVE_ENV=pve.
 #
 # Existing leases keep their old DNS until renewal (MikroTik lease-time is
 # 30m today), so the change reaches every client within ~30 minutes.
@@ -49,6 +52,15 @@
     lan_dns_subnet: "192.168.1.0/24"
 
   pre_tasks:
+    - name: Refuse to run without the production environment loaded
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'PVE_ENV') == 'pve'
+        fail_msg: >-
+          PVE_ENV is '{{ lookup('env', 'PVE_ENV') }}'. The LAN router serves
+          production: run this through ./with-secrets-prod, not ./with-secrets
+          (which defaults to pve-test-vm and its Technitium IP, 192.168.20.115).
+
     - name: Assert a known mode was requested
       ansible.builtin.assert:
         that:

@@ -2742,8 +2742,11 @@ gates:
    #     pre-cutover live value) and RA advertises the Pi-hole ULAs again.
    #
    # Usage (run from the repo root):
-   #   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
-   #   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole
+   #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
+   #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole
+   #
+   # Must be the prod wrapper: ./with-secrets loads pve-test-vm's
+   # LAB_IP_TECHNITIUM (192.168.20.115). A pre-task enforces PVE_ENV=pve.
    #
    # Existing leases keep their old DNS until renewal (MikroTik lease-time is
    # 30m today), so the change reaches every client within ~30 minutes.
@@ -2781,6 +2784,15 @@ gates:
        lan_dns_subnet: "192.168.1.0/24"
 
      pre_tasks:
+       - name: Refuse to run without the production environment loaded
+         ansible.builtin.assert:
+           that:
+             - lookup('env', 'PVE_ENV') == 'pve'
+           fail_msg: >-
+             PVE_ENV is '{{ lookup('env', 'PVE_ENV') }}'. The LAN router serves
+             production: run this through ./with-secrets-prod, not ./with-secrets
+             (which defaults to pve-test-vm and its Technitium IP, 192.168.20.115).
+
        - name: Assert a known mode was requested
          ansible.builtin.assert:
            that:
@@ -2938,8 +2950,11 @@ gates:
    # connections, so return traffic is never affected.
    #
    # Usage (run from the repo root):
-   #   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml
-   #   ./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml -e technitium_lan_state=absent   # rollback
+   #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml
+   #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml -e technitium_lan_state=absent   # rollback
+   #
+   # Must be the prod wrapper: ./with-secrets loads pve-test-vm's
+   # LAB_IP_TECHNITIUM (192.168.20.115). A pre-task enforces PVE_ENV=pve.
 
    - name: Restrict LAN access to the Technitium nodes to DNS
      hosts: localhost
@@ -2997,6 +3012,15 @@ gates:
            comment: "technitium-lan: LAN default-deny to Technitium (admin via technitium.lab)"
 
      pre_tasks:
+       - name: Refuse to run without the production environment loaded
+         ansible.builtin.assert:
+           that:
+             - lookup('env', 'PVE_ENV') == 'pve'
+           fail_msg: >-
+             PVE_ENV is '{{ lookup('env', 'PVE_ENV') }}'. The LAN router serves
+             production: run this through ./with-secrets-prod, not ./with-secrets
+             (which defaults to pve-test-vm and its Technitium IP, 192.168.20.115).
+
        - name: Assert MikroTik credentials are set
          ansible.builtin.assert:
            that:
@@ -3054,6 +3078,29 @@ gates:
              technitium_lan_address_lists.json
              | selectattr('list', 'equalto', technitium_lan_list)
              | selectattr('address', 'equalto', item) | list | length == 0
+         no_log: true
+
+       # Keep the list exact: an entry for any other address (e.g. a stale IP
+       # from a wrongly-targeted run) is removed.
+       - name: Remove address-list entries that are not Technitium nodes
+         ansible.builtin.uri:
+           url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list/{{ item['.id'] }}"
+           method: DELETE
+           user: "{{ mikrotik_user }}"
+           password: "{{ mikrotik_password }}"
+           force_basic_auth: true
+           validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+           status_code: [200, 204]
+         loop: >-
+           {{
+             technitium_lan_address_lists.json
+             | selectattr('list', 'equalto', technitium_lan_list)
+             | rejectattr('address', 'in', technitium_lan_ips)
+             | list
+           }}
+         loop_control:
+           label: "{{ item.address }}"
+         when: technitium_lan_effective_state == 'present'
          no_log: true
 
        - name: Find the first forward drop/reject rule for ordered insertion
@@ -3134,6 +3181,26 @@ gates:
          register: technitium_lan_filters_after
          no_log: true
 
+       - name: Re-read address lists
+         ansible.builtin.uri:
+           url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
+           method: GET
+           user: "{{ mikrotik_user }}"
+           password: "{{ mikrotik_password }}"
+           force_basic_auth: true
+           validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+           return_content: true
+         register: technitium_lan_address_lists_after
+         no_log: true
+
+       - name: Assert the address list holds exactly the Technitium nodes
+         ansible.builtin.assert:
+           that:
+             - >-
+               (technitium_lan_address_lists_after.json | selectattr('list', 'equalto', technitium_lan_list)
+                | map(attribute='address') | list | sort)
+               == ((technitium_lan_ips | sort) if technitium_lan_effective_state == 'present' else [])
+
        - name: Assert the rules are in the requested state and correctly ordered
          ansible.builtin.assert:
            that:
@@ -3160,14 +3227,17 @@ gates:
 
 ### Operator: cutover
 
-Preflight/approval (MikroTik is production), then — access lockdown
+Preflight/approval (MikroTik is production). **Use `./with-secrets-prod`**:
+`./with-secrets` loads pve-test-vm's `LAB_IP_TECHNITIUM` (192.168.20.115) —
+a first attempt on 2026-09-29 did exactly that (both playbooks now refuse
+unless `PVE_ENV=pve`). Access lockdown
 first, so no LAN device ever reaches the admin ports of a server it has
 just been told to use:
 
 ```bash
 export TASK_APPROVAL="lan-dns-cutover"
-./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml
-./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
 ```
 
 Check the lockdown from a phone on WiFi: `http://192.168.20.15:5380` must
@@ -3180,7 +3250,7 @@ reconnect) and confirm `resolvectl dns` shows `192.168.20.15
 192.168.20.17` and no `fd00::` address; spot-check a phone on WiFi (ads
 blocked in a browser, and a LAN name like `nas.gibbsgreatly.xyz`
 resolves). **Rollback** at any point:
-`./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole`.
+`./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole`.
 
 ### Operator: 7-day soak
 

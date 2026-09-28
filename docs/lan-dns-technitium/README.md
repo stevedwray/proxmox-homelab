@@ -323,3 +323,21 @@ Unit tests: same 8 pre-existing failures.
 - **lan-dns-20-mikrotik-firewall-lan** — created
   `ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml`. Gates
   `syntax-check`, `drop-is-new-only` PASS.
+
+### 2026-09-29 — Phase 4 cutover, attempt 1 (mis-targeted, no client impact)
+
+- Operator ran both MikroTik playbooks with `./with-secrets`, as the plan
+  then said. That wrapper defaults to pve-test-vm, whose
+  `LAB_IP_TECHNITIUM` is `192.168.20.115`, so both used `.115` instead of
+  `.15` (`.17` came from the shared `.env` and was right).
+- Resolver switch: its pre-check couldn't reach `.115` and refused —
+  **DHCP unchanged** (still `192.168.1.23`), RA unchanged.
+- Firewall: the 4 `technitium-lan:` rules were added, correctly ordered
+  before `*AE`, but the `technitium-dns` address list got `.115` + `.17`,
+  so the primary `.15` was left unrestricted; the final DNS check then
+  failed on `.115`. No breakage (LAN → `.15` unchanged).
+- Fixes: both playbooks now refuse unless `PVE_ENV=pve`; the firewall
+  playbook removes address-list entries that aren't Technitium nodes and
+  asserts the list is exact; plan commands use `./with-secrets-prod`.
+  Logic tested against the live address list (removes only `.115`, adds
+  `.15`).
