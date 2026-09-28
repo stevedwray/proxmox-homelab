@@ -27,7 +27,44 @@ time, plus garbage-collection runtime (can be hours on ~1 TB)
 Operator decisions: retention `keep-daily=7, keep-weekly=4, keep-monthly=6`;
 pve-tiny backs up to this same PBS, namespace `pve-tiny`.
 
-## Part A — retention on pve and reclaim space (approval `catchup-03a-pbs-retention`)
+## Correction, 2026-09-28 (A1 stop condition hit)
+
+A1 found an existing PBS prune job on `iscsi-backup`: `s-d37cf2f8-fb09`,
+every 2 h, **`keep-last=2`**, root namespace. GC is scheduled daily at 03:00
+(`gc-atime-cutoff=10`); its last run was OK and removed 10.4 GB. So the pve
+job's `keep-all=1` doesn't mean nothing is pruned: PBS itself keeps the last 2
+snapshots per group. **A2–A5 below are superseded and must not be run.** They
+would add a second, conflicting retention policy.
+
+The space is held by (logical sizes, 2026-09-28, 42 groups / 83 snapshots):
+
+- **Guests that no longer exist**, never pruned again: `112` elastic-stack
+  (398.9 GB, last 2026-08-31), `115` scanning-stack (74.1 GB, last 2026-09-17),
+  `104` cloud-stack (12.2 GB, last 2026-09-07). None has a config on `pve`.
+- **Long-stopped guests still backed up nightly**: `106` securityonion
+  (322.1 GB), `103` gaming-stack-legacy (200.0 GB), `111` wifi-analysis,
+  `108` securityonion-idh (107.4 GB each), `109`, `116`, `113`, `110`, `120`,
+  `100`.
+
+Replacement Part A (operator decision per group; deletion is irreversible):
+
+1. Delete the groups of guests that no longer exist (PBS GUI → Datastore
+   `iscsi-backup` → Content → group `ct/112` (or `vm/112`) → Remove group;
+   same for 115 and 104).
+2. Optionally, for long-stopped guests the operator wants to keep only as an
+   archive: exclude them from the nightly job
+   (`pvesh set /cluster/backup/backup-8b90fc3e-c3a5 --exclude 105,910,<ids>`).
+   Their existing 2 snapshots then stay put instead of churning.
+3. Start GC right away rather than waiting for 03:00:
+   `pct exec 105 -- proxmox-backup-manager garbage-collection start iscsi-backup`.
+4. Re-check `pvesm status --storage pbs-iscsi`, then Part B.
+
+Dedup note for Part B: chunks are shared across namespaces in a datastore,
+and the four relocated CTs' data is already stored from their pve copies. So
+their first pve-tiny backup should add little new data. The 20% gate still
+applies.
+
+## Part A (superseded — do not run) — retention on pve and reclaim space (approval `catchup-03a-pbs-retention`)
 
 Preflight to report: target `pve` backup job and PBS datastore
 `iscsi-backup`; mutating; changes job retention, deletes backup snapshots

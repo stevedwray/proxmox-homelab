@@ -23,8 +23,8 @@ command.
 | # | Plan | When | Effort | Value | Depends on | Status |
 |---|---|---|---|---|---|---|
 | 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | **done 2026-09-28** (browser spot-check pending) |
-| 02 | [Repo hygiene](02-repo-hygiene.md) | today | 45 min | Medium | — | not started |
-| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | not started |
+| 02 | [Repo hygiene](02-repo-hygiene.md) | today | 45 min | Medium | — | **mostly done** — PRs #435–#439 open; worktree/branch cleanup waits for merges |
+| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | **blocked on operator decision** — retention already exists (keep-last 2); space is held by dead-guest groups, see plan's Correction |
 | 04 | [Secrets refactor close-out](04-secrets-closeout.md) | 2026-09-29, after the 02:40 UTC run | 15 min | High | — | not started |
 | 05 | [Decommission old AI CTs on pve](05-decommission-pve-source-cts.md) | **not before 2026-10-04** | 45 min | Medium | 03 | not started |
 | 06 | [Run CI gates on PRs into `stable`](06-ci-gates-on-stable-prs.md) | this week | 30 min | Med-High | 02 | not started |
@@ -38,7 +38,7 @@ command.
 
 Why this order, and what changed from the first draft of the list:
 
-- **03 moved up to "today".** The PBS datastore every `pve` backup goes to
+- **03 moved up to "today".** *(Premise corrected 2026-09-28: a PBS prune job already keeps the last 2 per group; see the plan's Correction section.)* The PBS datastore every `pve` backup goes to
   (`pbs-iscsi` = `192.168.1.12`, datastore `iscsi-backup`) had 36.5 GB free
   of 1.08 TB on 2026-09-28. The `pve` job keeps every backup forever
   (`prune-backups: keep-all=1`), so the next few nightly runs will fill it
@@ -127,3 +127,34 @@ Why this order, and what changed from the first draft of the list:
   still answer (`200` ×4, `401` qBittorrent), so Traefik → backend works.
   Jellyseerr (`5055`, out of scope) is unchanged (`307`).
 - Open: operator browser spot-check (log in via Authentik, open each app).
+
+### 02 — repo hygiene (2026-09-28)
+
+- Local `stable` fast-forwarded to `62e91a7c`.
+- `fix/ark-update-workaround` gates: syntax-check of
+  `update-ark-survival-ascended.yml` OK; egg JSON parses.
+- PRs into `stable`: #435 `fix/ark-update-workaround`, #436
+  `task/dns-stack-daemon-json-audit`, #437 `task/docker-log-driver-audit`,
+  #438 `task/ci-gate-followups`, #439 `task/catch-up-01-arr-lockdown` (stacked:
+  status refresh + these plans + plan 01; replaces separate PRs for
+  `task/status-refresh-2026-09-28` and `task/catch-up-plans`).
+- Deleted the seven branches fully contained in `main`, local and remote
+  (each confirmed 0 commits outside `origin/main` first).
+  `git branch -d feat/secrets-openbao` initially refused (upstream-tracking
+  check), and the loop deleted its remote anyway. This was a deviation from
+  "treat a refusal as stop": the remote delete wasn't gated on the local one.
+  Verified afterwards that nothing was lost: 0 commits outside `origin/main`,
+  empty diff, tip `48fe078f` is an ancestor of `main`.
+- Still to do after merges: remove the two `.claude/worktrees/` worktrees and
+  their `worktree-agent-*` branches; delete the merged PR branches.
+
+### 03 — PBS (2026-09-28): stopped at A1
+
+- A1 baseline: pve job retention `keep-all=1`; PBS datastore `iscsi-backup`
+  has prune job `s-d37cf2f8-fb09` (every 2 h, `keep-last=2`) and GC daily 03:00
+  (last run OK, removed 10.4 GB). This is the plan's own stop condition. A2–A5
+  were not run and are superseded (see the plan's Correction section).
+- Space breakdown recorded in the plan. Awaiting operator decision on deleting
+  dead-guest groups `112`, `115`, `104` and on excluding long-stopped guests.
+  Part B (pve-tiny) not started: needs that space plus GUI steps (namespace,
+  storage password).
