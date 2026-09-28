@@ -1700,19 +1700,27 @@ gates:
 The Prometheus endpoint needs an API token. Agents can't write to OpenBao,
 so this is yours, once:
 
-1. In the Technitium UI (primary): Administration → Users → add user
-   `metrics` with a long random password you don't keep; Administration →
-   Permissions → Dashboard → give `metrics` **View** only (no other
-   section).
-2. Administration → Sessions → Create Token → user `metrics`, name
-   `victoriametrics`. Copy the token (shown once). Clustering later
-   copies the user and its token to the secondary.
-3. `bao login -method=oidc -no-store`, then write it with
+1. In the Technitium UI (primary): Administration → Users → **Add User**
+   `metrics`, with a long random password you don't keep.
+2. Open the user (User Details) and under **Member Of** remove the
+   **Everyone** group. Technitium adds every new user to Everyone, which by
+   default can view Zones, Cache, Allowed, Blocked, Apps, DNS Client, DHCP
+   and **Logs** (the query logs); a metrics token must not carry that.
+   Don't tick "Disable User Account" — that would disable its token too.
+3. Administration → Permissions → **Dashboard** → Edit → add user
+   `metrics` with **View** only. No other section.
+4. Administration → Sessions → **Create Token** → Username `metrics`,
+   Token Name `victoriametrics`. Copy the token (shown once; API tokens
+   don't expire with the session timeout). Clustering later copies the
+   user and its token to the secondary.
+5. `bao login -method=oidc -no-store`, then write it with
    `scripts/openbao_write.py` into `services/technitium` as field
    `TECHNITIUM_METRICS_TOKEN` (see `docs/reference/secrets-management.md`).
-4. Check: `curl -s -H "Authorization: Bearer <token>"
+6. Check: `curl -s -H "Authorization: Bearer <token>"
    http://192.168.20.15:5380/api/dashboard/metrics/text | head -3` shows
-   `# HELP uptime_seconds …` (an `invalid-token` JSON body means it's wrong).
+   `# HELP uptime_seconds …` (an `invalid-token` JSON body means it's wrong),
+   and the same token against `/api/zones/list` returns an access-denied
+   error rather than a zone list (proves step 2 took).
 
 **Do this before `lan-dns-11` lands**: every environment profile includes
 `services/technitium`, and the wrappers fail closed on a manifest field
