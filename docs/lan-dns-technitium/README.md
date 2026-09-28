@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Next: Phase 3 (pve-tiny secondary).** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Next: approved pve-tiny collision check + deploy, cluster formation.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -172,3 +172,28 @@ the operator ran each approved command; Claude verified afterwards.
   message predates the rule reload (first parsed 20:03:39Z); the same
   message shapes parse after it. Cosmetic: `dns_answers` keeps the
   answer's surrounding quotes.
+
+### 2026-09-29 — lan-dns-13..16 (Phase 3 file steps), executed by Claude in-session
+
+File changes only; nothing run against any host.
+
+- **lan-dns-13-ip-wiring** — `.env` (`LAB_IP_TECHNITIUM_TINY`,
+  `TF_VAR_lab_ip_technitium_tiny` = 192.168.20.17), `variables.tf`,
+  `main.tf`; `terraform fmt` clean. Gates `env-vars`, `tf-wired`, `fmt` PASS.
+  Checked separately: same infrastructure touchpoints as the last variable
+  added this way (`lab_ip_cse_panel`).
+- **lan-dns-14-stack-files** — `stacks/technitium-tiny-stack/{stack.yaml,STACK_CONTRACT.md}`,
+  `environments/pve-tiny/technitium-tiny-stack/terragrunt.hcl` (copy of
+  cse-panel-stack's), `network/pve-tiny.yaml` container entry. Gates
+  `metadata-valid`, `network-yaml-parses`, `terragrunt-copied` PASS.
+- **lan-dns-15-deploy-playbook** — `deploy-technitium-tiny-stack.yml`
+  (Docker base play copied byte-for-byte from the primary's playbook, then
+  the literal). Gates `syntax-check`, `imports-node-observability`,
+  `same-image-tag` PASS.
+- **lan-dns-16-monitoring-scrape-dashboard** — both nodes added to the
+  `node_exporter` and `cadvisor` jobs, dead `coredns` job replaced by the
+  `technitium` job (bearer token), `coredns.json` removed,
+  `technitium.json` (12 panels) added. Gates `syntax-check`, `coredns-gone`,
+  `technitium-targets`, `dashboard-valid` PASS.
+
+Unit tests: same 8 pre-existing failures.
