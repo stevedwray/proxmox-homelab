@@ -20,7 +20,8 @@ The CI pipeline (`validate.yml`) now includes:
 - **Python lint + security** (`ruff` + `bandit`) — added in PR #358
 
 SonarCloud runs on every push and analyses shell, Python, Ansible, YAML,
-Terraform, and Dockerfile. Quality gate is currently **PASSING**.
+Terraform, and Dockerfile. Quality gate: **FAILING since 2026-09-28**
+(see "CI gate failures accepted at the 2026-09-28 promotion" below).
 
 ## Documents
 
@@ -58,3 +59,43 @@ main sprint's Session 2 branch `fix/tls-hardening`).
   fixes Harbor IP. **Python lint CI job will fail until #356 is resolved.**
 - All findings classified; issues created.
 - No code-cleanup sessions started yet.
+
+## CI gate failures accepted at the 2026-09-28 promotion
+
+PR #434 promoted `stable` to `main`: 404 commits, 8 Sep to 28 Sep. The
+operator accepted it with four failing gates. None came from that day's
+changes. They had built up unseen, because `validate.yml` and SonarCloud's
+PR gate don't run for PRs from `task/*` branches into `stable`.
+
+1. **ansible-lint:** 193 fatal violations across many playbooks.
+2. **Harbor-only image references:** 10, in the `cse-code-eval`,
+   `cse-panel-stack`, `cse-kali` and `cse-controller` compose files (a
+   literal `harbor.lab.gibbsgreatly.xyz/...` instead of the registry
+   variable), and 3 upstream images in `pterodactyl-lab`.
+3. **ruff (Python lint + security):** unused imports and variables in
+   deep-research and harbor-findings files, among others.
+4. **SonarCloud quality gate:** security E and reliability E on new code
+   (53 open bugs and vulnerabilities). The 7 blockers, triaged but not
+   actioned:
+
+   | Finding | Triage |
+   |---|---|
+   | `.github/workflows/netbox-populate.yml:32` githubactions:S8482 "executing downloaded artifacts" | False positive: pipes the GitHub OIDC token response to `json.load`; nothing is executed. |
+   | `scripts/secrets_env.py:120-121` pythonsecurity:S2083 path traversal in `login()` | Low risk: the role name comes from the repo's `secrets/manifest.json` profile, not from user input. Could validate `role` against `^[a-z0-9-]+$`. |
+   | `terraform/lxc/ansible/files/deep-research-files/serve.py:86, 109` S2083 path traversal | Probably a false positive: paths come from stdlib `SimpleHTTPRequestHandler.translate_path`, which drops `..` components. Not tested live. |
+   | `terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py:98` S6418 hard-coded secret | False positive: `"credential": "mikrotik-gvm-scan"` is a credential *name*. |
+   | `terraform/lxc/ansible/files/deep-research-agent/src/engine/orchestrator.py:15` S8508 mutable default | Real, minor: replace with `None` plus an in-function default. |
+
+   The rest are lower severity:
+   - mostly S5332 plain-HTTP warnings on internal lab traffic (`edge.yaml`
+     files, Technitium's API, docs-rag embeddings);
+   - S7493 synchronous `open()` in async functions in the deep-research
+     agent;
+   - S4423 TLS-protocol warnings in `openbao_*.py` and `secrets_env.py`;
+   - a missing `uv.lock` for deep-research-agent.
+
+**Next:**
+- Mark the false positives in SonarCloud, giving the reason.
+- Fix the two small real items.
+- Decide whether `validate.yml` should also run on PRs into `stable`, so
+  these failures surface before a promotion rather than at it.
