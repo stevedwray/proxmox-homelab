@@ -35,18 +35,18 @@ jobs:
           echo "::add-mask::${jwt}"
           echo "OPENBAO_GITHUB_JWT=${jwt}" >> "${GITHUB_ENV}"
 
-      - name: Build populate container
-        run: |
-          docker build \
-            -t netbox-populate:daily \
-            -f terraform/lxc/stacks/netbox-stack/integrations/Dockerfile \
-            terraform/lxc/stacks/netbox-stack/integrations
-
-      - name: Run populate container (supported wrapper)
+      # populate.py runs directly on the runner, not in the netbox-populate
+      # container: the runner user has no Docker socket access, and this
+      # public repo's self-hosted runner deliberately doesn't get it. The
+      # container only wrapped python3 + pyyaml, which deploy-ci-runner.yml
+      # installs (python3-yaml).
+      - name: Run populate
         env:
           DOCKER_SOCKET_PROXY_URL_TEMPLATE: ${{ secrets.DOCKER_SOCKET_PROXY_URL_TEMPLATE }}
           DOCKER_SOCKET_PROXY_URL: ${{ secrets.DOCKER_SOCKET_PROXY_URL }}
           LAB_IP_OPENBAO: "192.168.20.16"
+          NETBOX_NETWORK_ENV: pve
+          NETBOX_GUEST_SSH_USER: automation
         run: |
           python3 scripts/secrets_env.py --profile ci-netbox-populate -- \
-            bash ./scripts/netbox-populate.sh apply
+            python3 terraform/lxc/stacks/netbox-stack/integrations/populate.py
