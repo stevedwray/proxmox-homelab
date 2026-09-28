@@ -225,3 +225,16 @@ Unit tests: same 8 pre-existing failures.
   next technitium-stack run (cluster step 5). Capacity: primary is at
   410 MiB / 2 GiB with 380k entries (249 MiB before lists); StevenBlack
   adds ~81k lines.
+
+### 2026-09-29 — cluster formation
+
+- Operator decisions: the Wazuh `apt_repository` deprecation is left for
+  the next Wazuh upgrade; the `lan-dns-06` rsyslog change is kept.
+- Zone adoption, attempt 1: failed with `role 'technitium_zone' was not
+  found` (`changed=0`, one failure per zone — nothing modified). Cause: the
+  standalone command ran from the repo root without the
+  `ANSIBLE_CONFIG`/`ANSIBLE_ROLES_PATH` that `provision.sh` exports, so
+  `terraform/lxc/ansible/ansible.cfg`'s `roles_path` wasn't used. The
+  plan's gates ran from `terraform/lxc/ansible` and `--syntax-check` never
+  resolves dynamic `include_role`, so they couldn't catch it. Plan and the
+  Graylog playbook's usage comment fixed to export both variables.

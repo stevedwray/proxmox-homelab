@@ -856,6 +856,7 @@ gates:
    # Runs on graylog-stack against its local API. Imported at the end of
    # deploy-graylog-stack.yml; gated on GRAYLOG_DEPLOY_RUNTIME exactly like
    # that playbook's own index-set/stream work. Standalone:
+   #   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles \
    #   GRAYLOG_DEPLOY_RUNTIME=true ./with-secrets-prod ansible-playbook \
    #     -i terraform/lxc/environments/pve/graylog-stack/inventory.yml \
    #     terraform/lxc/ansible/playbooks/configure-graylog-dns-queries.yml
@@ -2395,6 +2396,9 @@ exact API calls (tokens from `/api/user/login`; `$PW` =
    to the primary node, and the secondary pulls copies):
    ```bash
    export TASK_APPROVAL="lan-dns-technitium-adopt-zones"
+   # provision.sh exports these two; a standalone run must too, or roles
+   # (technitium_zone) are not found.
+   export ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles
    ./with-secrets-prod ansible-playbook \
      -i terraform/lxc/environments/pve/technitium-stack/inventory.yml \
      terraform/lxc/ansible/playbooks/technitium-cluster-adopt-zones.yml

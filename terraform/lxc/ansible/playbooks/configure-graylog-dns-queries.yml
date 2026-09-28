@@ -19,6 +19,7 @@
 # Runs on graylog-stack against its local API. Imported at the end of
 # deploy-graylog-stack.yml; gated on GRAYLOG_DEPLOY_RUNTIME exactly like
 # that playbook's own index-set/stream work. Standalone:
+#   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles \
 #   GRAYLOG_DEPLOY_RUNTIME=true ./with-secrets-prod ansible-playbook \
 #     -i terraform/lxc/environments/pve/graylog-stack/inventory.yml \
 #     terraform/lxc/ansible/playbooks/configure-graylog-dns-queries.yml
