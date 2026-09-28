@@ -48,30 +48,41 @@ The Panel accepted the startup update while preserving all 52 server variables.
 After the restart, `worldserver`, `authserver`, and MySQL were running; the
 world and authentication sockets were listening on TCP 8085 and 3724.
 
-### Phase 2 — reproducible QoL image
+### Phase 2 — controlled module build
 
-Create a dedicated, pinned image fork from the exact Playerbot source revision
-currently running in the realm. Add and build these pinned modules together:
+The existing egg already persists the Playerbot source checkout and supports
+module installation through `ACORE_MODULES`; a separate image registry and
+image change are unnecessary. The live baseline is Playerbot core
+`7f12e89ee5f467a50e62eba1d525eac7dc953d03` (branch `Playerbot`) and
+Playerbot module `7bae1b5c58c76a0aa20381155edc08096d1485b2` (branch
+`master`).
+
+Before adding modules, set `AUTO_UPDATE=0`. This freezes the known-working
+core and prevents a routine restart from silently pulling a newer core or
+module revision. Add and build these modules through the existing egg:
 
 - `azerothcore/mod-transmog`;
 - `azerothcore/mod-aoe-loot`.
 
-The image must include versioned configuration overlays and database migration
-files, rather than manually editing a running game-server container. Configure
-AoE loot for group use, a 20-yard range, no login spam, and fast decay of
-looted corpses. Configure Transmog to accept heirlooms but retain ordinary
-equipability restrictions. Run its migration on a disposable copy of the live
-database before any production cutover.
+Record the resulting module commits immediately after the initial build. Keep
+the configuration overlays and database SQL versioned in this repository,
+rather than relying on undocumented edits. Configure AoE loot for group use,
+a 20-yard range, no login spam, and fast decay of looted corpses. Configure
+Transmog to accept heirlooms but retain ordinary equipability restrictions.
+Back up the live database and server volume before the build; a failed module
+build rolls back by restoring the prior checkout/database backup and removing
+the module list.
 
 ### Phase 3 — starter provisioning
 
-Ship a small, versioned world/character database customization with the QoL
-image. It must provide:
+Ship a small, versioned world/character database customization. It must
+provide:
 
 - a free heirloom vendor in each playable starting area, containing only
   WotLK-appropriate heirlooms;
-- four maximum-size bags for each provisioned Altbot;
-- a generous starter-gold grant for each human or Altbot character;
+- four 32-slot Abyssal Bags (`41597`) for each new Altbot;
+- a 10,000g starter-gold grant for each new human or Altbot character, using
+  the egg's native `START_PLAYER_MONEY` setting;
 - idempotent migrations, so a restart or image update cannot duplicate gold,
   bags, or vendor stock.
 
@@ -81,11 +92,12 @@ dungeon drops remain meaningful.
 
 ### Phase 4 — controlled cutover
 
-Build and scan the image, take a database backup, stop server 4, change only
-its image and required configuration, then start it under the existing shared
-game-slot lock. Verify module migrations, an existing character, a new Altbot,
-free heirloom issue, bags, Transmog NPC interaction, AoE looting, and LAN
-login. Retain the previous image and database backup as rollback points.
+Take a database and server-volume backup, stop server 4, change only its
+approved startup variables and required configuration, then start it under the
+existing shared game-slot lock. Verify module migrations, an existing
+character, a new Altbot, free heirloom issue, bags, Transmog NPC interaction,
+AoE looting, and LAN login. Retain the previous source checkout/module list
+and database backup as rollback points.
 
 ## Explicit non-goals
 
