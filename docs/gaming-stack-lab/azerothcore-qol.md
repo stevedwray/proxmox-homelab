@@ -116,6 +116,14 @@ The vendor is intentionally not a source of normal combat upgrades, materials,
 profession rewards, or reputation rewards. Class quests, quest rewards, and
 dungeon drops remain meaningful.
 
+The proposed migration uses a separate Ethereal vendor template (`601100`),
+cloned only for its visual model from the Transmog Ethereal (`190011`). It has
+no Transmog script, so it cannot replace or break the existing Transmog NPC.
+It stocks 39 curated level-appropriate WotLK heirloom equipment items for zero
+cost, respecting the normal item faction/class restrictions. Nine spawns cover
+the distinct initial areas (including the shared death-knight area); shared
+race starts share one vendor.
+
 ### Phase 4 — controlled cutover
 
 Take a database and server-volume backup, stop server 4, change only its
