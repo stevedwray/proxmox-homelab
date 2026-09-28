@@ -1,12 +1,11 @@
 # framework-ip-and-port (planning workspace)
 
-Status: **Phases A and C complete and merged to `stable` (#432,
-2026-09-28); Phase B prepared, cutover pending.** The cutover window opens
-Mon 28 Sep 16:30 NZDT, with gazaar powered off. Run it from
-**`task/framework-reip-cutover`**, cut from `origin/stable`: fwip-02, then
-plan.md's "Operator: re-IP cutover" runbook, then fwip-03.
-`task/framework-dns-only-plan` is fully merged and must not be used for the
-cutover (it has the pre-OpenBao wrappers).
+Status: **All three phases complete.** Phases A and C were merged to
+`stable` in #432 (2026-09-28). Phase B, the re-IP cutover, ran on
+2026-09-28 from `task/framework-reip-cutover`: framework is now
+`192.168.1.18`, and `192.168.1.8` is gazaar's alone. That branch is not yet
+merged. NetBox still shows `.8`: the populate CI job is broken on its
+runner (see the hand-back log).
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
 was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
@@ -507,3 +506,66 @@ Findings, all folded into plan.md's Phase B:
 - fwip-02 was simulated on a scratch worktree of `origin/stable` (not
   committed). All three of its gates pass (NetBox tests 128 OK), and the
   resulting `.8`/`.18` file sets match fwip-03's expected lists.
+
+### Phase B cutover, 2026-09-28 (fwip-02, runbook, fwip-03)
+
+Run from `task/framework-reip-cutover`, starting 13:12 NZDT. The operator
+accepted starting before the 16:30 window: the MikroTik, Technitium and
+both Pi-holes had been checked at a TTL of 300 s or less, and gazaar was
+off.
+
+- **fwip-02** (`caa3840e`): `.env`, `.env.template`, `pve.yaml` and
+  `ip_to_stack.json` now say `.18`. All three gates pass (NetBox tests 128
+  OK).
+- **Pre-cutover check found two more resolvers.** The router's DHCP hands
+  LAN clients, including the workstation, the Pi-holes 192.168.1.22 and .23.
+  Both already served the 300 s answer. They are now in the runbook's
+  precondition. `.23` served its expired `.8` answer once, with TTL 0,
+  while it refreshed; the next query returned `.18`.
+- **Netplan** was confirmed before the change: `00-installer-config.yaml`,
+  one `192.168.1.8/24` line. The operator ran step 2 (`netplan try`) and
+  accepted it from `.18`, because Claude Code's permission check blocks
+  remote file writes. The backup is `/root/00-installer-config.yaml.pre-reip`.
+- **DNS:**
+  - The MikroTik record went to `.18` (5m), and the address-list
+    re-resolved to `.18`.
+  - The Technitium playbook flushed its cache; the assertion passed.
+  - After 5 minutes, `getent` returned `.18` on ai-services, secpipe,
+    mcp-utility, cse-controller, monitoring and proxy.
+  - The TTL was restored to 1h (still `.18`).
+- **Consumers:**
+  - `comfyui.` 302.
+  - `llm.` 401 without the key and 200 with it (a real completion, about
+    24 tok/s).
+  - `:8085` embeddings: 768 dimensions.
+  - VictoriaMetrics `up{stack="framework"}` is 1 for node_exporter,
+    cadvisor, llamacpp :8080 and :8085.
+  - Ansible ping OK; the Portainer agent port 9001 is open.
+  - Not checked by Claude: OpenWebUI chat, docs-rag `search_docs`, and the
+    Portainer UI endpoint state. These are for the operator.
+- **node_exporter cert:** the operator deleted the old cert, and the
+  bootstrap reissued it. The SANs are now `DNS:framework.gibbsgreatly.xyz`
+  only, valid to 2026-12-27, and the scrape is still up. The service unit is
+  `prometheus-node-exporter`, not `node_exporter`.
+- **gazaar:** powered on. `.8` answers with MAC `00:d0:b8:25:4b:93`
+  (framework's is `9c:bf:0d:01:f7:a7`), and forward and PTR records both say
+  gazaar; SMB, NFS, rsync and SSH answer. A completed backup run is for the
+  operator to confirm.
+- **Router re-scrape:** `.8` is gazaar's record only; the framework record
+  and address-list entry are `.18`, TTL 1h.
+- **fwip-03:** both gates match their expected file lists exactly.
+- **NetBox: not updated.** The branch was pushed and `netbox-populate.yml`
+  dispatched against it (run 36363158889). The GitHub-OIDC login to
+  OpenBao worked, but "Build populate container" failed: the self-hosted
+  runner user gets `permission denied` on `/var/run/docker.sock`. This is
+  CI breakage that predates the cutover: the workflow has no success in its
+  last 100 runs, and the scheduled runs on `main` still fail earlier, at
+  "Install SOPS" (the pre-OpenBao workflow). NetBox therefore still shows
+  framework at `.8` until the runner's Docker access is fixed and the
+  populate runs, from this branch or after `main` is promoted.
+- **Follow-up (not caused by the cutover):** the bootstrap reported
+  `changed` when creating `/var/lib/docker` and `/var/lib/containerd` and
+  their subdirectories on the containers volume, and neither directory is a
+  separate mount. Docker was not restarted (up since 2026-09-23). This looks
+  like the bootstrap's containers-volume layout was never applied to this
+  host. Investigate separately.

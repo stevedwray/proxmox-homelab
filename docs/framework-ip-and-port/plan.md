@@ -1616,7 +1616,11 @@ Preconditions. Check every one on the day:
   ```bash
   dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.1
   dig +noall +answer framework.gibbsgreatly.xyz @192.168.20.15   # Technitium
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.22    # Pi-hole (DHCP DNS for LAN clients)
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.23    # Pi-hole (the workstation's resolver)
   ```
+  The Pi-holes can't be flushed from here; they honour the 300 s TTL
+  (checked 2026-09-28), so step 4's 5-minute wait covers them too.
   Technitium held a one-day answer, fetched before the TTL change, until
   about 14:02 NZDT on 2026-09-28. If it still shows more than 300, wait,
   or flush it with the step 4 playbook first.
