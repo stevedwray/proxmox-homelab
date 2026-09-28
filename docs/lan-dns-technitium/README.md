@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). Next: monitoring-stack redeploy, `lan-dns-18`, security checklist, failover drill.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). Monitoring live, `lan-dns-18` all PASS. Next: remaining operator checklist items + failover drill, then Phase 4 (LAN cutover).** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -277,3 +277,29 @@ Unit tests: same 8 pre-existing failures.
   `public-over-tcp`) + `cluster-port` PASS. Lab NS is now
   `tech.cluster…` + `technitium-tiny.cluster…` (so `lan-dns-12`'s
   `standalone-ns-unchanged` no longer applies, as planned).
+
+### 2026-09-29 — monitoring + security checklist
+
+- **monitoring-stack** (`TASK_APPROVAL=lan-dns-monitoring`): `failed=0`,
+  `changed=9`, smoke PASS.
+- **lan-dns-18-verify-observability**: all 4 gates PASS
+  (`technitium-job-up`, `node-exporter-up`, `cadvisor-up`,
+  `queries-counted` — 2 targets each). Grafana has "Technitium DNS", the
+  "CoreDNS" dashboard is gone. Dashboard queries return data: both nodes
+  up; ~0.28 q/s on pve, 0 on pve-tiny (no clients yet); 12% blocked over
+  1h (mostly tests/platform telemetry); LXC memory ~530 MB / ~480 MB;
+  Technitium container ~340 MB / ~255 MB.
+- **Checklist, verified by Claude (read-only):**
+  - Graylog: "DNS Queries" has messages from **both** nodes with `dns_*`
+    fields (pve-tiny: `googlesyndication.com`/`ad.doubleclick.net` →
+    Blocked, `example.net` → Recursive, `lab.gibbsgreatly.xyz` →
+    Authoritative).
+  - Wazuh: agents `technitium-stack` (v4.14.7) and `technitium-tiny-stack`
+    (v4.14.8) both **active** with fresh keepalives. Version drift is
+    harmless; note for the planned Wazuh upgrade.
+  - Backups (pve): job `backup-8b90fc3e-c3a5` (daily 11:00, `pbs-iscsi`,
+    all guests minus an exclude list) covers 20015.
+- **Checklist, still operator/deferred:** pve-tiny backup job covers 20017
+  (not readable — no read-only token in that profile); GVM `.17` in the
+  next mgmt_seg scan; NetBox next `netbox-populate` run; Harbor dashboard
+  Critical findings on `technitium/dns-server:15.2.0` / cAdvisor.
