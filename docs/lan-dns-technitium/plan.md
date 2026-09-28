@@ -31,7 +31,7 @@ using the already-planned `docs/dhcp-refactor/` Stage E/F.
    `192.168.20.15` was confirmed working live on 2026-09-29.
 2. **Pis: cold fallback, then retire.** No Pi-hole config is carried
    over — no local records or custom lists need keeping; Technitium gets
-   its own blocklists (Phase 1). `argon-02` keeps running Pi-hole
+   its own blocklists (Phase 2). `argon-02` keeps running Pi-hole
    untouched through a 7-day soak as the rollback target; both Pis are
    then decommissioned. `argon-01` is already broken (below).
 3. **Upstream: DoH forwarding.** Cloudflare + Quad9 over HTTPS, matching
@@ -45,20 +45,16 @@ using the already-planned `docs/dhcp-refactor/` Stage E/F.
 
 ## Design decisions derived from research (not operator calls)
 
-- **Sync = Technitium clustering for config + zone transfer for zones.**
-  Technitium v14+ clustering (image `15.2.0` is in use) syncs Settings,
-  Allowed, Blocked, Apps and Administration from primary to secondary —
-  so forwarders, blocklists, allow/deny lists and the query-log app are
-  configured once, on the primary. Zones sync only if added to the
-  cluster catalog, **and the cluster then manages member zones' NS/SOA —
-  which `deploy-technitium-stack.yml` actively fights** (it deletes any
-  root NS other than `ns1.<zone>` and rewrites the SOA on every deploy;
-  read, not assumed: lines ~515-630). So the lab and reverse **Primary**
-  zones replicate with plain zone transfer + NOTIFY to Secondary zones on
-  pve-tiny instead; only **Forwarder** zones (which that playbook never
-  touches) join the cluster catalog. DHCP is not cluster-synced (known
-  upstream gap, already recorded in `docs/dhcp-refactor/decisions.md`
-  Decision 4).
+- **Sync = Technitium clustering, for config and zones.** Technitium
+  v14+ clustering (image `15.2.0` is in use) syncs Settings, Allowed,
+  Blocked, Apps and Administration from primary to secondary, and every
+  zone that is a member of the cluster catalog. So forwarders,
+  blocklists, allow/deny lists, the query-log app and all zones are
+  configured once, on the primary. Getting zones into the catalog safely
+  requires changing how this repo's automation creates zones and handles
+  NS/SOA records; that is Phase 1, and it explains why. DHCP is not
+  cluster-synced (known upstream gap, already recorded in
+  `docs/dhcp-refactor/decisions.md` Decision 4).
 - **Cluster domain: `cluster.lab.gibbsgreatly.xyz`.** Fixed forever once
   chosen. It is a child of the zone Technitium already hosts, so the
   router's existing `lab-zone-delegate` rule covers it with no change.
@@ -103,16 +99,13 @@ server on timeout; many query both).
 | pve-tiny (secondary) down | pve answers everything, exactly as today | nothing client-visible |
 | Both down | nothing; rollback is `mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole` during the soak | — |
 
-"Synced" happens by two mechanisms, split by what they can safely carry:
-
-- **Clustering** (primary -> secondary, config): settings (DoH forwarders,
-  blocking on/off, blocklist URLs, bypass list), the Allowed/Blocked
-  lists, installed apps, admin users. You configure the primary once and
-  the secondary picks it up — so tiny *does* do DoH and blocklists, it
-  just never gets configured directly.
-- **Zone transfer** (primary -> secondary, zone data): the
-  `lab.gibbsgreatly.xyz`, `tech.lab...` and reverse zones. Why not the
-  cluster for these too: see "Sync = Technitium clustering…" above.
+Everything reaches the secondary through Technitium clustering: settings
+(DoH forwarders, blocking, blocklist URLs, bypass list), the
+Allowed/Blocked lists, installed apps and admin users by config sync; and
+every zone (lab, bootstrap, reverse, forwarders) as a cluster catalog
+member, which the secondary serves as its own Secondary/SecondaryForwarder
+copy. You configure the primary once and the secondary picks it up, so
+tiny *does* do DoH and blocklists; it just never gets configured directly.
 
 ## Live facts this plan is grounded in (checked 2026-09-29)
 
@@ -132,23 +125,603 @@ server on timeout; many query both).
 - The router's upstream is DoH to `https://1.1.1.1/dns-query`, and its
   DHCP server adds `*.lan` dynamic entries (`add-dns-entries-suffix=lan`).
 - `192.168.20.17` and VMID `20017` appear nowhere in the repo; confirm
-  live before first apply (Phase 2 prose).
+  live before first apply (Phase 3 prose).
 
 ---
 
-## Phase 1 — Make the primary a LAN-grade resolver
+## Phase 1 — Make zone automation cluster-compatible
+
+On today's standalone server every change in this phase is behavior-
+neutral: zones are created exactly as before and NS/SOA are reconciled
+exactly as before. The changes only take effect once a Technitium cluster
+exists (Phase 3). The rule they implement, read from Technitium's source
+(`DnsServerCore/Cluster/ClusterManager.cs` `UpdateClusterRecordsFor`,
+`WebServiceZonesApi.cs` record add/update/delete guards, commit
+`4323993`, 2026-09-26):
+
+- A Primary zone that is a member of the cluster catalog gets its apex NS
+  records set to one per cluster node (each node's server domain) and
+  its SOA primary name server set to the primary node's domain. This
+  happens when the zone is created with `catalog=`, when an existing
+  zone is added to the catalog, and whenever a node joins or leaves.
+- For member zones, the API **rejects** adding, deleting or changing
+  apex NS records, and rejects SOA updates whose primary name server
+  isn't the primary node's domain. So today's deploy playbook would not
+  quietly fight the cluster; it would **fail** on every run.
+- Member zones inherit the catalog zone's zone-transfer ACL, NOTIFY list
+  and TSIG key, and secondaries create their copies automatically. No
+  per-zone replication automation is needed.
+
+The repo therefore gets one shared `technitium_zone` role that every zone
+creator uses (create, and join the catalog when this server is a cluster
+primary). The deploy playbook also stops owning apex NS/SOA once
+clustered; it asserts the cluster's values instead of rewriting them.
+
+Zone creators found in the repo and what happens to each:
+`deploy-technitium-stack.yml` (bootstrap + lab parity zones) and
+`roles/technitium_dns_record` (reverse zones on demand, used by the deploy
+playbook and the ai/gaming/pterodactyl DNS-record playbooks) move to the
+role; `technitium-framework-forwarder.yml` moves to the role;
+`configure-technitium-lan-resolver.yml` (Phase 2) is written against the
+role from the start. `configure-technitium-dhcp-scope-via-api.yml` is left
+alone: it is a pve-test-vm-only Stage A fixture that routes its API calls
+through an SSH hop, and dhcp-refactor Stage E rewrites it for production
+anyway (Phase 6 note). The deploy playbook's bootstrap-phase `lab_domain`
+Forwarder is also left alone; the parity-zone logic already deletes it
+immediately on a cold rebuild.
+
+### lan-dns-02-zone-role
+
+```yaml
+id: lan-dns-02-zone-role
+title: Add the technitium_zone role
+depends_on: []
+
+change: >
+  Create terraform/lxc/ansible/roles/technitium_zone/defaults/main.yml and
+  terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml with exactly
+  the literal content (with its 3-space indent stripped) in "Literal
+  content: technitium_zone role".
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/roles/technitium_zone/
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running any playbook against a host"
+
+gates:
+  - id: yaml-parses
+    cmd: "python3 -c \"import yaml;[yaml.safe_load(open(f)) for f in ('terraform/lxc/ansible/roles/technitium_zone/defaults/main.yml','terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml')]\""
+    expect: "exit 0"
+    critical: true
+  - id: uses-catalog-and-cluster-state
+    cmd: "grep -q 'admin/cluster/state' terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml && grep -q 'zones/options/set' terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml && test $(grep -c 'catalog=' terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml) -eq 2"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Literal content: technitium_zone role
+
+`terraform/lxc/ansible/roles/technitium_zone/defaults/main.yml`:
+
+   ```yaml
+   ---
+   # technitium_zone defaults -- see tasks/main.yml for the contract.
+   technitium_zone_type: Primary
+   technitium_zone_forwarder: ""
+   technitium_zone_forwarder_protocol: Udp
+   ```
+
+`terraform/lxc/ansible/roles/technitium_zone/tasks/main.yml`:
+
+   ```yaml
+   ---
+   # technitium_zone: ensure one Technitium zone exists and, when this server
+   # is a Technitium cluster primary, that it is a member of the cluster
+   # catalog -- so every cluster node serves it. This role is the only way
+   # automation in this repo should create a Technitium zone.
+   #
+   # Cluster contract (docs/lan-dns-technitium/plan.md): once a Primary zone
+   # is a cluster catalog member, Technitium owns its apex NS records (one per
+   # cluster node) and its SOA primary name server, rewrites both whenever a
+   # node joins or leaves, and its API rejects edits to them. Callers must
+   # never add/delete apex NS records or change the SOA primary name server
+   # of a member zone. Zone transfer to secondaries, NOTIFY and TSIG are
+   # inherited from the cluster catalog zone.
+   #
+   # Callers must already be logged in and provide technitium_api_base /
+   # technitium_token (same convention as technitium_dns_record).
+   #
+   # Required var: technitium_zone_name -- the zone's DNS name (reverse zones
+   #   as <c>.<b>.<a>.in-addr.arpa, not a CIDR).
+   # Optional: technitium_zone_type (Primary | Forwarder),
+   #   technitium_zone_forwarder, technitium_zone_forwarder_protocol.
+   # Sets fact: technitium_zone_cluster_catalog -- the cluster catalog zone
+   #   name, or '' when this server is not a cluster primary.
+
+   - name: Read Technitium cluster state
+     ansible.builtin.uri:
+       url: "{{ technitium_api_base }}/admin/cluster/state?token={{ technitium_token }}"
+       method: GET
+       return_content: true
+     register: technitium_zone_cluster_state
+     no_log: true
+
+   - name: Derive the cluster catalog zone name
+     ansible.builtin.set_fact:
+       technitium_zone_cluster_catalog: >-
+         {{
+           ('cluster-catalog.' ~ technitium_zone_state.clusterDomain)
+           if (technitium_zone_state.clusterInitialized | default(false) | bool
+               and (technitium_zone_state.nodes | default([])
+                    | selectattr('state', 'equalto', 'Self')
+                    | map(attribute='type') | first | default('')) == 'Primary')
+           else ''
+         }}
+     vars:
+       technitium_zone_state: "{{ (technitium_zone_cluster_state.content | from_json).response }}"
+
+   - name: List Technitium zones
+     ansible.builtin.uri:
+       url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+       method: GET
+       return_content: true
+     register: technitium_zone_list
+     no_log: true
+
+   - name: Find the existing zone
+     ansible.builtin.set_fact:
+       technitium_zone_existing: >-
+         {{
+           (technitium_zone_list.content | from_json).response.zones
+           | selectattr('name', 'equalto', technitium_zone_name)
+           | list | first | default({})
+         }}
+
+   - name: Refuse to reuse a same-named zone of a different type
+     ansible.builtin.assert:
+       that:
+         - technitium_zone_existing | length == 0 or technitium_zone_existing.type == technitium_zone_type
+       fail_msg: >-
+         Zone {{ technitium_zone_name }} already exists as
+         {{ technitium_zone_existing.type | default('?') }}, expected
+         {{ technitium_zone_type }}.
+
+   - name: Create the zone
+     ansible.builtin.uri:
+       url: >-
+         {{ technitium_api_base }}/zones/create?zone={{ technitium_zone_name | urlencode }}&type={{ technitium_zone_type
+         }}{% if technitium_zone_type == 'Forwarder' %}&protocol={{ technitium_zone_forwarder_protocol }}&forwarder={{ technitium_zone_forwarder | urlencode
+         }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true{% endif
+         %}{% if technitium_zone_cluster_catalog | length > 0 %}&catalog={{ technitium_zone_cluster_catalog | urlencode }}{% endif
+         %}&token={{ technitium_token }}
+       method: POST
+       return_content: true
+       status_code: [200]
+     register: technitium_zone_create
+     changed_when: true
+     failed_when: (technitium_zone_create.content | from_json).status | default('') != 'ok'
+     when: technitium_zone_existing | length == 0
+     no_log: true
+
+   - name: Add the existing zone to the cluster catalog
+     ansible.builtin.uri:
+       url: "{{ technitium_api_base }}/zones/options/set?zone={{ technitium_zone_name | urlencode }}&catalog={{ technitium_zone_cluster_catalog | urlencode }}&token={{ technitium_token }}"
+       method: POST
+       return_content: true
+       status_code: [200]
+     register: technitium_zone_catalog_set
+     changed_when: true
+     failed_when: (technitium_zone_catalog_set.content | from_json).status | default('') != 'ok'
+     when:
+       - technitium_zone_existing | length > 0
+       - technitium_zone_cluster_catalog | length > 0
+       - (technitium_zone_existing.catalog | default('', true)) != technitium_zone_cluster_catalog
+     no_log: true
+   ```
+
+### lan-dns-03-zone-role-consumers
+
+```yaml
+id: lan-dns-03-zone-role-consumers
+title: Route technitium_dns_record and the Framework forwarder through technitium_zone
+depends_on: [lan-dns-02-zone-role]
+
+change: >
+  (1) In terraform/lxc/ansible/roles/technitium_dns_record/tasks/main.yml,
+  replace the two tasks "List existing Technitium zones before reverse-zone
+  reconciliation" and "Create missing reverse zones for this record set"
+  (everything from the first task's "- name:" line up to, not including,
+  "- name: Query current A records before publishing") with the first
+  literal block in "Literal content: zone-role consumers". (2) In
+  terraform/lxc/ansible/playbooks/technitium-framework-forwarder.yml,
+  replace the two tasks "List Technitium zones" and "Create conditional
+  forwarder zone for the Framework FQDN if absent" (from the first task's
+  "- name:" line up to, not including, the comment line "# Every run, not
+  only on zone creation") with the second literal block. Strip the 3-space
+  indent from both. Change nothing else.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/roles/technitium_dns_record/tasks/main.yml
+    - terraform/lxc/ansible/playbooks/technitium-framework-forwarder.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Editing the A/PTR record tasks of technitium_dns_record"
+
+gates:
+  - id: syntax-dns-record-consumer
+    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/configure-ai-stack-dns-records.yml'"
+    expect: "exit 0"
+    critical: true
+  - id: syntax-framework
+    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/technitium-framework-forwarder.yml'"
+    expect: "exit 0"
+    critical: true
+  - id: no-direct-zone-create
+    cmd: "! grep -q 'zones/create' terraform/lxc/ansible/roles/technitium_dns_record/tasks/main.yml terraform/lxc/ansible/playbooks/technitium-framework-forwarder.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Literal content: zone-role consumers
+
+Replacement in `roles/technitium_dns_record/tasks/main.yml`:
+
+   ```yaml
+   # Reverse zones go through technitium_zone so they join the Technitium
+   # cluster catalog when this server is a cluster primary.
+   - name: Ensure each needed reverse zone exists
+     ansible.builtin.include_role:
+       name: technitium_zone
+     vars:
+       technitium_zone_name: >-
+         {{ technitium_dns_record_reverse_zone | regex_replace('^(\d+)\.(\d+)\.(\d+)\.0/24$', '\3.\2.\1.in-addr.arpa') }}
+     loop: "{{ technitium_dns_record_reverse_zones_needed }}"
+     loop_control:
+       loop_var: technitium_dns_record_reverse_zone
+       label: "{{ technitium_dns_record_reverse_zone }}"
+   ```
+
+Replacement in `playbooks/technitium-framework-forwarder.yml`:
+
+   ```yaml
+       - name: Ensure the conditional forwarder zone for the Framework FQDN exists
+         ansible.builtin.include_role:
+           name: technitium_zone
+         vars:
+           technitium_token: "{{ framework_fwd_token }}"
+           technitium_zone_name: "{{ framework_fqdn }}"
+           technitium_zone_type: Forwarder
+           technitium_zone_forwarder: "{{ framework_forwarder }}"
+   ```
+
+### lan-dns-04-deploy-cluster-aware
+
+```yaml
+id: lan-dns-04-deploy-cluster-aware
+title: Make deploy-technitium-stack.yml cluster-aware
+depends_on: [lan-dns-02-zone-role]
+
+change: >
+  In terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml make three
+  replacements with the literal blocks in "Literal content: cluster-aware
+  deploy playbook" (3-space indent stripped): (1) the whole task "Create
+  Technitium bootstrap zone if absent" -> block A; (2) the whole task
+  "Create Technitium parity zone if absent" -> block B; (3) everything from
+  the "- name: Remove unexpected NS records from the parity zone root" line
+  up to, not including, "- name: Assert parity-zone record set preserves
+  authority records" -> block C (block C contains those same five tasks,
+  re-indented inside a block, plus two new tasks). Change nothing else.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Changing the content of the five re-indented NS/SOA tasks"
+
+gates:
+  - id: syntax-check
+    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-technitium-stack.yml'"
+    expect: "exit 0"
+    critical: true
+  - id: only-lab-forwarder-create-left
+    cmd: "test $(grep -c '/zones/create?' terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml) -eq 1 && grep '/zones/create?' terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml | grep -q 'type=Forwarder'"
+    expect: "exit 0"
+    critical: true
+  - id: standalone-guard
+    cmd: "test $(grep -c \"technitium_zone_cluster_catalog | default('') | length == 0\" terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml) -eq 1 && test $(grep -c \"technitium_zone_cluster_catalog | default('') | length > 0\" terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml) -eq 2"
+    expect: "exit 0"
+    critical: true
+  - id: ns-soa-tasks-preserved
+    cmd: "for n in 'Remove unexpected NS records from the parity zone root' 'Publish expected NS record at the parity zone root' 'Derive desired SOA serial for the parity zone' 'Assert parity zone has an SOA record to update' 'Update SOA record at the parity zone root when authority identity differs'; do grep -q \"        - name: $n\" terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml || exit 1; done"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Literal content: cluster-aware deploy playbook
+
+Block A (replaces "Create Technitium bootstrap zone if absent"):
+
+   ```yaml
+       - name: Ensure Technitium bootstrap zone exists (and is a cluster catalog member when clustered)
+         ansible.builtin.include_role:
+           name: technitium_zone
+         vars:
+           technitium_zone_name: "{{ technitium_bootstrap_zone }}"
+   ```
+
+Block B (replaces "Create Technitium parity zone if absent"):
+
+   ```yaml
+       - name: Ensure Technitium parity zone exists (and is a cluster catalog member when clustered)
+         ansible.builtin.include_role:
+           name: technitium_zone
+         vars:
+           technitium_zone_name: "{{ technitium_generated_zone_name }}"
+         when: technitium_parity_zone_enabled | bool
+   ```
+
+Block C (replaces the five NS/SOA tasks):
+
+   ```yaml
+       # Apex NS records and the SOA primary name server belong to this
+       # playbook only while this server is standalone. Once the parity zone
+       # is a Technitium cluster catalog member, the cluster sets both (one NS
+       # per cluster node; SOA primary = the primary node's domain) and the
+       # API rejects edits to them -- so reconcile when standalone, assert
+       # when clustered. docs/lan-dns-technitium/plan.md.
+       - name: Reconcile parity-zone apex NS and SOA (standalone server only)
+         when:
+           - technitium_parity_zone_enabled | bool
+           - technitium_zone_cluster_catalog | default('') | length == 0
+         block:
+           - name: Remove unexpected NS records from the parity zone root
+             ansible.builtin.uri:
+               url: "{{ technitium_api_base }}/zones/records/delete?domain={{ technitium_generated_zone_name | urlencode }}&zone={{ technitium_generated_zone_name | urlencode }}&type=NS&nameServer={{ item.rData.nameServer | urlencode }}&token={{ technitium_token }}"
+               method: POST
+               status_code: [200]
+               return_content: true
+             loop: "{{ technitium_existing_parity_ns_records | default([]) }}"
+             loop_control:
+               label: "{{ item.rData.nameServer }}"
+             when:
+               - technitium_parity_zone_enabled | bool
+               - (item.rData.nameServer | default('')) != technitium_parity_zone_name_server
+             failed_when: >-
+               (
+                 delete_parity_ns_response.content | from_json
+               ).status != 'ok'
+             register: delete_parity_ns_response
+             no_log: true
+
+           - name: Publish expected NS record at the parity zone root
+             ansible.builtin.uri:
+               url: "{{ technitium_api_base }}/zones/records/add?domain={{ technitium_generated_zone_name | urlencode }}&zone={{ technitium_generated_zone_name | urlencode }}&type=NS&nameServer={{ technitium_parity_zone_name_server | urlencode }}&token={{ technitium_token }}"
+               method: POST
+               status_code: [200]
+               return_content: true
+             when: >-
+               technitium_parity_zone_enabled | bool and
+               (
+                 technitium_existing_parity_ns_records | default([])
+                 | selectattr('rData.nameServer', 'equalto', technitium_parity_zone_name_server)
+                 | list
+                 | length == 0
+               )
+             failed_when: >-
+               (
+                 publish_parity_ns_response.content | from_json
+               ).status != 'ok'
+             register: publish_parity_ns_response
+             no_log: true
+
+           - name: Derive desired SOA serial for the parity zone
+             ansible.builtin.set_fact:
+               technitium_parity_zone_soa_serial: >-
+                 {{
+                   (
+                     (
+                       technitium_existing_parity_soa_records | first | default({})
+                     ).rData.serial | default(1) | int
+                   ) + 1
+                 }}
+             when: technitium_parity_zone_enabled | bool
+             no_log: true
+
+           - name: Assert parity zone has an SOA record to update
+             ansible.builtin.assert:
+               that:
+                 - technitium_existing_parity_soa_records | default([]) | length > 0
+               fail_msg: >-
+                 Technitium parity zone {{ technitium_generated_zone_name }} is
+                 missing its root SOA record unexpectedly. Refusing to continue.
+             when: technitium_parity_zone_enabled | bool
+
+           - name: Update SOA record at the parity zone root when authority identity differs
+             ansible.builtin.uri:
+               url: "{{ technitium_api_base }}/zones/records/update?zone={{ technitium_generated_zone_name | urlencode }}&type=SOA&domain={{ technitium_generated_zone_name | urlencode }}&ttl={{ (technitium_existing_parity_soa_records | first).ttl | default(900) }}&disable={{ ((technitium_existing_parity_soa_records | first).disabled | default(false)) | ternary('true', 'false') }}&comments={{ ((technitium_existing_parity_soa_records | first).comments | default('')) | urlencode }}&expiryTtl={{ (technitium_existing_parity_soa_records | first).expiryTtl | default(0) }}&primaryNameServer={{ technitium_parity_zone_name_server | urlencode }}&responsiblePerson={{ technitium_parity_zone_responsible_person | urlencode }}&serial={{ technitium_parity_zone_soa_serial }}&refresh={{ technitium_seed_soa_refresh }}&retry={{ technitium_seed_soa_retry }}&expire={{ technitium_seed_soa_expire }}&minimum={{ technitium_seed_soa_minimum }}&useSerialDateScheme=false&token={{ technitium_token }}"
+               method: POST
+               status_code: [200]
+               return_content: true
+             when: >-
+               technitium_parity_zone_enabled | bool and
+               (
+                 technitium_existing_parity_soa_records | default([])
+                 | selectattr('rData.primaryNameServer', 'equalto', technitium_parity_zone_name_server)
+                 | selectattr('rData.responsiblePerson', 'equalto', technitium_parity_zone_responsible_person)
+                 | list
+                 | length == 0
+               )
+             failed_when: >-
+               (
+                 update_parity_soa_response.content | from_json
+               ).status != 'ok'
+             register: update_parity_soa_response
+             no_log: true
+
+       - name: Read cluster state for the parity-zone authority check
+         ansible.builtin.uri:
+           url: "{{ technitium_api_base }}/admin/cluster/state?token={{ technitium_token }}"
+           method: GET
+           return_content: true
+         register: technitium_parity_cluster_state
+         when:
+           - technitium_parity_zone_enabled | bool
+           - technitium_zone_cluster_catalog | default('') | length > 0
+         no_log: true
+
+       - name: Assert the cluster manages the parity zone's apex NS and SOA
+         ansible.builtin.assert:
+           that:
+             - >-
+               technitium_existing_parity_ns_records | map(attribute='rData.nameServer') | map('lower') | sort
+               == (technitium_parity_cluster_state.content | from_json).response.nodes | map(attribute='name') | map('lower') | sort
+             - >-
+               ((technitium_existing_parity_soa_records | first).rData.primaryNameServer | lower)
+               == ((technitium_parity_cluster_state.content | from_json).response.dnsServerDomain | lower)
+           fail_msg: >-
+             {{ technitium_generated_zone_name }} is a cluster catalog member but
+             its apex NS/SOA do not match the cluster's nodes -- check the
+             Cluster page; re-adding the zone to the catalog makes Technitium
+             rewrite them.
+         when:
+           - technitium_parity_zone_enabled | bool
+           - technitium_zone_cluster_catalog | default('') | length > 0
+   ```
+
+### lan-dns-05-adopt-zones-playbook
+
+```yaml
+id: lan-dns-05-adopt-zones-playbook
+title: Add technitium-cluster-adopt-zones.yml and document the cluster contract
+depends_on: [lan-dns-02-zone-role]
+
+change: >
+  (1) Create terraform/lxc/ansible/playbooks/technitium-cluster-adopt-zones.yml
+  with exactly the literal content (with its 3-space indent stripped) in
+  "Literal content: technitium-cluster-adopt-zones.yml". (2) In
+  terraform/lxc/stacks/technitium-stack/STACK_CONTRACT.md, append this
+  bullet as the last item of the "## What Must Not Be Edited Casually"
+  section: "- Create Technitium zones only through the `technitium_zone`
+  role. Once this server is a Technitium cluster primary, the cluster owns
+  every catalog member zone's apex NS records and SOA primary name server
+  and the API rejects edits to them; `deploy-technitium-stack.yml`
+  reconciles them only while standalone and asserts them when clustered.
+  See `docs/lan-dns-technitium/plan.md` Phase 1."
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/technitium-cluster-adopt-zones.yml
+    - terraform/lxc/stacks/technitium-stack/STACK_CONTRACT.md
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running the playbook"
+
+gates:
+  - id: syntax-check
+    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/technitium-cluster-adopt-zones.yml'"
+    expect: "exit 0"
+    critical: true
+  - id: contract-bullet
+    cmd: "grep -q 'Create Technitium zones only through the .technitium_zone.' terraform/lxc/stacks/technitium-stack/STACK_CONTRACT.md"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Literal content: technitium-cluster-adopt-zones.yml
+
+   ```yaml
+   ---
+   # Adds every user-created Primary and Forwarder zone on technitium-stack
+   # (the cluster primary) to the Technitium cluster catalog, so the cluster
+   # secondary (technitium-tiny-stack) serves all of them.
+   # docs/lan-dns-technitium/plan.md.
+   #
+   # Zones created through the technitium_zone role join the catalog on their
+   # own; this catches zones created before the cluster existed (a fresh
+   # rebuild, or zones from older playbooks). A no-op on a standalone server.
+   # Imported at the end of deploy-technitium-stack.yml.
+
+   - name: Adopt all zones into the Technitium cluster catalog
+     hosts: all
+     become: false
+     gather_facts: false
+
+     vars:
+       technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address | default(''), true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+       technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+       technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+
+     tasks:
+       - name: Log in to Technitium API and obtain session token
+         ansible.builtin.uri:
+           url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+           method: GET
+           return_content: true
+         register: adopt_login
+         retries: 10
+         delay: 3
+         until: adopt_login.status == 200
+         no_log: true
+
+       - name: Extract Technitium API token
+         ansible.builtin.set_fact:
+           technitium_token: "{{ (adopt_login.content | from_json).token }}"
+         no_log: true
+
+       - name: List Technitium zones
+         ansible.builtin.uri:
+           url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+           method: GET
+           return_content: true
+         register: adopt_zone_list
+         no_log: true
+
+       # Built-in zones are flagged internal. The cluster's own zone is already
+       # a member; the catalog zone itself has type Catalog and is not listed.
+       - name: Select zones to adopt
+         ansible.builtin.set_fact:
+           adopt_zones: >-
+             {{
+               adopt_all
+               | selectattr('type', 'in', ['Primary', 'Forwarder'])
+               | rejectattr('name', 'in', adopt_internal)
+               | list
+             }}
+         vars:
+           adopt_all: "{{ (adopt_zone_list.content | from_json).response.zones }}"
+           adopt_internal: "{{ adopt_all | selectattr('internal', 'defined') | selectattr('internal') | map(attribute='name') | list }}"
+
+       - name: Ensure each zone is a cluster catalog member
+         ansible.builtin.include_role:
+           name: technitium_zone
+         vars:
+           technitium_zone_name: "{{ adopt_zone.name }}"
+           technitium_zone_type: "{{ adopt_zone.type }}"
+         loop: "{{ adopt_zones }}"
+         loop_control:
+           loop_var: adopt_zone
+           label: "{{ adopt_zone.name }} ({{ adopt_zone.type }})"
+   ```
+
+---
+
+## Phase 2 — Make the primary a LAN-grade resolver
 
 No LAN client uses Technitium yet, so this phase has no client-facing
 effect. Blocking is bypassed for every SDN subnet, so platform stacks
 that resolve through Technitium are unaffected except for the DoH
 upstream and the router-forwarded `gibbsgreatly.xyz` view.
 
-### lan-dns-02-resolver-playbook
+### lan-dns-06-resolver-playbook
 
 ```yaml
-id: lan-dns-02-resolver-playbook
+id: lan-dns-06-resolver-playbook
 title: Add configure-technitium-lan-resolver.yml
-depends_on: []
+depends_on: [lan-dns-02-zone-role]
 
 change: >
   Create terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml
@@ -182,7 +755,7 @@ gates:
    ```yaml
    ---
    # LAN-resolver settings for technitium-stack, the Technitium cluster
-   # primary (docs/lan-dns-technitium/plan.md, Phase 1).
+   # primary (docs/lan-dns-technitium/plan.md, Phase 2).
    #
    # Makes Technitium a drop-in replacement for the Pi-holes: DoH upstream
    # forwarding, Pi-hole-style blocklists applied to the LAN only, forwarder
@@ -310,26 +883,17 @@ gates:
          when: lan_resolver_settings_drift | bool
          no_log: true
 
-       - name: List Technitium zones
-         ansible.builtin.uri:
-           url: "{{ technitium_api_base }}/zones/list?token={{ lan_resolver_token }}"
-           method: GET
-           return_content: true
-         register: lan_resolver_zone_list
-         no_log: true
-
-       - name: Create router forwarder zones if absent
-         ansible.builtin.uri:
-           url: "{{ technitium_api_base }}/zones/create?zone={{ item }}&type=Forwarder&protocol=Udp&forwarder={{ lan_resolver_router }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true&token={{ lan_resolver_token }}"
-           method: POST
-           return_content: true
-           status_code: [200]
-         register: lan_resolver_fwd_create
-         changed_when: true
-         failed_when: (lan_resolver_fwd_create.content | from_json).status | default('') != 'ok'
+       - name: Ensure router forwarder zones exist (cluster catalog members when clustered)
+         ansible.builtin.include_role:
+           name: technitium_zone
+         vars:
+           technitium_token: "{{ lan_resolver_token }}"
+           technitium_zone_name: "{{ lan_resolver_fwd_zone }}"
+           technitium_zone_type: Forwarder
+           technitium_zone_forwarder: "{{ lan_resolver_router }}"
          loop: "{{ lan_resolver_forwarder_zones }}"
-         when: item not in (lan_resolver_zone_list.content | from_json).response.zones | map(attribute='name') | list
-         no_log: true
+         loop_control:
+           loop_var: lan_resolver_fwd_zone
 
        - name: Add allowed domains
          ansible.builtin.uri:
@@ -449,21 +1013,23 @@ gates:
          when: not ansible_check_mode
    ```
 
-### lan-dns-03-import-into-deploy
+### lan-dns-07-import-into-deploy
 
 ```yaml
-id: lan-dns-03-import-into-deploy
-title: Import the LAN resolver playbook at the end of deploy-technitium-stack.yml
-depends_on: [lan-dns-02-resolver-playbook]
+id: lan-dns-07-import-into-deploy
+title: Import the LAN resolver and zone-adoption playbooks at the end of deploy-technitium-stack.yml
+depends_on: [lan-dns-04-deploy-cluster-aware, lan-dns-05-adopt-zones-playbook, lan-dns-06-resolver-playbook]
 
 change: >
-  Append these three lines to the very end of
+  Append these lines to the very end of
   terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml, after the
   existing "Forward the Framework Desktop FQDN to the MikroTik" import, with
-  one blank line before them:
+  one blank line before each "- name:" line:
   "- name: Configure Technitium as the LAN resolver (docs/lan-dns-technitium/)"
-  / "  ansible.builtin.import_playbook: configure-technitium-lan-resolver.yml".
-  (Two YAML lines; the first starts with "- name:", the second is indented
+  / "  ansible.builtin.import_playbook: configure-technitium-lan-resolver.yml"
+  / "- name: Adopt all zones into the Technitium cluster catalog (docs/lan-dns-technitium/)"
+  / "  ansible.builtin.import_playbook: technitium-cluster-adopt-zones.yml".
+  (Four YAML lines in two entries; each "import_playbook" line is indented
   two spaces.) Change nothing else in the file.
 
 scope:
@@ -478,40 +1044,40 @@ gates:
     cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-technitium-stack.yml'"
     expect: "exit 0"
     critical: true
-  - id: import-is-last
-    cmd: "tail -n 1 terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml | grep -q 'import_playbook: configure-technitium-lan-resolver.yml'"
-    expect: "exit 0"
-    critical: true
-  - id: only-additions
-    cmd: "test $(git diff -U0 HEAD -- terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml | grep -c '^-[^-]') -eq 0"
+  - id: adopt-is-last
+    cmd: "tail -n 1 terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml | grep -q 'import_playbook: technitium-cluster-adopt-zones.yml' && grep -q 'import_playbook: configure-technitium-lan-resolver.yml' terraform/lxc/ansible/playbooks/deploy-technitium-stack.yml"
     expect: "exit 0"
     critical: true
 ```
 
-### Operator: apply the resolver config to the primary (pve)
+### Operator: deploy technitium-stack on pve
 
-Production mutation — preflight, approval, then run just the standalone
-playbook (targeted, not a full `provision.sh` redeploy):
+Production mutation (Ansible task/role change → `provision.sh` on `pve`
+per CLAUDE.md's validation tiers). This one run validates Phase 1's
+changes in their **standalone** path (the cluster doesn't exist yet, so
+zones must be created and NS/SOA reconciled exactly as before, and the
+adopt play is a no-op) and applies the LAN resolver config:
 
 ```bash
-export TASK_APPROVAL="lan-dns-resolver-primary"
-./with-secrets-prod ansible-playbook \
-  -i terraform/lxc/environments/pve/technitium-stack/inventory.yml \
-  terraform/lxc/ansible/playbooks/configure-technitium-lan-resolver.yml
+export TASK_APPROVAL="lan-dns-technitium-primary"
+./with-secrets-prod scripts/provision.sh --stack technitium-stack
 ```
 
-Rollback: `settings/set?forwarders=false&enableBlocking=false` via the
-Technitium UI/API restores the pre-plan behavior; the forwarder zones can
-be deleted in the UI. Afterwards, spot-check a platform stack that uses
-Technitium as its Docker resolver still pulls images (e.g. re-run
+Expect in the recap: no failed tasks, the "Reconcile parity-zone apex NS
+and SOA" block running (not skipped), the two cluster-assertion tasks
+skipped, and `changed` only for the resolver settings, forwarder zones and
+query-log app. Rollback: re-run with the previous commit checked out;
+resolver settings revert with `settings/set?forwarders=false&enableBlocking=false`
+in the Technitium UI/API. Afterwards, spot-check a platform stack that
+uses Technitium as its Docker resolver still pulls images (e.g. re-run a
 `docker pull` of an already-used image on `monitoring-stack`).
 
-### lan-dns-04-verify-primary
+### lan-dns-08-verify-primary
 
 ```yaml
-id: lan-dns-04-verify-primary
+id: lan-dns-08-verify-primary
 title: Verify the primary answers like a Pi-hole, from the LAN
-depends_on: [lan-dns-03-import-into-deploy]   # and the operator apply above
+depends_on: [lan-dns-07-import-into-deploy]   # and the operator deploy above
 
 change: >
   No file edits. Run the gates from the workstation (on bridgeLocal) and
@@ -545,16 +1111,20 @@ gates:
     cmd: "dig +short @192.168.20.15 -x 192.168.1.104 | grep -q garuda"
     expect: "exit 0"
     critical: true
+  - id: standalone-ns-unchanged
+    cmd: "test \"$(dig +short @192.168.20.15 NS lab.gibbsgreatly.xyz)\" = ns1.lab.gibbsgreatly.xyz."
+    expect: "exit 0"
+    critical: true
 ```
 
 ---
 
-## Phase 2 — Secondary node on pve-tiny
+## Phase 3 — Secondary node on pve-tiny
 
-### lan-dns-05-ip-wiring
+### lan-dns-09-ip-wiring
 
 ```yaml
-id: lan-dns-05-ip-wiring
+id: lan-dns-09-ip-wiring
 title: Wire lab_ip_technitium_tiny through .env and Terraform
 depends_on: []
 
@@ -598,12 +1168,12 @@ gates:
     critical: true
 ```
 
-### lan-dns-06-stack-files
+### lan-dns-10-stack-files
 
 ```yaml
-id: lan-dns-06-stack-files
+id: lan-dns-10-stack-files
 title: Create technitium-tiny-stack's stack.yaml, contract, and pve-tiny env dir
-depends_on: [lan-dns-05-ip-wiring]
+depends_on: [lan-dns-09-ip-wiring]
 
 change: >
   Create terraform/lxc/stacks/technitium-tiny-stack/stack.yaml and
@@ -648,8 +1218,8 @@ gates:
    ```yaml
    # Technitium DNS Server — cluster secondary on pve-tiny (mgmt_seg).
    # Second LAN resolver alongside technitium-stack on pve; inherits settings,
-   # blocklists and apps through Technitium clustering and the lab/reverse
-   # zones through zone transfer. docs/lan-dns-technitium/plan.md.
+   # blocklists, apps and every zone through Technitium clustering.
+   # docs/lan-dns-technitium/plan.md.
    hostname: technitium-tiny-stack
    ip_address: "${lab_ip_technitium_tiny}/24"
    gateway: "${lab_gw_mgmt}"
@@ -718,7 +1288,7 @@ gates:
    | Input | Source | Notes |
    |---|---|---|
    | `LAB_IP_TECHNITIUM_TINY` | env var | **Mandatory.** This node's IP |
-   | `LAB_IP_TECHNITIUM` | env var | **Mandatory.** The primary's IP (zone-transfer source, cluster primary) |
+   | `LAB_IP_TECHNITIUM` | env var | Informational: the cluster primary's IP (cluster join is an operator step, not automated) |
    | `TECHNITIUM_ADMIN_PASSWORD` | env var (secret) | **Mandatory.** Same admin password as the primary; clustering syncs users from the primary after join |
    | `LAB_DOMAIN` | env var | Defaults to `lab.gibbsgreatly.xyz` |
 
@@ -726,7 +1296,7 @@ gates:
 
    | Service | Port | Protocol | Notes |
    |---|---|---|---|
-   | DNS resolver | 53 | UDP + TCP | LAN clients' second resolver (MikroTik DHCP `dns-server`). Serves Secondary copies of the primary's Primary zones |
+   | DNS resolver | 53 | UDP + TCP | LAN clients' second resolver (MikroTik DHCP `dns-server`). Serves cluster-synced copies of every zone on the primary |
    | Web console / REST API | 5380 | TCP | Direct by IP only; no Traefik route |
    | Cluster HTTPS | 53443 | TCP | Technitium cluster sync with the primary (self-signed, enabled automatically on cluster join) |
 
@@ -734,7 +1304,7 @@ gates:
 
    ## Dependencies
 
-   - `technitium-stack` (pve) — cluster primary and zone-transfer source.
+   - `technitium-stack` (pve) — cluster primary; source of all config and zones.
      Cross-node, so not in `stack.yaml`'s `depends_on`.
    - Harbor (`registry_host`) for the Technitium image pull.
    - `apt-cacher-stack` for package cache during host provisioning.
@@ -743,7 +1313,7 @@ gates:
 
    | Path | Storage | Contents |
    |---|---|---|
-   | Docker named volume `technitium-config` | Docker volume | Not a source of truth: settings/blocklists/apps come from the cluster primary, zones from zone transfer. A rebuild re-joins the cluster and re-transfers zones. |
+   | Docker named volume `technitium-config` | Docker volume | Not a source of truth: settings, blocklists, apps and zones all come from the cluster primary. A rebuild re-joins the cluster (operator step) and re-syncs. |
 
    ## What Must Not Be Edited Casually
 
@@ -755,12 +1325,12 @@ gates:
      `technitium_image_tag` — cluster nodes must run the same version.
    ```
 
-### lan-dns-07-deploy-playbook
+### lan-dns-11-deploy-playbook
 
 ```yaml
-id: lan-dns-07-deploy-playbook
+id: lan-dns-11-deploy-playbook
 title: Add deploy-technitium-tiny-stack.yml
-depends_on: [lan-dns-06-stack-files]
+depends_on: [lan-dns-10-stack-files]
 
 change: >
   Create terraform/lxc/ansible/playbooks/deploy-technitium-tiny-stack.yml.
@@ -930,231 +1500,6 @@ gates:
      roles:
        - unattended_upgrades
 
-   - name: Replicate the primary's zones to this node (docs/lan-dns-technitium/)
-     ansible.builtin.import_playbook: configure-technitium-zone-replication.yml
-   ```
-
-### lan-dns-08-replication-playbook
-
-```yaml
-id: lan-dns-08-replication-playbook
-title: Add configure-technitium-zone-replication.yml
-depends_on: [lan-dns-07-deploy-playbook]
-
-change: >
-  Create terraform/lxc/ansible/playbooks/configure-technitium-zone-replication.yml
-  with exactly the literal content (with its 3-space indent stripped) in "Literal content:
-  configure-technitium-zone-replication.yml".
-
-scope:
-  allowed_paths:
-    - terraform/lxc/ansible/playbooks/configure-technitium-zone-replication.yml
-  forbidden_actions:
-    - "Any change outside allowed_paths"
-    - "Running the playbook"
-
-gates:
-  - id: syntax-check
-    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/configure-technitium-zone-replication.yml'"
-    expect: "exit 0"
-    critical: true
-  - id: tiny-deploy-still-parses
-    cmd: "bash -c 'cd terraform/lxc/ansible && ansible-playbook --syntax-check -i localhost, playbooks/deploy-technitium-tiny-stack.yml'"
-    expect: "exit 0"
-    critical: true
-```
-
-#### Literal content: configure-technitium-zone-replication.yml
-
-   ```yaml
-   ---
-   # Replicates technitium-stack's (primary, pve) zones to technitium-tiny-stack
-   # (secondary, pve-tiny). docs/lan-dns-technitium/plan.md, Phase 2.
-   #
-   # - Primary zones (lab + reverse zones): classic zone transfer + NOTIFY to
-   #   Secondary zones on this node. NOT the cluster catalog, because the
-   #   cluster would then manage their NS/SOA and deploy-technitium-stack.yml
-   #   rewrites both on every run.
-   # - Forwarder zones: added to the cluster catalog once the cluster exists
-   #   (deploy-technitium-stack.yml never touches Forwarder zones).
-   #
-   # Runs on the secondary's inventory; the primary's API is reached over
-   # mgmt_seg. Imported at the end of deploy-technitium-tiny-stack.yml.
-
-   - name: Replicate primary zones to the secondary
-     hosts: all
-     become: false
-     gather_facts: false
-
-     vars:
-       technitium_primary_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
-       technitium_secondary_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}"
-       technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
-       technitium_primary_api: "http://{{ technitium_primary_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
-       technitium_secondary_api: "http://{{ technitium_secondary_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
-       technitium_cluster_domain: "cluster.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
-
-     tasks:
-       - name: Log in to the primary
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}"
-           method: GET
-           return_content: true
-         register: repl_primary_login
-         retries: 10
-         delay: 3
-         until: repl_primary_login.status == 200
-         no_log: true
-
-       - name: Log in to the secondary
-         ansible.builtin.uri:
-           url: "{{ technitium_secondary_api }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}"
-           method: GET
-           return_content: true
-         register: repl_secondary_login
-         retries: 10
-         delay: 3
-         until: repl_secondary_login.status == 200
-         no_log: true
-
-       - name: Extract tokens
-         ansible.builtin.set_fact:
-           repl_primary_token: "{{ (repl_primary_login.content | from_json).token }}"
-           repl_secondary_token: "{{ (repl_secondary_login.content | from_json).token }}"
-         no_log: true
-
-       - name: List primary zones
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/zones/list?token={{ repl_primary_token }}"
-           method: GET
-           return_content: true
-         register: repl_primary_zones_raw
-         no_log: true
-
-       # Built-in zones are flagged internal; zones at or under the cluster
-       # domain are synced by the cluster itself.
-       - name: Select zones to replicate
-         ansible.builtin.set_fact:
-           repl_primary_zone_names: >-
-             {{
-               repl_zones
-               | selectattr('type', 'equalto', 'Primary')
-               | rejectattr('name', 'in', repl_internal_zone_names)
-               | map(attribute='name')
-               | reject('equalto', technitium_cluster_domain)
-               | reject('search', '\.' ~ (technitium_cluster_domain | regex_escape) ~ '$')
-               | list
-             }}
-           repl_forwarder_zone_names: >-
-             {{
-               repl_zones
-               | selectattr('type', 'equalto', 'Forwarder')
-               | rejectattr('name', 'in', repl_internal_zone_names)
-               | map(attribute='name') | list
-             }}
-         vars:
-           repl_zones: "{{ (repl_primary_zones_raw.content | from_json).response.zones }}"
-           repl_internal_zone_names: "{{ repl_zones | selectattr('internal', 'defined') | selectattr('internal') | map(attribute='name') | list }}"
-
-       - name: Read zone-transfer options of each primary zone
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/zones/options/get?zone={{ item | urlencode }}&token={{ repl_primary_token }}"
-           method: GET
-           return_content: true
-         register: repl_zone_options
-         loop: "{{ repl_primary_zone_names }}"
-         no_log: true
-
-       - name: Allow transfer to and notify the secondary
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/zones/options/set?zone={{ item.item | urlencode }}&zoneTransfer=UseSpecifiedNetworkACL&zoneTransferNetworkACL={{ technitium_secondary_ip }}&notify=SpecifiedNameServers&notifyNameServers={{ technitium_secondary_ip }}&token={{ repl_primary_token }}"
-           method: POST
-           return_content: true
-           status_code: [200]
-         register: repl_zone_options_set
-         changed_when: true
-         failed_when: (repl_zone_options_set.content | from_json).status | default('') != 'ok'
-         loop: "{{ repl_zone_options.results }}"
-         loop_control:
-           label: "{{ item.item }}"
-         when: >-
-           (o.zoneTransfer | default('')) != 'UseSpecifiedNetworkACL'
-           or (o.zoneTransferNetworkACL | default([]) or []) != [technitium_secondary_ip]
-           or (o.notify | default('')) != 'SpecifiedNameServers'
-           or (o.notifyNameServers | default([]) or []) != [technitium_secondary_ip]
-         vars:
-           o: "{{ (item.content | from_json).response }}"
-         no_log: true
-
-       - name: List secondary zones
-         ansible.builtin.uri:
-           url: "{{ technitium_secondary_api }}/zones/list?token={{ repl_secondary_token }}"
-           method: GET
-           return_content: true
-         register: repl_secondary_zones_raw
-         no_log: true
-
-       - name: Refuse to shadow a replicated zone with a different local type
-         ansible.builtin.assert:
-           that:
-             - >-
-               (repl_secondary_zones_raw.content | from_json).response.zones
-               | selectattr('name', 'in', repl_primary_zone_names)
-               | rejectattr('type', 'equalto', 'Secondary')
-               | list | length == 0
-           fail_msg: >-
-             The secondary has a non-Secondary zone with the same name as a
-             primary zone; delete it on the secondary before re-running.
-
-       - name: Create Secondary zones for missing primary zones
-         ansible.builtin.uri:
-           url: "{{ technitium_secondary_api }}/zones/create?zone={{ item | urlencode }}&type=Secondary&primaryNameServerAddresses={{ technitium_primary_ip }}&zoneTransferProtocol=Tcp&token={{ repl_secondary_token }}"
-           method: POST
-           return_content: true
-           status_code: [200]
-         register: repl_secondary_create
-         changed_when: true
-         failed_when: (repl_secondary_create.content | from_json).status | default('') != 'ok'
-         loop: "{{ repl_primary_zone_names }}"
-         when: item not in (repl_secondary_zones_raw.content | from_json).response.zones | map(attribute='name') | list
-         no_log: true
-
-       - name: Read cluster state on the primary
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/admin/cluster/state?token={{ repl_primary_token }}"
-           method: GET
-           return_content: true
-         register: repl_cluster_state
-         no_log: true
-
-       - name: Add Forwarder zones to the cluster catalog
-         ansible.builtin.uri:
-           url: "{{ technitium_primary_api }}/zones/options/set?zone={{ item | urlencode }}&catalog={{ ('cluster-catalog.' ~ (repl_cluster_state.content | from_json).response.clusterDomain) | urlencode }}&token={{ repl_primary_token }}"
-           method: POST
-           return_content: true
-           status_code: [200]
-         register: repl_catalog_set
-         changed_when: false
-         failed_when: (repl_catalog_set.content | from_json).status | default('') != 'ok'
-         loop: "{{ repl_forwarder_zone_names }}"
-         when: (repl_cluster_state.content | from_json).response.clusterInitialized | default(false) | bool
-         no_log: true
-
-       - name: Compare SOA serials, primary vs secondary
-         ansible.builtin.shell: |
-           set -euo pipefail
-           p=$(dig @{{ technitium_primary_ip }} +short SOA {{ item }} | awk '{print $3}')
-           s=$(dig @{{ technitium_secondary_ip }} +short SOA {{ item }} | awk '{print $3}')
-           test -n "$p" && test "$p" = "$s"
-         args:
-           executable: /bin/bash
-         register: repl_serial_check
-         loop: "{{ repl_primary_zone_names }}"
-         changed_when: false
-         check_mode: false
-         retries: 12
-         delay: 10
-         until: repl_serial_check.rc == 0
    ```
 
 ### Operator: create technitium-tiny-stack on pve-tiny
@@ -1164,9 +1509,8 @@ gates:
    appear in pve-tiny's `pct list` (read-only API query through
    `./with-secrets-prod-tiny`, as in the media-stack-lab precedent).
 2. Deploy (Terraform creates the LXC, then Ansible runs
-   `deploy-technitium-tiny-stack.yml`; the replication import runs too but
-   creates nothing cluster-related yet — the catalog task is skipped until
-   the cluster exists):
+   `deploy-technitium-tiny-stack.yml`; it has no zones until it joins the
+   cluster):
    ```bash
    export TASK_APPROVAL="lan-dns-technitium-tiny-deploy"
    ./with-secrets-prod-tiny scripts/provision.sh --stack technitium-tiny-stack
@@ -1195,25 +1539,32 @@ exact API calls (tokens from `/api/user/login`; `$PW` =
 3. Confirm Technitium's Authentik OIDC login at
    `https://technitium.lab.gibbsgreatly.xyz` still works (node rename is
    the one change that could plausibly touch it).
-4. Re-run the replication playbook so the Forwarder zones join the
-   catalog:
+4. Adopt every existing zone into the cluster catalog (Technitium then
+   rewrites each Primary zone's apex NS to both nodes and its SOA primary
+   to the primary node, and the secondary pulls copies):
    ```bash
-   export TASK_APPROVAL="lan-dns-technitium-replication"
-   ./with-secrets-prod-tiny ansible-playbook \
-     -i terraform/lxc/environments/pve-tiny/technitium-tiny-stack/inventory.yml \
-     terraform/lxc/ansible/playbooks/configure-technitium-zone-replication.yml
+   export TASK_APPROVAL="lan-dns-technitium-adopt-zones"
+   ./with-secrets-prod ansible-playbook \
+     -i terraform/lxc/environments/pve/technitium-stack/inventory.yml \
+     terraform/lxc/ansible/playbooks/technitium-cluster-adopt-zones.yml
    ```
+5. Prove the **clustered** path of the deploy playbook: re-run
+   `./with-secrets-prod scripts/provision.sh --stack technitium-stack`
+   (same approval). Expect the standalone NS/SOA block skipped and "Assert
+   the cluster manages the parity zone's apex NS and SOA" passing, with no
+   failed tasks. A failure here means Phase 1 missed a writer; stop
+   before Phase 4.
 
 Rollback: `POST /api/admin/cluster/secondary/leave` on the secondary, then
 `/api/admin/cluster/primary/delete` on the primary. The primary keeps all
 its zones and settings either way.
 
-### lan-dns-09-verify-secondary
+### lan-dns-12-verify-secondary
 
 ```yaml
-id: lan-dns-09-verify-secondary
+id: lan-dns-12-verify-secondary
 title: Verify the secondary answers identically to the primary
-depends_on: [lan-dns-08-replication-playbook]   # and the two operator sections above
+depends_on: [lan-dns-11-deploy-playbook]   # and the two operator sections above
 
 change: >
   No file edits. Run the gates from the workstation and record results in
@@ -1243,6 +1594,14 @@ gates:
     cmd: "test \"$(dig +short @192.168.20.17 pve.gibbsgreatly.xyz A)\" = \"$(dig +short @192.168.1.1 pve.gibbsgreatly.xyz A)\""
     expect: "exit 0"
     critical: true
+  - id: cluster-owns-lab-ns
+    cmd: "test $(dig +short @192.168.20.17 NS lab.gibbsgreatly.xyz | grep -c '\\.cluster\\.lab\\.gibbsgreatly\\.xyz\\.$') -eq 2"
+    expect: "exit 0"
+    critical: true
+  - id: reverse-zone-synced
+    cmd: "dig +short @192.168.20.17 -x 192.168.30.10 | grep -q '^traefik\\.lab\\.gibbsgreatly\\.xyz\\.$'"
+    expect: "exit 0"
+    critical: true
   - id: public-over-tcp
     cmd: "dig +tcp @192.168.20.17 github.com A | grep -q 'status: NOERROR'"
     expect: "exit 0"
@@ -1257,7 +1616,7 @@ gates:
 
 Prove the table in "Failover behavior" rather than assume it. With
 approval, on pve: `pct exec 20015 -- docker stop technitium`, then from
-the workstation re-run `lan-dns-09`'s gates against `192.168.20.17` —
+the workstation re-run `lan-dns-12`'s gates against `192.168.20.17` —
 blocking, `traefik.lab.gibbsgreatly.xyz`, `pve.gibbsgreatly.xyz` and
 `github.com` must all still answer. Then
 `pct exec 20015 -- docker start technitium` and confirm the primary's
@@ -1268,14 +1627,14 @@ minute) and do it outside CI runs.
 
 ---
 
-## Phase 3 — Point the LAN at Technitium
+## Phase 4 — Point the LAN at Technitium
 
-### lan-dns-10-mikrotik-playbook
+### lan-dns-13-mikrotik-playbook
 
 ```yaml
-id: lan-dns-10-mikrotik-playbook
+id: lan-dns-13-mikrotik-playbook
 title: Add mikrotik-lan-dns-resolver.yml (cutover + rollback in one playbook)
-depends_on: [lan-dns-05-ip-wiring]
+depends_on: [lan-dns-09-ip-wiring]
 
 change: >
   Create ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml with exactly
@@ -1306,7 +1665,7 @@ gates:
    # mikrotik-lan-dns-resolver.yml
    #
    # Chooses which resolvers LAN (bridgeLocal) clients are told to use.
-   # docs/lan-dns-technitium/plan.md, Phase 3.
+   # docs/lan-dns-technitium/plan.md, Phase 4.
    #
    #   lan_dns_mode=technitium (default): DHCP hands out both Technitium
    #     nodes; IPv6 RA stops advertising DNS (clients resolve over IPv4).
@@ -1489,12 +1848,12 @@ reconfiguration before retirement. Also skim Technitium's Query Logs app
 and the Dashboard for SERVFAIL spikes and user reports of over-blocking;
 add allow entries to `configure-technitium-lan-resolver.yml`, not the UI.
 
-### lan-dns-11-docs-after-cutover
+### lan-dns-14-docs-after-cutover
 
 ```yaml
-id: lan-dns-11-docs-after-cutover
+id: lan-dns-14-docs-after-cutover
 title: Record the cutover in router and network docs
-depends_on: [lan-dns-10-mikrotik-playbook]   # and the operator cutover
+depends_on: [lan-dns-13-mikrotik-playbook]   # and the operator cutover
 
 change: >
   In router/desired-config.md: replace the DNS section bullet
@@ -1525,7 +1884,7 @@ gates:
 
 ---
 
-## Phase 4 — Retire the Pis (after the soak)
+## Phase 5 — Retire the Pis (after the soak)
 
 ### Operator: decommission
 
@@ -1538,12 +1897,12 @@ gates:
    (only now — it was the rollback target until here). After this, the
    `pihole` mode of `mikrotik-lan-dns-resolver.yml` no longer works.
 
-### lan-dns-12-docs-retire
+### lan-dns-15-docs-retire
 
 ```yaml
-id: lan-dns-12-docs-retire
+id: lan-dns-15-docs-retire
 title: Remove the Pi-holes from router and DHCP-refactor docs
-depends_on: [lan-dns-11-docs-after-cutover]   # and the operator decommission
+depends_on: [lan-dns-14-docs-after-cutover]   # and the operator decommission
 
 change: >
   In router/desired-config.md delete the argon-01 and argon-02 rows from the
@@ -1578,21 +1937,21 @@ gates:
 
 ---
 
-## Phase 5 — DHCP to Technitium (independent track)
+## Phase 6 — DHCP to Technitium (independent track)
 
 The DHCP migration is already fully planned in `docs/dhcp-refactor/`
 (Stages A–D done and validated; Stage E cutover packet drafted, Stage F =
 7-day soak). **It does not depend on Phases 0–4 and they don't depend on
 it.** The only coupling point is the DHCP scope's DNS-server option: it
 must hand out whatever the MikroTik hands out at the moment of the DHCP
-cutover. Phase 5 can therefore run before, during, or after the DNS
-work — but not in the same change window as the Phase 3 cutover, so a
+cutover. Phase 6 can therefore run before, during, or after the DNS
+work — but not in the same change window as the Phase 4 cutover, so a
 problem is attributable to one change.
 
-### lan-dns-13-dhcp-dns-option
+### lan-dns-16-dhcp-dns-option
 
 ```yaml
-id: lan-dns-13-dhcp-dns-option
+id: lan-dns-16-dhcp-dns-option
 title: Decouple the DHCP cutover packet's DNS option from the Pi-holes
 depends_on: []
 
@@ -1603,7 +1962,7 @@ change: >
   replace the DNS-server option table row's value and source cells
   ("`192.168.1.22`" and its note) with: value "**read live at execution
   time**: the MikroTik `lan` network's current `dns-server` (`192.168.1.23`
-  before docs/lan-dns-technitium/ Phase 3, `192.168.20.15,192.168.20.17`
+  before docs/lan-dns-technitium/ Phase 4, `192.168.20.15,192.168.20.17`
   after)" and source "decisions.md Decision 9"; and in the checklist line
   "DNS-server option handed out is still `192.168.1.22` (the Pi-hole)"
   replace that text with "DNS-server option handed out matches the value
@@ -1629,7 +1988,7 @@ gates:
 ```
 
 (The `stale-dns-gone` gate allows one remaining `192.168.1.22` — the
-argon-01 reservation row, which `lan-dns-12` removes later if Phase 4
+argon-01 reservation row, which `lan-dns-15` removes later if Phase 5
 has run.)
 
 #### Literal content: DHCP Decision 9
@@ -1670,13 +2029,19 @@ Follow `docs/dhcp-refactor/plan.md`'s "Immediate next step" and
 flow. Two items there are still genuinely open and need an operator
 decision before the window (recorded in the packet, not decided here):
 the scope's domain-name option (`lan` to match MikroTik's current
-`add-dns-entries-suffix`, recommended, since Phase 1 already forwards
+`add-dns-entries-suffix`, recommended, since Phase 2 already forwards
 `lan` to the router and it would simply move to being Technitium-owned)
-and the reverse-zone naming for `1.168.192.in-addr.arpa` — note Phase 1
+and the reverse-zone naming for `1.168.192.in-addr.arpa` — note Phase 2
 creates that name as a **Forwarder** zone to the router, so the DHCP
 scope's reverse zone requires converting it to a Primary zone at Stage E
 (delete the forwarder, let the scope create the Primary), and likewise
 for `lan`.
+
+When Stage E adapts `configure-technitium-dhcp-scope-via-api.yml` for the
+production `bridgeLocal` scope, its zone creation must go through the
+`technitium_zone` role (Phase 1), so the scope's forward and reverse zones
+join the cluster catalog and DHCP-driven A/PTR records reach the
+secondary like every other zone.
 
 **Newly possible follow-on (not planned here):** with
 `technitium-tiny-stack` live, dhcp-refactor's "Deferred: multi-instance
