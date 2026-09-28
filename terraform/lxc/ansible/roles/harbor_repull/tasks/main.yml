@@ -113,9 +113,9 @@
     # before recreating isn't trustworthy. A unique name sidesteps that
     # entirely: this task only ever runs when the local credential file is
     # missing, so POST always succeeds with 201 the first time -- no 409
-    # case to handle, and no dependency on SOPS, since the secret only ever
+    # case to handle, and no dependency on OpenBao, since the secret only ever
     # needs to exist on this one host. Deliberately NOT the shared
-    # 'robot$ci-runner' system-level robot -- its SOPS secret is already
+    # 'robot$ci-runner' system-level robot -- its OpenBao secret is already
     # known stale (see docs/harbor-stack/README.md,
     # [[project_harbor_ci_robot_credential_mismatch]] in memory) and that
     # credential is also shared with GitHub Actions CI workflows.

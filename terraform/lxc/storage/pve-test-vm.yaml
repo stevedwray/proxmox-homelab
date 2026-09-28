@@ -48,6 +48,14 @@ profiles:
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
 
+  # Alias only: stacks whose stack.yaml selects platform-nvme (a pve-tiny
+  # profile, docs/ai-stacks-pve-tiny/plan.md) still resolve here.
+  platform-nvme:
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
 extra_mount_profiles:
   durable-default:
     storage: infrastructure-containers

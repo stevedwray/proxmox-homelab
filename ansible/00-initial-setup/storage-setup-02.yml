@@ -545,6 +545,47 @@
       ansible.builtin.command: "pvesm status"
       changed_when: false
 
+    # ---------------------------------------------------------------
+    # Root-cause fix for a real outage (2026-09-07): pve-guests.service
+    # (Proxmox's own unit that auto-starts every onboot LXC/VM) has no
+    # ordering dependency on zfs-mount.service/zfs-import.target.
+    # Confirmed live: torrent-stack (a container bind-mounting a path on
+    # the "storage" zpool) failed its onboot start attempt on two
+    # separate reboots this session because its storage wasn't mounted
+    # yet -- a race, not a guaranteed failure, which is why it doesn't
+    # reproduce every time. Any container with a ZFS-pool-backed bind
+    # mount or storage backend is exposed to the same race on any future
+    # reboot, not just torrent-stack. Fixed with a systemd drop-in
+    # rather than editing pve-guests.service directly (a Proxmox-owned
+    # unit file that package upgrades can overwrite).
+    - name: Ensure a systemd drop-in directory exists for pve-guests.service
+      ansible.builtin.file:
+        path: /etc/systemd/system/pve-guests.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Order pve-guests.service after ZFS pools finish importing/mounting
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pve-guests.service.d/zfs-order.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by Ansible (storage-setup-02.yml) - do not edit by hand.
+          # See docs/threat-vuln-platform/plan.md's 2026-09-07 reboot-
+          # resilience root-cause writeup for why this exists.
+          [Unit]
+          After=zfs-mount.service zfs-import.target
+          Wants=zfs-mount.service zfs-import.target
+      register: pve_guests_zfs_order_dropin
+
+    - name: Reload systemd after adding the pve-guests/ZFS ordering drop-in
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: pve_guests_zfs_order_dropin.changed
+
   post_tasks:
     - name: Analyze configuration state for summary
       ansible.builtin.set_fact:

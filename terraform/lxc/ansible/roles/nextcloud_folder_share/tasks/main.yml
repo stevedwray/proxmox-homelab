@@ -1,0 +1,78 @@
+# nextcloud_folder_share -- idempotent: ensures a WebDAV folder exists
+# under a service account's own space and is shared (read-only by
+# default) with another Nextcloud user. Generic/reusable across
+# projects that push reports into Nextcloud under their own scoped
+# service account -- see docs/reporting-platform/plan.md Sec5a for the
+# first user (CyberSecEval). All HTTP calls run from wherever
+# ansible-playbook itself executes (delegate_to: localhost), not from
+# the managed host -- this only needs the operator's own machine to
+# reach Nextcloud, not the target LXC.
+
+---
+- name: Split the target folder into path segments
+  ansible.builtin.set_fact:
+    nextcloud_folder_share_segments: "{{ nextcloud_folder_share_folder.split('/') }}"
+
+- name: Build cumulative folder paths
+  ansible.builtin.set_fact:
+    nextcloud_folder_share_cumulative_paths: >-
+      {{
+        nextcloud_folder_share_cumulative_paths | default([]) +
+        [ (nextcloud_folder_share_segments[:item+1] | join('/')) ]
+      }}
+  loop: "{{ range(0, nextcloud_folder_share_segments | length) | list }}"
+
+- name: Ensure each folder level exists (MKCOL, tolerating "already exists")
+  ansible.builtin.uri:
+    url: >-
+      {{ nextcloud_folder_share_base_url }}/remote.php/dav/files/{{ nextcloud_folder_share_owner_user }}/{{ item }}
+    method: MKCOL
+    url_username: "{{ nextcloud_folder_share_owner_user }}"
+    url_password: "{{ nextcloud_folder_share_owner_password }}"
+    status_code: [201, 405]
+  loop: "{{ nextcloud_folder_share_cumulative_paths }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: Get existing shares for the target folder
+  ansible.builtin.uri:
+    url: >-
+      {{ nextcloud_folder_share_base_url }}/ocs/v2.php/apps/files_sharing/api/v1/shares?path=/{{ nextcloud_folder_share_folder }}&format=json
+    method: GET
+    url_username: "{{ nextcloud_folder_share_owner_user }}"
+    url_password: "{{ nextcloud_folder_share_owner_password }}"
+    headers:
+      OCS-APIRequest: "true"
+    status_code: 200
+  register: nextcloud_folder_share_existing
+  delegate_to: localhost
+  no_log: true
+
+- name: Determine whether the target user already has a share
+  ansible.builtin.set_fact:
+    nextcloud_folder_share_already_shared: >-
+      {{
+        nextcloud_folder_share_existing.json.ocs.data
+        | selectattr('share_with', 'equalto', nextcloud_folder_share_with_user)
+        | list | length > 0
+      }}
+
+- name: Create the share (folder not yet shared with the target user)
+  ansible.builtin.uri:
+    url: >-
+      {{ nextcloud_folder_share_base_url }}/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json
+    method: POST
+    url_username: "{{ nextcloud_folder_share_owner_user }}"
+    url_password: "{{ nextcloud_folder_share_owner_password }}"
+    headers:
+      OCS-APIRequest: "true"
+    body_format: form-urlencoded
+    body:
+      path: "/{{ nextcloud_folder_share_folder }}"
+      shareType: 0
+      shareWith: "{{ nextcloud_folder_share_with_user }}"
+      permissions: "{{ nextcloud_folder_share_permissions }}"
+    status_code: 200
+  when: not nextcloud_folder_share_already_shared
+  delegate_to: localhost
+  no_log: true

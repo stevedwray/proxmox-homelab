@@ -98,6 +98,29 @@ def _get_path(d: dict, path: str):
     return cur
 
 
+def _format_greenbone_asset(src: dict) -> str:
+    """GVM only ever captures a raw IP:port for a stack-less scan target --
+    no product identity of its own. Without a real hostname in the string,
+    the only identity text a downstream consumer (cve_deep_dive.py's LLM
+    prompt) ever sees is 'greenbone (1): <ip>:<port> (<zone>)' -- and with
+    no stacks[] to anchor on, the model has been observed inventing
+    'Greenbone security appliance' as the asset's identity, reading the
+    *scanner* name as the target's name (confirmed 2026-09-07 against
+    CVE-2017-5715/2026-4480/2026-4890/2026-4893: the real hosts are plain
+    Debian machines, argon-01/argon-02.lan.local, unrelated to Greenbone as
+    a product). gvm_findings_sync.py already captures the scan's own
+    reverse-DNS/host-detection result as target.hostname when GVM found
+    one -- surface it explicitly here so the prompt has a real name to use
+    instead of guessing. See docs/threat-vuln-platform/plan.md's UVM
+    remediation-sequence review for the full root-cause writeup."""
+    host = _get_path(src, "target.host") or "?"
+    hostname = _get_path(src, "target.hostname")
+    port = _get_path(src, "target.port") or "?"
+    zone = _get_path(src, "target.zone") or "?"
+    identity = f"{hostname} ({host})" if hostname else host
+    return f"{identity}:{port} ({zone})"
+
+
 ASSET_FIELD_SPECS = {
     "harbor": {
         "source_fields": ["artifact.repository", "artifact.tag"],
@@ -108,17 +131,19 @@ ASSET_FIELD_SPECS = {
         "production_field": "artifact.in_production",
         "zone_field": "artifact.zone",
         "stack_field": "artifact.stack",
+        # Only Harbor findings have a live-usage concept (a currently
+        # deployed digest) -- GVM host scans and Wazuh agent scans have no
+        # equivalent "is this specific artifact the one running right now"
+        # notion. See docs/threat-vuln-platform/plan.md Phase 13.
+        "in_use_field": "artifact.in_use",
     },
     "greenbone": {
-        "source_fields": ["target.host", "target.port", "target.zone"],
-        "format": lambda src: (
-            f"{_get_path(src, 'target.host') or '?'}:"
-            f"{_get_path(src, 'target.port') or '?'}"
-            f" ({_get_path(src, 'target.zone') or '?'})"
-        ),
+        "source_fields": ["target.host", "target.hostname", "target.port", "target.zone"],
+        "format": _format_greenbone_asset,
         "production_field": "target.in_production",
         "zone_field": "target.zone",
         "stack_field": "target.stack",
+        "in_use_field": None,
     },
     "wazuh": {
         "source_fields": ["target.agent_id", "target.agent_name"],
@@ -130,6 +155,7 @@ ASSET_FIELD_SPECS = {
         "production_field": "target.in_production",
         "zone_field": "target.zone",
         "stack_field": "target.stack",
+        "in_use_field": None,
     },
 }
 
@@ -154,6 +180,7 @@ def build_assets_summary(sources_list: list[dict]) -> str:
 def fetch_cve_instances(
     es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
     *, auth_header: str, verify_tls: bool, production_field: str, zone_field: str, stack_field: str,
+    in_use_field: str | None = None,
 ) -> dict[str, dict]:
     """Terms-aggregate distinct CVE values + doc counts from one findings
     index, plus: (1) a top_hits sub-aggregation sampling up to
@@ -169,23 +196,27 @@ def fetch_cve_instances(
     a terms agg on an array field buckets each value independently, which
     is the correct behaviour here (a finding with 2 CVEs should count
     toward both)."""
+    cve_aggs = {
+        "assets": {
+            "top_hits": {
+                "size": ASSET_SAMPLE_SIZE,
+                "_source": asset_source_fields,
+                "sort": [{"last_seen": {"order": "desc"}}],
+            }
+        },
+        "production_count": {"filter": {"term": {production_field: True}}},
+        "zones": {"terms": {"field": zone_field, "size": 10}},
+        "stacks": {"terms": {"field": stack_field, "size": 10}},
+    }
+    if in_use_field is not None:
+        cve_aggs["in_use_count"] = {"filter": {"term": {in_use_field: True}}}
+
     body = {
         "size": 0,
         "aggs": {
             "cves": {
                 "terms": {"field": cve_field, "size": 10000},
-                "aggs": {
-                    "assets": {
-                        "top_hits": {
-                            "size": ASSET_SAMPLE_SIZE,
-                            "_source": asset_source_fields,
-                            "sort": [{"last_seen": {"order": "desc"}}],
-                        }
-                    },
-                    "production_count": {"filter": {"term": {production_field: True}}},
-                    "zones": {"terms": {"field": zone_field, "size": 10}},
-                    "stacks": {"terms": {"field": stack_field, "size": 10}},
-                },
+                "aggs": cve_aggs,
             }
         },
     }
@@ -208,6 +239,7 @@ def fetch_cve_instances(
             "count": b["doc_count"],
             "raw_assets": [h.get("_source", {}) for h in hits],
             "production_count": b.get("production_count", {}).get("doc_count", 0),
+            "in_use_count": b.get("in_use_count", {}).get("doc_count") if in_use_field is not None else None,
             "zones": zones,
             "stacks": stacks,
         }
@@ -314,13 +346,13 @@ def call_cve_mcp_triage(mcp_url: str, cve_id: str, *, depth: str = "standard", t
     raise RuntimeError(f"unexpected cve-mcp-server response for {cve_id}: {raw[:300]}")
 
 
-# --- LLM narrative (Anthropic/OpenAI/Ollama -- see module docstring for
+# --- LLM narrative (Anthropic/OpenAI/llama.cpp -- see module docstring for
 # the local-LLM migration this is moving toward) --------------------------
 
 
 def synthesize_narrative(
     provider: str, api_key: str, cve_id: str, triage_text: str, sources: list[dict], total_instances: int,
-    *, ollama_url: str = "", ollama_model: str = "",
+    *, llamacpp_url: str = "", llamacpp_model: str = "", llamacpp_api_key: str = "",
 ) -> str:
     prompt = (
         f"You are a security analyst. Given this automated CVE triage for {cve_id}, "
@@ -333,8 +365,8 @@ def synthesize_narrative(
         return _call_anthropic(api_key, prompt)
     if provider == "openai":
         return _call_openai(api_key, prompt)
-    if provider == "ollama":
-        return _call_ollama(ollama_url, ollama_model, prompt)
+    if provider == "llamacpp":
+        return _call_llamacpp(llamacpp_url, llamacpp_model, prompt, api_key=llamacpp_api_key)
     raise ValueError(f"unknown LLM provider: {provider}")
 
 
@@ -368,27 +400,45 @@ def _call_openai(api_key: str, prompt: str, *, model: str = "gpt-4o-mini", timeo
     return result["choices"][0]["message"]["content"].strip()
 
 
-def _call_ollama(ollama_url: str, model: str, prompt: str, *, timeout: int = 120) -> str:
-    """Local Framework LLM via Ollama's /api/generate -- confirmed live
-    2026-09-01: framework.gibbsgreatly.xyz:11434, reachable from
-    secpipe-stack's network, laguna-s-2.1:q4_k_m-ctx131k confirmed loaded
-    (see docs/threat-vuln-platform/plan.md). No API key -- Ollama has none.
-    Longer default timeout than Anthropic/OpenAI (120s not 30s): a local
-    117B-param model genuinely takes longer per call than a hosted API,
-    confirmed by this project's own BFCL numbers for this exact model
-    (project_laguna_ollama_runtime memory)."""
-    if not ollama_url or not model:
-        raise ValueError("ollama provider requires both --ollama-url and --ollama-model")
-    body = {"model": model, "prompt": prompt, "stream": False}
+def _call_llamacpp(
+    base_url: str, model: str, prompt: str, *, api_key: str = "", max_tokens: int = 0, timeout: int = 600,
+) -> str:
+    """Local Framework LLM via the Nathanw llama.cpp fork's llama-server
+    (OpenAI-compatible /v1/chat/completions) -- replaced Ollama on
+    framework in 2026-09 (docs/framework-ip-and-port/plan.md). The served
+    model is a reasoning model: the answer is message.content, and
+    message.reasoning_content is deliberately dropped. A reply that ran out
+    of tokens before producing any content is an error, not an empty
+    narrative. Long timeout: generation on the local ~177B MoE model is
+    slower than a hosted API."""
+    if not base_url:
+        raise ValueError("llamacpp provider requires --llamacpp-url")
+    max_tokens = max_tokens or int(os.environ.get("LLAMACPP_MAX_TOKENS", "4096"))
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "max_tokens": max_tokens,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
-        f"{ollama_url.rstrip('/')}/api/generate",
+        f"{base_url.rstrip('/')}/v1/chat/completions",
         data=json.dumps(body).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/llama.cpp/MikroTik), never user-supplied; scheme is always http(s)
         result = json.loads(resp.read())
-    return (result.get("response") or "").strip()
+    choice = (result.get("choices") or [{}])[0]
+    content = ((choice.get("message") or {}).get("content") or "").strip()
+    if not content:
+        raise RuntimeError(
+            f"llama.cpp returned no content (finish_reason={choice.get('finish_reason')!r}) -- "
+            "raise LLAMACPP_MAX_TOKENS or the server's --ctx-size"
+        )
+    return content
 
 
 # --- write-back ------------------------------------------------------------
@@ -428,7 +478,7 @@ def writeback_findings(
 
 def refresh_exposure_sources(
     es_url: str, cve_id: str, sources_list: list[dict], total_instances: int,
-    in_production: bool, zones: list[str], stacks: list[str],
+    in_production: bool, zones: list[str], stacks: list[str], in_use: bool,
     *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> bool:
     """Cheap update for an already-enriched CVE whose sources/counts/
@@ -452,6 +502,7 @@ def refresh_exposure_sources(
             "in_production": in_production,
             "zones": zones,
             "stacks": stacks,
+            "in_use": in_use,
         }},
         auth_header=auth_header, verify_tls=verify_tls,
     )
@@ -579,18 +630,19 @@ def main() -> int:
     parser.add_argument("--cve-mcp-url", default=os.environ.get("CVE_MCP_URL", "http://127.0.0.1:8000/mcp"))
     parser.add_argument(
         "--llm-provider", default=os.environ.get("LLM_PROVIDER", "anthropic"),
-        choices=["anthropic", "openai", "ollama", "none"],
+        choices=["anthropic", "openai", "llamacpp", "none"],
     )
     parser.add_argument("--anthropic-api-key", default=os.environ.get("ANTHROPIC_API_KEY"))
     parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY"))
     parser.add_argument(
-        "--ollama-url", default=os.environ.get("OLLAMA_URL", "http://192.168.1.8:11434"),
-        help="local Framework Ollama endpoint (see docs/threat-vuln-platform/plan.md)",
+        "--llamacpp-url", default=os.environ.get("LLAMACPP_URL", "http://framework.gibbsgreatly.xyz:8080"),
+        help="Framework llama-server base URL (see docs/framework-ip-and-port/plan.md)",
     )
     parser.add_argument(
-        "--ollama-model", default=os.environ.get("OLLAMA_MODEL", "laguna-s-2.1:q4_k_m-ctx131k"),
-        help="Ollama model tag -- Laguna S 2.1 must run on Ollama not llama.cpp for this task, see project_laguna_ollama_runtime memory",
+        "--llamacpp-model", default=os.environ.get("LLAMACPP_MODEL", "qwen3.8-flash-next"),
+        help="model name sent to llama-server (its --alias)",
     )
+    parser.add_argument("--llamacpp-api-key", default=os.environ.get("LLAMACPP_API_KEY", ""))
     parser.add_argument("--triage-depth", default=os.environ.get("TRIAGE_DEPTH", "standard"))
     parser.add_argument(
         "--max-cves", type=int, default=int(os.environ.get("MAX_CVES", "0")) or None,
@@ -625,11 +677,16 @@ def main() -> int:
             args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
             auth_header=auth_header, verify_tls=verify_tls,
             production_field=spec["production_field"], zone_field=spec["zone_field"],
-            stack_field=spec["stack_field"],
+            stack_field=spec["stack_field"], in_use_field=spec["in_use_field"],
         )
         for cve_id, info in counts.items():
             entry = cve_map.setdefault(
-                cve_id, {"sources": [], "total_instances": 0, "production_count": 0, "zones": set(), "stacks": set()}
+                cve_id,
+                {
+                    "sources": [], "total_instances": 0, "production_count": 0,
+                    "harbor_total_count": 0, "harbor_in_use_count": 0,
+                    "zones": set(), "stacks": set(),
+                },
             )
             assets = [spec["format"](raw) for raw in info["raw_assets"]]
             entry["sources"].append({
@@ -641,28 +698,37 @@ def main() -> int:
             })
             entry["total_instances"] += info["count"]
             entry["production_count"] += info["production_count"]
+            if src["source"] == "harbor":
+                entry["harbor_total_count"] += info["count"]
+                entry["harbor_in_use_count"] += info["in_use_count"] or 0
             entry["zones"].update(info["zones"])
             entry["stacks"].update(info["stacks"])
 
     # Normalize the per-CVE production/zone/stack rollup computed above
     # (sets aren't JSON-serializable, and in_production is a simple
     # derived bool: true if ANY instance across ANY source is production).
+    # in_use only has meaning for Harbor findings (a GVM host-scan or
+    # Wazuh agent-scan has no "currently deployed digest" concept) -- a
+    # CVE with zero Harbor instances must read in_use:true (nothing to
+    # suppress it on), never get force-set to false just for lacking a
+    # Harbor angle. See docs/threat-vuln-platform/plan.md Phase 13.
     for entry in cve_map.values():
         entry["in_production"] = entry["production_count"] > 0
+        entry["in_use"] = True if entry["harbor_total_count"] == 0 else entry["harbor_in_use_count"] > 0
         entry["zones"] = sorted(entry["zones"])
         entry["stacks"] = sorted(entry["stacks"])
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
-    # Ollama needs no API key (it's a local, unauthenticated endpoint) --
-    # only anthropic/openai are gated on one being present.
+    # llama.cpp's key is optional here (the call just omits the header
+    # without one) -- only anthropic/openai are gated on a key being present.
     llm_api_key = None
     if args.llm_provider == "anthropic":
         llm_api_key = args.anthropic_api_key
     elif args.llm_provider == "openai":
         llm_api_key = args.openai_api_key
     llm_ready = (
-        args.llm_provider == "ollama"
+        args.llm_provider == "llamacpp"
         or (args.llm_provider in ("anthropic", "openai") and bool(llm_api_key))
     )
     if args.llm_provider != "none" and not llm_ready:
@@ -704,10 +770,11 @@ def main() -> int:
                     or existing.get("in_production") != entry["in_production"]
                     or existing.get("zones") != entry["zones"]
                     or existing.get("stacks") != entry["stacks"]
+                    or existing.get("in_use") != entry["in_use"]
                 ):
                     if refresh_exposure_sources(
                         args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
-                        entry["in_production"], entry["zones"], entry["stacks"],
+                        entry["in_production"], entry["zones"], entry["stacks"], entry["in_use"],
                         auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
                     ):
                         sources_refreshed += 1
@@ -742,7 +809,8 @@ def main() -> int:
                 narrative = synthesize_narrative(
                     args.llm_provider, llm_api_key, cve_id, triage_text,
                     entry["sources"], entry["total_instances"],
-                    ollama_url=args.ollama_url, ollama_model=args.ollama_model,
+                    llamacpp_url=args.llamacpp_url, llamacpp_model=args.llamacpp_model,
+                    llamacpp_api_key=args.llamacpp_api_key,
                 )
                 llm_provider_used = args.llm_provider
             except Exception as exc:  # noqa: BLE001
@@ -755,6 +823,7 @@ def main() -> int:
             "total_instances": entry["total_instances"],
             "assets_summary": build_assets_summary(entry["sources"]),
             "in_production": entry["in_production"],
+            "in_use": entry["in_use"],
             "zones": entry["zones"],
             "stacks": entry["stacks"],
             **parsed,

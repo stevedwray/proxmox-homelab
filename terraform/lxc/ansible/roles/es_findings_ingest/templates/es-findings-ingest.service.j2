@@ -10,6 +10,7 @@ Environment=ELASTICSEARCH_URL={{ es_findings_ingest_elasticsearch_url }}
 Environment=ES_FINDINGS_NO_VERIFY_TLS={{ es_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
 EnvironmentFile=-{{ es_findings_ingest_dir }}/harbor-robot.env
 EnvironmentFile=-{{ es_findings_ingest_dir }}/es-user.env
+EnvironmentFile=-{{ es_findings_ingest_dir }}/portainer.env
 ExecStart=/usr/bin/python3 {{ es_findings_ingest_dir }}/harbor_findings_sync.py
 StandardOutput=append:{{ es_findings_ingest_log_path }}
 StandardError=append:{{ es_findings_ingest_log_path }}

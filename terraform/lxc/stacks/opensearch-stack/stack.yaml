@@ -24,7 +24,7 @@ cores: 2
 memory: 6144
 swap: 1024
 rootfs_size: 16
-storage_profile: platform-zfs
+storage_profile: platform-nvme
 docker_storage_size: "20G"
 docker_mount:
   logical_name: docker-data
@@ -57,14 +57,14 @@ provides:
 # storage call, still valid). Started at 150G; grow-only.
 extra_mount_path: "/var/lib/opensearch-data"
 extra_mount_size: "150G"
-extra_mount_profile: durable-zfs
+extra_mount_profile: durable-nvme
 extra_mount:
   logical_name: opensearch-data
   path: /var/lib/opensearch-data
   size: "150G"
-  profile: durable-zfs
+  profile: durable-nvme
   backup_policy: include
-  resize_control_plane: operational
+  resize_control_plane: provider
   mutation_policy: grow-only
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
@@ -82,3 +82,8 @@ docker_socket_proxy_targets:
 ansible_playbook: "deploy-opensearch-stack"
 deployment_tier: platform
 portainer_agent: false
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

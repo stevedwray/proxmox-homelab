@@ -3,7 +3,7 @@
 # decision record (5 core-infra stacks, wazuh-authd shared-password
 # auto-enrollment, narrowly-scoped cross-zone firewall rules).
 #
-# Requires: WAZUH_AGENT_AUTHD_PASSWORD (SOPS, terraform/secrets.common.enc.yaml)
+# Requires: WAZUH_AGENT_AUTHD_PASSWORD (OpenBao, kv/services/wazuh)
 # and LAB_IP_WAZUH (.env) resolvable in the including playbook's env --
 # both are already common/shared, not wazuh-stack-specific, so every
 # stack's normal ./with-secrets / with-secrets-prod session already has

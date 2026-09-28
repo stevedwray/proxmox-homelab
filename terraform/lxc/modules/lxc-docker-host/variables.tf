@@ -188,3 +188,12 @@ variable "device_passthrough" {
   }))
   default = []
 }
+
+variable "lxc_raw_config" {
+  description = "Arbitrary raw `lxc.<key>: <value>` config lines that `pct set` itself has no CLI flag for at all (confirmed live: `pct set <vmid> -lxc.prlimit.memlock unlimited` → \"Unknown option\") -- e.g. lxc.prlimit.memlock (GPU buffer-pinning ulimit ceiling) or lxc.apparmor.profile (AppArmor confinement override). Default empty list means zero behavior change for every stack that doesn't set it. NOT applied by this resource -- these are appended directly to the container's own /etc/pve/lxc/<vmid>.conf out-of-band via ansible/playbooks/configure-device-passthrough.yml (direct root SSH, true root@pam), same restriction class as device_passthrough/host_bind_mounts. This variable exists so the value flows from stack.yaml through Terraform for documentation/consistency only."
+  type = list(object({
+    key   = string
+    value = string
+  }))
+  default = []
+}

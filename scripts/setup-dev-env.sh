@@ -202,11 +202,9 @@ install_precommit() {
 setup_environment() {
     log_info "Setting up environment configuration..."
 
-    log_info "Secrets are managed via SOPS — no .env file required."
-    log_info "All infrastructure credentials are stored in terraform/secrets.common.enc.yaml"
-    echo "  Ensure the age private key is present at ~/.config/sops/age/keys.txt"
-    echo "  Retrieve from Bitwarden: 'proxmox-homelab age private key'"
-    echo "  Then: mkdir -p ~/.config/sops/age && install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
+    log_info "Secrets are managed in OpenBao — see docs/reference/secrets-management.md."
+    echo "  Install the deploy AppRole credentials from Bitwarden ('openbao deploy approles')"
+    echo "  into ~/.config/openbao/ (<role>.role-id and <role>.secret-id, mode 0600)."
     echo "  Use ./with-secrets <command> to run any command with secrets injected."
     return 0
 }
@@ -261,10 +259,10 @@ show_completion() {
     echo "  ✓ Pre-commit hooks (if config present)"
     echo
     log_info "Next steps:"
-    echo "1. Ensure the age private key is present:"
-    echo "   mkdir -p ~/.config/sops/age"
-    echo "   install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
-    echo "   (Retrieve key from Bitwarden: 'proxmox-homelab age private key')"
+    echo "1. Install the OpenBao deploy AppRole credentials:"
+    echo "   install -d -m 700 ~/.config/openbao"
+    echo "   install -m 600 /dev/stdin ~/.config/openbao/deploy-dev.role-id   # and .secret-id, per role"
+    echo "   (Retrieve from Bitwarden: 'openbao deploy approles')"
     echo
     echo "2. Verify secret access:"
     echo "   ./with-secrets env | grep TF_VAR_"

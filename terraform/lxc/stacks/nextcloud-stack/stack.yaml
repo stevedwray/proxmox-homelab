@@ -1,0 +1,42 @@
+hostname: nextcloud-stack
+ip_address: "192.168.120.10/24"
+gateway: "192.168.120.1"
+dns_server: "192.168.120.1"
+network: { zone: apps_seg }
+vmid: 120010
+cores: 4
+memory: 4096
+swap: 1024
+rootfs_size: 16
+storage_profile: platform-apps-zfs
+docker_storage_size: "30G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "30G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: debian-13.1-2-docker-template.tar.gz
+tags: [docker, nextcloud, storage, apps]
+depends_on: []
+provides:
+  - service: nextcloud
+    port: 8080
+    protocol: tcp
+ansible_playbook: deploy-nextcloud-stack
+deployment_tier: apps
+portainer_agent: true
+extra_mount_path: /var/lib/nextcloud-persistent
+extra_mount_size: "200G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: nextcloud-persistent
+  path: /var/lib/nextcloud-persistent
+  size: "200G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | mandatory('LAB_FQDN_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -1,0 +1,191 @@
+---
+- name: Deploy nextcloud-stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: nextcloud-stack
+    nextcloud_stack_dir: "/opt/{{ stack_name }}"
+    nextcloud_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    nextcloud_stack_image_tag: "{{ lookup('env', 'NEXTCLOUD_IMAGE_TAG') | mandatory('NEXTCLOUD_IMAGE_TAG must pin a supported release') }}"
+    # The public hostname is intentionally distinct from LAB_DOMAIN. It is
+    # only routed by pangolin-proxy after the EdgeManifest opt-in; creating
+    # this trust entry does not create public DNS or a Pangolin resource.
+    nextcloud_pangolin_public_host: "{{ lookup('env', 'NEXTCLOUD_PANGOLIN_PUBLIC_HOST') | default('nextcloud.pan.gibbsgreatly.xyz', true) }}"
+    nextcloud_pangolin_proxy_ip: "{{ lookup('env', 'LAB_IP_PANGOLIN_PROXY') | default('192.168.30.11', true) }}"
+    wazuh_agent_fim_paths:
+      - "{{ nextcloud_stack_dir }}"
+    wazuh_agent_docker_monitoring_enabled: true
+
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+    - wazuh_agent
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+        daemon_reload: true
+
+  tasks:
+    - name: Forward Docker container logs to Graylog via local rsyslog relay
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Apply Docker logging configuration before compose deployment
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create Nextcloud persistent data directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        # The parent is the 200 GiB durable ZFS mount.  The child directory
+        # owners match the unprivileged service users in the pinned official
+        # images (www-data is 33; PostgreSQL 16 Alpine is 70), so neither
+        # service needs a broad world-writable mount.
+        - { path: /var/lib/nextcloud-persistent, owner: root, group: root, mode: "0750" }
+        - { path: /var/lib/nextcloud-persistent/data, owner: "33", group: "33", mode: "0750" }
+        - { path: /var/lib/nextcloud-persistent/postgres, owner: "70", group: "70", mode: "0700" }
+
+    - name: Create Nextcloud compose directory
+      ansible.builtin.file:
+        path: "{{ nextcloud_stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write Nextcloud compose definition
+      ansible.builtin.copy:
+        content: "{{ nextcloud_stack_compose_content }}"
+        dest: "{{ nextcloud_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write Nextcloud Compose environment
+      ansible.builtin.copy:
+        dest: "{{ nextcloud_stack_dir }}/.env"
+        mode: "0600"
+        content: |
+          REGISTRY_HOST={{ docker_registry_host }}
+          NEXTCLOUD_IMAGE_TAG={{ nextcloud_stack_image_tag }}
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          LAB_IP_PROXY={{ lookup('env', 'LAB_IP_PROXY') }}
+          LAB_IP_PANGOLIN_PROXY={{ nextcloud_pangolin_proxy_ip }}
+          NEXTCLOUD_PANGOLIN_PUBLIC_HOST={{ nextcloud_pangolin_public_host }}
+          NEXTCLOUD_DB_PASSWORD={{ lookup('env', 'NEXTCLOUD_DB_PASSWORD') | mandatory }}
+          NEXTCLOUD_REDIS_PASSWORD={{ lookup('env', 'NEXTCLOUD_REDIS_PASSWORD') | mandatory }}
+          NEXTCLOUD_STEVE_PASSWORD={{ lookup('env', 'NEXTCLOUD_STEVE_PASSWORD') | mandatory }}
+      no_log: true
+
+    - name: Validate Nextcloud Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ nextcloud_stack_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Nextcloud stack
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ nextcloud_stack_dir }}"
+      register: nextcloud_compose_up
+      changed_when: "'Started' in nextcloud_compose_up.stdout or 'Created' in nextcloud_compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Nextcloud HTTP service
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        timeout: 180
+      when: not ansible_check_mode
+
+    # These persistent config.php entries are required for an existing
+    # installation; Compose environment variables only cover first install.
+    # Both are read-then-append, not a hardcoded index -- a hardcoded
+    # "index 1" clobbered the LAN hostname on a fresh install (2026-09-25):
+    # NEXTCLOUD_TRUSTED_DOMAINS already populates indices 1 AND 2 on first
+    # install, so blindly setting index 1 overwrote the LAN entry with a
+    # duplicate of the Pangolin one, breaking https://nextcloud.lab...
+    # entirely until fixed live. Confirmed occ's list output is one value
+    # per line, in index order, so its length is always the next free index.
+    - name: Get current Nextcloud trusted_domains
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ config:system:get trusted_domains
+      register: nextcloud_trusted_domains
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Trust the Pangolin Nextcloud hostname if not already present
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          trusted_domains {{ nextcloud_trusted_domains.stdout_lines | length }}
+          --value={{ nextcloud_pangolin_public_host }}
+      when: >-
+        not ansible_check_mode and
+        nextcloud_pangolin_public_host not in nextcloud_trusted_domains.stdout_lines
+
+    - name: Get current Nextcloud trusted_proxies
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ config:system:get trusted_proxies
+      register: nextcloud_trusted_proxies
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Trust the dedicated Pangolin proxy if not already present
+      ansible.builtin.command:
+        cmd: >-
+          docker exec --user www-data nextcloud-stack-app php occ config:system:set
+          trusted_proxies {{ nextcloud_trusted_proxies.stdout_lines | length }}
+          --value={{ nextcloud_pangolin_proxy_ip }}
+      when: >-
+        not ansible_check_mode and
+        nextcloud_pangolin_proxy_ip not in nextcloud_trusted_proxies.stdout_lines
+
+    # No SSO/OIDC of any kind -- operator decision, 2026-09-25: Authentik
+    # must never gain any externally-reachable path, direct or through
+    # Pangolin, public or client-only. Nextcloud (and any future
+    # Pangolin-published service) authenticates with its own local/native
+    # login only. See docs/nextcloud-stack/README.md "Authentik-via-Pangolin
+    # retired" for the full rationale.
+    - name: Ensure the steve local account exists and is an admin
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ user:add --password-from-env --display-name=Steve --group=admin steve
+      environment:
+        OC_PASS: "{{ lookup('env', 'NEXTCLOUD_STEVE_PASSWORD') | mandatory }}"
+      register: occ_add_steve
+      changed_when: >-
+        'already exists' not in occ_add_steve.stdout and
+        'already exists' not in occ_add_steve.stderr
+      failed_when: >-
+        occ_add_steve.rc != 0 and
+        'already exists' not in occ_add_steve.stdout and
+        'already exists' not in occ_add_steve.stderr
+      no_log: true
+      when: not ansible_check_mode
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

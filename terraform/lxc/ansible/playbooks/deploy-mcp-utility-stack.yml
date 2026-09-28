@@ -88,7 +88,7 @@
     # docs/mcp-stack/plan.md and ~/git/cve-mcp-server/docs/api-service-plan.md.
     mcp_source_dir: "{{ lookup('env', 'CVE_MCP_SOURCE_DIR') | default('/home/steve/git/cve-mcp-server', true) }}"
 
-    # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Full key set per
+    # Secrets -- OpenBao (see secrets/manifest.json). Full key set per
     # the operator's 2026-08-01 decision (includes the threat-intel cluster,
     # not narrowed to core CVE-research sources only).
     mcp_nvd_api_key: "{{ lookup('env', 'NVD_API_KEY') | mandatory('NVD_API_KEY env var is required') }}"
@@ -428,10 +428,10 @@
                 # Traefik hostname route exists yet for this service.
                 DOCS_RAG_ALLOWED_HOSTS: "{{ docs_rag_allowed_hosts }}"
                 DATABASE_URL: "postgresql://docs_rag:{{ docs_rag_postgres_password }}@pgvector:5432/docs_rag"
-                # Reuses ai-services-stack's existing egress path and
-                # nomic-embed-text pull -- no new model, no new firewall
-                # rule (see docs/coding-stack/plan.md "Embedding pipeline").
-                OLLAMA_URL: "http://framework.gibbsgreatly.xyz:11434"
+                # Framework's llama.cpp embeddings server (Ollama is gone
+                # from framework) -- docs/framework-ip-and-port/plan.md.
+                # By name, never by IP.
+                EMBED_BASE_URL: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}:8085"
                 EMBED_MODEL: nomic-embed-text
                 CORPUS_DIR: /corpus
               volumes:
@@ -474,18 +474,20 @@
     - name: Wait for docs-rag-mcp HTTP endpoint to come up
       ansible.builtin.uri:
         url: "http://127.0.0.1:8001/mcp"
-        status_code: [200, 401, 405, 406]
+        # FastMCP returns 400 "Missing session ID" for a bare GET after the
+        # streamable-HTTP endpoint is ready; that is a valid live signature.
+        status_code: [200, 400, 401, 405, 406]
       register: docs_rag_health
       retries: 60
       delay: 10
-      until: docs_rag_health.status is defined and docs_rag_health.status in [200, 401, 405, 406]
+      until: docs_rag_health.status is defined and docs_rag_health.status in [200, 400, 401, 405, 406]
       failed_when: false
 
     - name: Fail if docs-rag-mcp never came up
       ansible.builtin.assert:
         that:
           - docs_rag_health.status is defined
-          - docs_rag_health.status in [200, 401, 405, 406]
+          - docs_rag_health.status in [200, 400, 401, 405, 406]
         fail_msg: "docs-rag-mcp did not respond on :8001/mcp after retries (last status: {{ docs_rag_health.status | default('unknown') }})"
 
     # Real bug found 2026-08-25: docs-rag-mcp only reindexes in its own
@@ -516,11 +518,11 @@
     - name: Wait for docs-rag-mcp to come back up after a corpus-change restart
       ansible.builtin.uri:
         url: "http://127.0.0.1:8001/mcp"
-        status_code: [200, 401, 405, 406]
+        status_code: [200, 400, 401, 405, 406]
       register: docs_rag_health_after_restart
       retries: 60
       delay: 10
-      until: docs_rag_health_after_restart.status is defined and docs_rag_health_after_restart.status in [200, 401, 405, 406]
+      until: docs_rag_health_after_restart.status is defined and docs_rag_health_after_restart.status in [200, 400, 401, 405, 406]
       failed_when: false
       when: corpus_changed
 
@@ -528,7 +530,7 @@
       ansible.builtin.assert:
         that:
           - docs_rag_health_after_restart.status is defined
-          - docs_rag_health_after_restart.status in [200, 401, 405, 406]
+          - docs_rag_health_after_restart.status in [200, 400, 401, 405, 406]
         fail_msg: "docs-rag-mcp did not respond on :8001/mcp after the corpus-change restart (last status: {{ docs_rag_health_after_restart.status | default('unknown') }})"
       when: corpus_changed
 

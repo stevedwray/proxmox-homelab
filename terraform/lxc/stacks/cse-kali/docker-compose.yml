@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # Stock Kali Linux image, no tools pre-installed by design — the deploy
+  # playbook (deploy-cse-kali.yml) installs a modest pentest toolset via
+  # `docker exec` after the container comes up, idempotently, every deploy.
+  # No sshd runs in this container: consumers SSH to the LXC host itself
+  # (standard for every stack here) and reach tools via
+  # `docker exec cse-kali <command>`.
+  # kalilinux/kali-rolling publishes no dated/versioned tags at all (only
+  # `latest`/arch-named tags, confirmed via Docker Hub 2026-09-18) — same
+  # situation this project already hit with Greenbone's registry. Pinned
+  # by digest instead of a tag for genuine reproducibility; re-resolve via
+  # `docker manifest inspect kalilinux/kali-rolling` if a refresh is wanted.
+  kali:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/kalilinux/kali-rolling@sha256:49d174981a2a211e76acdde22a2e4978ea19bc0433487292cd9ad865da24ee42
+    container_name: cse-kali
+    # Several tools (raw-socket nmap scan types in particular) need the
+    # LXC's real network namespace, not Docker's default bridge/NAT.
+    network_mode: host
+    # Mirrors greenbone-stack's ospd-openvas service, which needs the
+    # identical capabilities for the identical reason (raw-socket
+    # scanning) under the same nested-Docker LXC nesting feature.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    command: ["sleep", "infinity"]
+    restart: unless-stopped

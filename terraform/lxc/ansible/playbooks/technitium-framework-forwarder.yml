@@ -1,0 +1,106 @@
+---
+# Conditional forwarder on Technitium for framework.gibbsgreatly.xyz.
+#
+# Technitium is authoritative only for LAB_DOMAIN; any other gibbsgreatly.xyz
+# name is resolved recursively on the public internet, where
+# framework.gibbsgreatly.xyz does not exist. The name lives only as a static
+# record on the MikroTik (mikrotik-dns-framework.yml, the single source of the
+# Framework Desktop's IP). Stacks whose Docker daemon uses Technitium as its
+# resolver (monitoring, authentik, netbox, graylog, opensearch, wazuh) therefore
+# could not resolve it from inside containers -- found when monitoring-stack's
+# framework scrape moved to the FQDN (docs/framework-ip-and-port/README.md).
+#
+# This forwards just that name (and its subdomains) to the MikroTik's mgmt_seg
+# gateway address, so the IP stays published in one place.
+#
+# Standalone so it can be applied without re-running the whole Technitium
+# deploy; also imported at the end of deploy-technitium-stack.yml so rebuilds
+# keep it.
+
+- name: Ensure Technitium forwards the Framework Desktop FQDN to the MikroTik
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address | default(''), true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+    framework_fqdn: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | mandatory('LAB_FQDN_FRAMEWORK env var is required') }}"
+    framework_forwarder: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
+
+  tasks:
+    - name: Log in to Technitium API and obtain session token
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: framework_fwd_login
+      retries: 10
+      delay: 3
+      until: framework_fwd_login.status == 200
+      no_log: true
+
+    - name: Extract Technitium API token
+      ansible.builtin.set_fact:
+        framework_fwd_token: "{{ (framework_fwd_login.content | from_json).token }}"
+      no_log: true
+
+    - name: List Technitium zones
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/list?token={{ framework_fwd_token }}"
+        method: GET
+        return_content: true
+      register: framework_fwd_zone_list
+      no_log: true
+
+    - name: Create conditional forwarder zone for the Framework FQDN if absent
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ framework_fqdn }}&type=Forwarder&protocol=Udp&forwarder={{ framework_forwarder }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true&token={{ framework_fwd_token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: framework_fwd_create
+      changed_when: true
+      failed_when: (framework_fwd_create.content | from_json).status | default('') != 'ok'
+      when: framework_fqdn not in (framework_fwd_zone_list.content | from_json).response.zones | map(attribute='name') | list
+      no_log: true
+
+    # Every run, not only on zone creation: re-running this playbook is also
+    # how a Framework re-IP flushes Technitium's cached answer and then proves
+    # (assertion below) that Technitium agrees with the MikroTik
+    # (docs/framework-ip-and-port/plan.md, re-IP cutover step 4). Deleting one
+    # cached name is harmless when nothing changed.
+    - name: Drop any cached answer for the Framework FQDN
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/cache/delete?domain={{ framework_fqdn }}&token={{ framework_fwd_token }}"
+        method: POST
+        status_code: [200]
+      changed_when: false
+      no_log: true
+
+    - name: Ask the MikroTik for the Framework FQDN
+      ansible.builtin.command: dig @{{ framework_forwarder }} +short {{ framework_fqdn }} A
+      register: framework_fwd_expected
+      check_mode: false
+      changed_when: false
+
+    - name: Ask Technitium for the Framework FQDN
+      ansible.builtin.command: dig @{{ technitium_ip }} +short {{ framework_fqdn }} A
+      register: framework_fwd_actual
+      check_mode: false
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: (framework_fwd_actual.stdout | default('')) | length > 0
+
+    - name: Assert Technitium answers with the MikroTik's address
+      ansible.builtin.assert:
+        that:
+          - framework_fwd_expected.stdout | trim | length > 0
+          - (framework_fwd_actual.stdout | trim) == (framework_fwd_expected.stdout | trim)
+        fail_msg: >-
+          Technitium returned '{{ framework_fwd_actual.stdout | trim }}' for
+          {{ framework_fqdn }}; the MikroTik returned
+          '{{ framework_fwd_expected.stdout | trim }}'.
+      when: not ansible_check_mode

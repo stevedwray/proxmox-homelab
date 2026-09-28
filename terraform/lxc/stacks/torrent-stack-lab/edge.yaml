@@ -1,0 +1,85 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: torrent-stack-lab-edge
+  stack: torrent-stack-lab
+spec:
+  routes:
+    - name: qbittorrent
+      host: qbittorrent.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: prowlarr
+      host: prowlarr.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:9696
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: radarr
+      host: radarr.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:7878
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: sonarr
+      host: sonarr.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:8989
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: lidarr
+      host: lidarr.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:8686
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: jellyseerr
+      host: jellyseerr.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TORRENT_STACK_LAB}:5055
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: none

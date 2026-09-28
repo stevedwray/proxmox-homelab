@@ -1,0 +1,33 @@
+# Kali attacker for the CyberSecEval cyber range. Disposable, joins the
+# existing pentest_seg zone (extended to pve-test 2026-09-18 — see
+# docs/cyberseceval-implementation/plan/cyberseceval-implementation-plan.md
+# §1a/§11) rather than a new dedicated zone.
+hostname: cse-kali
+ip_address: 192.168.70.210/24
+gateway: "${lab_gw_pentest}"
+dns_server: "${lab_gw_pentest}"
+network:
+  zone: pentest_seg
+vmid: 70010
+cores: 2
+memory: 2048
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 20G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+  - docker
+  - pentest
+  - kali
+  - attacker
+  - cyberseceval
+  - disposable
+depends_on: []
+provides:
+  - service: kali-shell
+    port: 22
+    protocol: tcp
+ansible_playbook: deploy-cse-kali
+deployment_tier: apps
+portainer_agent: false

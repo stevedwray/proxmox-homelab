@@ -1,0 +1,38 @@
+# CyberSecEval control panel (Redis + Flower + panel-web) -- mgmt_seg zone
+# on pve-tiny (operator's choice 2026-09-19 -- see plan.md's header note).
+hostname: cse-panel-stack
+ip_address: "${lab_ip_cse_panel}/24"
+gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
+network:
+  zone: mgmt_seg
+vmid: 20030
+cores: 1
+memory: 1024
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: "8G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - cyberseceval
+  - control-panel
+  - dashboard
+  - docker
+# Empty, matching cse-controller/cse-code-eval's own precedent on
+# pve-tiny -- Harbor/Authentik/Traefik are real cross-node runtime
+# dependencies (see STACK_CONTRACT.md's Dependencies table) but aren't
+# listed here, since there's no existing precedent on this node for a
+# depends_on entry naming a stack on a different physical node, and
+# cse-controller/cse-code-eval both leave this empty for the same reason.
+depends_on: []
+provides:
+  - service: panel-web-http
+    port: 8000
+    protocol: tcp
+  - service: flower-http
+    port: 5555
+    protocol: tcp
+ansible_playbook: "deploy-cse-panel-stack"
+deployment_tier: apps
+portainer_agent: false

@@ -1,0 +1,8 @@
+[
+  {
+    "attackerIP": "192.168.70.212",
+    "attackerName": "cse-kali",
+    "targetIP": "192.168.70.211",
+    "targetName": "metasploitable3-win2k8"
+  }
+]

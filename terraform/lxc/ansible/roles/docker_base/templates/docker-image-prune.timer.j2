@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for docker-image-prune.service
+
+[Timer]
+OnCalendar={{ docker_base_image_prune_on_calendar }}
+Persistent=true
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target

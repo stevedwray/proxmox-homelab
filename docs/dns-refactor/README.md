@@ -1,5 +1,22 @@
 # DNS Refactor — CoreDNS to Technitium Migration
 
+**MIGRATION COMPLETE, 2026-07-05 — `technitium-stack` is the live
+authoritative DNS on `pve` and `pve-test-vm`.** This workspace's own
+"Closeout" section below calls for folding these conclusions into
+`docs/design/network.md` and archiving this doc — that hasn't happened
+yet, so treat everything below as historical planning record, not
+something still in progress.
+
+**`dns-stack`/CoreDNS on `pve` was fully decommissioned 2026-09-08** —
+removed via `pct destroy`, not just stopped — after confirming and fixing
+every remaining dependent. Its IP had been left hardcoded as the
+Docker-daemon-level DNS resolver on 8 stacks (a leftover from before this
+cutover, never fully repointed — the same class of gap that broke
+Harbor's image pulls fleet-wide once, 2026-08-16), all fixed first. See
+`reference_dns_stack_docker_daemon_dependency` for the incident and fix.
+`pve-test-vm` still has its own separate `dns-stack` instance, kept as a
+rollback point there — this decommission was `pve`-only.
+
 ## Purpose
 
 Plan and track migrating the internal authoritative DNS service (currently

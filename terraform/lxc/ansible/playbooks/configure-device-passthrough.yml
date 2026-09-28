@@ -16,19 +16,33 @@
 #   host_bind_mounts (list of {host_path, lxc_path} -- matches
 #     terraform/lxc/modules/lxc-docker-host's host_bind_mounts variable
 #     shape)
+#   lxc_raw_config (list of {key, value} -- arbitrary raw `lxc.<key>:
+#     <value>` config lines via `pct set -lxc.<key> <value>`, e.g.
+#     {key: "prlimit.memlock", value: "unlimited"}. Confirmed needed live
+#     2026-09-16: Docker's own memlock ulimit ceiling for VAAPI GPU
+#     transcoding is bounded by the LXC's own rlimit, which a systemd
+#     drop-in *inside* the container cannot raise -- same root@pam-only
+#     restriction class as device_passthrough/host_bind_mounts)
 #   pve_host, pve_ssh_user (default: root)
-# At least one of device_passthrough/host_bind_mounts must be non-empty.
+# At least one of device_passthrough/host_bind_mounts/lxc_raw_config must
+# be non-empty.
 ---
 - name: Configure LXC device passthrough and bind mounts on container
   hosts: all
   gather_facts: false
   vars:
-    device_passthrough: "{{ device_passthrough | default([]) }}"
-    host_bind_mounts: "{{ host_bind_mounts | default([]) }}"
+    # NOTE: do not self-reference device_passthrough/host_bind_mounts here
+    # (e.g. `device_passthrough: "{{ device_passthrough | default([]) }}"`)
+    # -- when either is actually supplied via -e extra-vars (the documented
+    # interface), the play-vars declaration shadows the extra-var in the
+    # same templating scope and Ansible hits genuine infinite recursion
+    # ("Recursive loop detected in template"). Confirmed live 2026-09-16 --
+    # this interface had apparently never actually been exercised via -e
+    # before. Default handling now lives only at the point of use below.
     proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PROXMOX_HOST'), true) | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
     device_passthrough_args: >-
       {%- set ns = namespace(result=[]) -%}
-      {%- for dev in device_passthrough -%}
+      {%- for dev in (device_passthrough | default([])) -%}
         {%- set attrs = ['path=' + dev.path] -%}
         {%- if dev.uid is defined and dev.uid is not none -%}
           {%- set _ = attrs.append('uid=' + (dev.uid | string)) -%}
@@ -47,17 +61,19 @@
       {{ ns.result | join(' ') }}
     bind_mount_args: >-
       {%- set ns = namespace(result=[]) -%}
-      {%- for mnt in host_bind_mounts -%}
+      {%- for mnt in (host_bind_mounts | default([])) -%}
         {%- set _ = ns.result.append('-mp' ~ loop.index0 ~ ' ' ~ mnt.host_path ~ ',mp=' ~ mnt.lxc_path) -%}
       {%- endfor -%}
       {{ ns.result | join(' ') }}
     pct_set_args: "{{ (device_passthrough_args ~ ' ' ~ bind_mount_args) | trim }}"
 
   tasks:
-    - name: Fail if neither device_passthrough nor host_bind_mounts is set
+    - name: Fail if none of device_passthrough/host_bind_mounts/lxc_raw_config is set
       ansible.builtin.fail:
-        msg: "At least one of device_passthrough/host_bind_mounts must be non-empty."
-      when: pct_set_args | length == 0
+        msg: "At least one of device_passthrough/host_bind_mounts/lxc_raw_config must be non-empty."
+      when:
+        - pct_set_args | length == 0
+        - (lxc_raw_config | default([])) | length == 0
 
     - name: Set device passthrough / bind mounts via pct
       ansible.builtin.command:
@@ -68,6 +84,24 @@
         ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       changed_when: true
+      when: pct_set_args | length > 0
+
+    # `pct set -lxc.<key> <value>` doesn't exist -- confirmed live 2026-09-16
+    # ("Unknown option: lxc.prlimit.memlock"). Raw lxc.* config lines (the
+    # same class already visible in some containers' `pct config`, e.g.
+    # `lxc.cgroup2.devices.allow`/`lxc.mount.entry`) are appended directly
+    # to the container's own /etc/pve/lxc/<vmid>.conf instead.
+    - name: Set raw lxc.* config lines directly in the container's conf file
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ vmid }}.conf"
+        line: "lxc.{{ item.key }}: {{ item.value }}"
+        regexp: "^lxc\\.{{ item.key | regex_escape }}:"
+      delegate_to: "{{ proxmox_delegate_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ lxc_raw_config | default([]) }}"
 
     - name: Reboot container to apply device passthrough / bind mounts
       ansible.builtin.command:

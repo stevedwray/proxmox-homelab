@@ -460,11 +460,6 @@ policies:
       must open to edge_seg, not infra_seg. Discovered live: all four PentAGI
       image pulls timed out until this was added — see docs/pentagi-stack/plan.md.
   - from: pentest_seg
-    to: 192.168.1.8
-    protocol: tcp
-    ports: [11434, 8082]
-    description: pentagi-stack to framework.gibbsgreatly.xyz (Ollama, SearXNG)
-  - from: pentest_seg
     to: 192.168.1.113
     protocol: all
     ports: []
@@ -558,9 +553,9 @@ policies:
       operator decision 2026-08-02 for docs/ai-services-migration/plan.md
       Step 4).
   - from: ai_seg
-    to: 192.168.1.8
+    to: framework.gibbsgreatly.xyz
     protocol: tcp
-    ports: [8080, 11434]
+    ports: [8080, 8085]
     description: >-
       ai-services-stack to framework.gibbsgreatly.xyz (llamacpp-router,
       Ollama) — docs/ai-services-migration/plan.md Step 2/3. The one real

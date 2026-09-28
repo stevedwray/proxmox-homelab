@@ -1,0 +1,58 @@
+diff --git a/ansible/00-initial-setup/cse-small-batch-run.yml b/ansible/00-initial-setup/cse-small-batch-run.yml
+index c9f62990..b0816756 100644
+--- a/ansible/00-initial-setup/cse-small-batch-run.yml
++++ b/ansible/00-initial-setup/cse-small-batch-run.yml
+@@ -35,7 +35,9 @@
+     # (confirmed live from the Phase 2 smoke test's own stat file) --
+     # the OPENAI provider just forwards whatever string is given, and
+     # llama.cpp's server ignores it beyond echoing it back.
+-    cse_batch_mut_spec: "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::not-needed::http://framework.gibbsgreatly.xyz:8080/v1"
++    # Key: framework's llama-server requires LLM_GPU_STACK_API_KEY since
++    # docs/framework-ip-and-port/plan.md.
++    cse_batch_mut_spec: "OPENAI::/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf::{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY must be set') }}::http://framework.gibbsgreatly.xyz:8080/v1"
+     cse_batch_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set (via ./with-secrets-prod-tiny) to run the judge-requiring benchmarks in this batch') }}"
+     cse_batch_num_cases: 2
+     cse_batch_phishing_cases: 1
+diff --git a/terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml b/terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
+index 63c67c43..786ec08b 100644
+--- a/terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
++++ b/terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
+@@ -526,6 +526,10 @@
+               environment:
+                 OPENAI_API_BASE: "{{ ai_services_deep_research_openai_api_base }}"
+                 OPENAI_MODEL: local-model
++                # Framework's llama-server requires its API key
++                # (docs/framework-ip-and-port/plan.md) -- same key
++                # OpenWebUI's OPENAI_API_KEYS already sends.
++                OPENAI_API_KEY: "{{ ai_services_openwebui_llm_api_key }}"
+                 # Real authenticated search API, not scraping -- switched
+                 # 2026-09-22 after confirming live that every
+                 # unauthenticated scraping path (DDGS's backend="auto",
+diff --git a/terraform/lxc/ansible/playbooks/deploy-cse-controller.yml b/terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
+index 6f6315b1..b140abaa 100644
+--- a/terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
++++ b/terraform/lxc/ansible/playbooks/deploy-cse-controller.yml
+@@ -70,6 +70,7 @@
+         mode: "0600"
+         content: |
+           OPENAI_API_KEY={{ lookup('env', 'OPENAI_API_KEY') | mandatory('OPENAI_API_KEY must be set to deploy the worker') }}
++          FRAMEWORK_LLM_API_KEY={{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY must be set to deploy the worker') }}
+           NEXTCLOUD_REPORTS_WEBDAV_URL={{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}
+           NEXTCLOUD_REPORTS_USER={{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}
+           NEXTCLOUD_REPORTS_APP_PASSWORD={{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}
+diff --git a/terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py b/terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
+index b6f1ff9d..32e8854c 100644
+--- a/terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
++++ b/terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py
+@@ -76,7 +76,10 @@ def _build_mut_spec(
+     name and base_url actually change."""
+     base_url = backend_base_url or DEFAULT_BACKEND_BASE_URL
+     model = backend_model or DEFAULT_BACKEND_MODEL
+-    key = backend_api_key or "not-needed"
++    # Framework's llama-server requires an API key since
++    # docs/framework-ip-and-port/plan.md; worker.env supplies it. An
++    # explicit backend_api_key (another server) still wins.
++    key = backend_api_key or os.environ.get("FRAMEWORK_LLM_API_KEY") or "not-needed"
+     return f"OPENAI::{model}::{key}::{base_url}"
+ 
+ 

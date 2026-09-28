@@ -1,4 +1,4 @@
-# OpenWebUI + SearXNG — ai_seg zone (pve / pve-test-vm).
+# OpenWebUI + SearXNG + deep-research-agent — ai_seg zone (pve / pve-test-vm).
 # Standard Docker-based stack (matches monitoring-stack's shape: one
 # container, multiple related Docker services in one compose file) --
 # unlike llm-gpu-stack/comfyui-stack, this needs no GPU passthrough.
@@ -10,6 +10,22 @@
 # for the full migration design, including why this is a rewrite rather than
 # a reuse of the old pve-framework-era stack.yaml (stale addressing bug: it
 # parameterized on what is now framework's own flat-LAN IP).
+#
+# deep-research (+ its deep-research-files sidecar) added 2026-09-21,
+# folded in here rather than a new dedicated stack/LXC: same reasoning as
+# above (thin network client of Framework, no local GPU/compute of its
+# own), plus this zone already reaches both Framework and cve-mcp-server
+# (mcp-utility-stack, also ai_seg). Replaces the Stage A throwaway LXC
+# (VMID 50014), which is disposed of, not migrated. See
+# docs/deep-research/plan.md Phase 4 for the full design.
+#
+# Memory 4096 -> 6144 (2026-09-16, recovered here 2026-09-22 -- see
+# fix/deep-research-web-search-mcp): web-search-mcp (a headless-Chromium
+# Playwright MCP server fronted by mcpo) needs real, persistent memory
+# this LXC didn't carry before. This bump was applied live via `pct set`
+# back on 2026-09-16 (terragrunt plan hit unrelated drift at the time) but
+# was never brought back into this tracked file until now -- the live LXC
+# has been running at 6144 the whole time this said 4096.
 
 hostname: ai-services-stack
 ip_address: "${lab_ip_ai_services}/24"
@@ -19,10 +35,10 @@ network:
   zone: ai_seg
 vmid: 50013
 cores: 2
-memory: 4096
+memory: 6144
 swap: 1024
 rootfs_size: 16
-storage_profile: platform-default
+storage_profile: platform-nvme
 docker_storage_size: "24G"
 docker_mount:
   logical_name: docker-data
@@ -37,6 +53,8 @@ tags:
   - ai
   - openwebui
   - searxng
+  - deep-research
+  - web-search-mcp
   - docker
 depends_on:
   - apt-cacher-stack
@@ -44,9 +62,16 @@ provides:
   - service: openwebui-http
     port: 8081
     protocol: tcp
+  - service: deep-research-http
+    port: 8090
+    protocol: tcp
+  - service: deep-research-files-http
+    port: 8091
+    protocol: tcp
 ansible_playbook: "deploy-ai-services-stack"
 deployment_tier: ai
-portainer_agent: false
+portainer_agent: true
+register_portainer_env: true
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"

@@ -7,14 +7,14 @@ useDefault = true
 [allowlist]
 description = "Global allowlist"
 
-# SOPS-encrypted files: values are ciphertext, not plaintext secrets
+# Former SOPS-encrypted file (deleted 2026-09; kept for history scans): ciphertext only
 # docs/ contains redacted examples only — no real secrets
 paths = [
     '''terraform/secrets\.enc\.yaml''',
     '''docs/''',
 ]
 
-# CHANGEME_ placeholder values used in SOPS for not-yet-provisioned secrets
+# CHANGEME_ placeholder values for not-yet-provisioned secrets
 regexes = [
     '''CHANGEME_[A-Z0-9_]+''',
     # __FROM_BITWARDEN__ placeholders in .env.template

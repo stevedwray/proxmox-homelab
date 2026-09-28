@@ -273,29 +273,24 @@ jobs:
             -not -path './.venv/*' \
             | xargs bandit -ll -q
 
-  sops-decrypt-check:
-    name: SOPS decrypt verification
+  sops-freeze:
+    name: SOPS secrets files are frozen
+    # No decryption happens here -- it only inspects which paths a PR changes.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
 
-      - name: Install sops
+      - name: Fail if a PR adds or modifies terraform/secrets.*.enc.yaml
         env:
-          SOPS_VERSION: "3.10.2"
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          curl -Lo /usr/local/bin/sops \
-            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
-          chmod +x /usr/local/bin/sops
-
-      - name: Verify decryption succeeds
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          # Check every secrets file, not just the common one — the per-env
-          # delta files (secrets.pve.enc.yaml etc.) are real secrets files
-          # too and were previously untested here. See
-          # docs/framework-integration/decisions.md Decision 6.
-          for f in terraform/secrets*.enc.yaml; do
-            sops --decrypt "$f" > /dev/null
-            echo "Decryption successful: $f"
-          done
+          changed="$(git diff --name-only --diff-filter=AM "origin/${BASE_REF}...HEAD" -- 'terraform/secrets.*.enc.yaml')"
+          if [ -n "${changed}" ]; then
+            echo "These SOPS files are frozen since the OpenBao cutover (docs/secrets-refactor/):"
+            echo "${changed}"
+            exit 1
+          fi
+          echo "No frozen SOPS files changed."

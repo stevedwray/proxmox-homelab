@@ -468,7 +468,7 @@ def _build_portainer_for_node(node_def: dict):
 
     Prefers an explicit API key (portainer_api_key_env) but falls back to
     password-based auth via PORTAINER_ADMIN_PASSWORD if no key is set.
-    This means PORTAINER_TOKEN in SOPS is optional — a Portainer rebuild
+    This means PORTAINER_TOKEN in OpenBao is optional — a Portainer rebuild
     does not break discovery because the admin password is always redeployed.
     """
     portainer_url = node_def.get("portainer_url")

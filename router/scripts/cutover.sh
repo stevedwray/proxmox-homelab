@@ -9,12 +9,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="${SCRIPT_DIR}/../.."
 
-eval "$(sops -d "${REPO_ROOT}/terraform/secrets.common.enc.yaml" \
-  | grep -E '^(hAPax3_ADMIN|MIKROTIK_USER):' \
-  | sed 's/: /=/;s/^/export /')"
+# Credentials come from the environment: run via ./with-secrets-prod (OpenBao).
+# hAPax3_ADMIN is not in the secret store (historical migration credential);
+# export it by hand if this script is ever re-run.
+: "${MIKROTIK_USER:?run via ./with-secrets-prod}"
+: "${hAPax3_ADMIN:?hAPax3_ADMIN not set (not in the secret store; export it for this run)}"
 
 TARGET_HOST="${MIKROTIK_HOST:?MIKROTIK_HOST not set}"
 TARGET="https://${TARGET_HOST}"

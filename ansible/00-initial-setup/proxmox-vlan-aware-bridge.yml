@@ -12,7 +12,7 @@
 # Run (ad-hoc, until pve-framework has its own inventory entry --
 # see docs/framework-integration/plan.md Phase 1):
 #
-#   ansible-playbook -i "192.168.1.8," -e target_hosts=all -e ansible_user=root \
+#   ansible-playbook -i "framework.gibbsgreatly.xyz," -e target_hosts=all -e ansible_user=root \
 #     00-initial-setup/proxmox-vlan-aware-bridge.yml
 #
 # Override pmx_vlan_aware_bridge_name / pmx_vlan_aware_bridge_vids per host

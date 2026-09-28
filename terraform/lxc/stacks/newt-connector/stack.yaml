@@ -1,0 +1,53 @@
+# newt-connector — minimal host for the Newt connector to the OCI Pangolin
+# edge. connector_seg zone (VLAN 110) — see docs/nextcloud-stack/plan.md
+# nextcloud-P3-01/P3-02 and /home/steve/git/oci/docs/hardening-and-wazuh-plan.md.
+#
+# This playbook provisions the base host ONLY (lxc_base, docker_base — Docker
+# installed and ready). It deliberately does NOT write Newt's own
+# docker-compose.yml or enrollment credentials: that's an operator action
+# using the already-issued `lab` site's NEWT_ID/NEWT_SECRET, never generated
+# or handled by this repo's automation (control-plane/credential-creating
+# action, same boundary as every other Newt/Pangolin credential in this plan).
+hostname: newt-connector
+ip_address: "192.168.110.10/24"
+gateway: "192.168.110.1"
+dns_server: "192.168.110.1"
+network:
+  zone: connector_seg
+vmid: 110010
+cores: 1
+memory: 512
+swap: 256
+rootfs_size: 4
+storage_profile: platform-zfs
+docker_storage_size: "2G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "2G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - docker
+  - newt
+  - connector
+  - pangolin
+# Deliberately empty, unlike every other stack: connector_seg has no
+# firewall reach to infra_seg (Harbor/apt-cacher) or the main Traefik —
+# only pangolin-proxy:443 and general internet egress (nextcloud-P3-01).
+# This host pulls its one image (fosrl/newt) directly from Docker Hub over
+# that egress rule, not through Harbor.
+depends_on: []
+provides: []
+ansible_playbook: "deploy-newt-connector"
+deployment_tier: platform
+portainer_agent: false
+
+# apt-cacher-ng is unreachable from connector_seg by design (see above);
+# lxc_base's own reachability check (roles/lxc_base/tasks/main.yml) falls
+# back to direct apt automatically when this times out, so setting it is
+# harmless and keeps this file consistent with every other stack rather
+# than requiring a special case.
+apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -16,36 +16,37 @@ jobs:
   populate:
     name: Run NetBox populate
     runs-on: [self-hosted, pve-test, build]
+    # id-token: write lets this job request a GitHub OIDC token, which
+    # OpenBao's jwt-github auth accepts only for this workflow on main
+    # (docs/secrets-refactor/). No long-lived secret credential is stored
+    # in GitHub for this.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Install SOPS
+      - name: Request GitHub OIDC token for OpenBao
         run: |
-          if ! command -v sops >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y sops
-          fi
+          jwt="$(curl -fsS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=openbao" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])')"
+          echo "::add-mask::${jwt}"
+          echo "OPENBAO_GITHUB_JWT=${jwt}" >> "${GITHUB_ENV}"
 
-      - name: Configure SOPS age key
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          install -d -m 700 "$HOME/.config/sops/age"
-          printf '%s\n' "$SOPS_AGE_KEY" > "$HOME/.config/sops/age/keys.txt"
-          chmod 600 "$HOME/.config/sops/age/keys.txt"
-
-      - name: Build populate container
-        run: |
-          docker build \
-            -t netbox-populate:daily \
-            -f terraform/lxc/stacks/netbox-stack/integrations/Dockerfile \
-            terraform/lxc/stacks/netbox-stack/integrations
-
-      - name: Run populate container (supported wrapper)
+      # populate.py runs directly on the runner, not in the netbox-populate
+      # container: the runner user has no Docker socket access, and this
+      # public repo's self-hosted runner deliberately doesn't get it. The
+      # container only wrapped python3 + pyyaml, which deploy-ci-runner.yml
+      # installs (python3-yaml).
+      - name: Run populate
         env:
           DOCKER_SOCKET_PROXY_URL_TEMPLATE: ${{ secrets.DOCKER_SOCKET_PROXY_URL_TEMPLATE }}
           DOCKER_SOCKET_PROXY_URL: ${{ secrets.DOCKER_SOCKET_PROXY_URL }}
+          LAB_IP_OPENBAO: "192.168.20.16"
+          NETBOX_NETWORK_ENV: pve
+          NETBOX_GUEST_SSH_USER: automation
         run: |
-          sops exec-env terraform/secrets.pve.enc.yaml -- \
-            bash ./scripts/netbox-populate.sh apply
+          python3 scripts/secrets_env.py --profile ci-netbox-populate -- \
+            python3 terraform/lxc/stacks/netbox-stack/integrations/populate.py

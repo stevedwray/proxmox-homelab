@@ -1,0 +1,31 @@
+hostname: cse-code-eval
+# On cse_seg (VLAN 100, plan §1b) -- NOT infra_seg. Live since 2026-09-19.
+ip_address: 192.168.100.71/24
+gateway: 192.168.100.1
+dns_server: 192.168.100.1
+network:
+  zone: cse_seg
+vmid: 100071
+cores: 2
+memory: 2048
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 30G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags: [docker, cyberseceval, code-eval, sandbox, execution, isolated]
+depends_on: []
+provides: []
+extra_mount_path: "/srv/cyberseceval"
+extra_mount_size: "50G"
+extra_mount_profile: durable-nvme
+extra_mount:
+  logical_name: cse-code-eval-data
+  path: /srv/cyberseceval
+  size: "50G"
+  profile: durable-nvme
+  backup_policy: exclude
+  resize_control_plane: provider
+ansible_playbook: deploy-cse-code-eval
+deployment_tier: apps
+portainer_agent: false

@@ -49,3 +49,8 @@ docker_socket_proxy_targets:
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Phase 14 (docs/threat-vuln-platform/plan.md) -- this stack is a confirmed
+# Portainer-exempt gap-list host; reports its own live container usage to
+# OpenSearch so in_use isn't blind to it.
+docker_live_usage_reporter_enabled: true

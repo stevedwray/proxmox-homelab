@@ -2,239 +2,256 @@
 
 ## Overview
 
-Environment configuration is split into two tiers:
+Secret **values** live in OpenBao, not in Git. Git holds only references
+(`secrets/manifest.json`), OpenBao's policies and auth configuration, and
+the automation around it. Design and rationale:
+`docs/secrets-refactor/secrets-design.md`. How it was built, and every
+finding along the way: `docs/secrets-refactor/README.md`.
 
-| Tier | What goes here | File | Committed? |
+| Tier | What goes here | Where | Committed? |
 | --- | --- | --- | --- |
-| Non-secret config | Hostnames, node names, IP addresses, usernames, workspace names | `.env`, `.env.<node>` | No (`.env`/`.env.<node>` are gitignored — except `.env.pve`/`.env.pve-test`/`.env.pve-test-vm`/`.env.pve-framework`, which predate that rule and are tracked; see the note in Decision 6) |
-| Secrets | Passwords, tokens, API keys | `terraform/secrets.common.enc.yaml` + `terraform/secrets.<node>.enc.yaml` | Yes (SOPS-encrypted) |
+| Non-secret config | Hostnames, node names, IP addresses, usernames, workspace names | `.env`, `.env.<node>` | See the note in `docs/framework-integration/decisions.md` Decision 6 |
+| Secret references | Which KV entries and fields each environment needs | `secrets/manifest.json` | Yes (names only, never values) |
+| Secret values | Passwords, tokens, API keys | OpenBao KV v2 at `kv/` on `openbao-stack` | No |
 
-As of 2026-07-17, secrets are split across **one common file plus one delta
-file per production-trust node** — `pve`, `pve-test-vm`, and (once it has a
-real Terraform token) `pve-framework` — rather than one shared file plus
-near-complete duplicate copies per environment. See
-`docs/framework-integration/decisions.md` Decision 6 for the full rationale
-and the migration that produced this layout; this doc describes the
-resulting model, not the history.
+A `git checkout`, `merge`, `rebase` or `reset` cannot change a secret value.
+A branch can change only *which* entries and fields it reads.
 
-```bash
-./with-secrets tofu plan
-./with-secrets ansible-playbook -i ansible/inventory/dev.yml site.yml
-./with-secrets sonar-scanner
-./with-secrets snyk iac test terraform/
-```
+## At a glance
 
-`with-secrets` loads `.env` first, then `.env.<PVE_ENV>`, then decrypts and
-overlays `secrets.common.enc.yaml` merged with `secrets.<PVE_ENV>.enc.yaml`
-(if that node has one). A node's own delta file always wins over `common`
-if the same key appears in both.
+| Thing | Where |
+| --- | --- |
+| OpenBao API (machines) | `https://192.168.20.16:8200` (`LAB_IP_OPENBAO`), CA `certs/homelab-root.crt`. Never through Traefik |
+| OpenBao UI (humans) | `https://openbao.lab.gibbsgreatly.xyz/ui/` → Method **OIDC** → Authentik (group `homelab-admins`) |
+| Container | LXC 20016 `openbao` on `pve`, `mgmt_seg`; OpenBao 2.7.0 native `.deb`; config `/etc/openbao/openbao.hcl` (managed by `deploy-openbao.yml`) |
+| Config as code | `terraform/lxc/ansible/playbooks/configure-openbao.yml`; policies in `terraform/lxc/stacks/openbao-stack/policies/` |
+| Audit log | `/var/log/openbao/audit.log` on the LXC (values are HMAC'd; logrotate 30 days) |
+| Dashboard | Grafana → "OpenBao" |
+| Seal key | USB A (ADATA, label `BAOSEAL`) plugged into `pve`, mounted read-only at `/mnt/openbao-seal`; offline copy on USB B (SanDisk, `BAOSEAL-B`), stored away from `pve` |
+| Bootstrap kit | Bitwarden secure note "openbao bootstrap kit" plus passphrase-encrypted `kit.age` on USB B |
 
-## The common/per-node split
+## Identities
 
-**`terraform/secrets.common.enc.yaml`** holds every secret that is
-genuinely the same value everywhere — the large majority. Two kinds of
-secret end up here:
+| Identity | Who uses it | Can do | Where its credentials live |
+| --- | --- | --- | --- |
+| `deploy-dev` | `./with-secrets` (pve-test-vm, pve-test) | read `services/*`, `shared/*`, `hosts/pve-test-vm`, `hosts/pve-test` | `~/.config/openbao/deploy-dev.*` (0600) |
+| `deploy-<node>` | `./with-secrets-prod*` (one per line of `terraform/PRODUCTION_NODES`) | read `services/*`, `shared/*`, own `hosts/<node>` | `~/.config/openbao/deploy-<node>.*` |
+| `ci-netbox-populate` | GitHub Actions (`jwt-github`), `netbox-populate.yml` on `main` only | read mikrotik, netbox, portainer, `hosts/pve` | none stored (GitHub OIDC token) |
+| `snapshot` | nightly and post-write snapshot job | `sys/storage/raft/snapshot` only | `/etc/openbao-snapshot/` on the LXC |
+| `metrics` | dashboard inventory exporter | list+read `kv/metadata/*` only; never values | `/etc/openbao-metrics/` on the LXC |
+| `breakglass` | operator, when Authentik is down | `sys/generate-root-token/*` only; still needs the recovery key | `~/.config/openbao/breakglass.*` and the bootstrap kit |
+| OIDC `homelab-admin` | humans | `openbao-admin` (full), 1-hour tokens | Authentik |
 
-- Shared infrastructure credentials that exist once regardless of how many
-  Proxmox environments consume them (there is only one MikroTik router,
-  one Cloudflare zone, one SonarCloud/Snyk account, one Docker Hub
-  pull-through account).
-- Secrets that are technically per-environment-instance (Authentik,
-  NetBox, Harbor, step-ca each run their own instance per environment) but
-  are deliberately kept identical across environments by design/convention
-  rather than left to drift — e.g. `HARBOR_ADMIN_PASSWORD` and
-  `PORTAINER_OAUTH_CLIENT_SECRET` are meant to be the same value
-  everywhere; if a given environment's live Harbor/Authentik doesn't
-  already match, that's a reconciliation task for that environment, not a
-  reason to fork the secret.
+Deploy identities never write, and agents only ever get deploy identities.
+Back up `~/.config/openbao/` to Bitwarden ("openbao deploy approles").
 
-**`terraform/secrets.<node>.enc.yaml`** holds only secrets that are
-*genuinely, structurally* tied to that specific Proxmox node — today just:
-
-- `PROXMOX_READONLY_TOKEN_ID` / `PROXMOX_READONLY_TOKEN_SECRET` — a
-  read-only Proxmox API discovery token, issued per-node and meaningless
-  against any other node's API.
-- `TF_VAR_pm_api_token_secret` — the Terraform automation token, same
-  reasoning.
-- `TF_VAR_lxc_password` — kept per-node by operator choice (not unified;
-  revisit if that changes).
-
-If you're deciding where a new secret belongs: default to `common`. Only
-put it in a per-node delta file if the value is inherently tied to that
-node's own Proxmox API identity (like the token family above) — not
-merely because the secret happens to currently only be consumed by a
-stack that runs on one environment.
-
-## Non-secret config (.env)
-
-Copy `.env.template` to `.env` and adjust for your environment:
+## Using secrets
 
 ```bash
-cp .env.template .env
-# Edit .env — set PROXMOX_HOST, TF_WORKSPACE, etc. for your target environment
+./with-secrets tofu plan                         # dev environments (PVE_ENV, default pve-test-vm)
+./with-secrets-prod terragrunt plan ...           # production node pve (same for -tiny, -framework)
 ```
 
-`.env` is gitignored and never committed (new `.env.<node>` files are too —
-see the tracked-legacy-files note above). For `pve-test-vm`, the key
-overrides from the default are:
+The wrappers load `.env`, then `.env.<PVE_ENV>`, then log in to OpenBao with
+the **read-only** deploy AppRole for that environment and export every field
+the manifest lists for its profile (`scripts/secrets_env.py`). Host entries
+(`hosts/<node>`) are applied last and override shared ones. The wrapper
+**fails closed**: if any listed field is missing or empty, the command does
+not run. `python3 scripts/secrets_env.py --profile pve --check` reads
+everything and prints only counts.
+
+## KV layout
+
+One entry per service or host; **field names are the environment variable
+names**, so `TF_VAR_*` naming is unchanged.
+
+| Path | Scope |
+| --- | --- |
+| `kv/services/<service>` | Secrets whose identity comes from a service (Harbor, Graylog, Authentik, ...) |
+| `kv/hosts/<node>` | A node's own Proxmox API tokens and LXC root password |
+| `kv/shared/platform` | Cross-cutting platform values (Cloudflare DNS token, node_exporter scrape credentials, break-glass password, default LXC password) |
+| `kv/shared/external-apis` | Third-party API keys (OpenAI, Anthropic, NVD, ...) |
+| `kv/shared/dev-tooling` | Workstation tooling tokens (Snyk, Sonar) |
+| `kv/services/legacy-unused` | Imported keys with no consumer in the repo (review for deletion) |
+
+`secrets/manifest.json` is the complete inventory: every entry, every field
+it must contain, and one profile per environment.
+
+## Adding or rotating a secret
+
+Writes need a human, explicitly logged in: never a deploy identity and
+never a cached token.
 
 ```bash
-export PROXMOX_HOST='pve-test-vm.gibbsgreatly.xyz'
-export TF_VAR_proxmox_node=pve-test-vm
-export TF_VAR_proxmox_host="${PROXMOX_HOST}"
-export TF_WORKSPACE=pve-test-vm
-export TF_VAR_portainer_server_ip=192.168.20.20
-export TF_VAR_registry_host=192.168.40.10
-export TF_VAR_apt_cacher_host=192.168.40.11
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # Authentik, group homelab-admins
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/graylog GRAYLOG_ROOT_PASSWORD GRAYLOG_ROOT_PASSWORD_SHA2
+unset BAO_TOKEN
 ```
 
-## Secrets (SOPS + age)
+`openbao_write.py` prompts for each value, writes all named fields as one new
+KV version (check-and-set), and then triggers a post-write snapshot on the
+OpenBao LXC. It exits non-zero with "WRITE OK, SNAPSHOT FAILED" if the
+snapshot fails.
 
-All secrets are stored encrypted via SOPS + age, split as described above.
+For a **new** field, also add its name to the right entry in
+`secrets/manifest.json` on your branch; the loader only exports listed
+fields. The value is visible to every branch whose manifest lists it, and
+invisible to the rest. For a **new entry**, add it to `entries` and to each
+profile that needs it. The dashboard's drift panel shows any entry that is
+in the manifest but missing from OpenBao, or the reverse.
 
-### Prerequisites
+Undo a bad value: `bao kv rollback -mount=kv -version=<n> <entry>` (KV v2 keeps
+20 versions per entry). `bao kv metadata get -mount=kv <entry>` shows the
+version history without values.
 
-The age private key lives at `~/.config/sops/age/keys.txt` (mode `0600`).
-Retrieve it from Bitwarden: **"proxmox-homelab age private key"**
+## Adding a production node
+
+1. Add the node to `terraform/PRODUCTION_NODES` and create `.env.<node>`.
+2. Add a `hosts/<node>` entry and a `<node>` profile to
+   `secrets/manifest.json`, and a `./with-secrets-prod-<node>` wrapper
+   (a copy of `with-secrets-prod-tiny` with `PVE_PROD_NODE` changed).
+3. Re-run `configure-openbao.yml`, which generates `deploy-host-<node>` and
+   the `deploy-<node>` AppRole from `PRODUCTION_NODES`. Then issue its
+   credentials with `bash scripts/openbao-issue-credentials.sh` (admin
+   `BAO_TOKEN` exported; existing SecretIDs are left alone).
+
+4. Write the node's tokens with `openbao_write.py hosts/<node> ...`.
+
+## Changing OpenBao's own configuration
+
+Edit `configure-openbao.yml` or `openbao-stack/policies/*.hcl`, then:
 
 ```bash
-mkdir -p ~/.config/sops/age
-install -m 600 /dev/stdin ~/.config/sops/age/keys.txt
-# paste key content, then Ctrl-D
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook terraform/lxc/ansible/playbooks/configure-openbao.yml
+unset BAO_TOKEN
 ```
 
-### Inspect secrets
-
-```bash
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.common.enc.yaml
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.pve.enc.yaml
-```
-
-### Guard required keys from accidental removal
-
-Run this check before or after editing `terraform/secrets.common.enc.yaml`:
-
-```bash
-bash scripts/check-required-sops-keys.sh
-```
-
-By default it enforces presence of (in `secrets.common.enc.yaml` — these
-are shared-router credentials, not per-node):
-
-- `MIKROTIK_USER`
-- `MIKROTIK_PASSWORD`
-- `MIKROTIK_ADMIN`
-- `MIKROTIK_ADMIN_PASSWORD`
-
-The same check runs in pre-commit whenever `terraform/secrets.common.enc.yaml`
-is part of a commit.
-
-### Edit a secret (re-encrypts on save)
-
-```bash
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml
-# or, for a node-specific secret:
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.pve.enc.yaml
-```
-
-### Add a new secret
-
-1. Decide common vs per-node using the rule above.
-2. `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.<common-or-node>.enc.yaml`
-3. Add `KEY_NAME: value` in your `$EDITOR`
-4. Save — sops re-encrypts automatically
-5. Commit the updated file
-
-### Secret inventory
-
-Common (`terraform/secrets.common.enc.yaml`) — used by every environment:
-
-| Key | Purpose | Used by |
-| --- | --- | --- |
-| `TF_VAR_lxc_password` | Generic fallback default LXC root password for any environment without its own override | Terraform |
-| `TF_VAR_portainer_admin_password` | Portainer initial admin | deploy-portainer-stack |
-| `NETBOX_DB_PASSWORD` | NetBox PostgreSQL password | deploy-netbox-stack |
-| `NETBOX_REDIS_PASSWORD` | NetBox Redis password | deploy-netbox-stack |
-| `NETBOX_REDIS_CACHE_PASSWORD` | NetBox Redis cache password | deploy-netbox-stack |
-| `NETBOX_SECRET_KEY` | NetBox Django secret key | deploy-netbox-stack |
-| `NETBOX_API_TOKEN_PEPPER` | NetBox API token pepper | deploy-netbox-stack |
-| `NETBOX_SUPERUSER_PASSWORD` | NetBox superuser password | deploy-netbox-stack |
-| `NETBOX_SUPERUSER_API_TOKEN` | NetBox superuser API token | Ansible NetBox API calls |
-| `NETBOX_API_TOKEN` | Least-privilege NetBox automation token (non-superuser) | reconciliation tooling |
-| `MIKROTIK_ADMIN` | MikroTik admin username (write operations) | Manual / future IaC |
-| `MIKROTIK_ADMIN_PASSWORD` | MikroTik admin password (write operations) | Manual / future IaC |
-| `MIKROTIK_USER` | MikroTik read-only API username (legacy name) | Manual |
-| `MIKROTIK_PASSWORD` | MikroTik read-only API password (legacy name) | Manual |
-| `MIKROTIK_READONLY_USER` | MikroTik read-only API username (preferred name) | NetBox discovery |
-| `MIKROTIK_READONLY_PASSWORD` | MikroTik read-only API password (preferred name) | NetBox discovery |
-| `HARBOR_ADMIN_PASSWORD` | Harbor admin password (unified across environments by convention, not auto-generated per instance) | deploy-harbor-stack |
-| `HARBOR_DB_PASSWORD` | Harbor PostgreSQL password | deploy-harbor-stack |
-| `HARBOR_OIDC_CLIENT_ID` | Harbor OIDC client ID (Authentik application slug/client ID) | deploy-harbor-stack |
-| `HARBOR_OIDC_CLIENT_SECRET` | Harbor OIDC client secret | deploy-harbor-stack |
-| `HARBOR_ROBOT_USER` | Harbor robot account username | All stack playbooks (image pull auth) |
-| `HARBOR_ROBOT_PASSWORD` | Harbor robot account password | All stack playbooks (image pull auth) |
-| `HARBOR_DOCKERHUB_USERNAME` | DockerHub pull-through account | Harbor proxy cache config |
-| `HARBOR_DOCKERHUB_PASSWORD` | DockerHub pull-through password | Harbor proxy cache config |
-| `PORTAINER_OAUTH_CLIENT_SECRET` | Portainer's Authentik OAuth client secret (unified across environments by convention) | deploy-portainer-stack |
-| `SONAR_TOKEN` | SonarCloud analysis token | CI / `sonar-scanner` |
-| `SNYK_TOKEN` | Snyk IaC scan token | CI / `snyk iac test` |
-| `AUTHENTIK_SECRET_KEY` | Authentik Django secret key (must never change) | deploy-authentik-stack |
-| `AUTHENTIK_POSTGRES_PASSWORD` | Authentik PostgreSQL password | deploy-authentik-stack |
-| `AUTHENTIK_SUPERUSER_PASSWORD` | Authentik initial admin password | deploy-authentik-stack |
-| `AUTHENTIK_SUPERUSER_API_TOKEN` | Authentik API token for IaC automation | terraform-provider-authentik |
-| `CF_DNS_API_TOKEN` | Cloudflare DNS API token — `Zone:DNS:Edit` for `gibbsgreatly.xyz` only (SEC-07) | deploy-proxy-stack (Traefik DNS-01) |
-| `STEP_CA_PASSWORD` | step-ca root CA key password | deploy-step-ca |
-| `STEP_CA_PROVISIONER_PASSWORD` | step-ca ACME provisioner password | deploy-step-ca |
-| `GRAFANA_ADMIN_PASSWORD` | Grafana admin password | deploy-monitoring-stack |
-| `GRAFANA_OAUTH_CLIENT_ID` | Grafana OAuth client ID (from Authentik OIDC provider) | deploy-monitoring-stack |
-| `GRAFANA_OAUTH_CLIENT_SECRET` | Grafana OAuth client secret (from Authentik OIDC provider) | deploy-monitoring-stack |
-| `TF_VAR_dayz_steam_username` / `TF_VAR_dayz_steam_password` | Steam account for the (pve-only) DayZ gaming-stack | gaming-stack |
-
-Per-node (`terraform/secrets.<node>.enc.yaml`, one file per production-trust
-node — see `terraform/PRODUCTION_NODES`):
-
-| Key | Purpose | Used by |
-| --- | --- | --- |
-| `PROXMOX_READONLY_TOKEN_ID` | Read-only Proxmox API discovery token ID for this node | NetBox discovery, health checks |
-| `PROXMOX_READONLY_TOKEN_SECRET` | Read-only Proxmox API discovery token secret for this node | NetBox discovery, health checks |
-| `TF_VAR_pm_api_token_secret` | Proxmox API token secret for this node | Terraform |
-| `TF_VAR_lxc_password` | Default LXC root password override for this node | Terraform |
-
-**SEC-07 reminder:** The Cloudflare API token (`CF_DNS_API_TOKEN`) must be scoped to
-`Zone:DNS:Edit` for `gibbsgreatly.xyz` only. Rotate after each development pass.
-
-**Known follow-up (not automatic):** `HARBOR_ADMIN_PASSWORD` and
-`PORTAINER_OAUTH_CLIENT_SECRET` being unified in `secrets.common.enc.yaml`
-only changes what's in the file. Each environment's already-provisioned
-Harbor/Authentik instance stores its own copy of these internally at
-deploy time, so any environment whose live values don't already match the
-common one needs a separate reconciliation (reset Harbor's admin password;
-update the Authentik OAuth application's client secret) — a file edit
-alone doesn't retroactively change already-running service state.
+The playbook is idempotent and never creates SecretIDs. Server settings
+(listener, seal, the **audit device**) are in `openbao.hcl`, which
+`deploy-openbao.yml` writes. OpenBao 2.x refuses audit devices created
+through the API.
 
 ## CI
 
-The `sops-decrypt-check` job in `validate.yml` verifies decryption succeeds
-for every `terraform/secrets*.enc.yaml` file on every push (both the
-common file and every per-node delta file). It uses the `SOPS_AGE_KEY`
-GitHub Actions secret (set via `gh secret set SOPS_AGE_KEY`).
+`netbox-populate.yml` authenticates with GitHub's OIDC token
+(`auth/jwt-github`, role `ci-netbox-populate`, bound to this repository, the
+workflow file and `refs/heads/main`) and loads the `ci-netbox-populate`
+profile. No secret-store credential is stored in GitHub; secrets are only
+ever retrieved on the self-hosted runner. **This goes live when `stable` is
+promoted to `main`**; until then `main` still carries the old SOPS-based
+workflow, which fails.
 
-## Key management
+## USB seal key operations
 
-The public key is committed in `.sops.yaml`. The private key is **never committed**.
+- **Normal:** USB A stays plugged into `pve`. OpenBao reads the key only at
+  start and auto-unseals unattended after any LXC restart or `pve` reboot.
+- **After unplugging or replugging USB A**, even briefly: the host mount
+  and the LXC bind mount go stale. OpenBao keeps running, but the next
+  restart would stay sealed. Fix on `pve`:
+  `mount /mnt/openbao-seal && pct reboot 20016`, then check
+  `curl -s --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health`
+  shows `"sealed":false`.
+- **USB A missing at boot:** `pve` still boots (the fstab entry is
+  `nofail`); `openbao.service` fails and stays sealed until the key is back.
+- **Key rotation** (only if a stick is lost or compromised): add a new key
+  as `current_key` and the old one as `previous_key` in the `seal "static"`
+  block (see OpenBao's static seal docs). Restart, confirm it unseals, then
+  write the new key to both sticks. Keep the old key until every snapshot
+  made under it has aged out (12 months).
 
-### Rotate the age key
+## Break-glass (Authentik unavailable)
+
+Deploy reads don't depend on Authentik, so redeploying Authentik works
+normally. Break-glass is only for administrative changes to OpenBao itself
+while OIDC is down:
 
 ```bash
-age-keygen -o ~/.config/sops/age/keys-new.txt
-
-# Re-encrypt with new key (update .sops.yaml first with new public key)
-SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-  sops updatekeys terraform/secrets.common.enc.yaml
-# Repeat for every terraform/secrets.<node>.enc.yaml file
-
-# Update GitHub Actions secret
-gh secret set SOPS_AGE_KEY < ~/.config/sops/age/keys-new.txt
-
-# Store new key in Bitwarden
+bash scripts/openbao-breakglass-test.sh
 ```
+
+That is the tested drill: breakglass AppRole login → generate-root with the
+recovery key → root token. As written, it verifies the token and revokes
+it. For real use, run the same steps but make the change before revoking.
+Recovery key and breakglass credentials: the bootstrap kit.
+
+## Backup and recovery
+
+- **Raft snapshots:** after every write through `openbao_write.py`, plus
+  nightly at 03:30, to the NAS (`/mnt/nas-backup/openbao-snapshots` on
+  `pve`). Retention: 90 days post-write / 14 daily / 8 weekly / 12 monthly,
+  never fewer than the newest 7. Manual:
+  `ssh root@192.168.20.16 systemctl start openbao-snapshot@postwrite.service`.
+- **A snapshot is useless without its seal key**, which is on USB B, so
+  snapshots can go to ordinary storage. Never store USB B with them.
+- **Recovery drill** (proves snapshot + USB B + recovery key are enough, on
+  a throwaway, network-less LXC): plug USB B into `pve`, then
+  `bash scripts/openbao-recovery-test.sh`. It passed on 2026-09-28. Re-run
+  it after any change to the seal, the backup job, or OpenBao's major
+  version.
+- **Real rebuild of `openbao-stack`:**
+  1. Load the bootstrap kit into a shell only:
+     `set -a; source .env; source .env.pve; source <(age -d kit.age); set +a`.
+  2. Recreate the LXC and run the playbook with `terragrunt apply` +
+     `scripts/provision.sh --stack openbao-stack` directly (not via the
+     wrappers, which need OpenBao).
+  3. Redo the bind mounts (`pct set 20016 -mp0 ... -mp1 ...`, see
+     `STACK_CONTRACT.md` and `stack.yaml` `host_bind_mounts`).
+  4. With USB B's key in place, start OpenBao, `bao operator init`, then
+     `bao operator raft snapshot restore -force <newest.snap>`. The restored
+     data auto-unseals.
+  5. Get a root token with the breakglass AppRole and the kit's recovery key.
+  6. Re-issue the LXC's `snapshot` and `metrics` credentials (the new LXC
+     has none; the restored data still holds the AppRoles):
+     `bash scripts/openbao-issue-credentials.sh`. It also proves `metrics`
+     cannot read values, runs one snapshot and one inventory export, and
+     runs the boundary check.
+
+## Monitoring
+
+Grafana → "OpenBao":
+
+- snapshot age and last run, and whether the LXC is up;
+- secret **entries and fields per category**;
+- a per-entry table of version and last-changed;
+- changes in the last 7 days;
+- manifest-vs-OpenBao drift.
+
+The inventory comes from the `metrics` identity, which can read KV metadata
+only; its attempts to read values are denied (verified in the audit log).
+**There is no alerting yet.** Watch the snapshot age (should be under 26 h)
+and drift (should be 0).
+
+## Checking everything still works
+
+- `python3 scripts/secrets_env.py --profile <env> --check` for each
+  environment: every field present.
+- `LAB_IP_OPENBAO=192.168.20.16 python3 scripts/openbao_boundary_check.py`:
+  each deploy identity reads only its own scope and can't write.
+- `TASK_APPROVAL=<task> bash scripts/secrets-check-sweep.sh`: `ansible --check`
+  of every production stack through the wrappers. Nothing on any host is
+  changed. It proves every playbook's secret lookups resolve and shows
+  whether secret-bearing files would change.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| `secrets_env: ERROR: missing or empty fields (fail closed): <entry>:<FIELD>` | Field listed in the manifest but not in OpenBao. Write it, or fix the manifest |
+| `missing AppRole credentials for '<role>'` | `~/.config/openbao/<role>.*` absent. Restore it from Bitwarden |
+| `OpenBao ... HTTP 403` from the wrapper | Profile/role mismatch, or the SecretID is bound to another CIDR (deploy roles accept only 192.168.1.0/24) |
+| Health shows `"sealed":true` | Seal key not readable. See USB seal key operations |
+| UI login: "callback ... did not supply all of the required parameters" | Authentik provider `grant_types` empty (reconciler create-time default). The openbao route is fixed; check `_oidc_grant_types` for new stacks |
+| `generate-root` 403 | Expected without a token (OpenBao ≥ 2.5.3). Use the breakglass AppRole |
+
+## History
+
+Until the 2026-09 cutover, secrets were SOPS-encrypted YAML files in Git
+(`terraform/secrets.common.enc.yaml` plus one per node). Checking out an old
+branch could silently restore an old password, which caused real incidents.
+Those files were frozen at the cutover, and then deleted after the recovery
+test. Old copies remain in Git history and are not authoritative, but they
+can be decrypted with the old age key, so rotate the high-value secrets
+over time.

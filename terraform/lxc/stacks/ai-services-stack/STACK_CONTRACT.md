@@ -11,15 +11,37 @@ dedicated `ai_seg` LXC. See `docs/ai-services-migration/plan.md` for the
 full migration design and why this is a rewrite of the old, stale
 `pve-framework`-era `stack.yaml`, not a reuse of it.
 
-Also runs `ollama-reliability-proxy` (added 2026-08-25, see
-`docs/coding-stack/plan.md` Phase 6) — a small stdlib-only Python proxy
-between any Ollama consumer and `framework:11434`, protecting against
-this project's own documented, repeated Ollama corruption bugs. Started
-as a per-workstation process for VS Code Copilot specifically, then
-deliberately centralized here so `OpenWebUI` (this stack's own Ollama
-consumer) benefits too, not just an external client. Source lives at
-`scripts/ollama-reliability-proxy/proxy.py` in this repo, copied in by
-this stack's own playbook — no separate build step.
+Also runs `deep-research`/`deep-research-files` (added 2026-09-21, see
+`docs/deep-research/plan.md` Phase 4) — the Stage B packaging of a local
+deep-research agent, built from source (not pulled), non-root, behind
+Authentik `forwardAuth`.
+
+`ollama-reliability-proxy` (added 2026-08-25) was **removed 2026-09-22**
+— Ollama/Laguna is no longer in active use on this platform (Nathanw/
+llama.cpp has proven better performance and reliability here). See git
+history if Ollama ever comes back into use. Its dedicated MikroTik
+firewall rule (`lan → 192.168.50.11:11435`, added for VS Code Copilot's
+use) is now orphaned and was not removed as part of this change — a
+separate, deliberate firewall cleanup if wanted.
+
+Also runs `web-search-mcp` — a headless-browser (Playwright/Chromium)
+web search MCP server (`mrkrsl/web-search-mcp`, pinned `v0.3.2`) fronted
+by `mcpo` so it's reachable over plain HTTP/OpenAPI instead of only the
+upstream project's `stdio` transport. Built and deployed live 2026-09-16
+on an unmerged branch (`feat/openwebui-web-search-mcp`) as a real,
+quota-free replacement for Brave's Search API (Free-tier 2000 req/month
+quota exhausted 2026-09-16) for OpenWebUI's own web search. That branch
+was never merged, so the running container silently drifted out of sync
+with this repo until recovered here 2026-09-22 (`fix/deep-research-web-
+search-mcp`) — see this stack's git history for the full story. Recovery
+also wired it up as `deep-research`'s search backend, its second real
+consumer: `deep-research`'s own DDGS-based search (`backend="auto"`)
+proved unstable in production 2026-09-22 (silently routed through
+`search.yahoo.com`, which was erroring on every query; the agent had no
+graceful fallback and burned through its fetch/grep quotas guessing URLs
+blind instead — see `docs/deep-research/current-state.md`). Internal-only
+(no published host port) — reachable only from `openwebui` and
+`deep-research` over this compose network.
 
 ## Network
 
@@ -38,8 +60,8 @@ Needs two cross-zone rules beyond the zone's existing egress allowlist
 (which is scoped narrowly to `mcp-utility-stack`'s CVE/threat-intel API
 hosts — not sufficient here):
 
-- Egress: `ai_seg → framework:8080,11434` (`192.168.50.0/24 →
-  192.168.1.8`) so OpenWebUI can reach llamacpp-router/Ollama.
+- Egress: `ai_seg → framework:8080,8085` (`192.168.50.0/24 →
+  dst-address-list framework`, resolved from `framework.gibbsgreatly.xyz` by the router) so OpenWebUI can reach llama-server.
 - Ingress: `edge_seg → ai_seg:8081,8082` so Traefik can reach OpenWebUI and
   the SearXNG browser UI — the zone's generic `edge_seg →
   ai_seg:[80,443]` entry is not enough on its own, same pattern
@@ -53,14 +75,15 @@ hosts — not sufficient here):
 | Input | Source | Notes |
 |-------|--------|-------|
 | `LAB_FQDN_HARBOR` (falls back to `harbor.${LAB_DOMAIN}`) | env var, optional | Registry host — both app images and the SearXNG-settings-seed helper image are pulled through Harbor's proxy-cache, not directly from ghcr.io/Docker Hub. FQDN via Traefik/`edge_seg`, not `LAB_IP_HARBOR`'s raw `infra_seg` IP: `ai_seg` is a contained zone (like `pentest_seg`) with no direct route to `infra_seg` — confirmed live 2026-08-02, a raw-IP pull timed out. Reuses the same `ai_seg -> edge_seg:443` rule the LM Studio route needs |
-| `FRAMEWORK_HOST` (falls back to `framework.gibbsgreatly.xyz`) | env var, optional | framework's FQDN — OpenWebUI's llama.cpp/Ollama routes point here, not `LAB_IP_AI_SERVICES` (this stack's own address) or `host.docker.internal` (only valid same-host, which this LXC no longer is). Matches `deploy-pentagi-stack.yml`'s identical `pentagi_framework_host` pattern, the other contained zone reaching framework the same way |
+| `LAB_FQDN_FRAMEWORK` (falls back to `framework.gibbsgreatly.xyz`) | env var, optional | framework's FQDN — OpenWebUI's llama.cpp/Ollama routes point here, not `LAB_IP_AI_SERVICES` (this stack's own address) or `host.docker.internal` (only valid same-host, which this LXC no longer is). |
 | `LAB_DOMAIN` | env var (mandatory) | Public hostname base (`openwebui.${LAB_DOMAIN}`) |
 | `LAB_FQDN_AUTHENTIK_INTERNAL` (falls back to `authentik-int.${LAB_DOMAIN}`) | env var, optional | OIDC discovery URL — deliberately the step-ca-issued **internal** direct-TLS endpoint (`mgmt_seg`), not the public `authentik.${LAB_DOMAIN}` route. That route's cert is Let's Encrypt staging on `pve-test-vm` (untrusted by design), which breaks `authlib`'s backend-side discovery fetch even though a human can click through it in a browser. See `docs/design/lessons-learned.md`'s Authentik section. Needs its own `ai_seg -> 192.168.20.110(Authentik):443` firewall rule — the first cross-zone rule into `mgmt_seg` from a contained zone. |
-| `OPENWEBUI_OIDC_CLIENT_SECRET` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Authentik app `edge-ai-services-stack-openwebui`, reused as-is — public hostname doesn't change, only its backend IP |
-| `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
-| `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
-| `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. |
+| `OPENWEBUI_OIDC_CLIENT_SECRET` | OpenBao `kv/services/ai-services`, mandatory | Authentik app `edge-ai-services-stack-openwebui`, reused as-is — public hostname doesn't change, only its backend IP |
+| `OPENWEBUI_WEBUI_SECRET_KEY` | OpenBao `kv/services/ai-services`, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
+| `SEARXNG_SECRET_KEY` | OpenBao `kv/services/ai-services`, mandatory | SearXNG's own session secret |
+| `LLM_GPU_STACK_API_KEY` | OpenBao `kv/services/llm-gpu`, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
+| `BRAVE_SEARCH_API_KEY` | OpenBao `kv/shared/external-apis`, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. **Free-tier monthly quota (2000 req) exhausted 2026-09-16** — one of the two reasons `web-search-mcp` exists; kept configured (not removed) in case the plan is upgraded later. |
+| `WEB_SEARCH_MCP_API_KEY` | OpenBao `kv/shared/external-apis`, mandatory | Bearer key `mcpo` requires from callers — protects the internal-only OpenAPI bridge from anything else reachable on this LXC's compose network, not a real external-facing secret. The value was exposed once (surfaced live via `docker exec printenv` during 2026-09-22 diagnosis); rotate it with `scripts/openbao_write.py` if that matters. |
 
 ## Provides
 
@@ -68,7 +91,8 @@ hosts — not sufficient here):
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
 | `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. It remains available for browser search; OpenWebUI's AI search calls Brave LLM Context directly. |
-| `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
+| `deep-research-http` | 8090 | tcp | Deep-research agent `--web` UI, published on the LXC host. Fronted by `deep-research.${LAB_DOMAIN}` via Traefik, `forwardAuth`/Authentik. |
+| `deep-research-files-http` | 8091 | tcp | Read-only file browser over deep-research's report/workspace data, same auth posture. Fronted by `deep-research-files.${LAB_DOMAIN}`. |
 
 SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
 raw `:8082` service remains available for existing machine-to-machine
@@ -94,6 +118,7 @@ firewall rule above instead of `depends_on:`.
 | `/var/lib/docker` | `docker_storage` (24G) | Docker image/container layers plus both named volumes below |
 | `ai-services-openwebui-data` (Docker named volume) | Docker volume | OpenWebUI's `webui.db` (chat history, users, settings) — migrated from framework's `/mnt/container-storage/openwebui-data` on first deploy, see plan.md Step 5 |
 | `ai-services-searxng-data` (Docker named volume) | Docker volume | SearXNG's `settings.yml` — migrated from framework's `/mnt/container-storage/searxng-data` on first deploy |
+| `ai-services-deep-research-config` (Docker named volume) | Docker volume | `deep-research`'s own `~/.deep-research-agent` (config.yaml, sessions/, workspace/) — mounted at exactly that path, not the whole `/home/app` home dir. **Renamed from `ai-services-deep-research-data` 2026-09-22** after a real bug: the old volume mounted the entire home directory, which meant every image rebuild's fresh `COPY src ./src` was silently shadowed at runtime by whatever was already in the volume from Stage B's very first deploy — every code change to `deep-research` since then had been silently ignored. See `docs/deep-research/current-state.md`. |
 
 ## What May Depend On This Stack
 
@@ -105,8 +130,8 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
 - **`LAB_IP_AI_SERVICES` names this stack's own `ai_seg` address, not
   framework's.** Before 2026-08-02 this variable held framework's flat-LAN
   IP (`192.168.1.8`) — reusing it for OpenWebUI's backend routes would
-  point OpenWebUI at itself. Use `FRAMEWORK_HOST`/`framework.gibbsgreatly.xyz`
-  (FQDN, not `LAB_IP_FRAMEWORK`'s raw IP) for anything that needs to reach
+  point OpenWebUI at itself. Use `LAB_FQDN_FRAMEWORK`/`framework.gibbsgreatly.xyz`
+  (FQDN, never an IP) for anything that needs to reach
   framework's own services.
 - **The llama.cpp router enforces no authentication on `:8080`** (checked
   live 2026-08-02 — a request with no key and a request with a
@@ -167,6 +192,21 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   `settings.yml` — this survives a settings file migrated in from
   `framework` (which has the same underlying default-engine problem, just
   never surfaced because nobody stress-tested web search there).
+- **`stack.yaml`'s `memory: 6144` is load-bearing for `web-search-mcp`.**
+  One headless Chromium instance plus its Node/`mcpo` process is real,
+  persistent memory pressure this LXC didn't carry at its original `4096`
+  (confirmed live 2026-09-16: ~1GB used of 4GB immediately before this
+  change). The bump was applied live via `pct set` on 2026-09-16 but the
+  tracked file itself said `4096` until this 2026-09-22 recovery — don't
+  assume `stack.yaml` and the live LXC agree without checking after a gap
+  like this.
+- **`web-search-mcp` has no `image:` — it's the only service in this
+  compose built locally (`build: context: ./web-search-mcp`).** The
+  `docker_compose_v2` deploy task's `build: always` (already required for
+  `deep-research`/`deep-research-files`) also covers it; removing that
+  flag can silently leave a stale build after a Dockerfile-only change
+  with no compose-file diff to trigger a rebuild otherwise — same failure
+  mode `mcp-utility-stack`'s `docs-rag-mcp` needed this for.
 - **Google Custom Search is deliberately not deployed** — Google no longer
   permits new Programmable Search Engines to search the general web, so its
   curated-site results do not meet this stack's general-search requirement.

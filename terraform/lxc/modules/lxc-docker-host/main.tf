@@ -119,7 +119,14 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     # or state edit) -- an accepted tradeoff for stacks that use
     # host_bind_mounts, matching the "grow-only" mutation policy those
     # mounts already use in practice.
-    ignore_changes = [features[0].keyctl, mount_point]
+    #
+    # device_passthrough: same restriction class and same symptom,
+    # confirmed live 2026-09-16 on media-stack-lab once device_passthrough
+    # actually flowed through stack_template_vars for the first time --
+    # `terragrunt plan` proposed an in-place update to strip the live GPU
+    # passthrough (dev0/dev1) it never created. A real `apply` would have
+    # silently broken hardware transcoding.
+    ignore_changes = [features[0].keyctl, mount_point, device_passthrough]
   }
 }
 

@@ -44,6 +44,12 @@ DEFAULT_INVALIDATION_FLOW_SLUGS = (
     "default-invalidation-flow",
 )
 DEFAULT_OIDC_SCOPE_NAMES = ("openid", "profile", "email")
+# grant_types for a NEWLY CREATED OAuth2 provider whose route has no explicit
+# _oidc_grant_types entry. Authentik defaults an omitted grant_types to [] on
+# create, which rejects every login ("Invalid grant_type for provider"); that
+# bit four stacks in a row (opensearch, wazuh, media-stack-lab, openbao).
+# Applied on create only, never on update: see _oidc_provider_payload.
+DEFAULT_OIDC_CREATE_GRANT_TYPES = ("authorization_code",)
 # Minimum outpost config — Authentik requires this field on creation.
 OUTPOST_DEFAULT_CONFIG = {
     "log_level": "info",
@@ -341,7 +347,7 @@ def _resolve_token(token_env: str) -> tuple[str | None, ReconcileIssue | None]:
         code="AKR001",
         message=(
             f"missing Authentik token in environment variable {token_env}. "
-            "Run with ./with-secrets so SOPS-backed secrets are injected "
+            "Run with ./with-secrets so secrets from OpenBao are injected "
             "(example: ./with-secrets terraform/lxc/reconcile-authentik-edge.py --json)."
         ),
     )
@@ -499,6 +505,8 @@ def _oidc_provider_payload(
     # (this script never patches an existing provider's grant_types), so a
     # future reconcile run against Harbor/Grafana/Portainer/Technitium/
     # OpenWebUI cannot narrow their existing (larger) grant_types sets.
+    # A provider this script CREATES without an entry below gets
+    # DEFAULT_OIDC_CREATE_GRANT_TYPES instead (_reconcile_provider_for_intent).
     grant_types = _DISCOVER._oidc_grant_types(intent)
     if grant_types:
         payload["grant_types"] = list(grant_types)
@@ -700,6 +708,30 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     patch: dict[str, Any] = {}
     for key, value in desired.items():
         current = existing.get(key)
+        # Authentik returns the OAuth2 provider's scope mappings in its own
+        # order. The mappings are an unordered provider association here, so
+        # avoid an otherwise perpetual no-op PATCH when the sets match.
+        if key == "property_mappings" and isinstance(current, list) and isinstance(value, list):
+            if {str(item) for item in current} == {str(item) for item in value}:
+                continue
+        # The API adds its default redirect_uri_type=authorization on reads,
+        # while create/update accepts the compact form emitted by the manifest
+        # reconciler. Compare only the declarative fields so a stable strict
+        # redirect URI does not cause a write on every edge activation.
+        if key == "redirect_uris" and isinstance(current, list) and isinstance(value, list):
+            def _redirect_identity(item: object) -> tuple[str, str] | None:
+                if not isinstance(item, dict):
+                    return None
+                mode = item.get("matching_mode")
+                url = item.get("url")
+                if isinstance(mode, str) and isinstance(url, str):
+                    return (mode, url)
+                return None
+
+            current_redirects = {_redirect_identity(item) for item in current}
+            desired_redirects = {_redirect_identity(item) for item in value}
+            if None not in current_redirects and current_redirects == desired_redirects:
+                continue
         if key in {"launch_url", "meta_launch_url"}:
             current_host = _DISCOVER._normalize_url_host(current)
             desired_host = _DISCOVER._normalize_url_host(value)
@@ -1148,6 +1180,8 @@ def _reconcile_provider_for_intent(
             object_kind="provider", object_name=intent.provider_name,
             operation="create", reason="owned provider is missing",
         ))
+        if intent.auth_mode == "oidc" and not provider_payload.get("grant_types"):
+            provider_payload = {**provider_payload, "grant_types": list(DEFAULT_OIDC_CREATE_GRANT_TYPES)}
         if apply and not route_stops and not stop_conditions:
             created = _call_create_provider(client, intent, provider_payload)
             write_count += 1

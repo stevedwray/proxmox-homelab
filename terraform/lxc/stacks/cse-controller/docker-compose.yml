@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  controller:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller
+    volumes:
+      - /srv/cyberseceval:/srv/cyberseceval
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  worker:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller-worker
+    volumes:
+      - /srv/cyberseceval:/srv/cyberseceval
+    working_dir: /srv/cyberseceval/repo/PurpleLlama
+    command:
+      - /srv/cyberseceval/.venv/bin/celery
+      - -A
+      - cse_tasks
+      - worker
+      - --loglevel=INFO
+      - --concurrency=1
+    environment:
+      - CELERY_BROKER_URL=redis://${LAB_IP_CSE_PANEL}:6379/0
+      - CELERY_RESULT_BACKEND=redis://${LAB_IP_CSE_PANEL}:6379/1
+      - PYTHONPATH=/srv/cyberseceval/config
+    env_file:
+      - /srv/cyberseceval/config/worker.env
+    restart: unless-stopped

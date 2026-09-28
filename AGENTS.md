@@ -10,17 +10,16 @@ stable                             ← validated per its tier, ready for pve
 main                               ← current production state
 ```
 
-**`pve-test-vm` is reserved for structural/high-blast-radius validation only**
-(Terraform/SDN/firewall zone work, full teardown cycles — see Validation
-Tiers below). It is no longer the default validation target for routine
-changes. Everything else — Ansible task/role changes, Authentik/Traefik/
-Harbor config, and similar app-level work — validates directly against
-`pve`, through the normal production approval flow (see Production
-Credential Controls), not on pve-test-vm first.
+All active validation runs directly against `pve` through the normal production
+approval flow (see Production Credential Controls). `pve-test-vm` is retired
+and is not a validation target. Match validation depth to the change risk;
+high-blast-radius changes require a more explicit production preflight,
+rollback plan, and targeted regression checks rather than a separate test
+environment.
 
 | Branch | Meaning | Promotion gate |
 |---|---|---|
-| `stable` | Validated per the appropriate tier for the change class — `pve-test-vm` for structural/high-blast-radius changes, `pve` directly (under the production approval flow) for everything else. | See Validation Tiers below. |
+| `stable` | Validated directly on `pve` under the production approval flow, at the depth appropriate to the change class. | See Validation Tiers below. |
 | `main` | Deployed to pve; smoke test passed. | Incremental deploy on pve succeeds with no regressions. |
 
 `baseline/teardown-validated` is frozen as a historical marker (last full-teardown-validated state). Do not use as a development base.
@@ -34,7 +33,7 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 - All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
 - Validate on the short-lived branch (live runs, tests, populate checks).
-- Promote to `stable` once the appropriate validation tier passes — on `pve-test-vm` for structural/high-blast-radius changes, directly on `pve` (under the production approval flow) for everything else.
+- Promote to `stable` once the appropriate validation tier passes directly on `pve` under the production approval flow.
 - `stable` is a **promotion target only** — never use it as the base for a new development branch.
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `stable` → `main` only after a successful incremental deploy to pve.
@@ -42,25 +41,19 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 ## Validation Tiers
 
-Match validation depth to change risk. A full teardown is required only for high-risk structural changes, not every promotion.
-
-**`pve-test-vm` is reserved for the structural/high-blast-radius tiers below**
-(Terraform/SDN/firewall zone work, full teardown cycles). Every other tier
-validates directly against `pve`, via `./with-secrets-prod`/
-`./with-secrets-prod-framework` under the normal production approval flow
-(Preflight Summary → Operator Approval → `TASK_APPROVAL` → execute — see
-Production Credential Controls). `scripts/teardown-deploy-test.sh` is
-pve-test-vm-only (it self-wraps `with-secrets`, not `with-secrets-prod`) and
-does not apply to tiers validated on `pve`.
+Match validation depth to change risk. All active validation is against `pve`
+via `./with-secrets-prod`/`./with-secrets-prod-framework` under the normal
+production approval flow (Preflight Summary → Operator Approval →
+`TASK_APPROVAL` → execute — see Production Credential Controls).
 
 | Change class | Minimum validation |
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
 | Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` directly on `pve`, under the production approval flow |
-| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | On `pve-test-vm`: apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
-| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test-vm |
-| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers directly on `pve`, under the production approval flow, and check their actual login/routing paths (targeted `scripts/provision.sh --stack <name>` calls via `./with-secrets-prod`/`./with-secrets-prod-framework`, in dependency order). A full teardown cycle (`scripts/teardown-deploy-test.sh cycle` / `destroy`, always on pve-test-vm) is never the default — run one only when the operator explicitly asks for it by name. |
+| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Review the production `terragrunt plan`; after approval, apply on `pve`, then test the explicit source-to-target path and 1–2 affected adjacent consumers. |
+| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Review the production plan and rollback path before approval; apply on `pve`, then run targeted checks for every affected path and consumer. |
+| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers directly on `pve`, under the production approval flow, and check their actual login/routing paths (targeted `scripts/provision.sh --stack <name>` calls via `./with-secrets-prod`/`./with-secrets-prod-framework`, in dependency order). |
 | Harbor (or another shared internal registry/cache) — version bump or config change that doesn't alter what consumers pull or push against | `scripts/provision.sh --stack harbor-stack` directly on `pve`, under the production approval flow, then re-run `scripts/provision.sh --stack <name>` for 1–2 stacks that actually pull through it (cover at least one native-adapter project and one proxy-cache project) to confirm no regression. Full teardown not required — unlike Authentik/Traefik, a Harbor outage doesn't break stacks that are already running (their images are already resident locally); it only blocks new pulls, deploys, and scans. |
 
 Batch related changes during development and run the appropriate tier.
@@ -77,7 +70,7 @@ Batch related changes during development and run the appropriate tier.
 ## Security Scanning
 
 - **snyk**: `/home/steve/.local/bin/snyk iac test terraform/` — Terraform IaC only, not Ansible
-- **sonar-scanner**: `./with-secrets /home/steve/.local/bin/sonar-scanner` — config in `sonar-project.properties`; `SONAR_TOKEN` is SOPS-backed, not in plain `.env`, so it must run through `./with-secrets`
+- **sonar-scanner**: `./with-secrets /home/steve/.local/bin/sonar-scanner` — config in `sonar-project.properties`; `SONAR_TOKEN` is an OpenBao secret (`kv/shared/dev-tooling`), not in plain `.env`, so it must run through `./with-secrets`
 
 ## Documentation Workspace Pattern
 
@@ -100,29 +93,32 @@ but every node goes through the same controls, not a bespoke copy per node.
 ### Production Nodes
 
 Declared in `terraform/PRODUCTION_NODES` (one node name per line) — currently
-`pve` and `pve-framework`. This file is the single source of truth for
+`pve`, `pve-tiny` and `pve-framework`. This file is the single source of truth for
 "which nodes are production"; both `./with-secrets`'s safety rail and the
 `with-secrets-prod*` wrappers read it. Adding a node here, plus its own
-`.env.<node>` and `terraform/secrets.<node>.enc.yaml`, is what's required to
-bring a new node under production control — never hardcode a node name into
+`.env.<node>`, a `hosts/<node>` entry and profile in `secrets/manifest.json`,
+and a re-run of `configure-openbao.yml` (which generates its `deploy-<node>`
+AppRole), is what's required to bring a new node under production control — never hardcode a node name into
 new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 ### Secrets Storage
 
-- **Common secrets:** `terraform/secrets.common.enc.yaml` — every secret
-  that's genuinely the same everywhere (the large majority); loaded by
-  `./with-secrets` and merged into every `with-secrets-prod*` wrapper too
-- **Per-node secrets:** `terraform/secrets.<node>.enc.yaml` — only secrets
-  structurally tied to that node's own Proxmox API identity (its
-  read-only/Terraform tokens, its LXC root password); loaded only by that
-  node's `with-secrets-prod*` wrapper, merged on top of common
-- All are encrypted with SOPS (age key at `~/.config/sops/age/keys.txt`).
-  See `docs/reference/secrets-management.md` for the full split and where a
-  new secret belongs.
+- **Secret values live in OpenBao** (`openbao-stack`, `https://192.168.20.16:8200`,
+  KV v2 at `kv/`), never in Git. A branch checkout cannot change a secret.
+- **References live in `secrets/manifest.json`**: every KV entry
+  (`services/*`, `shared/*`, `hosts/<node>`), the exact fields it must
+  contain, and one profile per environment. Host entries override shared ones,
+  as the old per-node files did.
+- **Reads** go through the wrappers with a read-only deploy AppRole per
+  environment (`~/.config/openbao/<role>.{role-id,secret-id}`); they fail
+  closed on any missing or empty field. **Writes** need an explicit human OIDC
+  login and `scripts/openbao_write.py` — agents never get write access.
+- See `docs/reference/secrets-management.md` for day-to-day use and
+  `docs/secrets-refactor/secrets-design.md` for the design.
 
 ### Wrappers
 
-- **`./with-secrets`** (development, pve-test-vm default)
+- **`./with-secrets`** (development and non-production)
   - Use for all normal infrastructure work
   - Fails if targeting any node listed in `terraform/PRODUCTION_NODES`
     without explicit `ALLOW_PVE=true`
@@ -195,11 +191,12 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 ## Workspace Operating Patterns
 
-- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus SOPS-backed secrets from `terraform/secrets.common.enc.yaml`; do not rely on `source .env` for secret-bearing workflows.
-- Treat `.env` as gitignored non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in `terraform/secrets.common.enc.yaml` via SOPS.
-- New Terraform secrets in SOPS should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, rather than adding a separate mapping layer.
-- Edit SOPS secrets with `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml`. Do not decrypt secrets into plaintext files or commit private age keys.
-- GitHub Actions secrets are for CI-only values and CI SOPS decryption. Local infrastructure automation should prefer SOPS plus `with-secrets`.
+- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus secrets read from OpenBao for the selected environment; do not rely on `source .env` for secret-bearing workflows.
+- Treat `.env` as non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in OpenBao, referenced from `secrets/manifest.json`.
+- New Terraform secrets should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, as the KV field name — there is no separate mapping layer.
+- Write or rotate secrets only with `scripts/openbao_write.py` after an explicit `bao login -method=oidc -no-store`; never persist a write token to `~/.vault-token`, never write secret values into files, and never commit AppRole SecretIDs.
+- `terraform/secrets.*.enc.yaml` (SOPS) are frozen and not authoritative; a pre-commit hook rejects edits to them.
+- GitHub Actions secrets are for CI-only values. CI reads secret-store values from OpenBao via GitHub OIDC (`auth/jwt-github`), never a stored credential.
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
 
@@ -225,9 +222,10 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | Stack | Service type | Verify approach |
 |---|---|---|
 | `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
-| `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on both `pve` and `pve-test-vm` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
+| `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on `pve` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
 | `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `openbao-stack` | systemd (OpenBao, native `.deb`) | **The secrets store** (192.168.20.16). `curl --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health` must show `"sealed":false`. Runbook: `docs/reference/secrets-management.md` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
 | `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
 | `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
@@ -238,6 +236,6 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 
 ## Execution Guardrails
 
-- Before any `terragrunt apply` or deployment validation run, confirm the target matches the change's validation tier (see Validation Tiers): for structural/high-blast-radius tiers, `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` must return `pve-test-vm`; for every other tier, the run goes through `./with-secrets-prod`/`./with-secrets-prod-framework` against `pve`/`pve-framework` under the production approval flow instead. Either way, stop and treat a mismatch between the intended target and the actual one as a targeting error.
+- Before any `terragrunt apply` or deployment validation run, confirm the target is the intended production node. Run it through the matching `./with-secrets-prod*` wrapper under the production approval flow, and stop if the resolved target differs from the approved target.
 - For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.
 - `pvesh` runs only on a Proxmox node itself; it is not installed on the operator's workstation. For read-only API checks from the workstation, use `./with-secrets` and curl against `${TF_VAR_proxmox_api_url}` with the `PROXMOX_READONLY_TOKEN_ID`/`PROXMOX_READONLY_TOKEN_SECRET` header (`Authorization: PVEAPIToken=<id>=<secret>`), or SSH to the target node and run `pvesh`/`pct list` there.

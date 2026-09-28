@@ -9,7 +9,13 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
-    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    # Points at technitium-stack (the real live DNS since the CoreDNS->
+    # Technitium cutover, docs/dns-refactor/README.md) -- NOT dns-stack's
+    # LAB_IP_DNS, which was hardcoded here as this container's Docker-daemon
+    # DNS resolver until this fix (reference_dns_stack_docker_daemon_dependency
+    # memory/incident, 2026-08-16: stopping dns-stack broke Harbor's pulls
+    # fleet-wide because of exactly this kind of leftover reference).
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     docker_registry_host: "{{ monitoring_registry_host }}"
@@ -66,7 +72,9 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
-    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    # Points at technitium-stack, not dns-stack -- see the matching comment
+    # on this same var in the "Configure Docker base" play above.
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.148.0"
@@ -166,6 +174,12 @@
         - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
+    # dns-stack's node_exporter target removed 2026-09-08 -- purely cosmetic
+    # (a metrics scrape target, not a functional dependency check), but
+    # dns-stack is being decommissioned and this would otherwise just show
+    # up as a perpetually "down" target after that. See
+    # reference_dns_stack_docker_daemon_dependency for the actual dependency
+    # this stack had (already fixed separately, unrelated to this target).
     - name: Write VictoriaMetrics scrape config
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/victoria-metrics/scrape.yml"
@@ -189,8 +203,6 @@
                   labels: {stack: step-ca-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_MONITORING') }}:9100"]
                   labels: {stack: monitoring-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_DNS') }}:9100"]
-                  labels: {stack: dns-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_PORTAINER') }}:9100"]
                   labels: {stack: portainer-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_PROXY') }}:9100"]
@@ -205,7 +217,7 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:9100"]
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
                   labels: {stack: pentagi-stack}
@@ -213,6 +225,23 @@
                   labels: {stack: gaming-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:9100"]
                   labels: {stack: media-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_OPENBAO') }}:9100"]
+                  labels: {stack: openbao-stack}
+
+            # Framework's native llama.cpp servers (--metrics), which
+            # replaced Ollama's textfile collector --
+            # docs/framework-ip-and-port/plan.md. The chat server requires
+            # its API key on /metrics; the embeddings server has no key and
+            # ignores the header.
+            - job_name: llamacpp
+              scheme: http
+              authorization:
+                credentials: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8080"]
+                  labels: {stack: framework, server: chat}
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8085"]
+                  labels: {stack: framework, server: embeddings}
 
             - job_name: cadvisor
               static_configs:
@@ -230,7 +259,7 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:8080"]
                   labels: {stack: graylog-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:8083"]
+                - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8083"]
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
                   labels: {stack: pentagi-stack}
@@ -927,6 +956,21 @@
           - victoriametrics
         state: restarted
       when: not ansible_check_mode
+
+- name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive: a new role, new files under its own directory, a new
+  # systemd timer, and a new dedicated (shared) OpenSearch user -- does not
+  # touch this stack's own compose deployment or any other role's state.
+  # See docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02) -- this stack
+  # is one of the confirmed gap-list hosts Portainer deliberately doesn't
+  # reach. Gated the same way es_findings_ingest/harbor_repull are: explicit
+  # opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: docker_live_usage_reporter
+      when: docker_live_usage_reporter_enabled | default(false) | bool
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

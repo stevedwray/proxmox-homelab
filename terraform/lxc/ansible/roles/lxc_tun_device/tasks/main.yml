@@ -67,6 +67,14 @@
         port: 22
         state: stopped
         timeout: 30
+      delegate_to: localhost
+      # Real bug found 2026-09-12 (this role had never actually been run
+      # before): without delegate_to, this task ran ON the target host
+      # itself by default -- but that host was just stopped by the
+      # previous task, so Ansible couldn't reach it to execute the
+      # module at all ("No route to host"), failing before the actual
+      # lxc.conf lines were ever added. Must check reachability FROM the
+      # control node, not from the host being stopped.
 
     - name: Configure /dev/net/tun in LXC config
       lineinfile:

@@ -128,7 +128,7 @@
     # approved worker-image change.
     pentagi_rebuild_kali_image: "{{ lookup('env', 'PENTAGI_REBUILD_KALI_IMAGE') | default('false', true) | bool }}"
 
-    # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
+    # Secrets -- OpenBao (see secrets/manifest.json). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.
     pentagi_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
     pentagi_postgres_password: "{{ lookup('env', 'PENTAGI_POSTGRES_PASSWORD') | mandatory('PENTAGI_POSTGRES_PASSWORD env var is required') }}"
@@ -247,7 +247,7 @@
     # the shared 'robot$ci-runner' system-level robot that signature-gate.yml
     # /security-scan.yml/supply-chain-signing-proof.yml use for signing and
     # scanning (sourced from GitHub Actions repo secrets, a separate store
-    # from SOPS). Reusing that shared credential here would mean any secret
+    # from OpenBao). Reusing that shared credential here would mean any secret
     # rotation done for this stack's sake could silently break those CI
     # pipelines. This robot can only push/pull the 'pentagi' project.
     # NOTE: Harbor's GET /api/v2.0/robots (and /robots/{id}) does not
@@ -257,7 +257,7 @@
     # ID and was absent from the full list immediately after. So an
     # existence pre-check against that endpoint is not trustworthy. Instead,
     # just attempt creation and treat 409 (name already taken) as the
-    # idempotent case, falling back to the secret already persisted in SOPS
+    # idempotent case, falling back to the secret already persisted in OpenBao
     # from whichever run first created it. The robot name is deterministic
     # (Harbor always renders it "robot$<project>+<name>"), so there's no
     # need to read it back from the API either way.
@@ -290,7 +290,7 @@
         - pentagi_rebuild_kali_image
         - not ansible_check_mode
 
-    - name: Display new pentagi push robot credentials -- store in SOPS for future runs
+    - name: Display new pentagi push robot credentials -- store in OpenBao for future runs
       ansible.builtin.debug:
         msg:
           - "ACTION REQUIRED: created a new Harbor robot scoped to the 'pentagi' project only."
@@ -854,6 +854,21 @@
       until: pentagi_pgvector_health.stdout == "healthy"
       retries: 10
       delay: 5
+
+- name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive: a new role, new files under its own directory, a new
+  # systemd timer, and a new dedicated (shared) OpenSearch user -- does not
+  # touch this stack's own compose deployment or any other role's state.
+  # See docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02) -- this stack
+  # is one of the confirmed gap-list hosts Portainer deliberately doesn't
+  # reach. Gated the same way es_findings_ingest/harbor_repull are: explicit
+  # opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: docker_live_usage_reporter
+      when: docker_live_usage_reporter_enabled | default(false) | bool
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

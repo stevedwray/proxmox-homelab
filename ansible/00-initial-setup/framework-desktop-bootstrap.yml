@@ -62,9 +62,11 @@
 # node_exporter/rsyslog_forward roles below resolve -- this playbook family
 # has no ansible.cfg of its own, unlike terraform/lxc/ansible/ which
 # provision.sh points ANSIBLE_CONFIG at):
-#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets \
-#     ansible-playbook -i ansible/inventory/ \
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
 #     ansible/00-initial-setup/framework-desktop-bootstrap.yml
+# (pve's OpenBao profile: step-ca and node_exporter secrets. Plain
+# ./with-secrets now defaults to the pve-test-vm profile and overlay.)
 
 - name: Bootstrap Framework Desktop for AI/LLM workloads
   hosts: framework
@@ -376,47 +378,19 @@
         - framework_root_ca_exists | bool
         - framework_homelab_root_ca_copy.changed
 
-    # Found live 2026-07-25: this inventory group's ansible_host defaults to
-    # the FQDN string unless FRAMEWORK_HOST_IP is set (ansible/inventory/
-    # inventory.yml), so node_exporter's step-ca cert (SANs come from
-    # ansible_host/inventory_hostname) previously had no IP SAN --
-    # VictoriaMetrics scrapes by IP (LAB_IP_FRAMEWORK) and TLS verification
-    # failed: "doesn't contain any IP SANs". FRAMEWORK_HOST_IP is now set in
-    # .env, so any *future* reissuance gets it right -- this task only
-    # forces the one-time reissuance of an already-existing, wrong cert;
-    # once it has the IP SAN it stays a no-op.
-    - name: Check whether existing node_exporter cert has the host's IP as a SAN
-      ansible.builtin.command:
-        cmd: openssl x509 -in /etc/node_exporter/certs/tls.crt -noout -ext subjectAltName
-      register: framework_node_exporter_cert_sans
-      changed_when: false
-      failed_when: false
-
-    - name: Remove node_exporter cert lacking an IP SAN (forces reissuance below)
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/node_exporter/certs/tls.crt
-        - /etc/node_exporter/certs/tls.key
-      when: >-
-        framework_node_exporter_cert_sans.rc == 0
-        and ('IP Address:' + ansible_host) not in framework_node_exporter_cert_sans.stdout
-
     - name: Install node_exporter for host metrics collection (scraped by monitoring-stack)
       ansible.builtin.include_role:
         name: node_exporter
       vars:
         node_exporter_textfile_dir: "{{ framework_textfile_collector_dir }}"
 
-    # GPU and Ollama neither one exposes Prometheus metrics natively
-    # (confirmed live 2026-07-25: llama.cpp's /metrics returned nothing,
-    # Ollama's /metrics 404s) -- these two small scripts poll AMDGPU
-    # sysfs and Ollama's /api/ps respectively and write node_exporter
-    # textfile-collector output, reusing the already-scraped node_exporter
-    # job instead of standing up new scrape targets. See
+    # AMDGPU exposes no Prometheus metrics natively, so this small script
+    # polls AMDGPU sysfs and writes node_exporter textfile-collector output,
+    # reusing the already-scraped node_exporter job. See
     # docs/framework-ubuntu/platform-integration-plan.md "Local AI
-    # dashboard" section.
+    # dashboard" section. The Ollama collector that used to sit beside it
+    # is gone with Ollama itself; llama.cpp is scraped directly via
+    # --metrics instead (docs/framework-ip-and-port/plan.md).
     - name: Copy GPU stats textfile-collector script
       ansible.builtin.copy:
         src: files/gpu_stats_textfile.py
@@ -425,15 +399,15 @@
         group: root
         mode: "0755"  # nosonar: ansible:S2612 — executable script, root-owned, no secrets
 
-    - name: Copy Ollama stats textfile-collector script
-      ansible.builtin.copy:
-        src: files/ollama_stats_textfile.py
-        dest: /usr/local/bin/ollama_stats_textfile.py
-        owner: root
-        group: root
-        mode: "0755"  # nosonar: ansible:S2612 — executable script, root-owned, no secrets
+    - name: Remove the retired Ollama stats collector and its stale output
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/ollama_stats_textfile.py
+        - "{{ framework_textfile_collector_dir }}/ollama_stats.prom"
 
-    - name: Write framework AI stats systemd service (runs both textfile-collector scripts)
+    - name: Write framework AI stats systemd service (runs the GPU textfile-collector script)
       ansible.builtin.copy:
         dest: /etc/systemd/system/framework-ai-stats.service
         owner: root
@@ -441,12 +415,11 @@
         mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
         content: |
           [Unit]
-          Description=Write AMDGPU + Ollama stats for node_exporter's textfile collector
+          Description=Write AMDGPU stats for node_exporter's textfile collector
 
           [Service]
           Type=oneshot
           ExecStart=/usr/bin/python3 /usr/local/bin/gpu_stats_textfile.py
-          ExecStart=/usr/bin/python3 /usr/local/bin/ollama_stats_textfile.py
       register: framework_ai_stats_service
 
     - name: Write framework AI stats systemd timer
@@ -457,7 +430,7 @@
         mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
         content: |
           [Unit]
-          Description=Periodically refresh AMDGPU + Ollama stats for node_exporter
+          Description=Periodically refresh AMDGPU stats for node_exporter
 
           [Timer]
           OnBootSec=15s

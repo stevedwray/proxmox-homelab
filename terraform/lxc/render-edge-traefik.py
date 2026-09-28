@@ -217,8 +217,13 @@ def _extract_intended_replacements(
 
 
 def _build_route_dynamic_config(route: dict[str, object]) -> tuple[str, dict[str, object], dict[str, object] | None]:
+    return _build_route_dynamic_config_for_host(route, str(route["host"]))
+
+
+def _build_route_dynamic_config_for_host(
+    route: dict[str, object], host: str
+) -> tuple[str, dict[str, object], dict[str, object] | None]:
     route_name = str(route["name"])
-    host = str(route["host"])
     backend = route["backend"]
     auth_mode = route["auth"]["mode"]
     resolver = route["tls"]["resolver"]
@@ -245,6 +250,65 @@ def _build_route_dynamic_config(route: dict[str, object]) -> tuple[str, dict[str
         router["service"] = backend["service"]
 
     return route_name, router, service
+
+
+def render_pangolin_traefik_dry_run(manifest_paths: list[Path]) -> RenderResult:
+    """Render explicit public and client-only Pangolin route opt-ins."""
+
+    validation = validate_manifests(manifest_paths)
+    if not validation.ok:
+        return RenderResult(
+            rendered=(),
+            issues=tuple(
+                RenderIssue(code=issue.code, message=issue.message, manifest=issue.manifest, host=issue.route)
+                for issue in validation.issues
+            ),
+            warnings=(),
+            legacy_route_count=0,
+        )
+
+    rendered: list[RenderedStack] = []
+    for manifest_path in sorted(manifest_paths):
+        document = load_manifest(manifest_path)
+        metadata = document["metadata"]
+        stack = str(metadata["stack"])
+        routers: dict[str, object] = {}
+        services: dict[str, object] = {}
+        for route in sorted(document["spec"]["routes"], key=lambda item: str(item["name"])):
+            pangolin = route.get("pangolin")
+            if not isinstance(pangolin, dict):
+                continue
+            public_host = pangolin.get("public_host")
+            if isinstance(public_host, str) and public_host.strip():
+                route_name, router, service = _build_route_dynamic_config_for_host(
+                    route, public_host.strip()
+                )
+                routers[route_name] = router
+                if service is not None:
+                    services[str(router["service"])] = service
+
+            # A private route reuses the route's LAN hostname. It is delivered
+            # only to pangolin-proxy; publication still requires an explicit
+            # dashboard private resource and client-side alias, never public DNS.
+            if pangolin.get("private_host") is True:
+                private_name = f"{route['name']}-private"
+                _, router, service = _build_route_dynamic_config_for_host(
+                    route, str(route["host"])
+                )
+                routers[private_name] = router
+                if service is not None:
+                    services[str(router["service"])] = service
+        if routers:
+            rendered_http: dict[str, object] = {"routers": routers}
+            if services:
+                rendered_http["services"] = services
+            rendered.append(
+                RenderedStack(stack=stack, manifest=str(manifest_path), config={"http": rendered_http})
+            )
+
+    return RenderResult(
+        rendered=tuple(rendered), issues=(), warnings=(), legacy_route_count=0
+    )
 
 
 def _render_manifest(
@@ -413,7 +477,22 @@ def render_traefik_dry_run(manifest_paths: list[Path], legacy_playbook: Path) ->
 
 
 def write_rendered_files(rendered: tuple[RenderedStack, ...], output_dir: Path) -> list[Path]:
-    """Write per-stack rendered config files to the output directory."""
+    """Write per-stack rendered config files to the output directory.
+
+    Full-sync semantics, not additive: a stack whose EdgeManifest route no
+    longer renders (opted out, host removed, etc.) has its previously
+    written <stack>.yml removed here too. Without this, a stale local file
+    survives indefinitely and gets faithfully republished to the live host
+    on every future deploy -- confirmed live, 2026-09-25: removing
+    authentik-stack's `pangolin` route left `authentik-stack.yml` sitting
+    in the generated dir, and deploy-pangolin-proxy.yml's own
+    remove-then-republish step (which only ever looks at what's in this
+    generated dir, not at what EdgeManifest currently declares) would have
+    faithfully recreated the live route on the very next redeploy. This
+    directory is dedicated, generated-only content (`.generated/traefik/`,
+    `.generated/pangolin-traefik/`) -- safe to fully sync rather than
+    only add to.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     written_paths: list[Path] = []
@@ -424,6 +503,12 @@ def write_rendered_files(rendered: tuple[RenderedStack, ...], output_dir: Path) 
             encoding="utf-8",
         )
         written_paths.append(output_path)
+
+    written_names = {path.name for path in written_paths}
+    for existing in output_dir.glob("*.yml"):
+        if existing.name not in written_names:
+            existing.unlink()
+
     return written_paths
 
 

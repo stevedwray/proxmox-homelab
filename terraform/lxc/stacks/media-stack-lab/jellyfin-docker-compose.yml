@@ -26,6 +26,18 @@ services:
       - /nas-media/video/movies:/movies
       - /nas-media/video/tv:/tv
       - /nas-media/music:/music
+    devices:
+      # AMD Radeon RX 6600 (pve's real GPU), passed through to the LXC via
+      # device_passthrough in stack.yaml (root@pam-only, applied
+      # out-of-band -- see that file). mode 0666 there means no
+      # group-membership dependency here. card0 (the primary DRM node) is
+      # included alongside the render node -- being tested live 2026-09-16
+      # to see whether Mesa/radeonsi's buffer allocation needs it for
+      # VAAPI surface creation (renderD128 alone got device init working
+      # but not surface allocation: "Query format failed ... Cannot
+      # allocate memory" on the hwupload filter).
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/card0:/dev/dri/card0
     ports:
       - 8096:8096
       - 8920:8920
@@ -37,6 +49,16 @@ services:
     restart: unless-stopped
     security_opt:
       - seccomp:unconfined
+    ulimits:
+      # Docker's default memlock cap (8MB here, confirmed live) is far too
+      # small for radeonsi's VAAPI buffer pinning -- confirmed live: ffmpeg
+      # -hwaccel vaapi failed with "Query format failed ... Cannot allocate
+      # memory" against this exact GPU until this was raised. Unlimited,
+      # matching ffmpeg/VAAPI's own documented recommendation for this
+      # class of error.
+      memlock:
+        soft: -1
+        hard: -1
 
 volumes:
   # External: preserves the volume created under the original combined

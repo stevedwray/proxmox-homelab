@@ -21,7 +21,7 @@ cores: 2
 memory: 1024
 swap: 512
 rootfs_size: 10
-storage_profile: platform-default
+storage_profile: platform-nvme
 docker_storage_size: "5G"
 docker_mount:
   logical_name: docker-data

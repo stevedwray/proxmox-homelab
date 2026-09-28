@@ -1,0 +1,417 @@
+---
+# gaming-stack-lab's own dedicated playbook, replacing the shared
+# deploy-portainer-agent.yml it used before Wings was added -- see
+# docs/gaming-stack-lab/plan.md, step gaming-lab-03-wings-install.
+#
+# Installs Docker/Portainer-agent base (unchanged from before), then pairs
+# this host with pterodactyl-lab's Panel as a Wings node: creates a
+# Location/Node/Allocations via the Panel's Application API if they don't
+# already exist (idempotent -- checked before creating, not blindly
+# re-posted every run), then runs Wings' own `wings configure` to fetch
+# and write its config.yml, matching the real CLI flags confirmed from
+# pterodactyl/wings' own cmd/configure.go (2026-09-20) -- not guessed.
+#
+# This playbook only gets Wings itself running and paired. Creating the
+# actual Minecraft/ARK servers under Wings (eggs, world/mod data,
+# allocations-to-server assignment) is separate, reviewed work, not part
+# of this file -- matching gaming-stack-lab's existing README convention
+# of hand-curating game content rather than automating it.
+
+- name: Configure Docker base and install Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Register endpoint with infra Portainer
+  hosts: all
+  roles:
+    - portainer_api
+    - portainer_stack
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades
+
+- name: Pair this host with pterodactyl-lab's Panel as a Wings node
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    # Direct internal address, not the public HTTPS FQDN -- that route now
+    # sits behind Authentik's forwardAuth gate (added when this stack got
+    # wired up to Traefik), which intercepts unauthenticated API calls and
+    # redirects to a login page instead of serving JSON. Found live
+    # 2026-09-20 ("invalid JSON" turned out to be an HTML login page, not
+    # a real parsing bug). Server-to-server Application API calls (this
+    # playbook's, and Wings' own `configure` fetch) go direct instead --
+    # same game_seg zone, no need to route through the public gate at all.
+    pterodactyl_panel_url: "http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') | mandatory('LAB_IP_PTERODACTYL_LAB env var is required') }}" # nosonar: ansible:S5332 -- Panel's Application API, private game_seg only
+    pterodactyl_api_key: "{{ lookup('env', 'PTERODACTYL_LAB_API_KEY') | mandatory('PTERODACTYL_LAB_API_KEY env var is not set -- create an Application API key in Panel first (one-time manual bootstrap, cannot be API-driven)') }}"
+    pterodactyl_api_headers:
+      Authorization: "Bearer {{ pterodactyl_api_key }}"
+      Accept: "Application/vnd.pterodactyl.v1+json"
+      Content-Type: "application/json"
+    pterodactyl_location_short: "game-servers"
+    pterodactyl_node_name: "gaming-stack-lab"
+    pterodactyl_required_ports:
+      - "25565" # Minecraft game
+      - "25575" # Minecraft RCON
+      - "7777"  # ARK game
+      - "7778"  # ARK peer (game + 1)
+      - "27015" # ARK query
+      - "37015" # ARK RCON
+      - "3724"  # AzerothCore authserver (WoW 3.3.5a)
+      - "8085"  # AzerothCore worldserver
+    wings_version: "v1.13.3"
+
+  tasks:
+    - name: Look up existing Location by short code
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/locations?filter[short]={{ pterodactyl_location_short }}"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: pterodactyl_location_lookup
+
+    - name: Create Location if it doesn't already exist
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/locations"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: POST
+        status_code: 201
+        return_content: true
+        body_format: json
+        body:
+          short: "{{ pterodactyl_location_short }}"
+          long: "gaming-stack-lab game servers"
+      register: pterodactyl_location_create
+      when: (pterodactyl_location_lookup.content | from_json).data | length == 0
+
+    # ansible.builtin.uri does not populate .content or .json at all
+    # unless return_content: true is set -- found live 2026-09-20 running
+    # this for real (two separate failures, one per missing attribute,
+    # before catching the actual cause). Parsed from .content, matching
+    # the pattern already used in configure-gaming-stack-dns-records.yml
+    # ((technitium_login.content | from_json).token).
+    - name: Determine Location id (existing or just-created)
+      ansible.builtin.set_fact:
+        pterodactyl_location_id: >-
+          {{ (pterodactyl_location_lookup.content | from_json).data[0].attributes.id
+             if (pterodactyl_location_lookup.content | from_json).data | length > 0
+             else (pterodactyl_location_create.content | from_json).attributes.id }}
+
+    - name: Look up existing Node by FQDN
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/nodes?filter[fqdn]={{ ansible_host }}"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: pterodactyl_node_lookup
+
+    - name: Create Node if it doesn't already exist
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/nodes"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: POST
+        status_code: 201
+        return_content: true
+        body_format: json
+        body:
+          name: "{{ pterodactyl_node_name }}"
+          description: "gaming-stack-lab -- Minecraft/ARK Wings node"
+          location_id: "{{ pterodactyl_location_id }}"
+          fqdn: "{{ ansible_host }}"
+          scheme: "http"
+          behind_proxy: false
+          maintenance_mode: false
+          memory: 24576
+          # Servers on this node are intentionally overallocated because the
+          # shared game-slot lock below admits exactly one at runtime. 100%
+          # leaves room for the current 16GB ARK + 16GB Minecraft definitions
+          # on a 24GB node without pretending they can run concurrently.
+          memory_overallocate: 100
+          disk: 500000
+          disk_overallocate: 0
+          upload_size: 100
+          daemon_listen: 8080
+          daemon_sftp: 2022
+          daemon_base: "/srv/docker/pterodactyl-volumes"
+      register: pterodactyl_node_create
+      when: (pterodactyl_node_lookup.content | from_json).data | length == 0
+
+    - name: Determine Node id (existing or just-created)
+      ansible.builtin.set_fact:
+        pterodactyl_node_id: >-
+          {{ (pterodactyl_node_lookup.content | from_json).data[0].attributes.id
+             if (pterodactyl_node_lookup.content | from_json).data | length > 0
+             else (pterodactyl_node_create.content | from_json).attributes.id }}
+
+    - name: Look up this node's existing allocations
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/nodes/{{ pterodactyl_node_id }}/allocations"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: pterodactyl_allocation_lookup
+
+    # Port ranges cover Minecraft, ARK, and the planned AzerothCore server.
+    # ARK's ports were corrected 2026-09-20 -- the smoketest used
+    # azixus/ARK_Ascended_Docker's own defaults (7790 game, 32330 RCON),
+    # but the actual Wings egg to be used (pelican-eggs' official
+    # ark_survival_ascended, confirmed via its real README) has different
+    # real defaults: 7777 game, 7778 peer (auto game+1, not separately
+    # allocatable), 27015 query, 37015 RCON. AzerothCore uses 3724 for
+    # authserver and 8085 for worldserver; its server is still intentionally
+    # uncreated until the interlocked egg and operator choices are ready.
+    - name: Create any missing game-server allocations on this node
+      ansible.builtin.uri:
+        url: "{{ pterodactyl_panel_url }}/api/application/nodes/{{ pterodactyl_node_id }}/allocations"
+        headers: "{{ pterodactyl_api_headers }}"
+        method: POST
+        status_code: 204
+        body_format: json
+        body:
+          ip: "{{ ansible_host }}"
+          ports: ["{{ item }}"]
+      loop: "{{ pterodactyl_required_ports }}"
+      when: >-
+        item | int not in
+        ((pterodactyl_allocation_lookup.content | from_json).data |
+         map(attribute='attributes.port') | map('int') | list)
+
+    - name: Check whether Wings binary is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/wings
+      register: pterodactyl_wings_binary
+
+    - name: Download Wings binary ({{ wings_version }})
+      ansible.builtin.get_url:
+        url: "https://github.com/pterodactyl/wings/releases/download/{{ wings_version }}/wings_linux_amd64"
+        dest: /usr/local/bin/wings
+        mode: "0755"
+      when: not pterodactyl_wings_binary.stat.exists
+
+    - name: Create /etc/pterodactyl directory
+      ansible.builtin.file:
+        path: /etc/pterodactyl
+        state: directory
+        mode: "0700"
+
+    - name: Check whether Wings is already configured
+      ansible.builtin.stat:
+        path: /etc/pterodactyl/config.yml
+      register: pterodactyl_wings_config
+
+    # Uses Wings' own `configure` subcommand to fetch and write config.yml
+    # via the Application API, rather than hand-serializing the API's JSON
+    # response ourselves -- the node configuration endpoint
+    # (GET /nodes/{id}/configuration) returns plain JSON, not ready-to-use
+    # YAML; letting Wings do its own fetch+write avoids guessing at
+    # config.yml's exact schema. --override is safe to pass even when a
+    # config already exists (idempotent re-pairing), but this task is
+    # still gated on the file's absence to avoid an unnecessary re-fetch
+    # on every run.
+    - name: Configure Wings via its own configure subcommand
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/wings configure
+          --panel-url {{ pterodactyl_panel_url }}
+          --token {{ pterodactyl_api_key }}
+          --node {{ pterodactyl_node_id }}
+      when: not pterodactyl_wings_config.stat.exists
+      no_log: true
+
+    # Four real, live-found fixes to Wings' own generated config.yml,
+    # applied unconditionally (not gated on first-configure) so they
+    # self-heal even against an already-existing file:
+    #
+    # 1. allowed_origins defaults to [] -- Wings rejects every browser
+    #    websocket connection (console/power controls) with 403
+    #    "request origin not allowed by Upgrader.CheckOrigin" until the
+    #    Panel's own origins are explicitly allowed. Found live
+    #    2026-09-20: no error banner in Panel's UI, just a permanently
+    #    disabled Start button -- the real cause was only visible in
+    #    Wings' own systemd journal.
+    - name: Fix Wings config -- allow the Panel's origins for websocket connections
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^allowed_origins:"
+        line: "allowed_origins: ['http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') }}', 'https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}']" # nosonar: ansible:S5332 -- Panel's own internal fallback origin, not a real cross-origin exposure
+      register: pterodactyl_wings_origins_fix
+
+    # 2. docker.network.dns defaults to 1.1.1.1/1.0.0.1 (public resolvers),
+    #    but game_seg's firewall only permits DNS to the router itself --
+    #    install containers couldn't resolve steamcdn-a.akamaihd.net at
+    #    all. Point Wings at the same resolver every container in this
+    #    zone already uses instead of opening new egress for a
+    #    Cloudflare-specific IP.
+    - name: Fix Wings config -- point Docker network DNS at the in-zone resolver
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^(\s+- )1\.1\.1\.1\s*$'
+        replace: '\1{{ dns_server }}'
+      register: pterodactyl_wings_dns_fix
+
+    - name: Fix Wings config -- drop the now-redundant secondary public DNS entry
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: '^\s+- 1\.0\.0\.1\s*$'
+        state: absent
+      register: pterodactyl_wings_dns_fix2
+
+    # 3. docker.network's default subnet (172.18.0.0/16) collided with
+    #    gaming-stack-lab's existing portainer_portainer-agent network on
+    #    this exact host, crash-looping Wings on every boot ("Pool
+    #    overlaps with other one on this address space"). 172.20.0.0/16
+    #    confirmed clear of every network already on this host.
+    - name: Fix Wings config -- avoid Docker subnet collision with existing networks
+      ansible.builtin.replace:
+        path: /etc/pterodactyl/config.yml
+        regexp: '172\.18\.0\.(1|0/16)'
+        replace: '172.20.0.\1'
+      register: pterodactyl_wings_subnet_fix
+
+    - name: Remove the Docker network so Wings recreates it with corrected settings
+      community.docker.docker_network:
+        name: pterodactyl_nw
+        state: absent
+      when: >-
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed
+
+    # 4. system.data defaults to /var/lib/pterodactyl/volumes, on this
+    #    host's 16GB rootfs -- not the dedicated 500GB gaming-containers
+    #    mount at /srv/docker that's provisioned specifically for game
+    #    data (see this stack's extra_mount in stack.yaml). Every
+    #    server's data was piling onto the small disk, discovered live
+    #    2026-09-23 when the rootfs hit 72% and blocked an ARK update
+    #    mid-download. Existing data was migrated by hand (rsync,
+    #    checksum-verified) before this fix landed; a fresh deploy just
+    #    gets the right path from the start.
+    - name: Ensure the game-data volumes directory exists on the dedicated mount
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/volumes
+        state: directory
+        mode: "0755"
+
+    # Every game on this node is deliberately sized on the assumption that it
+    # runs alone. A shared, read-only lock file lets each egg use flock(1) as
+    # an atomic admission check: the winning server holds the lock for its
+    # entire process lifetime and every concurrent start exits immediately.
+    # The Panel mount that exposes this directory inside servers is created
+    # separately because Pterodactyl has no Application API for mounts.
+    - name: Ensure the shared game-slot lock directory exists
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/game-slot
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure the shared game-slot lock file exists
+      ansible.builtin.file:
+        path: /srv/docker/pterodactyl/game-slot/active.lock
+        state: touch
+        owner: root
+        group: root
+        mode: "0444"
+        modification_time: preserve
+        access_time: preserve
+
+    - name: Allow Wings to expose the shared game-slot lock mount
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^allowed_mounts:"
+        line: "allowed_mounts: ['/srv/docker/pterodactyl/game-slot']"
+      register: pterodactyl_wings_allowed_mounts_fix
+
+    - name: Fix Wings config -- store server data on the dedicated game-data mount
+      ansible.builtin.lineinfile:
+        path: /etc/pterodactyl/config.yml
+        regexp: "^  data: .*"
+        line: "  data: /srv/docker/pterodactyl/volumes"
+      register: pterodactyl_wings_data_path_fix
+
+    - name: Restart Wings if any config fix actually changed something
+      ansible.builtin.systemd:
+        name: wings
+        state: restarted
+      when: >-
+        pterodactyl_wings_origins_fix.changed or
+        pterodactyl_wings_dns_fix.changed or
+        pterodactyl_wings_dns_fix2.changed or
+        pterodactyl_wings_subnet_fix.changed or
+        pterodactyl_wings_data_path_fix.changed or
+        pterodactyl_wings_allowed_mounts_fix.changed
+
+    - name: Install Wings systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/wings.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Pterodactyl Wings Daemon
+          After=docker.service
+          Requires=docker.service
+
+          [Service]
+          User=root
+          WorkingDirectory=/etc/pterodactyl
+          LimitNOFILE=4096
+          PIDFile=/var/run/wings/daemon.pid
+          ExecStart=/usr/local/bin/wings
+          Restart=on-failure
+          StartLimitInterval=180
+          StartLimitBurst=30
+          RestartSec=5s
+
+          [Install]
+          WantedBy=multi-user.target
+      register: pterodactyl_wings_systemd_unit
+
+    - name: Reload systemd and enable/start Wings
+      ansible.builtin.systemd:
+        name: wings
+        state: started
+        enabled: true
+        daemon_reload: "{{ pterodactyl_wings_systemd_unit.changed }}"

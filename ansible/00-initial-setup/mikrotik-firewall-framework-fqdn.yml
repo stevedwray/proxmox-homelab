@@ -1,0 +1,293 @@
+---
+# Framework Desktop (framework.gibbsgreatly.xyz) firewall access, DNS-driven.
+#
+# Single owner of every MikroTik forward rule whose destination is the
+# Framework Desktop. Rules match dst-address-list=framework; that list's one
+# static entry is the FQDN, which RouterOS resolves itself (from its own
+# /ip/dns/static record) into dynamic child entries. Changing Framework's IP
+# therefore needs only the DNS record changed -- no playbook, env var or
+# rule edit. See docs/framework-ip-and-port/plan.md.
+#
+# Replaces the dst-address=<IP> rules previously added by
+# mikrotik-firewall-ai-services-stack.yml and mikrotik-firewall-cse-seg.yml,
+# and removes the hand-added PentAGI-era pentest_seg -> framework rules
+# (PentAGI is deprecated; those paths are removed, not converted).
+# Ports: 8080 = llama-server chat (API key), 8085 = llama-server embeddings.
+# Ollama's 11434 is gone from framework and is not re-opened.
+#
+# Order is add-before-remove: address-list, wait for it to resolve, add the
+# list-based rules ahead of the first forward drop/reject, assert, and only
+# then delete legacy rules -- no window without an allow. Legacy rules are
+# matched by exact comment AND by still carrying a literal dst-address, so a
+# re-run never touches anything this playbook created.
+#
+# pve, pve-tiny and pve-test-vm share this one physical router; ai_seg and
+# cse_seg rules are subnet-scoped and apply to all of them at once.
+
+- name: Ensure DNS-driven framework firewall rules on the live MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
+    lab_subnet_cse_cidr: "{{ lookup('env', 'lab_subnet_cse_cidr') | mandatory('lab_subnet_cse_cidr env var is required') }}"
+    framework_fqdn: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | mandatory('LAB_FQDN_FRAMEWORK env var is required') }}"
+    framework_address_list: "framework"
+    framework_address_list_comment: "framework-fqdn: Framework Desktop, resolved by RouterOS DNS"
+
+    framework_firewall_rules:
+      - comment: "framework-fqdn: ai_seg to framework llama-server chat/embeddings"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address-list: "{{ framework_address_list }}"
+        dst-port: "8080,8085"
+      - comment: "framework-fqdn: cse_seg to framework llama-server"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_cse_cidr }}"
+        dst-address-list: "{{ framework_address_list }}"
+        dst-port: "8080"
+
+    framework_legacy_rule_comments:
+      - "ai-services-stack: ai_seg to framework llamacpp-router/ollama"
+      - "cse_seg to framework llama-server"
+      - "pentest_seg to framework Ollama"
+      - "pentest_seg to framework SearXNG"
+      - "pentest_seg to framework llamacpp-router"
+      - "pentest_seg to framework SSH (test-harness runner)"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          Set MIKROTIK_ADMIN/MIKROTIK_USER and MIKROTIK_ADMIN_PASSWORD/MIKROTIK_PASSWORD
+          before running this playbook.
+
+  tasks:
+    # ── 1. Address-list entry (FQDN) ─────────────────────────────────────────
+
+    - name: Read MikroTik firewall address-lists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: framework_address_lists
+      no_log: true
+
+    - name: Add framework FQDN address-list entry if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          list: "{{ framework_address_list }}"
+          address: "{{ framework_fqdn }}"
+          comment: "{{ framework_address_list_comment }}"
+        status_code: [200, 201]
+      when: >-
+        (framework_address_lists.json
+          | selectattr('list', 'equalto', framework_address_list)
+          | selectattr('address', 'equalto', framework_fqdn)
+          | list) | length == 0
+      no_log: true
+
+    - name: Wait for RouterOS to resolve the FQDN into the address-list
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: framework_address_lists_resolved
+      until: >-
+        (framework_address_lists_resolved.json
+          | selectattr('list', 'equalto', framework_address_list)
+          | selectattr('address', 'match', '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+          | list) | length > 0
+      retries: 12
+      delay: 5
+      no_log: true
+
+    - name: Report resolved framework address(es)
+      ansible.builtin.debug:
+        msg: >-
+          {{ framework_fqdn }} resolved by RouterOS to
+          {{ framework_address_lists_resolved.json
+             | selectattr('list', 'equalto', framework_address_list)
+             | selectattr('address', 'match', '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+             | map(attribute='address') | list }}
+
+    # ── 2. List-based rules, ahead of the first forward drop/reject ──────────
+
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add each missing list-based framework rule
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: >-
+          {{
+            item | combine({'place-before': forward_drop_anchor['.id']})
+            if forward_drop_anchor != {} else item
+          }}
+        status_code: [200, 201]
+      loop: "{{ framework_firewall_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when: >-
+        (firewall_filters.json
+          | selectattr('comment', 'defined')
+          | selectattr('comment', 'equalto', item.comment)
+          | selectattr('dst-address-list', 'defined')
+          | selectattr('dst-address-list', 'equalto', item['dst-address-list'])
+          | selectattr('src-address', 'defined')
+          | selectattr('src-address', 'equalto', item['src-address'])
+          | selectattr('dst-port', 'defined')
+          | selectattr('dst-port', 'equalto', item['dst-port'])
+          | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after add
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_added
+      no_log: true
+
+    - name: Assert every list-based framework rule exists before removing anything
+      ansible.builtin.assert:
+        that:
+          - >-
+            (firewall_filters_added.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', item.comment)
+              | selectattr('dst-address-list', 'defined')
+              | selectattr('dst-address-list', 'equalto', item['dst-address-list'])
+              | selectattr('dst-port', 'defined')
+              | selectattr('dst-port', 'equalto', item['dst-port'])
+              | list) | length == 1
+        fail_msg: "Rule '{{ item.comment }}' missing or duplicated -- legacy rules NOT removed."
+      loop: "{{ framework_firewall_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+
+    # ── 3. Remove legacy IP-based rules ──────────────────────────────────────
+
+    - name: Build list of legacy IP-based framework rules
+      ansible.builtin.set_fact:
+        framework_legacy_rules: >-
+          {{
+            firewall_filters_added.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'in', framework_legacy_rule_comments)
+            | selectattr('dst-address', 'defined')
+            | list
+          }}
+
+    - name: Report legacy rules about to be removed
+      ansible.builtin.debug:
+        msg: "{{ framework_legacy_rules | map(attribute='comment') | list }}"
+
+    - name: Remove legacy IP-based framework rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/{{ item['.id'] }}"
+        method: DELETE
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        status_code: [200, 204]
+      loop: "{{ framework_legacy_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after removal
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert no legacy IP-based framework rule remains
+      ansible.builtin.assert:
+        that:
+          - >-
+            (firewall_filters_final.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'in', framework_legacy_rule_comments)
+              | list) | length == 0
+        fail_msg: "Legacy framework rules still present after removal."

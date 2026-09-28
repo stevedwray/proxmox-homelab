@@ -1,0 +1,279 @@
+---
+# CyberSecEval cyber-range clone/configure/test/generate-pair-JSON/
+# collect/destroy automation (plan §7's remaining "Automate" list, beyond
+# the static-pair prep step already built in
+# terraform/lxc/stacks/cse-controller/cyberseceval-config/). This is a
+# real, imperative lifecycle tool -- not a Terraform-managed stack --
+# meant to be run ad hoc against pve-test whenever a fresh, disposable
+# attacker/target pair is needed instead of the fixed static pair
+# (cse-kali 192.168.70.210/212, metasploitable3-win2k8 192.168.70.211).
+#
+# Scope, deliberately: this proves the CLONE/CONFIGURE/TEST/GENERATE-
+# PAIR-JSON/DESTROY mechanics end-to-end. It does not run any actual
+# CyberSecEval benchmark (still deliberately out of scope this session),
+# so "collect" has nothing real to collect yet -- see the stub task
+# below. The generated pair JSON is written to pve-test and fetched back
+# to the Ansible control node for inspection; wiring it into
+# cse-controller's own run-orchestration (currently reads the static
+# cyber_range_pairs.json) is a separate, not-yet-built integration step.
+#
+# Target-VM IP note: metasploitable3-win2k8's IP is set inside the
+# Windows guest itself (console-only netsh, not Proxmox-managed -- see
+# current-state.md), so a full clone boots with the IDENTICAL IP
+# (192.168.70.211) as the source. This playbook only runs safely when
+# the source VM (70011) is stopped, which is asserted below -- do not
+# run this while the static-pair VM is powered on, or both instances
+# will collide on the same IP.
+#
+# Run with (pve-test is NOT a production node -- see terraform/PRODUCTION_NODES):
+#   PVE_ENV=pve-test ./with-secrets ansible-playbook \
+#     -i ansible/inventory/dev.yml ansible/00-initial-setup/cse-range-clone-destroy-cycle.yml
+
+- name: CyberSecEval cyber-range clone/configure/test/generate-pair-JSON/destroy cycle
+  hosts: pve-test.gibbsgreatly.xyz
+  become: true
+  gather_facts: false
+
+  vars:
+    cse_range_pentest_bridge: tvpent
+    cse_range_pentest_gw: 192.168.70.1
+
+    cse_range_attacker_source_vmid: 70010
+    cse_range_attacker_clone_vmid: 70020
+    cse_range_attacker_clone_ip: 192.168.70.220
+
+    cse_range_target_source_vmid: 70011
+    cse_range_target_clone_vmid: 70021
+    # Baked into the Windows guest itself -- see note above. NOT
+    # reassigned on clone (no automated way to do so yet).
+    cse_range_target_clone_ip: 192.168.70.211
+
+    cse_range_pair_json_path: "/tmp/cse-range-pair-{{ cse_range_run_id }}.json"
+
+  tasks:
+    # `lookup('pipe', 'date +%s')` re-executes on every Jinja reference --
+    # it is NOT memoized across tasks in `vars:`. Confirmed live
+    # 2026-09-19: the snapshot-name and clone --snapname args ended up
+    # with two different timestamps a few seconds apart, so the clone
+    # failed looking for a snapshot that was never actually created
+    # under that name. set_fact freezes it as a real fact instead.
+    - name: Freeze a single run id for this entire cycle
+      ansible.builtin.set_fact:
+        cse_range_run_id: "{{ lookup('pipe', 'date +%s') }}"
+
+    - name: Assert the ephemeral attacker VMID is not already in use
+      ansible.builtin.command:
+        cmd: "pct status {{ cse_range_attacker_clone_vmid }}"
+      register: cse_range_attacker_precheck
+      failed_when: cse_range_attacker_precheck.rc == 0
+      changed_when: false
+
+    - name: Assert the ephemeral target VMID is not already in use
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_clone_vmid }}"
+      register: cse_range_target_precheck
+      failed_when: cse_range_target_precheck.rc == 0
+      changed_when: false
+
+    - name: Assert the static-pair target VM is stopped (IP collision guard -- see header)
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_source_vmid }}"
+      register: cse_range_source_target_status
+      changed_when: false
+      failed_when: "'status: stopped' not in cse_range_source_target_status.stdout"
+
+    # -----------------------------------------------------------------
+    # CLONE
+    # -----------------------------------------------------------------
+
+    # cse-kali is the live static-pair attacker (cse-controller's own
+    # agent access depends on it) -- must not be stopped to clone it.
+    # Proxmox refuses a full clone of a *running* container except from
+    # a snapshot (confirmed live 2026-09-19: "Full clone of a running
+    # container is only possible from a snapshot"), so snapshot first.
+    - name: "CLONE: snapshot the live attacker source (required for a full clone while running)"
+      ansible.builtin.command:
+        cmd: "pct snapshot {{ cse_range_attacker_source_vmid }} cse-range-{{ cse_range_run_id }}"
+
+    - name: "CLONE: attacker (cse-kali) LXC, full clone from the snapshot to an ephemeral VMID"
+      ansible.builtin.command:
+        cmd: >-
+          pct clone {{ cse_range_attacker_source_vmid }} {{ cse_range_attacker_clone_vmid }}
+          --hostname cse-kali-range-{{ cse_range_run_id }} --full 1
+          --snapname cse-range-{{ cse_range_run_id }}
+
+    - name: "CLONE: target (metasploitable3-win2k8) VM, full clone to ephemeral VMID"
+      ansible.builtin.command:
+        cmd: >-
+          qm clone {{ cse_range_target_source_vmid }} {{ cse_range_target_clone_vmid }}
+          --name msf3-range-{{ cse_range_run_id }} --full 1
+
+    # -----------------------------------------------------------------
+    # CONFIGURE
+    # -----------------------------------------------------------------
+
+    - name: "CONFIGURE: give the attacker clone a distinct ephemeral IP"
+      ansible.builtin.command:
+        cmd: >-
+          pct set {{ cse_range_attacker_clone_vmid }}
+          --net0 name=eth0,bridge={{ cse_range_pentest_bridge }},gw={{ cse_range_pentest_gw }},ip={{ cse_range_attacker_clone_ip }}/24,type=veth
+
+    - name: "CONFIGURE: start the attacker clone"
+      ansible.builtin.command:
+        cmd: "pct start {{ cse_range_attacker_clone_vmid }}"
+
+    - name: "CONFIGURE: start the target clone"
+      ansible.builtin.command:
+        cmd: "qm start {{ cse_range_target_clone_vmid }}"
+
+    # -----------------------------------------------------------------
+    # TEST
+    # -----------------------------------------------------------------
+
+    - name: "TEST: wait for the attacker clone to report running"
+      ansible.builtin.command:
+        cmd: "pct status {{ cse_range_attacker_clone_vmid }}"
+      register: cse_range_attacker_status
+      until: "'status: running' in cse_range_attacker_status.stdout"
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: "TEST: wait for the attacker clone's ephemeral IP to answer ping"
+      ansible.builtin.command:
+        cmd: "ping -c1 -W2 {{ cse_range_attacker_clone_ip }}"
+      register: cse_range_attacker_ping
+      until: cse_range_attacker_ping.rc == 0
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: "TEST: verify the attacker clone's Kali/docker setup survived the clone intact"
+      ansible.builtin.command:
+        cmd: "pct exec {{ cse_range_attacker_clone_vmid }} -- docker exec cse-kali nmap --version"
+      register: cse_range_attacker_verify
+      changed_when: false
+
+    - name: "TEST: wait for the target clone to report running"
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_clone_vmid }}"
+      register: cse_range_target_status
+      until: "'status: running' in cse_range_target_status.stdout"
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: "TEST: give the target clone a grace period, then confirm it's still running (not crash-looped)"
+      ansible.builtin.pause:
+        seconds: 60
+
+    - name: "TEST: confirm the target clone is still running after the grace period"
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_clone_vmid }}"
+      register: cse_range_target_status_after_grace
+      changed_when: false
+      failed_when: "'status: running' not in cse_range_target_status_after_grace.stdout"
+
+    # -----------------------------------------------------------------
+    # GENERATE PAIR JSON
+    # -----------------------------------------------------------------
+
+    - name: "GENERATE PAIR JSON: write the ephemeral pair, same schema as the static cyber_range_pairs.json"
+      ansible.builtin.copy:
+        dest: "{{ cse_range_pair_json_path }}"
+        mode: "0644"
+        content: |
+          [
+            {
+              "attackerIP": "{{ cse_range_attacker_clone_ip }}",
+              "attackerName": "cse-kali-range-{{ cse_range_run_id }}",
+              "targetIP": "{{ cse_range_target_clone_ip }}",
+              "targetName": "msf3-range-{{ cse_range_run_id }}"
+            }
+          ]
+
+    - name: "GENERATE PAIR JSON: fetch it back to the Ansible control node for inspection"
+      ansible.builtin.fetch:
+        src: "{{ cse_range_pair_json_path }}"
+        dest: "/tmp/cse-range-pair-{{ cse_range_run_id }}.json"
+        flat: true
+
+    # -----------------------------------------------------------------
+    # COLLECT -- stub only. No benchmark ran against this pair, so
+    # there are no run/results/reports directories to pull back yet.
+    # A real implementation would rsync
+    # cse-controller:/srv/cyberseceval/runs/<run_id>/ here after a live
+    # benchmark.run against this pair's generated JSON.
+    # -----------------------------------------------------------------
+
+    - name: "COLLECT: stub -- no benchmark ran this cycle, nothing to collect"
+      ansible.builtin.debug:
+        msg: >-
+          COLLECT step is a stub: this cycle only proves clone/configure/
+          test/generate-pair-json/destroy mechanics, no benchmark was run
+          against this pair, so there are no results to pull back.
+
+    # -----------------------------------------------------------------
+    # DESTROY
+    # -----------------------------------------------------------------
+
+    - name: "DESTROY: stop the attacker clone"
+      ansible.builtin.command:
+        cmd: "pct stop {{ cse_range_attacker_clone_vmid }}"
+
+    - name: "DESTROY: stop the target clone"
+      ansible.builtin.command:
+        cmd: "qm stop {{ cse_range_target_clone_vmid }}"
+
+    - name: "DESTROY: wait for the attacker clone to report stopped"
+      ansible.builtin.command:
+        cmd: "pct status {{ cse_range_attacker_clone_vmid }}"
+      register: cse_range_attacker_stopped
+      until: "'status: stopped' in cse_range_attacker_stopped.stdout"
+      retries: 10
+      delay: 2
+      changed_when: false
+
+    - name: "DESTROY: wait for the target clone to report stopped"
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_clone_vmid }}"
+      register: cse_range_target_stopped
+      until: "'status: stopped' in cse_range_target_stopped.stdout"
+      retries: 10
+      delay: 2
+      changed_when: false
+
+    - name: "DESTROY: remove the attacker clone LXC"
+      ansible.builtin.command:
+        cmd: "pct destroy {{ cse_range_attacker_clone_vmid }} --purge 1"
+
+    - name: "DESTROY: remove the target clone VM"
+      ansible.builtin.command:
+        cmd: "qm destroy {{ cse_range_target_clone_vmid }} --purge 1"
+
+    - name: "DESTROY: verify the attacker clone VMID no longer exists"
+      ansible.builtin.command:
+        cmd: "pct status {{ cse_range_attacker_clone_vmid }}"
+      register: cse_range_attacker_gone
+      failed_when: cse_range_attacker_gone.rc == 0
+      changed_when: false
+
+    - name: "DESTROY: verify the target clone VMID no longer exists"
+      ansible.builtin.command:
+        cmd: "qm status {{ cse_range_target_clone_vmid }}"
+      register: cse_range_target_gone
+      failed_when: cse_range_target_gone.rc == 0
+      changed_when: false
+
+    - name: "DESTROY: remove the snapshot taken on the live attacker source"
+      ansible.builtin.command:
+        cmd: "pct delsnapshot {{ cse_range_attacker_source_vmid }} cse-range-{{ cse_range_run_id }}"
+
+    - name: Report cycle complete
+      ansible.builtin.debug:
+        msg: >-
+          Full clone/configure/test/generate-pair-json/collect(stub)/destroy
+          cycle completed for run {{ cse_range_run_id }}. Pair JSON fetched
+          to the control node at /tmp/cse-range-pair-{{ cse_range_run_id }}.json.
+          Both ephemeral VMIDs ({{ cse_range_attacker_clone_vmid }},
+          {{ cse_range_target_clone_vmid }}) confirmed destroyed.

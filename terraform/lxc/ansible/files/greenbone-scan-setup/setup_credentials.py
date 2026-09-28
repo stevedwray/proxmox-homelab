@@ -49,6 +49,11 @@ CREDENTIALS = {
         "login": "ansible",
         "key_path": os.environ["GREENBONE_STEVE_KEY_PATH"],
     },
+    "mikrotik-gvm-scan": {
+        "name": "MikroTik gvm-scan SSH key",
+        "login": "gvm-scan",
+        "key_path": os.environ["GREENBONE_MIKROTIK_KEY_PATH"],
+    },
 }
 
 # Only managed, known hosts belong here.  Do not replace these with CIDRs:
@@ -87,6 +92,11 @@ TARGETS = [
         "name": "Credentialed scan: Raspberry Pis",
         "credential": "raspberry-pi-ansible",
         "hosts": ["192.168.1.22", "192.168.1.23"],
+    },
+    {
+        "name": "Credentialed scan: MikroTik router",
+        "credential": "mikrotik-gvm-scan",
+        "hosts": ["192.168.1.1"],
     },
 ]
 

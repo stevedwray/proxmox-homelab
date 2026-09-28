@@ -10,7 +10,11 @@
   become: true
   gather_facts: true
   vars:
-    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    # Points at technitium-stack, not dns-stack -- see
+    # reference_dns_stack_docker_daemon_dependency memory/incident (this
+    # stack was the ORIGINAL 2026-08-16 outage: Harbor's pulls broke
+    # fleet-wide when dns-stack was stopped, because of this exact line).
+    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(dns_server, true) | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required') }}"
     harbor_docker_daemon_config:
       dns:
         - "{{ harbor_lab_ip_dns }}"

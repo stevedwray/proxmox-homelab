@@ -175,6 +175,49 @@ def reset_stats() -> dict:
     return snapshot
 
 
+REPETITION_WINDOW = 800
+REPETITION_MAX_PERIOD = 200
+REPETITION_RATIO_THRESHOLD = 0.6
+
+
+def _repetition_ratio(text: str, window: int = REPETITION_WINDOW, max_period: int = REPETITION_MAX_PERIOD) -> float:
+    """Return the fraction of the tail of `text` covered by the longest run
+    of some short (<= max_period char) unit repeated immediately back-to-
+    back with zero variation. 1.0 means that whole tail is one repeated
+    unit. Only the tail (last `window` chars) is checked -- a real answer
+    followed by a collapse into garbage should still be caught, and
+    bounding the window keeps this cheap even on an 8000+ token response.
+
+    2026-09-09: added after a live Gemma4 corruption (`<unused49>` x N,
+    Gemma's reserved-vocab placeholder token) sailed straight through the
+    original `?`-ratio check untouched -- that check only recognizes one
+    specific historical garbage character, not the general "the model
+    collapsed into looping one short unit" failure class it's actually an
+    instance of. This subsumes it (a run of `?` scores 1.0 here too) and
+    also catches the project's other documented real case, a whole
+    sentence repeated verbatim several times, which is wider than the old
+    64-char ceiling this replaced. Calibrated against real prose, code,
+    numbered lists, and changelog-style content (all land under ~0.35)
+    plus all three known corruption transcripts (all land at ~1.0) --
+    see test_proxy.py."""
+    tail = text[-window:] if len(text) > window else text
+    n = len(tail)
+    if n < 30:
+        return 0.0
+    best = 0
+    for period in range(1, min(max_period, n // 3) + 1):
+        unit = tail[:period]
+        count = 0
+        pos = 0
+        while tail[pos:pos + period] == unit:
+            count += 1
+            pos += period
+        covered = count * period
+        if covered > best:
+            best = covered
+    return best / n
+
+
 def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
     """Return a short reason string if the response looks like a known
     Ollama corruption pattern, else None. See module docstring for the
@@ -185,16 +228,84 @@ def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
             return "empty content"
         return None
     stripped = content.strip()
-    if len(stripped) > 20:
-        q_ratio = stripped.count("?") / len(stripped)
-        if q_ratio > 0.5:
-            return f"degenerate '?' output ({q_ratio:.0%} of {len(stripped)} chars)"
+    if len(stripped) > 40:
+        ratio = _repetition_ratio(stripped)
+        if ratio > REPETITION_RATIO_THRESHOLD:
+            return f"repetition collapse ({ratio:.0%} of last {min(len(stripped), REPETITION_WINDOW)} chars is one repeated unit)"
     return None
 
 
 def _truncate(text: str, limit: int = 200) -> str:
     text = text or ""
     return text if len(text) <= limit else text[:limit] + "...(truncated)"
+
+
+def payload_shape(body: dict) -> dict:
+    """Structural summary of a request payload -- message/role counts and
+    total character volume, never actual content -- so a degenerate-
+    response log line carries a real signature to compare against a
+    terminal repro attempt.
+
+    2026-09-09: added after Gemma4 corrupted identically twice in a row on
+    a real Copilot request that this project's own terminal-based repro
+    attempts (a single tool, a full 15-tool realistic stress payload, 5x
+    repeats of both) could not reproduce even once. The gap is something
+    specific about the literal real request -- this is what lets the next
+    real occurrence actually say what, instead of guessing again."""
+    messages = body.get("messages") or []
+    role_counts: dict[str, int] = {}
+    total_chars = 0
+    for m in messages:
+        role_counts[m.get("role", "?")] = role_counts.get(m.get("role", "?"), 0) + 1
+        content = m.get("content")
+        if isinstance(content, str):
+            total_chars += len(content)
+        for tc in m.get("tool_calls") or []:
+            total_chars += len(json.dumps(tc.get("function", {}).get("arguments", "")))
+    tools = body.get("tools") or []
+    return {
+        "message_count": len(messages),
+        "role_counts": role_counts,
+        "total_message_chars": total_chars,
+        "tool_count": len(tools),
+        "tools_schema_chars": len(json.dumps(tools)) if tools else 0,
+        # 2026-09-09: added per a real lead (ollama/ollama#15539) -- a
+        # confirmed Ollama Gemma4 parser bug triggers specifically on the
+        # combination of a system prompt + think:false + tools. Different
+        # symptom than what this project hit (a leaked-but-readable tool
+        # call vs. pure token-garbage repetition), but the same trigger
+        # combination, so whether the real failing request actually sets
+        # this is directly relevant, not a guess.
+        "think": body.get("think"),
+    }
+
+
+DEBUG_CAPTURE_PATH = os.environ.get("PROXY_DEBUG_CAPTURE_PATH", "")
+
+
+def debug_capture_once(body: dict, reason: str) -> None:
+    """If PROXY_DEBUG_CAPTURE_PATH is set (opt-in, unset by default -- see
+    deploy-ai-services-stack.yml), write the first real degenerate
+    request's full body -- actual prompt/tool content, not just shape --
+    to that path, without overwriting a capture that's already there.
+
+    2026-09-09: added because payload_shape() alone (message/role counts,
+    character volume) is enough to see that a request is unusually large,
+    but not enough to actually replay it, bisect its tool list, or test
+    it against a different quantization/runtime -- everything a real
+    root-cause investigation needs. This is opt-in and one-shot
+    specifically because, unlike shape metadata, it's the operator's
+    literal real prompt/code content -- not something to log by default
+    or accumulate indefinitely."""
+    if not DEBUG_CAPTURE_PATH or os.path.exists(DEBUG_CAPTURE_PATH):
+        return
+    try:
+        os.makedirs(os.path.dirname(DEBUG_CAPTURE_PATH) or ".", exist_ok=True)
+        with open(DEBUG_CAPTURE_PATH, "w") as f:
+            json.dump({"reason": reason, "captured_at": time.time(), "body": body}, f, indent=2)
+        log.warning("captured full failing request body to %s for offline diagnosis", DEBUG_CAPTURE_PATH)
+    except OSError as e:
+        log.warning("debug capture failed (non-fatal, continuing normally): %s", e)
 
 
 def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
@@ -223,9 +334,10 @@ def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
     usage = usage or {}
     log.info(
         "exchange model=%s user=%r tools_offered=%s -- content=%r tool_calls=%s "
-        "usage=(prompt=%s completion=%s total=%s)",
+        "usage=(prompt=%s completion=%s total=%s) shape=%s",
         body.get("model", ""), user_summary, tool_names, content_summary, calls_summary,
         usage.get("prompt_tokens", "?"), usage.get("completion_tokens", "?"), usage.get("total_tokens", "?"),
+        payload_shape(body),
     )
 
 
@@ -371,7 +483,11 @@ class Handler(BaseHTTPRequestHandler):
         finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
         reason = is_degenerate(message, finish_reason)
         if reason:
-            log.warning("degenerate response detected (%s) -- retrying once after unload", reason)
+            log.warning(
+                "degenerate response detected (%s) -- retrying once after unload -- request shape=%s",
+                reason, payload_shape(upstream_body),
+            )
+            debug_capture_once(upstream_body, reason)
             record_retry()
             unload_model(model)
             result = self._call_upstream_safe(self.path, upstream_body)
@@ -384,7 +500,11 @@ class Handler(BaseHTTPRequestHandler):
             finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
             reason2 = is_degenerate(message, finish_reason)
             if reason2:
-                log.error("still degenerate after retry (%s) -- surfacing as an error, not passing it through", reason2)
+                log.error(
+                    "still degenerate after retry (%s) -- surfacing as an error, not passing it through -- "
+                    "request shape=%s",
+                    reason2, payload_shape(upstream_body),
+                )
                 record_request()
                 self._send_json(
                     502,

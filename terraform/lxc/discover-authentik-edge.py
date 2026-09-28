@@ -49,6 +49,7 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
     ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
     ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
+    ("openbao-stack", "openbao"): ("OPENBAO_OIDC_CLIENT_ID", "openbao"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -60,6 +61,7 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
     ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
     ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
+    ("openbao-stack", "openbao"): "OPENBAO_OIDC_CLIENT_SECRET",
 }
 
 
@@ -160,6 +162,7 @@ class RouteIntent:
     stack: str
     route: str
     host: str
+    pangolin_public_host: str | None
     auth_mode: str
     app_name: str
     app_slug: str
@@ -341,6 +344,12 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
         for route in doc["spec"]["routes"]:
             route_name = str(route["name"])
             host = str(route["host"])
+            pangolin = route.get("pangolin")
+            pangolin_public_host = (
+                str(pangolin["public_host"]).strip().rstrip(".")
+                if isinstance(pangolin, dict) and isinstance(pangolin.get("public_host"), str)
+                else None
+            )
             auth_mode = str(route["auth"]["mode"])
             name_base = _slugify(f"{stack}-{route_name}")
             intents.append(
@@ -349,6 +358,7 @@ def _build_route_intents(manifest_paths: list[Path]) -> tuple[list[RouteIntent],
                     stack=stack,
                     route=route_name,
                     host=host,
+                    pangolin_public_host=pangolin_public_host,
                     auth_mode=auth_mode,
                     app_name=f"{OWNED_NAME_PREFIX}{name_base}-app",
                     app_slug=f"{OWNED_NAME_PREFIX}{name_base}",
@@ -486,6 +496,13 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/authentik/callback",)
     if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
         return (f"{base_url}/auth/login",)
+    if _oidc_route_key(intent) == ("openbao-stack", "openbao"):
+        # UI login callback (auth/oidc mounted at the default "oidc" path),
+        # plus the `bao login -method=oidc` CLI listener on localhost:8250.
+        return (
+            f"{base_url}/ui/vault/auth/oidc/oidc/callback",
+            "http://localhost:8250/oidc/callback",
+        )
     return ()
 
 
@@ -493,7 +510,10 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
     # Deliberately narrow: only routes listed here get grant_types set in
     # the provider payload at all (see _oidc_provider_payload's comment in
     # reconcile-authentik-edge.py for why leaving it unset elsewhere is
-    # required, not just simpler).
+    # required, not just simpler). A route NOT listed here still gets
+    # ("authorization_code",) when the reconciler creates its provider
+    # (DEFAULT_OIDC_CREATE_GRANT_TYPES), so a new stack no longer needs an
+    # entry just to avoid Authentik's create-time grant_types: [] default.
     if _oidc_route_key(intent) == ("opensearch-stack", "dashboards"):
         # Matches the common baseline already used by 6 of the other
         # providers in this Authentik instance. authorization_code is all
@@ -518,10 +538,17 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # live via a real failed SSO login attempt (Authentik redirected to
         # the callback with error=invalid_request, "the request is
         # otherwise malformed"; GET on the provider showed grant_types: []).
-        # jellyfin-plugin-authentik and Immich's native OAuth both only use
-        # authorization_code (with PKCE for jellyfin), but matching the
-        # common baseline for consistency, same as opensearch/wazuh above.
+        # jellyfin-plugin-authentik and Immich's native OAuth use the
+        # authorization-code flow (with PKCE where supported). Match the
+        # common provider baseline for consistency.
         return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) == ("openbao-stack", "openbao"):
+        # Fourth occurrence of the same create-time grant_types: [] bug,
+        # found live 2026-09-28 (Authentik log: "Invalid grant_type for
+        # provider", grant_type=authorization_code). OpenBao's UI and
+        # `bao login -method=oidc` use only the authorization-code flow
+        # (with PKCE), so nothing broader is granted.
+        return ("authorization_code",)
     return ()
 
 
@@ -1209,7 +1236,7 @@ def _resolve_token(token_env: str) -> tuple[str | None, DiscoveryIssue | None]:
         code="AKD001",
         message=(
             f"missing Authentik token in environment variable {token_env}. "
-            "Run with ./with-secrets so SOPS-backed secrets are injected "
+            "Run with ./with-secrets so secrets from OpenBao are injected "
             "(example: ./with-secrets terraform/lxc/discover-authentik-edge.py --json)."
         ),
     )

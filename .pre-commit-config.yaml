@@ -4,8 +4,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
     hooks:
+      # Plan-workspace patches (git apply input) must stay byte-exact: a
+      # stripped trailing blank context line corrupts the hunk.
       - id: trailing-whitespace
+        exclude: '^docs/.*/patches/.*\.patch$'
       - id: end-of-file-fixer
+        exclude: '^docs/.*/patches/.*\.patch$'
       - id: detect-private-key
       - id: check-added-large-files
         args: ['--maxkb=1000']
@@ -22,9 +26,17 @@ repos:
 
   - repo: local
     hooks:
-      - id: check-required-sops-keys
-        name: Check required SOPS keys
-        entry: bash scripts/check-required-sops-keys.sh
-        language: system
-        pass_filenames: false
-        files: ^terraform/secrets\.common\.enc\.yaml$
+      # OpenBao is authoritative since the cutover (docs/secrets-refactor/).
+      # A change to a SOPS file could only reintroduce a stale value, so any
+      # staged change to one fails. Deletions (SOPS retirement) are allowed:
+      # pre-commit does not pass deleted files to hooks.
+      - id: block-sops-secret-edits
+        name: Block edits to frozen SOPS secrets files
+        entry: "terraform/secrets.*.enc.yaml are frozen: OpenBao is authoritative. Write secrets with scripts/openbao_write.py (docs/secrets-refactor/)."
+        language: fail
+        files: ^terraform/secrets\..*\.enc\.yaml$
+        # Commit-time only: the pre-push run checks every file in the pushed
+        # range, which would reject the pre-freeze commits that legitimately
+        # touched these files. New edits are caught at commit time (here) and
+        # in PRs (validate.yml sops-freeze).
+        stages: [pre-commit]

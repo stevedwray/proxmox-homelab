@@ -86,3 +86,39 @@ greenbone/community/gvm-tools:latest
 # pentagi-stack -- postgres-exporter sidecar, same generic-adapter
 # cataloging bug (quay project), added alongside greenbone above.
 quay/prometheuscommunity/postgres-exporter:v0.16.0
+
+# Added 2026-09-07 -- Phase 13 live-usage audit
+# (docs/threat-vuln-platform/plan.md), cross-referencing every real
+# running container's actual image reference (via Portainer, across
+# every registered endpoint) against this file. Two running images were
+# confirmed Harbor-routed but excluded from this list on purpose: they're
+# pinned by digest, not tag (ghcr/open-webui/open-webui and
+# dockerhub/searxng/searxng on framework.gibbsgreatly.xyz/ai-services-stack)
+# -- this file's format is <project>/<repo>:<tag>, and a digest pin has no
+# tag to re-pull by. Also found, out of scope for this pass:
+# media-stack-lab's Immich/Jellyfin components (ghcr.io/immich-app/*,
+# lscr.io/linuxserver/jellyfin, docker.io/valkey/valkey) bypass Harbor
+# entirely -- direct upstream pulls, not proxy-cached at all. That's a
+# real gap against this repo's own Harbor-routing convention, but a
+# separate fix from "the manifest is missing an entry for something
+# already going through Harbor."
+
+# framework.gibbsgreatly.xyz (bare-metal, not an LXC stack)
+dockerhub/ollama/ollama:rocm
+dockerhub/yanwk/comfyui-boot:rocm
+
+# portainer-agent sidecar (shared, harbor-routed variant --
+# framework.gibbsgreatly.xyz/gaming-stack-lab/media-stack-lab)
+dockerhub/portainer/agent:2.39.5
+
+# gaming-stack-lab -- the actual live Minecraft server (CVE-2022-36944's
+# confirmed target) and its monitoring sidecar
+dockerhub/itzg/minecraft-server:java21
+dockerhub/itzg/mc-monitor:latest
+
+# mcp-utility-stack
+dockerhub/pgvector/pgvector:pg16
+
+# ai-services-stack -- ollama-reliability-proxy (distinct tag from
+# monitoring-stack's python:3.12-alpine above)
+dockerhub/library/python:3.12-slim

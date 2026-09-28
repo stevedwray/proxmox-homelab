@@ -79,7 +79,7 @@ Batch related changes during development and run the appropriate tier. As the pl
 ## Security Scanning
 
 - **snyk**: `/home/steve/.local/bin/snyk iac test terraform/` — Terraform IaC only, not Ansible
-- **sonar-scanner**: `./with-secrets /home/steve/.local/bin/sonar-scanner` — config in `sonar-project.properties`; `SONAR_TOKEN` is SOPS-backed, not in plain `.env`, so it must run through `./with-secrets`
+- **sonar-scanner**: `./with-secrets /home/steve/.local/bin/sonar-scanner` — config in `sonar-project.properties`; `SONAR_TOKEN` is an OpenBao secret (`kv/shared/dev-tooling`), not in plain `.env`, so it must run through `./with-secrets`
 
 ## Documentation Workspace Pattern
 
@@ -116,25 +116,28 @@ but every node goes through the same controls, not a bespoke copy per node.
 ### Production Nodes
 
 Declared in `terraform/PRODUCTION_NODES` (one node name per line) — currently
-`pve` and `pve-framework`. This file is the single source of truth for
+`pve`, `pve-tiny` and `pve-framework`. This file is the single source of truth for
 "which nodes are production"; both `./with-secrets`'s safety rail and the
 `with-secrets-prod*` wrappers read it. Adding a node here, plus its own
-`.env.<node>` and `terraform/secrets.<node>.enc.yaml`, is what's required to
-bring a new node under production control — never hardcode a node name into
+`.env.<node>`, a `hosts/<node>` entry and profile in `secrets/manifest.json`,
+and a re-run of `configure-openbao.yml` (which generates its `deploy-<node>`
+AppRole), is what's required to bring a new node under production control — never hardcode a node name into
 new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 ### Secrets Storage
 
-- **Common secrets:** `terraform/secrets.common.enc.yaml` — every secret
-  that's genuinely the same everywhere (the large majority); loaded by
-  `./with-secrets` and merged into every `with-secrets-prod*` wrapper too
-- **Per-node secrets:** `terraform/secrets.<node>.enc.yaml` — only secrets
-  structurally tied to that node's own Proxmox API identity (its
-  read-only/Terraform tokens, its LXC root password); loaded only by that
-  node's `with-secrets-prod*` wrapper, merged on top of common
-- All are encrypted with SOPS (age key at `~/.config/sops/age/keys.txt`).
-  See `docs/reference/secrets-management.md` for the full split and where a
-  new secret belongs.
+- **Secret values live in OpenBao** (`openbao-stack`, `https://192.168.20.16:8200`,
+  KV v2 at `kv/`), never in Git. A branch checkout cannot change a secret.
+- **References live in `secrets/manifest.json`**: every KV entry
+  (`services/*`, `shared/*`, `hosts/<node>`), the exact fields it must
+  contain, and one profile per environment. Host entries override shared ones,
+  as the old per-node files did.
+- **Reads** go through the wrappers with a read-only deploy AppRole per
+  environment (`~/.config/openbao/<role>.{role-id,secret-id}`); they fail
+  closed on any missing or empty field. **Writes** need an explicit human OIDC
+  login and `scripts/openbao_write.py` — agents never get write access.
+- See `docs/reference/secrets-management.md` for day-to-day use and
+  `docs/secrets-refactor/secrets-design.md` for the design.
 
 ### Wrappers
 
@@ -211,11 +214,12 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 ## Workspace Operating Patterns
 
-- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus SOPS-backed secrets from `terraform/secrets.common.enc.yaml`; do not rely on `source .env` for secret-bearing workflows.
-- Treat `.env` as gitignored non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in `terraform/secrets.common.enc.yaml` via SOPS.
-- New Terraform secrets in SOPS should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, rather than adding a separate mapping layer.
-- Edit SOPS secrets with `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml`. Do not decrypt secrets into plaintext files or commit private age keys.
-- GitHub Actions secrets are for CI-only values and CI SOPS decryption. Local infrastructure automation should prefer SOPS plus `with-secrets`.
+- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus secrets read from OpenBao for the selected environment; do not rely on `source .env` for secret-bearing workflows.
+- Treat `.env` as non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in OpenBao, referenced from `secrets/manifest.json`.
+- New Terraform secrets should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, as the KV field name — there is no separate mapping layer.
+- Write or rotate secrets only with `scripts/openbao_write.py` after an explicit `bao login -method=oidc -no-store`; never persist a write token to `~/.vault-token`, never write secret values into files, and never commit AppRole SecretIDs.
+- `terraform/secrets.*.enc.yaml` (SOPS) are frozen and not authoritative; a pre-commit hook rejects edits to them.
+- GitHub Actions secrets are for CI-only values. CI reads secret-store values from OpenBao via GitHub OIDC (`auth/jwt-github`), never a stored credential.
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
 
@@ -242,8 +246,9 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 |---|---|---|
 | `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
 | `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on both `pve` and `pve-test-vm` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
-| `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it |
+| `dns-stack` | systemd (CoreDNS) | **Removed from `pve`, 2026-09-08** (`pct destroy`, not just stopped) — was rollback-only since the cutover documented in `docs/dns-refactor/README.md`, decommissioned after fixing 8 stacks' hardcoded Docker-daemon-level dependency on it (see `reference_dns_stack_docker_daemon_dependency`). `pve-test-vm` still has its own separate instance, kept as a rollback point there — don't assume the same reasoning applies to it without re-checking its own dependents first. |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `openbao-stack` | systemd (OpenBao, native `.deb`) | **The secrets store** (192.168.20.16). `curl --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health` must show `"sealed":false`. Runbook: `docs/reference/secrets-management.md` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
 | `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
 | `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |

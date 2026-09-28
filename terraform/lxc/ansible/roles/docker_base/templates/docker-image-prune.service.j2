@@ -1,0 +1,16 @@
+[Unit]
+Description=Prune unused Docker images older than {{ docker_base_image_prune_min_age }} (root-cause fix for 2026-09-08 disk-full outage)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# -a removes every image not referenced by any container (running or
+# stopped), not just fully untagged ones -- confirmed live during the
+# 2026-09-08 incident that a plain `docker image prune` (no -a) leaves
+# behind old-but-still-real-repo-tagged image versions that a newer pull
+# already superseded, since those don't count as "dangling" without -a.
+ExecStart=/usr/bin/docker image prune -a -f --filter "until={{ docker_base_image_prune_min_age }}"
+
+[Install]
+WantedBy=multi-user.target

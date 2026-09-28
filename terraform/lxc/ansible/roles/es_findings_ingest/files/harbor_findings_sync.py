@@ -53,6 +53,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import harbor_live_usage
+
 PAGE_SIZE = 100
 
 _REGISTRY_PATH = Path(__file__).parent / "assets" / "known_production_images.json"
@@ -245,12 +247,43 @@ def _extract_cvss_score(vuln: dict) -> float | None:
 def build_documents(
     project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict],
     *, scan_time: str, production_registry: dict,
+    live_digests: set[str] | None = None,
+    live_tag_refs: set[tuple[str, str, str]] | None = None,
 ) -> list[dict]:
     digest = artifact.get("digest", "")
     tags = [t.get("name") for t in (artifact.get("tags") or []) if t.get("name")]
     tag = tags[0] if tags else None
     now = _now_iso()
     in_production, stack, zone = classify_artifact(repo_short_name, production_registry)
+
+    artifact_fields = {
+        "project": project_name,
+        "repository": repo_short_name,
+        "tag": tag,
+        "digest": digest,
+        "in_production": in_production,
+        "stack": stack,
+        "zone": zone,
+    }
+    # live_digests/live_tag_refs are None together when this run couldn't
+    # reach Portainer at all -- in that case leave the in_use key out
+    # entirely (never set it to False) so bulk_upsert()'s copy-if-missing
+    # painless step carries the prior value forward instead of wiping it.
+    # See docs/threat-vuln-platform/plan.md Phase 13's sticky-carry-forward
+    # decision.
+    #
+    # Digest-exact match OR tag-exact match (see harbor_live_usage.py's
+    # module docstring, 2026-09-07 update): confirmed live that
+    # digest-exact alone matched essentially nothing across the entire
+    # Harbor-sourced CVE population, not just the genuinely-stale entries
+    # it was meant to filter, because Harbor's own catalog for a floating
+    # tag routinely lags what a stack's deploy pull actually resolved to.
+    # The tag fallback can't mismatch a superseded digest onto the wrong
+    # artifact -- only the one harbor-findings doc Harbor currently
+    # considers this tag's artifact carries that tag value at all.
+    if live_digests is not None:
+        tag_match = tag is not None and (project_name, repo_short_name, tag) in (live_tag_refs or set())
+        artifact_fields["in_use"] = (digest in live_digests) or tag_match
 
     docs = []
     for vuln in vulnerabilities:
@@ -265,20 +298,71 @@ def build_documents(
                 "package_version": vuln.get("version"),
                 "fixed_version": vuln.get("fix_version") or None,
                 "description": (vuln.get("description") or "")[:2000] or None,
-                "artifact": {
-                    "project": project_name,
-                    "repository": repo_short_name,
-                    "tag": tag,
-                    "digest": digest,
-                    "in_production": in_production,
-                    "stack": stack,
-                    "zone": zone,
-                },
+                "artifact": dict(artifact_fields),
                 "scan_time": scan_time,
                 "last_seen": now,
             }
         )
     return docs
+
+
+def fetch_docker_live_usage(
+    es_base: str, *, auth_header: str, verify_tls: bool, max_age_hours: int = 48,
+) -> tuple[set[str], set[tuple[str, str, str]]]:
+    """Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-03): reads every
+    fresh per-host report docker_live_usage_reporter has written to the
+    docker-live-usage index (one document per Portainer-exempt host) and
+    unions their digest sets and tag-ref sets into the same two shapes
+    harbor_live_usage.fetch_live_usage() already returns for
+    Portainer-backed hosts. A stale report (older than max_age_hours,
+    default 48h -- twice the daily reporting cadence, so one missed run
+    doesn't drop a host) is excluded rather than trusted indefinitely; a
+    missing/empty index (no gap-list host deployed yet, or OpenSearch
+    unreachable) returns two empty sets, not an error -- this source
+    degrading never collapses the whole run, since Portainer's own data
+    is unioned in separately by the caller."""
+    cutoff = (datetime.now(timezone.utc).timestamp() - max_age_hours * 3600)
+    cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = json.dumps({
+        "size": 1000,
+        "query": {"range": {"reported_at": {"gte": cutoff_iso}}},
+        "_source": ["hostname", "digests", "tag_refs"],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{es_base}/docker-live-usage/_search", data=body, method="POST",
+    )
+    req.add_header("Authorization", auth_header)
+    req.add_header("Content-Type", "application/json")
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    digests: set[str] = set()
+    tag_refs: set[tuple[str, str, str]] = set()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=20.0) as resp:  # nosec B310 -- internal operator-configured OpenSearch endpoint, never user-supplied
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # Index doesn't exist yet -- no gap-list host has reported at
+            # all (e.g. docker_live_usage_reporter not deployed anywhere
+            # yet). Not an error, just nothing to union.
+            return digests, tag_refs
+        print(f"WARN: docker-live-usage query failed: {exc.code} {exc.read()}", file=sys.stderr)
+        return digests, tag_refs
+    except (urllib.error.URLError, ValueError, OSError) as exc:
+        print(f"WARN: docker-live-usage query failed: {exc}", file=sys.stderr)
+        return digests, tag_refs
+
+    for hit in result.get("hits", {}).get("hits", []):
+        source = hit.get("_source", {})
+        digests.update(source.get("digests") or [])
+        for ref in source.get("tag_refs") or []:
+            project, repository, tag = ref.get("project"), ref.get("repository"), ref.get("tag")
+            if project and repository and tag:
+                tag_refs.add((project, repository, tag))
+    return digests, tag_refs
 
 
 def doc_id(doc: dict) -> str:
@@ -300,6 +384,20 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
         _id = doc_id(doc)
         upsert_doc = dict(doc)
         upsert_doc["first_seen"] = now
+        # Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-05): on a
+        # genuinely brand-new artifact document, if it's already in_use:
+        # false at the moment of its very first scan, that IS the first
+        # confirmed-absent moment -- set not_in_use_since here directly,
+        # same as first_seen above. The update-script path below handles
+        # every subsequent run instead (this only ever fires once, the
+        # very first time this exact digest gets a document at all). A
+        # real copy is required, not a reference into doc["artifact"]
+        # (also used for params.doc below) -- mutating that shared dict
+        # in place would leak not_in_use_since into the update script's
+        # params.doc.artifact too, which must stay entirely
+        # painless-computed for the update path (see the script below).
+        upsert_doc["artifact"] = dict(doc["artifact"])
+        upsert_doc["artifact"]["not_in_use_since"] = now if doc["artifact"].get("in_use") is False else None
         lines.append(json.dumps({"update": {"_index": index, "_id": _id}}))
         lines.append(
             json.dumps(
@@ -318,10 +416,44 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
                         # full rerun, until this fix). first_seen stays
                         # deliberately sticky (only set if still null) since
                         # it's meant to record original discovery date, not
-                        # get overwritten by putAll.
+                        # get overwritten by putAll. artifact.in_use gets
+                        # its own copy-if-missing step first: putAll
+                        # replaces ctx._source.artifact wholesale (it's a
+                        # nested object, not merged field-by-field), so a
+                        # doc built with live_digests=None (Portainer
+                        # unreachable this run -- in_use key genuinely
+                        # absent from params.doc.artifact) would otherwise
+                        # silently wipe a previously-recorded in_use value
+                        # instead of carrying it forward. See
+                        # docs/threat-vuln-platform/plan.md Phase 13.
+                        #
+                        # not_in_use_since (Phase 14, uvm-14-05): entirely
+                        # painless-computed, never present in params.doc --
+                        # putAll would otherwise wipe it every run the same
+                        # way it would have wiped in_use without the
+                        # copy-if-missing step above. Captured BEFORE putAll
+                        # (oldNotInUseSince), then recomputed AFTER putAll
+                        # against the FINAL (possibly carried-forward)
+                        # in_use value: true clears it to null; false keeps
+                        # the original first-observed timestamp if one
+                        # already exists, or sets it to now if this is the
+                        # first run this artifact has ever been seen
+                        # not-in-use. uvm-14-06's deletion gate reads this
+                        # field directly -- it must only ever move forward
+                        # (or clear to null), never reset on every still-
+                        # not-in-use run, or the grace period would never
+                        # actually elapse.
                         "source": (
+                            "def oldNotInUseSince = (ctx._source.artifact != null && ctx._source.artifact.containsKey('not_in_use_since')) ? ctx._source.artifact.not_in_use_since : null; "
+                            "if (ctx._source.artifact != null && params.doc.artifact != null "
+                            "&& !params.doc.artifact.containsKey('in_use') && ctx._source.artifact.containsKey('in_use')) "
+                            "{ params.doc.artifact.in_use = ctx._source.artifact.in_use } "
                             "ctx._source.putAll(params.doc); "
-                            "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
+                            "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now } "
+                            "if (ctx._source.artifact != null && ctx._source.artifact.containsKey('in_use')) { "
+                            "if (ctx._source.artifact.in_use == true) { ctx._source.artifact.not_in_use_since = null } "
+                            "else { ctx._source.artifact.not_in_use_since = (oldNotInUseSince != null) ? oldNotInUseSince : params.now } "
+                            "}"
                         ),
                         "lang": "painless",
                         "params": {"now": now, "doc": doc},
@@ -431,6 +563,39 @@ def main() -> int:
     es_auth = _basic_auth_header(args.es_user, args.es_password)
     production_registry = load_production_registry()
 
+    live_digests: set[str] | None = None
+    live_tag_refs: set[tuple[str, str, str]] | None = None
+    portainer_url = os.environ.get("PORTAINER_URL", "")
+    portainer_token = os.environ.get("PORTAINER_TOKEN", "")
+    if portainer_url and portainer_token:
+        live_digests, live_tag_refs = harbor_live_usage.fetch_live_usage(
+            portainer_url, portainer_token, verify_tls=not args.no_verify_tls
+        )
+        if live_digests is None:
+            print(
+                "WARN: could not determine live image usage this run -- in_use carries forward from prior state",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            "WARN: PORTAINER_URL/PORTAINER_TOKEN not set -- in_use carries forward from prior state",
+            file=sys.stderr,
+        )
+
+    # Phase 14 (docs/threat-vuln-platform/plan.md, uvm-14-03): union in the
+    # self-reported gap-list data (Portainer-exempt security/infra tier) on
+    # top of Portainer's. Additive only -- this source's own degrade modes
+    # (index not yet created, a stale/missing individual host report) never
+    # downgrade an otherwise-successful Portainer read back to None; only a
+    # failed Portainer read on its own already sets live_digests to None
+    # above, and this union still runs against whatever (possibly empty)
+    # sets Portainer left behind so a Portainer outage doesn't also hide
+    # gap-list hosts' real data.
+    gap_digests, gap_tag_refs = fetch_docker_live_usage(es_base, auth_header=es_auth, verify_tls=not args.no_verify_tls)
+    if gap_digests or gap_tag_refs:
+        live_digests = (live_digests or set()) | gap_digests
+        live_tag_refs = (live_tag_refs or set()) | gap_tag_refs
+
     started = _now_iso()
     started_monotonic = time.monotonic()
 
@@ -489,6 +654,7 @@ def main() -> int:
                 docs = build_documents(
                     project_name, repo_short_name, artifact, vulns,
                     scan_time=scan_time, production_registry=production_registry,
+                    live_digests=live_digests, live_tag_refs=live_tag_refs,
                 )
                 indexed, bulk_errors = bulk_upsert(
                     es_base, "harbor-findings", docs, auth_header=es_auth, verify_tls=not args.no_verify_tls, dry_run=args.dry_run

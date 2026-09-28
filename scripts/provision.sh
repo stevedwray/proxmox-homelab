@@ -12,7 +12,7 @@ ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${PVE_ENV:-}"
 usage() {
   cat <<'EOF'
 Usage: scripts/provision.sh [--tier <platform|apps|all>] [--stack <name>]
-                            [--target-env <pve-test-vm|pve>] [--check]
+                            [--target-env <pve-test-vm|pve|pve-tiny>] [--check]
 
 Options:
   --tier        Limit orchestration to a deployment tier (default: all).
@@ -45,6 +45,7 @@ expected_pve_host_for_env() {
   # deliberately exempt — see assert_inventory_matches_env below.
   case "${PVE_ENV:-}" in
     pve) printf 'pve.gibbsgreatly.xyz' ;;
+    pve-tiny) printf 'pve-tiny.gibbsgreatly.xyz' ;;
     pve-test-vm|"") printf 'pve-test-vm.gibbsgreatly.xyz' ;;
     *) printf '' ;;
   esac
@@ -93,23 +94,9 @@ is_truthy() {
 }
 
 resolve_secrets_file_hint() {
-  local pve_env="${PVE_ENV:-}"
-  local repo_root
-  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-  # Most per-node secrets are per-node deltas now (see
-  # docs/framework-integration/decisions.md Decision 6) — only a handful of
-  # keys (the Proxmox token family, TF_VAR_lxc_password) actually live in
-  # terraform/secrets.<env>.enc.yaml; everything else is in secrets.common.enc.yaml.
-  # This previously only special-cased "pve" and silently fell back to the
-  # base file for every other env, including pve-test-vm — generalized here
-  # so the hint is correct for any environment with its own delta file.
-  if [[ -n "$pve_env" && -f "${repo_root}/terraform/secrets.${pve_env}.enc.yaml" ]]; then
-    printf 'terraform/secrets.%s.enc.yaml' "$pve_env"
-    return 0
-  fi
-
-  printf 'terraform/secrets.common.enc.yaml'
+  # Secrets live in OpenBao (docs/reference/secrets-management.md). New values
+  # are written by a human with scripts/openbao_write.py after an OIDC login.
+  printf 'OpenBao (scripts/openbao_write.py services/portainer PORTAINER_OAUTH_CLIENT_SECRET)'
 }
 
 ensure_portainer_oauth_secret() {
@@ -161,10 +148,13 @@ reconcile_all_edge() {
   fi
 
   local generated_traefik_dir
+  local generated_pangolin_traefik_dir
   if [[ -n "${PVE_ENV:-}" ]]; then
     generated_traefik_dir="${ENV_ROOT}/.generated/traefik"
+    generated_pangolin_traefik_dir="${ENV_ROOT}/.generated/pangolin-traefik"
   else
     generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
+    generated_pangolin_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/pangolin-traefik"
   fi
 
   [[ -f "$proxy_inventory" ]] || { log "SKIP edge reconcile: proxy-stack inventory not found"; return 0; }
@@ -193,6 +183,24 @@ reconcile_all_edge() {
       -e "@${proxy_extra_vars_file}" \
       -e "traefik_generated_source_dir=${generated_traefik_dir}"
     rm -f "$proxy_extra_vars_file"
+
+    local pangolin_proxy_inventory
+    if [[ -f "${ENV_ROOT}/pangolin-proxy/inventory.yml" ]]; then
+      pangolin_proxy_inventory="${ENV_ROOT}/pangolin-proxy/inventory.yml"
+    else
+      pangolin_proxy_inventory="${stacks_dir}/pangolin-proxy/inventory.yml"
+    fi
+    if [[ -f "$pangolin_proxy_inventory" ]]; then
+      local pangolin_proxy_extra_vars_file
+      pangolin_proxy_extra_vars_file="$(mktemp "/tmp/pangolin-proxy.ansible-extra-vars.XXXXXX.yml")"
+      render_stack_ansible_extra_vars "pangolin-proxy" "$pangolin_proxy_extra_vars_file"
+
+      log "Push generated Pangolin Traefik config to pangolin-proxy"
+      ansible-playbook -i "$pangolin_proxy_inventory" -u root "${ANSIBLE_DIR}/playbooks/deploy-pangolin-proxy.yml" \
+        -e "@${pangolin_proxy_extra_vars_file}" \
+        -e "pangolin_traefik_generated_source_dir=${generated_pangolin_traefik_dir}"
+      rm -f "$pangolin_proxy_extra_vars_file"
+    fi
   fi
 }
 
@@ -363,6 +371,10 @@ WAZUH_FINDINGS_INGEST_KEYS = (
     "wazuh_findings_ingest_enabled",
 )
 
+DOCKER_LIVE_USAGE_REPORTER_KEYS = (
+    "docker_live_usage_reporter_enabled",
+)
+
 CVE_ENRICHMENT_SYNC_KEYS = (
     "cve_enrichment_sync_enabled",
 )
@@ -378,7 +390,7 @@ def resolve_placeholders(value):
             name = match.group(1)
             # Check uppercase and TF_VAR_ before lowercase — env-specific overrides
             # (LAB_IP_* from .env.pve-test-vm) must win over base lowercase values
-            # from SOPS secrets that carry production IPs.
+            # from secrets that carry production IPs.
             for candidate in (name.upper(), f"TF_VAR_{name}", name):
                 if candidate in os.environ:
                     return os.environ[candidate]
@@ -442,6 +454,10 @@ for key in GVM_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in WAZUH_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in DOCKER_LIVE_USAGE_REPORTER_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 

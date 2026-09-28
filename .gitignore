@@ -33,7 +33,7 @@ docs/pentagi-stack/*.tar.gz
 !/.env.pve-test-vm.template
 !/.env.pve.template
 
-# SOPS — never commit decrypted/plaintext versions
+# Decrypted secrets (e.g. from old SOPS history) — never commit
 *.dec.yaml
 *.dec.env
 secrets.dec.*

@@ -722,3 +722,6 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Forward the Framework Desktop FQDN to the MikroTik
+  ansible.builtin.import_playbook: technitium-framework-forwarder.yml

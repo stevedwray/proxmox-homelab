@@ -501,23 +501,27 @@ data_stores:
       No HSM. Keys are stored in the LXC filesystem. Compromise of the
       step-ca LXC or its data volume gives the CA keys.
 
-  - id: ds-sops-secrets
-    name: SOPS-encrypted secrets
-    host: pve-host
-    type: filesystem
+  - id: ds-openbao-secrets
+    name: OpenBao secrets store
+    host: p-openbao
+    type: openbao
     data_classification: secret
     contents: >
-      terraform/secrets.enc.yaml (dev) and terraform/secrets.pve.enc.yaml
-      (prod). Contains DB passwords, API tokens, OIDC client secrets,
-      Authentik secret key, Harbor admin password, NetBox API token pepper,
-      step-ca provisioner password. Encrypted with age key at
-      ~/.config/sops/age/keys.txt on the pve host.
+      KV v2 at kv/ on openbao-stack (192.168.20.16): services/*, shared/*,
+      hosts/<node>, as listed in secrets/manifest.json. Contains DB
+      passwords, API tokens, OIDC client secrets, Authentik secret key,
+      Harbor admin password, NetBox API token pepper, step-ca provisioner
+      password. Replaced the Git-tracked SOPS files in 2026-09.
     encryption_at_rest: true
     notes: >
-      The age private key on the pve host is the master key for all secrets.
-      If the pve host is compromised, all secrets are exposed regardless of
-      SOPS encryption. CI workflows that call ./with-secrets decrypt secrets
-      into the CI runner environment.
+      Raft storage is sealed by a static key on a USB stick in pve,
+      bind-mounted read-only into the LXC (never in vzdump). Anyone with root
+      on pve holds the seal key and the Raft data, so a pve compromise still
+      exposes all secrets. Deploys read through per-environment read-only
+      AppRoles held on the operator workstation; CI reads via GitHub OIDC
+      (auth/jwt-github); writes need a human Authentik OIDC login. Old values
+      remain in Git history as SOPS ciphertext under the retired age key
+      until each secret is rotated.
 
 # ---------------------------------------------------------------------------
 # Data flows

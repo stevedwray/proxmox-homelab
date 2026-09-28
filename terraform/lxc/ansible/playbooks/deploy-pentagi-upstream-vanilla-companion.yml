@@ -27,7 +27,7 @@
     vanilla_framework_host: framework.gibbsgreatly.xyz
     vanilla_ollama_model: qwen3.6-35b-a3b-ud:q4_k_m
     vanilla_embedding_model: nomic-embed-text
-    # Shared SOPS-backed secret. Upstream disables API-token creation when
+    # Shared OpenBao secret. Upstream disables API-token creation when
     # this is omitted and it falls back to the insecure literal "salt".
     vanilla_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
     vanilla_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
@@ -150,6 +150,21 @@
       ansible.builtin.systemd:
         name: docker
         state: restarted
+
+- name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive: a new role, new files under its own directory, a new
+  # systemd timer, and a new dedicated (shared) OpenSearch user -- does not
+  # touch this stack's own compose deployment or any other role's state.
+  # See docs/threat-vuln-platform/plan.md Phase 14 (uvm-14-02) -- this stack
+  # is one of the confirmed gap-list hosts Portainer deliberately doesn't
+  # reach. Gated the same way es_findings_ingest/harbor_repull are: explicit
+  # opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: docker_live_usage_reporter
+      when: docker_live_usage_reporter_enabled | default(false) | bool
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

@@ -1,0 +1,225 @@
+diff --git a/ansible/00-initial-setup/mikrotik-dns-framework.yml b/ansible/00-initial-setup/mikrotik-dns-framework.yml
+new file mode 100644
+index 00000000..be51386d
+--- /dev/null
++++ b/ansible/00-initial-setup/mikrotik-dns-framework.yml
+@@ -0,0 +1,219 @@
++---
++# Framework Desktop DNS record on the MikroTik -- the ONE place the
++# framework's IP is published. Every client reaches framework by name
++# (framework.gibbsgreatly.xyz), and the firewall matches the "framework"
++# address-list, which RouterOS resolves from this same record. So moving
++# framework to a new IP means: change LAB_IP_FRAMEWORK in .env, run this.
++# See docs/framework-ip-and-port/plan.md (Phase B).
++#
++# Touches exactly one static DNS name (LAB_FQDN_FRAMEWORK). Other names
++# that happen to share the old address -- gazaar.gibbsgreatly.xyz, the NAS
++# that legitimately owns 192.168.1.8 -- are never read-modified here.
++#
++# After updating the record it flushes the router's DNS cache and toggles
++# the address-list's FQDN entry off/on so RouterOS re-resolves it now
++# instead of when the old answer's TTL runs out, then waits until the list
++# holds exactly the new address.
++#
++# TTL: default 1h. Run once with -e framework_dns_ttl=5m at least one old
++# TTL (1d) before a re-IP so caches (Technitium, clients) expire quickly,
++# then again without it after the move.
++#
++# Run:
++#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml
++
++- name: Publish the Framework Desktop's address in MikroTik static DNS
++  hosts: localhost
++  gather_facts: false
++
++  vars:
++    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
++    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
++    mikrotik_user: >-
++      {{
++        lookup('env', 'MIKROTIK_ADMIN')
++        | default(lookup('env', 'MIKROTIK_USER'), true)
++        | default('api-user', true)
++      }}
++    mikrotik_password: >-
++      {{
++        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
++        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
++      }}
++
++    framework_fqdn: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | mandatory('LAB_FQDN_FRAMEWORK env var is required') }}"
++    framework_ip: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
++    framework_dns_ttl: "1h"
++    framework_dns_comment: "framework-fqdn: Framework Desktop -- managed by mikrotik-dns-framework.yml"
++    framework_address_list: "framework"
++
++  pre_tasks:
++    - name: Assert MikroTik credentials are set
++      ansible.builtin.assert:
++        that:
++          - mikrotik_user | length > 0
++          - mikrotik_password | length > 0
++        fail_msg: >-
++          Set MIKROTIK_ADMIN/MIKROTIK_USER and MIKROTIK_ADMIN_PASSWORD/MIKROTIK_PASSWORD
++          before running this playbook.
++
++    - name: Assert framework_ip is a plain IPv4 address
++      ansible.builtin.assert:
++        that:
++          - framework_ip is match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
++        fail_msg: "LAB_IP_FRAMEWORK must be an IPv4 address, got '{{ framework_ip }}'"
++
++  tasks:
++    # ── 1. Static DNS record ─────────────────────────────────────────────────
++
++    - name: Read MikroTik static DNS entries
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/dns/static"
++        method: GET
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        return_content: true
++        status_code: 200
++      register: framework_dns_static
++      no_log: true
++
++    - name: Select the framework record(s)
++      ansible.builtin.set_fact:
++        framework_dns_entries: >-
++          {{
++            framework_dns_static.json
++            | selectattr('name', 'defined')
++            | selectattr('name', 'equalto', framework_fqdn)
++            | list
++          }}
++
++    - name: Refuse to guess if the name has more than one static record
++      ansible.builtin.assert:
++        that: framework_dns_entries | length <= 1
++        fail_msg: >-
++          {{ framework_fqdn }} has {{ framework_dns_entries | length }} static DNS
++          entries; remove the extras by hand, then re-run.
++
++    - name: Add the framework record if missing
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
++        method: POST
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        body_format: json
++        body:
++          name: "{{ framework_fqdn }}"
++          address: "{{ framework_ip }}"
++          ttl: "{{ framework_dns_ttl }}"
++          comment: "{{ framework_dns_comment }}"
++        status_code: [200, 201]
++      when: framework_dns_entries | length == 0
++      no_log: true
++
++    - name: Update the framework record's address, TTL and comment
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ framework_dns_entries[0]['.id'] }}"
++        method: PATCH
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        body_format: json
++        body:
++          address: "{{ framework_ip }}"
++          ttl: "{{ framework_dns_ttl }}"
++          comment: "{{ framework_dns_comment }}"
++        status_code: [200, 201]
++      when:
++        - framework_dns_entries | length == 1
++        - >-
++          framework_dns_entries[0].address | default('') != framework_ip
++          or framework_dns_entries[0].ttl | default('') != framework_dns_ttl
++          or framework_dns_entries[0].comment | default('') != framework_dns_comment
++      no_log: true
++
++    - name: Flush the router's DNS cache
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/dns/cache/flush"
++        method: POST
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        body_format: json
++        body: {}
++        status_code: [200, 201]
++      no_log: true
++
++    # ── 2. Force the firewall address-list to re-resolve ─────────────────────
++
++    - name: Read MikroTik firewall address-lists
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
++        method: GET
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        return_content: true
++        status_code: 200
++      register: framework_lists
++      no_log: true
++
++    - name: Select the FQDN entry of the framework address-list
++      ansible.builtin.set_fact:
++        framework_list_fqdn_entries: >-
++          {{
++            framework_lists.json
++            | selectattr('list', 'equalto', framework_address_list)
++            | selectattr('address', 'equalto', framework_fqdn)
++            | list
++          }}
++
++    - name: Toggle the FQDN entry off and on (skipped before fwdns-08 has created it)
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list/{{ framework_list_fqdn_entries[0]['.id'] }}"
++        method: PATCH
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        body_format: json
++        body:
++          disabled: "{{ item }}"
++        status_code: [200, 201]
++      loop: ["true", "false"]
++      when: framework_list_fqdn_entries | length == 1
++      no_log: true
++
++    - name: Wait until the address-list resolves to exactly the new address
++      ansible.builtin.uri:
++        url: "{{ mikrotik_rest_base_url }}/ip/firewall/address-list"
++        method: GET
++        user: "{{ mikrotik_user }}"
++        password: "{{ mikrotik_password }}"
++        force_basic_auth: true
++        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
++        return_content: true
++        status_code: 200
++      register: framework_lists_after
++      until: >-
++        (framework_lists_after.json
++          | selectattr('list', 'equalto', framework_address_list)
++          | selectattr('address', 'match', '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
++          | map(attribute='address') | list) == [framework_ip]
++      retries: 12
++      delay: 5
++      when: framework_list_fqdn_entries | length == 1
++      no_log: true
++
++    - name: Report
++      ansible.builtin.debug:
++        msg: >-
++          {{ framework_fqdn }} -> {{ framework_ip }} (ttl {{ framework_dns_ttl }});
++          address-list '{{ framework_address_list }}'
++          {{ 're-resolved' if framework_list_fqdn_entries | length == 1 else 'not present yet (fwdns-08 not applied)' }}.

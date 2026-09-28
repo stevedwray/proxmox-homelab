@@ -1,0 +1,15 @@
+[Unit]
+Description=Local Docker live-usage self-report -> OpenSearch (docker_live_usage_reporter)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-{{ docker_live_usage_reporter_dir }}/es-user.env
+ExecStart=/usr/bin/python3 {{ docker_live_usage_reporter_dir }}/docker_live_usage_report.py
+StandardOutput=append:{{ docker_live_usage_reporter_log_path }}
+StandardError=append:{{ docker_live_usage_reporter_log_path }}
+
+[Install]
+WantedBy=multi-user.target

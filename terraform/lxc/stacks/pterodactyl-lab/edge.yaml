@@ -1,0 +1,25 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: pterodactyl-lab-edge
+  stack: pterodactyl-lab
+spec:
+  routes:
+    - name: panel
+      host: pterodactyl.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_PTERODACTYL_LAB}:80
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Pterodactyl Panel has no native OIDC/SSO support -- same
+        # reasoning as netbox-stack/pentagi-stack/greenbone-stack's
+        # routes. forwardAuth gates the whole UI at Traefik's Authentik
+        # middleware; Panel's own local admin login stays as
+        # defense-in-depth behind that gate.
+        mode: forwardAuth

@@ -48,3 +48,32 @@ remediation call for the worst/most-exploitable subset.
 - OpenSearch Transform-job rollups (Phase 3, an explicit one-off
   departure from this repo's plain-Python-sync convention) — scoped but
   not step-blocked pending a live schema check.
+- Automated upstream-fix checking (Phase 12) — design decided and a
+  live-tested `check_upstream_fixes.py` sketch written, queries OSV.dev
+  daily for CVEs already accepted as risk pending an upstream fix; not
+  yet wired into a systemd service/timer or deployed.
+- Scoping CVE reporting to images actually in use (Phase 13 + Phase 14
+  uvm-14-01/02/03) — **live**, and now genuinely holistic. Phase 13's
+  `in_use` field (digest-exact + tag-exact fallback) was Portainer-only
+  at first, which turned out to be blind to most of the platform's
+  actual security/infra tier (only 9 real stacks are Portainer-registered
+  — every security/infra stack was deliberately exempted for
+  attack-surface reasons). Phase 14 added a second, self-reporting
+  collector (`docker_live_usage_reporter`, strictly read-only against
+  each host's own Docker socket, no SSH-based polling) for that exempt
+  tier, deployed to 10 of 12 confirmed gap-list stacks. Result: Harbor
+  CVEs correctly retained in the shortlist went from 356 to **2,313**
+  (out of 4,413 in-production) once Wazuh's own manager/dashboard/
+  indexer, the GVM/Greenbone scanner engine, OpenSearch, Grafana, and
+  NetBox's images stopped being invisible to `in_use`.
+- Harbor cleanup itself — the other half of Phase 13's original title —
+  **built and live, dry-run only.** `harbor_cleanup.py` runs daily
+  (`harbor-cleanup.timer`), identifying artifacts confirmed `in_use:
+  false` for 7+ consecutive days (`artifact.not_in_use_since`) and
+  logging what it *would* delete via Harbor's own artifact API —
+  excluding the `pentagi` pentest-target project. Real deletion
+  (`--execute`) stays off until the operator reviews a full grace
+  period's worth of dry-run output by hand. `manifest.txt`
+  auto-generation (uvm-14-07) stays explicitly deferred, per the plan's
+  own design — not enough time has passed on the combined live-usage
+  source to "trust it now."

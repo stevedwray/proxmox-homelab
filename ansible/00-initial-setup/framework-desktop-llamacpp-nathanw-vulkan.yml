@@ -1,0 +1,319 @@
+---
+# Reproduces, as Ansible IaC, the live Nathanw Strix-Halo llama.cpp
+# (Vulkan) container currently running on the Framework Desktop --
+# `qwen38-flash-next-q4`, started manually by the operator, not through
+# this repo. See docs/deep-research/current-state.md's "Live container
+# configuration" section for the exact `docker inspect` capture this
+# playbook is built from (captured 2026-09-21, read-only, no changes made
+# to the live container).
+#
+# Do NOT confuse this with framework-desktop-llamacpp-nathanw.yml (same
+# directory, different file): that one builds the Nathanw fork FROM
+# SOURCE for CyberSecEval's own unrelated purpose (port 8081, a different
+# model, Dockerfile.vulkan build) and is explicitly marked not wired up.
+# This playbook instead pulls the exact PREBUILT image already running
+# live and reproduces its exact invocation -- it is the Phase 0
+# prerequisite for docs/deep-research/plan.md, not related to CSE.
+#
+# What is reproduced exactly, because the live capture showed it matters:
+#   - image pinned by DIGEST, not the rolling `:vulkan` tag the live
+#     container happens to be running today (`docker inspect` showed no
+#     fork version label -- pin what's actually running, not a guess)
+#   - restart_policy "no" + auto_remove true -- the live container has
+#     NO automatic recovery on crash or host reboot (confirmed: no
+#     systemd unit, no cron, no user service supervises it). This
+#     playbook deliberately reproduces that lack of supervision rather
+#     than silently adding `restart: unless-stopped` -- see this repo's
+#     docs/deep-research/current-state.md for why that's a separate,
+#     explicitly-flagged decision, not something to fix here.
+#   - syslog log driver to tcp://127.0.0.1:10514 (rfc5424), not the
+#     json-file default used elsewhere in this repo
+#   - /dev/dri only, no /dev/kfd (Vulkan, not HIP)
+#   - the exact command-line flags observed live, including two that have
+#     no obvious effect visible from the outside (`--load-mode mmap`,
+#     `--no-host`, `--no-repack`, `--fit off`) -- kept verbatim rather
+#     than dropped, because their absence was not tested
+#
+# What is deliberately NOT reproduced by default: the live container's
+# own name (`qwen38-flash-next-q4`) and port (8080). This playbook
+# defaults to a distinct shadow name/port so it can be validated
+# side-by-side with the live container without colliding with or
+# disrupting it (see docs/deep-research/plan.md Phase 0's exit
+# criteria -- validate against `/health`/`/v1/models`/`/props`/`/slots`
+# before any cutover). Promoting this to replace the live container on
+# its real name/port is a deliberate, separate, operator-approved step:
+# override framework_llamacpp_nathanw_container_name and
+# framework_llamacpp_nathanw_port to the live values, and stop/remove the
+# manually-started container first.
+#
+# One open question this playbook does NOT resolve (see current-state.md):
+# the live command has no explicit --ctx-size/-c or --parallel/-np flag,
+# yet /props reports n_ctx=262144 and total_slots=4. This playbook also
+# omits those flags, matching the live invocation verbatim, rather than
+# guessing at explicit values that might not be equivalent. The validation
+# task below confirms whether the resulting /props output actually matches
+# -- if it doesn't, that is the signal an explicit flag is needed, not
+# something to assume up front.
+#
+# Run (shadow deployment, safe to run any time):
+#   ansible-playbook -i ansible/inventory/ framework-desktop-llamacpp-nathanw-vulkan.yml
+#
+# Run (promote to replace the live manual container -- operator-approved
+# cutover only, stops the existing qwen38-flash-next-q4 container first):
+#   ansible-playbook -i ansible/inventory/ framework-desktop-llamacpp-nathanw-vulkan.yml \
+#     -e framework_llamacpp_nathanw_container_name=qwen38-flash-next-q4 \
+#     -e framework_llamacpp_nathanw_port=8080 \
+#     -e framework_llamacpp_nathanw_promote=true
+
+- name: Deploy Nathanw Strix-Halo llama.cpp (Vulkan, prebuilt image) matching the live known-good config
+  hosts: framework
+  become: true
+  gather_facts: false
+
+  vars:
+    framework_llamacpp_nathanw_user: steve
+
+    # Pinned by digest, captured live 2026-09-21 via `docker image inspect
+    # ghcr.io/nathanw1014/strix-halo-llamacpp:vulkan --format
+    # '{{ "{{" }}.RepoDigests{{ "}}" }}'` against the running container.
+    # The `:vulkan` tag itself is a rolling tag with no fork-version label
+    # baked into the image (org.opencontainers.image.version is "24.04",
+    # the bundled Ubuntu/Mesa base label, not a fork release) -- pinning
+    # the tag alone would silently track future pushes to `:vulkan`.
+    framework_llamacpp_nathanw_image_repo: ghcr.io/nathanw1014/strix-halo-llamacpp
+    framework_llamacpp_nathanw_image_digest: "sha256:2fe2c66f712d23ff51cc99227ea6ef65d06979ff8381860fead494ea00d350cb"
+
+    # Shadow defaults -- distinct from the live container so this can run
+    # side-by-side for validation without disrupting it. Override both to
+    # the live values only for a deliberate, approved cutover (see header).
+    framework_llamacpp_nathanw_container_name: qwen38-flash-next-q4-iac-shadow
+    framework_llamacpp_nathanw_port: 8180
+    framework_llamacpp_nathanw_promote: false
+
+    # Verbatim from the live `docker inspect` capture -- do not add,
+    # remove, or reorder flags without re-confirming against a live
+    # /props comparison (see header's open question).
+    framework_llamacpp_nathanw_models_host_dir: /mnt/nvme2/models-gguf
+    framework_llamacpp_nathanw_model_path: /models/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+    framework_llamacpp_nathanw_command:
+      - llama-server
+      - -m
+      - "{{ framework_llamacpp_nathanw_model_path }}"
+      - -ngl
+      - "99"
+      - -fa
+      - "1"
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "{{ framework_llamacpp_nathanw_port }}"
+      - --load-mode
+      - mmap
+      - --no-host
+      - --no-repack
+      - --fit
+      - "off"
+
+    # Minimum free memory (MB, from /proc/meminfo's MemAvailable) required
+    # before this playbook will start ANY instance of this ~111GB
+    # GPU-resident (-ngl 99) model. This is deliberately close to the
+    # host's entire 122GB unified-memory budget: on this hardware, GPU
+    # weight and system RAM share the same physical pool, so there is no
+    # safe way to run two full copies of this model (or this model
+    # alongside another large one) at once. See
+    # docs/deep-research/current-state.md and this repo's memory
+    # (feedback_gpu_model_double_load_hang) for why this check exists --
+    # a prior run without it loaded a second full copy alongside the live
+    # container and hung the host, requiring a hard reset.
+    framework_llamacpp_nathanw_min_free_mb: 118000
+
+    # Verbatim from the live capture: syslog, not this repo's usual
+    # json-file default -- see docs/deep-research/current-state.md.
+    framework_llamacpp_nathanw_log_driver: syslog
+    framework_llamacpp_nathanw_log_options:
+      syslog-address: tcp://127.0.0.1:10514
+      syslog-format: rfc5424
+      # {% raw %}{{.Name}}{% endraw %} is Docker's own Go-template log-tag
+      # syntax, not Jinja -- the raw block stops Ansible from trying (and
+      # failing) to evaluate it as its own expression before this ever
+      # reaches the docker daemon.
+      tag: "docker-{% raw %}{{.Name}}{% endraw %}"
+
+  tasks:
+    - name: Refuse to promote onto the live container's own name/port without an explicit override
+      ansible.builtin.assert:
+        that:
+          - not (framework_llamacpp_nathanw_promote | bool) or framework_llamacpp_nathanw_container_name == 'qwen38-flash-next-q4'
+          - not (framework_llamacpp_nathanw_promote | bool) or (framework_llamacpp_nathanw_port | int) == 8080
+        fail_msg: >-
+          framework_llamacpp_nathanw_promote=true requires container_name=qwen38-flash-next-q4
+          and port=8080 -- this is the deliberate-cutover guard from the header comment, not a bug.
+        success_msg: "Cutover guard satisfied (or not promoting; running as a shadow deployment)."
+
+    - name: Check whether the live manually-started container is currently running
+      community.docker.docker_container_info:
+        name: qwen38-flash-next-q4
+      register: framework_llamacpp_nathanw_live_info
+
+    - name: Refuse to start a second full model load alongside the live container
+      ansible.builtin.assert:
+        that: >-
+          (framework_llamacpp_nathanw_promote | bool)
+          or not (framework_llamacpp_nathanw_live_info.exists
+                  and framework_llamacpp_nathanw_live_info.container.State.Running)
+        fail_msg: >-
+          qwen38-flash-next-q4 is already running and this is not a promote cutover
+          (which would stop it first). Starting a second ~111GB GPU-resident copy of
+          this model alongside it will exceed this host's unified-memory budget and
+          can hang the host (this happened on 2026-09-21 -- see this repo's
+          feedback_gpu_model_double_load_hang memory). Either stop the live container
+          yourself first, or run with promote=true to have this playbook stop it as
+          part of a deliberate cutover.
+
+    - name: Stop and remove the live manually-started container (promote cutover only)
+      community.docker.docker_container:
+        name: qwen38-flash-next-q4
+        state: absent
+      when:
+        - framework_llamacpp_nathanw_promote | bool
+        - framework_llamacpp_nathanw_live_info.exists
+
+    - name: Read free memory before starting any model load
+      ansible.builtin.command: cat /proc/meminfo
+      changed_when: false
+      register: framework_llamacpp_nathanw_meminfo
+
+    - name: Parse MemAvailable (kB) from /proc/meminfo
+      ansible.builtin.set_fact:
+        # This is a plain block scalar (>-), not a double-quoted string --
+        # it does NOT do C-style backslash unescaping, so the regex below
+        # must use single backslashes (\s, \d) as literal Jinja/Python
+        # regex syntax. A prior version of this task doubled them (\\s,
+        # \\d) on the mistaken assumption this scalar behaved like a
+        # double-quoted one; that made the pattern look for literal
+        # backslash characters that don't exist in /proc/meminfo, so it
+        # never matched, regex_replace silently returned the line
+        # unchanged, and `| int` on a non-numeric string silently
+        # defaulted to 0 -- which then passed straight into the safety
+        # assert below as "0 MB available", triggering it for the wrong
+        # reason. Confirmed against the real line format
+        # (`MemAvailable:   124719532 kB`) via a live, read-only SSH check
+        # before fixing.
+        framework_llamacpp_nathanw_mem_available_mb: >-
+          {{ (framework_llamacpp_nathanw_meminfo.stdout_lines
+              | select('match', '^MemAvailable:')
+              | first
+              | regex_replace('^MemAvailable:\s*(\d+)\s*kB$', '\1')
+              | int) // 1024 }}
+
+    - name: Refuse to start unless there is enough free memory for a full model load
+      ansible.builtin.assert:
+        that: (framework_llamacpp_nathanw_mem_available_mb | int) >= (framework_llamacpp_nathanw_min_free_mb | int)
+        fail_msg: >-
+          Only {{ framework_llamacpp_nathanw_mem_available_mb }} MB available, need at
+          least {{ framework_llamacpp_nathanw_min_free_mb }} MB before starting a
+          ~111GB GPU-resident (-ngl 99) model on this unified-memory host. Something
+          else is holding memory/GPU weight -- check `docker ps`/`free -h` on
+          framework.gibbsgreatly.xyz and free it up before re-running, rather than
+          overriding this check.
+        success_msg: >-
+          {{ framework_llamacpp_nathanw_mem_available_mb }} MB available -- proceeding.
+
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add {{ framework_llamacpp_nathanw_user }} to the docker group # noqa: name[template]
+      ansible.builtin.user:
+        name: "{{ framework_llamacpp_nathanw_user }}"
+        groups: docker
+        append: true
+
+    - name: Confirm the live-observed model shards exist on this host
+      ansible.builtin.stat:
+        path: "{{ framework_llamacpp_nathanw_models_host_dir }}/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-0000{{ item }}-of-00004.gguf"
+      loop: ["1", "2", "3", "4"]
+      register: framework_llamacpp_nathanw_shard_stat
+
+    - name: Fail loudly if any model shard is missing, rather than let the container start and fail obscurely
+      ansible.builtin.assert:
+        that: framework_llamacpp_nathanw_shard_stat.results | map(attribute='stat.exists') | list is all
+        fail_msg: >-
+          One or more Qwen3.8-Flash-Next-UD-Q4_K_XL GGUF shards are missing under
+          {{ framework_llamacpp_nathanw_models_host_dir }} -- this playbook does not download
+          models, it only reproduces the serving container. Confirm the host's own model
+          storage before proceeding.
+
+    - name: Pull the pinned Nathanw Vulkan image by digest
+      community.docker.docker_image:
+        name: "{{ framework_llamacpp_nathanw_image_repo }}@{{ framework_llamacpp_nathanw_image_digest }}"
+        source: pull
+
+    - name: Run the Nathanw llama.cpp (Vulkan) container, matching the live known-good config
+      community.docker.docker_container:
+        name: "{{ framework_llamacpp_nathanw_container_name }}"
+        image: "{{ framework_llamacpp_nathanw_image_repo }}@{{ framework_llamacpp_nathanw_image_digest }}"
+        command: "{{ framework_llamacpp_nathanw_command }}"
+        state: started
+        # Verbatim from the live capture: no automatic recovery on crash
+        # or host reboot. Do not change to unless-stopped/always without
+        # first raising it as its own decision -- see header comment.
+        restart_policy: "no"
+        auto_remove: true
+        devices:
+          - /dev/dri:/dev/dri:rwm
+        volumes:
+          - "{{ framework_llamacpp_nathanw_models_host_dir }}:/models:rw"
+        published_ports:
+          - "{{ framework_llamacpp_nathanw_port }}:{{ framework_llamacpp_nathanw_port }}"
+        log_driver: "{{ framework_llamacpp_nathanw_log_driver }}"
+        log_options: "{{ framework_llamacpp_nathanw_log_options }}"
+      register: framework_llamacpp_nathanw_run
+
+    - name: Wait for the server's own /health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llamacpp_nathanw_port }}/health"
+        status_code: 200
+      register: framework_llamacpp_nathanw_health
+      until: framework_llamacpp_nathanw_health.status == 200
+      retries: 30
+      delay: 10
+
+    - name: Read /props to compare against the live-recorded values
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llamacpp_nathanw_port }}/props"
+        return_content: true
+      register: framework_llamacpp_nathanw_props
+
+    - name: Fail if n_ctx/total_slots don't match the live-recorded 262144/4 -- see the header's open question
+      ansible.builtin.assert:
+        that:
+          - (framework_llamacpp_nathanw_props.json.default_generation_settings.n_ctx | int) == 262144
+          - (framework_llamacpp_nathanw_props.json.total_slots | int) == 4
+        fail_msg: >-
+          This reproduction's /props does not match the live container's recorded
+          n_ctx=262144/total_slots=4 (docs/deep-research/current-state.md). Since no
+          --ctx-size/--parallel flag is set here (matching the live command verbatim),
+          this means those live values come from something other than a compiled-in or
+          model-derived default -- do not add explicit flags to force a match without
+          first finding out what actually produced the live behavior.
+        success_msg: "/props matches the live-recorded configuration (n_ctx=262144, total_slots=4)."
+
+    - name: Report the endpoint this reproduction is serving on
+      ansible.builtin.debug:
+        msg: >-
+          Nathanw llama.cpp reproduction '{{ framework_llamacpp_nathanw_container_name }}'
+          is healthy on port {{ framework_llamacpp_nathanw_port }}.
+          {{ 'This IS now the live production endpoint (cutover complete).'
+             if framework_llamacpp_nathanw_promote | bool
+             else 'This is a shadow deployment -- the original qwen38-flash-next-q4 on :8080 is untouched.' }}

@@ -103,11 +103,9 @@ above for the current addresses.
 
 ### Credentials
 
-Stored in SOPS at `terraform/secrets.common.enc.yaml`. Decrypt with:
-
-```bash
-eval "$(sops -d terraform/secrets.common.enc.yaml | grep ^MIKROTIK | sed 's/: /=/;s/^/export /')"
-```
+Stored in OpenBao at `kv/services/mikrotik`. Run commands under
+`./with-secrets` (or `./with-secrets-prod`), which puts the `MIKROTIK_*`
+variables in the environment.
 
 ### Re-scraping
 
@@ -120,22 +118,20 @@ Two separate bugs, now both fixed:
    to `null`, and the script produced an all-null "scrape" that looked like
    a working run. Fixed by passing `-u "${USER}:${PASS}"` directly.
 2. **The documented `api-user` credential was broken as of 2026-07-03
-   (401 Unauthorized in all three SOPS files), but is working again as of a
+   (401 Unauthorized in all three of the then-SOPS files), but is working again as of a
    follow-up check the same day** — confirmed `HTTP 200` against
-   `/rest/system/identity` with the `secrets.common.enc.yaml` copy. Root cause of
+   `/rest/system/identity` with the then-`secrets.common.enc.yaml` copy (now `kv/services/mikrotik`). Root cause of
    the original 401 (rotated on-device vs. never valid) was never
    identified, so if it recurs, don't assume it's the same bug fixed in
    item 1 above — check auth separately from the script. Other working
    accounts, useful if `api-user` ever regresses:
-   `MIKROTIK_ADMIN`/`MIKROTIK_ADMIN_PASSWORD` (`dns-user`, full admin, in
-   all three files) and `MIKROTIK_READONLY_USER`/`MIKROTIK_READONLY_PASSWORD`
-   (`api-ro`, **only** in `secrets.pve.enc.yaml`) — note `api-ro`
+   `MIKROTIK_ADMIN`/`MIKROTIK_ADMIN_PASSWORD` (`dns-user`, full admin) and `MIKROTIK_READONLY_USER`/`MIKROTIK_READONLY_PASSWORD`
+   (`api-ro`) — note `api-ro`
    authenticates but its API policy doesn't grant read access to most
    `/rest` endpoints tested here (returned HTTP 200 with an empty body).
 
 ```bash
-eval "$(sops -d terraform/secrets.common.enc.yaml | grep -E '^MIKROTIK_(USER|PASSWORD):' | sed 's/: /=/;s/^/export /')"
-./router/scripts/scrape-config.sh 192.168.1.1
+./with-secrets ./router/scripts/scrape-config.sh 192.168.1.1
 ```
 
 `config/current-config.json` is now a fresh scrape taken this way on
