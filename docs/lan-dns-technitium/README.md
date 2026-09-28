@@ -197,3 +197,11 @@ File changes only; nothing run against any host.
   `technitium-targets`, `dashboard-valid` PASS.
 
 Unit tests: same 8 pre-existing failures.
+- **Pre-deploy (read-only)**: `terragrunt plan` for technitium-tiny-stack
+  = 5 add / 0 change / 0 destroy; CT 20017 on pve-tiny, 192.168.20.17/24
+  gw .20.1, bridge `tvmgmt`, 1 core, 2048 MB + 1024 MB swap, 12 GB rootfs +
+  6 GB docker on `local-lvm`, unprivileged + nesting, start on boot.
+  192.168.20.17 doesn't answer ping and has no PTR. VMID check left to the
+  operator (pve-tiny profile has no read-only API token). Plan corrected:
+  creation is `terragrunt apply` then `provision.sh` — `provision.sh` alone
+  never creates the CT.

@@ -2338,20 +2338,34 @@ gates:
 
 ### Operator: create technitium-tiny-stack on pve-tiny
 
-1. Read-only collision check, then preflight/approval:
-   `ping -c1 -W1 192.168.20.17` must fail, and VMID `20017` must not
-   appear in pve-tiny's `pct list` (read-only API query through
-   `./with-secrets-prod-tiny`, as in the media-stack-lab precedent).
-2. Deploy (Terraform creates the LXC, then Ansible runs
-   `deploy-technitium-tiny-stack.yml`; it has no zones until it joins the
-   cluster):
+`provision.sh` never runs Terraform — it only runs Ansible against the
+inventory that `terragrunt apply` generates — so creation is two commands
+(the same pattern `docs/ai-stacks-pve-tiny/` used on this node):
+
+1. Read-only checks: `terragrunt plan` (on the read-only allowlist) must
+   show 5 to add, 0 to change/destroy, CT 20017 on pve-tiny at
+   192.168.20.17 on `tvmgmt`; `ping -c1 -W1 192.168.20.17` must fail; and
+   VMID 20017 must not exist on pve-tiny (`pct list` on the node — the
+   pve-tiny secrets profile has no read-only API token, so this is an
+   operator check).
+   ```bash
+   ./with-secrets-prod-tiny terragrunt plan --working-dir terraform/lxc/environments/pve-tiny/technitium-tiny-stack -no-color
+   ```
+2. Create and start the CT (also attaches it to the SDN vnet and writes
+   `inventory.yml`/`network-sdn-vars.yml` in the env dir):
    ```bash
    export TASK_APPROVAL="lan-dns-technitium-tiny-deploy"
-   ./with-secrets-prod-tiny scripts/provision.sh --stack technitium-tiny-stack
+   ./with-secrets-prod-tiny terragrunt apply --working-dir terraform/lxc/environments/pve-tiny/technitium-tiny-stack
    ```
-   (If `ansible-playbook` inside it hits a blocking-IO error from the
-   Bash tool, wrap with `script -qec '…' /dev/null`, as for
-   `cse-panel-stack`.)
+3. Deploy Technitium (Ansible: Docker base, Technitium, Wazuh, unattended
+   upgrades, node observability; it has no zones until it joins the
+   cluster). Edge reconcile and Portainer registration skip on pve-tiny:
+   ```bash
+   ./with-secrets-prod-tiny scripts/provision.sh --stack technitium-tiny-stack
+   unset TASK_APPROVAL
+   ```
+   (If `ansible-playbook` inside it hits a blocking-IO error, wrap with
+   `script -qec '…' /dev/null`, as for `cse-panel-stack`.)
 
 ### Operator: form the cluster (one-time, cluster domain is permanent)
 
@@ -3378,3 +3392,7 @@ after Stage F as its own decision.
   contact point exists: `up{job="technitium"} == 0` for 5m, SERVFAIL ratio
   above 5%, no `blocked_total` increase for 24h (blocklists failed to
   load).
+- **pve-tiny has no read-only Proxmox API token** in its secrets profile
+  (only the automation token), so read-only checks against pve-tiny can't
+  follow CLAUDE.md's read-only-token rule. Adding `PROXMOX_READONLY_TOKEN_ID`
+  / `_SECRET` to `hosts/pve-tiny` (and the profile) would fix that.
