@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29, no steps executed.** Operator decisions are
+**Planned 2026-09-29. Phase 1 (`lan-dns-02`–`05`) done 2026-09-29 as file changes — not yet deployed anywhere.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -59,4 +59,32 @@ authoritative.
 Each executed step appends an entry here: step id, date, the edit made,
 each gate's actual result.
 
-_No steps executed yet._
+### 2026-09-29 — lan-dns-02..05 (Phase 1), executed by Claude in-session
+
+File changes only; nothing run against any host. Applied from the plan's
+literal blocks verbatim.
+
+- **lan-dns-02-zone-role** — created `roles/technitium_zone/{defaults,tasks}/main.yml`.
+  Gates: `yaml-parses` PASS, `uses-catalog-and-cluster-state` PASS.
+- **lan-dns-03-zone-role-consumers** — `technitium_dns_record` reverse-zone
+  creation and `technitium-framework-forwarder.yml`'s forwarder creation now
+  go through `technitium_zone`. Gates: `syntax-dns-record-consumer` PASS,
+  `syntax-framework` PASS, `no-direct-zone-create` PASS. Checked separately:
+  no remaining references to the removed registered variables.
+- **lan-dns-04-deploy-cluster-aware** — bootstrap/parity zone creation via
+  the role; NS/SOA reconciliation wrapped in a standalone-only block plus
+  two clustered-mode assertion tasks. Gates: `syntax-check`,
+  `only-lab-forwarder-create-left`, `standalone-guard`,
+  `ns-soa-tasks-preserved` all PASS. Checked separately: the five
+  re-indented NS/SOA tasks are byte-identical to HEAD apart from the extra
+  4-space indent.
+- **lan-dns-05-adopt-zones-playbook** — created
+  `playbooks/technitium-cluster-adopt-zones.yml`; appended the cluster-
+  contract bullet to `technitium-stack/STACK_CONTRACT.md`. Gates:
+  `syntax-check` PASS, `contract-bullet` PASS.
+
+`python3 -m unittest discover -s terraform/lxc -p "test_*.py"`: 87 tests,
+8 failures — the identical set fails on the pre-change HEAD
+(`test_reconcile_edge` ×7, `test_render_edge_coredns` ×1), so pre-existing
+and unrelated. Real validation of Phase 1 happens at the Phase 2
+`provision.sh --stack technitium-stack` run on pve (standalone path).

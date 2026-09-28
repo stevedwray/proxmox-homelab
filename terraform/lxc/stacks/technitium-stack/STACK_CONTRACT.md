@@ -151,6 +151,12 @@ No secret values are committed here. All sensitive values must come from the env
   host` into other stacks without an equivalent documented justification
   (see `terraform/lxc/PLATFORM_CONTRACT.md`'s Orchestration boundary
   section).
+- Create Technitium zones only through the `technitium_zone` role. Once
+  this server is a Technitium cluster primary, the cluster owns every
+  catalog member zone's apex NS records and SOA primary name server and
+  the API rejects edits to them; `deploy-technitium-stack.yml` reconciles
+  them only while standalone and asserts them when clustered. See
+  `docs/lan-dns-technitium/plan.md` Phase 1.
 
 ## Playbook
 

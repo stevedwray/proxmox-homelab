@@ -1,0 +1,5 @@
+---
+# technitium_zone defaults -- see tasks/main.yml for the contract.
+technitium_zone_type: Primary
+technitium_zone_forwarder: ""
+technitium_zone_forwarder_protocol: Udp
