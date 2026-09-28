@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Pending: Graylog rule update so DNS query logs get `dns_*` fields, then Phase 3.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Next: Phase 3 (pve-tiny secondary).** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -163,3 +163,12 @@ the operator ran each approved command; Claude verified afterwards.
   source accepted by Graylog's parse-only endpoint; Ansible-rendered source
   byte-identical to the parsed one. Needs an approved run of
   `configure-graylog-dns-queries.yml` on graylog-stack.
+- **Graylog rule update** (`TASK_APPROVAL=lan-dns-graylog-rule`, targeted
+  `configure-graylog-dns-queries.yml` run): `changed=1`, `failed=0`.
+  Verified: new "DNS Queries" messages carry `dns_client_ip`,
+  `dns_response_type`, `dns_qname`, `dns_qtype`, `dns_rcode`,
+  `dns_answers`, `dns_rtt_ms` — e.g. garuda's `googlesyndication.com` →
+  `Blocked`, `wikipedia.org` → `Recursive`. Every unparsed `local6`
+  message predates the rule reload (first parsed 20:03:39Z); the same
+  message shapes parse after it. Cosmetic: `dns_answers` keeps the
+  answer's surrounding quotes.
