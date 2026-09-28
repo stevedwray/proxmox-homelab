@@ -102,7 +102,7 @@ and `authserver` were verified listening on TCP 8085 and 3724 after the
 change. A short-lived newly created character remains the operator gameplay
 check for the four equipped bags.
 
-### Phase 3b — free heirloom vendor
+### Phase 3b — free heirloom vendor — completed 2026-09-29
 
 Ship a small, versioned world/character database customization. It must
 provide:
@@ -123,6 +123,10 @@ It stocks 39 curated level-appropriate WotLK heirloom equipment items for zero
 cost, respecting the normal item faction/class restrictions. Nine spawns cover
 the distinct initial areas (including the shared death-knight area); shared
 race starts share one vendor.
+
+The migration was imported into the live world database and server 4 was
+restarted. The vendor has 39 stock records and nine spawn records; both
+`authserver` and `worldserver` resumed listening on TCP 3724 and 8085.
 
 ### Phase 4 — controlled cutover
 
