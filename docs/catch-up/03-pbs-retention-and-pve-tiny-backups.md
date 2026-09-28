@@ -46,7 +46,7 @@ The space is held by (logical sizes, 2026-09-28, 42 groups / 83 snapshots):
   `108` securityonion-idh (107.4 GB each), `109`, `116`, `113`, `110`, `120`,
   `100`.
 
-Replacement Part A (operator decision per group; deletion is irreversible):
+Replacement Part A (operator decision per group; deletion is irreversible). **Done 2026-09-28**: see README hand-back; 244 GB free afterwards.
 
 1. Delete the groups of guests that no longer exist (PBS GUI → Datastore
    `iscsi-backup` → Content → group `ct/112` (or `vm/112`) → Remove group;

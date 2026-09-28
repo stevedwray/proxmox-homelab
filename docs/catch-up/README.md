@@ -22,9 +22,9 @@ command.
 
 | # | Plan | When | Effort | Value | Depends on | Status |
 |---|---|---|---|---|---|---|
-| 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | **done 2026-09-28** (browser spot-check pending) |
+| 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | **done 2026-09-28** (browser check confirmed by operator) |
 | 02 | [Repo hygiene](02-repo-hygiene.md) | today | 45 min | Medium | — | **mostly done** — PRs #435–#439 open; worktree/branch cleanup waits for merges |
-| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | **blocked on operator decision** — retention already exists (keep-last 2); space is held by dead-guest groups, see plan's Correction |
+| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | **Part A done** (244 GB free, 72%); Part B waits on operator GUI steps B1–B2 |
 | 04 | [Secrets refactor close-out](04-secrets-closeout.md) | 2026-09-29, after the 02:40 UTC run | 15 min | High | — | not started |
 | 05 | [Decommission old AI CTs on pve](05-decommission-pve-source-cts.md) | **not before 2026-10-04** | 45 min | Medium | 03 | not started |
 | 06 | [Run CI gates on PRs into `stable`](06-ci-gates-on-stable-prs.md) | this week | 30 min | Med-High | 02 | not started |
@@ -126,7 +126,7 @@ Why this order, and what changed from the first draft of the list:
   routes still `302`; from the proxy host (`192.168.30.10`) the backends
   still answer (`200` ×4, `401` qBittorrent), so Traefik → backend works.
   Jellyseerr (`5055`, out of scope) is unchanged (`307`).
-- Open: operator browser spot-check (log in via Authentik, open each app).
+- Operator browser check via Authentik: all apps load. Plan 01 closed.
 
 ### 02 — repo hygiene (2026-09-28)
 
@@ -158,3 +158,27 @@ Why this order, and what changed from the first draft of the list:
   dead-guest groups `112`, `115`, `104` and on excluding long-stopped guests.
   Part B (pve-tiny) not started: needs that space plus GUI steps (namespace,
   storage password).
+
+### 03 Part A (replacement) — reclaim PBS space (2026-09-28)
+
+Operator decisions: stopped guests are not to be backed up; delete the
+dead-guest backups.
+
+- pve job `backup-8b90fc3e-c3a5` exclude list changed `105,910` →
+  `100,103,105,106,108,109,110,111,113,116,120,910,40014,50011,50012,50013`
+  (every guest stopped at that moment: CTs 100 torrent-stack, 103
+  gaming-stack-legacy, 109 security-stack, 110 analysis-stack, 116 ai-stack,
+  40014/50011/50012/50013 old AI copies; VMs 106 securityonion, 108
+  securityonion-idh, 111 wifi-analysis, 113 pve-test-vm, 120 metasploitable).
+  Their last two snapshots stay on PBS as an archive. **If any of these is
+  started again, remove it from the exclude list or it won't be backed up.**
+- Deleted the six snapshots of guests that no longer exist (no config on
+  pve): `ct/104` ×2 (cloud-stack), `ct/112` ×2 (elastic-stack), `ct/115` ×2
+  (scanning-stack), via `pvesh delete /nodes/pve/storage/pbs-iscsi/content/<volid>`.
+- Manual GC on `iscsi-backup`: TASK OK, removed 193.1 GiB (101,433 chunks);
+  on-disk usage 727.4 GiB, dedup factor 5.08.
+- `pvesm status`: 72.33% used, 238,396,212 KiB (~244 GB) available, above
+  the 216 GB gate for Part B.
+- Part B next: operator does B1 (namespace `pve-tiny` in the PBS GUI) and B2
+  (add `pbs-iscsi` storage on pve-tiny, which needs the PBS root password);
+  then B3–B6 can run.
