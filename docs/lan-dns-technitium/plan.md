@@ -1449,11 +1449,14 @@ gates:
            != item.item.config
          no_log: true
 
+       # Probe domain: googlesyndication.com is itself an entry in Hagezi Pro.
+       # Not doubleclick.net -- Hagezi deliberately leaves that apex (and
+       # ad.doubleclick.net) unblocked and lists ad subdomains instead.
        # Blocking must be probed from a non-bypassed address: the LXC itself
        # sits in 192.168.20.0/24 (bypassed), so these digs run on the control
        # node, which is on bridgeLocal like a real LAN client.
        - name: Probe blocking from the LAN
-         ansible.builtin.command: dig @{{ technitium_ip }} +short doubleclick.net A
+         ansible.builtin.command: dig @{{ technitium_ip }} +short googlesyndication.com A
          delegate_to: localhost
          register: lan_resolver_block_probe
          check_mode: false
@@ -1818,7 +1821,7 @@ scope:
 
 gates:
   - id: blocks-ads
-    cmd: "test \"$(dig +short @192.168.20.15 doubleclick.net A)\" = 0.0.0.0"
+    cmd: "test \"$(dig +short @192.168.20.15 googlesyndication.com A)\" = 0.0.0.0"
     expect: "exit 0"
     critical: true
   - id: resolves-public
@@ -1862,7 +1865,7 @@ gates:
 In Graylog: the "DNS Queries" stream shows messages from `technitium-stack`
 within a minute of a lookup from your workstation, and a message has
 `clientIp`, `qName`, `responseType` fields (the structured data survived
-both relays). Look up `doubleclick.net` and confirm a `responseType:
+both relays). Look up `googlesyndication.com` and confirm a `responseType:
 Blocked` message. Technitium's own server log appears in the "Docker
 Chatter" stream as `application_name: docker-technitium`. If the fields
 are missing but the message text is there, the structured data was
@@ -2490,7 +2493,7 @@ scope:
 
 gates:
   - id: blocklists-synced
-    cmd: "test \"$(dig +short @192.168.20.17 doubleclick.net A)\" = 0.0.0.0"
+    cmd: "test \"$(dig +short @192.168.20.17 googlesyndication.com A)\" = 0.0.0.0"
     expect: "exit 0"
     critical: true
   - id: lab-zone-replicated
@@ -2695,7 +2698,7 @@ gates:
        - name: Refuse to cut over unless both Technitium nodes block and resolve
          ansible.builtin.shell: |
            set -euo pipefail
-           test "$(dig +short @{{ item }} doubleclick.net A)" = 0.0.0.0
+           test "$(dig +short @{{ item }} googlesyndication.com A)" = 0.0.0.0
            dig @{{ item }} github.com A | grep -q 'status: NOERROR'
          args:
            executable: /bin/bash

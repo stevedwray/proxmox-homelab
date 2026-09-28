@@ -284,11 +284,14 @@
         != item.item.config
       no_log: true
 
+    # Probe domain: googlesyndication.com is itself an entry in Hagezi Pro.
+    # Not doubleclick.net -- Hagezi deliberately leaves that apex (and
+    # ad.doubleclick.net) unblocked and lists ad subdomains instead.
     # Blocking must be probed from a non-bypassed address: the LXC itself
     # sits in 192.168.20.0/24 (bypassed), so these digs run on the control
     # node, which is on bridgeLocal like a real LAN client.
     - name: Probe blocking from the LAN
-      ansible.builtin.command: dig @{{ technitium_ip }} +short doubleclick.net A
+      ansible.builtin.command: dig @{{ technitium_ip }} +short googlesyndication.com A
       delegate_to: localhost
       register: lan_resolver_block_probe
       check_mode: false
