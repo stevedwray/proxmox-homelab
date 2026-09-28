@@ -4,8 +4,8 @@ Status: **All three phases complete.** Phases A and C were merged to
 `stable` in #432 (2026-09-28). Phase B, the re-IP cutover, ran on
 2026-09-28 from `task/framework-reip-cutover`: framework is now
 `192.168.1.18`, and `192.168.1.8` is gazaar's alone. That branch is not yet
-merged. NetBox still shows `.8`: the populate CI job is broken on its
-runner (see the hand-back log).
+merged. NetBox was corrected by hand the same day; the populate CI job's
+fix is on `fix/netbox-populate-no-docker` (see the hand-back log).
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
 was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
@@ -571,3 +571,44 @@ off.
   next task sets it back to 0711. Both report `changed` on every run; the
   end state is 0711, which is correct. The fix is to set the first task's
   mode to `'0711'` (not done yet).
+
+### NetBox follow-up, 2026-09-28 (afternoon)
+
+The daily `netbox-populate` job had never worked (no success back to at
+least 2026-06-14). There were three causes:
+1. The self-hosted runner's `runner` user has no access to
+   `/var/run/docker.sock`, so `docker build` failed.
+2. OpenBao's `ci-netbox-populate` JWT role accepts only
+   `refs/heads/main` (`configure-openbao.yml`). A dispatch from a branch,
+   as runbook step 9 had it, can never log in.
+3. `main` still carries the SOPS version of the workflow.
+
+- **CI fix (`fix/netbox-populate-no-docker`, `0f912630`, not pushed).**
+  The fix does not add `runner` to the `docker` group. The repo is public
+  and `security-scan.yml` runs fork PRs on the same runner (approval is
+  needed only for first-time contributors), so the group would give those
+  jobs root-equivalent access. Instead the workflow runs `populate.py`
+  directly: the container only wrapped Python 3.13 and pyyaml.
+  `deploy-ci-runner.yml` now installs `python3-yaml`.
+- **Runner deployed:** `provision.sh --stack ci-runner-01` on pve, under
+  the approval flow (`ci-runner-python-yaml`). ok=95, changed=5,
+  failed=0; the smoke test passed. `runner` imports pyyaml 6.0.2. Docker
+  and the runner service were not restarted, and the runner is online in
+  GitHub. The job itself can only be verified once the fix reaches
+  `main`.
+- **NetBox corrected by hand.**
+  - A dry run of the full populate showed 86 pending writes (months of
+    backlog), plus two warnings: Portainer endpoint discovery failed with
+    "connection refused", and threat-model derivation fails with
+    `unhashable type: 'list'`. It was not applied.
+  - Instead, populate's own `populate_static_hosts()` was run for the
+    framework entry only. It created `192.168.1.18/24` (id 58) on
+    framework's eth0 and set it as `primary_ip4`.
+  - The stale `192.168.1.8/24` record (id 42, still on framework's eth0) was
+    deleted by the operator (204). NetBox now has no `.8` address.
+- **Open:**
+  - push the fix branch and promote it to `main`, then check the first
+    scheduled run;
+  - the 86-write catch-up it will then apply, including the Portainer
+    discovery warning;
+  - the threat-model bug.

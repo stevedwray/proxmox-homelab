@@ -1713,17 +1713,13 @@ Preconditions. Check every one on the day:
 8. **Power on gazaar.** Check that `192.168.1.8` answers as the NAS, that
    `gazaar.gibbsgreatly.xyz` still resolves to `.8`, and that a backup run
    completes.
-9. **NetBox.** The daily `netbox-populate` workflow (02:17 UTC) runs from
-   `main`, which will say `.8` until it is promoted. Dispatch it against
-   the cutover branch instead:
-   ```bash
-   gh workflow run netbox-populate.yml --ref task/framework-reip-cutover
-   gh run watch "$(gh run list --workflow netbox-populate.yml --limit 1 --json databaseId -q '.[0].databaseId')"
-   ```
-   Then check that the framework static host shows `192.168.1.18` in NetBox.
-   If the run fails at the OpenBao login, CI's GitHub-OIDC role doesn't
-   accept that branch. Leave it: NetBox corrects itself on the first
-   scheduled run after `stable` → `main`.
+9. **NetBox.** CI can't do this from a branch: OpenBao's
+   `ci-netbox-populate` role accepts only `refs/heads/main`. Found on
+   2026-09-28, along with the job's Docker-socket failure; see README.md,
+   "NetBox follow-up". Update framework's static host directly instead,
+   with populate's own `populate_static_hosts()` for that one entry: a dry
+   run first, then apply through `./with-secrets-prod`. Then delete the
+   old address record, which populate never removes.
 10. **Record.**
     1. Re-scrape the router (step 1's command); it now shows `.18` for the
        framework record and `.8` only for gazaar.
