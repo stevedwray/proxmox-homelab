@@ -32,9 +32,14 @@
     # Hagezi Pro (ads/trackers/telemetry, ~230k domains) + Hagezi Threat
     # Intelligence Feeds "mini" (malware/phishing/scam). The full TIF list
     # is ~40MB, too heavy for a 2GB LXC. Both URLs checked 2026-09-29.
+    # Plus StevenBlack's unified hosts (Pi-hole's default list): Hagezi
+    # deliberately leaves some ad hosts alone (doubleclick.net apex,
+    # ad.doubleclick.net, adservice.google.com) that the Pi-holes blocked
+    # (operator, 2026-09-29).
     lan_resolver_block_list_urls:
       - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
       - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+      - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
     # Exceptions and extra blocks live here, not in the web UI, so a
     # rebuild keeps them. Synced to the secondary via clustering.
     lan_resolver_allowed_domains: []

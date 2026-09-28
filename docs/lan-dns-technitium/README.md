@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Next: approved pve-tiny collision check + deploy, cluster formation.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. technitium-tiny-stack created and deployed on pve-tiny 2026-09-29. Next: cluster formation.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -205,3 +205,23 @@ Unit tests: same 8 pre-existing failures.
   operator (pve-tiny profile has no read-only API token). Plan corrected:
   creation is `terragrunt apply` then `provision.sh` — `provision.sh` alone
   never creates the CT.
+
+### 2026-09-29 — technitium-tiny-stack deployed (pve-tiny), run by the operator
+
+- `terragrunt apply` + `provision.sh --stack technitium-tiny-stack`
+  (`TASK_APPROVAL=lan-dns-technitium-tiny-deploy`): `failed=0`,
+  `changed=62`.
+- Verified from garuda: `.17` resolves public names itself (default
+  recursion), doesn't block yet and has no lab zone (both arrive with the
+  cluster), API :5380 200, cAdvisor :8080 200, node_exporter :9100 401
+  (auth required = running). Server domain
+  `technitium-tiny.lab.gibbsgreatly.xyz` → becomes
+  `technitium-tiny.cluster.lab.gibbsgreatly.xyz` on join.
+- `secrets/manifest.json` (lan-dns-11) committed by Claude with operator
+  consent (4f78c9a4).
+- **StevenBlack unified hosts added** to the blocklists (operator decision):
+  covers the ad hosts Hagezi deliberately leaves alone (`doubleclick.net`,
+  `ad.doubleclick.net`, `adservice.google.com` all listed). Goes live at the
+  next technitium-stack run (cluster step 5). Capacity: primary is at
+  410 MiB / 2 GiB with 380k entries (249 MiB before lists); StevenBlack
+  adds ~81k lines.
