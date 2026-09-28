@@ -19,6 +19,47 @@ DNS resolver for the whole LAN — two synced Technitium nodes (`pve` +
 separate and largely independent track, move LAN DHCP to Technitium
 using the already-planned `docs/dhcp-refactor/` Stage E/F.
 
+## Execution status (updated 2026-09-29)
+
+| Phase | Steps | Status |
+|---|---|---|
+| 1 — cluster-compatible zone automation | 02–05 | ✅ done; standalone path proven on pve, clustered path proven after cluster formation |
+| 2 — primary as LAN resolver + observability | 06–12 | ✅ live on pve |
+| 3 — pve-tiny secondary, cluster, monitoring | 13–18 | ✅ live; failover drill PASS |
+| 4 — LAN cutover | 19–21 | ✅ **cut over 2026-09-29 ~12:45 NZDT**; 7-day soak to ~2026-10-06 |
+| 5 — retire the Pis | 22 | ⏳ after the soak |
+| 6 — DHCP to Technitium | 23 + dhcp-refactor Stage E/F | 23 ✅ (Decision 9 written); Stage E/F not started |
+
+Per-step hand-backs and gate results are in [README.md](./README.md).
+
+**Found while executing — all fixed in the code/steps below, recorded here
+so a rebuild doesn't rediscover them:**
+
+- Technitium 15.2's `/api/admin/cluster/state` returns **`clusterNodes`**
+  (the API docs say `nodes`); the Prometheus metric names are
+  `queries_total`, `blocked_total`, … (the docs show pre-15.1 names).
+  Check the v15.2.0 source, not APIDOCS.md, for response shapes.
+- Hagezi Pro deliberately leaves `doubleclick.net`/`ad.doubleclick.net`
+  unblocked; probes use `googlesyndication.com`. StevenBlack was added for
+  Pi-hole-like coverage.
+- The Log Exporter double-wraps its syslog output, so query fields arrive
+  as message text; Graylog's `route-dns-queries` rule regex-extracts
+  `dns_*` fields (`lan-dns-06`'s rsyslog change turned out unnecessary;
+  kept, byte-identical).
+- Standalone `ansible-playbook` runs from the repo root need
+  `ANSIBLE_CONFIG`/`ANSIBLE_ROLES_PATH` (as `provision.sh` exports), or
+  roles aren't found.
+- MikroTik playbooks must run via **`./with-secrets-prod`** — `./with-secrets`
+  loads pve-test-vm's `LAB_IP_TECHNITIUM` (`.115`); both now assert
+  `PVE_ENV=pve`.
+- Cluster init refuses an SSO session (use the API/local admin); the join
+  URL must use the primary's **name**; the secondary must be **restarted
+  after joining** to bind 53443.
+- `provision.sh` never creates LXCs — `terragrunt apply` does.
+- Claude's harness blocks production deploys even after chat approval and
+  denies `secrets/`: the operator ran every mutation; Claude verified
+  read-only.
+
 ## Decisions (operator, 2026-09-29)
 
 1. **Client path: mgmt_seg IPs.** LAN clients get `192.168.20.15`

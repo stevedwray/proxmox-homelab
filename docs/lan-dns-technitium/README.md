@@ -35,14 +35,20 @@ reason; `lan-dns-23` fixes that.
 
 ## Phases
 
-| Phase | What | Client impact |
+| Phase | What | Status |
 |---|---|---|
-| 1 | Make zone automation cluster-compatible: shared `technitium_zone` role, cluster-aware NS/SOA handling in `deploy-technitium-stack.yml`, zone-adoption playbook (`lan-dns-02`–`05`) | none (behavior-neutral while standalone) |
-| 2 | Primary becomes a LAN-grade resolver with observability: rsyslog forwards structured data, Graylog "DNS Queries" index set, DoH + Hagezi blocklists + rebinding protection + Log Exporter + query-log app, cAdvisor + console logging, metrics token; graylog-stack then technitium-stack re-provisioned (`lan-dns-06`–`12`) | none (no LAN client uses it yet; SDN subnets bypass blocking/rebinding) |
-| 3 | `technitium-tiny-stack` on pve-tiny, cluster formed, zones adopted, monitoring scrapes both nodes + "Technitium DNS" dashboard (CoreDNS job/dashboard removed), security checklist, failover drill (`lan-dns-13`–`18`) | none |
-| 4 | LAN restricted to DNS on the Technitium IPs, then MikroTik DHCP hands out both nodes; 7-day soak (`lan-dns-19`–`21`) | **cutover** — one-command rollback for each |
-| 5 | Retire the Pis (`lan-dns-22`) | none after soak |
-| 6 | DHCP to Technitium — existing dhcp-refactor Stage E/F, decoupled by `lan-dns-23` | separate window |
+| 1 | Cluster-compatible zone automation: `technitium_zone` role, cluster-aware NS/SOA in `deploy-technitium-stack.yml`, zone adoption (`lan-dns-02`–`05`) | ✅ |
+| 2 | Primary as LAN resolver: DoH, Hagezi Pro + TIF-mini + StevenBlack, rebinding protection, router forwarders, Log Exporter → Graylog `dns_*` fields, cAdvisor, metrics token (`lan-dns-06`–`12`) | ✅ live |
+| 3 | `technitium-tiny-stack` on pve-tiny, cluster `cluster.lab.gibbsgreatly.xyz`, all zones in the catalog, monitoring + "Technitium DNS" dashboard, security checklist, failover drill (`lan-dns-13`–`18`) | ✅ live |
+| 4 | LAN restricted to DNS on the Technitium IPs; DHCP hands out both nodes; RA DNS off (`lan-dns-19`–`21`) | ✅ cut over 2026-09-29 ~12:45 NZDT — **soak to ~2026-10-06** |
+| 5 | Retire the Pis (`lan-dns-22`) | ⏳ after soak |
+| 6 | DHCP to Technitium — dhcp-refactor Stage E/F, decoupled by `lan-dns-23` | `lan-dns-23` ✅; Stage E/F not started |
+
+**Live endpoints:** `192.168.20.15` (primary, `tech.cluster.lab.gibbsgreatly.xyz`),
+`192.168.20.17` (secondary, `technitium-tiny.cluster.lab.gibbsgreatly.xyz`);
+admin UI `https://technitium.lab.gibbsgreatly.xyz`; Grafana "Technitium DNS";
+Graylog stream "DNS Queries". **Rollback of the LAN switch:**
+`./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole`.
 
 Steps with no dependency on each other (e.g. `lan-dns-13` and
 `lan-dns-23`) can run in any order; `depends_on` in each step is
@@ -367,3 +373,17 @@ Unit tests: same 8 pre-existing failures.
   bullet's `advertise-dns=yes` corrected to `no`, and a short note on the
   four `technitium-lan:` forward rules added above the IPv4 forward-chain
   table. Gates `dhcp-line`, `pihole-line-gone` PASS.
+
+### 2026-09-29 — lan-dns-23 + docs sweep (Claude)
+
+- **lan-dns-23-dhcp-dns-option**: Decision 9 added to
+  `docs/dhcp-refactor/decisions.md`; the cutover packet's DNS-option row and
+  checklist now read the live value at execution time (the checklist's
+  stale "not Technitium" tail removed too). Gates `decision-9`,
+  `stale-dns-gone` PASS.
+- Docs brought to live state: `technitium-stack/STACK_CONTRACT.md`
+  (status + dependents), `docs/design/network.md` (LAN resolver path,
+  pve-tiny node), `docs/dhcp-refactor/{README,current-state}.md` (dated
+  updates incl. Compute now at `.105`), `docs/dns-refactor/README.md`
+  pointer, `docs/design/architecture.md` FR-12 note; `plan.md` gained an
+  execution-status section with the lessons from running it.

@@ -58,7 +58,7 @@ with these declared values:
 | Subnet | `192.168.1.0/24` | current-state.md |
 | Gateway/router option | `192.168.1.1` | current-state.md |
 | Lease time | `leaseTimeDays=7, Hours=0, Minutes=0` | Decision 6 |
-| DNS-server option | `192.168.1.22` | current-state.md (MikroTik hands out this single address today, not a two-entry list — replicate exactly, don't introduce a change in behavior beyond the migration itself) |
+| DNS-server option | **read live at execution time**: the MikroTik `lan` network's current `dns-server` (`192.168.1.23` before docs/lan-dns-technitium/ Phase 4, `192.168.20.15,192.168.20.17` after — the latter is live since 2026-09-29) | decisions.md Decision 9 |
 | Domain-name option | **open — decide before running**: MikroTik's own `add-dns-entries-suffix` is `"lan"`; using the same suffix for Technitium's scope keeps client-side behavior consistent, but this hasn't been explicitly decided anywhere in this workspace yet. Confirm before applying. |
 | Reverse zone | **open — decide before running**, same reasoning as domain-name: needed for Decision 4's auto A+PTR behavior to work for `bridgeLocal` clients. |
 
@@ -126,8 +126,7 @@ Then the full validation checklist:
 - [ ] all 8 reservations resolve to their declared address (spot-check via
       `dhcp/leases/list` on Technitium, or `ip addr` on a couple of the
       physical devices if convenient)
-- [ ] DNS-server option handed out is still `192.168.1.22` (the Pi-hole),
-      not Technitium
+- [ ] DNS-server option handed out matches the value the MikroTik handed out immediately before cutover (Decision 9)
 - [ ] forward + reverse DNS both resolve for at least one freshly-leased
       device (Decision 4's confirmed behavior)
 - [ ] IPv6 unaffected: RA still advertises `fd00::22`/`fd00::23` as DNS,

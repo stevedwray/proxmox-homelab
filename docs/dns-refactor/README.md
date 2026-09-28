@@ -1,5 +1,11 @@
 # DNS Refactor — CoreDNS to Technitium Migration
 
+> **Current state (2026-09-29):** Technitium is now a **two-node cluster**
+> (`technitium-stack` on pve, `technitium-tiny-stack` on pve-tiny) and the
+> **resolver for the whole LAN**, not just the lab-zone authority. See
+> [docs/lan-dns-technitium/](../lan-dns-technitium/) for that work; this
+> workspace is the historical CoreDNS → Technitium record.
+
 **MIGRATION COMPLETE, 2026-07-05 — `technitium-stack` is the live
 authoritative DNS on `pve` and `pve-test-vm`.** This workspace's own
 "Closeout" section below calls for folding these conclusions into
