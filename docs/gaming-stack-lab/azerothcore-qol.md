@@ -38,6 +38,8 @@ and their Altbots.
   `mod-aoe-loot` `57279b660a278e9b3a1afa425e7c7a5edc72b7bb`. Automatic
   source updates are disabled. The rebuilt authserver/worldserver listen
   normally on TCP 3724/8085; Transmog's character tables exist.
+- **Completed 2026-09-29:** new characters receive 10,000g and four equipped
+  32-slot Abyssal Bags. Existing character Aldred was topped up to 10,000g.
 
 ## Delivery plan
 
@@ -84,18 +86,31 @@ yards with no login message or overflow mail. `Rate.Corpse.Decay.Looted` is
 `0.01`. An operator gameplay check remains: use a Transmog NPC and loot a
 nearby group of corpses.
 
-### Phase 3 — starter provisioning
+### Phase 3a — starter money and bags — completed 2026-09-29
+
+The egg's native `START_PLAYER_MONEY` setting is `100000000` copper (10,000g).
+The idempotent world migration
+`scripts/azerothcore-qol/sql/001-starter-package.sql` adds four `41597`
+Abyssal Bags for every valid race/class creation template. AzerothCore equips
+new bags in available bag slots during character creation, rather than placing
+them loose in the initial inventory. Existing characters are intentionally not
+given bags retrospectively; existing Aldred was topped up to the same 10,000g
+floor.
+
+The server was restarted to reload the world create-item cache. `worldserver`
+and `authserver` were verified listening on TCP 8085 and 3724 after the
+change. A short-lived newly created character remains the operator gameplay
+check for the four equipped bags.
+
+### Phase 3b — free heirloom vendor
 
 Ship a small, versioned world/character database customization. It must
 provide:
 
 - a free heirloom vendor in each playable starting area, containing only
   WotLK-appropriate heirlooms;
-- four 32-slot Abyssal Bags (`41597`) for each new Altbot;
-- a 10,000g starter-gold grant for each new human or Altbot character, using
-  the egg's native `START_PLAYER_MONEY` setting;
-- idempotent migrations, so a restart or image update cannot duplicate gold,
-  bags, or vendor stock.
+- an idempotent migration, so a restart or image update cannot duplicate
+  vendor stock.
 
 The vendor is intentionally not a source of normal combat upgrades, materials,
 profession rewards, or reputation rewards. Class quests, quest rewards, and
