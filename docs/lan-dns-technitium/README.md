@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). Monitoring live, `lan-dns-18` all PASS. Next: remaining operator checklist items + failover drill, then Phase 4 (LAN cutover).** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). **Phase 3 complete** (failover drill PASS). Next: Phase 4 — LAN cutover (`lan-dns-19`/`20` file steps, then the approved MikroTik changes).** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -303,3 +303,9 @@ Unit tests: same 8 pre-existing failures.
   (not readable — no read-only token in that profile); GVM `.17` in the
   next mgmt_seg scan; NetBox next `netbox-populate` run; Harbor dashboard
   Critical findings on `technitium/dns-server:15.2.0` / cAdvisor.
+- **Failover drill** (`TASK_APPROVAL=lan-dns-failover-drill`, operator):
+  primary container stopped ~15 s; the secondary answered everything —
+  blocking, lab zone, router-owned name, public (DoH), reverse — all PASS;
+  primary restarted. After: primary answers normally, SOA serials 64/64,
+  router lab path OK, cluster shows the secondary `Connected`,
+  VictoriaMetrics re-scraped the primary within one interval.
