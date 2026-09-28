@@ -33,6 +33,11 @@ and their Altbots.
 - **Completed 2026-09-29:** the live Panel configuration sets
   `RATE_XP_KILL`, `RATE_XP_QUEST`, and `RATE_XP_EXPLORE` to `1.25`; money,
   reputation, and honor remain `1`.
+- **Completed 2026-09-29:** the pinned Playerbot checkout now includes
+  `mod-transmog` `0d85cbc53d63ce2df8527169ce6ae47f5f6f6ba8` and
+  `mod-aoe-loot` `57279b660a278e9b3a1afa425e7c7a5edc72b7bb`. Automatic
+  source updates are disabled. The rebuilt authserver/worldserver listen
+  normally on TCP 3724/8085; Transmog's character tables exist.
 
 ## Delivery plan
 
@@ -48,7 +53,7 @@ The Panel accepted the startup update while preserving all 52 server variables.
 After the restart, `worldserver`, `authserver`, and MySQL were running; the
 world and authentication sockets were listening on TCP 8085 and 3724.
 
-### Phase 2 — controlled module build
+### Phase 2 — controlled module build — completed 2026-09-29
 
 The existing egg already persists the Playerbot source checkout and supports
 module installation through `ACORE_MODULES`; a separate image registry and
@@ -72,6 +77,12 @@ Transmog to accept heirlooms but retain ordinary equipability restrictions.
 Back up the live database and server volume before the build; a failed module
 build rolls back by restoring the prior checkout/database backup and removing
 the module list.
+
+The deployed configuration makes Transmog free, retains its ordinary item
+restrictions, disables portable Transmog, and enables grouped AoE loot at 20
+yards with no login message or overflow mail. `Rate.Corpse.Decay.Looted` is
+`0.01`. An operator gameplay check remains: use a Transmog NPC and loot a
+nearby group of corpses.
 
 ### Phase 3 — starter provisioning
 
