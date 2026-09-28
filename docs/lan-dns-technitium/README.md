@@ -361,3 +361,9 @@ Unit tests: same 8 pre-existing failures.
   (QPM limit 600/min per client); over-blocking reports → allow entries in
   `configure-technitium-lan-resolver.yml`. Rollback:
   `./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole`.
+- **lan-dns-21-docs-after-cutover** (Claude): `router/desired-config.md`
+  — DHCP-hands-out, RA DNS and Upstream bullets updated as specified.
+  Beyond the step's text (same file, allowed path): the `ND (bridgeLocal)`
+  bullet's `advertise-dns=yes` corrected to `no`, and a short note on the
+  four `technitium-lan:` forward rules added above the IPv4 forward-chain
+  table. Gates `dhcp-line`, `pihole-line-gone` PASS.
