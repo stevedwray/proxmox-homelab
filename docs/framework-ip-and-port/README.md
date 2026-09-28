@@ -563,9 +563,11 @@ off.
   "Install SOPS" (the pre-OpenBao workflow). NetBox therefore still shows
   framework at `.8` until the runner's Docker access is fixed and the
   populate runs, from this branch or after `main` is promoted.
-- **Follow-up (not caused by the cutover):** the bootstrap reported
-  `changed` when creating `/var/lib/docker` and `/var/lib/containerd` and
-  their subdirectories on the containers volume, and neither directory is a
-  separate mount. Docker was not restarted (up since 2026-09-23). This looks
-  like the bootstrap's containers-volume layout was never applied to this
-  host. Investigate separately.
+- **Bootstrap `changed` results: harmless, checked.** The `containers` LV
+  (300G) is mounted at `/mnt/container-storage`, and its `docker/` and
+  `containerd/` directories are bind-mounted onto `/var/lib/docker` and
+  `/var/lib/containerd`, as `1df73e96` intended. Each pair is one inode,
+  so "Create docker/containerd subdirectories" sets it to 0755 and the
+  next task sets it back to 0711. Both report `changed` on every run; the
+  end state is 0711, which is correct. The fix is to set the first task's
+  mode to `'0711'` (not done yet).
