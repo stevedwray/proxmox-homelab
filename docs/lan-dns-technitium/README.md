@@ -22,27 +22,30 @@ re-homing the live primary's Terraform state first. No Pi-hole config is
 carried over (operator, 2026-09-29) — Technitium gets its own blocklists.
 Everything, zones included, syncs through Technitium clustering; Phase 1
 makes the repo's zone automation compatible with that (operator,
-2026-09-29).
+2026-09-29). Both nodes get the platform's monitoring, logging and
+security coverage (Grafana, Graylog incl. every DNS query, Wazuh, GVM,
+LAN access lockdown, rebinding protection); no alerting — none exists
+platform-wide yet (operator, 2026-09-29).
 
 Found while planning (live, 2026-09-29): **argon-01 answers ping but not
 DNS**, and the MikroTik already hands out only `192.168.1.23` — so the
 LAN currently has a single working resolver. The dhcp-refactor cutover
 packet's recorded DNS option (`192.168.1.22`) is stale for the same
-reason; `lan-dns-16` fixes that.
+reason; `lan-dns-23` fixes that.
 
 ## Phases
 
 | Phase | What | Client impact |
 |---|---|---|
 | 1 | Make zone automation cluster-compatible: shared `technitium_zone` role, cluster-aware NS/SOA handling in `deploy-technitium-stack.yml`, zone-adoption playbook (`lan-dns-02`–`05`) | none (behavior-neutral while standalone) |
-| 2 | Primary becomes a LAN-grade resolver: DoH, Hagezi Pro + TIF-mini blocklists, router forwarders, query-log app; one `provision.sh` run also validates Phase 1 (`lan-dns-06`–`08`) | none (no LAN client uses it yet; SDN subnets bypass blocking) |
-| 3 | `technitium-tiny-stack` on pve-tiny, cluster formed, all zones adopted into the cluster catalog, failover drill (`lan-dns-09`–`12`) | none |
-| 4 | MikroTik DHCP hands out both Technitium nodes; 7-day soak (`lan-dns-13`–`14`) | **cutover** — one-command rollback |
-| 5 | Retire the Pis (`lan-dns-15`) | none after soak |
-| 6 | DHCP to Technitium — existing dhcp-refactor Stage E/F, decoupled by `lan-dns-16` | separate window |
+| 2 | Primary becomes a LAN-grade resolver with observability: rsyslog forwards structured data, Graylog "DNS Queries" index set, DoH + Hagezi blocklists + rebinding protection + Log Exporter + query-log app, cAdvisor + console logging, metrics token; graylog-stack then technitium-stack re-provisioned (`lan-dns-06`–`12`) | none (no LAN client uses it yet; SDN subnets bypass blocking/rebinding) |
+| 3 | `technitium-tiny-stack` on pve-tiny, cluster formed, zones adopted, monitoring scrapes both nodes + "Technitium DNS" dashboard (CoreDNS job/dashboard removed), security checklist, failover drill (`lan-dns-13`–`18`) | none |
+| 4 | LAN restricted to DNS on the Technitium IPs, then MikroTik DHCP hands out both nodes; 7-day soak (`lan-dns-19`–`21`) | **cutover** — one-command rollback for each |
+| 5 | Retire the Pis (`lan-dns-22`) | none after soak |
+| 6 | DHCP to Technitium — existing dhcp-refactor Stage E/F, decoupled by `lan-dns-23` | separate window |
 
-Steps with no dependency on each other (e.g. `lan-dns-09` and
-`lan-dns-16`) can run in any order; `depends_on` in each step is
+Steps with no dependency on each other (e.g. `lan-dns-13` and
+`lan-dns-23`) can run in any order; `depends_on` in each step is
 authoritative.
 
 ## Files
