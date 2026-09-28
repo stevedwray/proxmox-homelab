@@ -29,6 +29,7 @@ jq \
       if .env_variable == "USE_PLAYERBOTS" then .default_value = "1" | .user_editable = false
       elif .env_variable == "MAP_UPDATE_THREADS" then .default_value = "4" | .user_editable = false
       elif .env_variable == "PLAYER_LIMIT" then .default_value = "2" | .user_editable = false
+      elif (.env_variable | startswith("RATE_XP_")) then .default_value = "1.25" | .user_editable = false
       elif (.env_variable | startswith("RATE_")) then .default_value = "1" | .user_editable = false
       else .
       end
