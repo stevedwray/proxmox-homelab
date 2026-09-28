@@ -13,7 +13,7 @@ LAN DHCP moves to Technitium via the already-planned
 
 ## Status
 
-**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. technitium-tiny-stack created and deployed on pve-tiny 2026-09-29. Next: cluster formation.** Operator decisions are
+**Planned 2026-09-29. `lan-dns-02`–`10` done 2026-09-29 as file changes — not yet deployed anywhere. `lan-dns-11` done; graylog-stack and technitium-stack deployed on pve 2026-09-29 (Phase 2 live on the primary, `lan-dns-12` all PASS). Graylog rule updated; DNS query logs carry `dns_*` fields. Phase 3 file steps `lan-dns-13`–`16` done 2026-09-29. Cluster formed and verified 2026-09-29 (`lan-dns-17` all PASS). Next: monitoring-stack redeploy, `lan-dns-18`, security checklist, failover drill.** Operator decisions are
 recorded at the top of [plan.md](./plan.md): mgmt_seg IPs as the client
 path (IPv4 DNS only, RA stops advertising DNS), argon-02 kept as a cold
 fallback through a 7-day soak then both Pis retired, DoH forwarding
@@ -264,4 +264,16 @@ Unit tests: same 8 pre-existing failures.
   container on pve-tiny (operator).- Operator restarted the secondary's container: 53443 now answers, the
   primary shows `technitium-tiny.cluster.lab.gibbsgreatly.xyz` as
   `Connected`, and the secondary still blocks. Plan updated with the
-  restart step.
+  restart step.- **Zone adoption + clustered deploy** (after the `clusterNodes` fix and
+  the secondary restart): deploy `failed=0`, smoke PASS, and "Assert the
+  cluster manages the parity zone's apex NS and SOA" → **ok** (clustered
+  path proven). Both nodes: 12 zones, all `cluster-catalog` members (the
+  secondary as Secondary/SecondaryForwarder copies); 3 blocklists (incl.
+  StevenBlack), 434,574 entries each; `ad.doubleclick.net` → 0.0.0.0 on
+  both.
+- **lan-dns-17-verify-secondary**: all 7 critical gates PASS
+  (`blocklists-synced`, `lab-zone-replicated`, `lab-serial-matches`,
+  `forwarders-synced`, `cluster-owns-lab-ns`, `reverse-zone-synced`,
+  `public-over-tcp`) + `cluster-port` PASS. Lab NS is now
+  `tech.cluster…` + `technitium-tiny.cluster…` (so `lan-dns-12`'s
+  `standalone-ns-unchanged` no longer applies, as planned).
