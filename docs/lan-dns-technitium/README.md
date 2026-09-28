@@ -237,4 +237,16 @@ Unit tests: same 8 pre-existing failures.
   `terraform/lxc/ansible/ansible.cfg`'s `roles_path` wasn't used. The
   plan's gates ran from `terraform/lxc/ansible` and `--syntax-check` never
   resolves dynamic `include_role`, so they couldn't catch it. Plan and the
-  Graylog playbook's usage comment fixed to export both variables.
+  Graylog playbook's usage comment fixed to export both variables.- Cluster formed via the API (operator): the UI refused because an SSO
+  user can't initialize a cluster. Init on the primary OK (renamed
+  `tech.cluster.lab.gibbsgreatly.xyz`, HTTPS 53443 up). First join failed
+  ("Address must be a domain name") — `primaryNodeUrl` must use the
+  primary's cluster name; rerun with
+  `https://tech.cluster.lab.gibbsgreatly.xyz:53443/` +
+  `primaryNodeIpAddress=192.168.20.15` joined. Verified read-only: the
+  secondary (`technitium-tiny.cluster.lab.gibbsgreatly.xyz`) has the DoH
+  forwarders, blocking (AnyAddress, 2 lists, 13 bypass subnets), all 3
+  apps, users `admin`/`metrics`/SSO user; blocks `googlesyndication.com`
+  and rebinding-protects `10.0.0.1.nip.io`; the `metrics` token
+  authenticates on both nodes. Zones: only the cluster's own until
+  adoption. Plan updated with both corrections.

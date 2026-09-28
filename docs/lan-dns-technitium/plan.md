@@ -2375,19 +2375,25 @@ inventory that `terragrunt apply` generates — so creation is two commands
 
 ### Operator: form the cluster (one-time, cluster domain is permanent)
 
-Production mutation on both nodes. Do this from the UIs or with these
-exact API calls (tokens from `/api/user/login`; `$PW` =
-`TECHNITIUM_ADMIN_PASSWORD` via `./with-secrets-prod bash -c`):
+Production mutation on both nodes. **Use the local `admin` account or the
+API — Technitium refuses cluster initialization from an SSO (Authentik)
+session** (found live 2026-09-29). The API route, run by the operator
+(reads the admin password from OpenBao; the prod wrapper lets `python3`
+through as read-only, so setting `TASK_APPROVAL` first is the only
+safeguard):
 
-1. On the **primary**, initialize (auto-enables HTTPS 53443 with a
-   self-signed cert and renames the node to
-   `tech.cluster.lab.gibbsgreatly.xyz` — its server domain is
-   `tech.lab.gibbsgreatly.xyz`, confirmed live 2026-09-29):
-   `POST http://192.168.20.15:5380/api/admin/cluster/init?clusterDomain=cluster.lab.gibbsgreatly.xyz&primaryNodeIpAddresses=192.168.20.15&token=$TP`
-2. On the **secondary**, join:
-   `POST http://192.168.20.17:5380/api/admin/cluster/initJoin?secondaryNodeIpAddresses=192.168.20.17&primaryNodeUrl=https%3A%2F%2F192.168.20.15%3A53443%2F&primaryNodeIpAddress=192.168.20.15&ignoreCertificateErrors=true&primaryNodeUsername=admin&primaryNodePassword=$PW&token=$TS`
-   (`ignoreCertificateErrors=true` is the documented option for a
-   self-signed primary on a private network.)
+1. Initialize on the **primary** (turns on HTTPS 53443 with a self-signed
+   cert, renames the node `tech.cluster.lab.gibbsgreatly.xyz`, creates the
+   cluster zone and `cluster-catalog.` zone):
+   `GET http://192.168.20.15:5380/api/admin/cluster/init?clusterDomain=cluster.lab.gibbsgreatly.xyz&primaryNodeIpAddresses=192.168.20.15&token=<admin token>`
+2. Join from the **secondary**. **`primaryNodeUrl` must use the primary's
+   cluster name, not an IP** (an IP host fails with "Address must be a
+   domain name"); `primaryNodeIpAddress` lets the secondary connect without
+   resolving that name:
+   `GET http://192.168.20.17:5380/api/admin/cluster/initJoin?secondaryNodeIpAddresses=192.168.20.17&primaryNodeUrl=https://tech.cluster.lab.gibbsgreatly.xyz:53443/&primaryNodeIpAddress=192.168.20.15&ignoreCertificateErrors=true&primaryNodeUsername=admin&primaryNodePassword=<pw>&token=<admin token on the secondary>`
+   (`ignoreCertificateErrors` only applies to this first connection; after
+   joining, nodes authenticate with DANE-EE via TLSA records in the cluster
+   zone.)
 3. Confirm Technitium's Authentik OIDC login at
    `https://technitium.lab.gibbsgreatly.xyz` still works (node rename is
    the one change that could plausibly touch it).
