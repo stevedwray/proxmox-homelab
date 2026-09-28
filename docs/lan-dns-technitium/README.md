@@ -249,4 +249,16 @@ Unit tests: same 8 pre-existing failures.
   apps, users `admin`/`metrics`/SSO user; blocks `googlesyndication.com`
   and rebinding-protects `10.0.0.1.nip.io`; the `metrics` token
   authenticates on both nodes. Zones: only the cluster's own until
-  adoption. Plan updated with both corrections.
+  adoption. Plan updated with both corrections.- Zone adoption (attempt 2) and clustered deploy ran `failed=0` but
+  **adopted nothing** (`changed=0`): Technitium 15.2 returns the node list
+  as `clusterNodes`, not `nodes` as its API docs say, so the role decided
+  the primary wasn't a cluster primary and skipped (and the deploy's
+  cluster assertion would have read the wrong field). Fixed in the role,
+  the deploy playbook and the plan; re-tested against the **live**
+  cluster-state JSON (primary → catalog name, secondary → none; assertion
+  shape passes). No zones had changed.
+- The primary reported the secondary `Unreachable`: the join saved
+  `webServiceEnableTls=true` on the secondary but never restarted its web
+  service, so 53443 wasn't bound (log shows only the HTTP bind). Config
+  sync still worked (the secondary pulls). Fix: restart the Technitium
+  container on pve-tiny (operator).

@@ -653,7 +653,7 @@
         that:
           - >-
             technitium_existing_parity_ns_records | map(attribute='rData.nameServer') | map('lower') | sort
-            == (technitium_parity_cluster_state.content | from_json).response.nodes | map(attribute='name') | map('lower') | sort
+            == (technitium_parity_cluster_state.content | from_json).response.clusterNodes | map(attribute='name') | map('lower') | sort
           - >-
             ((technitium_existing_parity_soa_records | first).rData.primaryNameServer | lower)
             == ((technitium_parity_cluster_state.content | from_json).response.dnsServerDomain | lower)

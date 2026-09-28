@@ -267,13 +267,15 @@ gates:
      register: technitium_zone_cluster_state
      no_log: true
 
+   # Technitium 15.2's /admin/cluster/state returns the node list as
+   # "clusterNodes" (the API docs say "nodes" -- they are wrong for 15.2).
    - name: Derive the cluster catalog zone name
      ansible.builtin.set_fact:
        technitium_zone_cluster_catalog: >-
          {{
            ('cluster-catalog.' ~ technitium_zone_state.clusterDomain)
            if (technitium_zone_state.clusterInitialized | default(false) | bool
-               and (technitium_zone_state.nodes | default([])
+               and (technitium_zone_state.clusterNodes | default([])
                     | selectattr('state', 'equalto', 'Self')
                     | map(attribute='type') | first | default('')) == 'Primary')
            else ''
@@ -597,7 +599,7 @@ Block C (replaces the five NS/SOA tasks):
            that:
              - >-
                technitium_existing_parity_ns_records | map(attribute='rData.nameServer') | map('lower') | sort
-               == (technitium_parity_cluster_state.content | from_json).response.nodes | map(attribute='name') | map('lower') | sort
+               == (technitium_parity_cluster_state.content | from_json).response.clusterNodes | map(attribute='name') | map('lower') | sort
              - >-
                ((technitium_existing_parity_soa_records | first).rData.primaryNameServer | lower)
                == ((technitium_parity_cluster_state.content | from_json).response.dnsServerDomain | lower)
