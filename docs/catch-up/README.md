@@ -24,7 +24,7 @@ command.
 |---|---|---|---|---|---|---|
 | 01 | [Arr UI port lockdown](01-arr-port-lockdown.md) | today | 45 min | High (live exposure) | — | **done 2026-09-28** (browser check confirmed by operator) |
 | 02 | [Repo hygiene](02-repo-hygiene.md) | today | 45 min | Medium | — | **mostly done** — PRs #435–#439 open; worktree/branch cleanup waits for merges |
-| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | **Part A done** (244 GB free, 72%); Part B waits on operator GUI steps B1–B2 |
+| 03 | [PBS retention + pve-tiny backups](03-pbs-retention-and-pve-tiny-backups.md) | today | 1.5–2 h (+ GC runtime) | **High** (PBS ~97% full) | — | **done 2026-09-28** |
 | 04 | [Secrets refactor close-out](04-secrets-closeout.md) | 2026-09-29, after the 02:40 UTC run | 15 min | High | — | not started |
 | 05 | [Decommission old AI CTs on pve](05-decommission-pve-source-cts.md) | **not before 2026-10-04** | 45 min | Medium | 03 | not started |
 | 06 | [Run CI gates on PRs into `stable`](06-ci-gates-on-stable-prs.md) | this week | 30 min | Med-High | 02 | not started |
@@ -70,7 +70,7 @@ Why this order, and what changed from the first draft of the list:
 |---|---|
 | How to close the arr direct-port exposure | MikroTik drop rule: UI ports on `192.168.80.11` reachable only from Traefik (`192.168.30.10`). No second arr login. |
 | PBS retention | `keep-daily=7, keep-weekly=4, keep-monthly=6` |
-| pve-tiny backup target | Same PBS datastore as `pve`, in its own namespace `pve-tiny` |
+| pve-tiny backup target | Same PBS datastore as `pve`, in its own namespace `pve-tiny`. Retention: the existing PBS prune job (keep-last 2) instead of 7/4/6, which was chosen under a wrong premise |
 | Alert delivery | Discord webhook (URL stored in OpenBao) |
 
 ## Things this workspace found that aren't planned here
@@ -182,3 +182,27 @@ dead-guest backups.
 - Part B next: operator does B1 (namespace `pve-tiny` in the PBS GUI) and B2
   (add `pbs-iscsi` storage on pve-tiny, which needs the PBS root password);
   then B3–B6 can run.
+
+### 03 Part B — pve-tiny backups (2026-09-28)
+
+- B1/B2 (operator, GUI): namespace `pve-tiny` created; pve-tiny storage
+  `pbs-iscsi` added (server `192.168.1.12`, datastore `iscsi-backup`,
+  namespace `pve-tiny`, `root@pam`, fingerprint `2b:44:…:00:fd`, verified
+  live via `proxmox-backup-manager cert info`). `pvesm status`: active.
+- B3: job `48087a29-1142-49ac-b304-756e2b86bc3c`: all guests, daily 12:30,
+  snapshot mode, `exclude 910` (stopped template), **no job-level prune**.
+  PBS prune job `s-d37cf2f8-fb09` has no `ns`/`max-depth`, so it recurses
+  into `pve-tiny` and keeps the last 2, the same policy as pve. This replaces
+  the 7/4/6 retention from the original plan.
+- B4: 40014/50011/50012/50013 mount points all `backup=1`.
+- B5: `vzdump 40014 50011 50012 50013`: real snapshot mode (no suspend
+  fallback), "Backup job finished successfully", task `OK`. Uploaded ~8.5 GiB
+  compressed in total.
+- B6 (Phase 4 requirements 2–3 of docs/ai-stacks-pve-tiny/plan.md):
+  - `pbs-iscsi:backup/ct/40014/2026-09-28T05:18:11Z`: hostname opensearch-stack, rootfs + mp0 + mp1 (`/var/lib/opensearch-data`), all backup=1
+  - `pbs-iscsi:backup/ct/50011/2026-09-28T05:18:59Z`: hostname mcp-utility-stack, rootfs + mp0
+  - `pbs-iscsi:backup/ct/50012/2026-09-28T05:19:46Z`: hostname secpipe-stack, rootfs + mp0
+  - `pbs-iscsi:backup/ct/50013/2026-09-28T05:20:00Z`: hostname ai-services-stack, rootfs + mp0
+- Step `catchup-03-record-backup-policy` done (row added to
+  docs/ai-stacks-pve-tiny/README.md; gate `row-present` prints 1).
+- Plan 05's backup prerequisite is met; its 7-day soak still runs to 2026-10-04.

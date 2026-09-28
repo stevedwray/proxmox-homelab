@@ -186,6 +186,8 @@ Expect `active 1`, `namespace pve-tiny`, `datastore iscsi-backup`, `server 192.1
 
 ### B3. Create the pve-tiny backup job
 
+*As executed 2026-09-28:* no `--prune-backups` on the job, because the PBS prune job (`keep-last 2`, no namespace or depth limit, so it recurses into `pve-tiny`) owns retention, same as pve. `--exclude 910` was added (stopped template).
+
 Scheduled at 12:30 so it never overlaps pve's 11:00 run:
 
 ```bash
@@ -237,7 +239,7 @@ change: |
   In docs/ai-stacks-pve-tiny/README.md, directly after the line that begins
   "| Phase 4 decommission (after ≥7-day soak) |", insert this LITERAL row:
 
-  | pve-tiny backup job + first post-import backup | done — see docs/catch-up/README.md hand-back for plan 03 (PBS `iscsi-backup`, namespace `pve-tiny`, daily 12:30, keep-daily=7/weekly=4/monthly=6) |
+  | pve-tiny backup job + first post-import backup | done 2026-09-28 — see docs/catch-up/README.md hand-back for plan 03 (PBS `iscsi-backup`, namespace `pve-tiny`, daily 12:30, retention = PBS prune job keep-last 2) |
 
   Change nothing else.
 
