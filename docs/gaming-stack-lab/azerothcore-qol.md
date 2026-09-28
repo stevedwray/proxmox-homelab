@@ -30,18 +30,23 @@ and their Altbots.
 - Playerbot's `maintenance` and Altbot `autogear` facilities are already
   available in the fork. The operator should use `maintenance` in party chat
   after creating an Altbot and at level milestones. Do not use `autogear bis`.
-- The existing live rates are still `1x` until the explicitly approved Panel
-  configuration change below is made.
+- **Completed 2026-09-29:** the live Panel configuration sets
+  `RATE_XP_KILL`, `RATE_XP_QUEST`, and `RATE_XP_EXPLORE` to `1.25`; money,
+  reputation, and honor remain `1`.
 
 ## Delivery plan
 
-### Phase 1 — safe live configuration
+### Phase 1 — safe live configuration — completed 2026-09-29
 
 Change only the existing Pterodactyl server's XP-rate variables from `1` to
 `1.25`, preserving every non-XP rate at `1`. Restart the server and verify a
 login, XP gain, and the existing game-slot interlock. This does not rebuild the
 core or touch characters, quests, the world database, or the other game
 servers.
+
+The Panel accepted the startup update while preserving all 52 server variables.
+After the restart, `worldserver`, `authserver`, and MySQL were running; the
+world and authentication sockets were listening on TCP 8085 and 3724.
 
 ### Phase 2 — reproducible QoL image
 
