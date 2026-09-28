@@ -2396,6 +2396,12 @@ safeguard):
    (`ignoreCertificateErrors` only applies to this first connection; after
    joining, nodes authenticate with DANE-EE via TLSA records in the cluster
    zone.)
+   Then **restart the secondary's container** — the join saves
+   `webServiceEnableTls=true` but doesn't restart the web service, so 53443
+   stays unbound and the primary shows the secondary `Unreachable` (config
+   sync still works, since the secondary pulls):
+   `ssh root@pve-tiny.gibbsgreatly.xyz pct exec 20017 -- docker restart technitium`,
+   then confirm the primary's Cluster view shows it `Connected`.
 3. Confirm Technitium's Authentik OIDC login at
    `https://technitium.lab.gibbsgreatly.xyz` still works (node rename is
    the one change that could plausibly touch it).

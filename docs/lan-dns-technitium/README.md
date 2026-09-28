@@ -261,4 +261,7 @@ Unit tests: same 8 pre-existing failures.
   `webServiceEnableTls=true` on the secondary but never restarted its web
   service, so 53443 wasn't bound (log shows only the HTTP bind). Config
   sync still worked (the secondary pulls). Fix: restart the Technitium
-  container on pve-tiny (operator).
+  container on pve-tiny (operator).- Operator restarted the secondary's container: 53443 now answers, the
+  primary shows `technitium-tiny.cluster.lab.gibbsgreatly.xyz` as
+  `Connected`, and the secondary still blocks. Plan updated with the
+  restart step.
