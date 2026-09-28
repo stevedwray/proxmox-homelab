@@ -172,7 +172,7 @@ The steps are numbered by phase. Run them in this order.
 | 4 | fwdns-06 (once the FQDN scrape is confirmed up in #2), fwllm-02, -03, -05, -06 (+ operator deploys), fwllm-07 | Restores docs-rag search, the CVE deep-dive, the `llm.` route and monitoring. fwllm-06's patch was cut on top of fwdns-06 |
 | 5 | Operator: measure chat context → fwllm-08 | Raises `--ctx-size` from 8192 only as far as memory allows |
 | 6 | fwdns-05, -10, -11, -12 | DNS-only clean-up |
-| 7 | fwip-01, -02 → operator: re-IP cutover → fwip-03 | Needs all of the above: no client may still hold the IP |
+| 7 | fwip-01 (done), -02 → operator: re-IP cutover → fwip-03 | Needs all of the above: no client may still hold the IP. Run from `task/framework-reip-cutover` (see Phase B intro) |
 
 **docs-rag `search_docs` is down until step 4 (fwllm-03).**
 `implement-step` normally fetches a step through `search_docs`. Until then,
@@ -190,8 +190,11 @@ operator or a frontier session run steps 1–4.
     cse-controller. Deploy them with `./with-secrets-prod-tiny`.
   - Stacks on **pve**: proxy/Traefik and monitoring. Deploy them with
     `./with-secrets-prod`.
-  - Framework is not a Proxmox production node; its playbooks run with
-    `PVE_ENV= ./with-secrets`.
+  - Framework is not a Proxmox node, but its playbooks need `pve`'s
+    secrets. Since the OpenBao switch (2026-09-28), run them as
+    `TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ...`. The
+    earlier `PVE_ENV= ./with-secrets` form (used for the 2026-09-27 runs
+    below) now fails with an empty profile.
 - **The router change needs a tier decision.** Per CLAUDE.md, *modifying or
   removing an existing cross-zone rule* maps to "full teardown cycle on
   pve-test-vm". That is not useful here: pve and pve-test-vm share the same
@@ -1256,7 +1259,7 @@ checks out, and fwdns-08 is applied on the router (ai_seg → 8080,8085).
 1. `free -m` on framework. Stop if anything other than
    `nathanw-llamacpp.service` holds a large share of memory. ComfyUI idle is
    fine; a second LLM is not.
-2. `PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml`.
+2. `TASK_APPROVAL=fwllm-01-native-apply ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml` (run on 2026-09-27 as `PVE_ENV= ./with-secrets ...`, before the OpenBao switch).
    This restarts the chat server (the model reloads over a few minutes),
    starts the embeddings server, and self-checks four things: `/health`
    on both, a 401 without the key, `/metrics` with the key, and a
@@ -1404,7 +1407,7 @@ Deploy:
    `server="embeddings"`. If it is 0, mgmt_seg can't reach
    `framework:8080/8085`; check the router before anything else.
 2. Re-run the framework bootstrap:
-   `ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-bootstrap.yml`.
+   `ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=fwllm-06-bootstrap ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-bootstrap.yml`.
    That removes the dead collector and its stale `.prom` file.
 
 ### fwllm-07-dashboard-llamacpp-panels
@@ -1463,7 +1466,7 @@ take the whole host down (see the GPU double-load and unified-memory OOM
 memories), so raise it one measured step at a time:
 
 1. For each candidate `C` in `16384`, `32768`, `65536`, `131072`, in order:
-   1. `PVE_ENV= ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml -e framework_llamacpp_chat_ctx_size=C`.
+   1. `TASK_APPROVAL=fwllm-ctx-measure ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llamacpp-native.yml -e framework_llamacpp_chat_ctx_size=C`.
    2. On framework, record
       `awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo` and the
       `llama_kv_cache` size line from `~/llamacpp-native-test/server.log`.
@@ -1488,6 +1491,26 @@ full measurement series in the comment. See README.md's hand-back log.
 ---
 
 # Phase B: move framework to 192.168.1.18
+
+**Where to run Phase B from (reviewed 2026-09-28).** Phases A and C and
+fwip-01 are merged to `stable` via #432. Run everything below from
+**`task/framework-reip-cutover`**, cut from `origin/stable` after the
+OpenBao switch. Never run it from `task/framework-dns-only-plan`: that
+branch's `with-secrets*` wrappers are the retired SOPS versions.
+
+**Wrappers after the OpenBao switch.**
+- `./with-secrets` picks its OpenBao profile from `PVE_ENV`, so the older
+  `PVE_ENV= ./with-secrets` form for framework playbooks now fails ("unknown
+  profile ''").
+- Run framework-hosted playbooks (`framework-desktop-*.yml`) through
+  `./with-secrets-prod`, which uses the `pve` profile. It carries
+  `LLM_GPU_STACK_API_KEY`, `STEP_CA_PROVISIONER_PASSWORD`,
+  `NODE_EXPORTER_SCRAPE_PASSWORD[_HASH]`, MikroTik, Technitium and NetBox,
+  all checked with `secrets_env.py --list-fields`.
+- Give `TASK_APPROVAL` inline, per command, never exported. This follows
+  the 2026-09-27 post-commit hook incident.
+- The router re-scrape still works through plain `./with-secrets` (the dev
+  profile has the MikroTik read credentials; checked 2026-09-28).
 
 ### fwip-01-mikrotik-dns-playbook
 
@@ -1533,11 +1556,10 @@ clients) may hold the old answer for up to a day. At least 24 hours before
 the cutover, with `LAB_IP_FRAMEWORK` still `192.168.1.8`:
 
 ```bash
-export TASK_APPROVAL="fwip-dns-ttl-lower"
-./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
+TASK_APPROVAL=fwip-dns-ttl-lower ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
 ```
 
-The address doesn't change. This run takes ownership of the record (adds
+**Done 2026-09-27 16:30 NZDT** (see README.md). The address doesn't change. This run takes ownership of the record (adds
 the comment) and shortens the TTL.
 
 ### fwip-02-record-new-ip
@@ -1584,20 +1606,42 @@ gates:
 
 ### Operator: re-IP cutover (not a step block)
 
-Preconditions:
+Preconditions. Check every one on the day:
 
-- Phases A and C are done, and every client uses the FQDN or the
-  address-list.
-- The TTL was lowered at least 24 hours ago.
-- fwip-02 is committed but its DNS change is not yet run.
-- Portainer's endpoint is by FQDN (fwdns-00 item 6).
+- You are on `task/framework-reip-cutover` (cut from `origin/stable`), with
+  fwip-02 committed and **pushed**. Step 8 dispatches CI against it.
+- The TTL was lowered at least 24 hours ago (done 2026-09-27 16:30 NZDT).
+- **Every cache holds only the 5-minute answer.** Both of these must print a
+  TTL of 300 or less:
+  ```bash
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.1
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.20.15   # Technitium
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.22    # Pi-hole (DHCP DNS for LAN clients)
+  dig +noall +answer framework.gibbsgreatly.xyz @192.168.1.23    # Pi-hole (the workstation's resolver)
+  ```
+  The Pi-holes can't be flushed from here; they honour the 300 s TTL
+  (checked 2026-09-28), so step 4's 5-minute wait covers them too.
+  Technitium held a one-day answer, fetched before the TTL change, until
+  about 14:02 NZDT on 2026-09-28. If it still shows more than 300, wait,
+  or flush it with the step 4 playbook first.
+- Portainer's endpoint is by FQDN (done 2026-09-27).
 - **gazaar is powered off.**
+- Give the operator one Preflight Summary covering every production
+  mutation below:
+  - the framework netplan change;
+  - the MikroTik DNS record, twice (cutover and TTL restore);
+  - the Technitium cache flush;
+  - the framework bootstrap (node_exporter cert reissue);
+  - the NetBox populate.
+  Out of scope: everything else. Get approval before starting.
 
 1. **Recheck that .18 is still free:**
    - `ping -c2 192.168.1.18` gets no reply.
-   - The router's DHCP leases and static DNS have no `.18`
-     (re-scrape per fwdns-00 item 2, then run
-     `jq '.. | objects | select(.address? == "192.168.1.18")' router/config/current-config.json`).
+   - The router's DHCP leases and static DNS have no `.18`:
+     ```bash
+     ./with-secrets bash -c 'MIKROTIK_USER=${MIKROTIK_ADMIN:-$MIKROTIK_USER} MIKROTIK_PASSWORD=${MIKROTIK_ADMIN_PASSWORD:-$MIKROTIK_PASSWORD} router/scripts/scrape-config.sh'
+     jq '.. | objects | select(.address? == "192.168.1.18")' router/config/current-config.json   # must print nothing
+     ```
 2. **Change framework's address under an auto-revert.** Run this inside
    tmux so it survives the SSH drop. On framework:
    ```bash
@@ -1610,38 +1654,93 @@ Preconditions:
    `ssh steve@192.168.1.18 -t tmux attach -t reip` and press Enter to
    accept. If you can't reach `.18` within 300 s, netplan reverts to `.8`
    by itself.
-3. **Publish the new address:**
+3. **Publish the new address.** First confirm the checkout carries fwip-02:
+   `bash -c 'source .env && echo $LAB_IP_FRAMEWORK'` must print
+   `192.168.1.18`. Then:
    ```bash
-   export TASK_APPROVAL="fwip-dns-cutover"
-   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
+   TASK_APPROVAL=fwip-dns-cutover ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml -e framework_dns_ttl=5m
    ```
    The playbook points the record at `.18`, flushes the router cache, and
    waits until the `framework` address-list holds exactly `192.168.1.18`.
-4. **Wait out the TTL (5 min).** Then check `getent hosts framework.gibbsgreatly.xyz`
-   from the same consumer set as fwdns-00 item 4. Every one must print
-   `192.168.1.18`. If Technitium still answers `.8`, flush its cache for the
-   name.
+4. **Flush Technitium and prove it agrees with the MikroTik:**
+   ```bash
+   ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg TASK_APPROVAL=fwip-technitium-flush ./with-secrets-prod ansible-playbook -i terraform/lxc/environments/pve/technitium-stack/inventory.yml terraform/lxc/ansible/playbooks/technitium-framework-forwarder.yml
+   ```
+   Since 2026-09-28 this playbook deletes Technitium's cached answer for the
+   FQDN on every run, then asserts Technitium returns the same address as
+   the MikroTik. The forwarder zone already exists, so nothing else changes.
+   Then **wait 5 minutes** for per-host resolvers and Docker's embedded DNS,
+   and check `getent hosts framework.gibbsgreatly.xyz` from the same
+   consumer set as fwdns-00 item 4: ai-services, secpipe, mcp-utility,
+   cse-controller, monitoring and proxy. Every one must print
+   `192.168.1.18`.
 5. **Consumer checks:**
    - OpenWebUI chat.
    - docs-rag `search_docs`.
    - `https://comfyui.lab.gibbsgreatly.xyz/` (302) and
-     `https://llm.lab.gibbsgreatly.xyz` (401 without the key).
+     `https://llm.lab.gibbsgreatly.xyz/v1/chat/completions` (401 without the
+     key, 200 with it).
    - VictoriaMetrics `up{stack="framework"}` = 1 for node_exporter,
-     cadvisor and llamacpp.
+     cadvisor and llamacpp (chat and embeddings).
    - `ansible -i ansible/inventory/inventory.yml framework.gibbsgreatly.xyz -m ping`.
    - The Portainer endpoint is up.
-6. **Restore the TTL:** re-run step 3 without `-e framework_dns_ttl=5m`
-   (TTL back to 1h).
-7. **Power on gazaar.** Check that `192.168.1.8` answers as the NAS, that
+6. **Reissue node_exporter's cert without the old IP.** Its SANs are
+   `DNS:framework.gibbsgreatly.xyz, IP Address:192.168.1.8` (checked
+   2026-09-28, valid to 2026-12-22). After the move, that IP is gazaar's.
+   The role's renewal timer (`step ca renew`) keeps the existing SANs, so it
+   would never drop the IP by itself. On framework:
+   ```bash
+   sudo rm -f /etc/node_exporter/certs/tls.crt /etc/node_exporter/certs/tls.key
+   ```
+   Then, from the workstation:
+   ```bash
+   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=fwip-node-exporter-reissue ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-bootstrap.yml
+   ```
+   The role issues a fresh cert when the file is missing, using
+   `ansible_host` and `inventory_hostname`, which are both the FQDN now.
+   Check it:
+   `echo | openssl s_client -connect framework.gibbsgreatly.xyz:9100 2>/dev/null | openssl x509 -noout -ext subjectAltName`
+   must show `DNS:framework.gibbsgreatly.xyz` and no IP address.
+   VictoriaMetrics `up{stack="framework",job="node_exporter"}` must return
+   to 1.
+7. **Restore the TTL**, from the same checkout (its `.env` must still say
+   `.18`):
+   ```bash
+   TASK_APPROVAL=fwip-dns-ttl-restore ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-framework.yml
+   ```
+   The TTL is back to 1h. Never run this from a checkout still at `.8`: it
+   would point the name back at gazaar's address.
+8. **Power on gazaar.** Check that `192.168.1.8` answers as the NAS, that
    `gazaar.gibbsgreatly.xyz` still resolves to `.8`, and that a backup run
    completes.
-8. **NetBox:** re-run the netbox-stack static-host populate so the
-   framework record shows `.18`. Re-scrape the router snapshot and commit
-   it.
+9. **NetBox.** CI can't do this from a branch: OpenBao's
+   `ci-netbox-populate` role accepts only `refs/heads/main`. Found on
+   2026-09-28, along with the job's Docker-socket failure; see README.md,
+   "NetBox follow-up". Update framework's static host directly instead,
+   with populate's own `populate_static_hosts()` for that one entry: a dry
+   run first, then apply through `./with-secrets-prod`. Then delete the
+   old address record, which populate never removes.
+10. **Record.**
+    1. Re-scrape the router (step 1's command); it now shows `.18` for the
+       framework record and `.8` only for gazaar.
+    2. Run fwip-03.
+    3. Only then commit the snapshot and README.md hand-back. A commit
+       touching `docs/**/*.md` fires the local post-commit hook, which
+       redeploys mcp-utility-stack under its standing approval, so don't
+       commit mid-cutover.
+11. **Promotion.** The operator decides when to open the PR for
+    `task/framework-reip-cutover` → `stable`. `stable` → `main` goes out
+    together with #432's pending promotion.
 
-**Rollback** (before step 3): run `sudo cp /root/00-installer-config.yaml.pre-reip /etc/netplan/00-installer-config.yaml && sudo netplan apply`
-on framework's console. Nothing else has changed yet. **After step 3:** also
-revert fwip-02 and re-run the DNS playbook.
+**Rollback before step 3:** on framework's console, run
+`sudo cp /root/00-installer-config.yaml.pre-reip /etc/netplan/00-installer-config.yaml && sudo netplan apply`.
+Nothing else has changed yet.
+
+**Rollback after step 3:**
+1. Revert fwip-02 in the checkout (`git revert <fwip-02 commit>`), so
+   `.env` says `.8` again.
+2. Restore the netplan backup as above.
+3. Re-run step 3's DNS playbook, then step 4's Technitium playbook.
 
 ### fwip-03-final-audit
 

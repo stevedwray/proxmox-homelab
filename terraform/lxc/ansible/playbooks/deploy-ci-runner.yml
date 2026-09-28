@@ -97,6 +97,11 @@
           - tar
           - libicu-dev
           - libssl-dev
+          # netbox-populate.yml runs populate.py directly on this host
+          # (no Docker: the runner user has no docker.sock access, and this
+          # public repo's runner should not get it). pyyaml is its only
+          # non-stdlib dependency.
+          - python3-yaml
         state: present
         update_cache: true
 

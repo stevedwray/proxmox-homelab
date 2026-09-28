@@ -27,7 +27,8 @@ Examples:
   bash $0 apply
   bash $0 clean
 
-Note: The GitHub Actions workflow uses this wrapper as the single supported entrypoint.
+Note: the GitHub Actions workflow (netbox-populate.yml) runs populate.py
+directly on the runner, without this wrapper or its container.
 EOF
 }
 

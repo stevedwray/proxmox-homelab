@@ -1,10 +1,11 @@
 # framework-ip-and-port (planning workspace)
 
-Status: **Phases A and C complete; Phase B prepared, cutover pending**
-(2026-09-27). The TTL was lowered to 5m at Sun 27 Sep 16:30 NZDT, so the
-cutover can run from Mon 28 Sep 16:30 NZDT with gazaar powered off.
-Next: fwip-02, then the "Operator: re-IP cutover" runbook, then fwip-03.
-Branch `task/framework-dns-only-plan`.
+Status: **All three phases complete.** Phases A and C were merged to
+`stable` in #432 (2026-09-28). Phase B, the re-IP cutover, ran on
+2026-09-28 from `task/framework-reip-cutover`: framework is now
+`192.168.1.18`, and `192.168.1.8` is gazaar's alone. That branch is not yet
+merged. NetBox was corrected by hand the same day; the populate CI job's
+fix is on `fix/netbox-populate-no-docker` (see the hand-back log).
 
 The Framework Desktop (`framework.gibbsgreatly.xyz`, bare-metal Ubuntu 26)
 was given `192.168.1.8` by mistake. That address belongs to **gazaar**, a
@@ -461,3 +462,153 @@ Read-back after 20 s: the new URL, `Status: 1` (up).
 fwip-02 is deliberately held until cutover day. Committing `.18` early
 would let any re-run of the DNS playbook repoint the name before framework
 moves.
+
+### Pre-cutover review, 2026-09-28 (read-only, plus plan updates)
+
+Live state at 12:44 NZDT:
+- MikroTik answers `framework.gibbsgreatly.xyz` A `192.168.1.8` with TTL
+  300 (playbook-owned). gazaar is A `192.168.1.8`, TTL 1d, untouched.
+- `.18` doesn't answer ping.
+- Chat `:8080/health` and embeddings `:8085/health` both return 200.
+
+Findings, all folded into plan.md's Phase B:
+
+- **Technitium still held a one-day answer** (TTL 4683 s at 12:44, so it
+  expires about 14:02 NZDT). It was fetched just before the TTL was
+  lowered. The runbook now checks both resolvers' TTLs as a precondition.
+- **Technitium flush.** `technitium-framework-forwarder.yml` deleted
+  Technitium's cached answer only when it created the zone. It now does so
+  on every run, so re-running it is the cutover's "flush Technitium and
+  assert it matches the MikroTik" step. Syntax-checked; it takes effect the
+  first time it runs, during the cutover.
+- **Wrappers after the OpenBao switch.**
+  - `PVE_ENV= ./with-secrets` fails ("unknown profile ''"), so the framework
+    playbook commands in the plan and in both playbook headers now use
+    `TASK_APPROVAL=<task> ./with-secrets-prod`. A read-only
+    `ansible-inventory` through it resolves framework, and the `pve`
+    profile lists every field Phase B needs.
+  - Plain `./with-secrets` (dev profile) still loads the MikroTik
+    credentials for the router re-scrape.
+- **node_exporter cert** SANs are `DNS:framework.gibbsgreatly.xyz,
+  IP Address:192.168.1.8`, valid to 2026-12-22. `step ca renew` keeps its
+  SANs, so the runbook's new step 6 deletes the cert and re-runs the
+  bootstrap to reissue it with DNS only.
+- **NetBox:** the daily populate workflow runs from `main`. The runbook
+  now dispatches it against the cutover branch, falling back to the first
+  scheduled run after `main` is promoted.
+- **Other runbook changes:**
+  - inline approvals throughout;
+  - a guard that `.env` says `.18` before the DNS cutover and the TTL
+    restore;
+  - commit the hand-back only after the checks (the post-commit hook);
+  - rollback-after-step-3 now reverts fwip-02 and re-runs the Technitium
+    flush.
+- fwip-02 was simulated on a scratch worktree of `origin/stable` (not
+  committed). All three of its gates pass (NetBox tests 128 OK), and the
+  resulting `.8`/`.18` file sets match fwip-03's expected lists.
+
+### Phase B cutover, 2026-09-28 (fwip-02, runbook, fwip-03)
+
+Run from `task/framework-reip-cutover`, starting 13:12 NZDT. The operator
+accepted starting before the 16:30 window: the MikroTik, Technitium and
+both Pi-holes had been checked at a TTL of 300 s or less, and gazaar was
+off.
+
+- **fwip-02** (`caa3840e`): `.env`, `.env.template`, `pve.yaml` and
+  `ip_to_stack.json` now say `.18`. All three gates pass (NetBox tests 128
+  OK).
+- **Pre-cutover check found two more resolvers.** The router's DHCP hands
+  LAN clients, including the workstation, the Pi-holes 192.168.1.22 and .23.
+  Both already served the 300 s answer. They are now in the runbook's
+  precondition. `.23` served its expired `.8` answer once, with TTL 0,
+  while it refreshed; the next query returned `.18`.
+- **Netplan** was confirmed before the change: `00-installer-config.yaml`,
+  one `192.168.1.8/24` line. The operator ran step 2 (`netplan try`) and
+  accepted it from `.18`, because Claude Code's permission check blocks
+  remote file writes. The backup is `/root/00-installer-config.yaml.pre-reip`.
+- **DNS:**
+  - The MikroTik record went to `.18` (5m), and the address-list
+    re-resolved to `.18`.
+  - The Technitium playbook flushed its cache; the assertion passed.
+  - After 5 minutes, `getent` returned `.18` on ai-services, secpipe,
+    mcp-utility, cse-controller, monitoring and proxy.
+  - The TTL was restored to 1h (still `.18`).
+- **Consumers:**
+  - `comfyui.` 302.
+  - `llm.` 401 without the key and 200 with it (a real completion, about
+    24 tok/s).
+  - `:8085` embeddings: 768 dimensions.
+  - VictoriaMetrics `up{stack="framework"}` is 1 for node_exporter,
+    cadvisor, llamacpp :8080 and :8085.
+  - Ansible ping OK; the Portainer agent port 9001 is open.
+  - Not checked by Claude: OpenWebUI chat, docs-rag `search_docs`, and the
+    Portainer UI endpoint state. These are for the operator.
+- **node_exporter cert:** the operator deleted the old cert, and the
+  bootstrap reissued it. The SANs are now `DNS:framework.gibbsgreatly.xyz`
+  only, valid to 2026-12-27, and the scrape is still up. The service unit is
+  `prometheus-node-exporter`, not `node_exporter`.
+- **gazaar:** powered on. `.8` answers with MAC `00:d0:b8:25:4b:93`
+  (framework's is `9c:bf:0d:01:f7:a7`), and forward and PTR records both say
+  gazaar; SMB, NFS, rsync and SSH answer. A completed backup run is for the
+  operator to confirm.
+- **Router re-scrape:** `.8` is gazaar's record only; the framework record
+  and address-list entry are `.18`, TTL 1h.
+- **fwip-03:** both gates match their expected file lists exactly.
+- **NetBox: not updated.** The branch was pushed and `netbox-populate.yml`
+  dispatched against it (run 36363158889). The GitHub-OIDC login to
+  OpenBao worked, but "Build populate container" failed: the self-hosted
+  runner user gets `permission denied` on `/var/run/docker.sock`. This is
+  CI breakage that predates the cutover: the workflow has no success in its
+  last 100 runs, and the scheduled runs on `main` still fail earlier, at
+  "Install SOPS" (the pre-OpenBao workflow). NetBox therefore still shows
+  framework at `.8` until the runner's Docker access is fixed and the
+  populate runs, from this branch or after `main` is promoted.
+- **Bootstrap `changed` results: harmless, checked.** The `containers` LV
+  (300G) is mounted at `/mnt/container-storage`, and its `docker/` and
+  `containerd/` directories are bind-mounted onto `/var/lib/docker` and
+  `/var/lib/containerd`, as `1df73e96` intended. Each pair is one inode,
+  so "Create docker/containerd subdirectories" sets it to 0755 and the
+  next task sets it back to 0711. Both report `changed` on every run; the
+  end state is 0711, which is correct. The fix is to set the first task's
+  mode to `'0711'` (not done yet).
+
+### NetBox follow-up, 2026-09-28 (afternoon)
+
+The daily `netbox-populate` job had never worked (no success back to at
+least 2026-06-14). There were three causes:
+1. The self-hosted runner's `runner` user has no access to
+   `/var/run/docker.sock`, so `docker build` failed.
+2. OpenBao's `ci-netbox-populate` JWT role accepts only
+   `refs/heads/main` (`configure-openbao.yml`). A dispatch from a branch,
+   as runbook step 9 had it, can never log in.
+3. `main` still carries the SOPS version of the workflow.
+
+- **CI fix (`fix/netbox-populate-no-docker`, `0f912630`, not pushed).**
+  The fix does not add `runner` to the `docker` group. The repo is public
+  and `security-scan.yml` runs fork PRs on the same runner (approval is
+  needed only for first-time contributors), so the group would give those
+  jobs root-equivalent access. Instead the workflow runs `populate.py`
+  directly: the container only wrapped Python 3.13 and pyyaml.
+  `deploy-ci-runner.yml` now installs `python3-yaml`.
+- **Runner deployed:** `provision.sh --stack ci-runner-01` on pve, under
+  the approval flow (`ci-runner-python-yaml`). ok=95, changed=5,
+  failed=0; the smoke test passed. `runner` imports pyyaml 6.0.2. Docker
+  and the runner service were not restarted, and the runner is online in
+  GitHub. The job itself can only be verified once the fix reaches
+  `main`.
+- **NetBox corrected by hand.**
+  - A dry run of the full populate showed 86 pending writes (months of
+    backlog), plus two warnings: Portainer endpoint discovery failed with
+    "connection refused", and threat-model derivation fails with
+    `unhashable type: 'list'`. It was not applied.
+  - Instead, populate's own `populate_static_hosts()` was run for the
+    framework entry only. It created `192.168.1.18/24` (id 58) on
+    framework's eth0 and set it as `primary_ip4`.
+  - The stale `192.168.1.8/24` record (id 42, still on framework's eth0) was
+    deleted by the operator (204). NetBox now has no `.8` address.
+- **Open:**
+  - push the fix branch and promote it to `main`, then check the first
+    scheduled run;
+  - the 86-write catch-up it will then apply, including the Portainer
+    discovery warning;
+  - the threat-model bug.
