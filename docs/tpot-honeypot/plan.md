@@ -433,17 +433,13 @@ behavior working as intended).
 
 ## Still open
 
-- **Codify the T-Pot host route**: the `192.168.50.12/32 via
-  192.168.1.1` NetworkManager route fix (Real bug #3) was applied by
-  hand during debugging, not yet added to
-  `ansible/00-initial-setup/tpot-host-baseline.yml`. It's persistent
-  (stored in the connection profile) so it currently survives a reboot,
-  but should be codified so it survives a full OS reinstall and so
-  future lab hosts needing to reach T-Pot don't hit the same
-  IP-collision wall silently. Consider whether to add routes for the
-  other colliding zones (`infra_seg`, `game_seg`, `pentest_seg`,
-  `media_seg`, `apps_seg`) proactively, or only as each is actually
-  needed.
+- ~~**Codify the T-Pot host route**~~ **DONE (2026-09-30)**: added as an
+  idempotent `tpot_extra_host_routes` task in `tpot-host-baseline.yml` —
+  survives a full OS reinstall now, not just a reboot. Verified
+  idempotent live (`changed=0` on a real re-run). Still an open decision
+  whether to add routes for the other colliding zones (`infra_seg`,
+  `game_seg`, `pentest_seg`, `media_seg`, `apps_seg`) proactively, or
+  only as each is actually needed — the list structure makes either easy.
 - **`secrets/manifest.json` profile-completeness gap**: adding a field
   to `entries` without also adding the entry to the relevant profile's
   list fails *silently* (empty string, not an error) rather than loud —
