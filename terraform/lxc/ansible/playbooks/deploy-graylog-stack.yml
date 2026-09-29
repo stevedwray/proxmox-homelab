@@ -1539,3 +1539,6 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: DNS query logs index set, stream and pipeline (docs/lan-dns-technitium/)
+  ansible.builtin.import_playbook: configure-graylog-dns-queries.yml

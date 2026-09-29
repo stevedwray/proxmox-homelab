@@ -1,0 +1,44 @@
+# Technitium DNS Server — cluster secondary on pve-tiny (mgmt_seg).
+# Second LAN resolver alongside technitium-stack on pve; inherits settings,
+# blocklists, apps and every zone through Technitium clustering.
+# docs/lan-dns-technitium/plan.md.
+hostname: technitium-tiny-stack
+ip_address: "${lab_ip_technitium_tiny}/24"
+gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
+network:
+  zone: mgmt_seg
+vmid: 20017
+cores: 1
+memory: 2048
+swap: 1024
+rootfs_size: 12
+storage_profile: platform-default
+docker_storage_size: "6G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - technitium-tiny-stack
+  - dns
+  - core-services
+  - infrastructure
+  - docker
+# Empty for the same reason as cse-panel-stack: no precedent on pve-tiny
+# for a depends_on entry naming a stack on a different physical node.
+depends_on: []
+provides:
+  - service: dns-resolver
+    port: 53
+    protocol: tcp
+  - service: dns-resolver-udp
+    port: 53
+    protocol: udp
+  - service: technitium-cluster-https
+    port: 53443
+    protocol: tcp
+ansible_playbook: "deploy-technitium-tiny-stack"
+deployment_tier: platform
+portainer_agent: false
+
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

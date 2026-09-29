@@ -63,13 +63,13 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 
 ## DNS
 
-- **Upstream:** DoH via `https://dns.google/dns-query`
+- **Upstream:** DoH via https://1.1.1.1/dns-query
 - **Fallback servers:** 8.8.8.8, 8.8.4.4
 - **Allow remote requests:** yes (router acts as local resolver on 192.168.1.1)
 - **Verify DoH cert:** no
 - **Static entries:** 72 host entries (was 80 when copied from the hAP ac —
   some dropped during or after migration)
-- **DHCP hands out:** 192.168.1.22, 192.168.1.23 (Pi-holes) ✅
+- **DHCP hands out:** 192.168.20.15, 192.168.20.17 (Technitium, pve + pve-tiny) — set by ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml, docs/lan-dns-technitium/
 - **ULA address on router:** fd00::1/64 on bridgeLocal (stable IPv6 for DNS)
 
 ---
@@ -98,8 +98,8 @@ corrected against live scrape)
 
 - **DHCPv6-PD:** client on vlan1-wan, requests address+prefix from ISP (~10 min lease)
 - **LAN prefix:** first /64 from delegated /56, assigned to bridgeLocal via `from-pool`
-- **ND (bridgeLocal):** M=yes, O=yes, hop-limit=64, advertise-dns=yes
-- **RA DNS:** `fd00::22, fd00::23` (Pi-holes via ULA — stable across ISP prefix changes)
+- **ND (bridgeLocal):** M=yes, O=yes, hop-limit=64, advertise-dns=no (since 2026-09-29, docs/lan-dns-technitium/)
+- **RA DNS:** not advertised (advertise-dns=no on bridgeLocal); clients resolve over IPv4 via Technitium. The ND dns list fd00::22,fd00::23 is left configured for rollback only.
 - **DHCPv6 server:** `LANIPv6DHCP` on bridgeLocal, address-pool=static-only, prefix-pool=default-pool
 - **IPv6 firewall:** 14 rules — allow established/ICMPv6, allow LAN→WAN, drop WAN→LAN, drop invalid, 6 kid-curfew drop rules (MAC-based)
 
@@ -146,6 +146,13 @@ Both interfaces are members of bridgeLocal, issue DHCP, and provide internet acc
 ## Firewall
 
 ### IPv4 forward chain
+
+Since 2026-09-29 the chain also has four `technitium-lan:` rules (before the
+first forward drop): LAN may reach the Technitium nodes (address list
+`technitium-dns` = 192.168.20.15, .17) on udp/tcp 53 only, garuda
+(192.168.1.104) keeps full access, other new LAN connections to them are
+dropped. Managed by `ansible/00-initial-setup/mikrotik-firewall-technitium-lan.yml`.
+The table below predates them and is not a full rule listing.
 
 | # | Action | Rule |
 |---|--------|------|

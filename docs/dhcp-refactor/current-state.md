@@ -6,6 +6,14 @@ from [router/README.md](../../router/README.md),
 scrape at [router/config/current-config.json](../../router/config/current-config.json),
 all refreshed against the hAP ax3 on 2026-07-03.
 
+> **Update 2026-09-29 (live router read):** DHCP `dns-server` is now
+> `192.168.20.15,192.168.20.17` (Technitium, `docs/lan-dns-technitium/`), not the
+> Pi-holes; `bridgeLocal` ND has `advertise-dns=no` (the `fd00::22,fd00::23` list is
+> kept only for rollback). Lease table: 13 leases, `Compute` now holds
+> `192.168.1.105` (Decision 8 reserves it at `.101` — decide which before Stage E);
+> `iPhone` `.117` and `BolorErlsiPhone` `.124` moved too (churn accepted, Decision 8).
+> The tables below are the 2026-07-03 baseline.
+
 ## Summary
 
 - The MikroTik hAP ax3 is the active DHCP server for the default LAN on

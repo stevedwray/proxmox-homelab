@@ -1,0 +1,347 @@
+---
+# LAN-resolver settings for technitium-stack, the Technitium cluster
+# primary (docs/lan-dns-technitium/plan.md, Phase 2).
+#
+# Makes Technitium a drop-in replacement for the Pi-holes: DoH upstream
+# forwarding, Pi-hole-style blocklists applied to the LAN only, forwarder
+# zones back to the MikroTik for the LAN names it still owns, and the
+# Query Logs app. Every setting here is a Technitium cluster parameter,
+# so technitium-tiny-stack inherits it through clustering -- run this
+# against the primary only.
+#
+# Standalone so it can be applied without re-running the whole Technitium
+# deploy; also imported at the end of deploy-technitium-stack.yml so
+# rebuilds keep it.
+
+- name: Configure Technitium as the LAN resolver
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address | default(''), true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+    lan_resolver_router: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
+
+    # Decision 3: DoH forwarding, not full recursion.
+    lan_resolver_forwarders:
+      - "https://cloudflare-dns.com/dns-query (1.1.1.1)"
+      - "https://dns.quad9.net/dns-query (9.9.9.9)"
+
+    # Hagezi Pro (ads/trackers/telemetry, ~230k domains) + Hagezi Threat
+    # Intelligence Feeds "mini" (malware/phishing/scam). The full TIF list
+    # is ~40MB, too heavy for a 2GB LXC. Both URLs checked 2026-09-29.
+    # Plus StevenBlack's unified hosts (Pi-hole's default list): Hagezi
+    # deliberately leaves some ad hosts alone (doubleclick.net apex,
+    # ad.doubleclick.net, adservice.google.com) that the Pi-holes blocked
+    # (operator, 2026-09-29).
+    lan_resolver_block_list_urls:
+      - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
+      - "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.mini-onlydomains.txt"
+      - "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+    # Exceptions and extra blocks live here, not in the web UI, so a
+    # rebuild keeps them. Synced to the secondary via clustering.
+    lan_resolver_allowed_domains: []
+    lan_resolver_blocked_domains: []
+
+    # Every SDN VLAN subnet bypasses blocking -- the Pi-holes only ever
+    # filtered bridgeLocal, whose subnet is deliberately absent here.
+    lan_resolver_blocking_bypass:
+      - 192.168.10.0/24
+      - 192.168.20.0/24
+      - 192.168.30.0/24
+      - 192.168.40.0/24
+      - 192.168.50.0/24
+      - 192.168.60.0/24
+      - 192.168.70.0/24
+      - 192.168.80.0/24
+      - 192.168.81.0/24
+      - 192.168.90.0/24
+      - 192.168.100.0/24
+      - 192.168.110.0/24
+      - 192.168.120.0/24
+
+    # Names the MikroTik still answers for LAN clients: its static
+    # *.gibbsgreatly.xyz records, DHCP-generated *.lan names, and their PTRs.
+    # lab.gibbsgreatly.xyz is a more specific Primary zone here, so it is
+    # never forwarded (no loop with the router's lab-zone-delegate).
+    lan_resolver_forwarder_zones:
+      - gibbsgreatly.xyz
+      - lan
+      - 1.168.192.in-addr.arpa
+
+    # Apps are cluster-synced (install + config), so the secondary gets them
+    # too. Rebinding protection and the Log Exporter bypass/skip nothing on
+    # their own; the SDN subnets bypass rebinding for the same reason they
+    # bypass blocking (platform DNS behavior unchanged).
+    lan_resolver_apps:
+      - name: "Query Logs (Sqlite)"
+        config: null
+      - name: "DNS Rebinding Protection"
+        config:
+          enableProtection: true
+          bypassNetworks: "{{ lan_resolver_blocking_bypass }}"
+          privateNetworks:
+            - 10.0.0.0/8
+            - 127.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+            - 169.254.0.0/16
+            - fc00::/7
+            - fe80::/10
+          # Legitimately-private public names: the router's split-horizon
+          # records, DHCP-generated names, RFC 8375, and Plex's LAN relay.
+          privateDomains:
+            - home.arpa
+            - gibbsgreatly.xyz
+            - lan
+            - plex.direct
+      # Every query + answer to the local rsyslog Docker-log listener, which
+      # relays to Graylog (configure-graylog-dns-queries.yml routes it by
+      # facility local6 into its own index set).
+      - name: "Log Exporter"
+        config:
+          maxQueueSize: 1000000
+          enableEdnsLogging: false
+          file:
+            path: "./dns_logs.json"
+            enabled: false
+          http:
+            endpoint: "http://localhost:5000/logs"  # nosonar: ansible:S5332 — disabled placeholder required by the app's config schema
+            headers: {}
+            enabled: false
+          syslog:
+            address: "127.0.0.1"
+            port: 10514
+            protocol: "TCP"
+            enabled: true
+
+  tasks:
+    - name: Log in to Technitium API and obtain session token
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: lan_resolver_login
+      retries: 10
+      delay: 3
+      until: lan_resolver_login.status == 200
+      no_log: true
+
+    - name: Extract Technitium API token
+      ansible.builtin.set_fact:
+        lan_resolver_token: "{{ (lan_resolver_login.content | from_json).token }}"
+      no_log: true
+
+    - name: Read current DNS settings
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/settings/get?token={{ lan_resolver_token }}"
+        method: GET
+        return_content: true
+      register: lan_resolver_settings_raw
+      no_log: true
+
+    - name: Detect settings drift
+      ansible.builtin.set_fact:
+        lan_resolver_settings_drift: >-
+          {{
+            (s.forwarders | default([]) or []) != lan_resolver_forwarders
+            or s.forwarderProtocol | default('') != 'Https'
+            or not (s.enableBlocking | default(false))
+            or s.blockingType | default('') != 'AnyAddress'
+            or (s.blockListUrls | default([]) or []) != lan_resolver_block_list_urls
+            or (s.blockingBypassList | default([]) or []) | sort != lan_resolver_blocking_bypass | sort
+            or not (s.dnssecValidation | default(false))
+          }}
+      vars:
+        s: "{{ (lan_resolver_settings_raw.content | from_json).response }}"
+
+    - name: Apply LAN resolver settings
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/settings/set?forwarders={{ lan_resolver_forwarders | join(',') | urlencode }}&forwarderProtocol=Https&concurrentForwarding=true&dnssecValidation=true&recursion=AllowOnlyForPrivateNetworks&enableBlocking=true&blockingType=AnyAddress&blockListUrls={{ lan_resolver_block_list_urls | join(',') | urlencode }}&blockListUpdateIntervalHours=24&blockingBypassList={{ lan_resolver_blocking_bypass | join(',') | urlencode }}&token={{ lan_resolver_token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: lan_resolver_settings_set
+      changed_when: true
+      failed_when: (lan_resolver_settings_set.content | from_json).status | default('') != 'ok'
+      when: lan_resolver_settings_drift | bool
+      no_log: true
+
+    - name: Download block lists now instead of waiting for the 24h timer
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/settings/forceUpdateBlockLists?token={{ lan_resolver_token }}"
+        method: POST
+        status_code: [200]
+      when: lan_resolver_settings_drift | bool
+      no_log: true
+
+    - name: Ensure router forwarder zones exist (cluster catalog members when clustered)
+      ansible.builtin.include_role:
+        name: technitium_zone
+      vars:
+        technitium_token: "{{ lan_resolver_token }}"
+        technitium_zone_name: "{{ lan_resolver_fwd_zone }}"
+        technitium_zone_type: Forwarder
+        technitium_zone_forwarder: "{{ lan_resolver_router }}"
+      loop: "{{ lan_resolver_forwarder_zones }}"
+      loop_control:
+        loop_var: lan_resolver_fwd_zone
+
+    - name: Add allowed domains
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/allowed/add?domain={{ item | urlencode }}&token={{ lan_resolver_token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: lan_resolver_allow_add
+      changed_when: false
+      failed_when: (lan_resolver_allow_add.content | from_json).status | default('') != 'ok'
+      loop: "{{ lan_resolver_allowed_domains }}"
+      no_log: true
+
+    - name: Add blocked domains
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/blocked/add?domain={{ item | urlencode }}&token={{ lan_resolver_token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: lan_resolver_block_add
+      changed_when: false
+      failed_when: (lan_resolver_block_add.content | from_json).status | default('') != 'ok'
+      loop: "{{ lan_resolver_blocked_domains }}"
+      no_log: true
+
+    - name: List installed apps
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/apps/list?token={{ lan_resolver_token }}"
+        method: GET
+        return_content: true
+      register: lan_resolver_installed_apps
+      no_log: true
+
+    - name: Find apps that are not installed yet
+      ansible.builtin.set_fact:
+        lan_resolver_missing_apps: >-
+          {{
+            lan_resolver_apps | map(attribute='name')
+            | reject('in', (lan_resolver_installed_apps.content | from_json).response.apps | map(attribute='name') | list)
+            | list
+          }}
+
+    - name: List store apps
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/apps/listStoreApps?token={{ lan_resolver_token }}"
+        method: GET
+        return_content: true
+      register: lan_resolver_store_apps
+      when: lan_resolver_missing_apps | length > 0
+      no_log: true
+
+    - name: Assert every missing app exists in the store
+      ansible.builtin.assert:
+        that:
+          - item in (lan_resolver_store_apps.content | from_json).response.storeApps | map(attribute='name') | list
+        fail_msg: "'{{ item }}' not found in the Technitium app store."
+      loop: "{{ lan_resolver_missing_apps }}"
+
+    - name: Install missing apps
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/apps/downloadAndInstall?name={{ item | urlencode }}&url={{ ((lan_resolver_store_apps.content | from_json).response.storeApps | selectattr('name', 'equalto', item) | map(attribute='url') | first) | urlencode }}&token={{ lan_resolver_token }}"
+        method: POST
+        return_content: true
+        status_code: [200]
+      register: lan_resolver_app_install
+      changed_when: true
+      failed_when: (lan_resolver_app_install.content | from_json).status | default('') != 'ok'
+      loop: "{{ lan_resolver_missing_apps }}"
+      no_log: true
+
+    - name: Read app configs
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/apps/config/get?name={{ item.name | urlencode }}&token={{ lan_resolver_token }}"
+        method: GET
+        return_content: true
+      register: lan_resolver_app_configs
+      loop: "{{ lan_resolver_apps | selectattr('config', 'ne', none) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Apply app configs that differ
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/apps/config/set?name={{ item.item.name | urlencode }}&token={{ lan_resolver_token }}"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          config: "{{ item.item.config | to_json }}"
+        return_content: true
+        status_code: [200]
+      register: lan_resolver_app_config_set
+      changed_when: true
+      failed_when: (lan_resolver_app_config_set.content | from_json).status | default('') != 'ok'
+      loop: "{{ lan_resolver_app_configs.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: >-
+        (((item.content | from_json).response.config | default('', true)) or '{}') | from_json
+        != item.item.config
+      no_log: true
+
+    # Probe domain: googlesyndication.com is itself an entry in Hagezi Pro.
+    # Not doubleclick.net -- Hagezi deliberately leaves that apex (and
+    # ad.doubleclick.net) unblocked and lists ad subdomains instead.
+    # Blocking must be probed from a non-bypassed address: the LXC itself
+    # sits in 192.168.20.0/24 (bypassed), so these digs run on the control
+    # node, which is on bridgeLocal like a real LAN client.
+    - name: Probe blocking from the LAN
+      ansible.builtin.command: dig @{{ technitium_ip }} +short googlesyndication.com A
+      delegate_to: localhost
+      register: lan_resolver_block_probe
+      check_mode: false
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: (lan_resolver_block_probe.stdout | trim) == '0.0.0.0'
+
+    - name: Probe public resolution from the LAN
+      ansible.builtin.command: dig @{{ technitium_ip }} +short github.com A
+      delegate_to: localhost
+      register: lan_resolver_public_probe
+      check_mode: false
+      changed_when: false
+      failed_when: (lan_resolver_public_probe.stdout | trim) | length == 0
+
+    - name: Probe DNS rebinding protection from the LAN
+      ansible.builtin.command: dig @{{ technitium_ip }} +short 10.0.0.1.nip.io A
+      delegate_to: localhost
+      register: lan_resolver_rebind_probe
+      check_mode: false
+      changed_when: false
+      retries: 6
+      delay: 10
+      until: (lan_resolver_rebind_probe.stdout | trim) | length == 0
+
+    - name: Ask the MikroTik for a router-owned LAN name
+      ansible.builtin.command: dig @{{ lan_resolver_router }} +short pve.gibbsgreatly.xyz A
+      register: lan_resolver_router_expected
+      check_mode: false
+      changed_when: false
+
+    - name: Ask Technitium for the same name
+      ansible.builtin.command: dig @{{ technitium_ip }} +short pve.gibbsgreatly.xyz A
+      register: lan_resolver_router_actual
+      check_mode: false
+      changed_when: false
+
+    - name: Assert Technitium agrees with the MikroTik for router-owned names
+      ansible.builtin.assert:
+        that:
+          - lan_resolver_router_expected.stdout | trim | length > 0
+          - (lan_resolver_router_actual.stdout | trim) == (lan_resolver_router_expected.stdout | trim)
+        fail_msg: >-
+          Technitium returned '{{ lan_resolver_router_actual.stdout | trim }}'
+          for pve.gibbsgreatly.xyz; the MikroTik returned
+          '{{ lan_resolver_router_expected.stdout | trim }}'.
+      when: not ansible_check_mode

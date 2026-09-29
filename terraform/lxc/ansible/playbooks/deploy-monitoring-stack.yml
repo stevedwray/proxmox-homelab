@@ -227,6 +227,10 @@
                   labels: {stack: media-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_OPENBAO') }}:9100"]
                   labels: {stack: openbao-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:9100"]
+                  labels: {stack: technitium-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:9100"]
+                  labels: {stack: technitium-tiny-stack}
 
             # Framework's native llama.cpp servers (--metrics), which
             # replaced Ollama's textfile collector --
@@ -267,6 +271,10 @@
                   labels: {stack: gaming-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:8080"]
                   labels: {stack: media-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:8080"]
+                  labels: {stack: technitium-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:8080"]
+                  labels: {stack: technitium-tiny-stack}
 
             - job_name: minecraft-status
               scrape_interval: 15s
@@ -290,11 +298,22 @@
                     stack: gaming-stack-lab
                     server: foreverworld
 
-            - job_name: coredns
+            # Technitium's native Prometheus endpoint (v15.0+). Needs an API
+            # token of the Technitium user "metrics" (Dashboard: View only);
+            # clustering syncs users and tokens, so one token serves both
+            # nodes. Replaces the coredns job (dns-stack destroyed
+            # 2026-09-08). docs/lan-dns-technitium/plan.md.
+            - job_name: technitium
               scrape_interval: 15s
+              scheme: http
+              metrics_path: /api/dashboard/metrics/text
+              authorization:
+                credentials: "{{ lookup('env', 'TECHNITIUM_METRICS_TOKEN') | mandatory('TECHNITIUM_METRICS_TOKEN env var is required') }}"
               static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_DNS') }}:9153"
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:5380"]
+                  labels: {stack: technitium-stack, node: pve}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:5380"]
+                  labels: {stack: technitium-tiny-stack, node: pve-tiny}
 
             - job_name: authentik
               static_configs:

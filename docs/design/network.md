@@ -50,6 +50,7 @@ Future zones (Phase 06+): `app_seg`, `game_seg`.
 | Monitoring | `mgmt_seg` | `192.168.20.12` | 20012 | 04 |
 | CoreDNS | `mgmt_seg` | `192.168.20.13` | 20013 | 04b |
 | Technitium | `mgmt_seg` | `192.168.20.15` | 20015 | 04b / DNS refactor |
+| Technitium secondary (pve-tiny) | `mgmt_seg` | `192.168.20.17` | 20017 | LAN DNS (`docs/lan-dns-technitium/`) |
 | Traefik | `edge_seg` | `192.168.30.10` | 30010 | 04 |
 | Harbor | `infra_seg` | `192.168.40.10` | 40010 | 03b |
 | apt-cacher-ng | `infra_seg` | `192.168.40.11` | 40011 | 03c |
@@ -108,6 +109,20 @@ Two-tier model:
    `lab.gibbsgreatly.xyz` / `test.gibbsgreatly.xyz` queries to Technitium via a FWD rule.
    All other queries are resolved by MikroTik directly (public DNS via DoH upstream).
 
+**LAN clients (bridgeLocal) are a separate path, since 2026-09-29**
+(`docs/lan-dns-technitium/`): the MikroTik's DHCP hands out **both Technitium
+nodes** — `192.168.20.15` (pve, cluster primary) and `192.168.20.17` (pve-tiny,
+cluster secondary) — and IPv6 RA no longer advertises DNS. Clients query
+Technitium directly (not via the MikroTik), which forwards public names over DoH
+(Cloudflare + Quad9), blocks ads/telemetry/malware (Hagezi Pro + TIF-mini +
+StevenBlack; SDN subnets bypass blocking), applies DNS rebinding protection, answers
+`lab.gibbsgreatly.xyz` itself, and forwards `gibbsgreatly.xyz`, `lan` and
+`1.168.192.in-addr.arpa` to the MikroTik for its split-horizon/LAN records. The two
+nodes form a Technitium cluster (`cluster.lab.gibbsgreatly.xyz`) that syncs settings
+and every zone; either node answers everything alone. LAN devices may reach the two
+IPs on port 53 only (MikroTik `technitium-lan:` rules; garuda excepted). The Pi-holes
+(`192.168.1.22`/`.23`) are a cold fallback until they are retired.
+
 CoreDNS on `pve` (`192.168.20.13`) was **removed, 2026-09-08** — decommissioned via
 `pct destroy`, not just stopped, after fixing 8 stacks' hardcoded Docker-daemon-level
 dependency on its IP (a pre-cutover leftover that had already broken Harbor's image
@@ -122,7 +137,7 @@ first.
 | Namespace | Resolver | Used for |
 |---|---|---|
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
-| `lab.gibbsgreatly.xyz` | Technitium on pve (`192.168.20.15`) | Internal platform identity — service-to-service, managed host access on pve |
+| `lab.gibbsgreatly.xyz` | Technitium cluster (`192.168.20.15`, copy on `192.168.20.17`) | Internal platform identity — service-to-service, managed host access on pve |
 | `test.gibbsgreatly.xyz` | Technitium on pve-test-vm (`192.168.20.115`) | Same as above for pve-test-vm environment; separate zone avoids DNS collisions |
 
 ### DNS configuration per LXC

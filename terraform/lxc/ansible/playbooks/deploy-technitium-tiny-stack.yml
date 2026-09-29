@@ -1,0 +1,188 @@
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Technitium DNS Server (cluster secondary)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    technitium_compose_dir: /opt/technitium-stack
+    technitium_certs_dir: /opt/technitium-stack/certs
+    technitium_combined_ca_bundle: /opt/technitium-stack/certs/combined-ca.crt
+    # Must equal deploy-technitium-stack.yml's value: cluster nodes run the
+    # same Technitium version.
+    technitium_image_tag: "15.2.0"
+    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}"
+
+  tasks:
+    - name: Create Technitium compose directory
+      ansible.builtin.file:
+        path: "{{ technitium_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write compose secrets env file
+      ansible.builtin.copy:
+        dest: "{{ technitium_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          REGISTRY_HOST={{ effective_registry_host }}
+          DNS_SERVER_ADMIN_PASSWORD={{ technitium_admin_password }}
+      no_log: true
+
+    - name: Create Technitium certs directory
+      ansible.builtin.file:
+        path: "{{ technitium_certs_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build Technitium combined CA bundle
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat /etc/ssl/certs/ca-certificates.crt > {{ technitium_combined_ca_bundle }}
+        if [[ -f /usr/local/share/ca-certificates/homelab-root.crt ]]; then
+          cat /usr/local/share/ca-certificates/homelab-root.crt >> {{ technitium_combined_ca_bundle }}
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Write Technitium compose definition
+      ansible.builtin.copy:
+        dest: "{{ technitium_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            technitium:
+              image: "{{ effective_registry_host }}/dockerhub/technitium/dns-server:{{ technitium_image_tag }}"
+              container_name: technitium
+              restart: unless-stopped
+              env_file: .env
+              environment:
+                # Hostname part becomes technitium-tiny.cluster.<lab_domain>
+                # when this node joins the cluster.
+                DNS_SERVER_DOMAIN: "technitium-tiny.{{ lab_domain }}"
+                DNS_SERVER_ADMIN_USERNAME: admin
+                DNS_SERVER_PREFER_IPV6: "false"
+                SSL_CERT_FILE: /etc/ssl/certs/combined-ca.crt
+              # network_mode: host -- same single-NIC/single-container
+              # reasoning as technitium-stack (docs/dhcp-refactor/decisions.md
+              # Decision 5); here it also lets clustering register and
+              # serve 53443 on the LXC's real IP. docs/lan-dns-technitium/plan.md.
+              network_mode: host
+              volumes:
+                - technitium-config:/etc/dns
+                - ./certs/combined-ca.crt:/etc/ssl/certs/combined-ca.crt:ro
+
+          volumes:
+            technitium-config:
+      register: technitium_compose_definition
+
+    - name: Validate Technitium compose configuration
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ technitium_compose_dir }}/docker-compose.yml" config -q
+        chdir: "{{ technitium_compose_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Technitium via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ technitium_compose_dir }}"
+        state: present
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed | default(false)
+                or technitium_compose_definition.changed | default(false))
+            else 'auto'
+          }}
+        remove_orphans: true
+      when: not ansible_check_mode
+
+    - name: Wait for Technitium web console to respond
+      ansible.builtin.uri:
+        url: "http://{{ technitium_ip }}:5380/api/user/session/get"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+        method: GET
+        status_code: [200, 401, 400]
+      register: technitium_console_ready
+      retries: 30
+      delay: 3
+      until: technitium_console_ready is success or technitium_console_ready.status in [401, 400]
+      when: not ansible_check_mode
+
+    - name: Verify recursive query for github.com
+      ansible.builtin.command: dig @{{ technitium_ip }} +short github.com A
+      register: technitium_recursion_test
+      check_mode: false
+      changed_when: false
+      retries: 10
+      delay: 3
+      until: (technitium_recursion_test.stdout | default('')) | length > 0
+
+- name: Enroll this host as a Wazuh agent
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/technitium-stack
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
+- name: Enable unattended security updates
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades
+
+- name: Technitium node observability (docs/lan-dns-technitium/)
+  ansible.builtin.import_playbook: technitium-node-observability.yml

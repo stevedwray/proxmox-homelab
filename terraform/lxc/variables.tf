@@ -194,6 +194,12 @@ variable "lab_ip_technitium" {
   default     = ""
 }
 
+variable "lab_ip_technitium_tiny" {
+  description = "Technitium cluster secondary (pve-tiny) IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_ip_proxy" {
   description = "Traefik service IPv4 address"
   type        = string

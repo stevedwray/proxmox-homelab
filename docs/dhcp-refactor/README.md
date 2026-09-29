@@ -12,6 +12,17 @@ validation surface.
 
 ## Status
 
+> **Update 2026-09-29 — LAN DNS moved to Technitium.** `docs/lan-dns-technitium/`
+> made two clustered Technitium nodes (192.168.20.15 on pve, 192.168.20.17 on
+> pve-tiny) the LAN's resolver; the MikroTik's DHCP now hands those out and IPv6
+> RA no longer advertises DNS. The Pi-holes are a cold fallback until retired.
+> **Decision 9** supersedes Decision 3's "DNS stays on the Pi-holes" bullet: the
+> Technitium scope's DNS option copies whatever the MikroTik hands out at cutover
+> time. Also: a second Technitium node now exists, so the "Deferred:
+> multi-instance DHCP resiliency" option has its second box. Before Stage E, note
+> that `Compute` is now at `192.168.1.105`, not the `.101` Decision 8 reserves
+> (see current-state.md). The status text below predates this.
+
 Planning opened on 2026-07-05. Phases 0 and 1 are complete —
 [decisions.md](./decisions.md) holds four settled decisions: IPv4 DHCP is
 relay-based (MikroTik relays to Technitium; Technitium stays off client L2

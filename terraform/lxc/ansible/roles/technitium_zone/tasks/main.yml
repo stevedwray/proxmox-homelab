@@ -1,0 +1,105 @@
+---
+# technitium_zone: ensure one Technitium zone exists and, when this server
+# is a Technitium cluster primary, that it is a member of the cluster
+# catalog -- so every cluster node serves it. This role is the only way
+# automation in this repo should create a Technitium zone.
+#
+# Cluster contract (docs/lan-dns-technitium/plan.md): once a Primary zone
+# is a cluster catalog member, Technitium owns its apex NS records (one per
+# cluster node) and its SOA primary name server, rewrites both whenever a
+# node joins or leaves, and its API rejects edits to them. Callers must
+# never add/delete apex NS records or change the SOA primary name server
+# of a member zone. Zone transfer to secondaries, NOTIFY and TSIG are
+# inherited from the cluster catalog zone.
+#
+# Callers must already be logged in and provide technitium_api_base /
+# technitium_token (same convention as technitium_dns_record).
+#
+# Required var: technitium_zone_name -- the zone's DNS name (reverse zones
+#   as <c>.<b>.<a>.in-addr.arpa, not a CIDR).
+# Optional: technitium_zone_type (Primary | Forwarder),
+#   technitium_zone_forwarder, technitium_zone_forwarder_protocol.
+# Sets fact: technitium_zone_cluster_catalog -- the cluster catalog zone
+#   name, or '' when this server is not a cluster primary.
+
+- name: Read Technitium cluster state
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/admin/cluster/state?token={{ technitium_token }}"
+    method: GET
+    return_content: true
+  register: technitium_zone_cluster_state
+  no_log: true
+
+# Technitium 15.2's /admin/cluster/state returns the node list as
+# "clusterNodes" (the API docs say "nodes" -- they are wrong for 15.2).
+- name: Derive the cluster catalog zone name
+  ansible.builtin.set_fact:
+    technitium_zone_cluster_catalog: >-
+      {{
+        ('cluster-catalog.' ~ technitium_zone_state.clusterDomain)
+        if (technitium_zone_state.clusterInitialized | default(false) | bool
+            and (technitium_zone_state.clusterNodes | default([])
+                 | selectattr('state', 'equalto', 'Self')
+                 | map(attribute='type') | first | default('')) == 'Primary')
+        else ''
+      }}
+  vars:
+    technitium_zone_state: "{{ (technitium_zone_cluster_state.content | from_json).response }}"
+
+- name: List Technitium zones
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+    method: GET
+    return_content: true
+  register: technitium_zone_list
+  no_log: true
+
+- name: Find the existing zone
+  ansible.builtin.set_fact:
+    technitium_zone_existing: >-
+      {{
+        (technitium_zone_list.content | from_json).response.zones
+        | selectattr('name', 'equalto', technitium_zone_name)
+        | list | first | default({})
+      }}
+
+- name: Refuse to reuse a same-named zone of a different type
+  ansible.builtin.assert:
+    that:
+      - technitium_zone_existing | length == 0 or technitium_zone_existing.type == technitium_zone_type
+    fail_msg: >-
+      Zone {{ technitium_zone_name }} already exists as
+      {{ technitium_zone_existing.type | default('?') }}, expected
+      {{ technitium_zone_type }}.
+
+- name: Create the zone
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_api_base }}/zones/create?zone={{ technitium_zone_name | urlencode }}&type={{ technitium_zone_type
+      }}{% if technitium_zone_type == 'Forwarder' %}&protocol={{ technitium_zone_forwarder_protocol }}&forwarder={{ technitium_zone_forwarder | urlencode
+      }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true{% endif
+      %}{% if technitium_zone_cluster_catalog | length > 0 %}&catalog={{ technitium_zone_cluster_catalog | urlencode }}{% endif
+      %}&token={{ technitium_token }}
+    method: POST
+    return_content: true
+    status_code: [200]
+  register: technitium_zone_create
+  changed_when: true
+  failed_when: (technitium_zone_create.content | from_json).status | default('') != 'ok'
+  when: technitium_zone_existing | length == 0
+  no_log: true
+
+- name: Add the existing zone to the cluster catalog
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/options/set?zone={{ technitium_zone_name | urlencode }}&catalog={{ technitium_zone_cluster_catalog | urlencode }}&token={{ technitium_token }}"
+    method: POST
+    return_content: true
+    status_code: [200]
+  register: technitium_zone_catalog_set
+  changed_when: true
+  failed_when: (technitium_zone_catalog_set.content | from_json).status | default('') != 'ok'
+  when:
+    - technitium_zone_existing | length > 0
+    - technitium_zone_cluster_catalog | length > 0
+    - (technitium_zone_existing.catalog | default('', true)) != technitium_zone_cluster_catalog
+  no_log: true

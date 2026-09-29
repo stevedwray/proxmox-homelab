@@ -599,6 +599,33 @@ ships native DHCP clustering (removing the two caveats above). If revisited,
 this supersedes Decision 4's "single instance" choice — write a new decision
 rather than editing Decision 4 in place.
 
+## Decision 9: DHCP-assigned DNS follows the LAN resolver, not the Pi-holes (supersedes part of Decision 3)
+
+Context: Decision 3 kept DHCP-assigned DNS on the Pi-holes because
+Technitium's role was scoped to platform-zone authority, and client-LAN
+ad-blocking would have been new, unevaluated scope. `docs/lan-dns-technitium/`
+now takes that scope on explicitly: two clustered Technitium nodes
+(`192.168.20.15` on pve, `192.168.20.17` on pve-tiny) with Pi-hole-style
+blocklists become the LAN resolver, and the Pis are retired. Separately,
+the packet's recorded value (`192.168.1.22`) was already stale: that Pi
+stopped answering DNS and the MikroTik hands out only `192.168.1.23`
+(live, 2026-09-28/29).
+
+Decision: the Technitium `bridgeLocal` scope's DNS-server option is set,
+at Stage E execution time, to exactly the MikroTik `lan` network's
+`dns-server` value read immediately before cutover — whichever resolver
+migration state the LAN is in then. The DNS migration and the DHCP
+migration stay independently sequenced; this is their only coupling, and
+it is a value read at execution time, not an ordering constraint. They
+must not share a change window.
+
+Rationale: keeps Stage E a pure "who issues leases" change with no
+resolver change bundled into it (the same like-for-like principle
+Decision 3 applied), while removing the hard-coded Pi-hole assumption
+that the DNS migration makes wrong. Decision 3's other two bullets
+(migrate `bridgeLocal` first; carry the static leases) stand, except the
+two argon reservations drop out once the Pis are retired.
+
 ## Format
 
 ```markdown

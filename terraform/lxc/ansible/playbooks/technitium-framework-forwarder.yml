@@ -46,25 +46,14 @@
         framework_fwd_token: "{{ (framework_fwd_login.content | from_json).token }}"
       no_log: true
 
-    - name: List Technitium zones
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/list?token={{ framework_fwd_token }}"
-        method: GET
-        return_content: true
-      register: framework_fwd_zone_list
-      no_log: true
-
-    - name: Create conditional forwarder zone for the Framework FQDN if absent
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/create?zone={{ framework_fqdn }}&type=Forwarder&protocol=Udp&forwarder={{ framework_forwarder }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true&token={{ framework_fwd_token }}"
-        method: POST
-        return_content: true
-        status_code: [200]
-      register: framework_fwd_create
-      changed_when: true
-      failed_when: (framework_fwd_create.content | from_json).status | default('') != 'ok'
-      when: framework_fqdn not in (framework_fwd_zone_list.content | from_json).response.zones | map(attribute='name') | list
-      no_log: true
+    - name: Ensure the conditional forwarder zone for the Framework FQDN exists
+      ansible.builtin.include_role:
+        name: technitium_zone
+      vars:
+        technitium_token: "{{ framework_fwd_token }}"
+        technitium_zone_name: "{{ framework_fqdn }}"
+        technitium_zone_type: Forwarder
+        technitium_zone_forwarder: "{{ framework_forwarder }}"
 
     # Every run, not only on zone creation: re-running this playbook is also
     # how a Framework re-IP flushes Technitium's cached answer and then proves
