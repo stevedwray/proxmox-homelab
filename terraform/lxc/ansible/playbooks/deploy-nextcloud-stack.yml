@@ -18,6 +18,7 @@
     wazuh_agent_fim_paths:
       - "{{ nextcloud_stack_dir }}"
     wazuh_agent_docker_monitoring_enabled: true
+    wazuh_agent_group: apps_seg
 
   roles:
     - lxc_base

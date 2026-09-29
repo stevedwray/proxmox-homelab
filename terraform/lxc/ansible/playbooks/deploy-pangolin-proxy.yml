@@ -317,3 +317,15 @@
     gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
   roles:
     - gvm_scan_account
+
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/pangolin-proxy
+    wazuh_agent_group: edge_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent

@@ -11,6 +11,7 @@
     # This accepts Docker socket access for Wazuh on this high-value,
     # single-workload host; see the shared role's documented tradeoff.
     wazuh_agent_docker_monitoring_enabled: true
+    wazuh_agent_group: connector_seg
   roles:
     - lxc_base
     - docker_base

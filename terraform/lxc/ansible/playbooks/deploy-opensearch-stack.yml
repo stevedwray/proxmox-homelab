@@ -410,6 +410,18 @@
   roles:
     - gvm_scan_account
 
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/opensearch-stack
+    wazuh_agent_group: infra_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all
   become: true

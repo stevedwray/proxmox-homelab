@@ -68,6 +68,7 @@
   vars:
     wazuh_agent_fim_paths:
       - /etc/apt-cacher-ng
+    wazuh_agent_group: infra_seg
   roles:
     - wazuh_agent
 

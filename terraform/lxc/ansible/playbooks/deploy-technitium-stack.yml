@@ -748,6 +748,7 @@
     wazuh_agent_fim_paths:
       - /opt/technitium-stack
     wazuh_agent_docker_monitoring_enabled: true
+    wazuh_agent_group: mgmt_seg
   roles:
     - wazuh_agent
 

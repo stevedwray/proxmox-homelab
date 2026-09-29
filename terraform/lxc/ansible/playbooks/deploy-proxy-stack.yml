@@ -360,6 +360,7 @@
     wazuh_agent_fim_paths:
       - /opt/proxy-stack
     wazuh_agent_docker_monitoring_enabled: true
+    wazuh_agent_group: edge_seg
   roles:
     - wazuh_agent
 
