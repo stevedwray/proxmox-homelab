@@ -24,7 +24,8 @@
     - lxc_base
     - docker_base
     - portainer_agent
-    - wazuh_agent
+    - role: wazuh_agent
+      tags: [wazuh_agent_rollout]
 
   handlers:
     - name: Restart Docker

@@ -710,6 +710,7 @@ provision_stack() {
 
   [[ "$check_mode" == "true" ]] && cmd+=(--check)
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
+  [[ -n "${ANSIBLE_SKIP_TAGS:-}" ]] && cmd+=(--skip-tags "$ANSIBLE_SKIP_TAGS")
 
   log "RUN ${stack}: ${cmd[*]}"
   if ! "${cmd[@]}"; then

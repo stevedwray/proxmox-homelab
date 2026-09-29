@@ -15,7 +15,8 @@
   roles:
     - lxc_base
     - docker_base
-    - wazuh_agent
+    - role: wazuh_agent
+      tags: [wazuh_agent_rollout]
 
   tasks:
     # No "Trust Harbor HTTP registry in Docker daemon" task here, unlike

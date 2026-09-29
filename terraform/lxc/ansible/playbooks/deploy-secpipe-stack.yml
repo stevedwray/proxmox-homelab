@@ -68,6 +68,7 @@
   hosts: all
   become: true
   gather_facts: false
+  tags: [wazuh_agent_rollout]
   vars:
     wazuh_agent_fim_paths:
       - /opt/cve-enrichment-sync
