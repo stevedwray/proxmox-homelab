@@ -187,25 +187,7 @@ def ensure_target(gmp, name, hosts, credential_id, port_list_id, elevate_credent
         print(f"target {name!r} already exists ({existing}), skipping")
         return existing
 
-    kwargs = {}
-    if elevate_credential_id is not None:
-        # NOT VERIFIED against the actually-installed python-gvm==27.5.*
-        # (this program's own pinned version, see
-        # terraform/lxc/ansible/files/gvm-bridge/requirements.txt) --
-        # ssh_elevate_credential_id is the parameter name GMP's own
-        # CREATE_TARGET schema implies (<ssh_credential><elevate_privilege>
-        # <credential id=.../></elevate_privilege></ssh_credential>), but
-        # python-gvm's high-level wrapper has changed this shape across
-        # versions before. FAILS LOUDLY (not silently) if this kwarg name
-        # is wrong for the installed version, on purpose: a target created
-        # without real privilege escalation wired up would look like it
-        # worked while silently never running `sudo` for any check, which
-        # is worse than a hard failure here. Verify this against the real
-        # installed version before trusting it in production; see
-        # docs/lxc-scan-and-monitoring-rollout/plan.md gvm-07's own note.
-        kwargs["ssh_elevate_credential_id"] = elevate_credential_id
-
-    try:
+    if elevate_credential_id is None:
         response = gmp.create_target(
             name=name,
             hosts=hosts,
@@ -213,19 +195,57 @@ def ensure_target(gmp, name, hosts, credential_id, port_list_id, elevate_credent
             alive_test=ALIVE_TESTS,
             port_list_id=port_list_id,
             comment="Managed authenticated target; intentionally explicit hosts only.",
-            **kwargs,
         )
-    except TypeError as exc:
+        target_id = response.get("id")
+        print(f"created target {name!r} ({target_id})")
+        return target_id
+
+    # CONFIRMED 2026-09-29 against a live GVM redeploy: the installed
+    # python-gvm's Gmp.create_target() (a GMPv224 instance, and this holds
+    # across every shipped version through v227/next -- checked the
+    # upstream source directly) has NO parameter for an SSH elevate
+    # credential at all, under any name. But GMP's own raw protocol does
+    # support it: <create_target><ssh_credential id="..."><...
+    # <ssh_elevate_credential id="..."/> is documented in the GMP schema
+    # (see docs.greenbone.net/API/GMP) and is exactly what the GSA web UI
+    # sends when you set an elevate credential on a target there. So this
+    # builds the request the same way Gmp.create_target() does internally
+    # (via the Targets request-builder, which returns the XML command
+    # object *before* sending it), appends that one extra element by hand,
+    # and sends it through the same internal transport the typed wrapper
+    # uses. This is intentionally not silent: if either internal API
+    # (Targets.create_target's import path, or _send_request_and_transform_
+    # response) has moved in whatever python-gvm version is actually
+    # installed, this raises loudly instead of quietly dropping privilege
+    # escalation for this target.
+    try:
+        from gvm.protocols.gmp.requests.v224 import Targets
+
+        request = Targets.create_target(
+            name=name,
+            hosts=hosts,
+            ssh_credential_id=credential_id,
+            alive_test=ALIVE_TESTS,
+            port_list_id=port_list_id,
+            comment="Managed authenticated target; intentionally explicit hosts only.",
+        )
+        request.add_element(
+            "ssh_elevate_credential", attrs={"id": str(elevate_credential_id)}
+        )
+        response = gmp._send_request_and_transform_response(request)
+    except (ImportError, AttributeError, TypeError) as exc:
         raise RuntimeError(
-            f"gmp.create_target() rejected ssh_elevate_credential_id -- the installed "
-            f"python-gvm version's Targets.create_target() signature doesn't match what "
-            f"this program assumed. Check the installed version's actual signature "
-            f"(python3 -c \"import gvm, inspect; from gvm.protocols.gmp import Gmp; "
-            f"print(inspect.signature(Gmp.create_target))\") and fix ensure_target() "
-            f"accordingly before re-running. Original error: {exc}"
+            f"Could not hand-build a create_target request with an "
+            f"ssh_elevate_credential element for the installed python-gvm "
+            f"version. Check gvm.protocols.gmp.requests.v224.Targets and "
+            f"Gmp._send_request_and_transform_response still exist with "
+            f"the expected shape (python3 -c \"import gvm.protocols.gmp."
+            f"requests.v224 as m; print(m.Targets.create_target)\") and "
+            f"fix ensure_target() accordingly before re-running. Original "
+            f"error: {exc}"
         ) from exc
     target_id = response.get("id")
-    print(f"created target {name!r} ({target_id})")
+    print(f"created target {name!r} ({target_id}) with elevate credential {elevate_credential_id!r}")
     return target_id
 
 
