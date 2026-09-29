@@ -135,6 +135,11 @@ The migration was imported into the live world database and server 4 was
 restarted. The vendor has 39 stock records and nine spawn records; both
 `authserver` and `worldserver` resumed listening on TCP 3724 and 8085.
 
+**Corrected 2026-09-29:** the Ammen Vale vendor was initially placed below the
+nearby verified terrain height. Migration
+`004-fix-draenei-heirloom-vendor-placement.sql` moves only that spawn beside
+the normal Draenei starter NPC at its confirmed ground height.
+
 ### Phase 4 — controlled cutover
 
 Take a database and server-volume backup, stop server 4, change only its
