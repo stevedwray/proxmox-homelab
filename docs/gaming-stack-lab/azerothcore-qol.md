@@ -162,7 +162,7 @@ characters are not backfilled; use `.learn all my trainer` as a one-off for a
 GM test character. New and normally-levelled characters receive ordinary
 trainer spells at the appropriate levels.
 
-### Phase 3f — small Auction House market — planned
+### Phase 3f — small Auction House market — completed 2026-09-30
 
 Use `azerothcore/mod-ah-bot`, pinned to commit
 `c11d8318cbd8714a9980f9464f78e07d3d48a70a`. This is distinct from the
@@ -173,11 +173,17 @@ character, never one of the operator's characters.
 The configuration overlay `scripts/azerothcore-qol/config/mod_ahbot.conf`
 enables listing only: the bot never bids on or buys player auctions. It draws
 loot, trade goods, and profession supplies but excludes vendor stock, has two
-or fewer duplicate stacks, and filters out requirements above level 80. Import
-the module's supplied `mod_auctionhousebot.sql` and
-`auctionhousebot_professionItems.sql`, then apply
-`scripts/azerothcore-qol/sql/009-ahbot-small-market.sql`. The resulting target
-stock is 100 Alliance, 100 Horde, and 60 neutral auctions.
+or fewer duplicate stacks, and filters out requirements above level 80. The
+module's supplied `mod_auctionhousebot.sql` creates both required tables and
+profession-item data; do not import its separate optional
+`auctionhousebot_professionItems.sql` afterwards, because it already exists.
+Then apply `scripts/azerothcore-qol/sql/009-ahbot-small-market.sql`.
+
+The live rollout created locked account `AHBOT` (ID 6) and its non-played
+`Auctioneer` owner character (GUID 49), rebuilt server 4, and loaded the
+seller-only configuration. It verified the pinned module revision, no AH bot
+errors, normal Wings/world/auth health, and exactly 100 Alliance, 100 Horde,
+and 60 neutral listings after two listing cycles.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
