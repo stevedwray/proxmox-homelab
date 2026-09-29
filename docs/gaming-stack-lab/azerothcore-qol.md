@@ -14,6 +14,7 @@ and their Altbots.
 | Experience | `1.25x` for all XP categories. |
 | Questing | Normal quest and class-quest progression; do not grant quest completions or bypass attunements. |
 | Training and upkeep | Altbots use Playerbot `maintenance`: spells/skills, repairs, consumables, enchants, and bags. This intentionally removes trainer and vendor errands. |
+| Weapon skills | New characters begin with every normal WotLK weapon skill for their class. This does not grant class spells, talents, armor/shield proficiencies, or dual wield. |
 | Gear | Keep normal drops and upgrades. Do not enable automatic BiS/epic gearing. Playerbot `autogear match` remains an occasional catch-up tool, not the normal progression path. |
 | Gold | Not a constraint. Characters receive enough starting money for ordinary travel and incidental costs; bot upkeep is supplied through `maintenance`. |
 | Heirlooms | Free at character creation/start-of-play, using a dedicated vendor rather than requiring emblems, PvP, or an auction economy. |
