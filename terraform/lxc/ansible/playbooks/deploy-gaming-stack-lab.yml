@@ -326,7 +326,7 @@
       ansible.builtin.replace:
         path: /etc/pterodactyl/config.yml
         regexp: '^(\s+- )1\.1\.1\.1\s*$'
-        replace: '\1{{ dns_server }}'
+        replace: '\g<1>{{ dns_server }}'
       register: pterodactyl_wings_dns_fix
 
     - name: Fix Wings config -- drop the now-redundant secondary public DNS entry
