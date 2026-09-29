@@ -98,9 +98,11 @@ given bags retrospectively; existing Aldred was topped up to the same 10,000g
 floor.
 
 The originally deployed `41597` Abyssal Bag was discovered to be a
-Warlock-only Soul Bag. Migration `003-fix-starter-bag.sql` replaces the global
-creation row with the largest ordinary all-class alternative, the 22-slot
-Glacial Bag (`41600`). It does not alter existing character inventories.
+Warlock-only Soul Bag. **Corrected 2026-09-29:** migration
+`003-fix-starter-bag.sql` replaced the global creation row with the largest
+ordinary all-class alternative, the 22-slot Glacial Bag (`41600`). It does not
+alter existing character inventories. After the restart, only the `41600 × 4`
+row remained and both realm services were listening normally.
 
 The server was restarted to reload the world create-item cache. `worldserver`
 and `authserver` were verified listening on TCP 8085 and 3724 after the
