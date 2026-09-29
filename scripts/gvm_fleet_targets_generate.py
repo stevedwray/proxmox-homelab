@@ -18,7 +18,7 @@ assumed), reads that stack's GVM scan credentials via
 gvm_scan_host_secret.py (skipping with a warning, not failing the whole
 run, if that stack's OpenBao entry doesn't exist yet -- e.g. gvm-04's
 bootstrap hasn't been run for it), and writes:
-  <out-dir>/targets.json           -- [{"name": str, "host": str}, ...]
+  <out-dir>/targets.json           -- [{"name": str, "host": str, "zone": str}, ...]
   <out-dir>/<name>.key              -- SSH private key
   <out-dir>/<name>.sudopass         -- plaintext sudo password
 
@@ -105,6 +105,26 @@ _TEMPLATE_RE = re.compile(r"^\$\{lab_ip_([a-z0-9_]+)\}/\d+$")
 _LITERAL_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)/\d+$")
 
 
+def resolve_stack_zone(stack: str) -> str | None:
+    """Reads terraform/lxc/stacks/<stack>/stack.yaml's zone field (used by
+    setup_credentials.py to group fleet scan tasks by VLAN via a per-zone
+    GVM Schedule + Tag -- see docs/lxc-scan-and-monitoring-rollout/plan.md).
+    Handles both the plain "zone: <name>" form and the nested
+    "network: { zone: <name> }" form seen live (nextcloud-stack). Returns
+    None, not a guess, if neither form matches -- callers must skip."""
+    stack_yaml = REPO_ROOT / "terraform" / "lxc" / "stacks" / stack / "stack.yaml"
+    if not stack_yaml.exists():
+        return None
+    for line in stack_yaml.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("zone:"):
+            return stripped.split(":", 1)[1].strip().strip('"').strip("'")
+        zone_match = re.search(r"zone:\s*(\w+)", stripped)
+        if zone_match:
+            return zone_match.group(1)
+    return None
+
+
 def resolve_stack_ip(stack: str) -> str | None:
     """Reads terraform/lxc/stacks/<stack>/stack.yaml's ip_address field.
     Handles both forms seen live: a literal IP/prefix, or a
@@ -155,6 +175,10 @@ def main(argv: list[str]) -> int:
         if host is None:
             print(f"WARN: could not resolve an IP for {stack!r}, skipping", file=sys.stderr)
             continue
+        zone = resolve_stack_zone(stack)
+        if zone is None:
+            print(f"WARN: could not resolve a zone for {stack!r}, skipping", file=sys.stderr)
+            continue
         secret = fetch_secret(stack)
         if secret is None:
             continue
@@ -162,7 +186,7 @@ def main(argv: list[str]) -> int:
         (out_dir / f"{stack}.key").chmod(0o644)
         (out_dir / f"{stack}.sudopass").write_text(secret["GVM_SCAN_SUDO_PASSWORD"], encoding="utf-8")
         (out_dir / f"{stack}.sudopass").chmod(0o644)
-        manifest.append({"name": stack, "host": host})
+        manifest.append({"name": stack, "host": host, "zone": zone})
 
     (out_dir / "targets.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"wrote {len(manifest)}/{len(IN_SCOPE_STACKS)} fleet targets to {out_dir}")

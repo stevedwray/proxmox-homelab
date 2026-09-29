@@ -13,9 +13,9 @@ for 4 credentials, unworkable for ~36.
 The fleet-wide gvm-scan targets (added 2026-09-29) use a different,
 scalable delivery shape instead: a single bind-mounted directory
 (GVM_FLEET_DIR, default /tmp/fleet) containing one targets.json manifest
-(list of {"name": str, "host": str} -- no secret content, safe to write
-without no_log) plus one "<name>.key" (SSH private key) and one
-"<name>.sudopass" (plaintext sudo password) file per fleet stack. Each
+(list of {"name": str, "host": str, "zone": str} -- no secret content,
+safe to write without no_log) plus one "<name>.key" (SSH private key) and
+one "<name>.sudopass" (plaintext sudo password) file per fleet stack. Each
 fleet stack gets its own "usk" login credential (login="gvm-scan") AND its
 own "up" elevate-privileges credential (same login, the sudo password) --
 GVM's ssh_elevate_credential_id lets Local Security Checks run `sudo`
@@ -25,7 +25,19 @@ through a real password, not passwordless/no-creds, per the operator's
 The existing CIDR scan program remains anonymous.  Credentialed Targets are
 explicit host lists so a root credential can never be applied accidentally to
 an arbitrary host discovered on a subnet.
+
+VLAN-organized scheduling (added 2026-09-29, gvm-08): a GVM Target can only
+carry one ssh_credential_id for every host it contains -- confirmed against
+upstream python-gvm, no version supports per-host credentials within a
+multi-host Target -- so grouping "by VLAN" can't mean one shared Target per
+zone without abandoning the unique-credential-per-host design above.
+Instead each fleet host's existing per-host Target/Task keeps its own
+credential, and gets a per-zone Schedule (ZONE_SCHEDULE_TIMES -- daily,
+staggered ~45min apart overnight UTC so the fleet doesn't scan all at once)
+and a per-zone Tag (zone:<name>, e.g. zone:infra_seg) for GSA-side grouping
+and filtering.
 """
+import datetime
 import json
 import os
 import sys
@@ -34,6 +46,30 @@ from pathlib import Path
 from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
+
+# Operator-confirmed 2026-09-29 (docs/lxc-scan-and-monitoring-rollout/
+# plan.md, gvm-08): fleet credentialed scans run daily, staggered ~45min
+# apart overnight UTC so the ~25-host fleet doesn't all hit at once. A
+# GVM Target can only carry ONE ssh_credential_id for every host in it
+# (confirmed against upstream python-gvm's request builders -- no
+# per-host-within-target credential exists in any shipped GMP version),
+# which is incompatible with this fleet's unique-keypair-per-LXC design,
+# so "divided by VLAN" is implemented as one Schedule + one Tag per zone
+# applied across the existing 25 per-host Targets/Tasks, not one shared
+# multi-host Target per zone.
+ZONE_SCHEDULE_TIMES = {
+    "mgmt_seg": "01:00",
+    "infra_seg": "01:45",
+    "ai_seg": "02:30",
+    "media_seg": "03:15",
+    "game_seg": "04:00",
+    "edge_seg": "04:45",
+    "pentest_seg": "05:30",
+    "connector_seg": "06:15",
+    "build_seg": "07:00",
+    "apps_seg": "07:45",
+}
+SCHEDULE_TIMEZONE = "UTC"
 
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
@@ -250,12 +286,14 @@ def ensure_target(gmp, name, hosts, credential_id, port_list_id, elevate_credent
 
 
 def load_fleet_targets(fleet_dir):
-    """Returns a list of {"name", "host", "key_path", "sudo_password"}
+    """Returns a list of {"name", "host", "zone", "key_path", "sudo_password"}
     dicts for the fleet-wide gvm-scan targets, or [] if GVM_FLEET_DIR
     doesn't exist / has no targets.json yet (e.g. before gvm-04's
     bootstrap has run for any stack) -- degrades gracefully, matching this
     program's existing "skip what isn't ready" philosophy rather than
-    crashing the whole run over an incomplete rollout."""
+    crashing the whole run over an incomplete rollout. "zone" is missing
+    (None) for a manifest written before the 2026-09-29 VLAN-organization
+    pass -- callers must handle that, not assume it's always present."""
     manifest_path = Path(fleet_dir) / "targets.json"
     if not manifest_path.exists():
         print(f"no fleet targets manifest at {manifest_path}, skipping fleet targets")
@@ -272,27 +310,107 @@ def load_fleet_targets(fleet_dir):
         fleet.append({
             "name": name,
             "host": host,
+            "zone": entry.get("zone"),
             "key_path": str(key_path),
             "sudo_password": sudopass_path.read_text(encoding="utf-8").strip(),
         })
     return fleet
 
 
-def ensure_task(gmp, name, config_id, target_id, scanner_id):
+def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id=None):
     existing = find_by_name(gmp, gmp.get_tasks, "task", name)
     if existing:
-        print(f"task {name!r} already exists ({existing}), skipping")
+        if schedule_id is not None:
+            gmp.modify_task(existing, schedule_id=schedule_id)
+            print(f"task {name!r} already exists ({existing}), ensured schedule {schedule_id!r}")
+        else:
+            print(f"task {name!r} already exists ({existing}), skipping")
         return existing
+    comment = (
+        "Managed authenticated task; part of the daily per-zone fleet rollout."
+        if schedule_id is not None
+        else "Managed authenticated task; intentionally unscheduled for first-pass validation."
+    )
     response = gmp.create_task(
         name=name,
         config_id=config_id,
         target_id=target_id,
         scanner_id=scanner_id,
-        comment="Managed authenticated task; intentionally unscheduled for first-pass validation.",
+        schedule_id=schedule_id,
+        comment=comment,
     )
     task_id = response.get("id")
-    print(f"created task {name!r} ({task_id})")
+    print(f"created task {name!r} ({task_id})" + (f" scheduled via {schedule_id!r}" if schedule_id else ""))
     return task_id
+
+
+def ensure_schedule(gmp, zone):
+    """One recurring daily GVM Schedule per network zone (docs/lxc-scan-
+    and-monitoring-rollout/plan.md gvm-08) -- start time is looked up from
+    ZONE_SCHEDULE_TIMES, staggered per-zone so the fleet doesn't all scan
+    at once. Hand-builds the iCalendar text rather than depending on the
+    `icalendar` PyPI package, which isn't a guaranteed dependency of the
+    upstream gvm-tools image this runs inside."""
+    hhmm = ZONE_SCHEDULE_TIMES.get(zone)
+    if hhmm is None:
+        raise RuntimeError(
+            f"no schedule start time configured for zone {zone!r} -- add it to "
+            f"ZONE_SCHEDULE_TIMES in this file before this zone can be scheduled"
+        )
+    name = f"Daily fleet scan: {zone}"
+    existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
+    if existing:
+        return existing
+    hour, minute = hhmm.split(":")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    dtstamp = now.strftime("%Y%m%dT%H%M%SZ")
+    # DTSTART only anchors the first occurrence's date; RRULE:FREQ=DAILY
+    # repeats it at this time-of-day forever after, so "today" is fine.
+    dtstart_date = now.strftime("%Y%m%d")
+    icalendar = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//proxmox-homelab//gvm-fleet-schedule//EN\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:gvm-fleet-schedule-{zone}@proxmox-homelab\r\n"
+        f"DTSTAMP:{dtstamp}\r\n"
+        f"DTSTART:{dtstart_date}T{hour}{minute}00\r\n"
+        "RRULE:FREQ=DAILY\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    response = gmp.create_schedule(
+        name=name,
+        icalendar=icalendar,
+        timezone=SCHEDULE_TIMEZONE,
+        comment=f"Fleet credentialed scans for zone {zone!r}, daily at {hhmm} {SCHEDULE_TIMEZONE}.",
+    )
+    schedule_id = response.get("id")
+    print(f"created schedule {name!r} ({schedule_id}) daily at {hhmm} {SCHEDULE_TIMEZONE}")
+    return schedule_id
+
+
+def ensure_zone_tag(gmp, zone, task_ids):
+    """One Tag per zone (zone:<name>), attached to every in-zone fleet
+    task -- lets the GSA UI/reports filter and group by VLAN even though
+    each host still has its own separate Target/credential."""
+    if not task_ids:
+        return None
+    name = f"zone:{zone}"
+    existing = find_by_name(gmp, gmp.get_tags, "tag", name)
+    if existing:
+        gmp.modify_tag(existing, resource_action="add", resource_type="task", resource_ids=task_ids)
+        print(f"tag {name!r} ({existing}) -- ensured {len(task_ids)} task(s) attached")
+        return existing
+    response = gmp.create_tag(
+        name=name,
+        resource_type="task",
+        resource_ids=task_ids,
+        comment=f"Fleet hosts in network zone {zone!r}.",
+    )
+    tag_id = response.get("id")
+    print(f"created tag {name!r} ({tag_id}) attached to {len(task_ids)} task(s)")
+    return tag_id
 
 
 def main():
@@ -324,8 +442,11 @@ def main():
                 scanner_id,
             )
 
+        schedule_ids_by_zone = {}
+        task_ids_by_zone = {}
         for fleet_target in load_fleet_targets(GVM_FLEET_DIR):
             fleet_name = fleet_target["name"]
+            zone = fleet_target["zone"]
             login_credential_id = ensure_credential(
                 gmp, f"fleet-{fleet_name}-login", GVM_FLEET_LOGIN, fleet_target["key_path"],
             )
@@ -340,13 +461,26 @@ def main():
                 port_list_id,
                 elevate_credential_id=elevate_credential_id,
             )
-            ensure_task(
+            schedule_id = None
+            if zone is not None:
+                if zone not in schedule_ids_by_zone:
+                    schedule_ids_by_zone[zone] = ensure_schedule(gmp, zone)
+                schedule_id = schedule_ids_by_zone[zone]
+            else:
+                print(f"WARN: fleet target {fleet_name!r} has no zone, leaving its task unscheduled")
+            task_id = ensure_task(
                 gmp,
                 f"Credentialed scan: fleet/{fleet_name}",
                 config_id,
                 target_id,
                 scanner_id,
+                schedule_id=schedule_id,
             )
+            if zone is not None:
+                task_ids_by_zone.setdefault(zone, []).append(task_id)
+
+        for zone, task_ids in task_ids_by_zone.items():
+            ensure_zone_tag(gmp, zone, task_ids)
 
         if START_TASK_NAME:
             task_id = find_by_name(gmp, gmp.get_tasks, "task", START_TASK_NAME)
