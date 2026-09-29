@@ -404,10 +404,18 @@ def main() -> int:
         tpot_base = f"http://127.0.0.1:{local_port}"
         info = tpot_get(tpot_base, "/")
         ver = str(info.get("version", {}).get("number", ""))
-        if not ver.startswith("8."):
-            print(f"ERROR: tunnel did not land on Elasticsearch 8.x, got: {info}", file=sys.stderr)
+        cluster_name = info.get("cluster_name", "")
+        # Sanity-checks the tunnel landed on T-Pot's own ES, not some other
+        # service entirely -- checks identity (cluster_name), not a specific
+        # major version. Found live 2026-09-30: this instance's bundled ES
+        # is 9.3.5 under T-Pot's own "24.04.1" release tag, not the 8.x the
+        # original tpotce-analysis prototype (and this script's first
+        # version, copying it) assumed -- a real version doesn't mean a
+        # wrong target, and classic Scroll stays functional in ES 9.x.
+        if cluster_name != "tpotcluster" or not ver:
+            print(f"ERROR: tunnel did not land on T-Pot's Elasticsearch, got: {info}", file=sys.stderr)
             return 3
-        print(f"[OK] T-Pot ES via tunnel: {info.get('cluster_name')} (v{ver})")
+        print(f"[OK] T-Pot ES via tunnel: {cluster_name} (v{ver})")
 
         processed, indexed, errors, max_cursor = sync_once(
             tpot_base=tpot_base,
