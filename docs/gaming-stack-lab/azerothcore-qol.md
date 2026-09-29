@@ -138,7 +138,8 @@ restarted. The vendor has 39 stock records and nine spawn records; both
 **Corrected 2026-09-29:** the Ammen Vale vendor was initially placed below the
 nearby verified terrain height. Migration
 `004-fix-draenei-heirloom-vendor-placement.sql` moves only that spawn beside
-the normal Draenei starter NPC at its confirmed ground height.
+the normal Draenei starter NPC at its confirmed ground height. The server was
+restarted and both realm services were verified listening normally afterward.
 
 ### Phase 4 — controlled cutover
 
