@@ -39,7 +39,7 @@ and their Altbots.
   source updates are disabled. The rebuilt authserver/worldserver listen
   normally on TCP 3724/8085; Transmog's character tables exist.
 - **Completed 2026-09-29:** new characters receive 10,000g and four equipped
-  32-slot Abyssal Bags. Existing character Aldred was topped up to 10,000g.
+  22-slot Glacial Bags. Existing character Aldred was topped up to 10,000g.
 
 ## Delivery plan
 
@@ -90,12 +90,17 @@ nearby group of corpses.
 
 The egg's native `START_PLAYER_MONEY` setting is `100000000` copper (10,000g).
 The idempotent world migration
-`scripts/azerothcore-qol/sql/001-starter-package.sql` adds four `41597`
-Abyssal Bags for every valid race/class creation template. AzerothCore equips
+`scripts/azerothcore-qol/sql/001-starter-package.sql` adds four `41600`
+Glacial Bags for every valid race/class creation template. AzerothCore equips
 new bags in available bag slots during character creation, rather than placing
 them loose in the initial inventory. Existing characters are intentionally not
 given bags retrospectively; existing Aldred was topped up to the same 10,000g
 floor.
+
+The originally deployed `41597` Abyssal Bag was discovered to be a
+Warlock-only Soul Bag. Migration `003-fix-starter-bag.sql` replaces the global
+creation row with the largest ordinary all-class alternative, the 22-slot
+Glacial Bag (`41600`). It does not alter existing character inventories.
 
 The server was restarted to reload the world create-item cache. `worldserver`
 and `authserver` were verified listening on TCP 8085 and 3724 after the
