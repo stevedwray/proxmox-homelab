@@ -19,30 +19,19 @@
   hosts: all
   become: true
   gather_facts: true
+  # Migrated to docker_base-owned daemon.json (docs/logging/docker-log-
+  # driver-audit.md, log-02) -- was json-file with no Graylog forwarding
+  # (this stack's own hand-written task below, now removed). Fleet
+  # default is syslog; no docker_base_daemon_extra override needed here.
+  # Safe alongside this stack's own per-service log-driver overrides (2 of
+  # its services already set syslog explicitly at the compose level, per
+  # the audit's own note) -- this only changes the daemon-wide default for
+  # whatever doesn't already override it.
+  vars:
+    docker_base_manage_daemon_json: true
   roles:
     - lxc_base
     - docker_base
-
-  tasks:
-    - name: Configure Docker daemon logging
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        mode: "0644"
-        content: |
-          {
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "50m",
-              "max-file": "7"
-            }
-          }
-      notify: Restart Docker
-
-  handlers:
-    - name: Restart Docker
-      ansible.builtin.systemd:
-        name: docker
-        state: restarted
 
 - name: Deploy OpenWebUI and SearXNG compose stack
   hosts: all
