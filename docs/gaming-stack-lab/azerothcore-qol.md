@@ -104,7 +104,7 @@ and `authserver` were verified listening on TCP 8085 and 3724 after the
 change. A short-lived newly created character remains the operator gameplay
 check for the four equipped bags.
 
-### Phase 3d — earlier ground riding and Old World flight — planned
+### Phase 3d — earlier ground riding and Old World flight — completed 2026-09-30
 
 Reduce only the normal ground-riding trainer gates: Apprentice Riding (spell
 `33388`, 60%) to level 10 and Journeyman Riding (spell `33391`, 100%) to level
@@ -128,6 +128,22 @@ client's `Cache` directory while the game is closed, then launch the client.
 The live realm should not be restarted until each intended player has the
 patch. The pinned server DBC checksum is
 `4e1b3495ca7bcd4929ada743a506d845c12e8a58b6cbc8a7447f5dce9718c4d7`.
+
+The live rollout imported the trainer migration, added the module through the
+existing `ACORE_MODULES` list, and rebuilt successfully. The deployed module
+revision is `141b789f9b9c99ebf0c5391df9dafb825f967f9a`; `FlyAnywhere.Enabled`
+is `true`; the runtime DBC has the pinned checksum; and world/auth listen on
+TCP 8085/3724. The build's normal client-data installation overwrites the
+runtime DBC after CMake copies the module DBC, so after any future full
+rebuild copy the module's
+`modules/mod-fly-anywhere/data/patch/server/AreaTable.dbc` to
+`env/dist/bin/dbc/AreaTable.dbc`, then restart the realm. Preserve the prior
+runtime DBC as an in-place rollback copy before doing so.
+
+During this rollout Wings was found failed because the `allowed_mounts` and
+`allowed_origins` YAML lists in `/etc/pterodactyl/config.yml` were malformed.
+The original values were retained, a timestamped backup was made, the lists
+were repaired, and Wings resumed managing all configured game containers.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
