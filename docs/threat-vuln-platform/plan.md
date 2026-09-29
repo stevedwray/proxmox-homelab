@@ -269,7 +269,11 @@ proven for the Harbor/GVM dashboards.
   clearly attributable and distinguishable from a human assessment later.
 - Wazuh/Security Onion/T-Pot ingestion design (the `*-events` family) —
   Wazuh is now scoped below (Phase 2); Security Onion/T-Pot remain
-  deferred. The shared sync-library refactor (extracting the
+  deferred. T-Pot itself is now documented (host, access, real gaps
+  found live) in `docs/tpot-honeypot/`, including the same access-review
+  and ingestion-shape questions this line already anticipated — start
+  there once T-Pot's turn comes instead of re-deriving its access model
+  from scratch. The shared sync-library refactor (extracting the
   ~90%-duplicated logic already visible between `harbor_findings_sync.py`
   and `gvm_findings_sync.py`, informed by `security-analysis`'s
   `secpipe_core` design) should happen once Wazuh is the third

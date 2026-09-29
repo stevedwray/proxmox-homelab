@@ -1,0 +1,89 @@
+# Labels the MikroTik DHCP lease for the T-Pot honeypot Raspberry Pi.
+#
+# docs/dhcp-refactor/current-state.md found this lease only as an
+# unlabeled forensic fingerprint (host-name: raspberrypi, 192.168.1.28,
+# MAC 88:A2:9E:57:E6:24) -- identified but never labeled on the router
+# itself. See docs/tpot-honeypot/plan.md Phase 1.
+#
+# This is a comment-only change to an existing dynamic lease (no IP/MAC
+# change, no static-reservation conversion -- that's still owed by the
+# separate, not-yet-executed DHCP-to-Technitium cutover in
+# docs/dhcp-refactor/bridgelocal-cutover-packet.md). Idempotent:
+# read-check-patch, matched by MAC address.
+#
+# Run intentionally against the live router:
+#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dhcp-lease-label-tpot-honeypot.yml
+
+- name: Ensure the T-Pot honeypot's DHCP lease is labeled on the MikroTik router
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    tpot_mac_address: "88:A2:9E:57:E6:24"
+    tpot_lease_comment: "tpot-honeypot -- T-Pot CE (Raspberry Pi 5), LAN-only honeypot, see docs/tpot-honeypot/"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read MikroTik DHCP leases
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/lease"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+      register: mikrotik_dhcp_leases
+
+    - name: Find the T-Pot lease by MAC address
+      ansible.builtin.set_fact:
+        tpot_lease: "{{ mikrotik_dhcp_leases.json | selectattr('mac-address', 'equalto', tpot_mac_address) | list | first | default(None) }}"
+
+    - name: Fail if the T-Pot lease is not present
+      ansible.builtin.fail:
+        msg: "No DHCP lease found for MAC {{ tpot_mac_address }} -- host may be offline or the lease may have expired."
+      when: tpot_lease is none
+
+    - name: Patch the lease's comment if not already set
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/lease/{{ tpot_lease['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          comment: "{{ tpot_lease_comment }}"
+        status_code: 200
+      when: tpot_lease.comment | default('') != tpot_lease_comment
+
+    - name: Re-read the lease to confirm
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/lease/{{ tpot_lease['.id'] }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+      register: mikrotik_dhcp_lease_recheck
+
+    - name: Assert the lease comment is correct
+      ansible.builtin.assert:
+        that:
+          - mikrotik_dhcp_lease_recheck.json.comment == tpot_lease_comment
+        fail_msg: "Lease comment did not update as expected."
+        success_msg: "T-Pot DHCP lease labeled: {{ tpot_lease_comment }}"
