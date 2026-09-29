@@ -310,10 +310,14 @@
     #    disabled Start button -- the real cause was only visible in
     #    Wings' own systemd journal.
     - name: Fix Wings config -- allow the Panel's origins for websocket connections
-      ansible.builtin.lineinfile:
+      # Wings and the Panel may serialize this setting as a block list. Replace
+      # the key and any immediately following list entries together: replacing
+      # only the key leaves a syntactically-invalid inline value plus orphaned
+      # "- ..." entries on the next configure/restart cycle.
+      ansible.builtin.replace:
         path: /etc/pterodactyl/config.yml
-        regexp: "^allowed_origins:"
-        line: "allowed_origins: ['http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') }}', 'https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}']" # nosonar: ansible:S5332 -- Panel's own internal fallback origin, not a real cross-origin exposure
+        regexp: '(?m)^allowed_origins:.*(?:\n[ \t]*-[^\n]*)*'
+        replace: "allowed_origins: ['http://{{ lookup('env', 'LAB_IP_PTERODACTYL_LAB') }}', 'https://pterodactyl.{{ lookup('env', 'LAB_DOMAIN') }}']" # nosonar: ansible:S5332 -- Panel's own internal fallback origin, not a real cross-origin exposure
       register: pterodactyl_wings_origins_fix
 
     # 2. docker.network.dns defaults to 1.1.1.1/1.0.0.1 (public resolvers),
@@ -397,10 +401,12 @@
         access_time: preserve
 
     - name: Allow Wings to expose the shared game-slot lock mount
-      ansible.builtin.lineinfile:
+      # Keep this in the Panel-compatible inline form and remove any stale
+      # block-list continuation emitted by an earlier Wings configuration.
+      ansible.builtin.replace:
         path: /etc/pterodactyl/config.yml
-        regexp: "^allowed_mounts:"
-        line: "allowed_mounts: ['/srv/docker/pterodactyl/game-slot']"
+        regexp: '(?m)^allowed_mounts:.*(?:\n[ \t]*-[^\n]*)*'
+        replace: "allowed_mounts: ['/srv/docker/pterodactyl/game-slot']"
       register: pterodactyl_wings_allowed_mounts_fix
 
     - name: Fix Wings config -- store server data on the dedicated game-data mount
