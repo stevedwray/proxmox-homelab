@@ -42,10 +42,37 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Operator-confirmed scope (2026-09-29): the real production stacks on
-# pve, corrected during execution (see module docstring) to drop two more
-# that don't actually belong here. This list is data, not a mechanical
-# filter -- re-verify it by hand if the fleet changes, same as
-# gvm_scan_credentials_bootstrap.py's own exclusion list.
+# pve, corrected twice during execution:
+#   1. Dropped pentagi-stack (CTs confirmed destroyed) and
+#      pentagi-upstream-control (comparison baseline, not real
+#      production) -- both were only in the plan's original "~36"
+#      estimate because that estimate came from a directory listing
+#      (terraform/lxc/environments/pve/), not live reality.
+#   2. That same directory turned out to be an UNRELIABLE enumeration --
+#      confirmed live via a read-only Proxmox API call (GET
+#      /nodes/pve/lxc) that newt-connector, nextcloud-stack,
+#      pterodactyl-lab, media-stack-lab, torrent-stack-lab, and
+#      openbao-stack are all real, running production LXCs on pve that
+#      simply don't have a terraform/lxc/environments/pve/<name>/
+#      directory (nextcloud-stack, for one, has its terragrunt.hcl
+#      directly under terraform/lxc/stacks/nextcloud-stack/ instead --
+#      apparently a newer, different layout convention than the older
+#      stacks use). Added below once each was confirmed to have both a
+#      real deploy-*.yml playbook AND a resolvable stack.yaml IP.
+#
+# Known, deliberately NOT included despite being live on pve: media-stack
+# (legacy, being replaced by media-stack-lab -- same "-legacy" rollback
+# pattern as gaming-stack-legacy), management-stack, omada-controller,
+# and proxmox-backup-server (confirmed live via the same Proxmox API
+# call, but none of the three has ANY deploy-*.yml playbook in this repo
+# to hook the gvm_scan_account/wazuh_agent rollout into -- not
+# Ansible-managed here at all, a real gap that needs its own playbook
+# work before it can join this list, not something this rollout can
+# silently paper over).
+#
+# This list is data, not a mechanical filter -- re-verify it by hand if
+# the fleet changes, same as gvm_scan_credentials_bootstrap.py's own
+# exclusion list (which imports this list directly, not a separate copy).
 IN_SCOPE_STACKS = [
     "ai-services-stack",
     "apt-cacher-stack",
@@ -56,15 +83,21 @@ IN_SCOPE_STACKS = [
     "greenbone-stack",
     "harbor-stack",
     "mcp-utility-stack",
+    "media-stack-lab",
     "monitoring-stack",
     "netbox-stack",
+    "newt-connector",
+    "nextcloud-stack",
     "opensearch-stack",
+    "openbao-stack",
     "pangolin-proxy",
     "portainer-stack",
     "proxy-stack",
+    "pterodactyl-lab",
     "secpipe-stack",
     "step-ca-stack",
     "technitium-stack",
+    "torrent-stack-lab",
     "wazuh-stack",
 ]
 
