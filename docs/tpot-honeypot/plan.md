@@ -321,8 +321,38 @@ needs `POST` (`PUT` targets an existing resource by ID, which `/add`
 doesn't have) — fixed to match every other `mikrotik-firewall-*.yml`
 playbook in this repo. **Blocked from self-apply** by the
 "Protected-Scope IaC Apply" classifier (same as every other MikroTik
-change this session) — corrected playbook is committed and
-syntax-checked; awaiting the operator's run.
+change this session) — operator ran the corrected playbook; rule
+confirmed present and correctly ordered (immediately before `ai_seg`'s
+deny-all anchor).
+
+**Real, unresolved problem #3 — SYN-ACK never returns, cause not yet
+found.** After the MikroTik fix, the tunnel still times out. Full
+diagnostic trail (2026-09-30):
+- MikroTik's own connection tracking confirms the SYN leaves the router
+  toward T-Pot (`tcp-state: syn-sent`) but `seen-reply: false` — no reply
+  packet is ever recorded arriving back.
+- T-Pot's own host firewall is not the cause: `iptables`/`nftables`
+  explicitly `ACCEPT` tcp/64295 from any source, `sshd` listens on
+  `0.0.0.0:64295`, no `ipset`/`fail2ban` ban exists for
+  `192.168.50.12`, and Suricata runs in passive `af-packet` capture mode
+  (not inline/NFQUEUE), so it isn't dropping anything either.
+- **Conclusive finding**: `/proc/net/tcp` on the T-Pot host, read during
+  a live connection attempt, shows a real entry for
+  `192.168.1.28:64295` ↔ `192.168.50.12:<ephemeral>` in `SYN_RECV`
+  state (code `03`) — T-Pot's kernel genuinely received the SYN and
+  answered with its own SYN-ACK. The honeypot side is doing everything
+  right.
+- A general `connection-state: established,related` accept rule already
+  sits early in MikroTik's forward chain (`*69`, no src/dst restriction)
+  and should cover the reply regardless of the new rule's position, so
+  this isn't a second ordering problem.
+- Conclusion: the SYN-ACK is being lost somewhere in the router's own
+  L2/hardware-switching path between the `vlan50-ai` and `bridgeLocal`
+  interfaces — something the REST API's `/ip/firewall` and `/ip/route`
+  views can't surface (e.g. bridge hardware offloading, switch-chip VLAN
+  table). **This needs direct RouterOS console access** (`/interface
+  bridge host print`, `/interface ethernet switch` settings) to diagnose
+  further — beyond what this session's REST-API-only access can reach.
 
 - Retention/ILM for the destination `tpot-events-*` indices is still not
   defined (see "Still open" below) — deliberately out of scope for this
@@ -330,7 +360,7 @@ syntax-checked; awaiting the operator's run.
 - Retention for the *source* `logstash-*` indices on the T-Pot host
   itself (Gap 5) is a separate, still-open decision.
 - **Not yet confirmed**: a real end-to-end run (tunnel connects, events
-  actually land in `tpot-events-*`) — blocked on the MikroTik fix above.
+  actually land in `tpot-events-*`) — blocked on problem #3 above.
 
 ### Phase 5 — visibility
 - Extend the existing `Threat & Vulnerability Overview (UVM)` Grafana
@@ -343,12 +373,17 @@ syntax-checked; awaiting the operator's run.
 
 ## Still open
 
-- **Immediate next step**: operator runs
-  `ansible/00-initial-setup/mikrotik-firewall-secpipe-to-tpot.yml`
-  (`TASK_APPROVAL=tpot-findings-ingest-mikrotik-fix ./with-secrets-prod ansible-playbook ...`),
-  then a manual trigger of `tpot-findings-ingest.service` on
-  `secpipe-stack` gets verified end-to-end (real events actually landing
-  in `tpot-events-*` on `opensearch-stack`, not just a clean tunnel).
+- **Immediate blocker (Real problem #3, above)**: the MikroTik firewall
+  fix is applied and confirmed correct, but the SSH tunnel still times
+  out — a SYN-ACK from T-Pot never makes it back through the router to
+  `ai_seg`, despite T-Pot's own kernel confirmed answering correctly
+  (`SYN_RECV` seen live in `/proc/net/tcp`). This needs direct RouterOS
+  console access to diagnose (bridge hardware offloading / switch-chip
+  VLAN table between `vlan50-ai` and `bridgeLocal`) — beyond what this
+  session's REST-API-only MikroTik access can reach. Once resolved, a
+  manual trigger of `tpot-findings-ingest.service` on `secpipe-stack`
+  gets verified end-to-end (real events actually landing in
+  `tpot-events-*` on `opensearch-stack`, not just a clean tunnel).
 - **Retention window (Gap 5)**: how long should raw T-Pot `logstash-*`
   indices be kept before ILM rolls them off? Not urgent given current
   growth rate (~35MB/day), but worth deciding once instead of leaving it
