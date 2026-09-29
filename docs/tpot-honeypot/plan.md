@@ -1,5 +1,36 @@
 # T-Pot honeypot — management plan
 
+## Management boundary (operator-confirmed 2026-09-30)
+
+**This repo's automation never touches `~/tpotce/` or runs its
+`install.sh`/`update.sh`/`deploy.sh`/`uninstall.sh`.** T-Pot's own
+Docker Compose stack (honeypots, ELK, nginx, the whole application
+layer) was hand-installed from the upstream `tpotce` project and stays
+exactly that way — the operator's stated concern is that it's fragile
+enough that a "redeploy" risks losing hand-tuned config, and there's no
+reason to take that risk: nothing this plan needs (patch cadence, SSH
+access for the sync job, persistent logging) requires touching the
+honeypot application at all.
+
+Everything in this plan operates one layer down, on the **Debian 13
+host underneath** — same boundary this repo already draws for the
+Framework Desktop (`docs/framework-ubuntu/`): a bare-metal,
+non-Proxmox host, managed by a plain Ansible inventory group
+(`ansible/inventory/inventory.yml`) and standalone playbooks under
+`ansible/00-initial-setup/`, entirely separate from
+`terraform/lxc/ansible/`'s Proxmox-guest-only conventions. Host-layer
+changes (package updates, SSH keys, journald config) can't touch or
+require restarting T-Pot's own containers.
+
+Consequence for Phase 2: **dropped** the web-UI htpasswd password
+rotation from scope — it isn't needed for anything this plan actually
+does (the ingestion sync job only ever needs SSH access, never the web
+UI), and rotating it means editing `~/tpotce/.env` and restarting
+`nginx`, which is exactly the app-layer risk this boundary exists to
+avoid. The SSH access needed for the sync job is now purely **additive**
+(a brand-new, dedicated keypair appended to `authorized_keys`) rather
+than a rotation of the operator's own existing interactive key.
+
 ## Why this exists
 
 T-Pot has been running on a Raspberry Pi 5 (`raspberrypi` /
@@ -172,58 +203,78 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
 - [x] Removed the dead `tpot-lxc` SSH alias from `~/.ssh/config`.
 - [x] Cross-linked this workspace from `docs/threat-vuln-platform/plan.md`'s
   `tpot-events` row so it's no longer an orphaned "deferred" mention.
+- [x] Added a `tpot` group to `ansible/inventory/inventory.yml`, mirroring
+  `framework`'s bare-metal, non-Proxmox pattern exactly (see "Management
+  boundary" above) — this is what makes the host itself Ansible-managed
+  for the first time, independent of anything else in this plan.
 
-### Phase 2 — credentials custody: full OpenBao migration (operator-confirmed 2026-09-30, corrected 2026-09-30)
-Corrected after checking `docs/reference/secrets-management.md` properly:
-this needs neither a `hosts/tpot` entry nor a new AppRole. `kv/hosts/<node>`
-is specifically for a *Proxmox* node's own API tokens (T-Pot isn't one);
-this belongs with everything else whose identity comes from a service
-(Harbor, Graylog, ...), i.e. `kv/services/tpot`. And `kv/services/*` is
-already broadly readable by every environment's existing `deploy-<node>`
-identity — so once the entry is added to the manifest, `secpipe-stack`'s
-own existing `deploy-pve-tiny` credentials already cover it. No new
-AppRole/policy to create.
+### Phase 1.5 — host baseline (done, 2026-09-30): `ansible/00-initial-setup/tpot-host-baseline.yml`
+Codifies, as an idempotent playbook, what was previously done by hand
+directly over SSH — and nothing more. Reuses the existing
+`unattended_upgrades` role unmodified (via `ANSIBLE_ROLES_PATH`, same
+technique `framework-desktop-bootstrap.yml` uses for `node_exporter`/
+`rsyslog_forward`), so the T-Pot host now gets the same security-only
+patch policy as every Proxmox-guest stack, without needing its own copy
+of that role's logic:
 
-- **Generate a new dedicated SSH keypair for the sync job** (not the
-  operator's interactive `steve` login key) and install its public half
-  on the T-Pot host's `authorized_keys` — this is the one step that can
-  happen independent of everything else below, since it's ordinary host
-  administration, not a secrets-store write.
-- Rotate the three web-UI htpasswd passwords (`admin`/`steve`/
-  `recoveryadmin`) on the T-Pot host at the same time, while in there.
+- `unattended_upgrades` role (security-only policy, apt-daily
+  unmask/enable) — same role, same template, as the rest of the fleet.
+- One-time catch-up `apt-get upgrade` for the 63 packages found pending
+  during the initial health check.
+- Persistent `journald` storage (`/var/log/journal`) — codifies the
+  manual fix already applied live 2026-09-30, so it survives an OS
+  reinstall rather than existing only as an undocumented one-off change.
+- A dedicated, purpose-built SSH keypair for the future ingestion sync
+  job, **appended** to `authorized_keys` (not replacing the operator's
+  own interactive key) — the only access change here, and purely
+  additive.
+
+None of this touches `~/tpotce/`, restarts any T-Pot container, or runs
+any of T-Pot's own install/update/deploy scripts.
+
+**Applied live and verified 2026-09-30** (dry-run via `--check --diff`
+first, then a real run after explicit operator confirmation):
+apt-upgradable count dropped from 63 to 3; `authorized_keys` grew from 1
+to 2 lines (additive only); the new keypair's public fingerprint
+confirmed (`tpot_findings_ingest@secpipe-stack`); `/var/log/journal`
+confirmed present with correct ownership. All 29+ T-Pot containers
+confirmed still running throughout — none were restarted, `~/tpotce/`
+was never touched. (Container count read 30 post-run vs. 29 at the
+initial health check; not caused by this playbook — nothing here runs
+`docker` — likely T-Pot's own internal automation; not investigated
+further as it's outside this plan's scope.)
+
+### Phase 2 — sync-job credentials: additive SSH key + OpenBao entry (operator-confirmed 2026-09-30, corrected 2026-09-30)
+Corrected twice: first after checking `docs/reference/secrets-management.md`
+properly (this needs neither a `hosts/tpot` entry nor a new AppRole —
+`kv/hosts/<node>` is specifically for a *Proxmox* node's own API tokens;
+this belongs with everything else whose identity comes from a service,
+i.e. `kv/services/tpot`, and `kv/services/*` is already broadly readable
+by every environment's existing `deploy-<node>` identity, so
+`secpipe-stack`'s own `deploy-pve-tiny` credentials already cover it, no
+new AppRole to create). Second, after the "Management boundary" decision
+above: **web-UI password rotation is dropped from scope entirely** — the
+sync job never uses the web UI, so rotating those passwords would be
+app-layer risk for no benefit.
+
+- [x] Dedicated SSH keypair generated and its public half appended to
+  `authorized_keys` (Phase 1.5, above) — purely additive, the operator's
+  own interactive key is untouched.
 - Add a `kv/services/tpot` entry to `secrets/manifest.json`'s `entries`
-  (fields: `TPOT_SSH_PRIVATE_KEY`, `TPOT_WEB_ADMIN_PASSWORD`, etc.), and
-  to `secpipe-stack`'s profile so the loader actually exports it.
-- Write the new values into OpenBao via `scripts/openbao_write.py` after
-  an explicit human OIDC login — this step, and the manifest edit above,
-  are **operator-only**: agents never get OpenBao write access
+  (field: `TPOT_SSH_PRIVATE_KEY`), and to `secpipe-stack`'s profile so
+  the loader actually exports it.
+- Write the private key value into OpenBao via `scripts/openbao_write.py`
+  after an explicit human OIDC login — this step, and the manifest edit
+  above, are **operator-only**: agents never get OpenBao write access
   (this repo's own policy), and `secrets/` is outside what this session
-  can read or edit regardless.
-- Update `~/.ssh/config`'s `tpot` alias to the new key once rotated (the
-  dead `tpot-lxc` alias was already removed in Phase 1).
+  can read or edit regardless. The private key file's path (not its
+  contents) is noted where the operator can find it.
 
 **Execution note (2026-09-30):** the `tpot_findings_ingest` role (Phase 4,
 below) already expects exactly this shape — `TPOT_SSH_PRIVATE_KEY` via
 `secrets/manifest.json` → OpenBao, materialized to a file on
-`secpipe-stack` at deploy time. It was built together with this phase
-since neither is useful alone; it fails loudly (mandatory env var) until
-this phase's manifest entry and OpenBao write actually exist. The
-credential rotation + manifest edit + OpenBao write are still
-operator-only steps, not yet done.
-
-### Phase 3 — patch cadence: security-only unattended-upgrades (operator-confirmed 2026-09-30)
-- Install the same security-only `unattended-upgrades` policy this
-  repo's `unattended_upgrades` Ansible role uses fleet-wide (same
-  `50unattended-upgrades` template, same apt-daily timer
-  unmask/enable logic) — applied by hand over SSH since this host isn't
-  in `terraform/lxc/ansible/`'s inventory, or via a small standalone
-  playbook with an inline inventory entry if that's easier to keep
-  idempotent across reruns.
-- One-time catch-up `apt-get upgrade` for the current 63 pending
-  packages first, same as was just done fleet-wide for the Proxmox-side
-  Wazuh vulnerability backlog (see `project_lxc_scan_monitoring_rollout_status`
-  memory) — the security-only policy alone won't retroactively close an
-  existing gap.
+`secpipe-stack` at deploy time. It fails loudly (mandatory env var) until
+this phase's manifest entry and OpenBao write actually exist.
 
 ### Phase 4 — findings ingestion: built 2026-09-30, not yet deployed (blocked on Phase 2)
 A new `tpot_findings_ingest` role was built, following the same shape as

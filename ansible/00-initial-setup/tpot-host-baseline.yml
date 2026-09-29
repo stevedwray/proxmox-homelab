@@ -1,0 +1,109 @@
+# Brings the T-Pot honeypot's underlying Debian 13 host under this repo's
+# Ansible management for the first time, per docs/tpot-honeypot/plan.md
+# Phase 1.5. See that plan's "Management boundary" section: this playbook
+# operates ONLY on the host layer (packages, systemd, SSH) and never
+# touches ~/tpotce/ or runs any of T-Pot's own install.sh/update.sh/
+# deploy.sh/uninstall.sh -- the honeypot's hand-installed Docker Compose
+# application stays exactly as-is, by design, because the operator has
+# flagged it as fragile enough that a "redeploy" risks losing config.
+#
+# Covers:
+#   - unattended_upgrades role (unmodified, reused via ANSIBLE_ROLES_PATH
+#     exactly as framework-desktop-bootstrap.yml reuses node_exporter/
+#     rsyslog_forward) -- same security-only patch policy as the rest of
+#     the fleet.
+#   - a one-time catch-up `apt-get upgrade` for the 63 packages found
+#     pending during the 2026-09-30 health check (the policy above only
+#     covers future security updates, not this existing backlog).
+#   - persistent journald storage -- codifies the manual live fix already
+#     applied 2026-09-30 (a reboot that day left zero log trail to
+#     diagnose it), so it survives an OS reinstall.
+#   - a dedicated, purpose-built SSH keypair for the future
+#     tpot_findings_ingest sync job (see docs/tpot-honeypot/plan.md
+#     Phase 2/4), generated ON this host and appended to authorized_keys
+#     -- purely additive, never touches the operator's own interactive
+#     key. The private key is deliberately never read back to the
+#     control node here (no secret materialization into Ansible facts/
+#     logs); moving it into OpenBao is a separate, operator-only step
+#     (Phase 2) -- see the final task's printed path.
+#
+# Run (from repo root; ANSIBLE_ROLES_PATH is required so unattended_upgrades
+# resolves, same as framework-desktop-bootstrap.yml -- this playbook family
+# has no ansible.cfg of its own, unlike terraform/lxc/ansible/):
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/tpot-host-baseline.yml
+# (No OpenBao secrets are needed for this playbook -- unattended_upgrades
+# has no external credentials. Plain ansible-playbook is fine; no
+# with-secrets* wrapper required.)
+
+- name: Bring the T-Pot host's underlying OS under management
+  hosts: tpot
+  become: true
+  gather_facts: true
+
+  vars:
+    tpot_sync_key_user: steve
+    tpot_sync_key_path: "/home/{{ tpot_sync_key_user }}/.ssh/tpot_findings_ingest_ed25519"
+
+  roles:
+    - role: unattended_upgrades
+
+  tasks:
+    - name: One-time catch-up apt upgrade (closes the pre-existing patch backlog)
+      ansible.builtin.apt:
+        upgrade: 'yes'
+        update_cache: true
+        force_apt_get: true
+        dpkg_options: 'force-confdef,force-confold'
+        lock_timeout: 300
+
+    - name: Ensure persistent journald storage directory exists
+      ansible.builtin.file:
+        path: /var/log/journal
+        state: directory
+        owner: root
+        group: systemd-journal
+        mode: "2755"
+      register: tpot_journald_dir
+
+    - name: Apply tmpfiles rules for the journal directory
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create --prefix /var/log/journal
+      when: tpot_journald_dir.changed
+      changed_when: true
+
+    - name: Restart journald to pick up persistent storage
+      ansible.builtin.systemd:
+        name: systemd-journald
+        state: restarted
+      when: tpot_journald_dir.changed
+
+    - name: Generate a dedicated SSH keypair for the findings-ingest sync job
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -f {{ tpot_sync_key_path }} -N ""
+          -C "tpot_findings_ingest@secpipe-stack"
+        creates: "{{ tpot_sync_key_path }}"
+      become: true
+      become_user: "{{ tpot_sync_key_user }}"
+
+    - name: Read the generated public key (not secret -- the private half is never read here)
+      ansible.builtin.slurp:
+        src: "{{ tpot_sync_key_path }}.pub"
+      register: tpot_sync_key_pub
+
+    - name: Append the sync job's public key to authorized_keys (additive, does not replace the operator's own key)
+      ansible.posix.authorized_key:
+        user: "{{ tpot_sync_key_user }}"
+        key: "{{ tpot_sync_key_pub.content | b64decode }}"
+        state: present
+
+    - name: Report where the private key lives (for the operator's own OpenBao write -- Phase 2, not done by this playbook)
+      ansible.builtin.debug:
+        msg: >-
+          Sync-job SSH private key is at {{ tpot_sync_key_path }} on this
+          host. Not fetched or displayed here by design -- see
+          docs/tpot-honeypot/plan.md Phase 2 for the operator-only steps
+          to move it into OpenBao (kv/services/tpot, field
+          TPOT_SSH_PRIVATE_KEY) via scripts/openbao_write.py.
