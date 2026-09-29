@@ -1,0 +1,24 @@
+[Unit]
+Description=T-Pot honeypot events sync -> OpenSearch (tpot_findings_ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=TPOT_SSH_HOST={{ tpot_findings_ingest_ssh_host }}
+Environment=TPOT_SSH_PORT={{ tpot_findings_ingest_ssh_port }}
+Environment=TPOT_SSH_USER={{ tpot_findings_ingest_ssh_user }}
+Environment=TPOT_SSH_KEY_PATH={{ tpot_findings_ingest_ssh_key_path }}
+Environment=TPOT_REMOTE_ES_PORT={{ tpot_findings_ingest_remote_es_port }}
+Environment=TPOT_SOURCE_INDEX_PATTERN={{ tpot_findings_ingest_source_index_pattern }}
+Environment=TPOT_EXCLUDE_INDICES={{ tpot_findings_ingest_exclude_indices }}
+Environment=TPOT_DEST_PREFIX={{ tpot_findings_ingest_dest_prefix }}
+Environment=ELASTICSEARCH_URL={{ tpot_findings_ingest_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ tpot_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+EnvironmentFile=-{{ tpot_findings_ingest_dir }}/es-user.env
+ExecStart=/usr/bin/python3 {{ tpot_findings_ingest_dir }}/tpot_findings_sync.py
+StandardOutput=append:{{ tpot_findings_ingest_log_path }}
+StandardError=append:{{ tpot_findings_ingest_log_path }}
+
+[Install]
+WantedBy=multi-user.target

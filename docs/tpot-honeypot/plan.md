@@ -173,22 +173,43 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
 - [x] Cross-linked this workspace from `docs/threat-vuln-platform/plan.md`'s
   `tpot-events` row so it's no longer an orphaned "deferred" mention.
 
-### Phase 2 — credentials custody: full OpenBao migration (operator-confirmed 2026-09-30)
-- Rotate the SSH key and all three web-UI htpasswd passwords.
-- Add a `hosts/tpot` (non-production) profile to `secrets/manifest.json`
-  — new SSH private key, new web-UI passwords, and (once Phase 4 exists)
-  the future sync job's tunnel/API credentials.
+### Phase 2 — credentials custody: full OpenBao migration (operator-confirmed 2026-09-30, corrected 2026-09-30)
+Corrected after checking `docs/reference/secrets-management.md` properly:
+this needs neither a `hosts/tpot` entry nor a new AppRole. `kv/hosts/<node>`
+is specifically for a *Proxmox* node's own API tokens (T-Pot isn't one);
+this belongs with everything else whose identity comes from a service
+(Harbor, Graylog, ...), i.e. `kv/services/tpot`. And `kv/services/*` is
+already broadly readable by every environment's existing `deploy-<node>`
+identity — so once the entry is added to the manifest, `secpipe-stack`'s
+own existing `deploy-pve-tiny` credentials already cover it. No new
+AppRole/policy to create.
+
+- **Generate a new dedicated SSH keypair for the sync job** (not the
+  operator's interactive `steve` login key) and install its public half
+  on the T-Pot host's `authorized_keys` — this is the one step that can
+  happen independent of everything else below, since it's ordinary host
+  administration, not a secrets-store write.
+- Rotate the three web-UI htpasswd passwords (`admin`/`steve`/
+  `recoveryadmin`) on the T-Pot host at the same time, while in there.
+- Add a `kv/services/tpot` entry to `secrets/manifest.json`'s `entries`
+  (fields: `TPOT_SSH_PRIVATE_KEY`, `TPOT_WEB_ADMIN_PASSWORD`, etc.), and
+  to `secpipe-stack`'s profile so the loader actually exports it.
 - Write the new values into OpenBao via `scripts/openbao_write.py` after
-  an explicit human OIDC login, per this repo's normal write path —
-  never generated/stored by an agent.
-- Give the future Phase-4 sync job its own narrow read-only AppRole,
-  scoped only to `kv/hosts/tpot`, following the same
-  read-only-deploy-AppRole pattern used for every other environment —
-  not a `PRODUCTION_NODES` entry (this host stays outside that list;
-  it's not Proxmox), just the same secrets-custody discipline applied to
-  a non-Proxmox host.
-- Update `~/.ssh/config`'s `tpot` alias to the new key once rotated, and
-  remove the dead `tpot-lxc` alias in the same pass.
+  an explicit human OIDC login — this step, and the manifest edit above,
+  are **operator-only**: agents never get OpenBao write access
+  (this repo's own policy), and `secrets/` is outside what this session
+  can read or edit regardless.
+- Update `~/.ssh/config`'s `tpot` alias to the new key once rotated (the
+  dead `tpot-lxc` alias was already removed in Phase 1).
+
+**Execution note (2026-09-30):** the `tpot_findings_ingest` role (Phase 4,
+below) already expects exactly this shape — `TPOT_SSH_PRIVATE_KEY` via
+`secrets/manifest.json` → OpenBao, materialized to a file on
+`secpipe-stack` at deploy time. It was built together with this phase
+since neither is useful alone; it fails loudly (mandatory env var) until
+this phase's manifest entry and OpenBao write actually exist. The
+credential rotation + manifest edit + OpenBao write are still
+operator-only steps, not yet done.
 
 ### Phase 3 — patch cadence: security-only unattended-upgrades (operator-confirmed 2026-09-30)
 - Install the same security-only `unattended-upgrades` policy this
@@ -204,27 +225,39 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
   memory) — the security-only policy alone won't retroactively close an
   existing gap.
 
-### Phase 4 — findings ingestion (the actual point of this exercise)
-Build a proper sync into this lab's existing OpenSearch pipeline,
-following the same shape as `wazuh_findings_ingest`/GVM's ingestion
-role rather than resurrecting either personal repo wholesale:
-- A `tpot_findings_sync.py` (plain stdlib + `requests`, matching
-  `harbor_findings_sync.py`/`gvm_findings_sync.py`/
-  `wazuh_findings_sync.py`'s existing convention) deployed to
-  `secpipe-stack`, running as a systemd timer.
+### Phase 4 — findings ingestion: built 2026-09-30, not yet deployed (blocked on Phase 2)
+A new `tpot_findings_ingest` role was built, following the same shape as
+`wazuh_findings_ingest`/`gvm_findings_ingest` rather than resurrecting
+either personal repo wholesale:
+- `terraform/lxc/ansible/roles/tpot_findings_ingest/files/tpot_findings_sync.py`
+  — stdlib-only (no `requests`/`elasticsearch` pip packages, matching
+  every other sync script's own convention), deployed to `secpipe-stack`
+  as a `tpot-findings-ingest.timer` systemd unit (hourly — this is a real
+  incremental event stream, unlike the `*-findings` roles' daily
+  current-state pulls).
 - Reuses the **tunnel-based fetch logic already proven in
   `tpotce-analysis/tpot_es_sync.py`** (SSH tunnel to `:64298`, scroll
-  API, incremental cursor state) — that part of the legacy script is
-  correct and tested; no need to reinvent it, just relocate/adapt it
-  into this repo's role/systemd-timer convention.
-- Lands in a dedicated `tpot-events` index, ILM-managed (operator-confirmed
-  2026-09-30 — not folded into `unified-cve-exposure`, since T-Pot activity
-  is activity-shaped, not CVE-shaped; this matches
-  `docs/threat-vuln-platform/plan.md`'s `*-events` table exactly as
-  already written).
-- Defines an explicit ES retention/ILM policy for the source
-  `logstash-*` indices at the same time (Gap 5) — window still open, see
-  below.
+  API, incremental cursor state) — that part of the legacy script was
+  correct and tested; rewritten stdlib-only rather than reinvented.
+- Lands in a dedicated `tpot-events-YYYY.MM.DD` index (one index per day
+  across all honeypots, `honeypot` as a field — not per-honeypot indices
+  like the prototype used), matching `docs/threat-vuln-platform/plan.md`'s
+  `*-events` table exactly as already written (operator-confirmed
+  2026-09-30 — not folded into `unified-cve-exposure`, since T-Pot
+  activity is activity-shaped, not CVE-shaped).
+- Wired into `deploy-secpipe-stack.yml`, gated behind
+  `tpot_findings_ingest_enabled` (default `false`) exactly like
+  `cve_enrichment_sync` — inert on every existing `secpipe-stack`
+  redeploy until explicitly turned on.
+- **Cannot actually run yet**: `tpot_findings_ingest_ssh_private_key` is
+  `mandatory()` on `TPOT_SSH_PRIVATE_KEY`, which doesn't exist until
+  Phase 2's manifest entry + OpenBao write are done. Deploying now would
+  fail loudly and immediately, by design, rather than silently no-op.
+- Retention/ILM for the destination `tpot-events-*` indices is still not
+  defined (see "Still open" below) — deliberately out of scope for this
+  pass; the sync script only writes.
+- Retention for the *source* `logstash-*` indices on the T-Pot host
+  itself (Gap 5) is a separate, still-open decision.
 
 ### Phase 5 — visibility
 - Extend the existing `Threat & Vulnerability Overview (UVM)` Grafana
