@@ -113,6 +113,7 @@
           - pterodactyl-lab
       register: gvm_scan_secret_raw
       delegate_to: localhost
+      become: false
       changed_when: false
     - name: Parse the credentials JSON
       ansible.builtin.set_fact:

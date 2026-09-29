@@ -1031,6 +1031,7 @@
             prefix: gvm-fleet-targets-
           register: greenbone_fleet_targets_local_tempdir
           delegate_to: localhost
+          become: false
           no_log: true
 
         - name: Generate the fleet-targets directory (targets.json + per-stack key/sudopass)
@@ -1041,6 +1042,7 @@
               - --out-dir
               - "{{ greenbone_fleet_targets_local_tempdir.path }}"
           delegate_to: localhost
+          become: false
           changed_when: false
           register: greenbone_fleet_targets_generated
 
@@ -1162,6 +1164,7 @@
           - greenbone-stack
       register: gvm_scan_secret_raw
       delegate_to: localhost
+      become: false
       changed_when: false
     - name: Parse the credentials JSON
       ansible.builtin.set_fact:
