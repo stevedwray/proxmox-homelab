@@ -1,8 +1,34 @@
 ## Status
 
-**Planned, not started.** Written 2026-09-29 following `docs/agent-design/README.md`'s
-process (research real conventions → surface judgment calls → bounded step
-packets per `docs/agent-design/step-packet-schema.md`). No code changed yet.
+**Code-complete for all three phases, not yet deployed to production.**
+Written 2026-09-29 following `docs/agent-design/README.md`'s process, then
+executed directly in the same session (operator judged it too complex for
+`/implement-step` local-model dispatch) rather than handed off step by step.
+
+- **Phase 1 (GVM)**: `gvm-01` through `gvm-02`, `gvm-04` through `gvm-07` all
+  written, syntax-checked, and functionally tested wherever testable without
+  live GVM/OpenBao access (real `ssh-keygen` output, real `stack.yaml`/`.env`
+  IP resolution, a real base64 round-trip). Rolled out to all 25 in-scope
+  stacks. **`gvm-03` (secrets/manifest.json entries) remains undone** -- this
+  session's permission settings deny all access to `secrets/`; every other
+  piece is ready and waiting on it. Real bugs found and fixed along the way:
+  `openbao_write.py`'s one-line-per-field stdin protocol would have silently
+  truncated multi-line SSH keys (fixed via base64); the original ~36-stack
+  scope estimate (from `terraform/lxc/environments/pve/`) turned out
+  unreliable and missed 6 real running stacks, found via a live Proxmox API
+  call and added.
+- **Phase 2 (Wazuh)**: `waz-01` (agent_groups) and `waz-02` (fleet rollout)
+  both done. All 25 in-scope stacks now include `wazuh_agent` with a real,
+  individually-verified `wazuh_agent_fim_paths` (not a copied default) and a
+  `wazuh_agent_group` matching each stack's actual `stack.yaml` zone.
+- **Phase 3 (Graylog log forwarding)**: `log-01` (docker_base daemon.json
+  ownership) and `log-02` (migrating the two actually-in-scope non-compliant
+  stacks, `ai-services-stack` and `mcp-utility-stack`) both done.
+
+**Not yet done, deliberately out of this pass's scope:** actually running
+`gvm-04`'s bootstrap (needs `gvm-03` first, plus operator OIDC login) or any
+production redeploy of any of this -- syntax-checking and functional unit
+testing happened; nothing has been applied to a live host yet.
 
 ## Problem statement
 
