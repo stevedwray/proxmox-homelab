@@ -1,9 +1,9 @@
 ## Status
 
-**Track A (GVM) fully deployed to production and verified live. Track B
-(Wazuh/Graylog) code-complete but not deployed.** Written 2026-09-29
-following `docs/agent-design/README.md`'s process, then executed directly
-in the same session (operator judged it too complex for `/implement-step`
+**All three phases (GVM, Wazuh, Graylog) fully deployed to production and
+verified live as of 2026-09-30.** Written 2026-09-29 following
+`docs/agent-design/README.md`'s process, then executed directly in the
+same session (operator judged it too complex for `/implement-step`
 local-model dispatch) rather than handed off step by step. See `README.md`
 for the current, day-to-day status; this section is the phase-by-phase
 build history.
@@ -37,25 +37,39 @@ build history.
   hand-building the GMP XML element); an unrelated pre-existing regex bug
   in `gaming-stack-lab`'s Wings DNS-fix task blocked its redeploy (fixed).
 - **Phase 2 (Wazuh)**: `waz-01` (agent_groups) and `waz-02` (fleet rollout)
-  both written and syntax-checked. All 25 in-scope stacks' playbooks now
-  include `wazuh_agent` with a real, individually-verified
-  `wazuh_agent_fim_paths` (not a copied default) and a `wazuh_agent_group`
-  matching each stack's actual `stack.yaml` zone -- but **not deployed**:
-  every Track A redeploy used `ANSIBLE_SKIP_TAGS=wazuh_agent_rollout`
-  (every Wazuh-enrollment play/role inclusion is now tagged specifically
-  so Track A and B redeploy independently) after a real, unexplained
-  Wazuh-manager-API timeout surfaced on `ai-services-stack` mid-rollout;
-  operator asked to defer Track B rather than debug it inline.
+  both written, deployed, and verified live 2026-09-30. All 25 in-scope
+  stacks now have a real, active Wazuh agent, individually-verified
+  `wazuh_agent_fim_paths` (not a copied default), and the correct
+  `wazuh_agent_group` matching each stack's actual `stack.yaml` zone --
+  confirmed via `GET /agents?select=name,group,status`, every agent
+  `status=active` with the right group. Root cause of the original
+  `ai-services-stack` timeout: not zone-specific at all -- every
+  already-registered agent (the entire original 8-stack pilot) was still
+  in the `default` group, because none of them had ever actually executed
+  the group-assignment API call added to the role after their original
+  enrollment. Two real, independent bugs found and fixed (see
+  `fix/wazuh-mikrotik-fleet-api-access`): (1) MikroTik had never opened
+  port 55000 (the manager API) from any zone -- fixed with 14 new
+  narrowly-scoped rules, one set per zone; (2) `agent-auth`'s `-G` flag
+  only applies group membership at first enrollment, so an
+  already-connected agent's redeploy silently never applies a group
+  change -- fixed with an explicit `PUT /agents/{id}/group/{id}` call
+  after enrollment either way.
 - **Phase 3 (Graylog log forwarding)**: `log-01` (docker_base daemon.json
   ownership) and `log-02` (migrating the two actually-in-scope non-compliant
-  stacks, `ai-services-stack` and `mcp-utility-stack`) both written, same
-  not-yet-deployed status as Phase 2 (bundled into the same playbooks,
-  same `ANSIBLE_SKIP_TAGS` deferral).
+  stacks, `ai-services-stack` and `mcp-utility-stack`) both written and
+  already live -- confirmed 2026-09-30 (`ai-services-stack`'s
+  `/etc/docker/daemon.json` shows the correct `syslog` driver, RFC5424,
+  `tcp://127.0.0.1:10514`). This took effect during Track A's own
+  redeploys of those two stacks, since `docker_base_manage_daemon_json`
+  isn't gated by the Wazuh skip-tag -- an earlier revision of this doc
+  said Phase 3 was undeployed, which was stale by the time Track A's
+  redeploys actually ran; corrected here.
 
-**Not yet done:** Track B's redeploy (see README.md's "Next steps for
-Track B"); confirming tonight's first unattended per-zone scan run
-actually completed cleanly (earliest checkable 2026-09-30 08:00 UTC, once
-all 10 zones' first staggered run has passed).
+**Not yet done:** `log-03` (a verification-only pass across the other
+~23 already-`syslog` stacks, no code change); confirming last night's
+first unattended per-zone GVM scan run actually completed cleanly for
+all 10 zones (see `gvm-08`'s own status above).
 
 ## Problem statement
 

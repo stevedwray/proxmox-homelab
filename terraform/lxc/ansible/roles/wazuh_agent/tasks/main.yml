@@ -307,3 +307,47 @@
             or wazuh_agent_docker_group.changed | default(false))
         else 'started'
       }}
+
+# FOUND LIVE 2026-09-30: the "-G" flag on agent-auth above only applies
+# group membership at the moment an agent FIRST enrolls. Once an agent
+# already exists (every host enrolled before wazuh_agent_group was
+# added to this role, and any future redeploy of an already-connected
+# host), "Enroll this agent with the manager via wazuh-authd" is skipped
+# entirely (wazuh_agent_already_connected.rc == 0), so -G never runs and
+# the agent silently stays in "default" forever -- confirmed live:
+# apt-cacher-stack showed group=["default"] after a full redeploy with
+# wazuh_agent_group: infra_seg set, MikroTik connectivity confirmed
+# working, and the "ensure group exists" block above reporting success.
+# This explicit assign step runs unconditionally whenever
+# wazuh_agent_group is set, after enrollment either way, so it's the
+# single source of truth for group membership rather than relying on
+# enrollment-time-only side effects. PUT /agents/{id}/group/{id} is
+# idempotent -- confirmed via Wazuh's own API docs, safe to re-run on
+# every redeploy.
+- name: Ensure this agent is actually a member of its Wazuh group
+  when: wazuh_agent_group | length > 0
+  block:
+    - name: Look up this host's own agent ID on the manager
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_agent_manager_ip }}:55000/agents?name={{ inventory_hostname }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ wazuh_agent_api_auth.json.data.token }}"
+        validate_certs: false  # nosonar: ansible:S4830 -- see above
+        status_code: 200
+      register: wazuh_agent_self_lookup
+      no_log: true
+
+    - name: Assign this agent to its Wazuh group
+      ansible.builtin.uri:
+        url: >-
+          https://{{ wazuh_agent_manager_ip }}:55000/agents/{{
+            wazuh_agent_self_lookup.json.data.affected_items[0].id
+          }}/group/{{ wazuh_agent_group }}
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ wazuh_agent_api_auth.json.data.token }}"
+        validate_certs: false  # nosonar: ansible:S4830 -- see above
+        status_code: 200
+      when: (wazuh_agent_self_lookup.json.data.total_affected_items | default(0)) > 0
+      no_log: true

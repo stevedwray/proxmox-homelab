@@ -10,7 +10,7 @@ originally estimated -- see plan.md's scope-correction notes).
 See `plan.md` for the full design, the operator's 2026-09-29 judgment-call
 answers, and the bounded step packets.
 
-## Status (2026-09-30): Track A fully deployed and verified live, including a real timezone fix; Track B not started
+## Status (2026-09-30): All tracks (GVM, Wazuh, Graylog) fully deployed and verified live
 
 ### Track A -- GVM credentialed scanning: DONE
 
@@ -95,30 +95,63 @@ through `16005dcf`, plus `fix/gvm-schedule-nzt-timezone`):
   actual intent). Fixed with a real IANA zone name (`Pacific/Auckland`)
   instead of a fixed offset, so it also stays correct across DST.
 
-### Track B -- Wazuh + Graylog: NOT STARTED
+### Track B -- Wazuh agent fleet rollout: DONE, fully deployed and verified live (2026-09-30)
 
-No blockers. `waz-01`/`waz-02`/`log-01`/`log-02` are code-complete
-(see plan.md) but nothing has been redeployed with Track B active --
-every Track A redeploy above used `ANSIBLE_SKIP_TAGS=wazuh_agent_rollout`
-(added this session -- every Wazuh-enrollment play/role inclusion across
-all 25+ playbooks is now tagged `wazuh_agent_rollout` specifically so
-Track A and B can be rolled out independently) because a real, unrelated
-Wazuh-manager-API timeout surfaced on `ai-services-stack` mid-rollout and
-the operator asked to defer Track B rather than debug it inline.
+All 25 in-scope stacks redeployed with `wazuh_agent`/`wazuh_agent_group`
+active. Verified live via the manager API (not just trusting task
+output): every agent shows `status=active` with its correct zone group
+(`ai-services-stack`→`ai_seg`, `greenbone-stack`→`pentest_seg`, etc. --
+see the full 25-host table in `project_lxc_scan_monitoring_rollout_status`
+memory, or query `GET /agents?select=name,group,status` directly).
 
-**Next steps for Track B**, whenever picked up:
+**Root cause of the original `ai-services-stack` timeout, and the real
+fix** (`fix/wazuh-mikrotik-fleet-api-access`, 2 commits): it was never
+zone-specific. Every already-registered agent -- the entire original
+8-stack pilot, enrolled 2026-08-29 -- was still in the `default` group
+on the live manager, meaning **none** of them had ever actually executed
+the group-assignment code path added to the role afterward.
+`ai-services-stack` was simply the first host in the whole 25-stack fleet
+to attempt it. Two real, independent bugs, both found and fixed live:
 
-1. Diagnose the `ai-services-stack` → Wazuh-manager-API timeout (port
-   55000, `ai_seg` → `infra_seg` zone crossing) before re-attempting --
-   this is a real, not-yet-understood failure, not the "unverified against
-   a live manager" risk originally flagged for `waz-01`'s group-creation
-   call (that part never got far enough to be tested).
-2. Redeploy the 25 in-scope stacks without `ANSIBLE_SKIP_TAGS` (or with it
-   unset) to pick up `wazuh_agent`/`wazuh_agent_group`, plus for
-   `ai-services-stack`/`mcp-utility-stack` specifically the `docker_base`
-   log-driver migration (`log-02`).
-3. Canary suggestion: something in a zone with an already-working manager
-   path, not `ai_seg` again until the timeout is understood.
+1. **MikroTik never had port 55000 (the Wazuh manager API) open from any
+   zone** -- confirmed by reading the live ruleset directly; every
+   existing Wazuh rule only opened `1514,1515` (agent comms/enrollment).
+   Fixed with `ansible/00-initial-setup/mikrotik-firewall-wazuh-api-
+   fleet.yml`: 14 new narrowly-scoped rules (`+55000` for the 4 zones
+   that already had `1514,1515`; both for the 5 zones with no Wazuh rule
+   at all). `infra_seg` needs nothing -- same subnet as `wazuh-stack`,
+   never hits the MikroTik forward chain.
+2. **The `wazuh_agent` role's `-G` flag on `agent-auth` only applies
+   group membership at first enrollment.** For any already-connected
+   agent (all 8 pilots, or any future already-enrolled host), the
+   enrollment task is skipped entirely on redeploy, so `-G` never runs
+   and the group silently never applies -- confirmed live: even after
+   the MikroTik fix, `apt-cacher-stack` still showed `group=["default"]`
+   post-redeploy. Fixed by adding an explicit `PUT /agents/{id}/group/
+   {id}` call (confirmed against Wazuh's own API docs, idempotent) that
+   runs after enrollment either way, so group membership no longer
+   depends on which enrollment path ran.
+
+One transient failure during the fleet batch, not a design bug:
+`greenbone-stack` (`pentest_seg`) hit a one-off `Connection refused`
+mid-batch (20+ rapid back-to-back API authentications may have briefly
+overloaded the manager) -- a live TCP re-test immediately after showed
+the connection working fine, and a straight retry of the redeploy
+succeeded cleanly.
+
+**`log-01`/`log-02` (Graylog Docker-container-log forwarding) are also
+already live**, confirmed 2026-09-30 -- `docker_base_manage_daemon_json`
+isn't gated by the Wazuh skip-tag, so it took effect during Track A's
+own redeploys of `ai-services-stack`/`mcp-utility-stack`. Verified live:
+`ai-services-stack`'s `/etc/docker/daemon.json` shows the correct
+`syslog` driver, RFC5424 format, `tcp://127.0.0.1:10514`. (plan.md's
+Phase 3 section previously said this was undeployed -- that was stale,
+written before Track A's redeploys actually ran; corrected here.)
+
+**Both Track A and Track B are now fully deployed and verified live.**
+The only remaining open item from this whole rollout is `log-03`
+(fleet-wide verification pass across the other ~23 already-`syslog`
+stacks) -- a check, not new code; not run yet.
 
 ## Known, deliberate gaps (not bugs -- documented, not silently dropped)
 
