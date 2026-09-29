@@ -41,6 +41,9 @@ and their Altbots.
   normally on TCP 3724/8085; Transmog's character tables exist.
 - **Completed 2026-09-29:** new characters receive 10,000g and four equipped
   22-slot Glacial Bags. Existing character Aldred was topped up to 10,000g.
+- **Completed 2026-09-29:** new characters receive all normal WotLK weapon
+  skills for their class through the versioned creation-skill rule. This omits
+  talent-gated proficiencies, shields/armor, and class spells.
 
 ## Delivery plan
 
