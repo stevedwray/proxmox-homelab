@@ -10,7 +10,7 @@ originally estimated -- see plan.md's scope-correction notes).
 See `plan.md` for the full design, the operator's 2026-09-29 judgment-call
 answers, and the bounded step packets.
 
-## Status (2026-09-29): Track A fully deployed and verified live; Track B not started
+## Status (2026-09-30): Track A fully deployed and verified live, including a real timezone fix; Track B not started
 
 ### Track A -- GVM credentialed scanning: DONE
 
@@ -32,25 +32,36 @@ answers, and the bounded step packets.
   python-gvm/GMP version -- confirmed directly against upstream source,
   not assumed -- so true one-Target-per-zone isn't possible without
   abandoning the unique-credential-per-host design. Implemented instead as
-  one GVM **Schedule** per network zone (daily, staggered ~45min apart
-  from 01:00 UTC across the 10 in-scope zones) and one **Tag** per zone
-  (`zone:<name>`) attached to that zone's tasks, while each host keeps its
-  own separate Target/credential. Deployed and verified live: all 10
-  schedules created with the right recurrence (`DTSTART`/`RRULE:FREQ=DAILY`
-  confirmed via raw GMP XML), all 25 tasks confirmed wired to their zone's
-  schedule, all 10 tags confirmed with the right host counts, and `gvmd`'s
-  own event log confirms the schedules are live (not silently rejected).
-  **First real unattended scan**: tonight, `mgmt_seg` at 01:00 UTC (the
-  largest zone, 7 hosts) -- not yet observed completing; the credentialed
-  probe above stopped its 2 sample tasks early on purpose (it's a
-  credential check, not a full scan), so no zone has finished a real
-  "Full and fast" run under the new schedule yet. Worth checking report
-  counts after 2026-09-30 08:00 UTC (all 10 zones' first run will have
-  passed by then).
+  one GVM **Schedule** per network zone (daily, staggered ~45min apart)
+  and one **Tag** per zone (`zone:<name>`) attached to that zone's tasks,
+  while each host keeps its own separate Target/credential.
+- **First real unattended scan, and a real bug caught by checking it**:
+  when checked the next day, only 1 of 25 hosts (`nextcloud-stack`,
+  `apps_seg`'s only host) had actually run -- and it succeeded (1000
+  results, real `Authenticated Scan / LSC Info Consolidation` results, 0
+  high-severity findings) purely because its zone's time-of-day happened
+  to land later than `gvm-08`'s own deploy time on the same calendar day.
+  The other 24 hosts hadn't fired at all yet. Digging into why surfaced a
+  real design bug: the schedules used `SCHEDULE_TIMEZONE="UTC"` with times
+  chosen to *look* like an overnight window, but the operator is in NZT
+  (UTC+12/+13, NZ observes DST) -- 01:00-07:45 UTC actually lands at
+  14:00-20:45 NZT, the operator's afternoon/evening, not overnight. Fixed
+  by switching to a real IANA zone name, `Pacific/Auckland`, instead of a
+  fixed offset -- confirmed live that `gvmd` correctly expands this into a
+  full DST-aware `VTIMEZONE` block (real NZDT/NZST transition rules), so
+  it stays correct across DST changes automatically. `ensure_schedule()`
+  now re-applies `icalendar`/`timezone` via `modify_schedule()` even when
+  a schedule already exists, not just on first creation, since the fix
+  needed to correct the 10 already-created UTC schedules in place.
+  Deployed and verified live: all 10 schedules confirmed re-stored with
+  the correct `Pacific/Auckland` timezone and DST rules (raw GMP XML), all
+  25 tasks and 10 tags re-confirmed wired. First real overnight run under
+  the corrected schedule: tonight NZT, `mgmt_seg` first at 01:00 NZT (7
+  hosts) -- not yet observed completing as of this writing.
 
 Real bugs found and fixed live during this rollout (all on
 `task/lxc-scan-and-monitoring-rollout-plan`, commits `07bbdffc`
-through `16005dcf`):
+through `16005dcf`, plus `fix/gvm-schedule-nzt-timezone`):
 
 - `gvm-05`/`gvm-07`'s `delegate_to: localhost` OpenBao-read tasks
   inherited the enclosing play's `become: true`, so `sudo` stripped
@@ -75,6 +86,14 @@ through `16005dcf`):
   `opensearch-stack` on the first pass -- caught before it mattered
   (both inventories resolve to the same `ansible_host`, so nothing was
   misapplied) and re-run correctly.
+- `gvm-08`'s schedules used `SCHEDULE_TIMEZONE="UTC"` with times picked to
+  look like "overnight," but never checked against the operator's actual
+  timezone (NZT) -- found the next day by cross-checking real report
+  timestamps against `gvmd`'s own clock, not by trusting the earlier "all
+  10 schedules confirmed wired" verification (which only checked the
+  schedules existed and were attached, not that their times served the
+  actual intent). Fixed with a real IANA zone name (`Pacific/Auckland`)
+  instead of a fixed offset, so it also stays correct across DST.
 
 ### Track B -- Wazuh + Graylog: NOT STARTED
 

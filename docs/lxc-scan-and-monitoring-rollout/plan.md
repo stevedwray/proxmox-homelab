@@ -438,9 +438,28 @@ Deployed and verified live: all 10 schedules created at the right times,
 all 25 tasks confirmed wired to their zone's schedule (`modify_task` on
 each pre-existing task), all 10 tags created with the correct per-zone host
 counts, and `gvmd`'s own event log shows real `Schedule ... has been
-created by admin` entries for all 10 — not silently rejected. First
-unattended run under this schedule: tonight, `mgmt_seg` (7 hosts) at
-01:00 UTC.
+created by admin` entries for all 10 — not silently rejected.
+
+**Correction, 2026-09-30 (`fix/gvm-schedule-nzt-timezone`):** the initial
+version used `SCHEDULE_TIMEZONE="UTC"`, which put these "overnight" times
+at 14:00–20:45 in the operator's actual timezone (NZT) — their afternoon/
+evening, not overnight. Only one host (`nextcloud-stack`/`apps_seg`) had
+actually fired by the next day, purely by coincidence of its zone's
+time-of-day landing after the original deploy time on the same calendar
+day — it succeeded (1000 results, real credentialed LSC checks, 0
+high-severity findings), but the other 24 hosts hadn't run at all, which
+is what surfaced the timezone bug on inspection. Fixed by switching
+`SCHEDULE_TIMEZONE` to the real IANA zone name `Pacific/Auckland` instead
+of a fixed offset, so it resolves NZ's DST transitions correctly forever
+rather than drifting wrong twice a year. `ensure_schedule()` now calls
+`gmp.modify_schedule()` to re-apply the `icalendar`/`timezone` even when a
+schedule of that name already exists, not just on first creation — needed
+so the fix actually corrected the 10 already-created UTC schedules in
+place, not only future ones. Verified live: `gvmd` expands the corrected
+schedule into a full DST-aware `VTIMEZONE` block with real NZDT/NZST
+transition rules (raw GMP XML), and all 25 tasks/10 tags re-confirmed
+wired. First real overnight run under the corrected schedule: `mgmt_seg`
+at 01:00 NZT.
 
 ## Phase 2 — Wazuh agent fleet rollout + groups
 
