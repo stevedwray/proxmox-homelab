@@ -43,9 +43,14 @@ cve_enrichment_sync_llamacpp_url: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK')
 cve_enrichment_sync_llamacpp_model: qwen3.8-flash-next
 cve_enrichment_sync_llamacpp_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | default('', true) }}"
 # Output cap per call. The prompt plus this must fit the server's context
-# (framework_llamacpp_chat_ctx_size); the reasoning model spends part of it
-# thinking before any content appears.
-cve_enrichment_sync_llamacpp_max_tokens: 4096
+# (framework_llamacpp_chat_ctx_size = 131072, ansible/00-initial-setup/
+# framework-desktop-llamacpp-native.yml) -- the reasoning model spends part
+# of this cap thinking before any content appears. 4096 was too tight:
+# confirmed live 2026-09-29, 5 of 15 deep-dive CVEs got zero content
+# (finish_reason='length') at that cap. Raised to 16384 -- still a small
+# fraction of the 131k context, plenty of headroom for both the prompt and
+# a generous reasoning budget.
+cve_enrichment_sync_llamacpp_max_tokens: 16384
 
 # Caps CVEs processed per run (0 = unlimited, the standing scheduled
 # timer's behavior). Set to a small number (e.g. 10-20) for a fast manual

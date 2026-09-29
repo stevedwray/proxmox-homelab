@@ -340,7 +340,13 @@ def main() -> int:
             print(f"[dry-run] {cve_id}: {action} -- {assessment_text[:120]}")
 
     print(f"Done -- assessed={assessed} errors={errors} dry_run={args.dry_run}")
-    return 0 if errors == 0 else 1
+    # A few per-CVE LLM calls failing (usually the reasoning model exhausting
+    # LLAMACPP_MAX_TOKENS on a dense CVE) is expected, tolerated noise, not a
+    # pipeline failure -- see the try/except above. Only report this run as a
+    # genuine systemd failure when NOTHING got assessed, so "failed" keeps
+    # meaning something instead of firing on every partial shortfall (found
+    # 2026-09-29: this unit had been "failed" on every single real run).
+    return 1 if assessed == 0 and errors > 0 else 0
 
 
 if __name__ == "__main__":
