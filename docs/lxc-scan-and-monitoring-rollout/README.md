@@ -10,59 +10,96 @@ originally estimated -- see plan.md's scope-correction notes).
 See `plan.md` for the full design, the operator's 2026-09-29 judgment-call
 answers, and the bounded step packets.
 
-## Status: code-complete for all 3 phases, not yet deployed (2026-09-29)
+## Status (2026-09-29): Track A fully deployed and verified live; Track B not started
 
-All code written, syntax-checked, and (wherever testable without live
-GVM/OpenBao access) functionally tested with real data. Nothing has been
-applied to a production host yet. Branch: `task/lxc-scan-and-monitoring-rollout-plan`
-(12 commits), not merged -- operator's call on PR/merge timing.
+### Track A -- GVM credentialed scanning: DONE
 
-## Next steps, in order
+- `gvm-03` (secrets/manifest.json, 25 entries) done by the operator; `gvm-04`
+  bootstrap run and verified (all 25 stacks' keypairs/passwords live in
+  OpenBao).
+- All 25 in-scope stacks redeployed with the `gvm_scan_account` role
+  (dedicated SSH keypair + full sudo, password-gated). Verified live: SSH
+  login + sudo elevation both confirmed working via a real credentialed
+  probe (`BIOS and Hardware Information Detection (Linux/Unix SSH Login)`
+  NVT result, which requires both) against a 2-zone sample
+  (`harbor-stack`/infra_seg, `proxy-stack`/edge_seg).
+- `greenbone-stack` redeployed: `gvm-07` registered all 25 hosts' login +
+  elevate credentials, Targets, and Tasks in GVM. Verified live via an
+  idempotent re-run (every object reports "already exists").
+- `gvm-08` (added after Track A's initial deploy, operator asked for the
+  scans to be organized "by VLAN"): a GVM Target can only carry **one**
+  `ssh_credential_id` for every host it contains, in every shipped
+  python-gvm/GMP version -- confirmed directly against upstream source,
+  not assumed -- so true one-Target-per-zone isn't possible without
+  abandoning the unique-credential-per-host design. Implemented instead as
+  one GVM **Schedule** per network zone (daily, staggered ~45min apart
+  from 01:00 UTC across the 10 in-scope zones) and one **Tag** per zone
+  (`zone:<name>`) attached to that zone's tasks, while each host keeps its
+  own separate Target/credential. Deployed and verified live: all 10
+  schedules created with the right recurrence (`DTSTART`/`RRULE:FREQ=DAILY`
+  confirmed via raw GMP XML), all 25 tasks confirmed wired to their zone's
+  schedule, all 10 tags confirmed with the right host counts, and `gvmd`'s
+  own event log confirms the schedules are live (not silently rejected).
+  **First real unattended scan**: tonight, `mgmt_seg` at 01:00 UTC (the
+  largest zone, 7 hosts) -- not yet observed completing; the credentialed
+  probe above stopped its 2 sample tasks early on purpose (it's a
+  credential check, not a full scan), so no zone has finished a real
+  "Full and fast" run under the new schedule yet. Worth checking report
+  counts after 2026-09-30 08:00 UTC (all 10 zones' first run will have
+  passed by then).
 
-### Track A -- GVM credentialed scanning (blocked)
+Real bugs found and fixed live during this rollout (all on
+`task/lxc-scan-and-monitoring-rollout-plan`, commits `07bbdffc`
+through `16005dcf`):
 
-1. **`gvm-03`** (the one remaining blocker): add 25 entries to
-   `secrets/manifest.json`, one per in-scope stack at
-   `services/greenbone/scan-hosts/<stack>`, each listing fields
-   `GVM_SCAN_SSH_PRIVATE_KEY`, `GVM_SCAN_SSH_PUBLIC_KEY`,
-   `GVM_SCAN_SUDO_PASSWORD`. Needs a session/operator with `secrets/`
-   access -- this session's permission settings denied it entirely.
-2. **Bootstrap**: operator runs `bao login -method=oidc -no-store`,
-   exports `BAO_TOKEN`, then `scripts/gvm_scan_credentials_bootstrap.py --all`
-   once. Generates + stores all 25 stacks' keypairs and sudo passwords.
-3. **Redeploy the 25 in-scope stacks** (see `IN_SCOPE_STACKS` in
-   `scripts/gvm_fleet_targets_generate.py` for the exact list) via their
-   own `scripts/provision.sh --stack <name>`, under the normal production
-   approval flow. Each picks up the `gvm_scan_account` role.
-4. **Redeploy `greenbone-stack`** last. This is where `gvm-07` actually
-   runs for real -- generates the fleet directory, registers the GVM
-   credentials/targets/tasks. Watch closely: `ensure_target()`'s
-   `ssh_elevate_credential_id` kwarg is flagged in the code as unverified
-   against the installed `python-gvm==27.5.*`'s actual API signature --
-   it's designed to fail loudly with an actionable error if wrong, not
-   silently skip privilege escalation.
+- `gvm-05`/`gvm-07`'s `delegate_to: localhost` OpenBao-read tasks
+  inherited the enclosing play's `become: true`, so `sudo` stripped
+  `LAB_IP_OPENBAO`/`OPENBAO_ADDR` from the environment -- fixed with
+  `become: false` on those specific tasks, across all 25 playbooks plus
+  `greenbone-stack`'s fleet-targets generation.
+- An unrelated pre-existing bug in `gaming-stack-lab`'s Wings DNS-fix task
+  (`replace: '\1{{ dns_server }}'` -- Python's `re.sub` parses `\1`
+  immediately followed by a digit as a two-digit group reference) blocked
+  that stack's redeploy; fixed with `\g<1>`.
+- python-gvm has **no** parameter for an SSH elevate/privilege-escalation
+  credential on `create_target`/`modify_target`, in any shipped GMP
+  version (v224 through v227/next -- checked upstream source directly).
+  GMP's raw protocol does support it (`<ssh_elevate_credential id="..."/>`,
+  confirmed against Greenbone's own GMP schema docs and forum). Worked
+  around by hand-building the request via the same internal
+  `Targets.create_target()` builder `gmp.create_target()` itself uses,
+  appending that element, and sending it through
+  `gmp._send_request_and_transform_response()`.
+- Used the wrong node-secrets wrapper (`./with-secrets-prod` instead of
+  `./with-secrets-prod-tiny`) for `ai-services-stack`, `mcp-utility-stack`,
+  `opensearch-stack` on the first pass -- caught before it mattered
+  (both inventories resolve to the same `ansible_host`, so nothing was
+  misapplied) and re-run correctly.
 
-### Track B -- Wazuh + Graylog (no blockers, ready now)
+### Track B -- Wazuh + Graylog: NOT STARTED
 
-1. Redeploy any of the 25 in-scope stacks -- picks up
-   `wazuh_agent`/`wazuh_agent_group`, and for `ai-services-stack` /
-   `mcp-utility-stack` specifically, the `docker_base` log-driver
-   migration (`log-02`).
-2. Watch the first redeploy of any stack that needs a **new** Wazuh
-   group created -- `waz-01`'s manager-API group-creation call
-   (`GET/POST /groups`) is unverified against a live Wazuh 4.14.7
-   manager; flagged in the role's own commit message.
+No blockers. `waz-01`/`waz-02`/`log-01`/`log-02` are code-complete
+(see plan.md) but nothing has been redeployed with Track B active --
+every Track A redeploy above used `ANSIBLE_SKIP_TAGS=wazuh_agent_rollout`
+(added this session -- every Wazuh-enrollment play/role inclusion across
+all 25+ playbooks is now tagged `wazuh_agent_rollout` specifically so
+Track A and B can be rolled out independently) because a real, unrelated
+Wazuh-manager-API timeout surfaced on `ai-services-stack` mid-rollout and
+the operator asked to defer Track B rather than debug it inline.
 
-### Suggested order
+**Next steps for Track B**, whenever picked up:
 
-Don't redeploy all 25 at once. Canary first:
-
-- **Track B**: `apt-cacher-stack` (small, already had `wazuh_agent` --
-  this redeploy only adds the group, low risk).
-- **Track A** (once unblocked): `harbor-stack` (the actual exemplar
-  `gvm-05` was built and tested against).
-
-Confirm both work cleanly, then roll the rest.
+1. Diagnose the `ai-services-stack` → Wazuh-manager-API timeout (port
+   55000, `ai_seg` → `infra_seg` zone crossing) before re-attempting --
+   this is a real, not-yet-understood failure, not the "unverified against
+   a live manager" risk originally flagged for `waz-01`'s group-creation
+   call (that part never got far enough to be tested).
+2. Redeploy the 25 in-scope stacks without `ANSIBLE_SKIP_TAGS` (or with it
+   unset) to pick up `wazuh_agent`/`wazuh_agent_group`, plus for
+   `ai-services-stack`/`mcp-utility-stack` specifically the `docker_base`
+   log-driver migration (`log-02`).
+3. Canary suggestion: something in a zone with an already-working manager
+   path, not `ai_seg` again until the timeout is understood.
 
 ## Known, deliberate gaps (not bugs -- documented, not silently dropped)
 

@@ -1,34 +1,61 @@
 ## Status
 
-**Code-complete for all three phases, not yet deployed to production.**
-Written 2026-09-29 following `docs/agent-design/README.md`'s process, then
-executed directly in the same session (operator judged it too complex for
-`/implement-step` local-model dispatch) rather than handed off step by step.
+**Track A (GVM) fully deployed to production and verified live. Track B
+(Wazuh/Graylog) code-complete but not deployed.** Written 2026-09-29
+following `docs/agent-design/README.md`'s process, then executed directly
+in the same session (operator judged it too complex for `/implement-step`
+local-model dispatch) rather than handed off step by step. See `README.md`
+for the current, day-to-day status; this section is the phase-by-phase
+build history.
 
-- **Phase 1 (GVM)**: `gvm-01` through `gvm-02`, `gvm-04` through `gvm-07` all
-  written, syntax-checked, and functionally tested wherever testable without
-  live GVM/OpenBao access (real `ssh-keygen` output, real `stack.yaml`/`.env`
-  IP resolution, a real base64 round-trip). Rolled out to all 25 in-scope
-  stacks. **`gvm-03` (secrets/manifest.json entries) remains undone** -- this
-  session's permission settings deny all access to `secrets/`; every other
-  piece is ready and waiting on it. Real bugs found and fixed along the way:
-  `openbao_write.py`'s one-line-per-field stdin protocol would have silently
-  truncated multi-line SSH keys (fixed via base64); the original ~36-stack
-  scope estimate (from `terraform/lxc/environments/pve/`) turned out
-  unreliable and missed 6 real running stacks, found via a live Proxmox API
-  call and added.
+- **Phase 1 (GVM)**: `gvm-01` through `gvm-07` all written, deployed, and
+  verified live. `gvm-03` (secrets/manifest.json, 25 entries) was done by
+  the operator directly (this session's permissions denied all access to
+  `secrets/`); `gvm-04`'s bootstrap ran and all 25 stacks' credentials
+  confirmed live in OpenBao; all 25 stacks redeployed with
+  `gvm_scan_account`, verified via a real credentialed probe (SSH login +
+  sudo elevation both confirmed working, not just assumed); `greenbone-
+  stack` redeployed, `gvm-07` registered all 25 hosts' credentials/
+  Targets/Tasks in GVM, verified via an idempotent re-run. **`gvm-08`**
+  (added after initial Track A deploy, per the operator's "divide scans up
+  by VLAN" request) organizes the 25 per-host Tasks by network zone via a
+  per-zone GVM Schedule + Tag -- a shared multi-host Target per zone isn't
+  possible (confirmed against upstream python-gvm: one `ssh_credential_id`
+  per Target, no per-host override, in any shipped GMP version), so this
+  keeps the 25 individual credentialed Targets and groups scheduling/
+  visibility around them instead. Deployed and verified live (all 10
+  schedules + tags confirmed correct via raw GMP XML and `gvmd`'s own
+  event log). Real bugs found and fixed along the way: `openbao_write.py`'s
+  one-line-per-field stdin protocol would have silently truncated
+  multi-line SSH keys (fixed via base64); the original ~36-stack scope
+  estimate (from `terraform/lxc/environments/pve/`) turned out unreliable
+  and missed 6 real running stacks, found via a live Proxmox API call and
+  added; `delegate_to: localhost` OpenBao-read tasks inheriting play-level
+  `become: true` stripped `LAB_IP_OPENBAO` via `sudo` (fixed with
+  `become: false`); python-gvm has no elevate-credential parameter on
+  `create_target`/`modify_target` in any version (worked around by
+  hand-building the GMP XML element); an unrelated pre-existing regex bug
+  in `gaming-stack-lab`'s Wings DNS-fix task blocked its redeploy (fixed).
 - **Phase 2 (Wazuh)**: `waz-01` (agent_groups) and `waz-02` (fleet rollout)
-  both done. All 25 in-scope stacks now include `wazuh_agent` with a real,
-  individually-verified `wazuh_agent_fim_paths` (not a copied default) and a
-  `wazuh_agent_group` matching each stack's actual `stack.yaml` zone.
+  both written and syntax-checked. All 25 in-scope stacks' playbooks now
+  include `wazuh_agent` with a real, individually-verified
+  `wazuh_agent_fim_paths` (not a copied default) and a `wazuh_agent_group`
+  matching each stack's actual `stack.yaml` zone -- but **not deployed**:
+  every Track A redeploy used `ANSIBLE_SKIP_TAGS=wazuh_agent_rollout`
+  (every Wazuh-enrollment play/role inclusion is now tagged specifically
+  so Track A and B redeploy independently) after a real, unexplained
+  Wazuh-manager-API timeout surfaced on `ai-services-stack` mid-rollout;
+  operator asked to defer Track B rather than debug it inline.
 - **Phase 3 (Graylog log forwarding)**: `log-01` (docker_base daemon.json
   ownership) and `log-02` (migrating the two actually-in-scope non-compliant
-  stacks, `ai-services-stack` and `mcp-utility-stack`) both done.
+  stacks, `ai-services-stack` and `mcp-utility-stack`) both written, same
+  not-yet-deployed status as Phase 2 (bundled into the same playbooks,
+  same `ANSIBLE_SKIP_TAGS` deferral).
 
-**Not yet done, deliberately out of this pass's scope:** actually running
-`gvm-04`'s bootstrap (needs `gvm-03` first, plus operator OIDC login) or any
-production redeploy of any of this -- syntax-checking and functional unit
-testing happened; nothing has been applied to a live host yet.
+**Not yet done:** Track B's redeploy (see README.md's "Next steps for
+Track B"); confirming tonight's first unattended per-zone scan run
+actually completed cleanly (earliest checkable 2026-09-30 08:00 UTC, once
+all 10 zones' first staggered run has passed).
 
 ## Problem statement
 
@@ -378,6 +405,43 @@ gates:
     critical: true
 ```
 
+### gvm-08-vlan-scheduling (deployed 2026-09-29, prose — implemented after gvm-07, not part of the original operator answers)
+
+Operator asked, after Track A's initial deploy, for the fleet scans to be
+"divided up by vlan". Checked against upstream python-gvm source directly
+before writing anything: `create_target`/`modify_target` accept exactly
+one `ssh_credential_id` for every host in a Target, in every shipped GMP
+version (v224 through v227/next) — there is no per-host credential within
+a multi-host Target. That's incompatible with the per-host-unique-
+credential design this whole plan is built around, so a literal
+one-shared-Target-per-zone isn't achievable without abandoning blast-radius
+containment. Confirmed this reading with the operator via AskUserQuestion
+before implementing.
+
+Implemented as: the 25 existing per-host Targets/Tasks are unchanged, each
+keeps its own credential. Added one GVM **Schedule** per network zone
+(`ZONE_SCHEDULE_TIMES` in `setup_credentials.py` — daily, staggered ~45min
+apart starting 01:00 UTC across the 10 in-scope zones, operator-confirmed
+cadence and window) and one **Tag** per zone (`zone:<name>`) attached to
+every task in that zone. `gvm_fleet_targets_generate.py` now also resolves
+each stack's `zone:` from its `stack.yaml` (handles both the plain and
+nested `network: { zone: }` forms) and includes it in `targets.json`.
+`ensure_task()` passes `schedule_id` into `create_task`/`modify_task`
+(a real, directly-supported parameter in this GMP version — unlike the
+elevate-credential case above, no hand-built XML was needed). Schedule
+iCalendar text is hand-built (`BEGIN:VCALENDAR`/`VEVENT` with
+`DTSTART`+`RRULE:FREQ=DAILY`) rather than depending on the `icalendar`
+PyPI package, which isn't a guaranteed dependency of the upstream
+`gvm-tools` image this runs inside.
+
+Deployed and verified live: all 10 schedules created at the right times,
+all 25 tasks confirmed wired to their zone's schedule (`modify_task` on
+each pre-existing task), all 10 tags created with the correct per-zone host
+counts, and `gvmd`'s own event log shows real `Schedule ... has been
+created by admin` entries for all 10 — not silently rejected. First
+unattended run under this schedule: tonight, `mgmt_seg` (7 hosts) at
+01:00 UTC.
+
 ## Phase 2 — Wazuh agent fleet rollout + groups
 
 ### waz-01-agent-groups-support
@@ -540,16 +604,27 @@ step-packet work.
 
 ## Open items / not decided yet
 
-- The exact Wazuh API version/auth shape for `waz-01`'s group-creation
-  task needs to be confirmed against whatever version `wazuh-stack`
-  actually runs before that step is executed — flagged inside the step
-  itself, not resolved here.
-- `gvm-07`'s exact python-gvm API call for setting a Target's elevate
-  ssh credential varies by library version — flagged inside the step,
-  needs a live check against the installed version before writing the
-  final call.
-- Whether GVM's own credentialed-scan schedule/task objects need
-  updating to actually *use* the new fleet-wide Target list (this plan
-  only builds the credentials + Target metadata; wiring them into an
-  actual recurring scan Task is a follow-on this plan doesn't cover —
-  raise with the operator once gvm-01..07 are live).
+- ~~The exact Wazuh API version/auth shape for `waz-01`'s group-creation
+  task~~ — superseded: `waz-01`'s group-creation call has not actually
+  been exercised live yet (Track B redeploy deferred), so this remains
+  genuinely unverified, but the more concrete open item now is below.
+- ~~`gvm-07`'s exact python-gvm API call for setting a Target's elevate
+  ssh credential~~ — RESOLVED 2026-09-29: confirmed live, no version of
+  python-gvm supports it at all; fixed via a hand-built GMP XML element.
+  See `gvm-07`'s step section above.
+- ~~Whether GVM's own credentialed-scan schedule/task objects need
+  updating to actually *use* the new fleet-wide Target list~~ — RESOLVED
+  2026-09-29 as `gvm-08` (see above): per-zone Schedule + Tag, deployed
+  and verified live.
+- **New, real, not yet understood**: `ai-services-stack`'s Wazuh
+  enrollment hit an API timeout connecting to the Wazuh manager (port
+  55000, `ai_seg` → `infra_seg` zone crossing) during the Track A fleet
+  rollout. Not diagnosed — Track B redeploy was deferred entirely rather
+  than debugged inline, per the operator's explicit scope call at the
+  time. Needs investigation before Track B's redeploy: firewall rule gap
+  between those two zones on that port, a manager-side issue, or
+  something else. Whoever picks up Track B should start here, not assume
+  it's the same "unverified against a live manager" risk this plan
+  originally flagged for `waz-01`'s group-creation logic (that code never
+  actually ran far enough to hit that risk — it failed earlier, at the
+  initial authentication call).
