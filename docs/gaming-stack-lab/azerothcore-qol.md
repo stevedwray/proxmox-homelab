@@ -20,6 +20,9 @@ and their Altbots.
 | Bags | Every Altbot receives four maximum-size general bags at first provisioning; no bag-management loop. |
 | Appearance | Transmog is enabled with normal weapon, armor, class, and proficiency restrictions and a nominal or zero price. |
 | Looting | Area loot is enabled for grouped play at a conservative 20-yard radius. |
+| Ground riding | Apprentice Riding (60%) is trainable at level 10 and Journeyman Riding (100%) at level 20. |
+| Old World flying | Expert Riding at level 60 permits flight in Eastern Kingdoms and Kalimdor. Each client needs the supplied `Patch-O.mpq`. |
+| Trainer spells | Normal player characters learn ordinary class-trainer spells automatically on level-up. Class-quest rewards remain manual. |
 
 ## What exists already
 
@@ -101,6 +104,86 @@ The server was restarted to reload the world create-item cache. `worldserver`
 and `authserver` were verified listening on TCP 8085 and 3724 after the
 change. A short-lived newly created character remains the operator gameplay
 check for the four equipped bags.
+
+### Phase 3d — earlier ground riding and Old World flight — completed 2026-09-30
+
+Reduce only the normal ground-riding trainer gates: Apprentice Riding (spell
+`33388`, 60%) to level 10 and Journeyman Riding (spell `33391`, 100%) to level
+20. Expert Riding (spell `34090`) remains level 60, so flying progression and
+mount requirements otherwise remain WotLK-like. The migration is
+`scripts/azerothcore-qol/sql/006-earlier-ground-riding.sql`; it changes trainer
+availability only and neither grants skills nor changes existing characters.
+
+Use `abracadaniel22/mod-fly-anywhere`, pinned to commit
+`141b789f9b9c99ebf0c5391df9dafb825f967f9a`. Its build hook copies the matching
+server `AreaTable.dbc` and its config overlay enables flight in Eastern
+Kingdoms, Kalimdor, and the Burning Crusade starter zones when a character has
+Expert Riding. The exact configuration is stored in
+`scripts/azerothcore-qol/config/fly-anywhere.conf`.
+
+The corresponding client file is the module's `data/patch/client/Patch-O.mpq`
+(SHA-256 `ae45fb68e6f74ff722c7663459857558704cbbafd54ff9dd9ca4345ebe9d2086`).
+Copy it into each 3.3.5a client's `Data` directory without overwriting an
+existing patch of the same name (rename the suffix if necessary), delete that
+client's `Cache` directory while the game is closed, then launch the client.
+The live realm should not be restarted until each intended player has the
+patch. The pinned server DBC checksum is
+`4e1b3495ca7bcd4929ada743a506d845c12e8a58b6cbc8a7447f5dce9718c4d7`.
+
+The live rollout imported the trainer migration, added the module through the
+existing `ACORE_MODULES` list, and rebuilt successfully. The deployed module
+revision is `141b789f9b9c99ebf0c5391df9dafb825f967f9a`; `FlyAnywhere.Enabled`
+is `true`; the runtime DBC has the pinned checksum; and world/auth listen on
+TCP 8085/3724. The build's normal client-data installation overwrites the
+runtime DBC after CMake copies the module DBC, so after any future full
+rebuild copy the module's
+`modules/mod-fly-anywhere/data/patch/server/AreaTable.dbc` to
+`env/dist/bin/dbc/AreaTable.dbc`, then restart the realm. Preserve the prior
+runtime DBC as an in-place rollback copy before doing so.
+
+During this rollout Wings was found failed because the `allowed_mounts` and
+`allowed_origins` YAML lists in `/etc/pterodactyl/config.yml` were malformed.
+The original values were retained, a timestamped backup was made, the lists
+were repaired, and Wings resumed managing all configured game containers.
+
+### Phase 3e — automatic trainer spells — completed 2026-09-30
+
+Use `n70n10/mod-autolearn` for normal player characters. The configuration in
+`scripts/azerothcore-qol/config/mod_autolearn.conf` enables only class-spell
+learning and excludes Playerbots, riding ranks, weapon-skill automation, and
+starter items. Playerbots continue to use their established `maintenance`
+workflow.
+
+Import the module's supplied `mod_autolearn.sql`, then apply
+`scripts/azerothcore-qol/sql/008-autolearn-preserve-class-quests.sql`. The
+second migration removes the module's automatic Paladin/Warlock class mounts
+and Druid Swift Flight Form, preserving those class quest chains. Existing
+characters are not backfilled; use `.learn all my trainer` as a one-off for a
+GM test character. New and normally-levelled characters receive ordinary
+trainer spells at the appropriate levels.
+
+### Phase 3f — small Auction House market — completed 2026-09-30
+
+Use `azerothcore/mod-ah-bot`, pinned to commit
+`c11d8318cbd8714a9980f9464f78e07d3d48a70a`. This is distinct from the
+Playerbot fork and supplies a controlled background market for the private
+realm. It must use one locked, dedicated account and non-played owner
+character, never one of the operator's characters.
+
+The configuration overlay `scripts/azerothcore-qol/config/mod_ahbot.conf`
+enables listing only: the bot never bids on or buys player auctions. It draws
+loot, trade goods, and profession supplies but excludes vendor stock, has two
+or fewer duplicate stacks, and filters out requirements above level 80. The
+module's supplied `mod_auctionhousebot.sql` creates both required tables and
+profession-item data; do not import its separate optional
+`auctionhousebot_professionItems.sql` afterwards, because it already exists.
+Then apply `scripts/azerothcore-qol/sql/009-ahbot-small-market.sql`.
+
+The live rollout created locked account `AHBOT` (ID 6) and its non-played
+`Auctioneer` owner character (GUID 49), rebuilt server 4, and loaded the
+seller-only configuration. It verified the pinned module revision, no AH bot
+errors, normal Wings/world/auth health, and exactly 100 Alliance, 100 Horde,
+and 60 neutral listings after two listing cycles.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
