@@ -26,6 +26,28 @@
 #     control node here (no secret materialization into Ansible facts/
 #     logs); moving it into OpenBao is a separate, operator-only step
 #     (Phase 2) -- see the final task's printed path.
+#   - a host route override for each lab host that needs to reach T-Pot
+#     directly, working around a real IP-collision bug found live
+#     2026-09-30: T-Pot's own Docker networking auto-allocates a
+#     sequence of /20 per-honeypot bridge subnets (32.0/20, 48.0/20,
+#     64.0/20, 80.0/20, 112.0/20, 128.0/20, 144.0/20, 160.0/20) that
+#     covers nearly every VLAN octet this lab uses -- ai_seg's
+#     192.168.50.0/24 falls inside T-Pot's own 192.168.48.0/20, so
+#     without this override T-Pot's kernel routes replies for any
+#     ai_seg host into its own internal Docker bridge instead of back
+#     out to the real network (confirmed via `ip route get` and the
+#     ICMP "Destination Host Unreachable" coming from the bridge's own
+#     gateway, not the real network). The real fix (reconfiguring
+#     Docker's default-address-pools) needs recreating T-Pot's compose
+#     networks -- exactly the "redeploy" risk this plan avoids -- so
+#     this adds a single more-specific host route per known consumer
+#     instead, via NetworkManager (wins by ordinary longest-prefix-match
+#     routing, persists across reboots in the connection profile, never
+#     touches ~/tpotce/ or Docker). Applied by hand during initial
+#     debugging for secpipe-stack (192.168.50.12); codified here so it
+#     survives a full OS reinstall too. Add a new entry to
+#     tpot_extra_host_routes as each additional consumer needs one --
+#     see the plan's "Still open" for which zones are known to collide.
 #
 # Run (from repo root; ANSIBLE_ROLES_PATH is required so unattended_upgrades
 # resolves, same as framework-desktop-bootstrap.yml -- this playbook family
@@ -45,6 +67,14 @@
   vars:
     tpot_sync_key_user: steve
     tpot_sync_key_path: "/home/{{ tpot_sync_key_user }}/.ssh/tpot_findings_ingest_ed25519"
+    tpot_nm_connection: "Wired connection 1"
+    tpot_default_gateway: "192.168.1.1"
+    # Add one entry per lab host that needs to reach T-Pot directly and
+    # falls inside one of T-Pot's own colliding Docker /20 ranges -- see
+    # the comment block above. secpipe-stack is the only confirmed,
+    # live-needed consumer so far.
+    tpot_extra_host_routes:
+      - host: "192.168.50.12"  # secpipe-stack (ai_seg) -- tpot_findings_ingest sync job
 
   roles:
     - role: unattended_upgrades
@@ -98,6 +128,28 @@
         user: "{{ tpot_sync_key_user }}"
         key: "{{ tpot_sync_key_pub.content | b64decode }}"
         state: present
+
+    - name: Check current static routes on the NetworkManager connection
+      ansible.builtin.command:
+        cmd: nmcli -g ipv4.routes connection show {{ tpot_nm_connection | quote }}
+      register: tpot_nm_current_routes
+      changed_when: false
+
+    - name: Add missing host route overrides (works around T-Pot's own Docker /20 IP collisions)
+      ansible.builtin.command:
+        cmd: >-
+          nmcli connection modify {{ tpot_nm_connection | quote }}
+          +ipv4.routes "{{ item.host }}/32 {{ tpot_default_gateway }}"
+      loop: "{{ tpot_extra_host_routes }}"
+      loop_control:
+        label: "{{ item.host }}"
+      when: (item.host ~ '/32 ' ~ tpot_default_gateway) not in tpot_nm_current_routes.stdout
+      register: tpot_nm_route_changes
+
+    - name: Reapply the NetworkManager connection to activate new routes
+      ansible.builtin.command:
+        cmd: nmcli device reapply eth0
+      when: tpot_nm_route_changes.changed
 
     - name: Report where the private key lives (for the operator's own OpenBao write -- Phase 2, not done by this playbook)
       ansible.builtin.debug:
