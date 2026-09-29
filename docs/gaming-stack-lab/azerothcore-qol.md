@@ -22,6 +22,7 @@ and their Altbots.
 | Looting | Area loot is enabled for grouped play at a conservative 20-yard radius. |
 | Ground riding | Apprentice Riding (60%) is trainable at level 10 and Journeyman Riding (100%) at level 20. |
 | Old World flying | Expert Riding at level 60 permits flight in Eastern Kingdoms and Kalimdor. Each client needs the supplied `Patch-O.mpq`. |
+| Trainer spells | Normal player characters learn ordinary class-trainer spells automatically on level-up. Class-quest rewards remain manual. |
 
 ## What exists already
 
@@ -144,6 +145,22 @@ During this rollout Wings was found failed because the `allowed_mounts` and
 `allowed_origins` YAML lists in `/etc/pterodactyl/config.yml` were malformed.
 The original values were retained, a timestamped backup was made, the lists
 were repaired, and Wings resumed managing all configured game containers.
+
+### Phase 3e — automatic trainer spells — planned
+
+Use `n70n10/mod-autolearn` for normal player characters. The configuration in
+`scripts/azerothcore-qol/config/mod_autolearn.conf` enables only class-spell
+learning and excludes Playerbots, riding ranks, weapon-skill automation, and
+starter items. Playerbots continue to use their established `maintenance`
+workflow.
+
+Import the module's supplied `mod_autolearn.sql`, then apply
+`scripts/azerothcore-qol/sql/008-autolearn-preserve-class-quests.sql`. The
+second migration removes the module's automatic Paladin/Warlock class mounts
+and Druid Swift Flight Form, preserving those class quest chains. Existing
+characters are not backfilled; use `.learn all my trainer` as a one-off for a
+GM test character. New and normally-levelled characters receive ordinary
+trainer spells at the appropriate levels.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
