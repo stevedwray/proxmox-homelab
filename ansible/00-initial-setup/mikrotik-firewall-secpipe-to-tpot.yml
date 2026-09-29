@@ -58,7 +58,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         status_code: 200
       register: mikrotik_filter_rules
 
@@ -81,11 +81,11 @@
     - name: Add the secpipe-stack -> T-Pot SSH forward rule
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
-        method: PUT
+        method: POST
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body:
           chain: forward
@@ -106,7 +106,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         status_code: 200
       register: mikrotik_filter_rules_recheck
 

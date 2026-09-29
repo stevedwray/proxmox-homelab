@@ -43,7 +43,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         status_code: 200
       register: mikrotik_dhcp_leases
 
@@ -63,7 +63,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body:
           comment: "{{ tpot_lease_comment }}"
@@ -77,7 +77,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         status_code: 200
       register: mikrotik_dhcp_lease_recheck
 
