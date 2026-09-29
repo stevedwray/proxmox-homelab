@@ -20,6 +20,8 @@ and their Altbots.
 | Bags | Every Altbot receives four maximum-size general bags at first provisioning; no bag-management loop. |
 | Appearance | Transmog is enabled with normal weapon, armor, class, and proficiency restrictions and a nominal or zero price. |
 | Looting | Area loot is enabled for grouped play at a conservative 20-yard radius. |
+| Ground riding | Apprentice Riding (60%) is trainable at level 10 and Journeyman Riding (100%) at level 20. |
+| Old World flying | Expert Riding at level 60 permits flight in Eastern Kingdoms and Kalimdor. Each client needs the supplied `Patch-O.mpq`. |
 
 ## What exists already
 
@@ -101,6 +103,31 @@ The server was restarted to reload the world create-item cache. `worldserver`
 and `authserver` were verified listening on TCP 8085 and 3724 after the
 change. A short-lived newly created character remains the operator gameplay
 check for the four equipped bags.
+
+### Phase 3d — earlier ground riding and Old World flight — planned
+
+Reduce only the normal ground-riding trainer gates: Apprentice Riding (spell
+`33388`, 60%) to level 10 and Journeyman Riding (spell `33391`, 100%) to level
+20. Expert Riding (spell `34090`) remains level 60, so flying progression and
+mount requirements otherwise remain WotLK-like. The migration is
+`scripts/azerothcore-qol/sql/006-earlier-ground-riding.sql`; it changes trainer
+availability only and neither grants skills nor changes existing characters.
+
+Use `abracadaniel22/mod-fly-anywhere`, pinned to commit
+`141b789f9b9c99ebf0c5391df9dafb825f967f9a`. Its build hook copies the matching
+server `AreaTable.dbc` and its config overlay enables flight in Eastern
+Kingdoms, Kalimdor, and the Burning Crusade starter zones when a character has
+Expert Riding. The exact configuration is stored in
+`scripts/azerothcore-qol/config/fly-anywhere.conf`.
+
+The corresponding client file is the module's `data/patch/client/Patch-O.mpq`
+(SHA-256 `ae45fb68e6f74ff722c7663459857558704cbbafd54ff9dd9ca4345ebe9d2086`).
+Copy it into each 3.3.5a client's `Data` directory without overwriting an
+existing patch of the same name (rename the suffix if necessary), delete that
+client's `Cache` directory while the game is closed, then launch the client.
+The live realm should not be restarted until each intended player has the
+patch. The pinned server DBC checksum is
+`4e1b3495ca7bcd4929ada743a506d845c12e8a58b6cbc8a7447f5dce9718c4d7`.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
