@@ -62,3 +62,11 @@ cve_enrichment_sync_enabled: true
 # cve_deep_dive.py's module docstring and docs/threat-vuln-platform/plan.md
 # Phase 11.
 cve_enrichment_sync_deep_dive_enabled: true
+
+# tpot_findings_ingest (docs/tpot-honeypot/plan.md Phase 4) -- SSH-tunnels
+# to the standalone T-Pot honeypot (not a Proxmox guest) and syncs its
+# events into opensearch-stack's tpot-events-* indices. Left false until
+# Phase 2's kv/services/tpot OpenBao entry (TPOT_SSH_PRIVATE_KEY) actually
+# exists -- the role's mandatory() check fails loudly rather than silently
+# no-op if this is flipped on too early.
+tpot_findings_ingest_enabled: false

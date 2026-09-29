@@ -56,11 +56,18 @@
     # operator's own interactive `steve` login key), sourced from
     # OpenBao. See defaults/main.yml and docs/tpot-honeypot/plan.md
     # Phase 2 for why this is mandatory rather than silently skipped.
+    #
+    # Stored in OpenBao base64-encoded, not as raw PEM text: openbao_write.py
+    # reads one value per line of stdin when piped non-interactively, so a
+    # real multi-line private key piped straight in would silently truncate
+    # to just its first line. base64 -w0 collapses it to the one line that
+    # tool actually supports -- decoded back out here before it ever
+    # touches disk.
     # ---------------------------------------------------------------
 
     - name: Materialize the T-Pot SSH tunnel private key
       ansible.builtin.copy:
-        content: "{{ tpot_findings_ingest_ssh_private_key }}"
+        content: "{{ tpot_findings_ingest_ssh_private_key | b64decode }}"
         dest: "{{ tpot_findings_ingest_ssh_key_path }}"
         owner: root
         group: root

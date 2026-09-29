@@ -36,10 +36,11 @@ tpot_findings_ingest_dest_prefix: "tpot-events"
 
 # A dedicated SSH keypair for this sync job, NOT the operator's own
 # `steve` interactive login key -- see docs/tpot-honeypot/plan.md Phase 2.
-# Sourced from OpenBao (kv/services/tpot, field TPOT_SSH_PRIVATE_KEY) via
-# secrets/manifest.json, same as every other secret this repo's roles
-# consume -- mandatory, so this role fails loudly (not silently) until
-# Phase 2's credential rotation + manifest entry actually exist.
+# Sourced from OpenBao (kv/services/tpot, field TPOT_SSH_PRIVATE_KEY,
+# stored base64-encoded -- see tasks/main.yml's materialize step for why)
+# via secrets/manifest.json, same as every other secret this repo's
+# roles consume -- mandatory, so this role fails loudly (not silently)
+# until Phase 2's credential rotation + manifest entry actually exist.
 tpot_findings_ingest_ssh_private_key: "{{ lookup('env', 'TPOT_SSH_PRIVATE_KEY') | mandatory('TPOT_SSH_PRIVATE_KEY env var is required -- see docs/tpot-honeypot/plan.md Phase 2') }}"
 tpot_findings_ingest_ssh_key_path: "{{ tpot_findings_ingest_dir }}/tpot_tunnel_key"
 
