@@ -49,8 +49,20 @@ from gvm.transforms import EtreeCheckCommandTransform
 
 # Operator-confirmed 2026-09-29 (docs/lxc-scan-and-monitoring-rollout/
 # plan.md, gvm-08): fleet credentialed scans run daily, staggered ~45min
-# apart overnight UTC so the ~25-host fleet doesn't all hit at once. A
-# GVM Target can only carry ONE ssh_credential_id for every host in it
+# apart overnight in the operator's own local time (Pacific/Auckland) so
+# the ~25-host fleet doesn't all hit at once. CORRECTED 2026-09-30: the
+# first version of this used a fixed "UTC" timezone with times chosen to
+# look like "overnight," but the operator is in NZT (UTC+12/+13 -- NZ
+# observes DST), so 01:00-07:45 UTC actually landed in their afternoon/
+# evening, not overnight -- caught live by checking real report
+# timestamps against the operator's own clock, not assumed correct just
+# because the schedules were confirmed "wired" the day before. Using a
+# real IANA zone name (not a fixed offset) here so this stays correct
+# across NZ's DST transitions instead of drifting wrong twice a year --
+# gvmd/libical resolve the named zone's DST rules themselves, same as
+# their own create_schedule() docs' "Europe/Berlin" example.
+#
+# A GVM Target can only carry ONE ssh_credential_id for every host in it
 # (confirmed against upstream python-gvm's request builders -- no
 # per-host-within-target credential exists in any shipped GMP version),
 # which is incompatible with this fleet's unique-keypair-per-LXC design,
@@ -69,7 +81,7 @@ ZONE_SCHEDULE_TIMES = {
     "build_seg": "07:00",
     "apps_seg": "07:45",
 }
-SCHEDULE_TIMEZONE = "UTC"
+SCHEDULE_TIMEZONE = "Pacific/Auckland"
 
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
@@ -358,9 +370,6 @@ def ensure_schedule(gmp, zone):
             f"ZONE_SCHEDULE_TIMES in this file before this zone can be scheduled"
         )
     name = f"Daily fleet scan: {zone}"
-    existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
-    if existing:
-        return existing
     hour, minute = hhmm.split(":")
     now = datetime.datetime.now(datetime.timezone.utc)
     dtstamp = now.strftime("%Y%m%dT%H%M%SZ")
@@ -379,11 +388,21 @@ def ensure_schedule(gmp, zone):
         "END:VEVENT\r\n"
         "END:VCALENDAR\r\n"
     )
+    comment = f"Fleet credentialed scans for zone {zone!r}, daily at {hhmm} {SCHEDULE_TIMEZONE}."
+    existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
+    if existing:
+        # Not just a dedup skip -- re-apply icalendar/timezone every run so
+        # a corrected ZONE_SCHEDULE_TIMES/SCHEDULE_TIMEZONE value (as
+        # happened 2026-09-30, UTC -> Pacific/Auckland) actually lands on
+        # an already-created schedule, not just on schedules created fresh.
+        gmp.modify_schedule(existing, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
+        print(f"schedule {name!r} ({existing}) already existed, updated to daily at {hhmm} {SCHEDULE_TIMEZONE}")
+        return existing
     response = gmp.create_schedule(
         name=name,
         icalendar=icalendar,
         timezone=SCHEDULE_TIMEZONE,
-        comment=f"Fleet credentialed scans for zone {zone!r}, daily at {hhmm} {SCHEDULE_TIMEZONE}.",
+        comment=comment,
     )
     schedule_id = response.get("id")
     print(f"created schedule {name!r} ({schedule_id}) daily at {hhmm} {SCHEDULE_TIMEZONE}")
