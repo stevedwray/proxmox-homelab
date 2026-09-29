@@ -159,29 +159,24 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
    (see `wazuh_findings_ingest`/GVM's `gvm_findings_sync.py` on
    `secpipe-stack` — plain stdlib-only Python synced via a systemd
    timer, landing in OpenSearch, correlated by `cve_enrichment_sync`).
-2. **Host is undocumented/unlabeled at the network level.** No MikroTik
-   comment, no DHCP reservation, identified only by a DHCP-refactor-era
-   forensic fingerprint. Low risk (it's LAN-only and known-location) but
-   inconsistent with how every other lab host is tracked.
-3. **Credentials live entirely outside OpenBao.** SSH key, web UI
-   htpasswd, and both sync repos' external-ES API keys are plain local
-   files with no rotation path and no central record of what exists.
-   This host will never be a `PRODUCTION_NODES` entry (it's not Proxmox),
-   so it doesn't need the full `with-secrets-prod` treatment — but
-   "nothing about it is written down anywhere" is a real gap for a box
-   whose entire job is being attacker-adjacent.
-4. **No patch cadence.** 63 pending apt packages, no unattended-upgrades
-   equivalent. The daily reboot/container-prune cron keeps the *honeypot
-   images* fresh (they're pulled `always`), but the underlying Debian
-   host OS itself isn't covered by that.
+2. ~~**Host is undocumented/unlabeled at the network level.**~~
+   **FIXED (Phase 1)**: MikroTik DHCP lease labeled, `tpot` inventory
+   group added.
+3. ~~**Credentials live entirely outside OpenBao.**~~ **FIXED for the
+   sync job's own access (Phase 2)** — a dedicated key is now OpenBao-
+   tracked. The *interactive* `steve` login key and the web-UI htpasswd
+   passwords remain outside OpenBao by deliberate choice (see
+   "Management boundary" — rotating them means touching `~/tpotce/`,
+   which this plan avoids), not because it was missed.
+4. ~~**No patch cadence.**~~ **FIXED (Phase 1.5)**: security-only
+   `unattended-upgrades` installed, 63-package backlog cleared to 3.
 5. **No ES retention policy.** Indices accumulate indefinitely
    (`logstash-YYYY.MM.DD`, one per day, unbounded). At ~35MB/day this is
    not urgent (years before it matters on a 459G disk) but there's no
    ILM policy defining an intended retention window, so it's an
-   unbounded-by-accident state, not a decided one.
-6. **Stale SSH alias.** `tpot-lxc` → `192.168.1.31:64295` doesn't
-   resolve to anything live — looks like leftover config from an
-   abandoned plan to run this as an LXC.
+   unbounded-by-accident state, not a decided one. **Still open.**
+6. ~~**Stale SSH alias.**~~ **FIXED (Phase 1)**: `tpot-lxc` removed from
+   `~/.ssh/config`.
 
 ## Proposed plan
 
@@ -244,39 +239,37 @@ initial health check; not caused by this playbook — nothing here runs
 `docker` — likely T-Pot's own internal automation; not investigated
 further as it's outside this plan's scope.)
 
-### Phase 2 — sync-job credentials: additive SSH key + OpenBao entry (operator-confirmed 2026-09-30, corrected 2026-09-30)
-Corrected twice: first after checking `docs/reference/secrets-management.md`
-properly (this needs neither a `hosts/tpot` entry nor a new AppRole —
-`kv/hosts/<node>` is specifically for a *Proxmox* node's own API tokens;
-this belongs with everything else whose identity comes from a service,
-i.e. `kv/services/tpot`, and `kv/services/*` is already broadly readable
-by every environment's existing `deploy-<node>` identity, so
-`secpipe-stack`'s own `deploy-pve-tiny` credentials already cover it, no
-new AppRole to create). Second, after the "Management boundary" decision
-above: **web-UI password rotation is dropped from scope entirely** — the
-sync job never uses the web UI, so rotating those passwords would be
-app-layer risk for no benefit.
+### Phase 2 — sync-job credentials: additive SSH key + OpenBao entry (done, 2026-09-30)
+Corrected twice before execution: first after checking
+`docs/reference/secrets-management.md` properly (this needs neither a
+`hosts/tpot` entry nor a new AppRole — `kv/hosts/<node>` is specifically
+for a *Proxmox* node's own API tokens; this belongs with everything else
+whose identity comes from a service, i.e. `kv/services/tpot`, and
+`kv/services/*` is already broadly readable by every environment's
+existing `deploy-<node>` identity, so `secpipe-stack`'s own
+`deploy-pve-tiny` credentials already cover it, no new AppRole to
+create). Second, after the "Management boundary" decision above:
+**web-UI password rotation dropped from scope entirely** — the sync job
+never uses the web UI, so rotating those passwords would be app-layer
+risk for no benefit.
 
 - [x] Dedicated SSH keypair generated and its public half appended to
-  `authorized_keys` (Phase 1.5, above) — purely additive, the operator's
-  own interactive key is untouched.
-- Add a `kv/services/tpot` entry to `secrets/manifest.json`'s `entries`
-  (field: `TPOT_SSH_PRIVATE_KEY`), and to `secpipe-stack`'s profile so
-  the loader actually exports it.
-- Write the private key value into OpenBao via `scripts/openbao_write.py`
-  after an explicit human OIDC login — this step, and the manifest edit
-  above, are **operator-only**: agents never get OpenBao write access
-  (this repo's own policy), and `secrets/` is outside what this session
-  can read or edit regardless. The private key file's path (not its
-  contents) is noted where the operator can find it.
+  `authorized_keys` (Phase 1.5) — purely additive, the operator's own
+  interactive key untouched.
+- [x] `kv/services/tpot` entry added to `secrets/manifest.json`'s
+  `entries` (field: `TPOT_SSH_PRIVATE_KEY`) and to `secpipe-stack`'s
+  profile — operator-run, since `secrets/` is outside this session's
+  read/edit permissions.
+- [x] Private key value written into OpenBao via
+  `scripts/openbao_write.py` after explicit human OIDC login —
+  operator-run. **Base64-encoded before writing** (not raw PEM text):
+  `openbao_write.py` reads exactly one line per field when stdin isn't a
+  TTY, so a real multi-line private key piped straight in would silently
+  truncate to just its first line — found while drafting the runbook,
+  fixed before it was ever run. The role `b64decode`s it back out before
+  it touches disk.
 
-**Execution note (2026-09-30):** the `tpot_findings_ingest` role (Phase 4,
-below) already expects exactly this shape — `TPOT_SSH_PRIVATE_KEY` via
-`secrets/manifest.json` → OpenBao, materialized to a file on
-`secpipe-stack` at deploy time. It fails loudly (mandatory env var) until
-this phase's manifest entry and OpenBao write actually exist.
-
-### Phase 4 — findings ingestion: built 2026-09-30, not yet deployed (blocked on Phase 2)
+### Phase 4 — findings ingestion: deployed live 2026-09-30, two real bugs found and fixed, one MikroTik fix pending operator run
 A new `tpot_findings_ingest` role was built, following the same shape as
 `wazuh_findings_ingest`/`gvm_findings_ingest` rather than resurrecting
 either personal repo wholesale:
@@ -297,18 +290,47 @@ either personal repo wholesale:
   2026-09-30 — not folded into `unified-cve-exposure`, since T-Pot
   activity is activity-shaped, not CVE-shaped).
 - Wired into `deploy-secpipe-stack.yml`, gated behind
-  `tpot_findings_ingest_enabled` (default `false`) exactly like
-  `cve_enrichment_sync` — inert on every existing `secpipe-stack`
-  redeploy until explicitly turned on.
-- **Cannot actually run yet**: `tpot_findings_ingest_ssh_private_key` is
-  `mandatory()` on `TPOT_SSH_PRIVATE_KEY`, which doesn't exist until
-  Phase 2's manifest entry + OpenBao write are done. Deploying now would
-  fail loudly and immediately, by design, rather than silently no-op.
+  `tpot_findings_ingest_enabled` — same pattern as `cve_enrichment_sync`.
+  Flipped to `true` in `terraform/lxc/stacks/secpipe-stack/stack.yaml`
+  once Phase 2 was done.
+
+**Real bug #1, found and fixed live**: the first deploy attempt showed
+*every* `tpot_findings_ingest` task as `skipping`, even with the flag set
+`true`. Root cause: `scripts/provision.sh`'s `render_stack_ansible_extra_vars()`
+only forwards an explicit, hardcoded allowlist of keys from each stack's
+`stack.yaml` into Ansible extra-vars — `tpot_findings_ingest_enabled`
+wasn't in it (sibling flags like `wazuh_findings_ingest_enabled` were).
+Fixed by adding a `TPOT_FINDINGS_INGEST_KEYS` entry to that allowlist,
+identical in shape to its siblings. Re-run after the fix: role installed
+cleanly, 0 failed.
+
+**Real bug #2, found and fixed live**: the first manual trigger of
+`tpot-findings-ingest.service` failed with `Connection timed out`
+opening the SSH tunnel from `secpipe-stack` (`192.168.50.12`, `ai_seg`)
+to T-Pot (`192.168.1.28`, flat client LAN, port 64295). Confirmed by
+reading the live MikroTik ruleset directly: `ai_seg` had rules to/from
+several VLAN zones and a narrow internet allowlist, but **nothing at all
+reaching the flat LAN** — the same class of gap as the Wazuh
+port-55000 issue found earlier in this same overall rollout
+(`docs/lxc-scan-and-monitoring-rollout/`), not a flaw in the new role.
+Fix written: `ansible/00-initial-setup/mikrotik-firewall-secpipe-to-tpot.yml`,
+one narrowly-scoped forward-chain rule (secpipe-stack's own IP → T-Pot's
+own IP, port 64295 only). First apply attempt hit a second, smaller bug —
+used `PUT` on MikroTik's `/ip/firewall/filter/add` REST endpoint, which
+needs `POST` (`PUT` targets an existing resource by ID, which `/add`
+doesn't have) — fixed to match every other `mikrotik-firewall-*.yml`
+playbook in this repo. **Blocked from self-apply** by the
+"Protected-Scope IaC Apply" classifier (same as every other MikroTik
+change this session) — corrected playbook is committed and
+syntax-checked; awaiting the operator's run.
+
 - Retention/ILM for the destination `tpot-events-*` indices is still not
   defined (see "Still open" below) — deliberately out of scope for this
   pass; the sync script only writes.
 - Retention for the *source* `logstash-*` indices on the T-Pot host
   itself (Gap 5) is a separate, still-open decision.
+- **Not yet confirmed**: a real end-to-end run (tunnel connects, events
+  actually land in `tpot-events-*`) — blocked on the MikroTik fix above.
 
 ### Phase 5 — visibility
 - Extend the existing `Threat & Vulnerability Overview (UVM)` Grafana
@@ -321,9 +343,19 @@ either personal repo wholesale:
 
 ## Still open
 
+- **Immediate next step**: operator runs
+  `ansible/00-initial-setup/mikrotik-firewall-secpipe-to-tpot.yml`
+  (`TASK_APPROVAL=tpot-findings-ingest-mikrotik-fix ./with-secrets-prod ansible-playbook ...`),
+  then a manual trigger of `tpot-findings-ingest.service` on
+  `secpipe-stack` gets verified end-to-end (real events actually landing
+  in `tpot-events-*` on `opensearch-stack`, not just a clean tunnel).
 - **Retention window (Gap 5)**: how long should raw T-Pot `logstash-*`
   indices be kept before ILM rolls them off? Not urgent given current
   growth rate (~35MB/day), but worth deciding once instead of leaving it
-  implicit — revisit when Phase 4 is actually built.
+  implicit.
+- **Destination retention**: same open question for the new
+  `tpot-events-*` indices this phase creates — no ILM policy defined yet.
 - **AI daily-report port** (Phase 5): worth reviving, or does the
   Grafana panel make it redundant?
+- **Phase 5 (visibility)**: not started — Grafana dashboard panel work
+  comes after the ingestion pipeline is confirmed flowing end-to-end.

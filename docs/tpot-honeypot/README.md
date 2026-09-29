@@ -6,7 +6,7 @@ standalone Raspberry Pi 5 — **not** a Proxmox guest, so it sits outside
 part of this home lab's network and its findings are meant to feed the
 same `docs/threat-vuln-platform/` pipeline as Wazuh and GVM.
 
-## Status (2026-09-30): documented for the first time; live and healthy; ingestion not yet built
+## Status (2026-09-30): host under management, ingestion deployed, one MikroTik fix pending operator run
 
 This workspace exists because the host had drifted into "unlabeled
 device on the LAN" status (see `docs/dhcp-refactor/current-state.md`,
@@ -14,8 +14,21 @@ which found it only as a fingerprinted `raspberrypi` DHCP lease) and its
 log-ingestion tooling was split across two personal repos
 (`tpotce-analysis`, `security-analysis`) neither of which is wired into
 this lab's actual OpenSearch/threat-vuln-platform stack. See `plan.md`
-for the full access review and the proposed path to bring it under
-proper management.
+for the full access review, the completed phases, and what's left.
+
+**Done, same day**: DHCP lease labeled, host brought under Ansible
+management (`unattended-upgrades`, persistent `journald`, a dedicated
+SSH key for the sync job — all host-layer only, per the "Management
+boundary" section in `plan.md`; T-Pot's own `~/tpotce/` application is
+never touched), OpenBao credential entry written, and a
+`tpot_findings_ingest` role deployed live to `secpipe-stack`.
+
+**Blocking the first real data flow**: `secpipe-stack`'s zone (`ai_seg`)
+has no MikroTik route to T-Pot's flat client LAN — a genuine, newly-found
+gap (same class as the Wazuh port-55000 issue from earlier in this
+rollout), not a flaw in the new role. The fix is written and
+syntax-checked but blocked from self-apply by the router-change
+classifier; see `plan.md`'s "Still open" for the exact command.
 
 **Live health check performed 2026-09-30** (see `plan.md` §Current
 state for full detail):
