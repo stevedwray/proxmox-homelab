@@ -6,7 +6,7 @@ standalone Raspberry Pi 5 — **not** a Proxmox guest, so it sits outside
 part of this home lab's network and its findings are meant to feed the
 same `docs/threat-vuln-platform/` pipeline as Wazuh and GVM.
 
-## Status (2026-09-30): host under management, ingestion deployed, blocked on a router-level networking mystery
+## Status (2026-09-30): fully live — host managed, ingestion working end-to-end (223k+ events)
 
 This workspace exists because the host had drifted into "unlabeled
 device on the LAN" status (see `docs/dhcp-refactor/current-state.md`,
@@ -23,19 +23,21 @@ boundary" section in `plan.md`; T-Pot's own `~/tpotce/` application is
 never touched), OpenBao credential entry written, and a
 `tpot_findings_ingest` role deployed live to `secpipe-stack`.
 
-**Blocking the first real data flow**: `secpipe-stack`'s zone (`ai_seg`)
-had no MikroTik route to T-Pot's flat client LAN at all — a genuine
-gap (same class as the Wazuh port-55000 issue from earlier in this
-rollout), now fixed and confirmed live. But the tunnel still times out
-even with that fix in place: T-Pot's own kernel is confirmed correctly
-answering the SSH connection attempt (`SYN_RECV` observed live in
-`/proc/net/tcp`), yet the reply never makes it back through the router
-to `ai_seg` — MikroTik's connection tracking shows the SYN going out but
-never sees a reply. Points to something at the router's hardware-
-switching layer between `vlan50-ai` and `bridgeLocal` that isn't visible
-through the REST API's firewall/route views — needs direct RouterOS
-console access to chase further. See `plan.md`'s "Still open" for the
-full diagnostic trail.
+**Five real bugs found and fixed to get the first data flow working**
+(full diagnostic trail in `plan.md`): a missing MikroTik route from
+`ai_seg` to T-Pot's flat client LAN (same class as the Wazuh port-55000
+issue found earlier in this rollout); an IP address collision between
+T-Pot's own internal Docker bridge networks and most of this lab's VLAN
+addressing (T-Pot's `192.168.48.0/20` per-honeypot bridge silently
+swallowed replies meant for `ai_seg`'s `192.168.50.0/24` — fixed with a
+single host-layer route on T-Pot, no Docker/compose changes); a
+`scripts/provision.sh` allowlist gap that silently no-op'd the whole
+role; a `secrets/manifest.json` profile-completeness gap that
+materialized an empty private key with no error; and a hardcoded
+Elasticsearch major-version check that rejected T-Pot's real (and
+healthy) ES 9.3.5. **Confirmed end-to-end**: 223,172 events synced with
+0 errors, 223,173 documents verified live in `opensearch-stack`'s
+`tpot-events-*` index.
 
 **Live health check performed 2026-09-30** (see `plan.md` §Current
 state for full detail):

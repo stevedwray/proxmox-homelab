@@ -345,22 +345,82 @@ diagnostic trail (2026-09-30):
 - A general `connection-state: established,related` accept rule already
   sits early in MikroTik's forward chain (`*69`, no src/dst restriction)
   and should cover the reply regardless of the new rule's position, so
-  this isn't a second ordering problem.
-- Conclusion: the SYN-ACK is being lost somewhere in the router's own
-  L2/hardware-switching path between the `vlan50-ai` and `bridgeLocal`
-  interfaces — something the REST API's `/ip/firewall` and `/ip/route`
-  views can't surface (e.g. bridge hardware offloading, switch-chip VLAN
-  table). **This needs direct RouterOS console access** (`/interface
-  bridge host print`, `/interface ethernet switch` settings) to diagnose
-  further — beyond what this session's REST-API-only access can reach.
+  this isn't a second ordering problem — ruled out router hardware
+  offloading too (`vlan50-ai`'s `hw-offloaded: false`), and the bridge's
+  VLAN table/FDB entries for both VLAN 50 and T-Pot's own MAC checked out
+  completely normal.
+
+**Root cause of #3, found**: not MikroTik at all. `ip route get
+192.168.50.12` on the T-Pot host itself showed the reply routing into
+`br-2156a55887f4` (one of T-Pot's own internal per-honeypot Docker
+bridge networks, `192.168.48.0/20`) instead of out via the real gateway
+— confirmed by the ICMP error literally coming back *from* that bridge's
+own gateway IP (`192.168.48.1`, "Destination Host Unreachable"), not
+from anywhere on the real network. **T-Pot's own Docker networking
+collides with this lab's private IP space**: its sequence of
+auto-allocated `/20` per-honeypot bridges (`32.0/20`, `48.0/20`,
+`64.0/20`, `80.0/20`, `112.0/20`, `128.0/20`, `144.0/20`, `160.0/20`)
+covers nearly every octet this lab's own VLANs use (`ai_seg`=50 falls in
+`48.0/20`; `infra_seg`=40 falls in `32.0/20`; `game_seg`=60,
+`pentest_seg`=70, `media_seg`=80, `apps_seg`=120 all collide too — only
+`build_seg`=10, `mgmt_seg`=20, `edge_seg`=30 are currently clear). Any
+lab host in a colliding range talking to T-Pot would hit this same wall,
+not just `secpipe-stack`.
+
+The real fix (reconfiguring Docker's `default-address-pools` on the
+host) requires recreating T-Pot's compose networks — exactly the
+"redeploy" risk the "Management boundary" section exists to avoid.
+Fixed instead with a host-layer-only, non-disruptive workaround: a
+single more-specific host route added directly on T-Pot
+(`192.168.50.12/32 via 192.168.1.1`, via `nmcli connection modify
+'Wired connection 1' +ipv4.routes ...` + `nmcli device reapply eth0`) —
+wins over the colliding `/20` by ordinary longest-prefix-match routing,
+persists across reboots (stored in the NetworkManager connection
+profile), and never touches `~/tpotce/` or restarts anything. Verified
+live: full ping round-trip `secpipe-stack` ↔ T-Pot immediately after.
+*Not yet codified into `tpot-host-baseline.yml`* — applied by hand
+during this debugging session; worth adding there so it survives an OS
+reinstall (see "Still open").
+
+**Real bug #4, found and fixed live**: with routing fixed, the tunnel's
+SSH handshake itself then failed — `Load key ... error in libcrypto`,
+`Permission denied`. The materialized private key on `secpipe-stack` was
+**0 bytes**. Root cause: `secrets/manifest.json`'s `pve-tiny` profile
+entry list didn't include `services/tpot` — the field was correctly
+defined under `entries` (so `openbao_write.py` didn't warn), and the
+value was genuinely written to OpenBao (confirmed via `bao kv get`), but
+the loader only exports fields for entries actually listed in the
+active profile, so it silently resolved to an empty string rather than
+failing (`mandatory()` only catches a fully *unset* variable, not an
+empty one). Fixed by the operator adding `"services/tpot"` to the
+`pve-tiny` profile's entries. Redeployed: key materialized at a real
+432 bytes, valid `OPENSSH PRIVATE KEY` header confirmed.
+
+**Real bug #5, found and fixed live**: tunnel finally connected fully,
+but the script then rejected it — `"tunnel did not land on Elasticsearch
+8.x, got: ...9.3.5..."`. Checked directly on T-Pot: same pinned image
+(`ghcr.io/telekom-security/elasticsearch:24.04.1`), cluster `green`, all
+data intact, no recent restart — this T-Pot release's bundled ES simply
+*is* 9.3.5; the `8.x` assumption was copied from
+`tpotce-analysis`'s original prototype (written against an older T-Pot
+release) without re-verifying it live. Fixed by replacing the
+hardcoded-major-version guard with what it was actually meant to check —
+landing on the right service at all (`cluster_name == "tpotcluster"`),
+not a specific version.
+
+**Phase 4 confirmed fully working end-to-end, 2026-09-30**: real run
+processed/indexed **223,172 events with 0 errors**, cursor state saved.
+Verified independently on the OpenSearch side via the sync job's own
+scoped credential: `tpot-events-*` holds **223,173** documents (one more
+than the run reported — a second manual trigger during verification
+picked up a few additional new events, exactly the incremental-cursor
+behavior working as intended).
 
 - Retention/ILM for the destination `tpot-events-*` indices is still not
   defined (see "Still open" below) — deliberately out of scope for this
   pass; the sync script only writes.
 - Retention for the *source* `logstash-*` indices on the T-Pot host
   itself (Gap 5) is a separate, still-open decision.
-- **Not yet confirmed**: a real end-to-end run (tunnel connects, events
-  actually land in `tpot-events-*`) — blocked on problem #3 above.
 
 ### Phase 5 — visibility
 - Extend the existing `Threat & Vulnerability Overview (UVM)` Grafana
@@ -373,17 +433,23 @@ diagnostic trail (2026-09-30):
 
 ## Still open
 
-- **Immediate blocker (Real problem #3, above)**: the MikroTik firewall
-  fix is applied and confirmed correct, but the SSH tunnel still times
-  out — a SYN-ACK from T-Pot never makes it back through the router to
-  `ai_seg`, despite T-Pot's own kernel confirmed answering correctly
-  (`SYN_RECV` seen live in `/proc/net/tcp`). This needs direct RouterOS
-  console access to diagnose (bridge hardware offloading / switch-chip
-  VLAN table between `vlan50-ai` and `bridgeLocal`) — beyond what this
-  session's REST-API-only MikroTik access can reach. Once resolved, a
-  manual trigger of `tpot-findings-ingest.service` on `secpipe-stack`
-  gets verified end-to-end (real events actually landing in
-  `tpot-events-*` on `opensearch-stack`, not just a clean tunnel).
+- **Codify the T-Pot host route**: the `192.168.50.12/32 via
+  192.168.1.1` NetworkManager route fix (Real bug #3) was applied by
+  hand during debugging, not yet added to
+  `ansible/00-initial-setup/tpot-host-baseline.yml`. It's persistent
+  (stored in the connection profile) so it currently survives a reboot,
+  but should be codified so it survives a full OS reinstall and so
+  future lab hosts needing to reach T-Pot don't hit the same
+  IP-collision wall silently. Consider whether to add routes for the
+  other colliding zones (`infra_seg`, `game_seg`, `pentest_seg`,
+  `media_seg`, `apps_seg`) proactively, or only as each is actually
+  needed.
+- **`secrets/manifest.json` profile-completeness gap**: adding a field
+  to `entries` without also adding the entry to the relevant profile's
+  list fails *silently* (empty string, not an error) rather than loud —
+  this cost real debugging time (Real bug #4). Worth a `--check` habit
+  or tooling improvement flagged separately; out of scope for this plan
+  to fix generally.
 - **Retention window (Gap 5)**: how long should raw T-Pot `logstash-*`
   indices be kept before ILM rolls them off? Not urgent given current
   growth rate (~35MB/day), but worth deciding once instead of leaving it
