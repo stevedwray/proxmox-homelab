@@ -146,7 +146,7 @@ During this rollout Wings was found failed because the `allowed_mounts` and
 The original values were retained, a timestamped backup was made, the lists
 were repaired, and Wings resumed managing all configured game containers.
 
-### Phase 3e — automatic trainer spells — planned
+### Phase 3e — automatic trainer spells — completed 2026-09-30
 
 Use `n70n10/mod-autolearn` for normal player characters. The configuration in
 `scripts/azerothcore-qol/config/mod_autolearn.conf` enables only class-spell
@@ -161,6 +161,23 @@ and Druid Swift Flight Form, preserving those class quest chains. Existing
 characters are not backfilled; use `.learn all my trainer` as a one-off for a
 GM test character. New and normally-levelled characters receive ordinary
 trainer spells at the appropriate levels.
+
+### Phase 3f — small Auction House market — planned
+
+Use `azerothcore/mod-ah-bot`, pinned to commit
+`c11d8318cbd8714a9980f9464f78e07d3d48a70a`. This is distinct from the
+Playerbot fork and supplies a controlled background market for the private
+realm. It must use one locked, dedicated account and non-played owner
+character, never one of the operator's characters.
+
+The configuration overlay `scripts/azerothcore-qol/config/mod_ahbot.conf`
+enables listing only: the bot never bids on or buys player auctions. It draws
+loot, trade goods, and profession supplies but excludes vendor stock, has two
+or fewer duplicate stacks, and filters out requirements above level 80. Import
+the module's supplied `mod_auctionhousebot.sql` and
+`auctionhousebot_professionItems.sql`, then apply
+`scripts/azerothcore-qol/sql/009-ahbot-small-market.sql`. The resulting target
+stock is 100 Alliance, 100 Horde, and 60 neutral auctions.
 
 ### Phase 3b — free heirloom vendor — completed 2026-09-29
 
