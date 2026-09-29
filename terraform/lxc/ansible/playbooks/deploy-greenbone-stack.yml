@@ -1018,6 +1018,42 @@
             mode: "0644"
           no_log: true
 
+        # Fleet-wide gvm-scan targets (docs/lxc-scan-and-monitoring-rollout/
+        # plan.md, gvm-07). Generated on the Ansible control host (where
+        # OpenBao AppRole creds and secrets/manifest.json live), never on
+        # greenbone-stack itself, then copied over -- same
+        # generate-locally-then-deliver shape the existing steve/openvas/
+        # mikrotik keys already use, just via a script instead of a single
+        # inline value because there are ~19 of these, not one.
+        - name: Create local temporary directory for fleet-targets generation
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: gvm-fleet-targets-
+          register: greenbone_fleet_targets_local_tempdir
+          delegate_to: localhost
+          no_log: true
+
+        - name: Generate the fleet-targets directory (targets.json + per-stack key/sudopass)
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "{{ playbook_dir }}/../../../../scripts/gvm_fleet_targets_generate.py"
+              - --out-dir
+              - "{{ greenbone_fleet_targets_local_tempdir.path }}"
+          delegate_to: localhost
+          changed_when: false
+          register: greenbone_fleet_targets_generated
+
+        - name: Show fleet-targets generation summary
+          ansible.builtin.debug:
+            msg: "{{ greenbone_fleet_targets_generated.stdout }}"
+
+        - name: Copy the generated fleet-targets directory onto greenbone-stack
+          ansible.builtin.copy:
+            src: "{{ greenbone_fleet_targets_local_tempdir.path }}/"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/fleet/"
+            mode: "0644"
+
         - name: Create credentialed targets and unscheduled tasks
           ansible.builtin.command:
             cmd: >-
@@ -1026,6 +1062,7 @@
               -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key:/tmp/mikrotik-gvm-scan.key:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/fleet:/tmp/fleet:ro
               -e GVM_USERNAME
               -e GVM_PASSWORD
               -e GREENBONE_STEVE_KEY_PATH
@@ -1033,6 +1070,7 @@
               -e GREENBONE_MIKROTIK_KEY_PATH
               -e GREENBONE_START_TASK_NAME
               -e GREENBONE_STATUS_TASK_NAME
+              -e GVM_FLEET_DIR=/tmp/fleet
               gvm-tools python3 /tmp/setup_credentials.py
             chdir: "{{ greenbone_compose_dir }}"
           environment:
@@ -1058,6 +1096,14 @@
             path: "{{ greenbone_credential_program_tempdir.path }}"
             state: absent
           no_log: true
+
+        - name: Remove local fleet-targets temporary directory
+          ansible.builtin.file:
+            path: "{{ greenbone_fleet_targets_local_tempdir.path }}"
+            state: absent
+          delegate_to: localhost
+          no_log: true
+          when: greenbone_fleet_targets_local_tempdir.path is defined
 
 - name: Deploy findings ingestion (GVM -> opensearch-stack)
   hosts: all
