@@ -26,3 +26,38 @@ docker_base_image_prune_min_age: "24h"
 # a thundering-herd alignment with other scheduled jobs (matches
 # harbor_repull_on_calendar's own reasoning).
 docker_base_image_prune_on_calendar: "*-*-* 03:47:00"
+
+# --- /etc/docker/daemon.json ownership (docs/logging/docker-log-driver-audit.md) ---
+# Opt-in per stack while stacks migrate off their own hand-written
+# daemon.json copy task. A stack that sets this true MUST delete its own
+# daemon.json task in the same change, or the two will flap.
+docker_base_manage_daemon_json: false
+
+# Fleet default: container stdout/stderr -> local rsyslog :10514 -> Graylog.
+# Override per stack only with a written reason (e.g. pentagi-stack's
+# per-service json-file options, see audit R2).
+docker_base_log_driver: syslog
+
+docker_base_log_opts_by_driver:
+  syslog:
+    syslog-address: "tcp://127.0.0.1:10514"
+    syslog-format: rfc5424
+    tag: "{% raw %}docker-{{.Name}}{% endraw %}"
+    # Never set cache-disabled: deploy-graylog-stack.yml reads `docker logs`
+    # via Docker's dual-logging cache (audit R5).
+  json-file:
+    max-size: "50m"
+    max-file: "7"
+  local:
+    max-size: "50m"
+    max-file: "7"
+
+# Rotation is always present for non-syslog drivers; a stack can still
+# replace the whole dict if it really needs to.
+docker_base_log_opts: "{{ docker_base_log_opts_by_driver[docker_base_log_driver] | default({'max-size': '50m', 'max-file': '7'}) }}"
+
+# Everything else a stack needs in daemon.json (insecure-registries, dns,
+# storage-driver, live-restore, etc.) -- merged in via combine, same
+# per-stack-dict pattern deploy-portainer-stack.yml's own daemon.json task
+# already uses.
+docker_base_daemon_extra: {}

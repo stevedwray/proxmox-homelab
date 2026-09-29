@@ -1,7 +1,12 @@
 # Docker log-driver audit (LXC stacks)
 
-**Status:** audit + proposal only. Nothing in this document has been applied.
-No playbook, role, or template was changed on the branch that added it.
+**Status:** the `roles/docker_base` design below (§4's defaults diff plus
+the corresponding tasks/handlers) was applied 2026-09-29, opt-in and off by
+default (`docker_base_manage_daemon_json: false`) -- see
+`docs/lxc-scan-and-monitoring-rollout/plan.md`'s `log-01`/`log-02`. Per-stack
+migrations are NOT yet done fleet-wide -- only `ai-services-stack` and
+`mcp-utility-stack` have opted in so far (`log-02`); every other stack listed
+below as non-compliant is unchanged.
 
 **Scope:** every `terraform/lxc/ansible/playbooks/deploy-*.yml` (39 playbooks),
 the compose files under `terraform/lxc/stacks/*/docker-compose.yml` and
