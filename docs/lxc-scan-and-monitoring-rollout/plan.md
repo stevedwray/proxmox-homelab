@@ -127,8 +127,8 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check terraform/lxc/ansible/roles/gvm_scan_account/tasks/main.yml"
-    expect: "exit 0 (a bare tasks file syntax-checks as a standalone play list)"
+    cmd: "printf '%s\n' '- hosts: all' '  gather_facts: false' '  roles: [gvm_scan_account]' > /tmp/syntax-check-gvm-scan-account.yml && ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check /tmp/syntax-check-gvm-scan-account.yml"
+    expect: "exit 0 -- CORRECTED 2026-09-29: a bare tasks/main.yml is NOT a valid standalone play list (ansible-playbook --syntax-check errors 'ansible.builtin.assert is not a valid attribute for a Play' when pointed at it directly) -- verified live, must wrap the role in a throwaway play like this instead"
     critical: true
   - id: sudoers-content-exact
     cmd: "grep -q 'gvm-scan ALL=(ALL) ALL' terraform/lxc/ansible/roles/gvm_scan_account/tasks/main.yml"
@@ -397,8 +397,8 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check terraform/lxc/ansible/roles/wazuh_agent/tasks/main.yml"
-    expect: "exit 0"
+    cmd: "printf '%s\n' '- hosts: all' '  gather_facts: false' '  roles: [wazuh_agent]' > /tmp/syntax-check-wazuh-agent.yml && ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check /tmp/syntax-check-wazuh-agent.yml"
+    expect: "exit 0 -- a bare tasks/main.yml is not a valid standalone play list, must wrap the role (see gvm-01's corrected gate for why)"
     critical: true
   - id: conditional-flag-present
     cmd: "grep -c '\\-G' terraform/lxc/ansible/roles/wazuh_agent/tasks/main.yml"
@@ -458,8 +458,8 @@ scope:
 
 gates:
   - id: syntax-check
-    cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check terraform/lxc/ansible/roles/docker_base/tasks/main.yml"
-    expect: "exit 0"
+    cmd: "printf '%s\n' '- hosts: all' '  gather_facts: false' '  roles: [docker_base]' > /tmp/syntax-check-docker-base.yml && ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check /tmp/syntax-check-docker-base.yml"
+    expect: "exit 0 -- a bare tasks/main.yml is not a valid standalone play list, must wrap the role (see gvm-01's corrected gate for why)"
     critical: true
   - id: default-still-off
     cmd: "grep -q 'docker_base_manage_daemon_json: false' terraform/lxc/ansible/roles/docker_base/defaults/main.yml"

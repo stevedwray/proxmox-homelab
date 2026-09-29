@@ -1,0 +1,17 @@
+---
+# Defaults for gvm_scan_account -- see docs/lxc-scan-and-monitoring-rollout/
+# plan.md (gvm-01). Creates the dedicated "gvm-scan" local account GVM's
+# credentialed (LSC) scans authenticate as: SSH key for login, full sudo
+# gated behind a separate password credential (GVM's "elevate privileges"
+# model), replacing the old setup_credentials.py's reuse of the operator's
+# own root admin key.
+
+# Both of these are deliberately given no real default -- they are
+# security-relevant, per-host, unique values (one SSH keypair + one sudo
+# password per LXC, operator-confirmed 2026-09-29) that must come from
+# that specific stack's own OpenBao entry via gvm_scan_host_secret.py
+# (see gvm-02/gvm-05), never guessed or shared across hosts. Same "never
+# guessed, exact match or fail" philosophy as
+# known_production_images.json's classify_artifact().
+gvm_scan_account_public_key: ""
+gvm_scan_account_sudo_password_hash: ""
