@@ -8,13 +8,15 @@
 # FIM baseline rather than a task failure.
 wazuh_agent_fim_paths: []
 
-# Not assigning agents to a named Wazuh dashboard group in this first
-# pilot pass -- agent_groups requires the group to already exist on the
-# manager before enrollment, which would mean a manager-side
-# provisioning step this role doesn't otherwise depend on. With only 5
-# pilot hosts, filtering/managing them individually by name in the
-# dashboard is enough for now; revisit grouping if/when this becomes a
-# fleet-wide rollout.
+# Fleet-wide agent_groups (docs/lxc-scan-and-monitoring-rollout/plan.md,
+# waz-01, added 2026-09-29 -- the pilot-era comment here used to say
+# "revisit grouping if/when this becomes a fleet-wide rollout"; that's
+# now). One zone group per host, not a list -- the including playbook
+# passes its own stack's zone value (e.g. "infra_seg") literally, same as
+# it already passes wazuh_agent_fim_paths. Empty string means "no group"
+# (skips the ensure-group task and the -G enrollment flag entirely), so
+# this stays backward compatible with any host that doesn't set it.
+wazuh_agent_group: ""
 
 # Off by default -- deliberate opt-in, not "on wherever Docker happens
 # to be present". The docker-listener wodle runs as the wazuh user and

@@ -1,0 +1,53 @@
+---
+# gvm_scan_account -- see defaults/main.yml and docs/lxc-scan-and-monitoring-
+# rollout/plan.md (gvm-01) for the design. Uses ansible.builtin modules only
+# -- ansible.posix isn't a declared collection dependency anywhere else in
+# this repo (checked: requirements.yml only lists community.docker), and
+# the one existing authorized_keys precedent (deploy-cse-kali.yml) writes it
+# by hand rather than via ansible.posix.authorized_key, so this role follows
+# that same convention instead of adding a new dependency for one file write.
+
+- name: Fail closed if this stack's GVM scan public key/sudo password hash weren't supplied
+  ansible.builtin.assert:
+    that:
+      - gvm_scan_account_public_key | length > 0
+      - gvm_scan_account_sudo_password_hash | length > 0
+    fail_msg: >-
+      gvm_scan_account_public_key and gvm_scan_account_sudo_password_hash
+      must both be set by the including playbook (from this stack's own
+      OpenBao entry via scripts/gvm_scan_host_secret.py, see
+      docs/lxc-scan-and-monitoring-rollout/plan.md gvm-05) -- never
+      guessed or defaulted, same "never guessed" philosophy as
+      known_production_images.json's classify_artifact().
+
+- name: Create the gvm-scan system account
+  ansible.builtin.user:
+    name: gvm-scan
+    shell: /bin/bash
+    create_home: true
+    password: "{{ gvm_scan_account_sudo_password_hash }}"
+
+- name: Ensure gvm-scan's .ssh directory exists
+  ansible.builtin.file:
+    path: /home/gvm-scan/.ssh
+    state: directory
+    owner: gvm-scan
+    group: gvm-scan
+    mode: "0700"
+
+- name: Write gvm-scan's authorized_keys (exclusive -- this is the only key it should ever trust)
+  ansible.builtin.copy:
+    dest: /home/gvm-scan/.ssh/authorized_keys
+    content: "{{ gvm_scan_account_public_key }}\n"
+    owner: gvm-scan
+    group: gvm-scan
+    mode: "0600"
+
+- name: Grant gvm-scan full sudo (password required -- GVM's ssh_elevate credential supplies it)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/gvm-scan
+    content: "gvm-scan ALL=(ALL) ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"

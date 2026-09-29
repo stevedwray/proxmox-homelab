@@ -54,6 +54,33 @@
     daemon_reload: true
   when: docker_rsyslog_order_dropin.changed
 
+# Opt-in daemon.json ownership (docs/logging/docker-log-driver-audit.md,
+# log-01). Off by default (docker_base_manage_daemon_json: false) -- a
+# stack that hasn't migrated yet keeps its own hand-written daemon.json
+# task untouched. A stack that sets this true MUST delete its own
+# daemon.json task in the same change (see that stack's own migration
+# commit), or the two will flap on every run. Written before Docker
+# starts, matching deploy-portainer-stack.yml's own established
+# pre_tasks-before-docker_base ordering for the same reason.
+- name: Write /etc/docker/daemon.json (docker_base-owned)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    mode: "0644"
+    content: >-
+      {{
+        (docker_base_daemon_extra | combine({
+          'log-driver': docker_base_log_driver,
+          'log-opts': docker_base_log_opts,
+        })) | to_nice_json
+      }}
+  register: docker_base_daemon_json
+  notify: Restart Docker (docker_base)
+  when: docker_base_manage_daemon_json | bool
+
+- name: Flush handlers so a changed daemon.json applies before containers start
+  ansible.builtin.meta: flush_handlers
+  when: docker_base_manage_daemon_json | bool
+
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
     name: docker

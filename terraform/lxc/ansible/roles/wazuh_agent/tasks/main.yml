@@ -17,7 +17,62 @@
         lookup('env', 'WAZUH_AGENT_AUTHD_PASSWORD')
         | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required for the wazuh_agent role -- see wazuh-stack STACK_CONTRACT.md')
       }}
+    # Only needed for the group-ensure task below, and only when this host
+    # actually sets wazuh_agent_group -- same WAZUH_API_PASSWORD (OpenBao
+    # kv/services/wazuh) deploy-wazuh-stack.yml itself already requires,
+    # confirmed already common/shared to every stack's env the same way
+    # WAZUH_AGENT_AUTHD_PASSWORD is. Username is "wazuh-wui" -- confirmed
+    # against deploy-wazuh-stack.yml's own API_USERNAME value, Wazuh
+    # 4.14.7 (see wazuh_image_tag there; do not assume this API shape
+    # holds for a different major version without re-checking).
+    wazuh_agent_api_password_resolved: >-
+      {{
+        lookup('env', 'WAZUH_API_PASSWORD')
+        | mandatory('WAZUH_API_PASSWORD env var is required for wazuh_agent_group -- see wazuh-stack STACK_CONTRACT.md')
+        if wazuh_agent_group | length > 0 else ''
+      }}
   no_log: true
+
+- name: Ensure this host's Wazuh agent group exists on the manager
+  when: wazuh_agent_group | length > 0
+  block:
+    - name: Authenticate to the Wazuh manager API
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_agent_manager_ip }}:55000/security/user/authenticate"
+        method: GET
+        url_username: wazuh-wui
+        url_password: "{{ wazuh_agent_api_password_resolved }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- Wazuh's own self-signed demo cert, internal SDN only, same acceptance already made for the indexer's own API call in deploy-wazuh-stack.yml
+        return_content: true
+      register: wazuh_agent_api_auth
+      no_log: true
+
+    - name: Check whether this host's agent group already exists
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_agent_manager_ip }}:55000/groups?groups_list={{ wazuh_agent_group }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ wazuh_agent_api_auth.json.data.token }}"
+        validate_certs: false  # nosonar: ansible:S4830 -- see above
+        status_code: [200, 404]
+      register: wazuh_agent_group_check
+      no_log: true
+
+    - name: Create this host's agent group on the manager
+      ansible.builtin.uri:
+        url: "https://{{ wazuh_agent_manager_ip }}:55000/groups"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ wazuh_agent_api_auth.json.data.token }}"
+        body_format: json
+        body:
+          group_id: "{{ wazuh_agent_group }}"
+        validate_certs: false  # nosonar: ansible:S4830 -- see above
+        status_code: 200
+      when: >-
+        (wazuh_agent_group_check.json.data.total_affected_items | default(0)) == 0
+      no_log: true
 
 - name: Install prerequisites for the Wazuh apt repo
   ansible.builtin.apt:
@@ -229,14 +284,13 @@
 
 - name: Enroll this agent with the manager via wazuh-authd
   ansible.builtin.command:
-    argv:
-      - /var/ossec/bin/agent-auth
-      - -m
-      - "{{ wazuh_agent_manager_ip }}"
-      - -A
-      - "{{ inventory_hostname }}"
-      - -P
-      - "{{ wazuh_agent_authd_password_resolved }}"
+    argv: >-
+      {{
+        [
+          '/var/ossec/bin/agent-auth', '-m', wazuh_agent_manager_ip,
+          '-A', inventory_hostname, '-P', wazuh_agent_authd_password_resolved,
+        ] + (['-G', wazuh_agent_group] if wazuh_agent_group | length > 0 else [])
+      }}
   when: wazuh_agent_already_connected.rc != 0
   no_log: true
   changed_when: true
