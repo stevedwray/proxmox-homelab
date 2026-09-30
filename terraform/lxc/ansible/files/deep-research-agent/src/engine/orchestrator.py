@@ -1,6 +1,7 @@
 import os
 import asyncio
 import re
+from openai import AsyncOpenAI
 from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework import tool, AgentSession
 from tools import WORKSPACE_TOOLS, tool_quotas_ctx, with_quota, think_tool, QuotaAbortException
@@ -63,11 +64,33 @@ def _get_default_options():
         }
     return options
 
+# Real production incident 2026-09-30/10-01: a live session's final-report
+# completion call hung silently for 18+ minutes with zero response -- the
+# framework LLM host's own CPU was confirmed flat/idle (VictoriaMetrics)
+# for the entire window, so the request never got real processing, yet no
+# timeout ever fired. Root cause: OpenAIChatCompletionClient.__init__ has
+# no `timeout` parameter of its own, and _build_client() never passed one
+# to the underlying AsyncOpenAI client either -- so it silently used the
+# openai SDK's own default (nominally 600s, but implemented via httpx as a
+# PER-READ timeout, which resets on any received byte, including a bare
+# keep-alive ping with no real content). A connection that stays
+# technically "alive" without producing a real response can therefore hang
+# indefinitely. Building our own AsyncOpenAI client with an explicit,
+# bounded total `timeout` and handing it in via `async_client=` closes
+# this gap -- a stuck completion now raises a catchable
+# openai.APITimeoutError instead of hanging the whole session forever.
+_LLM_TIMEOUT_SECONDS = 300
+
+
 def _build_client():
-    return OpenAIChatCompletionClient(
+    async_client = AsyncOpenAI(
         base_url=config.cfg["api"]["openai_base_url"],
         api_key=os.getenv("OPENAI_API_KEY", "dummy"),
-        model=config.cfg["api"]["openai_model"]
+        timeout=_LLM_TIMEOUT_SECONDS,
+    )
+    return OpenAIChatCompletionClient(
+        model=config.cfg["api"]["openai_model"],
+        async_client=async_client,
     )
 
 def create_local_agent(builder, subagent_callback=None, session_data=None):
