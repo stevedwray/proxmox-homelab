@@ -133,7 +133,7 @@ ss -ltn | grep -c ':8080 '  # expect 0
 ```
 
 Stop if available memory is under 105 GiB. Find what's holding it before
-going further ([[feedback_gpu_model_double_load_hang]]).
+going further. The 2026-09-21 hard reset was a double load.
 
 ### Step 4: Load and serve GLM-5.3-Flash on :8080
 
