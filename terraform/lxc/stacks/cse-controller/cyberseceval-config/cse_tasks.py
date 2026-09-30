@@ -463,10 +463,23 @@ def _write_report(
         "summary": summary,
     }, indent=2))
 
-    _push_report_to_nextcloud(run_dir, benchmark)
+    _push_report_to_nextcloud(run_dir, benchmark, started_at)
 
 
-def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
+def _nextcloud_run_folder_name(run_dir: Path, started_at: str) -> str:
+    """A short, sortable, human-readable folder name instead of the raw
+    job UUID -- date+time from started_at, plus the job id's first 8 hex
+    chars for guaranteed uniqueness even if two runs of the same
+    benchmark start in the same minute (e.g. a multi-benchmark suite)."""
+    try:
+        stamp = datetime.fromisoformat(started_at).strftime("%Y-%m-%d_%H%M")
+    except ValueError:
+        stamp = "unknown-time"
+    short_id = run_dir.name.removeprefix("panel-")[:8]
+    return f"{stamp}_{short_id}"
+
+
+def _push_report_to_nextcloud(run_dir: Path, benchmark: str, started_at: str) -> None:
     """Best-effort WebDAV push of this run's report.md into Nextcloud,
     per docs/reporting-platform/plan.md Sec5a (2026-09-25). Never raises
     -- report.md is already durable on cse-controller's own disk
@@ -486,13 +499,16 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
     auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
     base = webdav_url.rstrip("/")
     # Must match nextcloud_folder_share_folder ("Reports/cyberseceval") in
-    # deploy-cse-controller.yml's folder-share play exactly -- confirmed
-    # live 2026-09-30 that these two had drifted apart (this function wrote
-    # to a bare top-level "cyberseceval", while the actual share the
-    # operator can see points at "Reports/cyberseceval"), so every pushed
-    # report landed in a folder nobody had access to.
-    for collection_url in (f"{base}/Reports", f"{base}/Reports/cyberseceval", f"{base}/Reports/cyberseceval/{run_dir.name}"):
-        request = urllib.request.Request(collection_url, method="MKCOL")
+    # deploy-cse-controller.yml's folder-share play -- that share is
+    # recursive, so nesting further by benchmark and run underneath it
+    # needs no separate share. Organized by benchmark (2026-09-30, per
+    # operator request) since a flat directory of UUID-named runs across
+    # 10 different benchmarks becomes unbrowsable fast.
+    run_folder = _nextcloud_run_folder_name(run_dir, started_at)
+    relative_path = f"Reports/cyberseceval/{benchmark}/{run_folder}"
+    segments = ["Reports", "Reports/cyberseceval", f"Reports/cyberseceval/{benchmark}", relative_path]
+    for seg in segments:
+        request = urllib.request.Request(f"{base}/{seg}", method="MKCOL")
         request.add_header("Authorization", auth_header)
         try:
             urllib.request.urlopen(request, timeout=15)
@@ -502,7 +518,7 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
         except urllib.error.URLError:
             return
 
-    put_url = f"{base}/Reports/cyberseceval/{run_dir.name}/report.md"
+    put_url = f"{base}/{relative_path}/report.md"
     request = urllib.request.Request(
         put_url, data=(run_dir / "report.md").read_bytes(), method="PUT"
     )
