@@ -1,5 +1,42 @@
 # Deep research: current state
 
+**2026-09-30/10-01 incident, two real bugs found from a bad real test run:**
+a live session hit `fetch_url_to_workspace`'s `ValueError: bad value(s) in
+fds_to_keep` 18 times — `multiprocessing`'s process-wide `resource_tracker`
+singleton isn't safe against concurrent `Queue()`/`Process()` creation, and
+real multi-subagent load raced on it. Each crash silently burned one unit
+of that tool's quota for a call that never ran. Fixed by serializing
+spawn+start behind a module-level `asyncio.Lock` in `tools/core.py`'s
+`run_with_hard_kill` (the wait itself stays fully concurrent). **Could not
+force this race to reproduce in an isolated 40-way synthetic test, with or
+without the lock** — it's load/timing-dependent and likely needs the full
+production combination (concurrent `web_search` HTTP + `markitdown`/
+`onnxruntime` thread spawning + subprocess spawns together) to trigger
+reliably. The fix is the textbook-correct mitigation for this documented
+Python pitfall regardless; real confirmation is zero further occurrences
+in actual usage, not a synthetic repro.
+
+**Separately, and more consequentially: the 2026-09-22 `web_search: 20 →
+60` quota fix silently never took effect.** `config_template.yaml` is only
+copied to the real runtime config (`~/.deep-research-agent/config.yaml`,
+on the persistent volume) the first time that file doesn't exist —
+`config.py`'s own bootstrap logic. The volume already had a `config.yaml`
+from before that fix, so every redeploy since kept silently using the
+stale value of 20. Verified live at the time by checking
+`config_template.yaml` inside the container, which showed 60 — the actual
+runtime `config.yaml` was never checked, a real verification gap. Fixed by
+directly patching the live file's `web_search` value to 60 (confirmed it
+survives redeploys, since redeploys never touch an already-existing file
+on this volume). **This will recur for any future `config_template.yaml`
+quota/setting change** unless the live `config.yaml` is also patched, or
+the volume is recreated from scratch — there is no reconciliation step.
+Worth fixing properly (e.g. a startup-time deep-merge of template values
+for keys the operator hasn't customized) if this class of change becomes
+frequent; not attempted here as it risks clobbering genuine live
+customizations (`enable_thinking`, `enable_session_persistence`) with no
+clean way to distinguish "stale default" from "deliberate override" in
+the current schema.
+
 Checked 2026-09-21. Originally gathered as a read-only inventory with no
 service or infrastructure changes. That is no longer true as of the
 incident below — this document now also records an actual outage caused by
