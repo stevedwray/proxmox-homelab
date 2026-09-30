@@ -293,7 +293,7 @@ def _first_present_key(entry: dict, keys: list[str]) -> str | None:
     return None
 
 
-def _wrap_for_display(text: str, width: int = 100) -> str:
+def _wrap_for_display(text: str, width: int = 60) -> str:
     """Prompts routinely arrive as one long unbroken paragraph (no
     newlines at all) -- inside a fenced code block that renders as a
     single line requiring horizontal scroll to read at all (confirmed
