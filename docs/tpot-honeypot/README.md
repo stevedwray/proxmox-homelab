@@ -64,11 +64,13 @@ state for full detail):
   catches LAN scanning/lateral-movement noise, not real internet
   attackers.
 - **Access**: SSH alias `tpot` (`~/.ssh/config`), port 64295, user
-  `steve`, key-only auth, full passwordless sudo. Web UI on
-  `:64294`/`:64297` (LAN-exposed); internal Elasticsearch (`:64298`)
-  and Kibana (`:64296`) are bound to `127.0.0.1` only — reachable
-  exclusively via SSH tunnel, which is exactly how both existing sync
-  scripts (`tpotce-analysis/tpot_es_sync.py`,
+  `steve`, key-only auth, full passwordless sudo. Web UI is on
+  `:64297` (LAN-exposed) — `:64294` is a separate vhost for Logstash
+  sensor ingest, not the browser UI (corrected 2026-09-30, see
+  `plan.md` Phase 6). Internal Elasticsearch (`:64298`) and Kibana
+  (`:64296`) are bound to `127.0.0.1` only — reachable exclusively via
+  SSH tunnel, which is exactly how both existing sync scripts
+  (`tpotce-analysis/tpot_es_sync.py`,
   `security-analysis/src/pipelines/tpotce/sync.py`) already work.
 - **Not currently referenced anywhere else in `proxmox-homelab`** except
   as a deferred line item in `docs/threat-vuln-platform/plan.md` (the
