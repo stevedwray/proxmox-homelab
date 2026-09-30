@@ -666,11 +666,22 @@
   vars:
     nextcloud_reports_user: "{{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}"
     nextcloud_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}"
+    # Real fix, 2026-09-30: the direct apps_seg IP:port URL (192.168.120.10:8080)
+    # isn't in Nextcloud's own trusted_domains and gets rejected with a 400
+    # ("Access through untrusted domain") -- confirmed live. Deriving the base
+    # URL from NEXTCLOUD_REPORTS_WEBDAV_URL (its own /remote.php/dav/files/<user>
+    # suffix stripped off) instead of a second hardcoded value means there's one
+    # source of truth, and it goes through the existing Traefik ingress
+    # (nextcloud.lab.gibbsgreatly.xyz, already trusted) instead of the raw LAN
+    # IP -- confirmed reachable live from inside the worker container with
+    # default cert verification, so no cse_seg -> apps_seg firewall rule is
+    # needed either.
+    nextcloud_reports_webdav_url: "{{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}"
   roles:
     - role: nextcloud_folder_share
-      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0
+      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0 and nextcloud_reports_webdav_url | length > 0
       vars:
-        nextcloud_folder_share_base_url: "http://192.168.120.10:8080" # nosonar -- internal apps_seg LAN traffic, same trust model as this stack's own status.php health check
+        nextcloud_folder_share_base_url: "{{ nextcloud_reports_webdav_url | regex_replace('/remote\\.php/dav/files/.*$', '') }}"
         nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
         nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/cyberseceval"
