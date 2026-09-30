@@ -54,6 +54,9 @@ rather than just re-tuning its memory limit.
   status, containerization, RAM-contention risk against the four services
   above, and a bounded proof-of-concept test plan. Research only, not
   started.
+- [`glm-5.3-flash-evaluation.md`](./glm-5.3-flash-evaluation.md) — bounded
+  load/speed/CyberSecEval test of Z.ai's GLM-5.3-Flash (320B MoE, ~2-bit)
+  on an upstream llama.cpp build. In progress.
 - [`local-ai-development.md`](./local-ai-development.md) — the layer above
   inference: coding agents, MCP, model gateway/workflow platforms, chat UIs,
   image-gen additions. Candidate table plus a phased development/test plan.
