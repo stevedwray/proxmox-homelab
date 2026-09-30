@@ -1,0 +1,118 @@
+# Grants secpipe-stack (ai_seg) reach to the T-Pot honeypot's SSH port,
+# needed for tpot_findings_ingest's SSH tunnel to T-Pot's internal
+# Elasticsearch (see docs/tpot-honeypot/plan.md Phase 4).
+#
+# T-Pot lives on the flat client LAN (192.168.1.28), not inside any VLAN
+# zone -- reaching it from a zoned stack crosses the MikroTik forward
+# chain like any other cross-zone hop. Found live 2026-09-30: the first
+# real run of tpot-findings-ingest.service failed with "Connection timed
+# out" opening the SSH tunnel, same class of bug as the Wazuh
+# port-55000 gap found earlier in this same overall rollout (see
+# docs/lxc-scan-and-monitoring-rollout/README.md) -- a new cross-zone
+# reach was needed and nobody had opened it yet, not a config error in
+# the new role itself.
+#
+# Deliberately scoped to secpipe-stack's own IP -> T-Pot's own IP,
+# SSH port only (64295, T-Pot's non-standard SSH port -- see
+# docs/tpot-honeypot/README.md's access table) -- mirrors this repo's
+# existing "scope by specific source/dest IP, not the whole zone"
+# precedent (e.g. mikrotik-firewall-greenbone-router-ssh-input.yml).
+#
+# Same idempotent read-check-insert-before-anchor-reread-assert pattern
+# as every other mikrotik-firewall-*.yml playbook. ai_seg's anchor is its
+# own explicit deny-all rule (comment "ai_seg explicit deny - everything
+# else"), confirmed live via a direct read of the router's ruleset.
+#
+# Run intentionally against the live router:
+#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-secpipe-to-tpot.yml
+
+- name: Ensure secpipe-stack -> T-Pot SSH firewall reach exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    lab_ip_secpipe: "{{ lookup('env', 'LAB_IP_SECPIPE') | mandatory('LAB_IP_SECPIPE env var is required') }}"
+    tpot_host_ip: "192.168.1.28"
+    tpot_ssh_port: "64295"
+    secpipe_to_tpot_comment: "secpipe-stack: tpot_findings_ingest SSH tunnel reach to T-Pot honeypot"
+    ai_seg_deny_all_comment: "ai_seg explicit deny - everything else"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: Set MIKROTIK_USER and MIKROTIK_PASSWORD via with-secrets.
+
+  tasks:
+    - name: Read MikroTik forward-chain firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        status_code: 200
+      register: mikrotik_filter_rules
+
+    - name: Check whether the secpipe-stack -> T-Pot rule already exists
+      ansible.builtin.set_fact:
+        secpipe_tpot_rule_exists: "{{ mikrotik_filter_rules.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', secpipe_to_tpot_comment) | list | length > 0 }}"
+
+    - name: Find the ai_seg explicit-deny anchor rule
+      ansible.builtin.set_fact:
+        ai_seg_deny_rule: "{{ mikrotik_filter_rules.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', ai_seg_deny_all_comment) | list | first | default(None) }}"
+      when: not secpipe_tpot_rule_exists
+
+    - name: Fail if the ai_seg deny-all anchor is not found
+      ansible.builtin.fail:
+        msg: "Could not find the ai_seg explicit deny-all rule (comment: '{{ ai_seg_deny_all_comment }}') to insert before."
+      when:
+        - not secpipe_tpot_rule_exists
+        - ai_seg_deny_rule is none
+
+    - name: Add the secpipe-stack -> T-Pot SSH forward rule
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          chain: forward
+          src-address: "{{ lab_ip_secpipe }}"
+          dst-address: "{{ tpot_host_ip }}"
+          protocol: tcp
+          dst-port: "{{ tpot_ssh_port }}"
+          action: accept
+          place-before: "{{ ai_seg_deny_rule['.id'] }}"
+          comment: "{{ secpipe_to_tpot_comment }}"
+        status_code: [200, 201]
+      when: not secpipe_tpot_rule_exists
+
+    - name: Re-read MikroTik forward-chain firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        status_code: 200
+      register: mikrotik_filter_rules_recheck
+
+    - name: Assert the secpipe-stack -> T-Pot rule is present
+      ansible.builtin.assert:
+        that:
+          - mikrotik_filter_rules_recheck.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', secpipe_to_tpot_comment) | list | length > 0
+        fail_msg: "secpipe-stack -> T-Pot SSH rule was not found after apply."
+        success_msg: "secpipe-stack -> T-Pot SSH rule confirmed present."

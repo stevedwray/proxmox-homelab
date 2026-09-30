@@ -1,0 +1,161 @@
+# Brings the T-Pot honeypot's underlying Debian 13 host under this repo's
+# Ansible management for the first time, per docs/tpot-honeypot/plan.md
+# Phase 1.5. See that plan's "Management boundary" section: this playbook
+# operates ONLY on the host layer (packages, systemd, SSH) and never
+# touches ~/tpotce/ or runs any of T-Pot's own install.sh/update.sh/
+# deploy.sh/uninstall.sh -- the honeypot's hand-installed Docker Compose
+# application stays exactly as-is, by design, because the operator has
+# flagged it as fragile enough that a "redeploy" risks losing config.
+#
+# Covers:
+#   - unattended_upgrades role (unmodified, reused via ANSIBLE_ROLES_PATH
+#     exactly as framework-desktop-bootstrap.yml reuses node_exporter/
+#     rsyslog_forward) -- same security-only patch policy as the rest of
+#     the fleet.
+#   - a one-time catch-up `apt-get upgrade` for the 63 packages found
+#     pending during the 2026-09-30 health check (the policy above only
+#     covers future security updates, not this existing backlog).
+#   - persistent journald storage -- codifies the manual live fix already
+#     applied 2026-09-30 (a reboot that day left zero log trail to
+#     diagnose it), so it survives an OS reinstall.
+#   - a dedicated, purpose-built SSH keypair for the future
+#     tpot_findings_ingest sync job (see docs/tpot-honeypot/plan.md
+#     Phase 2/4), generated ON this host and appended to authorized_keys
+#     -- purely additive, never touches the operator's own interactive
+#     key. The private key is deliberately never read back to the
+#     control node here (no secret materialization into Ansible facts/
+#     logs); moving it into OpenBao is a separate, operator-only step
+#     (Phase 2) -- see the final task's printed path.
+#   - a host route override for each lab host that needs to reach T-Pot
+#     directly, working around a real IP-collision bug found live
+#     2026-09-30: T-Pot's own Docker networking auto-allocates a
+#     sequence of /20 per-honeypot bridge subnets (32.0/20, 48.0/20,
+#     64.0/20, 80.0/20, 112.0/20, 128.0/20, 144.0/20, 160.0/20) that
+#     covers nearly every VLAN octet this lab uses -- ai_seg's
+#     192.168.50.0/24 falls inside T-Pot's own 192.168.48.0/20, so
+#     without this override T-Pot's kernel routes replies for any
+#     ai_seg host into its own internal Docker bridge instead of back
+#     out to the real network (confirmed via `ip route get` and the
+#     ICMP "Destination Host Unreachable" coming from the bridge's own
+#     gateway, not the real network). The real fix (reconfiguring
+#     Docker's default-address-pools) needs recreating T-Pot's compose
+#     networks -- exactly the "redeploy" risk this plan avoids -- so
+#     this adds a single more-specific host route per known consumer
+#     instead, via NetworkManager (wins by ordinary longest-prefix-match
+#     routing, persists across reboots in the connection profile, never
+#     touches ~/tpotce/ or Docker). Applied by hand during initial
+#     debugging for secpipe-stack (192.168.50.12); codified here so it
+#     survives a full OS reinstall too. Add a new entry to
+#     tpot_extra_host_routes as each additional consumer needs one --
+#     see the plan's "Still open" for which zones are known to collide.
+#
+# Run (from repo root; ANSIBLE_ROLES_PATH is required so unattended_upgrades
+# resolves, same as framework-desktop-bootstrap.yml -- this playbook family
+# has no ansible.cfg of its own, unlike terraform/lxc/ansible/):
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/tpot-host-baseline.yml
+# (No OpenBao secrets are needed for this playbook -- unattended_upgrades
+# has no external credentials. Plain ansible-playbook is fine; no
+# with-secrets* wrapper required.)
+
+- name: Bring the T-Pot host's underlying OS under management
+  hosts: tpot
+  become: true
+  gather_facts: true
+
+  vars:
+    tpot_sync_key_user: steve
+    tpot_sync_key_path: "/home/{{ tpot_sync_key_user }}/.ssh/tpot_findings_ingest_ed25519"
+    tpot_nm_connection: "Wired connection 1"
+    tpot_default_gateway: "192.168.1.1"
+    # Add one entry per lab host that needs to reach T-Pot directly and
+    # falls inside one of T-Pot's own colliding Docker /20 ranges -- see
+    # the comment block above. secpipe-stack is the only confirmed,
+    # live-needed consumer so far.
+    tpot_extra_host_routes:
+      - host: "192.168.50.12"  # secpipe-stack (ai_seg) -- tpot_findings_ingest sync job
+
+  roles:
+    - role: unattended_upgrades
+
+  tasks:
+    - name: One-time catch-up apt upgrade (closes the pre-existing patch backlog)
+      ansible.builtin.apt:
+        upgrade: 'yes'
+        update_cache: true
+        force_apt_get: true
+        dpkg_options: 'force-confdef,force-confold'
+        lock_timeout: 300
+
+    - name: Ensure persistent journald storage directory exists
+      ansible.builtin.file:
+        path: /var/log/journal
+        state: directory
+        owner: root
+        group: systemd-journal
+        mode: "2755"
+      register: tpot_journald_dir
+
+    - name: Apply tmpfiles rules for the journal directory
+      ansible.builtin.command:
+        cmd: systemd-tmpfiles --create --prefix /var/log/journal
+      when: tpot_journald_dir.changed
+      changed_when: true
+
+    - name: Restart journald to pick up persistent storage
+      ansible.builtin.systemd:
+        name: systemd-journald
+        state: restarted
+      when: tpot_journald_dir.changed
+
+    - name: Generate a dedicated SSH keypair for the findings-ingest sync job
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -f {{ tpot_sync_key_path }} -N ""
+          -C "tpot_findings_ingest@secpipe-stack"
+        creates: "{{ tpot_sync_key_path }}"
+      become: true
+      become_user: "{{ tpot_sync_key_user }}"
+
+    - name: Read the generated public key (not secret -- the private half is never read here)
+      ansible.builtin.slurp:
+        src: "{{ tpot_sync_key_path }}.pub"
+      register: tpot_sync_key_pub
+
+    - name: Append the sync job's public key to authorized_keys (additive, does not replace the operator's own key)
+      ansible.posix.authorized_key:
+        user: "{{ tpot_sync_key_user }}"
+        key: "{{ tpot_sync_key_pub.content | b64decode }}"
+        state: present
+
+    - name: Check current static routes on the NetworkManager connection
+      ansible.builtin.command:
+        cmd: nmcli -g ipv4.routes connection show {{ tpot_nm_connection | quote }}
+      register: tpot_nm_current_routes
+      changed_when: false
+
+    - name: Add missing host route overrides (works around T-Pot's own Docker /20 IP collisions)
+      ansible.builtin.command:
+        cmd: >-
+          nmcli connection modify {{ tpot_nm_connection | quote }}
+          +ipv4.routes "{{ item.host }}/32 {{ tpot_default_gateway }}"
+      loop: "{{ tpot_extra_host_routes }}"
+      loop_control:
+        label: "{{ item.host }}"
+      when: (item.host ~ '/32 ' ~ tpot_default_gateway) not in tpot_nm_current_routes.stdout
+      register: tpot_nm_route_changes
+
+    - name: Reapply the NetworkManager connection to activate new routes
+      ansible.builtin.command:
+        cmd: nmcli device reapply eth0
+      when: tpot_nm_route_changes.changed
+
+    - name: Report where the private key lives (for the operator's own OpenBao write -- Phase 2, not done by this playbook)
+      ansible.builtin.debug:
+        msg: >-
+          Sync-job SSH private key is at {{ tpot_sync_key_path }} on this
+          host. Not fetched or displayed here by design -- see
+          docs/tpot-honeypot/plan.md Phase 2 for the operator-only steps
+          to move it into OpenBao (kv/services/tpot, field
+          TPOT_SSH_PRIVATE_KEY) via scripts/openbao_write.py.

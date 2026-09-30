@@ -48,3 +48,19 @@ all:
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
       vars:
         ansible_python_interpreter: /usr/bin/python3
+
+    # T-Pot honeypot host - bare-metal Raspberry Pi 5, Debian 13 (not
+    # Proxmox, not Terraform-managed; see docs/tpot-honeypot/plan.md).
+    # Host-layer only: this group/its playbooks never touch ~/tpotce/ or
+    # T-Pot's own Docker Compose application (see plan.md's "Management
+    # boundary"). ansible_host is the operator's own ~/.ssh/config alias
+    # ("tpot" -> tpot.gibbsgreatly.xyz:64295) rather than duplicating its
+    # non-standard port here -- Ansible's default ssh connection plugin
+    # shells out to the real ssh binary, so the alias resolves normally.
+    tpot:
+      hosts:
+        tpot.gibbsgreatly.xyz:
+          ansible_host: tpot
+          ansible_user: steve
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

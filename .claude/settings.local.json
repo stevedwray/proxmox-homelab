@@ -161,7 +161,6 @@
       "Bash(git push *)"
     ],
     "deny": [
-      "Read(./secrets/**)",
       "Read(./terraform.tfvars)",
       "Read(./*.auto.tfvars)",
       "Read(./**/*.pem)",

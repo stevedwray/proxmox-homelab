@@ -39,6 +39,14 @@
     - role: cve_enrichment_sync
       when: cve_enrichment_sync_enabled | default(false) | bool
 
+- name: Deploy T-Pot honeypot events ingest (docs/tpot-honeypot/plan.md Phase 4)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - role: tpot_findings_ingest
+      when: tpot_findings_ingest_enabled | default(false) | bool
+
 - name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
   hosts: all
   become: true

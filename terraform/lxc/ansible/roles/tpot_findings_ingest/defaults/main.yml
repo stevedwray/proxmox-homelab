@@ -1,0 +1,60 @@
+---
+# Defaults for tpot_findings_ingest -- see docs/tpot-honeypot/plan.md
+# "Phase 4: findings ingestion" and docs/threat-vuln-platform/plan.md's
+# `*-events` index family. Explicit opt-in, matching every other
+# *_findings_ingest role's pattern -- only ever included on secpipe-stack.
+#
+# Unlike wazuh_findings_ingest/gvm_findings_ingest (which run ON their
+# own source stack, reading a colocated indexer), T-Pot is a standalone
+# Raspberry Pi outside terraform/lxc/ entirely -- this role runs on
+# secpipe-stack (the existing general-purpose security-pipeline host,
+# already running cve_enrichment_sync/cve_deep_dive) and reaches T-Pot
+# over an SSH tunnel instead.
+tpot_findings_ingest_enabled: false
+
+tpot_findings_ingest_dir: /opt/tpot-findings-ingest
+tpot_findings_ingest_log_path: /var/log/tpot-findings-ingest.log
+
+# T-Pot's logstash-* indices accumulate at roughly one day's worth of
+# LAN-noise events per run; hourly keeps the lookback window small and
+# the operator's "what just happened" latency low -- unlike the
+# *-findings roles' daily current-state pulls, this is a real
+# incremental event stream.
+tpot_findings_ingest_on_calendar: "*:00:00"
+
+# --- T-Pot connection (source) --------------------------------------------
+# Non-secret connection details -- see docs/tpot-honeypot/README.md's
+# access table. The SSH private key itself is the one genuinely secret
+# value here (see below).
+tpot_findings_ingest_ssh_host: "{{ lookup('env', 'TPOT_SSH_HOST') | default('192.168.1.28', true) }}"
+tpot_findings_ingest_ssh_port: "{{ lookup('env', 'TPOT_SSH_PORT') | default('64295', true) }}"
+tpot_findings_ingest_ssh_user: "{{ lookup('env', 'TPOT_SSH_USER') | default('steve', true) }}"
+tpot_findings_ingest_remote_es_port: "{{ lookup('env', 'TPOT_REMOTE_ES_PORT') | default('64298', true) }}"
+tpot_findings_ingest_source_index_pattern: "logstash-20*"
+tpot_findings_ingest_exclude_indices: "logstash-1970.01.01"
+tpot_findings_ingest_dest_prefix: "tpot-events"
+
+# A dedicated SSH keypair for this sync job, NOT the operator's own
+# `steve` interactive login key -- see docs/tpot-honeypot/plan.md Phase 2.
+# Sourced from OpenBao (kv/services/tpot, field TPOT_SSH_PRIVATE_KEY,
+# stored base64-encoded -- see tasks/main.yml's materialize step for why)
+# via secrets/manifest.json, same as every other secret this repo's
+# roles consume -- mandatory, so this role fails loudly (not silently)
+# until Phase 2's credential rotation + manifest entry actually exist.
+tpot_findings_ingest_ssh_private_key: "{{ lookup('env', 'TPOT_SSH_PRIVATE_KEY') | mandatory('TPOT_SSH_PRIVATE_KEY env var is required -- see docs/tpot-honeypot/plan.md Phase 2') }}"
+tpot_findings_ingest_ssh_key_path: "{{ tpot_findings_ingest_dir }}/tpot_tunnel_key"
+
+# --- OpenSearch connection (destination) ----------------------------------
+# Identical target/reasoning to every other *_findings_ingest role.
+tpot_findings_ingest_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+tpot_findings_ingest_elasticsearch_url: "https://{{ tpot_findings_ingest_elasticsearch_host }}:9200"
+tpot_findings_ingest_es_no_verify_tls: true
+
+tpot_findings_ingest_elastic_admin_user: admin
+tpot_findings_ingest_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Reuses es_findings_ingest's own es_findings_writer OpenSearch role,
+# extended to also cover tpot-events*/tpot-events-sync-state -- same
+# technique wazuh_findings_ingest/cve_enrichment_sync already used.
+tpot_findings_ingest_es_role_name: es_findings_writer
+tpot_findings_ingest_es_user_name: tpot_findings_ingest
