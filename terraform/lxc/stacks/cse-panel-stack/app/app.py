@@ -28,6 +28,7 @@ integrations, not just this one HTML page.
 import html
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 
 from celery import Celery, group
@@ -192,7 +193,21 @@ def _resolve_backend(base_url: str | None, model: str | None) -> tuple[str, str,
     return base_url or "", model or "", "custom"
 
 
-def _job_kwargs(spec: TestSpec, submitted_by: str) -> dict:
+def _new_run_group_stamp() -> str:
+    """One label shared by every job in a single submission (a whole
+    suite, or a standalone job as a suite-of-one) -- becomes the
+    top-level Nextcloud folder for that submission. Generated here, once,
+    before dispatch, since jobs in a suite run sequentially (worker
+    concurrency=1) and their own individual start times would otherwise
+    drift apart by however long earlier benchmarks in the suite take,
+    landing suite-mates in different folders instead of one shared one
+    (operator request 2026-09-30: "top level folder for the run date and
+    time, and that folder have subfolders for each benchmark type")."""
+    now = datetime.now(timezone.utc)
+    return f"{now.strftime('%Y-%m-%d_%H%M')}_{uuid.uuid4().hex[:8]}"
+
+
+def _job_kwargs(spec: TestSpec, submitted_by: str, run_group_stamp: str) -> dict:
     return {
         "benchmark": spec.benchmark,
         "num_test_cases": spec.num_test_cases,
@@ -201,6 +216,7 @@ def _job_kwargs(spec: TestSpec, submitted_by: str) -> dict:
         "backend_model": spec.backend_model,
         "backend_api_key": spec.backend_api_key,
         "random_sample": spec.random_sample,
+        "run_group_stamp": run_group_stamp,
     }
 
 
@@ -380,7 +396,7 @@ def submit_job(
         backend_api_key=backend_api_key,
         random_sample=random_sample,
     )
-    result = celery_app.send_task(TASK_NAME, kwargs=_job_kwargs(spec, submitted_by))
+    result = celery_app.send_task(TASK_NAME, kwargs=_job_kwargs(spec, submitted_by, _new_run_group_stamp()))
     celery_app.backend.client.lpush(RECENT_JOBS_KEY, result.id)
     celery_app.backend.client.ltrim(RECENT_JOBS_KEY, 0, RECENT_MAX - 1)
     resolved_base_url, resolved_model, backend_label = _resolve_backend(backend_base_url, backend_model)
@@ -445,8 +461,9 @@ def submit_suite(body: SuiteRequest, x_authentik_username: str | None = Header(d
     if not body.tests:
         return {"error": "tests list is empty"}
     submitted_by = x_authentik_username or "unknown"
+    run_group_stamp = _new_run_group_stamp()
     job_group = group(
-        celery_app.signature(TASK_NAME, kwargs=_job_kwargs(t, submitted_by))
+        celery_app.signature(TASK_NAME, kwargs=_job_kwargs(t, submitted_by, run_group_stamp))
         for t in body.tests
     )
     result = job_group.apply_async()

@@ -387,6 +387,7 @@ def _write_report(
     submitted_by: str,
     num_test_cases: int,
     random_sample: bool,
+    run_group_stamp: str,
 ) -> None:
     """Writes report.md + manifest.json per
     docs/reporting-platform/CONVENTION.md -- the actual Phase 2 fix
@@ -463,33 +464,49 @@ def _write_report(
         "summary": summary,
     }, indent=2))
 
-    _push_report_to_nextcloud(run_dir, benchmark, started_at)
+    _push_report_to_nextcloud(benchmark, run_group_stamp, result, started_at, finished_at, submitted_by)
 
 
-def _nextcloud_run_folder_name(run_dir: Path, started_at: str) -> str:
-    """A short, sortable, human-readable folder name instead of the raw
-    job UUID -- date+time from started_at, plus the job id's first 8 hex
-    chars for guaranteed uniqueness even if two runs of the same
-    benchmark start in the same minute (e.g. a multi-benchmark suite)."""
-    try:
-        stamp = datetime.fromisoformat(started_at).strftime("%Y-%m-%d_%H%M")
-    except ValueError:
-        stamp = "unknown-time"
-    short_id = run_dir.name.removeprefix("panel-")[:8]
-    return f"{stamp}_{short_id}"
+_CATEGORY_KEYS = ["mitre_category", "attack_type", "category"]
 
 
-def _push_report_to_nextcloud(run_dir: Path, benchmark: str, started_at: str) -> None:
-    """Best-effort WebDAV push of this run's report.md into Nextcloud,
-    per docs/reporting-platform/plan.md Sec5a (2026-09-25). Never raises
-    -- report.md is already durable on cse-controller's own disk
+def _entry_category_slug(entry: dict, max_len: int = 40) -> str:
+    """A short filename suffix from whatever category-ish field this
+    benchmark's entries happen to carry (field names vary across
+    benchmarks -- there's no single universal one) -- empty if none
+    found, per operator request 2026-09-30 for more descriptive
+    per-test-case filenames than a bare index."""
+    for k in _CATEGORY_KEYS:
+        v = entry.get(k)
+        if v:
+            slug = re.sub(r"[^a-z0-9]+", "-", str(v).lower()).strip("-")[:max_len].strip("-")
+            if slug:
+                return f"-{slug}"
+    return ""
+
+
+def _push_report_to_nextcloud(
+    benchmark: str, run_group_stamp: str, result: dict,
+    started_at: str, finished_at: str, submitted_by: str,
+) -> None:
+    """Best-effort WebDAV push of this run's transcript into Nextcloud --
+    one markdown file per test case (or per attack session for
+    autonomous-uplift), each with its own prompt/response/verdict, per
+    docs/reporting-platform/plan.md Sec5a (2026-09-25; restructured
+    2026-09-30 per operator request: "top level folder for the run date
+    and time, and that folder have subfolders for each benchmark type
+    ... each markdown file has the results, prompt, output"). Never
+    raises -- report.md is already durable on cse-controller's own disk
     (docs/reporting-platform/CONVENTION.md); Nextcloud being briefly
-    unreachable or a rotated credential must never fail a benchmark
-    run that has already completed."""
+    unreachable or a rotated credential must never fail a benchmark run
+    that has already completed."""
     webdav_url = os.environ.get("NEXTCLOUD_REPORTS_WEBDAV_URL", "")
     user = os.environ.get("NEXTCLOUD_REPORTS_USER", "")
     password = os.environ.get("NEXTCLOUD_REPORTS_APP_PASSWORD", "")
     if not (webdav_url and user and password):
+        return
+    transcript = result.get("transcript", [])
+    if not transcript:
         return
 
     import base64
@@ -500,13 +517,15 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str, started_at: str) ->
     base = webdav_url.rstrip("/")
     # Must match nextcloud_folder_share_folder ("Reports/cyberseceval") in
     # deploy-cse-controller.yml's folder-share play -- that share is
-    # recursive, so nesting further by benchmark and run underneath it
-    # needs no separate share. Organized by benchmark (2026-09-30, per
-    # operator request) since a flat directory of UUID-named runs across
-    # 10 different benchmarks becomes unbrowsable fast.
-    run_folder = _nextcloud_run_folder_name(run_dir, started_at)
-    relative_path = f"Reports/cyberseceval/{benchmark}/{run_folder}"
-    segments = ["Reports", "Reports/cyberseceval", f"Reports/cyberseceval/{benchmark}", relative_path]
+    # recursive, so nesting further underneath it needs no separate
+    # share. Top level is one folder per submission (run_group_stamp,
+    # shared across every benchmark in the same suite -- see
+    # cse-panel-stack's _new_run_group_stamp), with a subfolder per
+    # benchmark underneath it.
+    benchmark_dir = f"Reports/cyberseceval/{run_group_stamp}/{benchmark}"
+    segments = [
+        "Reports", "Reports/cyberseceval", f"Reports/cyberseceval/{run_group_stamp}", benchmark_dir,
+    ]
     for seg in segments:
         request = urllib.request.Request(f"{base}/{seg}", method="MKCOL")
         request.add_header("Authorization", auth_header)
@@ -518,16 +537,28 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str, started_at: str) ->
         except urllib.error.URLError:
             return
 
-    put_url = f"{base}/{relative_path}/report.md"
-    request = urllib.request.Request(
-        put_url, data=(run_dir / "report.md").read_bytes(), method="PUT"
-    )
-    request.add_header("Authorization", auth_header)
-    request.add_header("Content-Type", "text/markdown")
-    try:
-        urllib.request.urlopen(request, timeout=15)
-    except urllib.error.URLError:
-        pass
+    for i, entry in enumerate(transcript):
+        label = "attack-session" if "operation_log" in entry else "test-case"
+        filename = f"{label}-{i + 1}{_entry_category_slug(entry)}.md"
+        doc = "\n".join([
+            f"# CyberSecEval: {benchmark} -- {label.replace('-', ' ')} {i + 1}",
+            "",
+            f"**Submitted by:** {submitted_by}  ",
+            f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+            f"**Started:** {started_at}  ",
+            f"**Finished:** {finished_at}",
+            "",
+            _render_transcript_entry(entry, i),
+        ])
+        request = urllib.request.Request(
+            f"{base}/{benchmark_dir}/{filename}", data=doc.encode(), method="PUT"
+        )
+        request.add_header("Authorization", auth_header)
+        request.add_header("Content-Type", "text/markdown")
+        try:
+            urllib.request.urlopen(request, timeout=15)
+        except urllib.error.URLError:
+            pass
 
 
 def _extract_failure_reason(log_text: str, max_chars: int = 300) -> str:
@@ -621,12 +652,18 @@ def run_benchmark(
     backend_model: str | None = None,
     backend_api_key: str | None = None,
     random_sample: bool = False,
+    run_group_stamp: str | None = None,
 ) -> dict:
     job_id = run_benchmark.request.id
     run_dir = RUNS_DIR / f"panel-{job_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
     mut_spec = _build_mut_spec(backend_base_url, backend_model, backend_api_key)
     started_at = datetime.now(timezone.utc).isoformat()
+    # Falls back to this job's own started_at for callers that predate
+    # run_group_stamp (a manual/direct invocation, or an older queued
+    # task) -- still a valid, just narrower ("group of one"), top-level
+    # Nextcloud folder.
+    run_group_stamp = run_group_stamp or started_at.replace(":", "").replace("-", "")[:13]
     (run_dir / "meta.json").write_text(json.dumps({
         "benchmark": benchmark,
         "num_test_cases": num_test_cases,
@@ -646,7 +683,7 @@ def run_benchmark(
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
             result = {"rc": 1, "error": f"unknown benchmark '{benchmark}'", "stats_error": f"unknown benchmark '{benchmark}'"}
-            _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample)
+            _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample, run_group_stamp)
             return result
         prompt_path = (
             _sample_prompts(benchmark, run_dir, num_test_cases)
@@ -722,7 +759,7 @@ def run_benchmark(
     # as a single self-contained file, regardless of benchmark.
     (run_dir / RESULT_JSON_NAME).write_text(json.dumps(result, indent=2, default=str))
 
-    _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample)
+    _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample, run_group_stamp)
     return result
 
 
