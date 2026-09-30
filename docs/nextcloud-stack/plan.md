@@ -1923,23 +1923,56 @@ above, adapted for the current OpenBao-backed secrets flow (not SOPS):
 
 #### Deploy and verify
 
-After the six code steps (`nextcloud-P2-08` through `nextcloud-P2-13`)
-land and the three operator actions above are done: Preflight Summary
-(target `pve-tiny`, mutating, exact object = `ai-services-stack`'s
-`deep-research` container env/code, plus a firewall change on `pve` and
-a folder-share call against Nextcloud made from the operator's own
-workstation, out-of-scope = everything else) → operator "Proceed" →
-`export TASK_APPROVAL="nextcloud-P2-deep-research-reports-push"` →
-`./with-secrets-prod-tiny scripts/provision.sh --stack ai-services-stack`
-→ confirm the deploy's own output shows `nextcloud-P2-13`'s role
-actually created (or found already-present) the share, then run one real
-`deep-research` session end-to-end and confirm `final_report.md` appears
-in `steve`'s own Nextcloud Files view under
-Reports/deep-research-agent/, readable via the Text app — not just that
-the push returned success. Also re-verify CyberSecEval's own push now
-actually lands in Nextcloud (it previously did not, per this section's
-`nextcloud-P2-01` findings), since `nextcloud-P2-08` fixed its firewall
-gap too.
+Done and verified live, 2026-09-30/10-01. `nextcloud-P2-08` was withdrawn
+before ever being applied (see its own superseded note above) once live
+testing showed the real fix needed was the FQDN, not a firewall rule.
+Real sequence that actually happened, for the record:
+
+1. `nextcloud-P2-09` through `nextcloud-P2-13` deployed via
+   `./with-secrets-prod-tiny scripts/provision.sh --stack ai-services-stack`
+   under `TASK_APPROVAL="nextcloud-P2-deep-research-reports-push"`.
+2. First deploy attempt failed closed: adding the three
+   `NEXTCLOUD_DR_REPORTS_*` field names to `secrets/manifest.json` *before*
+   the operator had written their actual values to OpenBao tripped
+   `secrets_env.py`'s fail-closed check for **every stack on every node
+   profile** (`services/nextcloud` is listed in all of them), not just
+   this one. Reverted the manifest fields, redeployed successfully with
+   them omitted, then re-added them only after confirming via a
+   `--check`-only dry run (against a scratch copy of the manifest, never
+   touching the real one) that the OpenBao values genuinely existed.
+   Lesson: write the OpenBao value first, add the manifest field second —
+   never the reverse.
+3. The `nextcloud_folder_share` role's own MKCOL calls failed live with
+   Nextcloud's `400 Bad Request` / "Access through untrusted domain" —
+   the bare `apps_seg` IP was never in `trusted_domains`. Root-caused by
+   reading the actual deployed `cse_tasks.py`'s `NEXTCLOUD_REPORTS_WEBDAV_URL`
+   directly (not guessing from this doc's own stale example), which
+   showed CyberSecEval's real, working config already used the FQDN
+   `nextcloud.lab.gibbsgreatly.xyz` — confirmed via `getent hosts` that it
+   resolves to Traefik (`192.168.30.10`, `edge_seg`), not the container
+   directly. Fixed by switching this play's `nextcloud_folder_share_base_url`
+   to the same FQDN; the two firewall rules `nextcloud-P2-08` would have
+   added were never needed and were reverted from `pve.yaml` before ever
+   reaching the live MikroTik.
+4. A clean, fully-completed real session then wrote `final_report.md` but
+   pushed nothing to Nextcloud, with zero errors anywhere in its log.
+   Root cause was `push_report_to_nextcloud` having no logging on any
+   path — a manual replay of its exact MKCOL/PUT sequence against that
+   run's real files succeeded immediately, proving the mechanism itself
+   was sound. Fixed by logging every outcome; manually pushed that one
+   run's report as a one-off. **Whether the original miss was a one-off
+   or a reproducible gap in `run_agent`'s call site is still open** — not
+   otherwise instrumented, the next real run's container logs will show
+   which.
+5. **Not verified**: whether CyberSecEval's own push
+   (`_push_report_to_nextcloud` in `cse_tasks.py`) also needed the FQDN
+   fix or already had it — its own `nextcloud_folder_share_base_url` in
+   `deploy-cse-controller.yml` still literally reads the bare IP in this
+   doc's `nextcloud-P2-07` step block (see the correction note added
+   there), but whether the actually-deployed file matches that literal
+   text was never checked, since doing so would have meant touching
+   `cse-controller`'s own deploy while its benchmark job was running.
+   Worth checking next time that job isn't active.
 
 ---
 
