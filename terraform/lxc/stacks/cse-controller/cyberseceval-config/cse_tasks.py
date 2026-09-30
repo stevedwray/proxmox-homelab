@@ -267,6 +267,97 @@ def _flatten_stats(stats, limit: int = 20) -> list[list]:
     return out[:limit]
 
 
+# Kept in sync manually with cse-panel-stack's app.py PROMPT_KEYS/
+# RESPONSE_KEYS/VERDICT_KEYS/SKIP_KEYS and renderTranscriptEntry/
+# renderOperationLog (different container/codebase, no shared package) --
+# the same field-name guesswork the panel's own UI already relies on,
+# reused here so report.md carries the actual prompts/outputs, not just
+# a stats summary and a list of filenames that only exist on
+# cse-controller's own disk. This is what makes the existing report.md
+# Nextcloud push (see _push_report_to_nextcloud) actually deliver
+# research-usable content instead of a thin pointer document.
+_PROMPT_KEYS = ["test_case_prompt", "prompt", "mutated_prompt", "question"]
+_RESPONSE_KEYS = ["response", "model_output", "model_response"]
+_VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly"]
+_TRANSCRIPT_SKIP_KEYS = set(
+    _PROMPT_KEYS + _RESPONSE_KEYS + _VERDICT_KEYS
+    + ["model", "prompt_id", "pass_id", "judge_question", "user_input"]
+)
+
+
+def _first_present_key(entry: dict, keys: list[str]) -> str | None:
+    for k in keys:
+        if k in entry:
+            return k
+    return None
+
+
+def _render_operation_log(log: str) -> str:
+    """autonomous-uplift's own shape -- one continuous >>> USER:/>>> AI:
+    transcript, not a prompt/response pair. Mirrors the panel's
+    renderOperationLog exactly (USER = target/environment output, AI =
+    the model's own command)."""
+    parts = re.split(r"(>>> (?:USER|AI): )", log)
+    turns = []
+    for i in range(1, len(parts), 2):
+        is_ai = "AI" in parts[i]
+        text = (parts[i + 1] if i + 1 < len(parts) else "").strip()
+        if not text:
+            continue
+        label = "Model command" if is_ai else "Target/environment output"
+        turns.append(f"**{label}:**\n\n```\n{text}\n```")
+    return "\n\n".join(turns) if turns else "*(no operations recorded)*"
+
+
+def _render_transcript_entry(entry: dict, i: int) -> str:
+    if "operation_log" in entry:
+        lines = [f"### Attack session {i + 1}", ""]
+        header = " · ".join(
+            f"{k}: {entry[k]}" for k in ("attacker", "target", "model") if entry.get(k)
+        )
+        if header:
+            lines += [header, ""]
+        if entry.get("system_prompt"):
+            lines += [
+                "<details><summary>System prompt (what the model was actually told)</summary>",
+                "",
+                f"```\n{entry['system_prompt']}\n```",
+                "",
+                "</details>",
+                "",
+            ]
+        lines += [_render_operation_log(entry.get("operation_log", "")), ""]
+        return "\n".join(lines)
+
+    prompt_key = _first_present_key(entry, _PROMPT_KEYS)
+    response_key = _first_present_key(entry, _RESPONSE_KEYS)
+    verdict_key = _first_present_key(entry, _VERDICT_KEYS)
+    lines = [f"### Test case {i + 1}", ""]
+    if prompt_key:
+        lines += ["**Prompt:**", "", f"```\n{entry[prompt_key]}\n```", ""]
+    if entry.get("user_input"):
+        lines += ["**User input:**", "", f"```\n{entry['user_input']}\n```", ""]
+    if response_key:
+        lines += ["**Response:**", "", f"```\n{entry[response_key]}\n```", ""]
+    if verdict_key:
+        lines += [f"**Judge verdict:** {entry[verdict_key]}", ""]
+    if entry.get("judge_question"):
+        lines += [f"*Judge question: {entry['judge_question']}*", ""]
+    meta_parts = [
+        f"{k}: {v}" for k, v in entry.items()
+        if k not in _TRANSCRIPT_SKIP_KEYS and v not in (None, "")
+    ]
+    if meta_parts:
+        lines += [" · ".join(meta_parts), ""]
+    return "\n".join(lines)
+
+
+def _render_transcript_markdown(transcript: list) -> str:
+    if not transcript:
+        return "*No transcript available for this run.*"
+    return "\n".join(_render_transcript_entry(e, i) for i, e in enumerate(transcript))
+
+
 def _write_report(
     run_dir: Path,
     benchmark: str,
@@ -331,10 +422,14 @@ def _write_report(
 
     lines += [
         "",
+        "## Transcript",
+        "",
+        _render_transcript_markdown(result.get("transcript", [])),
+        "",
         "## Artifacts",
         "",
         "- `run.log` -- full stdout/stderr",
-        "- `responses.json` / `judge_responses.json` -- raw per-test-case transcripts",
+        "- `responses.json` / `judge_responses.json` -- raw per-test-case transcripts (this report's Transcript section above is rendered from these)",
         "- `stat.json` / `stats.json` -- raw benchmark output this report summarizes",
     ]
     (run_dir / "report.md").write_text("\n".join(lines) + "\n")
