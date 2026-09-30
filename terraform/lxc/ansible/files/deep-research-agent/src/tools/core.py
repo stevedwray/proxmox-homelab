@@ -22,6 +22,21 @@ import queue as queue_module
 # fetch_url_to_workspace -- shared here so it isn't duplicated per tool.
 _MP_CONTEXT = multiprocessing.get_context("spawn")
 
+# Real production incident 2026-09-30: under real multi-subagent concurrent
+# load (many fetch_url_to_workspace calls in flight from different subagents
+# at once), multiple coroutines raced to create a multiprocessing.Queue()
+# simultaneously. Queue()/Lock() creation registers a semaphore with
+# multiprocessing's process-wide resource_tracker singleton, which is not
+# safe against concurrent initialization -- the race corrupted its internal
+# fd bookkeeping and crashed with "ValueError: bad value(s) in fds_to_keep"
+# (from _posixsubprocess.fork_exec via resource_tracker.ensure_running()),
+# 18 times in one real session, each one silently burning a unit of that
+# tool's quota for a call that never actually ran. Serializing only the
+# creation+start of the Queue/Process (not the wait, which stays fully
+# concurrent across subagents) closes the race without limiting real
+# throughput.
+_spawn_lock = asyncio.Lock()
+
 
 async def run_with_hard_kill(target, args: tuple, timeout: float):
     """Runs `target(*args, result_queue)` in a spawned subprocess and
@@ -32,9 +47,10 @@ async def run_with_hard_kill(target, args: tuple, timeout: float):
     process boundary itself. Raises asyncio.TimeoutError on timeout, or
     RuntimeError(message) if the worker reported its own failure.
     """
-    result_queue = _MP_CONTEXT.Queue()
-    process = _MP_CONTEXT.Process(target=target, args=(*args, result_queue), daemon=True)
-    process.start()
+    async with _spawn_lock:
+        result_queue = _MP_CONTEXT.Queue()
+        process = _MP_CONTEXT.Process(target=target, args=(*args, result_queue), daemon=True)
+        process.start()
     try:
         status, payload = await asyncio.to_thread(result_queue.get, True, timeout)
     except queue_module.Empty:
