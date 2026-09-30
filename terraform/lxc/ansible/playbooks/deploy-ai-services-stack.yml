@@ -527,6 +527,16 @@
                 # docs/deep-research/current-state.md for the full
                 # investigation. Free tier: 1000 searches/month.
                 TAVILY_API_KEY: "{{ ai_services_tavily_api_key }}"
+                # Best-effort WebDAV push of final_report.md to Nextcloud
+                # (docs/nextcloud-stack/plan.md nextcloud-P2-10/11/12).
+                # Deliberately default('', true), not mandatory -- a
+                # missing/not-yet-provisioned Nextcloud credential must
+                # never block a deep-research deploy, matching
+                # push_report_to_nextcloud's own silent no-op on empty
+                # values.
+                NEXTCLOUD_DR_REPORTS_WEBDAV_URL: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_WEBDAV_URL') | default('', true) }}"
+                NEXTCLOUD_DR_REPORTS_USER: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+                NEXTCLOUD_DR_REPORTS_APP_PASSWORD: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
               # Mounted at ~/.deep-research-agent specifically, NOT the
               # whole /home/app home dir -- real bug found and fixed
               # 2026-09-22: mounting the entire home dir meant every image
@@ -895,3 +905,18 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Share deep-research's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    nextcloud_dr_reports_user: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+    nextcloud_dr_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: nextcloud_dr_reports_user | length > 0 and nextcloud_dr_reports_app_password | length > 0
+      vars:
+        nextcloud_folder_share_base_url: "http://192.168.120.10:8080"
+        nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
+        nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
+        nextcloud_folder_share_folder: "Reports/deep-research-agent"
