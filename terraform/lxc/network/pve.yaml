@@ -622,26 +622,6 @@ policies:
     protocol: tcp
     ports: [8080]
     description: Traefik to Nextcloud web UI
-  - from: ai_seg
-    to: 192.168.120.10
-    protocol: tcp
-    ports: [8080]
-    description: >-
-      deep-research's WebDAV push of final_report.md to Nextcloud
-      (docs/nextcloud-stack/plan.md nextcloud-P2-10). deep-research runs
-      on pve-tiny but stays in ai_seg (same VLAN/subnet as pve's ai_seg,
-      per pve-tiny.yaml), so this one rule covers it regardless of
-      physical node.
-  - from: cse_seg
-    to: 192.168.120.10
-    protocol: tcp
-    ports: [8080]
-    description: >-
-      CyberSecEval's own WebDAV push (_push_report_to_nextcloud in
-      cse_tasks.py, nextcloud-P2-04) -- confirmed missing here even
-      though the push code shipped 2026-09-25; the push has almost
-      certainly been silently failing (URLError swallowed by design)
-      every run since. Retroactive fix, not new scope.
   - from: apps_seg
     to: mgmt_seg
     protocol: tcp

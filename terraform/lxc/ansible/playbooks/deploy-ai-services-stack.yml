@@ -916,7 +916,14 @@
     - role: nextcloud_folder_share
       when: nextcloud_dr_reports_user | length > 0 and nextcloud_dr_reports_app_password | length > 0
       vars:
-        nextcloud_folder_share_base_url: "http://192.168.120.10:8080"
+        # NOT the bare apps_seg IP -- confirmed live 2026-09-30 that Nextcloud
+        # rejects any Host header not in its own trusted_domains list with a
+        # "400 Bad Request / Access through untrusted domain" guest page,
+        # and the bare IP was never added there. CyberSecEval's own runtime
+        # push (cse_tasks.py) already uses this same FQDN and demonstrably
+        # works -- this play now matches that, not the plan doc's illustrative
+        # (and wrong) bare-IP example.
+        nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
         nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
         nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/deep-research-agent"

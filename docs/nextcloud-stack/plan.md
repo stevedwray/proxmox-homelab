@@ -1485,6 +1485,19 @@ change: >
           nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
           nextcloud_folder_share_folder: "Reports/cyberseceval"
 
+  **Correction, 2026-09-30 (see nextcloud-P2-08's superseded note):** this
+  literal `nextcloud_folder_share_base_url` value is wrong -- confirmed
+  live that the bare IP gets Nextcloud's own "Access through untrusted
+  domain" 400 rejection, since `trusted_domains` only lists
+  `nextcloud.lab.gibbsgreatly.xyz` (and the Pangolin FQDN), never a bare
+  IP. Whether `deploy-cse-controller.yml`'s actually-deployed play matches
+  this doc's literal text, or was hand-corrected to the FQDN at some point
+  without this doc being updated, was not checked as part of today's
+  deep-research work (out of scope -- would mean touching cse-controller's
+  own deploy while its job was running). If this play has never
+  successfully run, it needs the same `https://nextcloud.lab.gibbsgreatly.xyz`
+  fix as `nextcloud-P2-13` below.
+
   Guarded the same way `nextcloud-P2-05` guards the worker env file --
   this play must no-op cleanly (not fail the whole deploy) when the
   Nextcloud credential hasn't been provisioned yet.
@@ -1567,65 +1580,47 @@ single-file-per-run output shape — one `MKCOL` for `<run-id>`, one `PUT`
 of `final_report.md`, no per-test-case fan-out, no benchmark subfolder
 level.
 
-#### nextcloud-P2-08-firewall-ai-seg-and-cse-seg-to-nextcloud
+#### nextcloud-P2-08-firewall-ai-seg-and-cse-seg-to-nextcloud — SUPERSEDED, do not implement
 
-```yaml
-id: nextcloud-P2-08-firewall-ai-seg-and-cse-seg-to-nextcloud
-title: Open the two still-missing MikroTik rules for Nextcloud report pushes
-depends_on: []
+**Withdrawn 2026-09-30, the same day it was written, before ever being
+applied live.** This step assumed both pushes hit `192.168.120.10:8080`
+directly (the "raw container port, not through Traefik" design this whole
+Phase 2 section originally reasoned from). Live testing during rollout
+proved that assumption wrong on both sides:
 
-change: >
-  In terraform/lxc/network/pve.yaml's `policies:` list, immediately after
-  the existing entry
+- CyberSecEval's real, already-deployed `NEXTCLOUD_REPORTS_WEBDAV_URL`
+  (`cse-controller:/srv/cyberseceval/config/worker.env`, read directly,
+  not guessed) uses `nextcloud.lab.gibbsgreatly.xyz`, not the bare IP --
+  the plan doc's own illustrative example value was simply wrong relative
+  to what was actually configured. The operator confirmed this push has
+  been working and producing real reports in Nextcloud all along.
+- `nextcloud.lab.gibbsgreatly.xyz` resolves to `192.168.30.10` (Traefik,
+  `edge_seg`), confirmed via `getent hosts` run from `cse-controller`'s own
+  host. The real, working traffic path is `cse_seg -> edge_seg -> apps_seg`,
+  not `cse_seg -> apps_seg` directly -- and no `cse_seg -> edge_seg` (or
+  `-> 192.168.30.10`) rule exists in `pve.yaml` either, yet it demonstrably
+  works. The live network already permits this path even though it isn't
+  declared in this policy file (a separate, pre-existing doc/reality gap
+  this step does not attempt to resolve).
+- Separately, and independent of network path entirely: `deep-research`'s
+  own `dr-reports` push, configured with the bare-IP pattern this step's
+  sibling steps originally specified, failed live with Nextcloud's own
+  `400 Bad Request` / "Access through untrusted domain" guest page --
+  confirmed by reading the actual HTTP response body. `trusted_domains`
+  (checked via `occ config:system:get trusted_domains`) lists only
+  `localhost`, `nextcloud.lab.gibbsgreatly.xyz`, and
+  `nextcloud.pan.gibbsgreatly.xyz` -- no bare IP, in either FQDN or IP
+  form. **This means the bare-IP design was never going to work at the
+  application layer, regardless of what firewall rules existed.**
 
-  - from: edge_seg
-    to: apps_seg
-    protocol: tcp
-    ports: [8080]
-    description: Traefik to Nextcloud web UI
-
-  add exactly these two new entries (destination-IP-scoped, matching this
-  file's own narrower pattern documented in the CyberSecEval
-  "Operator-only actions" section below, not a whole-zone `to: apps_seg`
-  rule):
-
-  - from: ai_seg
-    to: 192.168.120.10
-    protocol: tcp
-    ports: [8080]
-    description: >-
-      deep-research's WebDAV push of final_report.md to Nextcloud
-      (nextcloud-P2-10). deep-research now runs on pve-tiny but stays in
-      ai_seg (same VLAN/subnet as pve's ai_seg, per pve-tiny.yaml), so
-      this one rule covers it regardless of physical node.
-  - from: cse_seg
-    to: 192.168.120.10
-    protocol: tcp
-    ports: [8080]
-    description: >-
-      CyberSecEval's own WebDAV push (_push_report_to_nextcloud in
-      cse_tasks.py, nextcloud-P2-04) -- confirmed missing here even
-      though the push code shipped 2026-09-25; the push has almost
-      certainly been silently failing (URLError swallowed by design)
-      every run since. Retroactive fix, not new scope.
-
-  Do not add a whole-zone `to: apps_seg` rule for either -- scope both to
-  the single destination IP, matching precedent already set elsewhere in
-  this same policies list.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/network/pve.yaml
-  forbidden_actions:
-    - "Any change to an existing policy entry -- additive only"
-    - "Applying this to the live MikroTik -- that's a manual operator step (no automated wrapper for this device), see Operator-only actions below"
-
-gates:
-  - id: terragrunt-plan-zero-diff-on-existing
-    cmd: "./with-secrets bash -c 'cd terraform/lxc/network && terragrunt plan' 2>&1 | grep -qE '0 to change, 0 to destroy|No changes'"
-    expect: "exit 0 -- confirms this is additive-only per the Validation Tiers table"
-    critical: true
-```
+`ai_seg -> edge_seg:443` already exists (found while investigating this),
+so once `nextcloud-P2-10`/`P2-13` are corrected to use the FQDN instead of
+the bare IP (see their updated content below), `deep-research`'s push
+needs **no new firewall rule at all**. The two rules this step would have
+added were reverted from `pve.yaml` the same session they were written,
+never applied to the live MikroTik. Left here, marked superseded, rather
+than deleted, so a future reader doesn't re-derive and re-add the same
+wrong rules from the same wrong assumption this plan originally made.
 
 #### nextcloud-P2-09-provision-dr-reports-openbao-fields
 
@@ -1869,7 +1864,11 @@ change: >
       - role: nextcloud_folder_share
         when: nextcloud_dr_reports_user | length > 0 and nextcloud_dr_reports_app_password | length > 0
         vars:
-          nextcloud_folder_share_base_url: "http://192.168.120.10:8080"
+          # NOT the bare apps_seg IP -- confirmed live 2026-09-30 that
+          # Nextcloud's trusted_domains rejects it (400 "Access through
+          # untrusted domain"). Matches CyberSecEval's own real, working
+          # NEXTCLOUD_REPORTS_WEBDAV_URL, which already uses this FQDN.
+          nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
           nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
           nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
           nextcloud_folder_share_folder: "Reports/deep-research-agent"
@@ -1904,7 +1903,10 @@ above, adapted for the current OpenBao-backed secrets flow (not SOPS):
 2. **Write the three secret values to OpenBao** under the existing
    `kv/data/services/nextcloud` path (same KV entry as `cse-reports`'
    fields, per `nextcloud-P2-09`): `NEXTCLOUD_DR_REPORTS_WEBDAV_URL`
-   (e.g. `http://192.168.120.10:8080/remote.php/dav/files/dr-reports`),
+   (the FQDN, not the bare IP -- confirmed live 2026-09-30 that Nextcloud's
+   `trusted_domains` rejects the bare IP with a 400; use
+   `https://nextcloud.lab.gibbsgreatly.xyz/remote.php/dav/files/dr-reports`,
+   matching CyberSecEval's own real, working value),
    `NEXTCLOUD_DR_REPORTS_USER=dr-reports`,
    `NEXTCLOUD_DR_REPORTS_APP_PASSWORD=<generated app password>`. Per
    CLAUDE.md's Secrets Storage section: `bao login -method=oidc
