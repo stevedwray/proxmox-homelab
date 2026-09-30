@@ -1,5 +1,53 @@
 # Deep research: current state
 
+**2026-10-01 follow-up: the actual session-killing bug was a missing LLM
+client timeout, found via a second live test after the two fixes below.**
+With `web_search` genuinely at 60 and the spawn race mostly mitigated, a
+follow-up test ran a real, thorough multi-hour research session — then
+the final-report completion call hung silently for 18+ minutes with zero
+response. Diagnosed by querying VictoriaMetrics for `framework`'s own CPU
+over that exact window: flat at ~0.3% (idle) the entire time, meaning the
+request never got real processing server-side, yet nothing ever raised a
+timeout client-side. Root cause: `engine/orchestrator.py`'s
+`_build_client()` never passed a `timeout` to the LLM client.
+`OpenAIChatCompletionClient.__init__` (agent_framework_openai) has no
+`timeout` parameter of its own, so this fell through to the `openai` SDK's
+default — nominally 600s, but implemented via `httpx` as a **per-read**
+timeout that resets on any received byte, including a bare keep-alive with
+no real content, so a connection that stays technically "alive" without
+producing a real response can hang indefinitely.
+
+Fixed by constructing our own `AsyncOpenAI` client with an explicit,
+bounded 300s total timeout and handing it to `OpenAIChatCompletionClient`
+via its `async_client=` parameter (the only way to control this, since the
+wrapper doesn't expose `timeout` directly) — verified live afterward that
+the deployed client's actual `.timeout` is `300`, not just that it
+constructs without error. A stuck completion now raises a catchable
+`openai.APITimeoutError` instead of silently losing the entire session.
+
+**What this does *not* explain: why the request never got real processing
+in the first place.** Querying `framework`'s llama-server `/slots` and
+`/metrics` endpoints directly after the fact was inconclusive — `/slots`
+showed one slot retaining non-zero prompt-token metadata from the aborted
+connection, but `/metrics` reported `requests_processing: 0` and
+`requests_deferred: 0`, meaning the server considered itself fully idle,
+not queuing or stuck on anything. Leading theory, unconfirmed: a
+llama.cpp/Nathanw-fork scheduling quirk under a very large accumulated
+context (the final synthesis call for a multi-hour, many-subagent session)
+that drops a request from real processing while the HTTP connection stays
+open. Catching this live with the server's own debug/trace logging
+enabled, next time it recurs, would be the way to actually confirm it —
+not attempted here given the shared server also serves CyberSecEval and
+restarting or reconfiguring it was out of scope for this investigation.
+
+**Also confirmed working well in the same test**: the `resource_tracker`
+race fix and the corrected `web_search` quota both held up under a
+genuinely long, thorough multi-angle session (far more real search
+results and gathered material than any prior test) — the resource_tracker
+crashes still occurred (19 this run) but the agent handled every one
+gracefully, correctly reasoning "transient system fault" and working
+around it via already-gathered search snippets, exactly as designed.
+
 **2026-09-30/10-01 incident, two real bugs found from a bad real test run:**
 a live session hit `fetch_url_to_workspace`'s `ValueError: bad value(s) in
 fds_to_keep` 18 times — `multiprocessing`'s process-wide `resource_tracker`
