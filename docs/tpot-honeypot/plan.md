@@ -170,11 +170,10 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
    which this plan avoids), not because it was missed.
 4. ~~**No patch cadence.**~~ **FIXED (Phase 1.5)**: security-only
    `unattended-upgrades` installed, 63-package backlog cleared to 3.
-5. **No ES retention policy.** Indices accumulate indefinitely
-   (`logstash-YYYY.MM.DD`, one per day, unbounded). At ~35MB/day this is
-   not urgent (years before it matters on a 459G disk) but there's no
-   ILM policy defining an intended retention window, so it's an
-   unbounded-by-accident state, not a decided one. **Still open.**
+5. ~~**No ES retention policy.**~~ **FIXED (Phase 7)**: found a real,
+   pre-existing `tpot` ILM policy (30-day retention) already governing
+   this — not actually "unbounded," a prior assumption in this doc that
+   turned out wrong on closer inspection. Extended to 90 days.
 6. ~~**Stale SSH alias.**~~ **FIXED (Phase 1)**: `tpot-lxc` removed from
    `~/.ssh/config`.
 
@@ -476,6 +475,35 @@ exactly the `nginx` container — no honeypot data, no other service.
   durable record so the same loss doesn't happen again, not a live
   credential feed).
 
+### Phase 7 — extended raw retention to 90 days (done, 2026-09-30)
+Gap 5 ("no ES retention policy") turned out to be based on an
+incomplete check — a real ILM policy already existed. Found while
+answering "is there enough disk to retain more than 30 days" (yes,
+trivially — 424G/459G free, ~35MB/day means even a full year is only
+~13GB):
+
+- `clean.sh` (T-Pot's own `tpotinit` cleanup script, run every daily
+  reboot cycle) only rotates each honeypot's own raw logfiles under
+  `/data/<service>/log` — it has no code path that touches Elasticsearch
+  at all, despite `TPOT_PERSISTENCE_CYCLES=30` looking at a glance like
+  it might govern both.
+- The real mechanism: a genuine, pre-existing ILM policy named `tpot`
+  (`_meta.description`: *"T-Pot ILM policy with a retention of 30
+  days"*), attached to every `logstash-*` index via the `logstash` index
+  template's `index.lifecycle.name` setting — confirmed via each
+  index's own `_settings` (not found by an earlier, less thorough check
+  of `_ilm/policy` that only searched by exact policy name match).
+- Extended live via a plain `PUT /_ilm/policy/tpot` (operator-confirmed
+  2026-09-30: 90 days) — a pure Elasticsearch API config change, not a
+  `~/tpotce/.env`/compose change, so it needed no container
+  restart/recreate at all; ILM re-evaluates the new value on its own
+  periodic sweep. Verified live: policy's `delete.min_age` now `90d`,
+  all 30 existing indices still correctly attached.
+- Source-side retention (this phase) and destination-side retention for
+  `tpot-events-*` in `opensearch-stack` (still no ILM policy there) are
+  two separate, independently-decided windows — the destination one
+  remains open, see below.
+
 ## Still open
 
 - ~~**Codify the T-Pot host route**~~ **DONE (2026-09-30)**: added as an
@@ -491,12 +519,13 @@ exactly the `nginx` container — no honeypot data, no other service.
   this cost real debugging time (Real bug #4). Worth a `--check` habit
   or tooling improvement flagged separately; out of scope for this plan
   to fix generally.
-- **Retention window (Gap 5)**: how long should raw T-Pot `logstash-*`
-  indices be kept before ILM rolls them off? Not urgent given current
-  growth rate (~35MB/day), but worth deciding once instead of leaving it
-  implicit.
-- **Destination retention**: same open question for the new
-  `tpot-events-*` indices this phase creates — no ILM policy defined yet.
+- ~~**Retention window (Gap 5)**~~ **DONE (Phase 7)**: source-side
+  `logstash-*` retention extended to 90 days via the existing `tpot`
+  ILM policy.
+- **Destination retention**: still open — the `tpot-events-*` indices in
+  `opensearch-stack` have no ILM policy defined yet, so they currently
+  accumulate indefinitely. A separate decision from the source-side
+  window above.
 - **AI daily-report port** (Phase 5): worth reviving, or does the
   Grafana panel make it redundant?
 - **Phase 5 (visibility)**: not started — Grafana dashboard panel work
