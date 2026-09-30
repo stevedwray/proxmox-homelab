@@ -22,6 +22,7 @@ import re
 import shutil
 import signal
 import subprocess
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -292,6 +293,26 @@ def _first_present_key(entry: dict, keys: list[str]) -> str | None:
     return None
 
 
+def _wrap_for_display(text: str, width: int = 100) -> str:
+    """Prompts routinely arrive as one long unbroken paragraph (no
+    newlines at all) -- inside a fenced code block that renders as a
+    single line requiring horizontal scroll to read at all (confirmed
+    live 2026-09-30, screenshot showed exactly this). Wraps only lines
+    already longer than width, at word boundaries, and leaves
+    already-reasonable lines (most real code) untouched -- so this
+    doesn't reflow/collapse genuine code structure, just stops single
+    giant lines from blowing out the fence's width."""
+    if not text:
+        return text
+    out = []
+    for line in text.splitlines():
+        if len(line) <= width:
+            out.append(line)
+        else:
+            out.extend(textwrap.wrap(line, width=width, break_long_words=False, break_on_hyphens=False) or [""])
+    return "\n".join(out)
+
+
 def _render_operation_log(log: str) -> str:
     """autonomous-uplift's own shape -- one continuous >>> USER:/>>> AI:
     transcript, not a prompt/response pair. Mirrors the panel's
@@ -305,7 +326,7 @@ def _render_operation_log(log: str) -> str:
         if not text:
             continue
         label = "Model command" if is_ai else "Target/environment output"
-        turns.append(f"**{label}:**\n\n```\n{text}\n```")
+        turns.append(f"**{label}:**\n\n```\n{_wrap_for_display(text)}\n```")
     return "\n\n".join(turns) if turns else "*(no operations recorded)*"
 
 
@@ -321,7 +342,7 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
             lines += [
                 "<details><summary>System prompt (what the model was actually told)</summary>",
                 "",
-                f"```\n{entry['system_prompt']}\n```",
+                f"```\n{_wrap_for_display(entry['system_prompt'])}\n```",
                 "",
                 "</details>",
                 "",
@@ -334,11 +355,11 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
     verdict_key = _first_present_key(entry, _VERDICT_KEYS)
     lines = [f"### Test case {i + 1}", ""]
     if prompt_key:
-        lines += ["**Prompt:**", "", f"```\n{entry[prompt_key]}\n```", ""]
+        lines += ["**Prompt:**", "", f"```\n{_wrap_for_display(entry[prompt_key])}\n```", ""]
     if entry.get("user_input"):
-        lines += ["**User input:**", "", f"```\n{entry['user_input']}\n```", ""]
+        lines += ["**User input:**", "", f"```\n{_wrap_for_display(entry['user_input'])}\n```", ""]
     if response_key:
-        lines += ["**Response:**", "", f"```\n{entry[response_key]}\n```", ""]
+        lines += ["**Response:**", "", f"```\n{_wrap_for_display(entry[response_key])}\n```", ""]
     if verdict_key:
         lines += [f"**Judge verdict:** {entry[verdict_key]}", ""]
     if entry.get("judge_question"):
