@@ -7,6 +7,15 @@
 # ansible-playbook itself executes (delegate_to: localhost), not from
 # the managed host -- this only needs the operator's own machine to
 # reach Nextcloud, not the target LXC.
+#
+# force_basic_auth: true on every call -- confirmed live 2026-09-30 that
+# without it, ansible.builtin.uri waits for a 401 challenge with a
+# WWW-Authenticate header before resending credentials. Nextcloud's OCS
+# API's JSON-formatted 401 doesn't include that header (unlike WebDAV,
+# which does), so the shares GET/POST calls never actually authenticated
+# even with correct credentials -- a plain curl with the same
+# credentials worked fine, isolating this to the module's own
+# challenge-response assumption, not the credentials or endpoint.
 
 ---
 - name: Split the target folder into path segments
@@ -29,6 +38,7 @@
     method: MKCOL
     url_username: "{{ nextcloud_folder_share_owner_user }}"
     url_password: "{{ nextcloud_folder_share_owner_password }}"
+    force_basic_auth: true
     status_code: [201, 405]
   loop: "{{ nextcloud_folder_share_cumulative_paths }}"
   delegate_to: localhost
@@ -41,6 +51,7 @@
     method: GET
     url_username: "{{ nextcloud_folder_share_owner_user }}"
     url_password: "{{ nextcloud_folder_share_owner_password }}"
+    force_basic_auth: true
     headers:
       OCS-APIRequest: "true"
     status_code: 200
@@ -64,6 +75,7 @@
     method: POST
     url_username: "{{ nextcloud_folder_share_owner_user }}"
     url_password: "{{ nextcloud_folder_share_owner_password }}"
+    force_basic_auth: true
     headers:
       OCS-APIRequest: "true"
     body_format: form-urlencoded
