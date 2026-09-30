@@ -464,7 +464,13 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
 
     auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
     base = webdav_url.rstrip("/")
-    for collection_url in (f"{base}/cyberseceval", f"{base}/cyberseceval/{run_dir.name}"):
+    # Must match nextcloud_folder_share_folder ("Reports/cyberseceval") in
+    # deploy-cse-controller.yml's folder-share play exactly -- confirmed
+    # live 2026-09-30 that these two had drifted apart (this function wrote
+    # to a bare top-level "cyberseceval", while the actual share the
+    # operator can see points at "Reports/cyberseceval"), so every pushed
+    # report landed in a folder nobody had access to.
+    for collection_url in (f"{base}/Reports", f"{base}/Reports/cyberseceval", f"{base}/Reports/cyberseceval/{run_dir.name}"):
         request = urllib.request.Request(collection_url, method="MKCOL")
         request.add_header("Authorization", auth_header)
         try:
@@ -475,7 +481,7 @@ def _push_report_to_nextcloud(run_dir: Path, benchmark: str) -> None:
         except urllib.error.URLError:
             return
 
-    put_url = f"{base}/cyberseceval/{run_dir.name}/report.md"
+    put_url = f"{base}/Reports/cyberseceval/{run_dir.name}/report.md"
     request = urllib.request.Request(
         put_url, data=(run_dir / "report.md").read_bytes(), method="PUT"
     )
