@@ -1,8 +1,11 @@
 # GLM-5.3-Flash: bounded capability test on Framework
 
-Status: **in progress (2026-10-01).** Operator approved the bounded test
-and stopping other GPU services for its duration. Results are recorded
-in §7 as each gate completes.
+Status: **GLM-5.3-Flash is serving on Framework :8080 and ready for
+CyberSecEval runs (2026-10-01).** Load, GPU residency, sanity, speed and a
+CSE smoke run all pass (§7). This needed one fix not in the original plan: a
+metadata rewrite of the Unsloth GGUF (§5a). Qwen3.8-Flash-Next
+(`nathanw-llamacpp.service`) and ComfyUI are **stopped** while this runs,
+at operator direction.
 
 ## TL;DR
 
@@ -108,7 +111,9 @@ hf download unsloth/GLM-5.3-Flash-GGUF \
   --local-dir /mnt/nvme2/models-gguf/glm-5.3-flash
 ```
 
-Done when all 4 shards are present, with a combined 101,854,843,808 bytes.
+Done when all 4 shards are present, with a combined 101,844,951,808 bytes
+(9,429,888 + 49,896,298,080 + 49,248,507,840 + 2,690,716,000; each matches
+the HF API).
 
 ### Step 2: Build upstream llama.cpp (non-disruptive)
 
@@ -237,6 +242,35 @@ flags, so the binaries are functionally identical. The running
 fetching `master` into a named ref and building from an explicit
 `cd /home/steve/llama.cpp-upstream || exit 1`.
 
+## 5a. Arch-name mismatch and the metadata rewrite (2026-10-01)
+
+The first load failed: `unknown model architecture: 'glm5next'`. Unsloth's
+quants (uploaded 2026-08-29, last touched 2026-09-06) were made with a
+pre-merge branch that named the architecture `glm5next`. The merged
+upstream code registers it as `glm5-next` (`src/llama-arch.cpp`), and every
+hparam key is prefixed with the arch name. No corrected re-upload existed
+on 2026-10-01.
+
+At the operator's direction ("focus on getting GLM5 working"), this
+overrode the "don't hand-edit GGUF metadata" stop condition below. The
+fix:
+
+- Shard 1 is metadata only (72 KVs, 0 tensors). Shards 2–4 hold only
+  `split.*` KVs plus tensors, with no arch-prefixed keys.
+- Wrote a new shard 1 into `/mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/`
+  with `general.architecture = glm5-next` and the 40 `glm5next.*` keys
+  renamed to `glm5-next.*`. The values are copied unchanged, using the
+  `GGUFReader` → `GGUFWriter` field-copy pattern from
+  `gguf-py/gguf/scripts/gguf_new_metadata.py`.
+- Shards 2–4 are **hard links** to the originals, so no extra disk is used.
+  The untouched originals stay in `UD-IQ2_XXS/`.
+
+Tensor names matched the merged loader as-is: no missing-tensor errors.
+The only load warnings are `blk.45.*` "unused tensor", which is the MTP
+(`nextn`) draft layer, expected when not running speculative decoding,
+and a tokenizer note that `special_eot_id`/`special_eom_id` aren't in
+`special_eog_ids`. Responses still end cleanly (`finish_reason: stop`).
+
 ## 6. Stop conditions
 
 | Symptom | Meaning | Action |
@@ -248,15 +282,39 @@ fetching `master` into a named ref and building from an explicit
 
 ## 7. Results
 
-_Filled in as gates complete._
-
 | Gate | Result |
 |---|---|
-| G1 build | |
-| G2 load / GPU | |
-| G3 sanity / speed | |
-| CSE smoke | |
-| CSE suite | |
+| G1 build | **Pass.** `llama-server` 0.5.0-dev build 11309, commit `a4d880fd5`, Vulkan (RADV STRIX_HALO) |
+| G2 load / GPU | **Pass after the §5a rewrite.** Healthy in 45–55 s. GTT 96.0 GiB at 64k ctx, 98.6 GiB at 131k ctx, 21 GiB host RAM still available. No `dmesg` errors |
+| G3 sanity / speed | **Pass.** `17*23` → `391`, clean content/reasoning split. Decode 16.6–18.8 tok/s. Prefill 148 tok/s on a 4k-token prompt (33 tok/s on tiny prompts) |
+| Reasoning effort | **Works.** Same security prompt: `low` 279 tokens, no reasoning; `high` 458 tokens, 843 reasoning chars; `max` (model default) 1813 tokens, 7326 reasoning chars. The server default is now set to `high` via `--chat-template-kwargs` because CSE sends no effort field |
+| CSE smoke | **Pass.** `mitre-frr`, 1 case, custom backend, job `46abd249`: `SUCCESS`, real scored response (accept, 0% refusal), ~8 min wall time |
+| CSE suite | Not yet run: handed to operator |
+
+### Current serving command (as running)
+
+```bash
+setsid nohup ~/llama.cpp-upstream/build-vk/bin/llama-server \
+  -m /mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf \
+  --alias glm-5.3-flash --host 0.0.0.0 --port 8080 \
+  --ctx-size 131072 --n-gpu-layers 999 --jinja \
+  --chat-template-kwargs '{"reasoning_effort":"high"}' \
+  --temp 1.0 --top-p 0.95 --min-p 0.01 \
+  --metrics --api-key-file /etc/llamacpp/api-key \
+  > ~/glm53-flash-test/server.log 2>&1 < /dev/null &
+```
+
+`--ctx-size` was raised from the planned 65536 to 131072 so the ~117k-token
+`malware_analysis` prompts fit, matching Qwen's setting. Prefill at ~148
+tok/s means a prompt that size takes roughly 13+ minutes before the first
+token.
+
+### Using it from CyberSecEval
+
+Panel → Run tests → backend **custom**. Base URL
+`http://framework.gibbsgreatly.xyz:8080/v1`, model `glm-5.3-flash`, API key
+blank. Via the API, `POST /jobs` takes query parameters, for example
+`?benchmark=mitre-frr&num_test_cases=1&backend_base_url=...&backend_model=glm-5.3-flash`.
 
 ## Sources
 
