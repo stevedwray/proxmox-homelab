@@ -104,13 +104,13 @@ from Elasticsearch's own retention — there's no ILM policy trimming the
 | Surface | Detail |
 |---|---|
 | SSH | `~/.ssh/config` alias `tpot` → `tpot.gibbsgreatly.xyz:64295`, user `steve`, key-only auth (1 key in `authorized_keys`), **passwordless full sudo** (`(ALL) NOPASSWD: ALL`). A second alias `tpot-lxc` → `192.168.1.31:64295` exists but is unreachable/dead — looks like a stale entry from an earlier plan to run this as a Proxmox LXC that was never followed through; worth removing once confirmed. |
-| Web UI | Nginx portal, LAN-exposed on `:64294` and `:64297` (0.0.0.0). Three htpasswd users configured in `~/tpotce/.env` (`WEB_USER=`, base64-encoded `user:$apr1$...` pairs) — not decoded as part of this review. |
+| Web UI | **`:64297`** — the real user-facing portal (landing page, elasticvue, cyberchef, Kibana/ES/map/Spiderfoot proxies), `auth_basic` via `/etc/nginx/nginxpasswd` (regenerated from `.env`'s `WEB_USER=` on every `docker compose up`/recreate of the `nginx`+`tpotinit` containers — a plain `docker restart nginx` does **not** pick up `.env` changes, only a full recreate does). `:64294` is a **different vhost entirely** (`lsweb.conf`) — the Logstash sensor-ingest endpoint (`LS_WEB_USER`), not part of the web UI; corrected here after an earlier version of this doc conflated the two. Three htpasswd users (`admin`/`steve`/`recoveryadmin`), now OpenBao-tracked (`kv/services/tpot`, see Phase 6). |
 | Internal Elasticsearch | `:64298`, bound to `127.0.0.1` only — SSH-tunnel-only by design. This is what both existing sync scripts use. |
 | Internal Kibana | `:64296`, also `127.0.0.1`-only. |
-| Sensor ingest | `LS_WEB_USER` (per-sensor Logstash credential) — unset; irrelevant since no `SENSOR`-type satellite exists. |
+| Sensor ingest | `:64294` (`lsweb.conf`), keyed by `LS_WEB_USER` — unset; irrelevant since no `SENSOR`-type satellite exists. |
 | Network exposure | Single NIC, `192.168.1.28/24` (client LAN), no MikroTik NAT/port-forward rule found anywhere in this repo pointing at it — confirmed LAN-only, matching `tpot_ai_reporter_config.yaml`'s own stated assumption (`network_type: home_lab_lan_only`, "treat any LAN source as potentially hostile"). |
 | DHCP | Static-looking lease but not a MikroTik reservation; identified only as `raspberrypi` (MAC `88:A2:9E:57:E6:24`) in `docs/dhcp-refactor/`, never labeled. |
-| Secrets custody | Everything (SSH key, web htpasswd, the two sync repos' `.env`/API-key files) lives outside OpenBao, outside this repo — pure local-file custody on the Pi and on the operator's workstation. |
+| Secrets custody | SSH tunnel key and all three web-UI passwords are now OpenBao-tracked (`kv/services/tpot`) — see Phase 2 and Phase 6. The two sync repos' (`tpotce-analysis`/`security-analysis`) own `.env`/API-key files remain outside this repo entirely, unrelated to this host. |
 
 ## Current state (verified live, 2026-09-30)
 
@@ -430,6 +430,51 @@ behavior working as intended).
 - Decide whether the AI daily-report feature from `tpotce-analysis`
   (`tpot_ai_reporter.py`) is worth porting too, or whether the Grafana
   panel supersedes it.
+
+### Phase 6 — web-UI password recovery (done, 2026-09-30)
+The operator lost the web-UI password entirely (not stored anywhere,
+predates OpenBao). Recovered directly, staying within the "Management
+boundary": this genuinely does touch `~/tpotce/.env` (there's no way
+around that for a web-UI credential), but the blast radius was kept to
+exactly the `nginx` container — no honeypot data, no other service.
+
+- Generated new random passwords for all three accounts (`admin`,
+  `steve`, `recoveryadmin`), computed real `$apr1$` htpasswd hashes with
+  `openssl passwd -apr1` on the host itself, base64-encoded them
+  (**with the trailing `\n\n` T-Pot's own `.env` comment example
+  expects** — omitting it, as a first attempt did, makes `tpotinit`
+  silently reject the affected user rather than erroring), and replaced
+  `.env`'s `WEB_USER=` line (original backed up alongside it,
+  `.env.bak.<timestamp>`).
+- **Real bug found while verifying**: `docker restart nginx` does
+  **not** pick up `.env` changes — only `docker compose up -d nginx`
+  (which recreates the container, and its `tpotinit` init dependency)
+  actually re-reads it. Confirmed live: the container's own `$WEB_USER`
+  was empty after a plain restart; `docker compose up -d --force-recreate
+  nginx` was needed to get `tpotinit` to regenerate
+  `/etc/nginx/nginxpasswd` from the new value.
+- **Real doc error found and fixed**: this plan previously listed the
+  web UI as reachable on both `:64294` and `:64297`. Only `:64297`
+  (`tpotweb.conf`) is the actual portal with `auth_basic`; `:64294`
+  (`lsweb.conf`) is the Logstash sensor-ingest endpoint, a completely
+  different vhost with no relation to the browser UI. Every login
+  attempt against `:64294` returned 401 regardless of credentials
+  (correct or wrong) — including from `127.0.0.1` itself, which should
+  have bypassed auth entirely under that vhost's own `satisfy any` /
+  `allow 127.0.0.1` rule had it actually been the right target — the
+  tell that we were hitting the wrong server block. See "What access we
+  know about" above, corrected.
+- Verified live: all three accounts return `200` against `:64297` with
+  their new passwords, `401` with a wrong one; all 28 other T-Pot
+  containers confirmed untouched (same uptime as before, 4 hours) —
+  only `nginx`/`tpotinit` were recreated.
+- New passwords written to OpenBao (`kv/services/tpot`:
+  `TPOT_WEB_ADMIN_PASSWORD`, `TPOT_WEB_STEVE_PASSWORD`,
+  `TPOT_WEB_RECOVERYADMIN_PASSWORD`) — operator-run, same pattern as
+  Phase 2's SSH key. Added to `secrets/manifest.json`'s `entries` (no
+  profile needed — nothing currently reads these back, this is a
+  durable record so the same loss doesn't happen again, not a live
+  credential feed).
 
 ## Still open
 
