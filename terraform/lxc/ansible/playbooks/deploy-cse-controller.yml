@@ -388,6 +388,56 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch6.changed
 
+    # Real gap found live 2026-09-30: even 32768 wasn't always enough --
+    # a mitre-frr prompt (a C-program network-monitoring task) drove the
+    # model to spend 32,237 of its 32,768-token budget on
+    # reasoning_content, leaving essentially nothing for the actual
+    # content, so judge_responses.json recorded a real "accept" verdict
+    # against a genuinely empty response. Framework serves this model
+    # with a 131072-token context (confirmed via /slots), so there's
+    # room to raise further. 65536 doesn't guarantee no prompt can ever
+    # exhaust it, but it's a meaningful step with real headroom left in
+    # the context.
+    - name: Raise the local-model max_completion_tokens cap further, 32768 -> 65536 (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '32768 if self\.model\.startswith\("/"\) else 16384'
+        replace: '65536 if self.model.startswith("/") else 16384'
+      register: cse_controller_openai_patch7
+
+    - name: Commit the further-raised local-model cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise local-model max_completion_tokens cap
+          32768 -> 65536 -- a mitre-frr prompt exhausted the 32768 budget
+          entirely on reasoning_content, producing a genuinely empty
+          judged response. Framework serves 131072 context for this
+          model, confirmed live 2026-09-30."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch7.changed
+
+    # Companion fix to the cap raise above, same reasoning as the
+    # original 2026-09-25 timeout fix: worst-case generation time scales
+    # with the cap. At this model's observed ~23.5 tok/s (32237 tokens in
+    # ~1372s, confirmed live 2026-09-30), a full 65536-token generation
+    # could take ~46 minutes -- past the current 1800s (30 min) timeout.
+    - name: Raise the OpenAI client's request timeout to match the 65536 completion cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'timeout=1800\.0\)  # cse-lab patch: SDK default \(600s\) is shorter than a genuine 32768-token generation can take at this model''s ~20 tok/s, causing spurious mid-generation timeouts \+ retry loops that look like a hang \(confirmed live 2026-09-25\)'
+        replace: 'timeout=3600.0)  # cse-lab patch: raised alongside the 65536 completion cap -- SDK default (600s) and the earlier 1800s both fall short of what a genuine full-budget generation can take at this model''s ~23.5 tok/s (confirmed live 2026-09-30)'
+      register: cse_controller_openai_patch8
+
+    - name: Commit the further-raised OpenAI client timeout on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise OpenAI client timeout 1800s -> 3600s to match
+          the 65536 completion cap. Confirmed live 2026-09-30."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch8.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"
