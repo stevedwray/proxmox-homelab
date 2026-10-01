@@ -20,6 +20,55 @@ VMID 116) was removed in the pve teardown.
 
 See [`plan.md`](./plan.md) for decisions, steps and usage.
 
+## Where things stand and what's next (checkpoint 2026-10-01)
+
+**Live:**
+- **eval-runner on `ai-services-stack`** (pve-tiny, 192.168.50.11):
+  `eval-run gpqa|ifeval|resume|selftest|results|publish`.
+- **Nextcloud:** Tables "Model evaluations" (table id 2, 21 historical
+  rows, two Comparable views, shared read-only with steve) and
+  `Reports/eval-runner/`, shared with steve.
+- **Framework :8080:** still serving GLM-5.3-Flash (hand-started, not a
+  systemd unit). Qwen `nathanw-llamacpp` and ComfyUI are stopped. One slot
+  was busy at the checkpoint, likely the operator's CSE suite.
+
+**Branches (not merged, the operator decides):**
+- `task/eval-runner`: 16 commits.
+- `task/glm-5.3-flash-eval`: 4 commits (GLM doc, including the CPU-spin
+  §8).
+
+**Pending operator decisions:**
+1. **`leaderboard.csv` in Nextcloud** opens as plain text (no CSV
+   viewer). Proposed: stop uploading it, keep it on the CT dry-run, and
+   rely on the Tables table plus `leaderboard.md`. Alternatives: install
+   Nextcloud Office (Collabora) or leave as is. **Awaiting the
+   operator's answer.**
+2. **Token budget:** add `--max-gen-toks` (for example 32k) as a
+   separate, labelled non-comparable series for reasoning models? Default
+   stays 8192.
+3. **Rest of the battery:**
+   - BFCL: the `bfcl` CLI, packageable.
+   - RepoBench: the custom scripts are lost; lm_eval's
+     `longbench_repobench-p` is a different benchmark.
+   - AgentBench: 6.7 GB with Docker task servers.
+4. **The first real scored run** against Framework. This needs explicit
+   go-ahead (hours of GPU; check `/slots` and CSE first).
+5. **Merging** `task/eval-runner` and `task/glm-5.3-flash-eval`.
+
+**Known side issues (not fixed, out of scope):**
+- `deploy-nextcloud-stack.yml`'s steve-user task sets `OC_PASS` without
+  `docker exec -e`.
+- GLM CPU spin on Framework (GLM doc §8): diagnose with
+  `GGML_SCHED_DEBUG=2`, then try `--threads 4`, when Framework is idle.
+
+**How to resume:**
+- Read `plan.md`. Its prose has the operator sequences, and all 36 gates
+  re-run green against the branch.
+- The plan is regenerated from repo files by a generator script kept in
+  the session scratchpad. If that's gone, edit `plan.md` by hand and
+  re-run the gate check, which parses the YAML blocks and runs each
+  `cmd`.
+
 ## Progress
 
 | Step | Status |
