@@ -2981,18 +2981,18 @@ change: |
         filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}] if task else []
         filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                     for column, value in required.items()]
-        if task is None:  # the all-tasks runs view: newest first
-            shown, sort = RUNS_VIEW_COLUMNS, [{"columnId": col_ids["Date"], "mode": "DESC"}]
+        if task is None:  # the all-tasks runs view
+            shown = RUNS_VIEW_COLUMNS
         else:
             has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
             shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
-            # "yes" sorts after "no", so DESC puts comparable full runs first.
-            sort = [{"columnId": col_ids["Comparable"], "mode": "DESC"},
-                    {"columnId": col_ids["Score %"], "mode": "DESC"}]
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
             "filter": [filters],
-            "sort": sort,
+            # No preset sort: Tables 2.3.1 hides the column header's sort buttons
+            # on preset-sorted columns, and the operator wants to sort by clicking
+            # any column (2026-10-02). Ranked lists live in leaderboard.md/.xlsx.
+            "sort": [],
         }
 
 
@@ -3013,12 +3013,12 @@ change: |
 
     def table_layout(col_ids):
         """Body for the OCS v2 PUT /tables/{id}: the table's own column order
-        (TABLE_ORDER, Key last) and default sort (task, then score desc).
+        (TABLE_ORDER, Key last) and no preset sort (see view_settings).
         The v1 API has no way to set these; without it the base table shows
         columns in an arbitrary order."""
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(TABLE_ORDER)],
-            "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
+            "sort": [],
         }
 
 
@@ -3130,7 +3130,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "f554fd303cd0f4b24ebcb5e6584f59afec71d89cadecf4dc688326af266f705d"
+    expect: "b4b74327bb23450951712ba9c380c0523168ab3214c0808f4463d11fb7a8525c"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3697,14 +3697,12 @@ change: |
             self.assertEqual(gpqa["filter"], [[{"columnId": next(i for i, t in titles.items() if t == "Task"),
                                                  "operator": "is-equal", "value": "GPQA diamond"}]])
             self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
-            self.assertEqual([(titles[r["columnId"]], r["mode"]) for r in gpqa["sort"]],
-                             [("Comparable", "DESC"), ("Score %", "DESC")])
+            self.assertEqual(gpqa["sort"], [])  # every column sortable from its header
             bfcl = next(v for v in state["views"] if v["title"] == "BFCL")
             self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
             runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
             self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
             self.assertEqual([(titles[f["columnId"]], f["value"]) for f in runs["filter"][0]], [("Source", "eval-runner")])
-            self.assertEqual((titles[runs["sort"][0]["columnId"]], runs["sort"][0]["mode"]), ("Date", "DESC"))
             # the table and every view are shared, so the views show up for steve
             self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
             self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
@@ -3716,7 +3714,7 @@ change: |
             self.assertEqual(titles[table["columnSettings"][0]["columnId"]], "Model")
             self.assertEqual(table["columnSettings"][-1], {"columnId": key_id, "order": len(publish.COLUMNS) - 1})
             self.assertEqual(sorted(publish.TABLE_ORDER), sorted(t for t, _ in publish.COLUMNS))
-            self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
+            self.assertEqual(table["sort"], [])
 
         def test_republish_is_idempotent(self):
             publish.publish(self.nc, self.files, self.rows, share_with="steve")
@@ -3818,7 +3816,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "7c2f221775d8936d15360e2cff302cb14ffb247efe25b009763a1fb39f977b7f"
+    expect: "27573888aaaf0625b135763e2af06044d5aa2ba1a6931975a19c30450bb58b53"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"

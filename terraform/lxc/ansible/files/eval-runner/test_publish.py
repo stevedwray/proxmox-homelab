@@ -253,14 +253,12 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(gpqa["filter"], [[{"columnId": next(i for i, t in titles.items() if t == "Task"),
                                              "operator": "is-equal", "value": "GPQA diamond"}]])
         self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
-        self.assertEqual([(titles[r["columnId"]], r["mode"]) for r in gpqa["sort"]],
-                         [("Comparable", "DESC"), ("Score %", "DESC")])
+        self.assertEqual(gpqa["sort"], [])  # every column sortable from its header
         bfcl = next(v for v in state["views"] if v["title"] == "BFCL")
         self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
         runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
         self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
         self.assertEqual([(titles[f["columnId"]], f["value"]) for f in runs["filter"][0]], [("Source", "eval-runner")])
-        self.assertEqual((titles[runs["sort"][0]["columnId"]], runs["sort"][0]["mode"]), ("Date", "DESC"))
         # the table and every view are shared, so the views show up for steve
         self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
         self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
@@ -272,7 +270,7 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(titles[table["columnSettings"][0]["columnId"]], "Model")
         self.assertEqual(table["columnSettings"][-1], {"columnId": key_id, "order": len(publish.COLUMNS) - 1})
         self.assertEqual(sorted(publish.TABLE_ORDER), sorted(t for t, _ in publish.COLUMNS))
-        self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
+        self.assertEqual(table["sort"], [])
 
     def test_republish_is_idempotent(self):
         publish.publish(self.nc, self.files, self.rows, share_with="steve")

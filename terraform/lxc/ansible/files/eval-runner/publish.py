@@ -672,18 +672,18 @@ def view_settings(col_ids, task, required):
     filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}] if task else []
     filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                 for column, value in required.items()]
-    if task is None:  # the all-tasks runs view: newest first
-        shown, sort = RUNS_VIEW_COLUMNS, [{"columnId": col_ids["Date"], "mode": "DESC"}]
+    if task is None:  # the all-tasks runs view
+        shown = RUNS_VIEW_COLUMNS
     else:
         has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
         shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
-        # "yes" sorts after "no", so DESC puts comparable full runs first.
-        sort = [{"columnId": col_ids["Comparable"], "mode": "DESC"},
-                {"columnId": col_ids["Score %"], "mode": "DESC"}]
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
         "filter": [filters],
-        "sort": sort,
+        # No preset sort: Tables 2.3.1 hides the column header's sort buttons
+        # on preset-sorted columns, and the operator wants to sort by clicking
+        # any column (2026-10-02). Ranked lists live in leaderboard.md/.xlsx.
+        "sort": [],
     }
 
 
@@ -704,12 +704,12 @@ def ensure_views(nc, table_id, col_ids):
 
 def table_layout(col_ids):
     """Body for the OCS v2 PUT /tables/{id}: the table's own column order
-    (TABLE_ORDER, Key last) and default sort (task, then score desc).
+    (TABLE_ORDER, Key last) and no preset sort (see view_settings).
     The v1 API has no way to set these; without it the base table shows
     columns in an arbitrary order."""
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(TABLE_ORDER)],
-        "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
+        "sort": [],
     }
 
 
