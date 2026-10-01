@@ -157,6 +157,10 @@ JOB_META_TTL = 86400  # matches Celery's own default result_expires
 
 app = FastAPI(title="CyberSecEval Control Panel")
 
+# eval-runner's benchmark battery page (/eval), docs/eval-runner/panel-plan.md.
+from eval_battery import router as eval_battery_router  # noqa: E402
+app.include_router(eval_battery_router)
+
 
 class TestSpec(BaseModel):
     benchmark: str
@@ -637,6 +641,7 @@ def index():
     </head>
     <body>
       <h1>CyberSecEval Control Panel</h1>
+      <p class="muted"><a href="/eval">Eval battery (GPQA, IFEval, BFCL, AgentBench, RepoBench) &rarr;</a></p>
 
       <div class="tabs">
         <button type="button" class="tab-btn active" id="tab-btn-run" onclick="showTab('run')">Run tests</button>

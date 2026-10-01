@@ -946,6 +946,15 @@
     eval_runner_nextcloud_user: eval-reports
     eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
     eval_runner_table_share_with: steve
+    # The control panel's worker (eval_tasks.py; docs/eval-runner/panel-plan.md)
+    # connects out to cse-panel-stack's Redis (mgmt_seg, MikroTik rule
+    # mikrotik-firewall-eval-runner-panel.yml).
+    eval_runner_worker_dir: /opt/eval-runner-worker
+    eval_runner_cse_panel_ip: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
+    eval_runner_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
+    eval_runner_workers:
+      - { name: runs, queue: eval-runner }
+      - { name: ctl, queue: eval-runner-ctl }
   tasks:
     - name: Create eval-runner build and config directories
       ansible.builtin.file:
@@ -1055,6 +1064,79 @@
         src: "{{ eval_runner_source_dir }}/eval-run"
         dest: /usr/local/bin/eval-run
         mode: "0755"
+
+    - name: Install python3-venv for the panel worker
+      ansible.builtin.apt:
+        name: python3-venv
+        state: present
+
+    - name: Create the panel worker venv (celery/redis pinned as cse-panel)
+      ansible.builtin.pip:
+        name:
+          - celery==5.4.0
+          - redis==5.2.1
+        virtualenv: "{{ eval_runner_worker_dir }}/.venv"
+        virtualenv_command: python3 -m venv
+      register: eval_runner_worker_venv
+
+    - name: Install the panel worker's task module
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/eval_tasks.py"
+        dest: "{{ eval_runner_worker_dir }}/eval_tasks.py"
+        mode: "0644"
+      register: eval_runner_worker_module
+
+    - name: Install the panel worker's broker settings
+      ansible.builtin.copy:
+        dest: /etc/eval-runner/worker.env
+        mode: "0600"
+        content: |
+          CELERY_BROKER_URL=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/0
+          CELERY_RESULT_BACKEND=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/1
+      no_log: true
+      register: eval_runner_worker_env
+
+    # Two workers from one module: "runs" takes benchmark runs one at a time;
+    # "ctl" takes cancel/publish (and writes Framework's status), so those
+    # aren't stuck behind a run that takes hours. Root, because they drive
+    # eval-run and docker exactly as the operator does over ssh.
+    - name: Install the panel worker systemd units
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/eval-runner-worker-{{ item.name }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=eval-runner panel worker ({{ item.name }}: queue {{ item.queue }})
+          After=network-online.target docker.service
+          Wants=network-online.target
+
+          [Service]
+          EnvironmentFile=/etc/eval-runner/eval-runner.env
+          EnvironmentFile=/etc/eval-runner/worker.env
+          WorkingDirectory={{ eval_runner_worker_dir }}
+          ExecStart={{ eval_runner_worker_dir }}/.venv/bin/celery -A eval_tasks worker -Q {{ item.queue }} --concurrency 1 -n {{ item.name }}@%%h --loglevel INFO
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      loop: "{{ eval_runner_workers }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: eval_runner_worker_units
+
+    # Restarted only when something changed: a restart mid-run makes Celery
+    # redeliver the run task, which re-attaches to the still-running
+    # container (eval_tasks._run_job) rather than starting it again.
+    - name: Enable and (re)start the panel workers
+      ansible.builtin.systemd:
+        name: "eval-runner-worker-{{ item.name }}"
+        enabled: true
+        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+        daemon_reload: true
+      loop: "{{ eval_runner_workers }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: Check Framework's llama-server is reachable with this key
       ansible.builtin.uri:

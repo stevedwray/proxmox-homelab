@@ -5730,6 +5730,590 @@ gates:
     critical: true
 ```
 
+### eval-runner-12a-eval-tasks
+
+```yaml
+id: eval-runner-12a-eval-tasks
+title: Add the control panel worker module
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/eval_tasks.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Celery worker for eval-runner's control panel page (cse-panel's "Eval
+    battery" page; docs/eval-runner/panel-plan.md).
+
+    Runs on ai-services-stack as two systemd units from this one module, both
+    connecting OUT to cse-panel's Redis (the panel never reaches ai_seg):
+
+      eval-runner-worker-runs  queue eval-runner, concurrency 1: run, resume.
+                               One benchmark run at a time, in submission order.
+      eval-runner-worker-ctl   queue eval-runner-ctl: cancel, publish, and a
+                               background loop that writes Framework's status.
+                               Separate so a click isn't stuck behind a run
+                               that takes hours.
+
+    Everything goes through /usr/local/bin/eval-run, so the panel and the
+    command line behave identically (eval-run's one-run-at-a-time guard
+    included). State the page shows is kept in Redis (the Celery result
+    backend's client):
+
+      eval:framework      {model, slots, busy, checked, error}, every 30 s
+      eval:job:<task id>  {state, task, run, log_tail, ...}, kept 30 days
+
+    Job states: queued, waiting (for Framework or another run), running,
+    publishing, done, failed, cancelled.
+    """
+
+    import datetime
+    import json
+    import os
+    import re
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+
+    from celery import Celery
+    from celery.signals import worker_ready
+
+    BROKER_URL = os.environ.get("CELERY_BROKER_URL", "memory://")
+    RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "cache+memory://")
+    app = Celery("eval_tasks", broker=BROKER_URL, backend=RESULT_BACKEND)
+    # A worker killed mid-run gets the task redelivered (acks_late); the
+    # visibility timeout must outlast the longest run (a full RepoBench on a
+    # slow model is about a day), or Redis redelivers a run that is still going
+    # (reference_celery_redis_visibility_timeout_redelivery).
+    app.conf.task_acks_late = True
+    app.conf.worker_prefetch_multiplier = 1
+    app.conf.broker_transport_options = {"visibility_timeout": 48 * 3600}
+
+    RUN_QUEUE = "eval-runner"
+    CTL_QUEUE = "eval-runner-ctl"
+    EVAL_RUN = os.environ.get("EVAL_RUN", "/usr/local/bin/eval-run")
+    TASKS = ("gpqa", "ifeval", "bfcl", "agentbench", "repobench")
+    BUDGET_TASKS = ("gpqa", "ifeval")
+    JOB_TTL = 30 * 24 * 3600
+    FRAMEWORK_KEY = "eval:framework"
+    STATUS_EVERY = 30
+    FOLLOW_EVERY = 10
+    FRAMEWORK_POLL = 60
+    FRAMEWORK_MAX_WAIT = 12 * 3600
+    LOG_TAIL = 20
+
+
+    def _now():
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+    def _redis():
+        return app.backend.client
+
+
+    def job_key(job_id):
+        return f"eval:job:{job_id}"
+
+
+    def get_job(job_id, client=None):
+        raw = (client or _redis()).get(job_key(job_id))
+        return json.loads(raw) if raw else {}
+
+
+    def update_job(job_id, client=None, **fields):
+        client = client or _redis()
+        job = get_job(job_id, client)
+        job.update(fields, updated=_now())
+        client.set(job_key(job_id), json.dumps(job), ex=JOB_TTL)
+        return job
+
+
+    def cancel_requested(job_id, client=None):
+        return bool(get_job(job_id, client).get("cancel_requested"))
+
+
+    # ---------------------------------------------------------------- commands
+
+    def eval_run_args(task, mode, limit=None, note="", budget_32k=False):
+        """argv for `eval-run` from the panel's form fields (validated again here:
+        the worker, not the page, is the trust boundary for what it executes)."""
+        if task not in TASKS:
+            raise ValueError(f"unknown task {task!r}")
+        argv = [EVAL_RUN, task]
+        if mode == "pilot":
+            argv.append("--pilot")
+        elif mode == "limit":
+            if not isinstance(limit, int) or not 1 <= limit <= 10000:
+                raise ValueError("limit must be an integer 1-10000")
+            argv += ["--limit", str(limit)]
+        elif mode != "full":
+            raise ValueError(f"unknown mode {mode!r}")
+        if budget_32k:
+            if task not in BUDGET_TASKS:
+                raise ValueError("the 32k budget applies to gpqa/ifeval only")
+            argv += ["--max-gen-toks", "32768"]
+        if note:
+            if len(note) > 200 or "\n" in note:
+                raise ValueError("note must be one line, at most 200 characters")
+            argv += ["--note", note]
+        return argv
+
+
+    def run_cmd(argv, timeout=600):
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+
+
+    def started_run(output):
+        """The run name from eval-run's "Started eval-<run>" line."""
+        match = re.search(r"^Started eval-(\S+)$", output, re.M)
+        return match.group(1) if match else None
+
+
+    def container_state(run):
+        """(status, exit code) of the run's container, or (None, None) if absent."""
+        out = run_cmd(["docker", "inspect", "-f", "{{.State.Status}} {{.State.ExitCode}}", f"eval-{run}"], 30)
+        if out.returncode != 0:
+            return None, None
+        status, code = out.stdout.split()
+        return status, int(code)
+
+
+    def log_tail(run, lines=LOG_TAIL):
+        out = run_cmd(["docker", "logs", "--tail", str(lines), f"eval-{run}"], 30)
+        text = (out.stdout or "") + (out.stderr or "")
+        # tqdm redraws with bare carriage returns; keep each line's last state
+        # (str.splitlines would also split on \r, so split on \n only)
+        return "\n".join(line.split("\r")[-1] for line in text.rstrip("\n").split("\n")[-lines:])
+
+
+    def eval_container_running():
+        out = run_cmd(["docker", "ps", "--filter", "name=^eval-", "--format", "{{.Names}}"], 30)
+        return out.stdout.strip() or None
+
+
+    # --------------------------------------------------------------- Framework
+
+    def framework_status(get_json=None):
+        """What Framework's llama-server is serving and whether it is busy."""
+        base = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+        key = os.environ.get("OPENAI_API_KEY", "")
+        if get_json is None:
+            def get_json(path):
+                req = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {key}"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return json.load(resp)
+        status = {"checked": _now(), "model": None, "slots": None, "busy": None, "error": None}
+        try:
+            models = get_json("/v1/models")
+            status["model"] = (models.get("data") or [{}])[0].get("id")
+            slots = get_json("/slots")
+            status["slots"] = len(slots)
+            status["busy"] = sum(1 for s in slots if s.get("is_processing"))
+        except Exception as err:  # unreachable, no model, /slots disabled
+            status["error"] = f"{type(err).__name__}: {err}"
+        return status
+
+
+    def wait_until(job_id, client, ready, waiting_for, poll, max_wait, sleep=None):
+        """Poll ready() until true; the job shows `waiting_for` meanwhile.
+        Returns False if cancelled or timed out."""
+        sleep = sleep or time.sleep  # resolved at call time, so tests can patch it
+        waited = 0
+        while not ready():
+            if cancel_requested(job_id, client):
+                return False
+            if waited >= max_wait:
+                update_job(job_id, client, state="failed", error=f"gave up waiting for {waiting_for}")
+                return False
+            update_job(job_id, client, state="waiting", waiting_for=waiting_for)
+            sleep(poll)
+            waited += poll
+        return True
+
+
+    def framework_idle():
+        status = framework_status()
+        return status["error"] is None and status["busy"] == 0
+
+
+    # ------------------------------------------------------------------- tasks
+
+    def follow(job_id, run, client, sleep=None):
+        """Track the run's container until it exits; returns its exit code (or
+        None if it vanished). Stops it if the panel asked to cancel."""
+        sleep = sleep or time.sleep
+        while True:
+            status, code = container_state(run)
+            tail = log_tail(run) if status else ""
+            update_job(job_id, client, state="running", run=run, log_tail=tail)
+            if status is None:
+                return None
+            if status == "exited":
+                return code
+            if cancel_requested(job_id, client):
+                run_cmd(["docker", "stop", f"eval-{run}"], 120)
+            sleep(FOLLOW_EVERY)
+
+
+    def finish(job_id, run, code, client):
+        """Publish, record the result summary, remove the container."""
+        cancelled = cancel_requested(job_id, client)
+        update_job(job_id, client, state="publishing")
+        publish = run_cmd([EVAL_RUN, "publish"], 900)
+        results = run_cmd([EVAL_RUN, "results", run], 120) if run else None
+        run_cmd(["docker", "rm", f"eval-{run}"], 60)
+        state = "cancelled" if cancelled else ("done" if code == 0 else "failed")
+        return update_job(job_id, client, state=state, exit_code=code, finished=_now(),
+                          results=(results.stdout.strip() if results else ""),
+                          published=(publish.stdout.strip().splitlines() or [""])[-1],
+                          publish_error=publish.stderr.strip() if publish.returncode else "")
+
+
+    def _launch(job_id, argv, client):
+        """Wait for a free slot (no other eval run, Framework idle), then start."""
+        if not wait_until(job_id, client, lambda: eval_container_running() is None, "another eval run",
+                          FRAMEWORK_POLL, FRAMEWORK_MAX_WAIT):
+            return None
+        if not wait_until(job_id, client, framework_idle, "Framework (busy slots)", FRAMEWORK_POLL, FRAMEWORK_MAX_WAIT):
+            return None
+        out = run_cmd(argv)
+        run = started_run(out.stdout)
+        if run is None:
+            update_job(job_id, client, state="failed", error=(out.stderr or out.stdout).strip()[-2000:])
+        return run
+
+
+    def _run_job(job_id, argv, client):
+        if cancel_requested(job_id, client):
+            return update_job(job_id, client, state="cancelled")
+        # Redelivered after a worker restart (acks_late) while its run container
+        # carried on: re-attach to that run instead of starting a second one.
+        previous = get_job(job_id, client)
+        if previous.get("run") and previous.get("state") in ("running", "publishing"):
+            status, code = container_state(previous["run"])
+            if status is not None:
+                code = follow(job_id, previous["run"], client) if status != "exited" else code
+                return finish(job_id, previous["run"], code, client)
+        update_job(job_id, client, state="starting", started=_now())
+        run = _launch(job_id, argv, client)
+        if run is None:
+            job = get_job(job_id, client)
+            if job.get("state") not in ("failed",):
+                job = update_job(job_id, client, state="cancelled")
+            return job
+        code = follow(job_id, run, client)
+        return finish(job_id, run, code, client)
+
+
+    @app.task(bind=True, name="eval_tasks.run")
+    def run(self, task, mode="full", limit=None, note="", budget_32k=False, submitted_by=""):
+        client = _redis()
+        try:
+            argv = eval_run_args(task, mode, limit, note, budget_32k)
+        except ValueError as err:
+            return update_job(self.request.id, client, state="failed", error=str(err))
+        update_job(self.request.id, client, task=task, mode=mode, limit=limit, note=note,
+                   budget_32k=budget_32k, submitted_by=submitted_by)
+        return _run_job(self.request.id, argv, client)
+
+
+    @app.task(bind=True, name="eval_tasks.resume")
+    def resume(self, run_name, force=False, submitted_by=""):
+        client = _redis()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_name or ""):
+            return update_job(self.request.id, client, state="failed", error="bad run name")
+        update_job(self.request.id, client, task="resume", run=run_name, submitted_by=submitted_by)
+        argv = [EVAL_RUN, "resume", run_name] + (["--force"] if force else [])
+        return _run_job(self.request.id, argv, client)
+
+
+    @app.task(name="eval_tasks.cancel")
+    def cancel(job_id):
+        """Ask a waiting or running job to stop (the run task notices within
+        FOLLOW_EVERY / FRAMEWORK_POLL seconds); stop its container right away."""
+        client = _redis()
+        job = update_job(job_id, client, cancel_requested=True)
+        if job.get("run") and job.get("state") == "running":
+            run_cmd(["docker", "stop", f"eval-{job['run']}"], 120)
+        return job
+
+
+    @app.task(name="eval_tasks.publish")
+    def publish():
+        out = run_cmd([EVAL_RUN, "publish"], 900)
+        return {"ok": out.returncode == 0, "output": (out.stdout + out.stderr).strip()[-2000:], "at": _now()}
+
+
+    def status_loop(client=None, sleep=None, rounds=None):
+        """Write Framework's status for the page every STATUS_EVERY seconds."""
+        client = client or _redis()
+        sleep = sleep or time.sleep
+        n = 0
+        while rounds is None or n < rounds:
+            status = framework_status()
+            status["eval_running"] = eval_container_running()
+            client.set(FRAMEWORK_KEY, json.dumps(status), ex=STATUS_EVERY * 10)
+            n += 1
+            sleep(STATUS_EVERY)
+
+
+    @worker_ready.connect
+    def _start_status_loop(sender=None, **_):
+        if str(getattr(sender, "hostname", "")).startswith("ctl@"):
+            threading.Thread(target=status_loop, daemon=True, name="framework-status").start()
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/eval_tasks.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/eval_tasks.py | cut -d' ' -f1"
+    expect: "38c4b1c76d30df67dadff4484212e7c9045f3530314570a8d2c7afa6a8589197"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/eval_tasks.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-12b-test-eval-tasks
+
+```yaml
+id: eval-runner-12b-test-eval-tasks
+title: Add panel worker unit tests
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/test_eval_tasks.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Unit tests for eval_tasks.py (the panel's Celery worker), with eval-run,
+    docker and Redis faked. Skipped where celery isn't installed (it's only in
+    the worker's venv on ai-services-stack). Run with:
+    python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner -p "test_*.py"
+    """
+
+    import json
+    import subprocess
+    import unittest
+    from unittest import mock
+
+    try:
+        import eval_tasks
+    except ImportError:  # celery not installed locally
+        eval_tasks = None
+
+
+    class FakeRedis:
+        def __init__(self):
+            self.data = {}
+
+        def get(self, key):
+            return self.data.get(key)
+
+        def set(self, key, value, ex=None):
+            self.data[key] = value
+
+
+    def done(stdout="", stderr="", code=0):
+        return subprocess.CompletedProcess([], code, stdout, stderr)
+
+
+    class FakeHost:
+        """Stands in for eval-run and docker: one run container that runs for
+        `polls` inspections, then exits with `exit_code`."""
+
+        def __init__(self, polls=2, exit_code=0, start_output="Started eval-glm-bfcl-limit2-S\n"):
+            self.polls, self.exit_code, self.start_output = polls, exit_code, start_output
+            self.calls = []
+            self.stopped = False
+
+        def __call__(self, argv, timeout=600):
+            self.calls.append(argv)
+            if argv[0] == eval_tasks.EVAL_RUN:
+                if argv[1] in eval_tasks.TASKS or argv[1] == "resume":
+                    return done(self.start_output)
+                if argv[1] == "publish":
+                    return done("published 71 files ...; 1 rows created\n")
+                if argv[1] == "results":
+                    return done("glm-bfcl-limit2-S: BFCL simple 50.00%\n")
+            if argv[:2] == ["docker", "ps"]:
+                return done("")
+            if argv[:2] == ["docker", "inspect"]:
+                self.polls -= 1
+                if self.stopped or self.polls < 0:
+                    return done(f"exited {143 if self.stopped else self.exit_code}\n")
+                return done("running 0\n")
+            if argv[:2] == ["docker", "logs"]:
+                return done("Generating: 50%\rGenerating: 100%\n")
+            if argv[:2] == ["docker", "stop"]:
+                self.stopped = True
+                return done("")
+            return done("")
+
+
+    @unittest.skipUnless(eval_tasks, "celery not installed")
+    class ArgsTest(unittest.TestCase):
+        def test_modes_and_options(self):
+            f = eval_tasks.eval_run_args
+            self.assertEqual(f("bfcl", "full")[1:], ["bfcl"])
+            self.assertEqual(f("gpqa", "pilot", note="x")[1:], ["gpqa", "--pilot", "--note", "x"])
+            self.assertEqual(f("ifeval", "limit", 5, budget_32k=True)[1:],
+                             ["ifeval", "--limit", "5", "--max-gen-toks", "32768"])
+
+        def test_rejects_anything_unexpected(self):
+            f = eval_tasks.eval_run_args
+            for kwargs in ({"task": "rm", "mode": "full"}, {"task": "bfcl", "mode": "everything"},
+                           {"task": "bfcl", "mode": "limit", "limit": 0},
+                           {"task": "bfcl", "mode": "full", "budget_32k": True},
+                           {"task": "bfcl", "mode": "full", "note": "a\nb"}):
+                with self.assertRaises(ValueError):
+                    f(**kwargs)
+
+        def test_started_run_parsed(self):
+            self.assertEqual(eval_tasks.started_run("Started eval-glm-bfcl-limit2-S\n  follow: ..."), "glm-bfcl-limit2-S")
+            self.assertIsNone(eval_tasks.started_run("eval-run: an eval is already running"))
+
+
+    @unittest.skipUnless(eval_tasks, "celery not installed")
+    class RunJobTest(unittest.TestCase):
+        def setUp(self):
+            self.redis = FakeRedis()
+            patches = [
+                mock.patch.object(eval_tasks, "_redis", return_value=self.redis),
+                mock.patch.object(eval_tasks, "framework_idle", return_value=True),
+                mock.patch.object(eval_tasks.time, "sleep"),
+                mock.patch.object(eval_tasks, "FOLLOW_EVERY", 0),
+            ]
+            for p in patches:
+                p.start()
+                self.addCleanup(p.stop)
+
+        def run_job(self, host, **kwargs):
+            with mock.patch.object(eval_tasks, "run_cmd", host):
+                return eval_tasks.run.apply(kwargs={"task": "bfcl", "mode": "limit", "limit": 2, **kwargs},
+                                            task_id="job-1").get()
+
+        def test_happy_path_publishes_and_records(self):
+            host = FakeHost()
+            job = self.run_job(host)
+            self.assertEqual(job["state"], "done")
+            self.assertEqual(job["run"], "glm-bfcl-limit2-S")
+            self.assertIn("BFCL simple 50.00%", job["results"])
+            self.assertEqual(job["log_tail"], "Generating: 100%")
+            self.assertIn([eval_tasks.EVAL_RUN, "publish"], host.calls)
+            self.assertIn(["docker", "rm", "eval-glm-bfcl-limit2-S"], host.calls)
+            self.assertEqual(json.loads(self.redis.data["eval:job:job-1"])["state"], "done")
+
+        def test_failed_run_is_failed_but_still_published(self):
+            host = FakeHost(exit_code=1)
+            job = self.run_job(host)
+            self.assertEqual((job["state"], job["exit_code"]), ("failed", 1))
+            self.assertIn([eval_tasks.EVAL_RUN, "publish"], host.calls)
+
+        def test_eval_run_refusing_to_start_fails_the_job(self):
+            host = FakeHost(start_output="")
+            job = self.run_job(host)
+            self.assertEqual(job["state"], "failed")
+
+        def test_bad_input_never_reaches_eval_run(self):
+            host = FakeHost()
+            with mock.patch.object(eval_tasks, "run_cmd", host):
+                job = eval_tasks.run.apply(kwargs={"task": "bfcl; reboot", "mode": "full"}, task_id="job-2").get()
+            self.assertEqual(job["state"], "failed")
+            self.assertEqual(host.calls, [])
+
+        def test_cancel_while_running_stops_the_container(self):
+            host = FakeHost(polls=5)
+            original = eval_tasks.update_job
+
+            def update(job_id, client=None, **fields):
+                if fields.get("state") == "running":
+                    original(job_id, client, cancel_requested=True)
+                return original(job_id, client, **fields)
+            with mock.patch.object(eval_tasks, "update_job", update):
+                job = self.run_job(host)
+            self.assertEqual(job["state"], "cancelled")
+            self.assertIn(["docker", "stop", "eval-glm-bfcl-limit2-S"], host.calls)
+
+        def test_waits_for_busy_framework_then_runs(self):
+            host = FakeHost()
+            with mock.patch.object(eval_tasks, "framework_idle", side_effect=[False, False, True]):
+                job = self.run_job(host)
+            self.assertEqual(job["state"], "done")
+
+        def test_cancel_while_waiting_never_starts(self):
+            host = FakeHost()
+            eval_tasks.update_job("job-1", self.redis, cancel_requested=True)
+            with mock.patch.object(eval_tasks, "framework_idle", return_value=False):
+                job = self.run_job(host)
+            self.assertEqual(job["state"], "cancelled")
+            self.assertFalse(any(c[:2] == [eval_tasks.EVAL_RUN, "bfcl"] for c in host.calls))
+
+        def test_redelivered_job_reattaches_instead_of_starting_again(self):
+            eval_tasks.update_job("job-1", self.redis, state="running", run="glm-bfcl-limit2-S")
+            host = FakeHost(polls=1)
+            job = self.run_job(host)
+            self.assertEqual(job["state"], "done")
+            self.assertFalse(any(c[:2] == [eval_tasks.EVAL_RUN, "bfcl"] for c in host.calls))
+
+        def test_resume_validates_run_name(self):
+            host = FakeHost()
+            with mock.patch.object(eval_tasks, "run_cmd", host):
+                bad = eval_tasks.resume.apply(args=["../etc"], task_id="job-3").get()
+                good = eval_tasks.resume.apply(args=["glm-bfcl-limit2-S"], task_id="job-4").get()
+            self.assertEqual(bad["state"], "failed")
+            self.assertEqual(good["state"], "done")
+            self.assertIn([eval_tasks.EVAL_RUN, "resume", "glm-bfcl-limit2-S"], host.calls)
+
+
+    @unittest.skipUnless(eval_tasks, "celery not installed")
+    class StatusTest(unittest.TestCase):
+        def test_framework_status(self):
+            def get_json(path):
+                return {"data": [{"id": "glm-5.3-flash"}]} if path == "/v1/models" else \
+                    [{"is_processing": True}, {"is_processing": False}]
+            status = eval_tasks.framework_status(get_json)
+            self.assertEqual((status["model"], status["slots"], status["busy"], status["error"]),
+                             ("glm-5.3-flash", 2, 1, None))
+
+        def test_unreachable_framework_reports_error(self):
+            def get_json(path):
+                raise OSError("connection refused")
+            status = eval_tasks.framework_status(get_json)
+            self.assertIn("connection refused", status["error"])
+
+        def test_status_loop_writes_key(self):
+            redis = FakeRedis()
+            with mock.patch.object(eval_tasks, "framework_status", return_value={"model": "m", "busy": 0}), \
+                    mock.patch.object(eval_tasks, "eval_container_running", return_value=None):
+                eval_tasks.status_loop(redis, sleep=lambda s: None, rounds=1)
+            self.assertEqual(json.loads(redis.data[eval_tasks.FRAMEWORK_KEY])["model"], "m")
+
+
+    if __name__ == "__main__":
+        unittest.main()
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/test_eval_tasks.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_eval_tasks.py | cut -d' ' -f1"
+    expect: "a5af0ecd767e781d85442d746d5e4ec726f4385af51f6d4fe972b5e2a699e0fe"
+    critical: true
+```
+
 ### eval-runner-08-findings
 
 ```yaml
@@ -5948,6 +6532,15 @@ change: |
         eval_runner_nextcloud_user: eval-reports
         eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
         eval_runner_table_share_with: steve
+        # The control panel's worker (eval_tasks.py; docs/eval-runner/panel-plan.md)
+        # connects out to cse-panel-stack's Redis (mgmt_seg, MikroTik rule
+        # mikrotik-firewall-eval-runner-panel.yml).
+        eval_runner_worker_dir: /opt/eval-runner-worker
+        eval_runner_cse_panel_ip: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
+        eval_runner_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
+        eval_runner_workers:
+          - { name: runs, queue: eval-runner }
+          - { name: ctl, queue: eval-runner-ctl }
       tasks:
         - name: Create eval-runner build and config directories
           ansible.builtin.file:
@@ -6058,6 +6651,79 @@ change: |
             dest: /usr/local/bin/eval-run
             mode: "0755"
 
+        - name: Install python3-venv for the panel worker
+          ansible.builtin.apt:
+            name: python3-venv
+            state: present
+
+        - name: Create the panel worker venv (celery/redis pinned as cse-panel)
+          ansible.builtin.pip:
+            name:
+              - celery==5.4.0
+              - redis==5.2.1
+            virtualenv: "{{ eval_runner_worker_dir }}/.venv"
+            virtualenv_command: python3 -m venv
+          register: eval_runner_worker_venv
+
+        - name: Install the panel worker's task module
+          ansible.builtin.copy:
+            src: "{{ eval_runner_source_dir }}/eval_tasks.py"
+            dest: "{{ eval_runner_worker_dir }}/eval_tasks.py"
+            mode: "0644"
+          register: eval_runner_worker_module
+
+        - name: Install the panel worker's broker settings
+          ansible.builtin.copy:
+            dest: /etc/eval-runner/worker.env
+            mode: "0600"
+            content: |
+              CELERY_BROKER_URL=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/0
+              CELERY_RESULT_BACKEND=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/1
+          no_log: true
+          register: eval_runner_worker_env
+
+        # Two workers from one module: "runs" takes benchmark runs one at a time;
+        # "ctl" takes cancel/publish (and writes Framework's status), so those
+        # aren't stuck behind a run that takes hours. Root, because they drive
+        # eval-run and docker exactly as the operator does over ssh.
+        - name: Install the panel worker systemd units
+          ansible.builtin.copy:
+            dest: "/etc/systemd/system/eval-runner-worker-{{ item.name }}.service"
+            mode: "0644"
+            content: |
+              [Unit]
+              Description=eval-runner panel worker ({{ item.name }}: queue {{ item.queue }})
+              After=network-online.target docker.service
+              Wants=network-online.target
+
+              [Service]
+              EnvironmentFile=/etc/eval-runner/eval-runner.env
+              EnvironmentFile=/etc/eval-runner/worker.env
+              WorkingDirectory={{ eval_runner_worker_dir }}
+              ExecStart={{ eval_runner_worker_dir }}/.venv/bin/celery -A eval_tasks worker -Q {{ item.queue }} --concurrency 1 -n {{ item.name }}@%%h --loglevel INFO
+              Restart=always
+              RestartSec=10
+
+              [Install]
+              WantedBy=multi-user.target
+          loop: "{{ eval_runner_workers }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: eval_runner_worker_units
+
+        # Restarted only when something changed: a restart mid-run makes Celery
+        # redeliver the run task, which re-attaches to the still-running
+        # container (eval_tasks._run_job) rather than starting it again.
+        - name: Enable and (re)start the panel workers
+          ansible.builtin.systemd:
+            name: "eval-runner-worker-{{ item.name }}"
+            enabled: true
+            state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+            daemon_reload: true
+          loop: "{{ eval_runner_workers }}"
+          loop_control:
+            label: "{{ item.name }}"
+
         - name: Check Framework's llama-server is reachable with this key
           ansible.builtin.uri:
             url: "http://{{ eval_runner_framework_host }}:8080/v1/models"
@@ -6117,12 +6783,12 @@ scope:
 
 gates:
   - id: exact-appended-play
-    cmd: "tail -n 175 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
-    expect: "e486f3a22b7b8cf78384bd64b064872260acda32b62f61c16f6b5207f83f7821"
+    cmd: "tail -n 257 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
+    expect: "70f3c98770dfc472cc176734690417bffac68e0e28f55fe39926e11e850c9328"
     critical: true
   - id: append-only
     cmd: "git diff --numstat stable -- terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
-    expect: "176\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "258\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
     critical: true
   - id: syntax-check
     cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"

@@ -22,8 +22,8 @@ services:
       - --loglevel=INFO
       - --concurrency=1
     environment:
-      - CELERY_BROKER_URL=redis://${LAB_IP_CSE_PANEL}:6379/0
-      - CELERY_RESULT_BACKEND=redis://${LAB_IP_CSE_PANEL}:6379/1
+      - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/1
       - PYTHONPATH=/srv/cyberseceval/config
     env_file:
       - /srv/cyberseceval/config/worker.env

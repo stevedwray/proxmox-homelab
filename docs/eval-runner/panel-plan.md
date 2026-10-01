@@ -1,10 +1,17 @@
 # eval-runner control panel (an "Eval battery" page in cse-panel)
 
-Status: **planned (2026-10-02), not built.** Operator decisions so far:
-- it lives in the existing CyberSecEval panel, as a tab, not as a
-  separate panel;
-- the first version covers starting runs, watching and controlling them,
-  publishing and links, and Framework status.
+Status: **built and unit-tested (2026-10-02), not deployed.**
+- Code: `eval_tasks.py` (worker), `eval_battery.py` (page), Redis
+  password wiring, and the MikroTik rule playbook. 23 new unit tests.
+- Deploy runbook: see "Rollout" below.
+
+Operator decisions:
+- It is a tab in the existing CyberSecEval panel.
+- v1 covers starting runs, watching and controlling them, publishing and
+  links, and Framework status.
+- Eval jobs wait for idle Framework slots.
+- cse-panel's Redis gets a password first.
+- I run the MikroTik rule, under approval.
 
 ## Goal
 
@@ -113,19 +120,53 @@ ai-services-stack (ai_seg, pve-tiny)
      state, and the publish is triggered.
    - A real Framework smoke run only with the operator's go-ahead.
 
+## As built (differences from the steps above)
+
+- **Two worker units from one module.**
+  - `eval-runner-worker-runs` takes the `eval-runner` queue: runs and
+    resumes, concurrency 1.
+  - `eval-runner-worker-ctl` takes the `eval-runner-ctl` queue: cancel,
+    publish and the Framework status loop.
+  - A click therefore never waits behind a run that takes hours.
+- **Cancelling** a queued job revokes it. A waiting or running job is
+  flagged in Redis, and the ctl worker stops its container.
+- **A run task redelivered** after a worker restart re-attaches to its
+  still-running container instead of starting the benchmark again.
+- **The page lives at `/eval`.** The CSE page links to it, and `app.py`
+  changed by 5 lines.
+
+## Rollout (each step through the production approval flow)
+
+1. **Operator: write the secret.** Run `bao login -method=oidc -no-store`,
+   then `scripts/openbao_write.py services/cse-panel` with
+   `CSE_PANEL_REDIS_PASSWORD` set to a value from `openssl rand -hex 32`.
+   Until that's written, every `./with-secrets-prod-tiny` load on this
+   branch fails closed.
+2. **The MikroTik rule:**
+   `./with-secrets-prod-tiny ansible-playbook ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
+3. **Redis password cutover (CSE idle first):** deploy `cse-panel-stack`
+   (Redis requirepass, the new page), then `cse-controller` (the worker's
+   new broker URL). The CSE worker is disconnected between the two, so
+   no CSE suite may be running.
+4. **The eval-runner play on ai-services-stack** (the workers; all
+   selftests as before).
+5. **Check:**
+   - the page shows Framework status;
+   - a `--limit 1` BFCL job queued from the page runs, publishes, and
+     shows its results.
+   That last item uses Framework for about a minute, so it needs the
+   operator's go-ahead.
+
 ## Open decisions
 
 - **Sharing Framework with CSE.** v1 makes eval jobs wait for idle
   slots, and leaves the CSE worker unchanged. A true shared lock means
   editing `cse_tasks.py`, which another session is changing on
   `fix/cse-report-transcript-content`. Revisit after that merges.
-- **Redis has no password.** The firewall is its only gate, exactly as
-  for cse-controller. This plan adds one more allowed source, so a
-  compromised ai-services-stack could enqueue CSE jobs as well as eval
-  jobs. Options:
-  - accept it, the same trust level as cse-controller;
-  - add a Redis password, which touches the CSE worker and panel, so it
-    needs coordinating with the CSE session.
+- **Redis password: decided, add one.** The CSE files it touches are
+  compose and playbook env wiring only (`cse_tasks.py` and `app.py` read
+  the URL from the environment). None of them is changed on the CSE
+  branch.
 - **Merge order.** This branches from `task/eval-runner`. It touches
   `cse-panel-stack/app/app.py` (two lines) and adds files. The CSE
   branch changes 13 lines of the same `app.py`. A small manual merge is

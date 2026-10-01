@@ -1,0 +1,118 @@
+---
+# One new cross-zone rule for eval-runner's control panel page
+# (docs/eval-runner/panel-plan.md): the eval-runner panel workers on
+# ai-services-stack (ai_seg) connect OUT to cse-panel-stack's Redis in
+# mgmt_seg -- the only direction; ai_seg never becomes reachable FROM
+# mgmt_seg. Same pattern as mikrotik-firewall-cse-panel-cross-zone.yml
+# (cse-controller's worker), kept in its own file.
+
+- name: Ensure the eval-runner panel cross-zone rule exists on the live MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+    eval_runner_worker_ip: "192.168.50.11"  # ai-services-stack (pve-tiny inventory)
+    cse_panel_ip: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
+
+    eval_panel_rule:
+      comment: "eval-runner panel worker (ai-services-stack) to cse-panel-stack Redis"
+      chain: "forward"
+      action: "accept"
+      protocol: "tcp"
+      src-address: "{{ eval_runner_worker_ip }}"
+      dst-address: "{{ cse_panel_ip }}"
+      dst-port: "6379"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: "Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD before running this playbook."
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add the eval-runner panel cross-zone rule if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ eval_panel_rule | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', eval_panel_rule.comment)
+            | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert the eval-runner panel cross-zone rule exists
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', eval_panel_rule.comment)
+            | list | length > 0
+        fail_msg: "Expected eval-runner panel cross-zone rule was not found after apply."
+
+    - name: Report eval-runner panel cross-zone rule confirmed present
+      ansible.builtin.debug:
+        msg: "ai-services-stack -> cse-panel-stack Redis rule confirmed present."
