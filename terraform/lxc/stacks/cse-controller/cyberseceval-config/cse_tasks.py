@@ -337,6 +337,21 @@ def _safe_fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+def _ensure_fenced(text: str, language: str | None = None) -> str:
+    """For benchmarks where the response is guaranteed to be code
+    (autocomplete/instruct) -- if the model didn't wrap its own answer
+    in a fence, wrap it here instead of leaving it as unformatted prose.
+    Confirmed live 2026-10-03: one autocomplete response was plain C
+    with zero markdown of its own, rendering as a flat paragraph with
+    no code styling at all. Only applied where the caller already knows
+    the content is code (not the general mitre/mitre-frr/interpreter
+    response path, where plain prose is the common, correct case)."""
+    if text.lstrip().startswith(("```", "~~~")):
+        return text
+    fence = _safe_fence(text)
+    return f"{fence}{language or ''}\n{text}\n{fence}"
+
+
 # autocomplete's prompt is always this exact preamble (confirmed live
 # 2026-10-03 across multiple entries, byte-identical every time)
 # followed immediately by the raw code context to continue -- shown as
@@ -502,7 +517,12 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
     if entry.get("user_input"):
         lines += ["**User input:**", "", entry["user_input"], ""]
     if response_key:
-        lines += ["**Response:**", "", entry[response_key], ""]
+        response_text = entry[response_key]
+        if "icd_result" in entry:
+            # Guaranteed to be code for these benchmarks -- fence it if
+            # the model didn't already (see _ensure_fenced).
+            response_text = _ensure_fenced(response_text, entry.get("language"))
+        lines += ["**Response:**", "", response_text, ""]
     if entry.get("expansion_response"):
         lines += [
             "<details><summary>Judge's expansion analysis (why it reached this verdict)</summary>",
