@@ -184,6 +184,18 @@
         dest: "{{ maltego_build_dir }}/"
         mode: preserve
 
+    # tsup.config.ts declares a "demo-basic" build entry pointing at
+    # scripts/demo-basic.ts -- omitting scripts/ makes `npm run build` fail
+    # with "Cannot find demo-basic: scripts/demo-basic.ts" (found live
+    # 2026-10-02, first real build attempt). Copy the whole directory
+    # rather than patching tsup.config.ts to drop the entry, to stay
+    # faithful to the pinned upstream build as-is.
+    - name: Copy maltego-mcp scripts/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/scripts"
+        dest: "{{ maltego_build_dir }}/"
+        mode: preserve
+
     - name: Write maltego-mcp Dockerfile
       ansible.builtin.copy:
         dest: "{{ maltego_build_dir }}/Dockerfile"
@@ -206,6 +218,7 @@
           COPY package.json package-lock.json tsconfig.json tsup.config.ts ./
           COPY index.ts cli.ts mcp-bin.ts mcp-server.ts ./
           COPY src ./src
+          COPY scripts ./scripts
           RUN npm ci && npm run build
 
           FROM node:20-slim
@@ -609,6 +622,26 @@
         project_src: "{{ mcp_compose_dir }}"
         build: always
         state: present
+
+    # maltego-mcp has profiles: ["tools"] (deliberate -- it's stdio-only,
+    # invoked on demand, never a daemon, see docs/maltego-integration/
+    # README.md). docker_compose_v2's state:present above only builds/
+    # starts default-profile services, so it silently never touches
+    # maltego-mcp (found live 2026-10-02: provision.sh reported changed=4
+    # with no maltego-mcp container or volume ever created). Build it
+    # explicitly here, but never `up` it -- `--profile tools up` would
+    # start it as a long-running daemon, which is not what Phase 1 wants.
+    - name: Build maltego-mcp image (profile-gated, not started as a daemon)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --profile
+          - tools
+          - build
+          - maltego-mcp
+        chdir: "{{ mcp_compose_dir }}"
+      changed_when: true
 
     - name: Wait for cve-mcp-server HTTP endpoint to come up
       ansible.builtin.uri:
