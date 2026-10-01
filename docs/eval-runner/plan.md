@@ -1,10 +1,10 @@
 # eval-runner: the eval battery from ai-services-stack
 
-Status: **all steps done.** GPQA/IFEval and Nextcloud publishing are
-deployed to pve-tiny (2026-10-01). BFCL, AgentBench and RepoBench
-(rebuilt) are built and unit-tested; their deploy and selftest are in
-`README.md`. The literal content and hashes below match the files on the
-branch.
+Status: **all steps done and deployed to pve-tiny (2026-10-01).** This
+covers GPQA, IFEval, BFCL, AgentBench, RepoBench (rebuilt) and Nextcloud
+publishing. Every image's selftest passes as the deploy gate. The literal
+content and hashes below match the files as deployed. See `README.md` for
+hand-backs.
 
 ## Goal
 

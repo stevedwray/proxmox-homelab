@@ -1,12 +1,12 @@
 # eval-runner
 
 Status:
-- **Live on `ai-services-stack`** (pve-tiny), deployed 2026-10-01. It
-  covers GPQA, IFEval and Nextcloud publishing, with `leaderboard.xlsx`
-  and token-budget series. The deploy gate is a GPU-free self-test.
-- **Built, unit-tested and not yet deployed:** BFCL, AgentBench and
-  RepoBench (rebuilt), plus the historical BFCL/AgentBench import. That
-  deploy needs approval: preflight below.
+- **The whole battery is live on `ai-services-stack`** (pve-tiny),
+  deployed 2026-10-01: GPQA, IFEval, BFCL, AgentBench and RepoBench
+  (rebuilt), with Nextcloud publishing (`leaderboard.xlsx` and Tables).
+- **The deploy gate** is a set of GPU-free selftests, one per image.
+- **History:** 41 historical rows are published (18 of them BFCL and 2
+  AgentBench).
 - **No real scored run against Framework yet.** That is an operator
   decision.
 - **Not merged:** branch `task/eval-runner`.
@@ -34,18 +34,8 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
     Shared with steve.
 - **Framework :8080:** GLM-5.3-Flash, hand-started.
 
-**Next deploy (preflight, needs approval):** `eval-runner-battery`.
-1. Run `./with-secrets-prod-tiny scripts/provision.sh --stack
-   ai-services-stack`. It builds `eval-runner-bfcl`,
-   `eval-runner-agentbench` and `local-os/default` (the Ubuntu 26.04
-   sandbox), adding roughly 2-3 GB of images. Then it runs every
-   selftest. The AgentBench selftest starts two real sandbox containers
-   on the CT, with no network. Check the CT's disk first.
-2. Copy the historical import (18 BFCL + 2 AgentBench results files, a
-   few KB) into `/srv/eval-runner/results/_historical/` (plan.md,
-   "import historical BFCL and AgentBench results").
-3. Run `eval-run publish`. That adds about 20 rows and the BFCL,
-   AgentBench and RepoBench views.
+**Deployed (`eval-runner-battery`, 2026-10-01):** see the progress
+log at the end.
 
 **Nextcloud Office (proposal, not started):**
 - **What's there:** the `eurooffice` app (Euro-Office, ONLYOFFICE-derived)
@@ -70,16 +60,15 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   and memory.
 
 **Pending operator decisions:**
-1. Approve the `eval-runner-battery` deploy above.
-2. Nextcloud Office: Euro-Office Document Server, Collabora, or leave
+1. Nextcloud Office: Euro-Office Document Server, Collabora, or leave
    it.
-3. The first real scored run(s) against Framework: explicit go-ahead
+2. The first real scored run(s) against Framework: explicit go-ahead
    only. Rough durations at about 17 tok/s:
    - BFCL: about 1-2 h;
    - AgentBench (100 episodes): several hours;
    - RepoBench: prefill-bound, about 1 day on GLM;
    - GPQA and IFEval: many hours each.
-4. Merging `task/eval-runner` and `task/glm-5.3-flash-eval`.
+3. Merging `task/eval-runner` and `task/glm-5.3-flash-eval`.
 
 **Known side issues (not fixed, out of scope):**
 - `deploy-nextcloud-stack.yml`'s steve-user task sets `OC_PASS` without
@@ -445,3 +434,32 @@ sandbox image, the historical importer, and 70 unit tests passing.
   yet copied to the CT.
 - **Not done yet:** this part isn't deployed. That needs the
   `eval-runner-battery` approval.
+
+**Deploy `eval-runner-battery`:** commits `8866caaa`, `7d0f2422` and
+`ac0ba820`.
+- **Disk:** the CT's `/var/lib/docker` was at 86% (3.3 GB free) from 19
+  dangling images left by rebuilds. Pruned them and the build cache
+  (about 7.5 GB, now 50% used). The play now prunes dangling images
+  after each build.
+- **Selftest catch 1, BFCL:** qwen-agent imports `soundfile`, which
+  bfcl-eval doesn't declare. Framework's venv had `soundfile`,
+  `transformers` and `safetensors` installed by hand. The image now
+  installs them too, so it resolves to the identical 109-package set.
+- **Selftest catch 2, AgentBench:** the episodes ran in real network-less
+  sandboxes, but the closing `calculate_overall` failed with "No workers
+  available". Sandbox teardown stalls the worker heartbeat past the
+  controller's 11 s tolerance. The wrapper now waits and re-runs the
+  assigner, which sends no requests and only recalculates.
+- **Final deploy:** `ok=112 failed=0`, "all selftests OK":
+  - GPQA/IFEval and publish;
+  - BFCL: 2 cases, resume with 0 new requests;
+  - AgentBench: 2 sandbox episodes, resume with 0 new requests;
+  - RepoBench: dataset download, 15 completions, resume with 0 new
+    requests.
+- **History import:** 20 historical results files copied.
+- **`eval-run publish`:** 61 files, 20 rows created, 21 unchanged.
+- **Verified through the API:**
+  - 41 rows: 18 BFCL, 11 GPQA, 10 IFEval and 2 AgentBench;
+  - 7 views, each with two filters;
+  - `leaderboard.xlsx`, `leaderboard.md` and `findings.md` in the
+    folder, and no CSV.
