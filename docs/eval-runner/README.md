@@ -64,10 +64,12 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 **How to resume:**
 - Read `plan.md`. Its prose has the operator sequences, and all 36 gates
   re-run green against the branch.
-- The plan is regenerated from repo files by a generator script kept in
-  the session scratchpad. If that's gone, edit `plan.md` by hand and
-  re-run the gate check, which parses the YAML blocks and runs each
-  `cmd`.
+- `plan.md` is generated from the repo files by
+  `python3 docs/eval-runner/artifacts/genplan.py`, run from the repo
+  root. That folder is git-ignored local scratch, and the script uses
+  `plan-head.md`, `plan-tail.md` and `step01.md` from the same folder.
+  Rerun it after changing any eval-runner file, then re-run every gate.
+  If artifacts/ is gone, edit `plan.md` by hand.
 
 ## Progress
 
