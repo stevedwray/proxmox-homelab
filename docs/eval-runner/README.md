@@ -1,7 +1,9 @@
 # eval-runner
 
-Status: **deployed to pve-tiny (2026-10-01); smoke test (IFEval + GPQA
-pilots against GLM-5.3-Flash) in progress.**
+Status: **deployed to pve-tiny (2026-10-01). The infrastructure path is
+proven up to lm_eval sending requests to Framework. No scored pilot yet:
+the IFEval pilot was stopped at operator request. Run a pilot when
+Framework's GPU is free for it.**
 
 Runs the eval battery's lm_eval tests (GPQA, IFEval) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -22,7 +24,7 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 | eval-runner-04-playbook-play | done 2026-10-01, all critical gates pass |
 | eval-runner-05-battery-doc-pointer | done 2026-10-01, all critical gates pass |
 | Operator: deploy to pve-tiny | done 2026-10-01, second attempt (`failed=0`); first attempt failed on the image build, fixed in `156fc493` |
-| Operator: smoke test (IFEval + GPQA pilots) | in progress |
+| Operator: smoke test (IFEval + GPQA pilots) | partial: request path proven, no completed pilot (stopped, see below) |
 
 ## Hand-backs
 
@@ -65,3 +67,30 @@ scripts/provision.sh --stack ai-services-stack` (inventory target
   returned HTTP 200`. Image `eval-runner:local` is 780 MB. `curl` and
   `python3` are both present on the CT, which settles the open question in
   `plan.md`.
+
+### 2026-10-01: smoke test (partial, stopped)
+
+`eval-run ifeval --pilot` started `eval-glm-5.3-flash-ifeval-pilot-20261001T020318Z`.
+
+**Proven:**
+- Model id auto-detected as `glm-5.3-flash`.
+- lm_eval picked up `timeout: 3600`, `num_concurrent: 1` and
+  `max_gen_toks: 8192`.
+- Framework's `/slots` showed the request being generated, from
+  `192.168.50.11`.
+
+**Not proven:**
+- A completed run and results files.
+- GPQA (the gated dataset, inside the container).
+
+The container was stopped (`docker stop`, exit 137) and removed after
+about 10 minutes, with 0 of 40 prompts finished, at operator request.
+The operator hadn't intended this work to start GPU jobs, and a
+CyberSecEval suite from `cse_seg` (`192.168.100.70`) was running against
+the same server at the time.
+
+**Timing note for the next attempt:** with reasoning at `high`, a single
+IFEval answer from GLM-5.3-Flash ran to 6,387 tokens. Sharing the server
+with another client roughly halves per-request speed (10 vs ~18 tok/s).
+Budget a couple of hours for a 40-prompt pilot, and run it when nothing
+else is using Framework.
