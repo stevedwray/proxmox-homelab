@@ -119,6 +119,10 @@ class RecordTest(unittest.TestCase):
         self.assertIsNone(record["limit"])
         self.assertEqual(record["run"], "glm-5.3-flash-ifeval-S")
 
+    def test_limit_named_in_run(self):
+        record, _ = runmeta.build_record(self.server, "bfcl", False, 10, 1, "", "S", "/results")
+        self.assertEqual((record["run"], record["limit"]), ("glm-5.3-flash-bfcl-limit10-S", 10))
+
     def test_safe_name(self):
         self.assertEqual(runmeta.safe_name("org/model:q4 x"), "org-model-q4-x")
 

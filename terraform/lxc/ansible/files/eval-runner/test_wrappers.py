@@ -204,7 +204,7 @@ class ResultsFlowTest(unittest.TestCase):
         self.assertEqual(rows[0]["Series"], "")
 
     def test_every_wrapper_task_has_labels_series_and_a_view(self):
-        view_tasks = {task for _, _, task, _ in publish.VIEWS}
+        view_tasks = {task for _, _, task, _ in publish.VIEWS if task}
         for task in summarize.HEADLINE:
             self.assertIn(task, publish.TASK_LABELS)
             self.assertIn(task, summarize.STANDARD_SERIES)

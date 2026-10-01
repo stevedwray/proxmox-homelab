@@ -152,9 +152,10 @@ def budget_suffix(max_gen_toks):
     return f"{max_gen_toks // 1024}k" if max_gen_toks % 1024 == 0 else str(max_gen_toks)
 
 
-def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS):
+def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS, limit=None):
     suffix = budget_suffix(max_gen_toks)
-    parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + (["pilot"] if pilot else []) + [stamp]
+    sample = ["pilot"] if pilot else ([f"limit{limit}"] if limit else [])
+    parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + sample + [stamp]
     return "-".join(parts)
 
 
@@ -214,7 +215,7 @@ def build_record(server, task, pilot, limit, concurrency, note, stamp, results_r
     if limit is None and pilot:
         limit = PILOT_LIMIT if harness == "lm_eval" else WRAPPER_PILOT_LIMITS[harness]
     name = run_name(server["model_id"], task, pilot, stamp,
-                    max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS)
+                    max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS, limit)
     run_dir = os.path.join(results_root, name)
     argv = (lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
                          max_gen_toks)

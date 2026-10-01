@@ -110,6 +110,9 @@ VIEWS = [
     ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
     ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
     ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
+    # Every eval-runner run, newest first -- including smoke tests and
+    # pilots, which the ranked views leave out.
+    ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
 ]
 
 
@@ -606,6 +609,8 @@ def upsert_rows(nc, table_id, col_ids, rows):
 # with the internal Key first was unreadable). The rest stays in the base
 # table.
 VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
+                     "Comparable", "Why not comparable", "Note", "Run"]
 # The base table's column order: what a person reads first, the internal
 # upsert Key last.
 TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
@@ -619,15 +624,19 @@ def view_settings(col_ids, task, required):
     filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
     sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
     (the deprecated "columns" key breaks when given a string)."""
-    filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
+    filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}] if task else []
     filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                 for column, value in required.items()]
-    has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
-    shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
+    if task is None:  # the all-tasks runs view: newest first
+        shown, sort = RUNS_VIEW_COLUMNS, [{"columnId": col_ids["Date"], "mode": "DESC"}]
+    else:
+        has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
+        shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
+        sort = [{"columnId": col_ids["Score %"], "mode": "DESC"}]
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
         "filter": [filters],
-        "sort": [{"columnId": col_ids["Score %"], "mode": "DESC"}],
+        "sort": sort,
     }
 
 

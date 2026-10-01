@@ -376,8 +376,8 @@ change: |
 
     usage() {
       cat <<'USAGE'
-    Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--note TEXT]
-           eval-run <bfcl|agentbench|repobench> [--pilot] [--note TEXT]
+    Usage: eval-run <gpqa|ifeval> [--pilot|--limit N] [--concurrency N] [--max-gen-toks N] [--note TEXT]
+           eval-run <bfcl|agentbench|repobench> [--pilot|--limit N] [--note TEXT]
            eval-run resume <run> [--force]
            eval-run selftest
            eval-run results [run...]
@@ -397,6 +397,8 @@ change: |
       --pilot          a small sample instead of the full task: 40 examples
                        (gpqa/ifeval/bfcl), 10 episodes (agentbench), 5 per
                        level and setting (repobench)
+      --limit N        a smoke test of N items (repobench: per level and setting).
+                       Like --pilot, listed but never ranked
       --concurrency N  parallel requests (gpqa/ifeval only; default 1, as every
                        historical result)
       --max-gen-toks N token budget per answer (default 8192, the budget every
@@ -484,6 +486,9 @@ change: |
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --pilot) extra+=(--pilot); shift ;;
+          --limit)
+            [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || die "--limit needs a positive integer"
+            extra+=(--limit "$2"); shift 2 ;;
           --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
           --max-gen-toks) max_gen_toks="${2:?--max-gen-toks needs a value}"; shift 2 ;;
           --note) note="${2?--note needs a value}"; shift 2 ;;
@@ -605,7 +610,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/eval-run | cut -d' ' -f1"
-    expect: "3c349c4827bf5fea0845b1a943557414160a38a830a2a54723ec30b9692331ee"
+    expect: "633d9dd1815d8c528f310c185ead55249abe3716625a6fe28b7ee158eda8758f"
     critical: true
   - id: executable
     cmd: "test -x terraform/lxc/ansible/files/eval-runner/eval-run && echo OK"
@@ -1419,9 +1424,10 @@ change: |
         return f"{max_gen_toks // 1024}k" if max_gen_toks % 1024 == 0 else str(max_gen_toks)
 
 
-    def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS):
+    def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS, limit=None):
         suffix = budget_suffix(max_gen_toks)
-        parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + (["pilot"] if pilot else []) + [stamp]
+        sample = ["pilot"] if pilot else ([f"limit{limit}"] if limit else [])
+        parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + sample + [stamp]
         return "-".join(parts)
 
 
@@ -1481,7 +1487,7 @@ change: |
         if limit is None and pilot:
             limit = PILOT_LIMIT if harness == "lm_eval" else WRAPPER_PILOT_LIMITS[harness]
         name = run_name(server["model_id"], task, pilot, stamp,
-                        max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS)
+                        max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS, limit)
         run_dir = os.path.join(results_root, name)
         argv = (lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
                              max_gen_toks)
@@ -1613,7 +1619,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/runmeta.py | cut -d' ' -f1"
-    expect: "946fd0acdab10f009624925e44f1cb2f1619552e009f1fe79de358eb5b6d1ebe"
+    expect: "bce842d3a807054542788012ba4cf96ff5c4b508404af6da009db3d9efb70e73"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/runmeta.py && echo OK"
@@ -1953,6 +1959,10 @@ change: |
             self.assertIsNone(record["limit"])
             self.assertEqual(record["run"], "glm-5.3-flash-ifeval-S")
 
+        def test_limit_named_in_run(self):
+            record, _ = runmeta.build_record(self.server, "bfcl", False, 10, 1, "", "S", "/results")
+            self.assertEqual((record["run"], record["limit"]), ("glm-5.3-flash-bfcl-limit10-S", 10))
+
         def test_safe_name(self):
             self.assertEqual(runmeta.safe_name("org/model:q4 x"), "org-model-q4-x")
 
@@ -2044,7 +2054,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_runmeta.py | cut -d' ' -f1"
-    expect: "2b479dd80e9197ac0ea82342b133aaebcb7f10d90d90d4979a8f2f7007f3cb7e"
+    expect: "df5de194c75b17504671e800d21aaf126fd73534ddbfbd28c84ab31748788262"
     critical: true
 ```
 
@@ -2406,6 +2416,9 @@ change: |
         ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
         ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
         ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
+        # Every eval-runner run, newest first -- including smoke tests and
+        # pilots, which the ranked views leave out.
+        ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
     ]
 
 
@@ -2902,6 +2915,8 @@ change: |
     # with the internal Key first was unreadable). The rest stays in the base
     # table.
     VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+    RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
+                         "Comparable", "Why not comparable", "Note", "Run"]
     # The base table's column order: what a person reads first, the internal
     # upsert Key last.
     TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
@@ -2915,15 +2930,19 @@ change: |
         filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
         sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
         (the deprecated "columns" key breaks when given a string)."""
-        filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
+        filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}] if task else []
         filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                     for column, value in required.items()]
-        has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
-        shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
+        if task is None:  # the all-tasks runs view: newest first
+            shown, sort = RUNS_VIEW_COLUMNS, [{"columnId": col_ids["Date"], "mode": "DESC"}]
+        else:
+            has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
+            shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
+            sort = [{"columnId": col_ids["Score %"], "mode": "DESC"}]
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
             "filter": [filters],
-            "sort": [{"columnId": col_ids["Score %"], "mode": "DESC"}],
+            "sort": sort,
         }
 
 
@@ -3049,7 +3068,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "8d3ba61d298a3af5d6c576019709edb6f6cf60e8058f9b288732d75d4c9c946b"
+    expect: "aea2a1c154e7f147c8b5abeb677f1b9bb38ef9cdbf605ba6f1765eeee432bb8b"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3589,6 +3608,10 @@ change: |
             self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
             bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
             self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
+            runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
+            self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
+            self.assertEqual([(titles[f["columnId"]], f["value"]) for f in runs["filter"][0]], [("Source", "eval-runner")])
+            self.assertEqual((titles[runs["sort"][0]["columnId"]], runs["sort"][0]["mode"]), ("Date", "DESC"))
             # the table and every view are shared, so the views show up for steve
             self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
             self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
@@ -3683,7 +3706,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "9c7135d563dc3c99a0f7a83be2ad2a83d9bdbdcf9c63300b62cd6eeda2971ec6"
+    expect: "33bfb56c2741764a7420853b11e5880e2fcdf69e818614f67a3b15dc93d80f5c"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
@@ -5566,7 +5589,7 @@ change: |
             self.assertEqual(rows[0]["Series"], "")
 
         def test_every_wrapper_task_has_labels_series_and_a_view(self):
-            view_tasks = {task for _, _, task, _ in publish.VIEWS}
+            view_tasks = {task for _, _, task, _ in publish.VIEWS if task}
             for task in summarize.HEADLINE:
                 self.assertIn(task, publish.TASK_LABELS)
                 self.assertIn(task, summarize.STANDARD_SERIES)
@@ -5589,7 +5612,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_wrappers.py | cut -d' ' -f1"
-    expect: "7214c11260b2227ef676e9ff5eb623def560cf28f16479738f5600e52b792193"
+    expect: "dece1f1aa562c1e8f41a00b00072867b6d77750366d7057f34b61e45ee22fe07"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"

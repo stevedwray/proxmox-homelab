@@ -233,6 +233,10 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
         bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
         self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
+        runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
+        self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
+        self.assertEqual([(titles[f["columnId"]], f["value"]) for f in runs["filter"][0]], [("Source", "eval-runner")])
+        self.assertEqual((titles[runs["sort"][0]["columnId"]], runs["sort"][0]["mode"]), ("Date", "DESC"))
         # the table and every view are shared, so the views show up for steve
         self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
         self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
