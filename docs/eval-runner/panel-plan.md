@@ -1,6 +1,8 @@
 # eval-runner control panel (an "Eval battery" page in cse-panel)
 
-Status: **built and unit-tested (2026-10-02), not deployed.**
+Status: **deployed (2026-10-02, `eval-runner-panel-rollout`).** The
+end-to-end check from the page is pending the operator's go-ahead,
+because it uses Framework for about a minute.
 - Code: `eval_tasks.py` (worker), `eval_battery.py` (page), Redis
   password wiring, and the MikroTik rule playbook. 23 new unit tests.
 - Deploy runbook: see "Rollout" below.
@@ -171,3 +173,21 @@ ai-services-stack (ai_seg, pve-tiny)
   `cse-panel-stack/app/app.py` (two lines) and adds files. The CSE
   branch changes 13 lines of the same `app.py`. A small manual merge is
   likely; whichever lands second resolves it.
+
+## Rollout log (2026-10-02)
+
+0. **Pre-check:** the `celery` and `eval-runner` queues were empty, with
+   no unacked tasks. The four "Queued" CSE entries were stale IDs whose
+   results had expired.
+1. **MikroTik rule:** asserted present, `ok=7 failed=0`.
+2. **cse-panel-stack:** deployed, `failed=0`.
+   - Unauthenticated Redis is refused (`NOAUTH`), and `requirepass` is
+     not in the process arguments.
+   - CSE `/jobs` and `/eval` return HTTP 200.
+3. **cse-controller:** deployed, `failed=0`. The CSE worker logs
+   `Connected to redis://:**@192.168.20.30` and is ready.
+4. **ai-services-stack eval-runner play:** `failed=0`, all selftests OK.
+   - `eval-runner-worker-runs` and `-ctl` are active and connected.
+   - `/eval/api/state` shows `glm-5.3-flash`, 4 slots, 0 busy.
+   - The images were rebuilt, so `publish.py`'s formatting fixes are now
+     baked in.
