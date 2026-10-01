@@ -39,6 +39,13 @@ start_mock() {
   done
 }
 
+# Keep only the 5 most recent selftest runs (~140 KB each; one per deploy).
+# Names end in a UTC stamp, so a reverse name sort is newest-first.
+mkdir -p "$root"
+find "$root" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +5 | while read -r old; do
+  rm -rf "$old"
+done
+
 rm -f "$log"
 export OPENAI_API_KEY=selftest
 start_mock 18080 /models/selftest-mock.gguf
