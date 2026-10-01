@@ -168,6 +168,13 @@ class RenderTest(unittest.TestCase):
         self.assertIn("| Strict-match | 25.00% |", report)
         self.assertIn("| Empty answers | 1 (33.3%) |", report)
 
+    def test_report_header_is_tidy(self):
+        report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+        self.assertIn("- **Started:** 2026-10-02 00:00 UTC", report)
+        self.assertIn("temperature 1, top_p 0.95", report)
+        self.assertIn("- **Harness:** lm_eval 0.4.12; sample limit none (full run)", report)
+        self.assertEqual(publish._num(0.949999988079071), "0.95")
+
     def test_leaderboard_lists_latest_eval_runner_runs(self):
         board = self.files["leaderboard.md"].decode()
         self.assertIn("## Latest eval-runner runs", board)

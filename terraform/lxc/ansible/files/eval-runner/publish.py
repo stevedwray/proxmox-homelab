@@ -307,6 +307,20 @@ def metric_names(label):
     return primary, alt
 
 
+def _num(value):
+    """0.949999988079071 -> 0.95; None -> –."""
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return "–" if value is None else str(value)
+
+
+def _started(stamp):
+    """20261001T204344Z -> 2026-10-01 20:43 UTC"""
+    if len(stamp) >= 13 and stamp[8] == "T":
+        return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]} UTC"
+    return stamp or "–"
+
+
 def render_report(source, run_dir, record, rows):
     run = os.path.basename(os.path.normpath(run_dir))
     lines = [f"# {run}", ""]
@@ -320,15 +334,17 @@ def render_report(source, run_dir, record, rows):
     if record:
         props = (record.get("server") or {}).get("props") or {}
         params = props.get("params") or {}
+        harness = record.get("harness") or "lm_eval"
+        harness_text = (f"lm_eval {record.get('lm_eval_version') or ''}".strip() if harness == "lm_eval"
+                        else f"{harness} (eval-runner wrapper)")
         lines += [
-            f"- **Started:** {record.get('created_utc', '')}",
+            f"- **Started:** {_started(record.get('created_utc', ''))}",
             f"- **Note:** {record.get('note') or '–'}",
-            f"- **Server:** n_ctx {props.get('n_ctx', '–')}, server-default sampling "
-            f"temperature {params.get('temperature', '–')} / top_p {params.get('top_p', '–')} "
-            "(requests override temperature to 0)",
+            f"- **Server:** context {_num(props.get('n_ctx'))} tokens; server-default sampling "
+            f"temperature {_num(params.get('temperature'))}, top_p {_num(params.get('top_p'))} "
+            "(requests override temperature)",
+            f"- **Harness:** {harness_text}; sample limit {record.get('limit') or 'none (full run)'}",
             f"- **Fingerprint:** `{record.get('fingerprint', '')[:16]}`",
-            f"- **lm_eval:** {record.get('lm_eval_version') or '–'}, "
-            f"limit {record.get('limit') or 'none'}, concurrency {record.get('concurrency')}",
         ]
     # One narrow Metric | Value table per task: Nextcloud's markdown viewer
     # scrolls wide tables sideways (operator, 2026-10-02).

@@ -2613,6 +2613,20 @@ change: |
         return primary, alt
 
 
+    def _num(value):
+        """0.949999988079071 -> 0.95; None -> –."""
+        if isinstance(value, float):
+            return f"{value:.4g}"
+        return "–" if value is None else str(value)
+
+
+    def _started(stamp):
+        """20261001T204344Z -> 2026-10-01 20:43 UTC"""
+        if len(stamp) >= 13 and stamp[8] == "T":
+            return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]} {stamp[9:11]}:{stamp[11:13]} UTC"
+        return stamp or "–"
+
+
     def render_report(source, run_dir, record, rows):
         run = os.path.basename(os.path.normpath(run_dir))
         lines = [f"# {run}", ""]
@@ -2626,15 +2640,17 @@ change: |
         if record:
             props = (record.get("server") or {}).get("props") or {}
             params = props.get("params") or {}
+            harness = record.get("harness") or "lm_eval"
+            harness_text = (f"lm_eval {record.get('lm_eval_version') or ''}".strip() if harness == "lm_eval"
+                            else f"{harness} (eval-runner wrapper)")
             lines += [
-                f"- **Started:** {record.get('created_utc', '')}",
+                f"- **Started:** {_started(record.get('created_utc', ''))}",
                 f"- **Note:** {record.get('note') or '–'}",
-                f"- **Server:** n_ctx {props.get('n_ctx', '–')}, server-default sampling "
-                f"temperature {params.get('temperature', '–')} / top_p {params.get('top_p', '–')} "
-                "(requests override temperature to 0)",
+                f"- **Server:** context {_num(props.get('n_ctx'))} tokens; server-default sampling "
+                f"temperature {_num(params.get('temperature'))}, top_p {_num(params.get('top_p'))} "
+                "(requests override temperature)",
+                f"- **Harness:** {harness_text}; sample limit {record.get('limit') or 'none (full run)'}",
                 f"- **Fingerprint:** `{record.get('fingerprint', '')[:16]}`",
-                f"- **lm_eval:** {record.get('lm_eval_version') or '–'}, "
-                f"limit {record.get('limit') or 'none'}, concurrency {record.get('concurrency')}",
             ]
         # One narrow Metric | Value table per task: Nextcloud's markdown viewer
         # scrolls wide tables sideways (operator, 2026-10-02).
@@ -3086,7 +3102,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "87979bda09073442cb8b44448b3085a02ee6c30e23f9d8efce7631fa01504d70"
+    expect: "4dedf7689ff4fef77949e8d4372f055b3ca18babde0dbadde080b74e9e2cdb64"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3561,6 +3577,13 @@ change: |
             self.assertIn("| Strict-match | 25.00% |", report)
             self.assertIn("| Empty answers | 1 (33.3%) |", report)
 
+        def test_report_header_is_tidy(self):
+            report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+            self.assertIn("- **Started:** 2026-10-02 00:00 UTC", report)
+            self.assertIn("temperature 1, top_p 0.95", report)
+            self.assertIn("- **Harness:** lm_eval 0.4.12; sample limit none (full run)", report)
+            self.assertEqual(publish._num(0.949999988079071), "0.95")
+
         def test_leaderboard_lists_latest_eval_runner_runs(self):
             board = self.files["leaderboard.md"].decode()
             self.assertIn("## Latest eval-runner runs", board)
@@ -3739,7 +3762,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "d70de7b0be5c466861c7d907f922c8e0b18c59289480d01d25f0ea9f52333302"
+    expect: "5db886d07fbfc5719214ef007677919ae947be1c3ab062b654f9abe149bb4fba"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
