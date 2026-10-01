@@ -5,6 +5,11 @@
 # service. See docs/eval-runner/plan.md.
 FROM python:3.12-slim
 
+# Set before the RUN below, not after: nltk 3.10's import guard refuses to
+# import anything that resolves under the current working directory, and
+# the build's default cwd is / -- which contains the whole stdlib.
+WORKDIR /results
+
 # Pinned to the lm_eval release and API/IFEval dependency versions behind
 # every GPQA/IFEval number in docs/framework/eval-battery-phase2-plan.md,
 # so new results stay comparable with the old ones. No torch/transformers:
@@ -19,5 +24,4 @@ RUN pip install --no-cache-dir \
       "nltk==3.10.1" \
     && python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
-WORKDIR /results
 ENTRYPOINT ["lm_eval"]

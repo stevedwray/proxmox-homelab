@@ -158,6 +158,11 @@ change: |
     # service. See docs/eval-runner/plan.md.
     FROM python:3.12-slim
 
+    # Set before the RUN below, not after: nltk 3.10's import guard refuses to
+    # import anything that resolves under the current working directory, and
+    # the build's default cwd is / -- which contains the whole stdlib.
+    WORKDIR /results
+
     # Pinned to the lm_eval release and API/IFEval dependency versions behind
     # every GPQA/IFEval number in docs/framework/eval-battery-phase2-plan.md,
     # so new results stay comparable with the old ones. No torch/transformers:
@@ -172,7 +177,6 @@ change: |
           "nltk==3.10.1" \
         && python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
 
-    WORKDIR /results
     ENTRYPOINT ["lm_eval"]
 
 scope:
@@ -186,7 +190,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile | cut -d' ' -f1"
-    expect: "542fdf7e1d3dfbcde5d528c44f7ab95e0ea0c5cd525c216c144ae6315795c4fb"
+    expect: "11e7dce68a0f0654d43bd238a126df30549c79718923ef0530048a22f8647e85"
     critical: true
 ```
 
