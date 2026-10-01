@@ -226,7 +226,12 @@
           WORKDIR /app
           COPY --from=builder /app/node_modules ./node_modules
           COPY --from=builder /app/dist ./dist
-          COPY phase1-expand-domain.mjs ./
+          # --chown=app:app -- found live 2026-10-02: the Ansible-written
+          # source file is root-owned mode 0640, and without --chown here
+          # COPY preserves root ownership into the image, which the
+          # non-root `app` user (USER app, below) can't read -- EACCES at
+          # runtime, not at build time.
+          COPY --chown=app:app phase1-expand-domain.mjs ./
           ENV MALTEGO_MCP_OUTPUT_DIR=/home/app/MaltegoGraphs
           RUN mkdir -p /home/app/MaltegoGraphs && chown -R app:app /home/app
           USER app
