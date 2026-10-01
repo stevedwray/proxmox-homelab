@@ -76,6 +76,8 @@ def publish_errors(state, expected_rows, run):
         errors.append(f"columns {titles} don't match publish.COLUMNS")
     if len(state["rows"]) != expected_rows:
         errors.append(f"expected {expected_rows} rows, table has {len(state['rows'])}")
+    if state["tables"] and len(state["tables"][0].get("columnSettings") or []) != len(publish.COLUMNS):
+        errors.append("table column order (OCS v2 columnSettings) was not applied")
     if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
         errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
                       f"{len(state['views'])} and {len(state['shares'])}")

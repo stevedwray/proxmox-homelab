@@ -30,6 +30,14 @@ class FakeNextcloud:
             if path not in self.state["folders"]:
                 self.state["folders"].append(path)
 
+    def request(self, method, path, body=None):
+        self.calls.append((method, path))
+        assert path.startswith(mock_nextcloud.OCS_API), path
+        code, result = mock_nextcloud.ocs_route(method, path[len(mock_nextcloud.OCS_API):], body or {})
+        if code != 200:
+            raise publish.NextcloudError(f"{method} {path} -> {code} {result}")
+        return result
+
     def put_file(self, rel, content):
         assert os.path.dirname(rel) in self.state["folders"], rel
         self.state["files"][rel] = content.decode()
@@ -153,9 +161,15 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(len(state["rows"]), 5)
         self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
         view = state["views"][0]
-        self.assertIn('"operator": "is-equal"', view["filter"])
+        self.assertEqual(view["filter"][0][0]["operator"], "is-equal")
+        self.assertEqual(view["sort"], [{"columnId": view["columnSettings"][2]["columnId"], "mode": "DESC"}])
+        self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
         self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
         self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
+        table = state["tables"][0]
+        key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
+        self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
+        self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
 
     def test_republish_is_idempotent(self):
         publish.publish(self.nc, self.files, self.rows, share_with="steve")
@@ -164,6 +178,20 @@ class PublishTest(unittest.TestCase):
         state = self.nc.state
         self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
                          (1, 5, 2, 1))
+
+    def test_half_configured_view_is_repaired(self):
+        table_id, _ = publish.publish(self.nc, self.files, self.rows)
+        self.nc.state["views"][0].pop("filter")
+        publish.publish(self.nc, self.files, self.rows)
+        self.assertIn("filter", self.nc.state["views"][0])
+        self.assertEqual(len(self.nc.state["views"]), len(publish.VIEWS))
+
+    def test_mock_rejects_the_old_string_format(self):
+        import mock_nextcloud
+        self.assertIsNotNone(mock_nextcloud.view_update_problem({"columns": "[1,2]"}))
+        self.assertIsNotNone(mock_nextcloud.view_update_problem({"sort": [{"columnId": 1, "mode": "down"}]}))
+        self.assertIsNone(mock_nextcloud.view_update_problem(publish.view_settings(
+            {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", True)))
 
     def test_changed_value_updates_in_place(self):
         publish.publish(self.nc, self.files, self.rows)

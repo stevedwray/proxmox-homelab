@@ -51,6 +51,7 @@ FOLDER = "Reports/eval-runner"
 TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
 TABLES_API = "/index.php/apps/tables/api/1"
+TABLES_OCS_API = "/ocs/v2.php/apps/tables/api/2"
 
 TASK_LABELS = {
     "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
@@ -465,20 +466,47 @@ def upsert_rows(nc, table_id, col_ids, rows):
     return created, updated, unchanged
 
 
+def view_settings(col_ids, task, comparable_only):
+    """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
+    accepts (read from its source): columnSettings [{columnId, order}],
+    filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
+    sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
+    (the deprecated "columns" key breaks when given a string)."""
+    filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
+    if comparable_only:
+        filters.append({"columnId": col_ids["Comparable"], "operator": "is-equal", "value": "yes"})
+    shown = [title for title, _ in COLUMNS if title != "Key"]
+    return {
+        "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
+        "filter": [filters],
+        "sort": [{"columnId": col_ids["Score %"], "mode": "DESC"}],
+    }
+
+
 def ensure_views(nc, table_id, col_ids):
-    existing = {v["title"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
+    """Create missing views, and (re)apply every view's settings each time,
+    so a view left half-configured by an earlier failure gets repaired."""
+    existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
     for title, emoji, task, comparable_only in VIEWS:
-        if title in existing:
-            continue
-        view = nc.tables("POST", f"/tables/{table_id}/views", {"title": title, "emoji": emoji})
-        filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
-        if comparable_only:
-            filters.append({"columnId": col_ids["Comparable"], "operator": "is-equal", "value": "yes"})
-        nc.tables("PUT", f"/views/{view['id']}", {"data": {
-            "columns": json.dumps([col_ids[t] for t, _ in COLUMNS if t != "Key"]),
-            "filter": json.dumps([filters]),
-            "sort": json.dumps([{"columnId": col_ids["Score %"], "mode": "DESC"}]),
-        }})
+        view_id = existing.get(title)
+        if view_id is None:
+            view_id = nc.tables("POST", f"/tables/{table_id}/views", {"title": title, "emoji": emoji})["id"]
+        nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, comparable_only)})
+
+
+def table_layout(col_ids):
+    """Body for the OCS v2 PUT /tables/{id}: the table's own column order
+    (COLUMNS order, Key first) and default sort (task, then score desc).
+    The v1 API has no way to set these; without it the base table shows
+    columns in an arbitrary order."""
+    return {
+        "columnSettings": [{"columnId": col_ids[title], "order": i} for i, (title, _) in enumerate(COLUMNS)],
+        "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
+    }
+
+
+def ensure_table_layout(nc, table_id, col_ids):
+    nc.request("PUT", f"{TABLES_OCS_API}/tables/{table_id}", body=table_layout(col_ids))
 
 
 def ensure_share(nc, table_id, user):
@@ -502,6 +530,7 @@ def publish(nc, files, rows, share_with=None):
     table_id = ensure_table(nc)
     col_ids = ensure_columns(nc, table_id)
     counts = upsert_rows(nc, table_id, col_ids, rows)
+    ensure_table_layout(nc, table_id, col_ids)
     ensure_views(nc, table_id, col_ids)
     if share_with:
         ensure_share(nc, table_id, share_with)
