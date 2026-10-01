@@ -323,3 +323,47 @@ blank. Via the API, `POST /jobs` takes query parameters, for example
 - llama.cpp `649dcb103` "add GLM-5.3-Flash (GLM5-Next) support (#27773)",
   `05af0d2b1` "glm5-next: give dead indexer slots unique scatter rows (#29745)"
 - [runaihome: GLM-5.3 open weights, license and GGUF sizes](https://runaihome.com/blog/glm-5-3-open-weights-live-hardware-guide-2026/)
+
+## 8. CPU usage alongside the GPU (observed 2026-10-01, not yet resolved)
+
+**Symptom.** While serving, Framework shows heavy CPU use as well as GPU
+use. Qwen3.8-Flash-Next only ever showed GPU use. 16 llama-server worker
+threads ran at about 65–73% each (load average ~12), with
+`gpu_busy_percent` at 86.
+
+**Profile.** `sudo perf record -F 199 -p <pid> -- sleep 10`, then
+`perf report --sort dso,symbol`:
+
+| Where CPU time goes | Share |
+|---|---|
+| `libgomp.so.1` (one address; OpenMP worker spin-wait) | ~93% |
+| `ggml_vk_wait_for_fence` (GPU→CPU handoff syncs) | 2.3% |
+| `ggml_vec_dot_q8_0_q8_0` + `ggml_compute_forward_mul_mat` (real CPU compute: a Q8_0-weight matmul) | ~1% |
+
+**Reading.** At least one op in the GLM5-Next graph is scheduled on the
+CPU backend every token. Each time, the 16-thread OpenMP pool wakes, does
+very little work, and spins while the GPU runs. On this APU the CPU and
+GPU share a power budget, so the spinning probably costs GPU clocks, and
+each split adds a sync.
+
+**Ruled out by reading `ggml-vulkan.cpp` `supports_op`:**
+- `GATED_DELTA_NET` (KDA): S_v=128 and F32 are both supported.
+- `DSV4_HC_PRE`/`POST`/`COMB`: all inputs are F32. The Q8_0 `hc_*_fn`
+  weights go through a separate `ggml_mul_mat`, which Vulkan supports.
+
+The CPU-side op is **not yet identified.**
+
+**Next (needs a server restart, so only when Framework is otherwise
+idle):**
+1. Restart with `GGML_SCHED_DEBUG=2`, send one short request, and read the
+   split/backend assignment.
+2. Restart with `--threads 4` (and/or `OMP_WAIT_POLICY=PASSIVE`) and
+   compare tok/s against §7. This is the usual setting for a fully
+   offloaded model and should remove most of the spinning, whatever the
+   op is.
+3. If it's a genuinely unsupported op, record it here as an upstream
+   llama.cpp/Vulkan gap.
+
+Also seen at the same time: two concurrent clients (eval-runner on
+`192.168.50.11` and a CSE suite on `192.168.100.70`). One request
+dropped to 10 tok/s from ~18.
