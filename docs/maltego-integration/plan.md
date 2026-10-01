@@ -4,9 +4,15 @@ Phase 1 only (see `README.md` for why). Phases 2-6 from `brief.md` are
 deliberately left as prose, not step-blocks, until Phase 1's result is known:
 
 - **Phase 2** — generalize into a proper OSINT service layer with caching,
-  provenance records, and error handling; extend `cve-mcp-server`'s dormant
-  threat-intel integrations (AbuseIPDB/GreyNoise/URLScan/CIRCL PDNS) as part
-  of this, not Phase 1.
+  provenance records, and error handling. Enrichment lookups (IP
+  reputation, domain intel, Shodan, etc. — the capabilities `cve-mcp-
+  server` happens to already have dormant upstream) get built as **new
+  tools on `maltego-mcp` itself**, not enabled on `cve-mcp-server` —
+  decided 2026-10-02 after reconsidering: `cve-mcp-server`'s name, repo,
+  and contract all say CVE-only, and its one real consumer
+  (`cve_enrichment_sync.py`) has nothing to do with Maltego investigations.
+  Mixing them would share one quota/blast-radius story across two
+  unrelated purposes with no record of why. See `README.md`.
 - **Phase 3** — wire `deep-research-agent` to call the OSINT service via a
   true MCP client (new pattern for that codebase — see `README.md`).
 - **Phase 4** — interactive Maltego Desktop transform calling the backend
@@ -75,7 +81,7 @@ gates:
 
 ### maltego-02-dockerfile-and-driver
 
-```yaml
+````yaml
 id: maltego-02-dockerfile-and-driver
 title: Write the maltego-mcp Dockerfile and Phase 1 driver script via Ansible content blocks
 depends_on: [maltego-01-vendor-source]
@@ -94,7 +100,7 @@ change: >
   Dockerfile content (write exactly, do not add a HEALTHCHECK or EXPOSE --
   this image has no HTTP port in Phase 1):
 
-  ```
+  ```dockerfile
   # syntax=docker/dockerfile:1
   #
   # maltego-mcp, vendored from https://github.com/lidless-labs/maltego-mcp
@@ -230,13 +236,13 @@ gates:
     cmd: "grep -c 'phase1-expand-domain.mjs' terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml"
     expect: "output >= 2"
     critical: true
-```
+````
 
 ---
 
 ### maltego-03-compose-service
 
-```yaml
+````yaml
 id: maltego-03-compose-service
 title: Add the maltego-mcp service block to the mcp-utility-stack compose content
 depends_on: [maltego-02-dockerfile-and-driver]
@@ -284,7 +290,7 @@ gates:
     cmd: "grep -c 'maltego-mcp-output' terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml"
     expect: "output >= 2"
     critical: true
-```
+````
 
 ---
 

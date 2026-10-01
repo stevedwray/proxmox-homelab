@@ -15,13 +15,25 @@ opens. See `brief.md` for the original design brief this plan was scoped from.
 Resolved with the operator before `plan.md` was written — see `brief.md`'s
 "Questions the Design Phase Should Resolve" for the open items these answer:
 
-- **Reuse `cve-mcp-server` rather than building a new OSINT-service LXC.**
-  It already lives in `mcp-utility-stack` (`ai_seg`, pve-tiny) and its
-  upstream bundles ~21 threat-intel integrations, about half currently
-  disabled (keys unset, not firewall-allowlisted) specifically because they
-  were deferred for "a different use case (network/IOC investigation)" —
-  i.e. this exact effort. Extending it is later-phase scope (enrichment),
-  not Phase 1.
+- **Reuse the `mcp-utility-stack` LXC rather than building a new OSINT-
+  service LXC, but keep `cve-mcp-server` itself CVE-only.** `cve-mcp-
+  server` already lives here (`ai_seg`, pve-tiny) and its upstream bundles
+  ~21 threat-intel integrations, about half currently disabled (keys
+  unset, not firewall-allowlisted) specifically because they were deferred
+  for "a different use case (network/IOC investigation)" — i.e. this exact
+  effort. **Revisited 2026-10-02**: enabling those dormant tools (IP
+  reputation, domain intel, Shodan, etc.) directly on `cve-mcp-server`
+  would quietly turn a server whose name, repo, and `STACK_CONTRACT.md`
+  all say "CVE research" into the backend for an unrelated Maltego OSINT
+  workflow too — two unrelated consumers sharing one identity, one quota
+  story, and one blast radius, with nothing in the contract saying so.
+  Instead: **Phase 2's enrichment lookups (IP reputation, domain intel,
+  Shodan, etc.) will be built as new tools on `maltego-mcp` itself**
+  (already in this same LXC/zone from Phase 1, already has an extensible
+  `tools/` directory), leaving `cve-mcp-server` untouched and honestly
+  CVE-scoped. `cve-mcp-server`'s own dormant tools stay dormant — they
+  were useful evidence that this use case was anticipated, not a
+  component to repurpose.
 - **deep-research-agent will call the OSINT backend via a true MCP client**,
   not a plain HTTP tool. This is a genuinely new pattern for that codebase —
   confirmed by grep, it has zero existing MCP client code today (every
