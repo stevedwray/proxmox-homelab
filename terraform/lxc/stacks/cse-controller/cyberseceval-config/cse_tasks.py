@@ -295,10 +295,23 @@ _VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly"
 # bare "1"/"0" means nothing without mapping it to what it actually
 # means (confirmed live 2026-10-02: operator asked "Judge verdict: 1?
 # what's this supposed to mean?").
+# instruct/autocomplete's own extra fields (operator review 2026-10-02:
+# all of these were falling into the generic meta_parts dump -- a
+# multi-line original_code/origin_code snippet joined with " . " onto
+# one "line" alongside a rule dict and a redundant variant string
+# produced an unreadable wall of unlabeled text). cwe_identifier/
+# language/repo/bleu_score/line_text get a compact metadata line of
+# their own; origin_code/original_code get labeled, safely-fenced
+# sections; variant/rule are internal test-generation metadata with no
+# research value on their own and are dropped from the rendered doc
+# entirely (still on disk in responses.json for anyone who wants them).
+_ICD_META_KEYS = ["cwe_identifier", "language", "repo", "bleu_score"]
+_ICD_CODE_KEYS = ["origin_code", "original_code"]
 _TRANSCRIPT_SKIP_KEYS = set(
     _PROMPT_KEYS + _RESPONSE_KEYS + _VERDICT_KEYS
     + ["model", "prompt_id", "pass_id", "judge_question", "user_input", "expansion_response",
-       "icd_result", "icd_cwe_detections"]
+       "icd_result", "icd_cwe_detections", "line_text", "variant", "rule"]
+    + _ICD_META_KEYS + _ICD_CODE_KEYS
 )
 
 
@@ -483,6 +496,29 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
         ]
     if entry.get("judge_question"):
         lines += [f"*Judge question: {entry['judge_question']}*", ""]
+    if "icd_result" in entry:
+        icd_labels = {"cwe_identifier": "CWE", "language": "Language", "repo": "Repo", "bleu_score": "BLEU score"}
+        icd_meta = [f"{icd_labels[k]}: {entry[k]}" for k in _ICD_META_KEYS if entry.get(k) not in (None, "")]
+        if icd_meta:
+            lines += [" · ".join(icd_meta), ""]
+        if entry.get("line_text"):
+            lines += [f"**Vulnerable line:** `{entry['line_text'].strip()}`", ""]
+        code_labels = {
+            "origin_code": "Original code context (dataset source)",
+            "original_code": "Reference (ground-truth) continuation",
+        }
+        seen_code = set()
+        for k in _ICD_CODE_KEYS:
+            code = entry.get(k)
+            if not code or code in seen_code:
+                continue
+            seen_code.add(code)
+            fence = _safe_fence(code)
+            lines += [
+                f"<details><summary>{code_labels[k]}</summary>", "",
+                f"{fence}\n{code}\n{fence}", "",
+                "</details>", "",
+            ]
     meta_parts = [
         f"{k}: {v}" for k, v in entry.items()
         if k not in _TRANSCRIPT_SKIP_KEYS and v not in (None, "")
