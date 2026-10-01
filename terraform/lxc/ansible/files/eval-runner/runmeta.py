@@ -38,9 +38,25 @@ TASKS = {
     "gpqa": ["gpqa_diamond_cot_zeroshot"],
     "ifeval": ["ifeval"],
     "both": ["gpqa_diamond_cot_zeroshot", "ifeval"],
+    "bfcl": ["bfcl_simple"],
+    "agentbench": ["agentbench_os_std"],
+    "repobench": ["repobench_python"],
 }
+# Which program runs each task: lm_eval itself, or eval-runner's wrapper
+# /opt/eval-runner/<harness>_run.py (in the harness's own image for bfcl
+# and agentbench -- see eval-run).
+HARNESS = {"gpqa": "lm_eval", "ifeval": "lm_eval", "both": "lm_eval",
+           "bfcl": "bfcl", "agentbench": "agentbench", "repobench": "repobench"}
 PILOT_LIMIT = 40
+# --pilot sizes for the wrappers: test cases (bfcl), episodes (agentbench),
+# samples per context-length level and setting (repobench).
+WRAPPER_PILOT_LIMITS = {"bfcl": 40, "agentbench": 10, "repobench": 5}
 MAX_GEN_TOKS = 8192
+# Per-answer token budget each wrapper uses: BFCL's historical handler never
+# set max_tokens (server default); AgentBench's agent config used 3072;
+# RepoBench (rebuilt) is a raw completion of one line, 128 tokens as
+# upstream RepoBench.
+WRAPPER_MAX_GEN_TOKS = {"bfcl": None, "agentbench": 3072, "repobench": 128}
 REQUEST_TIMEOUT = 3600
 # Seconds per generated token allowed on top of REQUEST_TIMEOUT's floor:
 # 32768 tokens at the slowest decode seen on framework (~10 tok/s) needs
@@ -49,6 +65,10 @@ SECONDS_PER_TOKEN = 0.15
 # Prompt tokens the per-slot context must hold beyond max_gen_toks (GPQA's
 # longest prompt with the chat template is well under 1k tokens).
 PROMPT_HEADROOM = 2048
+# The same for the wrappers: BFCL simple and AgentBench prompts are short
+# (AgentBench's 8-round history stays under ~6k); RepoBench prompts are
+# cut to 15800 tokens, as upstream.
+WRAPPER_PROMPT_HEADROOM = {"bfcl": 4096, "agentbench": 8192, "repobench": 16384}
 PROPS_TOP = ("model_path", "model_alias", "build_info", "total_slots")
 PROPS_PARAMS = (
     "temperature", "top_k", "top_p", "min_p", "n_predict", "seed",
@@ -142,12 +162,12 @@ def request_timeout(max_gen_toks):
     return max(REQUEST_TIMEOUT, int(max_gen_toks * SECONDS_PER_TOKEN))
 
 
-def context_problem(server, max_gen_toks):
+def context_problem(server, max_gen_toks, headroom=PROMPT_HEADROOM):
     """None if the server's per-slot context fits the budget (or is unknown), else why not."""
     n_ctx = ((server.get("props") or {}).get("n_ctx"))
-    if isinstance(n_ctx, int) and n_ctx < max_gen_toks + PROMPT_HEADROOM:
+    if isinstance(n_ctx, int) and n_ctx < (max_gen_toks or 0) + headroom:
         return (f"server per-slot context {n_ctx} can't hold max_gen_toks {max_gen_toks} "
-                f"plus ~{PROMPT_HEADROOM} prompt tokens")
+                f"plus ~{headroom} prompt tokens")
     return None
 
 
@@ -183,14 +203,26 @@ def _now_stamp():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def wrapper_argv(harness, run_dir):
+    return ["python", f"/opt/eval-runner/{harness}_run.py", run_dir]
+
+
 def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root, max_gen_toks=MAX_GEN_TOKS):
+    harness = HARNESS[task]
+    if harness != "lm_eval":
+        max_gen_toks = WRAPPER_MAX_GEN_TOKS[harness]
     if limit is None and pilot:
-        limit = PILOT_LIMIT
-    name = run_name(server["model_id"], task, pilot, stamp, max_gen_toks)
+        limit = PILOT_LIMIT if harness == "lm_eval" else WRAPPER_PILOT_LIMITS[harness]
+    name = run_name(server["model_id"], task, pilot, stamp,
+                    max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS)
     run_dir = os.path.join(results_root, name)
+    argv = (lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
+                         max_gen_toks)
+            if harness == "lm_eval" else wrapper_argv(harness, run_dir))
     return {
         "run": name,
         "task": task,
+        "harness": harness,
         "tasks": TASKS[task],
         "pilot": pilot,
         "limit": limit,
@@ -201,8 +233,9 @@ def build_record(server, task, pilot, limit, concurrency, note, stamp, results_r
         "lm_eval_version": _lm_eval_version(),
         "server": server,
         "fingerprint": fingerprint(server),
-        "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
-                                     max_gen_toks),
+        # The command `exec` runs (named for lm_eval, which came first; for
+        # the wrappers it is their own command line).
+        "lm_eval_argv": argv,
     }, run_dir
 
 
@@ -213,7 +246,9 @@ def load_record(run_dir):
 
 def cmd_start(args):
     server = snapshot_server(args.base_url, os.environ.get("OPENAI_API_KEY", ""))
-    problem = context_problem(server, args.max_gen_toks)
+    harness = HARNESS[args.task]
+    problem = (context_problem(server, args.max_gen_toks) if harness == "lm_eval" else
+               context_problem(server, WRAPPER_MAX_GEN_TOKS[harness], WRAPPER_PROMPT_HEADROOM[harness]))
     if problem:
         print(f"runmeta: {problem}", file=sys.stderr)
         return 2
@@ -232,6 +267,13 @@ def cmd_start(args):
 def cmd_exec(args):
     argv = load_record(args.run_dir)["lm_eval_argv"]
     os.execvp(argv[0], argv)
+
+
+def cmd_field(args):
+    """Print one top-level run.json field (eval-run uses it to pick the image)."""
+    value = load_record(args.run_dir).get(args.key)
+    print("" if value is None else value)
+    return 0
 
 
 def cmd_check(args):
@@ -269,6 +311,10 @@ def main(argv=None):
     check.add_argument("run_dir")
     check.add_argument("--base-url")
 
+    field = sub.add_parser("field")
+    field.add_argument("run_dir")
+    field.add_argument("key")
+
     args = parser.parse_args(argv)
     if args.cmd == "start":
         if not args.base_url:
@@ -277,9 +323,13 @@ def main(argv=None):
             parser.error("--concurrency must be >= 1")
         if args.max_gen_toks < MAX_GEN_TOKS:
             parser.error(f"--max-gen-toks below {MAX_GEN_TOKS} truncates reasoning models (Bug 6)")
+        if HARNESS[args.task] != "lm_eval" and args.max_gen_toks != MAX_GEN_TOKS:
+            parser.error(f"--max-gen-toks only applies to gpqa/ifeval; {args.task} uses its historical budget")
         return cmd_start(args)
     if args.cmd == "exec":
         return cmd_exec(args)
+    if args.cmd == "field":
+        return cmd_field(args)
     return cmd_check(args)
 
 

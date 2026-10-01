@@ -1,18 +1,17 @@
 # eval-runner
 
-Status: **done and in place (2026-10-01).** The harness runs on
-`ai-services-stack` (pve-tiny), with a five-stage GPU-free self-test as its
-deploy gate. Results publish to Nextcloud:
-- the Tables table **Model evaluations** (21 historical rows, two
-  comparable views, shared read-only with `steve`);
-- `Reports/eval-runner/` (leaderboard.md/.csv, findings.md, per-run
-  reports), shared with `steve`.
+Status:
+- **Live on `ai-services-stack`** (pve-tiny), deployed 2026-10-01. It
+  covers GPQA, IFEval and Nextcloud publishing, with `leaderboard.xlsx`
+  and token-budget series. The deploy gate is a GPU-free self-test.
+- **Built, unit-tested and not yet deployed:** BFCL, AgentBench and
+  RepoBench (rebuilt), plus the historical BFCL/AgentBench import. That
+  deploy needs approval: preflight below.
+- **No real scored run against Framework yet.** That is an operator
+  decision.
+- **Not merged:** branch `task/eval-runner`.
 
-All 36 plan gates and 46 unit tests pass. No real scored run against
-Framework has been made yet; that is an operator decision. Branch
-`task/eval-runner` is not merged.
-
-Runs the eval battery's lm_eval tests (GPQA, IFEval) from
+Runs the eval battery (CyberSecEval aside: it has its own panel) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
 model Framework's llama-server is serving. It replaces running them on
 `framework` or garuda. The previous dedicated harness LXC (`ai-stack`,
@@ -20,40 +19,67 @@ VMID 116) was removed in the pve teardown.
 
 See [`plan.md`](./plan.md) for decisions, steps and usage.
 
-## Where things stand and what's next (checkpoint 2026-10-01)
+## Where things stand and what's next (checkpoint 2026-10-01, evening)
 
 **Live:**
 - **eval-runner on `ai-services-stack`** (pve-tiny, 192.168.50.11):
-  `eval-run gpqa|ifeval|resume|selftest|results|publish`.
-- **Nextcloud:** Tables "Model evaluations" (table id 2, 21 historical
-  rows, two Comparable views, shared read-only with steve) and
-  `Reports/eval-runner/`, shared with steve.
-- **Framework :8080:** still serving GLM-5.3-Flash (hand-started, not a
-  systemd unit). Qwen `nathanw-llamacpp` and ComfyUI are stopped. One slot
-  was busy at the checkpoint, likely the operator's CSE suite.
+  `eval-run gpqa|ifeval|resume|selftest|results|publish`, with
+  `--max-gen-toks` for the 32k series.
+- **Nextcloud:**
+  - Tables "Model evaluations" (table id 2): 21 historical rows, a Series
+    column, and Comparable and 32k-budget views. Shared read-only with
+    steve.
+  - `Reports/eval-runner/`: `leaderboard.xlsx` (replaced the CSV),
+    `leaderboard.md` (narrowed), `findings.md` and per-run reports.
+    Shared with steve.
+- **Framework :8080:** GLM-5.3-Flash, hand-started.
 
-**Branches (not merged, the operator decides):**
-- `task/eval-runner`: 16 commits.
-- `task/glm-5.3-flash-eval`: 4 commits (GLM doc, including the CPU-spin
-  §8).
+**Next deploy (preflight, needs approval):** `eval-runner-battery`.
+1. Run `./with-secrets-prod-tiny scripts/provision.sh --stack
+   ai-services-stack`. It builds `eval-runner-bfcl`,
+   `eval-runner-agentbench` and `local-os/default` (the Ubuntu 26.04
+   sandbox), adding roughly 2-3 GB of images. Then it runs every
+   selftest. The AgentBench selftest starts two real sandbox containers
+   on the CT, with no network. Check the CT's disk first.
+2. Copy the historical import (18 BFCL + 2 AgentBench results files, a
+   few KB) into `/srv/eval-runner/results/_historical/` (plan.md,
+   "import historical BFCL and AgentBench results").
+3. Run `eval-run publish`. That adds about 20 rows and the BFCL,
+   AgentBench and RepoBench views.
+
+**Nextcloud Office (proposal, not started):**
+- **What's there:** the `eurooffice` app (Euro-Office, ONLYOFFICE-derived)
+  and `office` are enabled. There's no Document Server
+  (`DocumentServerUrl` unset), so `.xlsx` files don't open in the browser.
+- **Smallest working setup:**
+  - Add `ghcr.io/euro-office/documentserver`, pinned (v9.3.4-hotfix.1 is
+    the latest stable), as a service in nextcloud-stack's compose,
+    through Harbor's ghcr proxy.
+  - Give it its own Traefik route (for example
+    `office.lab.gibbsgreatly.xyz`), because browsers load the editor
+    from it directly.
+  - Store the JWT secret in OpenBao `services/nextcloud`.
+  - Set `occ config:app:set eurooffice DocumentServerUrl` and the JWT
+    key in `deploy-nextcloud-stack.yml`.
+  - Raise nextcloud-stack's memory: it is 4 GiB now, and the Document
+    Server wants about 2-4 GB.
+- **Caveat:** upstream calls that image "for testing and integration
+  purposes" for now.
+- **The alternative** is Collabora CODE (`richdocuments` +
+  `collabora/code`), which is mature but needs the same route, secret
+  and memory.
 
 **Pending operator decisions:**
-1. **`leaderboard.csv` in Nextcloud** opens as plain text (no CSV
-   viewer). Proposed: stop uploading it, keep it on the CT dry-run, and
-   rely on the Tables table plus `leaderboard.md`. Alternatives: install
-   Nextcloud Office (Collabora) or leave as is. **Awaiting the
-   operator's answer.**
-2. **Token budget:** add `--max-gen-toks` (for example 32k) as a
-   separate, labelled non-comparable series for reasoning models? Default
-   stays 8192.
-3. **Rest of the battery:**
-   - BFCL: the `bfcl` CLI, packageable.
-   - RepoBench: the custom scripts are lost; lm_eval's
-     `longbench_repobench-p` is a different benchmark.
-   - AgentBench: 6.7 GB with Docker task servers.
-4. **The first real scored run** against Framework. This needs explicit
-   go-ahead (hours of GPU; check `/slots` and CSE first).
-5. **Merging** `task/eval-runner` and `task/glm-5.3-flash-eval`.
+1. Approve the `eval-runner-battery` deploy above.
+2. Nextcloud Office: Euro-Office Document Server, Collabora, or leave
+   it.
+3. The first real scored run(s) against Framework: explicit go-ahead
+   only. Rough durations at about 17 tok/s:
+   - BFCL: about 1-2 h;
+   - AgentBench (100 episodes): several hours;
+   - RepoBench: prefill-bound, about 1 day on GLM;
+   - GPQA and IFEval: many hours each.
+4. Merging `task/eval-runner` and `task/glm-5.3-flash-eval`.
 
 **Known side issues (not fixed, out of scope):**
 - `deploy-nextcloud-stack.yml`'s steve-user task sets `OC_PASS` without
@@ -62,7 +88,7 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   `GGML_SCHED_DEBUG=2`, then try `--threads 4`, when Framework is idle.
 
 **How to resume:**
-- Read `plan.md`. Its prose has the operator sequences, and all 36 gates
+- Read `plan.md`. Its prose has the operator sequences, and all 56 gates
   re-run green against the branch.
 - `plan.md` is generated from the repo files by
   `python3 docs/eval-runner/artifacts/genplan.py`, run from the repo
@@ -70,6 +96,10 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   `plan-head.md`, `plan-tail.md` and `step01.md` from the same folder.
   Rerun it after changing any eval-runner file, then re-run every gate.
   If artifacts/ is gone, edit `plan.md` by hand.
+- Unit tests: run `python3 -m unittest discover -s
+  terraform/lxc/ansible/files/eval-runner -p "test_*.py"` (70 tests;
+  the xlsx and edit-similarity tests skip without openpyxl or
+  rapidfuzz).
 
 ## Progress
 
@@ -378,3 +408,40 @@ Nextcloud.
 `plan.md` was regenerated (19 steps, 36 gates, all pass). Step 01's
 manifest gate is now scoped to its own entry, because the manifest
 legitimately has two additions.
+
+### 2026-10-01 (evening): spreadsheet, token-budget series, rest of the battery
+
+**Operator direction:**
+- Wide markdown tables read badly and the CSV opened as plain text.
+- Add the 32k series.
+- Build the rest of the battery: AgentBench sandboxes on
+  ai-services-stack's Docker, RepoBench rebuilt as a new series, and
+  BFCL as in history.
+
+**xlsx + series:** built in `44daed73` and `2d736ebe`, and deployed under
+`eval-runner-xlsx-series`.
+- The first deploy's selftest gate failed: the new context check refused
+  the mock's 4096-token context. Fixed the mock and added a unit test.
+- The redeploy passed: `ok=111 failed=0`, `selftest OK`.
+- `eval-run publish`: 21 files, 21 rows updated (Series filled in),
+  `leaderboard.xlsx` uploaded and `leaderboard.csv` deleted.
+- Read-only check of Nextcloud's apps: `eurooffice` 11.0.5 and `office`
+  1.1.0 are enabled, but no Document Server is configured (proposal
+  above).
+
+**Battery:** BFCL, AgentBench and RepoBench wrappers, two new images, the
+sandbox image, the historical importer, and 70 unit tests passing.
+- **BFCL:** the historical package set resolves for Python 3.12.
+- **AgentBench:**
+  - Found that 240 of the 800 os-std episodes `apt-get` packages at
+    start. The sandbox image pre-installs them, so networking can be
+    disabled.
+  - Found that the HTTP agent's 120 s timeout would cut off slow models.
+    The patch raises it.
+  - The patch also keeps the API key out of every config file.
+- **RepoBench:** rebuilt from upstream's code, verified against its
+  `run.py`, `data/utils.py`, `eval.py` and `metrics.py`.
+- **History:** 18 BFCL and 2 AgentBench historical results converted, not
+  yet copied to the CT.
+- **Not done yet:** this part isn't deployed. That needs the
+  `eval-runner-battery` approval.

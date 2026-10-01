@@ -64,10 +64,16 @@ TABLES_OCS_API = "/ocs/v2.php/apps/tables/api/2"
 # Files earlier versions published that are now gone; deleted on publish.
 STALE_FILES = ("leaderboard.csv",)
 
+# task -> (label, primary metric name, alternative metric name or None).
+# Order is the leaderboard's section and sheet order.
 TASK_LABELS = {
     "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
     "ifeval": ("IFEval", "prompt-level strict", "prompt-level loose"),
+    "bfcl_simple": ("BFCL simple", "accuracy", None),
+    "agentbench_os_std": ("AgentBench os-std", "success rate", None),
+    "repobench_python": ("RepoBench (rebuilt)", "exact match", "edit similarity"),
 }
+TASK_BY_LABEL = {label: task for task, (label, _, _) in TASK_LABELS.items()}
 
 # (title, column spec). Order is the table's column order. "Key" is the
 # upsert identity and must stay first and unchanged.
@@ -99,10 +105,13 @@ VIEWS = [
     # (title, emoji, task label, {column: required value})
     ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
     ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
+    ("Comparable: BFCL", "🔧", "BFCL simple", {"Comparable": "yes"}),
+    ("Comparable: AgentBench", "🤖", "AgentBench os-std", {"Comparable": "yes"}),
+    ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
     ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
     ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
 ]
-STANDARD_SERIES = summarize.series_label(summarize.MAX_GEN_TOKS)
+
 
 
 # ---------------------------------------------------------------- collect
@@ -123,6 +132,9 @@ def _date(data, fallback):
 
 
 def _runtime(data, record):
+    wrapper = data.get("config", {}).get("eval_runner") or {}
+    if wrapper.get("runtime"):
+        return wrapper["runtime"]
     if record and (record.get("server") or {}).get("props"):
         return f"llama.cpp {record['server']['props'].get('build_info') or ''}".strip()
     return "Ollama" if ":11434" in _base_url(data) else "OpenAI-compatible server"
@@ -142,9 +154,11 @@ def _stamp_date(stamp):
 
 def _row(source, run, task, data, metrics, samples, record, stamp):
     label, primary_name, alt_name = TASK_LABELS[task]
-    primary_key, alt_key = [key for _, key in summarize.HEADLINE[task]]
+    keys = [key for _, key in summarize.HEADLINE[task]]
+    primary_key, alt_key = keys[0], (keys[1] if len(keys) > 1 else None)
     n = data.get("n-samples", {}).get(task, {}).get("effective")
-    flags = summarize.response_flags(samples, task) if samples else {"empty": None, "unparsed": None}
+    flags = summarize.task_flags(task, metrics, samples) or {"empty": None, "unparsed": None}
+    wrapper = data.get("config", {}).get("eval_runner") or {}
     reason = summarize.exclusion_reason(data)
     model = (record or {}).get("server", {}).get("model_id") or summarize.model_name(data) or run
 
@@ -158,7 +172,7 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         "Task": label,
         "Score %": pct(metrics.get(primary_key)),
         "Alt score %": pct(metrics.get(alt_key)),
-        "Metrics": f"{primary_name} / {alt_name}",
+        "Metrics": f"{primary_name} / {alt_name}" if alt_name else primary_name,
         "Questions": n,
         "Empty answers": empty,
         "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
@@ -169,8 +183,8 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         "Why not comparable": reason or "",
         "Model file / tag": _model_file(model, record),
         "Runtime": _runtime(data, record),
-        "Note": (record or {}).get("note", ""),
-        "Source": "eval-runner" if source == "runs" else "historical (framework)",
+        "Note": (record or {}).get("note") or wrapper.get("note") or "",
+        "Source": "eval-runner" if source == "runs" else f"historical ({wrapper.get('origin') or 'framework'})",
         "Run": run,
         "Date": _date(data, _stamp_date((record or {}).get("created_utc", ""))),
         "Report": f"{FOLDER}/{source}/{run}/report.md",
@@ -245,18 +259,38 @@ CAVEATS = """\
 - **Series.** Full runs at a larger budget (e.g. 32k) are ranked in their
   own series, never against the 8k one: more budget lets reasoning models
   finish answers they would otherwise lose.
+- **BFCL** is v3 "simple" (400 cases, bfcl-eval 2025.8.6.2) and
+  **AgentBench** is os-std on a seed-42 sample of 100 episodes, both as
+  every historical number. An AgentBench run over all 800 episodes is
+  its own series.
+- **RepoBench (rebuilt)** is a new series: the scripts behind the
+  historical RepoBench numbers are lost, so those aren't ranked with it.
 - Per-question samples stay on the eval-runner CT, not in Nextcloud:
   GPQA's licence forbids reposting its questions.
 """
 
-TASK_ORDER = ("GPQA diamond", "IFEval")
+TASK_ORDER = tuple(label for label, _, _ in TASK_LABELS.values())
 
 
-def series_order(all_rows):
-    """Series present in the rows: the standard (8k) one first, then by budget."""
-    found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Series"]}
-    found.setdefault(STANDARD_SERIES, summarize.MAX_GEN_TOKS)
-    return sorted(found, key=lambda name: (name != STANDARD_SERIES, found[name]))
+def standard_series(label):
+    return summarize.STANDARD_SERIES[TASK_BY_LABEL[label]]
+
+
+def series_order(all_rows, label):
+    """Series present for one task label: its standard series first (even
+    with no rows yet), then the others by token budget."""
+    standard = standard_series(label)
+    found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Task"] == label and r["Series"]}
+    found.setdefault(standard, 0)
+    return sorted(found, key=lambda name: (name != standard, found[name], name))
+
+
+def series_heading(label, series):
+    standard = standard_series(label)
+    if series == standard:
+        return "comparable runs"
+    kind = "token budget series" if TASK_BY_LABEL[label] in summarize.LM_EVAL_TASKS else "series"
+    return f"{series} {kind}, not comparable with {standard}"
 
 
 def ranked(all_rows, label, series):
@@ -265,8 +299,9 @@ def ranked(all_rows, label, series):
 
 
 def metric_names(label):
-    """(primary, alternative) metric names for a task label."""
-    return next((primary, alt) for lbl, primary, alt in TASK_LABELS.values() if lbl == label)
+    """(primary, alternative or None) metric names for a task label."""
+    _, primary, alt = TASK_LABELS[TASK_BY_LABEL[label]]
+    return primary, alt
 
 
 def render_report(source, run_dir, record, rows):
@@ -328,16 +363,12 @@ def render_leaderboard(all_rows, generated):
              f"Generated {generated} by `eval-run publish`. The full detail is in "
              f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
              "Analysis: `findings.md`.", ""]
-    for series in series_order(all_rows):
-        for label in TASK_ORDER:
+    for label in TASK_ORDER:
+        for series in series_order(all_rows, label):
             rows = ranked(all_rows, label, series)
-            if series != STANDARD_SERIES and not rows:
-                continue
             main, alt = metric_names(label)
-            heading = "comparable runs" if series == STANDARD_SERIES else \
-                f"{series} token budget series, not comparable with 8k"
-            lines += [f"## {label}: {heading}", "", f"Ranked by {main}.", "",
-                      f"| # | Model | Score | {alt} | Empty answers | Date |",
+            lines += [f"## {label}: {series_heading(label, series)}", "", f"Ranked by {main}.", "",
+                      f"| # | Model | Score | {alt or '–'} | Empty answers | Date |",
                       "|---|---|---|---|---|---|"]
             for i, r in enumerate(rows, 1):
                 lines.append(
@@ -392,13 +423,13 @@ def render_xlsx(all_rows, generated):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     wb.properties.creator = "eval-runner"
-    for series in series_order(all_rows):
-        for label in TASK_ORDER:
+    for label in TASK_ORDER:
+        for series in series_order(all_rows, label):
             rows = ranked(all_rows, label, series)
-            if series != STANDARD_SERIES and not rows:
+            if not rows:
                 continue
             main, alt = metric_names(label)
-            headers = ["Rank", "Model", f"Score % ({main})", f"{alt} %", "Empty answers", "Questions",
+            headers = ["Rank", "Model", f"Score % ({main})", f"{alt or 'Alt score'} %", "Empty answers", "Questions",
                        "Empty %", "Unparsed", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run"]
             body = [[i, r["Model"], r["Score %"], r["Alt score %"], r["Empty answers"], r["Questions"],
                      r["Empty %"], r["Unparsed"], r["Runtime"], r["Model file / tag"], r["Note"],

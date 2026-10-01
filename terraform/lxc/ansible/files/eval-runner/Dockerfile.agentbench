@@ -1,0 +1,41 @@
+# eval-runner-agentbench -- AgentBench os-std (Eugleo/agent-bench, pinned
+# commit, plus agentbench.patch) as an HTTP client of Framework's
+# llama-server. Built on ai-services-stack by deploy-ai-services-stack.yml
+# and started one run at a time by `eval-run agentbench`, which mounts the
+# CT's Docker socket: AgentBench's task worker starts one throwaway sandbox
+# container (local-os/default, Dockerfile.agentbench-sandbox) per episode,
+# with networking disabled. See docs/eval-runner/plan.md.
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends patch \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 app
+
+# The commit every historical AgentBench number ran from (garuda's
+# ~/eval-harnesses/AgentBench), checksum-verified.
+ARG AGENTBENCH_COMMIT=0cfef9785eedf4de13a7a994b6df486f56a38515
+ARG AGENTBENCH_SHA256=7e5ea8a517a3dcfe98a1c78037570b11954d65ef2ee5edb7db6038f48d962806
+COPY agentbench.patch /tmp/agentbench.patch
+RUN python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/Eugleo/agent-bench/archive/${AGENTBENCH_COMMIT}.tar.gz', '/tmp/agentbench.tar.gz')" \
+    && echo "${AGENTBENCH_SHA256}  /tmp/agentbench.tar.gz" | sha256sum -c - \
+    && mkdir /opt/agentbench \
+    && tar -xzf /tmp/agentbench.tar.gz -C /opt/agentbench --strip-components=1 \
+    && patch -d /opt/agentbench -p1 < /tmp/agentbench.patch \
+    && rm /tmp/agentbench.tar.gz /tmp/agentbench.patch
+
+# AgentBench's requirements.txt minus FastChat/accelerate/transformers (the
+# HTTP agent doesn't need them, and they pull in torch), constrained to the
+# historical venv's versions.
+COPY agentbench-constraints.txt /tmp/agentbench-constraints.txt
+RUN grep -v -E '^(fschat|accelerate|transformers)' /opt/agentbench/requirements.txt > /tmp/requirements.txt \
+    && pip install --no-cache-dir --only-binary=:all: -c /tmp/agentbench-constraints.txt -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt /tmp/agentbench-constraints.txt
+
+WORKDIR /results
+COPY agentbench_run.py mock_openai.py publish.py runmeta.py selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+RUN chmod 0755 /opt/eval-runner/wrapper_selftest.sh
+
+USER app
+ENV HOME=/home/app
+ENTRYPOINT ["python"]

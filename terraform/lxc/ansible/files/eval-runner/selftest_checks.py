@@ -7,6 +7,12 @@
             chat message list ending in a user turn. Also checks the count.
   flags     summarize.py's empty-response flags add up to what the mock was
             told to produce, and run.json carries a fingerprint and props.
+  wrapper   (--harness bfcl|agentbench|repobench) Every request the
+            wrapper sent matches how its historical results were produced:
+            BFCL -- tools present, temperature 0.001, no max_tokens;
+            AgentBench -- temperature 0, max_tokens 3072; RepoBench --
+            raw completions, temperature 0, max_tokens 128. Plus the
+            served model id and the request count.
   publish   After publishing twice to mock_nextcloud.py: one table with every
             column, the expected rows (no duplicates from the second
             publish), every view, one share, the report files including
@@ -50,11 +56,39 @@ def request_errors(path, expected_count, model):
     return errors
 
 
+# harness -> {field: expected value}; MISSING means the field must be absent.
+MISSING = object()
+WRAPPER_REQUESTS = {
+    "bfcl": {"temperature": 0.001, "max_tokens": MISSING},
+    "agentbench": {"temperature": 0, "max_tokens": 3072},
+    "repobench": {"temperature": 0, "max_tokens": 128},
+}
+
+
+def wrapper_request_errors(path, expected_count, model, harness):
+    with open(path) as fh:
+        requests = [json.loads(line) for line in fh if line.strip()]
+    errors = []
+    if len(requests) != expected_count:
+        errors.append(f"expected {expected_count} requests, mock saw {len(requests)}")
+    for i, req in enumerate(requests, 1):
+        for field, want in WRAPPER_REQUESTS[harness].items():
+            if want is MISSING and field in req:
+                errors.append(f"request {i}: {field} {req[field]!r} sent, historical runs sent none")
+            elif want is not MISSING and req.get(field) != want:
+                errors.append(f"request {i}: {field} {req.get(field)!r}, want {want!r}")
+        if req.get("model") != model:
+            errors.append(f"request {i}: model {req.get('model')!r}, want {model!r}")
+        if harness == "bfcl" and not req.get("tools"):
+            errors.append(f"request {i}: no tools (BFCL runs in native function-calling mode)")
+    return errors
+
+
 def flag_errors(run_dir, expected_empty):
     errors = []
     found = summarize.load(run_dir)
     total_empty = 0
-    for task in summarize.HEADLINE:
+    for task in summarize.LM_EVAL_TASKS:
         entry = found.get(task)
         if not entry or not entry["samples"]:
             errors.append(f"{task}: no results/samples file")
@@ -107,10 +141,13 @@ def main(argv=None):
     parser.add_argument("--nextcloud-state", help="mock_nextcloud.py /_mock/state URL")
     parser.add_argument("--expect-rows", type=int)
     parser.add_argument("--published-run")
+    parser.add_argument("--harness", choices=sorted(WRAPPER_REQUESTS))
     args = parser.parse_args(argv)
 
     errors = []
-    if args.requests:
+    if args.requests and args.harness:
+        errors += wrapper_request_errors(args.requests, args.expect_requests, args.model, args.harness)
+    elif args.requests:
         errors += request_errors(args.requests, args.expect_requests, args.model)
     if args.run_dir is not None:
         errors += flag_errors(args.run_dir, args.expect_empty)

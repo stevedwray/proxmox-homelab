@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# eval-run -- start, resume, self-test and summarise lm_eval GPQA/IFEval
-# runs against whatever model Framework's llama-server is serving right
-# now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
+# eval-run -- start, resume, self-test and summarise eval battery runs
+# (GPQA, IFEval, BFCL, AgentBench, RepoBench) against whatever model
+# Framework's llama-server is serving right now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
 # play; see docs/eval-runner/plan.md. Secrets never pass through this
 # script: containers get them only via --env-file.
 set -euo pipefail
@@ -9,11 +9,15 @@ set -euo pipefail
 ENV_FILE=/etc/eval-runner/eval-runner.env
 RESULTS_DIR=/srv/eval-runner/results
 IMAGE=eval-runner:local
+BFCL_IMAGE=eval-runner-bfcl:local
+AGENTBENCH_IMAGE=eval-runner-agentbench:local
 HF_VOLUME=eval-runner-hf:/home/app/.cache/huggingface
+DOCKER_SOCK=/var/run/docker.sock
 
 usage() {
   cat <<'USAGE'
 Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--note TEXT]
+       eval-run <bfcl|agentbench|repobench> [--pilot] [--note TEXT]
        eval-run resume <run> [--force]
        eval-run selftest
        eval-run results [run...]
@@ -22,8 +26,19 @@ Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--
 gpqa|ifeval  Start one detached run (container eval-<run>) against the model
              Framework's llama-server is serving. Uses Framework's GPU for
              hours -- check nothing else needs it first.
-  --pilot          40 examples (--limit 40) instead of the full task
-  --concurrency N  parallel requests (default 1, as every historical result)
+bfcl         BFCL v3 "simple" (400 cases, bfcl-eval 2025.8.6.2), as every
+             historical BFCL number.
+agentbench   AgentBench os-std, 100 episodes sampled with seed 42, as the
+             historical numbers. Each episode runs in a throwaway sandbox
+             container on this CT's Docker, with networking disabled.
+repobench    RepoBench (rebuilt): Python v1.1, 3 settings x 5 context
+             levels. A new series; the historical RepoBench numbers came
+             from scripts that are lost, so they aren't comparable.
+  --pilot          a small sample instead of the full task: 40 examples
+                   (gpqa/ifeval/bfcl), 10 episodes (agentbench), 5 per
+                   level and setting (repobench)
+  --concurrency N  parallel requests (gpqa/ifeval only; default 1, as every
+                   historical result)
   --max-gen-toks N token budget per answer (default 8192, the budget every
                    comparable result used). A larger one, e.g. 32768, starts
                    a separate series (run name gets -32k), ranked only
@@ -36,7 +51,9 @@ resume       Re-run an interrupted run. Answers already received are
              (model, build, sampling defaults, chat template) has changed,
              unless --force.
 selftest     Exercise the whole harness against a stand-in server inside
-             the image (no Framework, no GPU). Exits non-zero on failure.
+             each image -- GPQA/IFEval and publishing, then BFCL, AgentBench
+             (two real sandbox episodes) and RepoBench (no Framework, no
+             GPU). Exits non-zero on failure.
 results      Headline scores and response-quality flags per run.
 publish      Push everything (eval-runner runs + historical) to Nextcloud:
              Reports/eval-runner/ (leaderboard.xlsx/.md, findings.md, one
@@ -66,14 +83,28 @@ refuse_if_running() {
   fi
 }
 
+# image_args <task>: the image (and, for agentbench, the Docker socket its
+# task server starts sandboxes through) a run of <task> needs.
+image_args() {
+  case "$1" in
+    bfcl) echo "$BFCL_IMAGE" ;;
+    agentbench)
+      echo "-v ${DOCKER_SOCK}:${DOCKER_SOCK} --group-add $(stat -c %g "$DOCKER_SOCK") $AGENTBENCH_IMAGE"
+      ;;
+    *) echo "$IMAGE" ;;
+  esac
+}
+
 launch() {
-  local run="$1"
+  local run="$1" task="$2"
+  local -a image
+  read -r -a image <<<"$(image_args "$task")"
   docker run -d --name "eval-${run}" \
     --env-file "$ENV_FILE" \
     -v "${RESULTS_DIR}:/results" \
     -v "$HF_VOLUME" \
     --entrypoint python \
-    "$IMAGE" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
+    "${image[@]}" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
   echo "Started eval-${run}"
   echo "  follow:  docker logs -f eval-${run}"
   echo "  scores:  eval-run results ${run}"
@@ -100,13 +131,16 @@ cmd_start() {
     esac
   done
   [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+  if [[ "$short" != gpqa && "$short" != ifeval && "$concurrency" != 1 ]]; then
+    die "--concurrency only applies to gpqa/ifeval"
+  fi
   [[ "$max_gen_toks" =~ ^[1-9][0-9]*$ ]] || die "--max-gen-toks must be a positive integer"
   refuse_if_running
 
   local run
   run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
     --concurrency "$concurrency" --max-gen-toks "$max_gen_toks" --note "$note")
-  launch "$run"
+  launch "$run" "$short"
   if [[ -z "$note" ]]; then
     echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
   fi
@@ -132,12 +166,12 @@ cmd_resume() {
     die "could not check the server (exit $rc)"
   fi
   docker rm "eval-${run}" >/dev/null 2>&1 || true
-  launch "$run"
+  launch "$run" "$(helper /opt/eval-runner/runmeta.py field "/results/${run}" task)"
 }
 
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }
 case "$1" in
-  gpqa|ifeval)
+  gpqa|ifeval|bfcl|agentbench|repobench)
     cmd_start "$@"
     ;;
   resume)
@@ -146,13 +180,27 @@ case "$1" in
     ;;
   selftest)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-    exec docker run --rm \
-      --env-file "$ENV_FILE" \
-      -e "SELFTEST_RUN=$(date -u +%Y%m%dT%H%M%SZ)" \
-      -v "${RESULTS_DIR}:/results" \
-      -v "$HF_VOLUME" \
-      --entrypoint /bin/sh \
-      "$IMAGE" /opt/eval-runner/selftest.sh
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    selftest_in() {
+      local -a image
+      read -r -a image <<<"$(image_args "$1")"
+      shift
+      docker run --rm \
+        --env-file "$ENV_FILE" \
+        -e "SELFTEST_RUN=$stamp" \
+        -v "${RESULTS_DIR}:/results" \
+        -v "$HF_VOLUME" \
+        --entrypoint /bin/sh \
+        "${image[@]}" "$@"
+    }
+    # GPQA/IFEval + publishing, then each wrapper: <limit> <expected requests>
+    # (bfcl and agentbench: one request per case/episode; repobench: one per
+    # setting x level).
+    selftest_in gpqa /opt/eval-runner/selftest.sh
+    selftest_in bfcl /opt/eval-runner/wrapper_selftest.sh bfcl 2 2
+    selftest_in agentbench /opt/eval-runner/wrapper_selftest.sh agentbench 2 2
+    selftest_in repobench /opt/eval-runner/wrapper_selftest.sh repobench 1 15
+    echo "all selftests OK"
     ;;
   results)
     shift

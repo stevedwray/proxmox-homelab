@@ -23,7 +23,8 @@ WORKDIR /results
 # so new results stay comparable with the old ones. No torch/transformers:
 # the API model path doesn't need them. Not --only-binary: langdetect,
 # rouge-score, sqlitedict and word2number only ship as sdists. openpyxl is
-# publish.py's (leaderboard.xlsx), not lm_eval's.
+# publish.py's (leaderboard.xlsx) and rapidfuzz is repobench_run.py's (edit
+# similarity), not lm_eval's.
 RUN pip install --no-cache-dir \
       "aiohttp==3.14.3" \
       "datasets==5.0.1" \
@@ -32,14 +33,15 @@ RUN pip install --no-cache-dir \
       "lm_eval[api,ifeval]==0.4.12" \
       "nltk==3.10.1" \
       "openpyxl==3.1.5" \
+      "rapidfuzz==3.14.6" \
       "tenacity==9.1.4"
 
 # Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud
 # publishing (publish.py, findings.md -- copied in from docs/eval-runner/ by
 # the playbook) and the selftest pieces. Copied after the pip layer so editing them doesn't invalidate the
 # slow install. The test_*.py unit tests stay in the repo, not the image.
-COPY findings.md mock_nextcloud.py mock_openai.py publish.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
-RUN chmod 0755 /opt/eval-runner/selftest.sh
+COPY findings.md mock_nextcloud.py mock_openai.py publish.py repobench_run.py runmeta.py selftest.sh selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+RUN chmod 0755 /opt/eval-runner/selftest.sh /opt/eval-runner/wrapper_selftest.sh
 
 USER app
 ENV HOME=/home/app

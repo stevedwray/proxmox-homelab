@@ -8,7 +8,7 @@ The canonical copy is `docs/eval-runner/findings.md` in the repo. The
 eval-runner image ships it and `eval-run publish` mirrors it into
 Nextcloud.
 
-Last updated: 2026-10-01 (32k series added).
+Last updated: 2026-10-01 (32k series; BFCL/AgentBench/RepoBench added).
 
 ## How results are produced
 
@@ -95,11 +95,42 @@ GPQA score. The table shows strict-match only for completeness.
 The automatic rule (full run with `max_gen_toks=8192`) selects exactly the
 set the eval-battery doc treats as valid.
 
+### 5. BFCL, AgentBench and RepoBench history
+
+- **BFCL simple (18 imported results)** clusters at 90-96% for every
+  usable model, so it separates broken tool calling more than it ranks
+  good models. Two outliers are runtime problems, not capability:
+  - Laguna S2.1 on the llama.cpp router scored 75.50% with 34 empty
+    answers, against 92.75% on Ollama (the reason Laguna stays on
+    Ollama).
+  - Llama4-Scout scored 16.25%.
+  The Qwen3.8-27B reasoning-effort variants (none/low/medium/high) all
+  land within 92.5-93.75%, so effort doesn't matter on single calls.
+- **AgentBench os-std:** only two historical outputs survive.
+  - Qwen3.6-35B: 22% on the seed-42 sample of 100 (comparable).
+  - Qwen3-Coder-30B: 27% over all 800 episodes (its own series).
+  - The other historical numbers are known only from
+    `docs/framework/eval-battery-phase2-plan.md` and can't be imported:
+    Gemma4-26B 47%, the A4B-QAT 42%, Qwen3-Coder-Next 36% and
+    Laguna-Heretic 38%.
+  - Sampling noise is large: an identical-config Qwen3.6-35B repeat
+    swung 30% to 10% at n=10, which is why the floor is n=100.
+  - os-std is the prompt-injection variant, so eval-runner also records
+    `injection_success_rate` (lower is better) in each results file.
+- **RepoBench:** the six historical results (for example Qwen3.6-35B EM
+  17.33% / ES 41.0%) came from lost scripts that sent chat prompts with
+  an "output only code" instruction, and scored a compliance rate as
+  well. The rebuilt series uses upstream's raw-completion method, so
+  expect different absolute numbers. It ranks only against itself.
+
 ## Open questions
 
 - **Budget:** how much do the 32k-series scores differ from the 8k ones
   for the same model? The first pair of runs (8k and 32k for one
   reasoning model) will show whether the 8k ranking holds up.
+- **RepoBench calibration:** re-running one historical RepoBench model
+  in the rebuilt series would show how far the two methods differ. That
+  needs the same model served by llama.cpp.
 - **Comparability with history:** GLM-5.3-Flash runs on llama.cpp with
   server-side `reasoning_effort=high`, while the historical runs used
   Ollama defaults. A runtime or reasoning-mode difference is recorded per

@@ -199,7 +199,7 @@ class SeriesTest(unittest.TestCase):
     @unittest.skipUnless(openpyxl, "openpyxl not installed")
     def test_xlsx_has_32k_sheet(self):
         wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
-        self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "GPQA (32k)", "All results", "Notes"])
+        self.assertEqual(wb.sheetnames, ["GPQA (8k)", "GPQA (32k)", "IFEval (8k)", "All results", "Notes"])
         self.assertEqual(wb["GPQA (32k)"].max_row, 2)
 
     def test_32k_views_filter_on_series(self):

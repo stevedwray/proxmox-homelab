@@ -1,9 +1,15 @@
-"""Print headline GPQA/IFEval numbers for eval-run result directories.
+"""Print headline numbers for eval-run result directories.
+
+Tasks: GPQA and IFEval (lm_eval), and BFCL, AgentBench and RepoBench
+(eval-runner's own wrappers -- bfcl_run.py, agentbench_run.py,
+repobench_run.py -- which write lm_eval-shaped results_*.json files, with
+their comparability decided by the wrapper under config.eval_runner).
 
 With no arguments, summarises every run directory under /results except
 those starting with "_" (selftest output). With --check, exits non-zero
-unless every given directory holds results for both tasks with numeric
-headline metrics -- the selftest uses this as one of its checks.
+unless every given directory holds results for each of its run.json
+tasks (GPQA and IFEval if there's no run.json) with numeric headline
+metrics -- the selftest uses this as one of its checks.
 
 Each task also gets response-quality flags read from its samples file,
 counted per question:
@@ -49,6 +55,23 @@ HEADLINE = {
         ("IFEval p-strict", "prompt_level_strict_acc,none"),
         ("IFEval p-loose", "prompt_level_loose_acc,none"),
     ],
+    "bfcl_simple": [("BFCL simple", "accuracy,none")],
+    "agentbench_os_std": [("AgentBench os-std", "success_rate,none")],
+    "repobench_python": [
+        ("RepoBench EM", "exact_match,weighted"),
+        ("RepoBench ES", "edit_similarity,weighted"),
+    ],
+}
+# Tasks scored by lm_eval itself (samples_*.jsonl, gen_kwargs comparability).
+LM_EVAL_TASKS = ("gpqa_diamond_cot_zeroshot", "ifeval")
+# The series each task's comparable (ranked) results belong to. The
+# wrappers write these names into config.eval_runner.series.
+STANDARD_SERIES = {
+    "gpqa_diamond_cot_zeroshot": "8k",
+    "ifeval": "8k",
+    "bfcl_simple": "v3 simple",
+    "agentbench_os_std": "100 seeded",
+    "repobench_python": "rebuilt",
 }
 
 
@@ -73,6 +96,9 @@ def _max_gen_toks(gen_kwargs):
 def exclusion_reason(data):
     """None if a results file is comparable with eval-runner runs, else why not."""
     config = data.get("config", {})
+    wrapper = config.get("eval_runner")
+    if wrapper is not None and config.get("limit") is None:
+        return wrapper.get("exclusion")
     if config.get("limit") is not None:
         return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
     budget = _max_gen_toks(config.get("gen_kwargs"))
@@ -92,8 +118,12 @@ def series(data):
     """The token-budget series a results file is ranked in ('8k', '32k', ...),
     or None for pilots and runs without a token cap."""
     config = data.get("config", {})
+    if config.get("limit") is not None:
+        return None
+    if config.get("eval_runner") is not None:
+        return config["eval_runner"].get("series")
     budget = _max_gen_toks(config.get("gen_kwargs"))
-    if config.get("limit") is not None or budget is None or budget < MAX_GEN_TOKS:
+    if budget is None or budget < MAX_GEN_TOKS:
         return None
     return series_label(budget)
 
@@ -152,14 +182,28 @@ def response_flags(samples_path, task):
     }
 
 
+def task_flags(task, metrics, samples):
+    """Response-quality flags for one task: from lm_eval's samples file, or
+    (wrapper tasks) from the empty/errors counts the wrapper recorded.
+    None if neither is available."""
+    if task in LM_EVAL_TASKS:
+        return response_flags(samples, task) if samples else None
+    if "empty,none" not in metrics:
+        return None
+    return {"questions": None, "empty": metrics.get("empty,none"), "unparsed": None,
+            "errors": metrics.get("errors,none")}
+
+
 def _flag_text(task, entry):
-    if not entry["samples"]:
+    flags = task_flags(task, entry["metrics"], entry["samples"])
+    if flags is None:
         return "[no samples file]"
-    flags = response_flags(entry["samples"], task)
     text = f"empty {flags['empty']}"
     if flags["unparsed"] is not None:
         text += f", unparsed {flags['unparsed']}"
-    if flags["empty"] or flags["unparsed"]:
+    if flags.get("errors"):
+        text += f", errors {flags['errors']}"
+    if flags["empty"] or flags["unparsed"] or flags.get("errors"):
         text += " <- inspect samples"
     return f"[{text}]"
 
@@ -180,6 +224,15 @@ def task_parts(task, entry):
     return parts, ok
 
 
+def _expected_tasks(run_dir):
+    """Tasks a run should have results for: run.json's list, or GPQA+IFEval."""
+    try:
+        with open(os.path.join(run_dir, "run.json")) as fh:
+            return json.load(fh).get("tasks") or list(LM_EVAL_TASKS)
+    except (OSError, ValueError):
+        return list(LM_EVAL_TASKS)
+
+
 def describe(run_dir, check, comparable_only=False):
     """Return (line, ok) for one run directory."""
     name = os.path.basename(os.path.normpath(run_dir))
@@ -188,9 +241,10 @@ def describe(run_dir, check, comparable_only=False):
         return f"{name}: no results yet (still running, or failed)", False
     ok = True
     parts = []
+    expected = _expected_tasks(run_dir)
     for task in HEADLINE:
         if task not in found:
-            ok = ok and not check
+            ok = ok and not (check and task in expected)
             continue
         task_text, task_ok = task_parts(task, found[task])
         parts += task_text

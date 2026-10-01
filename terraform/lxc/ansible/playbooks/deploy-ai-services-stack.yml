@@ -928,7 +928,7 @@
         nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/deep-research-agent"
 
-- name: Install eval-runner (lm_eval GPQA/IFEval against Framework's llama-server)
+- name: Install eval-runner (GPQA/IFEval/BFCL/AgentBench/RepoBench against Framework's llama-server)
   hosts: all
   become: true
   gather_facts: false
@@ -973,13 +973,24 @@
         mode: "0644"
       loop:
         - Dockerfile
+        - Dockerfile.agentbench
+        - Dockerfile.agentbench-sandbox
+        - Dockerfile.bfcl
+        - agentbench-constraints.txt
+        - agentbench.patch
+        - agentbench_run.py
+        - bfcl-constraints.txt
+        - bfcl_run.py
         - mock_nextcloud.py
         - mock_openai.py
         - publish.py
+        - repobench_run.py
         - runmeta.py
         - selftest.sh
         - selftest_checks.py
         - summarize.py
+        - wrapper_common.py
+        - wrapper_selftest.sh
 
     # Canonical copy lives with the docs; the image ships it so `eval-run
     # publish` can mirror it into Nextcloud next to the leaderboard.
@@ -997,14 +1008,24 @@
         name: eval-runner-hf-cache
         state: absent
 
-    - name: Build eval-runner image
+    # One image per harness (their pinned dependencies conflict), plus the
+    # sandbox AgentBench starts one throwaway container of per episode.
+    - name: Build eval-runner images
       community.docker.docker_image:
-        name: eval-runner
-        tag: local
+        name: "{{ item.name }}"
+        tag: "{{ item.tag }}"
         source: build
         build:
           path: "{{ eval_runner_build_dir }}"
+          dockerfile: "{{ item.dockerfile }}"
         force_source: true
+      loop:
+        - { name: eval-runner, tag: local, dockerfile: Dockerfile }
+        - { name: eval-runner-bfcl, tag: local, dockerfile: Dockerfile.bfcl }
+        - { name: eval-runner-agentbench, tag: local, dockerfile: Dockerfile.agentbench }
+        - { name: local-os/default, tag: latest, dockerfile: Dockerfile.agentbench-sandbox }
+      loop_control:
+        label: "{{ item.name }}:{{ item.tag }}"
 
     - name: Install eval-runner env file
       ansible.builtin.copy:
@@ -1040,10 +1061,13 @@
         msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"
 
     # Runs the real start/exec/check path against a stand-in server inside
-    # the image -- no Framework, no GPU. Proves the gated GPQA download,
+    # each image -- no Framework, no GPU. Proves the gated GPQA download,
     # IFEval's nltk data, scoring, the request settings lm_eval sends
     # (max_tokens 8192, temperature 0), the empty-response flags, resume from
-    # cache, and server-change detection on every deploy.
+    # cache and server-change detection; then BFCL, AgentBench (two real
+    # network-less sandbox episodes) and RepoBench (dataset download, raw
+    # completions) end to end, each with its historical request shape and
+    # resume, on every deploy.
     - name: Run eval-runner self-test
       ansible.builtin.command:
         argv:
@@ -1051,11 +1075,11 @@
           - selftest
       register: eval_runner_selftest
       changed_when: false
-      failed_when: eval_runner_selftest.rc != 0 or 'selftest OK' not in eval_runner_selftest.stdout
+      failed_when: eval_runner_selftest.rc != 0 or 'all selftests OK' not in eval_runner_selftest.stdout
 
     - name: Show eval-runner self-test summary
       ansible.builtin.debug:
-        msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|selftest OK|server )') | list }}"
+        msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|.*selftest OK|all selftests OK|server )') | list }}"
 
 - name: Share eval-runner's Nextcloud Reports folder with steve
   hosts: all

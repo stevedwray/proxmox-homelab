@@ -1,17 +1,19 @@
-# eval-runner: GPQA/IFEval from ai-services-stack
+# eval-runner: the eval battery from ai-services-stack
 
-Status: **all steps done and deployed to pve-tiny (2026-10-01).** The
-deploy-time self-test passes. The literal content and hashes below match
-the files as deployed. See `README.md` for hand-backs.
+Status: **all steps done.** GPQA/IFEval and Nextcloud publishing are
+deployed to pve-tiny (2026-10-01). BFCL, AgentBench and RepoBench
+(rebuilt) are built and unit-tested; their deploy and selftest are in
+`README.md`. The literal content and hashes below match the files on the
+branch.
 
 ## Goal
 
-Run the lm_eval-based tests from the eval battery
-(`docs/framework/eval-battery-phase2-plan.md`): GPQA (diamond, CoT
-zero-shot) and IFEval. They run from `ai-services-stack` against whatever
-model Framework's llama-server is serving on `:8080`, instead of on
-`framework` itself or garuda. The whole harness has to be verifiable
-without using Framework's GPU.
+Run the eval battery (`docs/framework/eval-battery-phase2-plan.md`),
+except CyberSecEval (it has its own panel): GPQA (diamond, CoT
+zero-shot), IFEval, BFCL, AgentBench and RepoBench. They run from
+`ai-services-stack` against whatever model Framework's llama-server is
+serving on `:8080`, instead of on `framework` itself or garuda. The whole
+harness has to be verifiable without using Framework's GPU.
 
 ## Decisions (resolved with the operator, 2026-10-01)
 
@@ -79,11 +81,65 @@ without using Framework's GPU.
     is secret (`services/nextcloud:NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`).
   - `samples_*.jsonl` never leave the CT (GPQA licence).
   - `findings.md` is written by hand, in the repo.
+- **The rest of the battery (operator, 2026-10-01).** Each benchmark
+  gets a wrapper (`<harness>_run.py`) that runs it against the run's
+  server and writes an lm_eval-shaped `results_*.json` with
+  `config.eval_runner` (harness, version, series, exclusion, runtime), so
+  `results`, `publish`, the table and the xlsx treat every benchmark
+  alike. BFCL and AgentBench get their own images (their pins conflict
+  with lm_eval's); RepoBench runs in the main image.
+  - **BFCL: same as history.** bfcl-eval 2025.8.6.2, v3 `simple` (400
+    cases), default temperature 0.001, native function calling, no
+    `max_tokens`. Installed under the exact package set of framework's
+    BFCL venv (`bfcl-constraints.txt`). One generic handler is
+    registered at start-up instead of the per-model handlers edited into
+    framework's site-packages.
+  - **AgentBench: os-std, 100 episodes, seed 42, on ai-services-stack's
+    Docker.** Pinned commit `0cfef97` (checksum-verified tarball), the
+    historical sample patch, temperature 0, `max_tokens` 3072. The run
+    container gets the CT's Docker socket; each episode's sandbox runs
+    with networking disabled. The sandbox image pre-installs every
+    package the task inits fetch, so the tasks see what they saw with
+    network. `agentbench.patch` also reads the API key from the
+    environment (no secret in any config file) and raises the HTTP
+    timeout from 120 s to 3600 s (slow models timed out mid-answer).
+  - **RepoBench: rebuilt as a new series.** The historical scripts are
+    lost. The rebuild follows upstream RepoBench (prompt construction,
+    first-non-comment-line extraction, EM/ES, sample-weighted average)
+    on the same v1.1 Python data, with raw completions and greedy
+    decoding, 100 seeded samples per setting and level. It is not ranked
+    against the six historical RepoBench numbers.
+  - **History imported where data survives:** 18 BFCL scores from
+    framework and 2 AgentBench outputs from garuda
+    (`import_history.py`).
 - **`HF_TOKEN` goes in `shared/external-apis`.** GPQA is gated (anonymous
   fetch: HTTP 401). Framework's key is the existing
   `LLM_GPU_STACK_API_KEY`.
 
 ## Facts checked (2026-10-01)
+
+- **BFCL (bfcl-eval 2025.8.6.2, read from the wheel):**
+  `MODEL_CONFIG_MAPPING` is one dict shared by every module, and
+  generation runs in threads, so registering a model at start-up works.
+  `bfcl evaluate` asserts that every case has an answer, so the wrapper
+  calls the same `ast_file_runner` itself on the generated cases. A
+  re-run skips answered cases, but also skips "Error during inference"
+  entries, so the wrapper drops those first. All 106 pinned packages
+  resolve to Python 3.12 wheels.
+- **AgentBench (garuda checkout):** os-std is the prompt-injection
+  variant (800 episodes = 14 tasks x ~70 variants). Init scripts
+  `apt-get install` netcat or libssl-dev (100 episodes),
+  `--reinstall wamerican` (140) and net-tools/iproute2/lsof, and their
+  exit codes are ignored. The historical sandboxes were built
+  `FROM ubuntu` = 26.04. Only `FastChatAgent` imports the torch stack.
+  The assigner resumes from an existing output folder. The 43 pinned
+  packages resolve to Python 3.11 wheels.
+- **RepoBench upstream (Leolty/repobench @ e0cfd34):** `run.py`
+  completes raw prompts (no chat), 128 new tokens, at levels 2k-16k, with
+  prompts cut to 15800 tokens. `eval.py` weights per-setting EM/ES by
+  sample count. The dataset (`tianyang/repobench_python_v1.1`, 473 MB,
+  not gated) is the same set of parquet files as framework's
+  `repobench-convert` copy.
 
 - **Network:** `ai_seg → framework:8080` and `ai_seg → internet:443` are
   already allowed. No firewall change is needed.
@@ -250,7 +306,8 @@ change: |
     # so new results stay comparable with the old ones. No torch/transformers:
     # the API model path doesn't need them. Not --only-binary: langdetect,
     # rouge-score, sqlitedict and word2number only ship as sdists. openpyxl is
-    # publish.py's (leaderboard.xlsx), not lm_eval's.
+    # publish.py's (leaderboard.xlsx) and rapidfuzz is repobench_run.py's (edit
+    # similarity), not lm_eval's.
     RUN pip install --no-cache-dir \
           "aiohttp==3.14.3" \
           "datasets==5.0.1" \
@@ -259,14 +316,15 @@ change: |
           "lm_eval[api,ifeval]==0.4.12" \
           "nltk==3.10.1" \
           "openpyxl==3.1.5" \
+          "rapidfuzz==3.14.6" \
           "tenacity==9.1.4"
 
     # Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud
     # publishing (publish.py, findings.md -- copied in from docs/eval-runner/ by
     # the playbook) and the selftest pieces. Copied after the pip layer so editing them doesn't invalidate the
     # slow install. The test_*.py unit tests stay in the repo, not the image.
-    COPY findings.md mock_nextcloud.py mock_openai.py publish.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
-    RUN chmod 0755 /opt/eval-runner/selftest.sh
+    COPY findings.md mock_nextcloud.py mock_openai.py publish.py repobench_run.py runmeta.py selftest.sh selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+    RUN chmod 0755 /opt/eval-runner/selftest.sh /opt/eval-runner/wrapper_selftest.sh
 
     USER app
     ENV HOME=/home/app
@@ -284,7 +342,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile | cut -d' ' -f1"
-    expect: "f7c459dcf5c5a391877ef2eed5c369fe3606e8048c0f7166b692cc92aa127928"
+    expect: "d1412eefead159b79be2d1237fcddb26b8e551c813743703ad185b350a9f6d12"
     critical: true
 ```
 
@@ -301,9 +359,9 @@ change: |
   the file itself has no leading indentation:
 
     #!/usr/bin/env bash
-    # eval-run -- start, resume, self-test and summarise lm_eval GPQA/IFEval
-    # runs against whatever model Framework's llama-server is serving right
-    # now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
+    # eval-run -- start, resume, self-test and summarise eval battery runs
+    # (GPQA, IFEval, BFCL, AgentBench, RepoBench) against whatever model
+    # Framework's llama-server is serving right now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
     # play; see docs/eval-runner/plan.md. Secrets never pass through this
     # script: containers get them only via --env-file.
     set -euo pipefail
@@ -311,11 +369,15 @@ change: |
     ENV_FILE=/etc/eval-runner/eval-runner.env
     RESULTS_DIR=/srv/eval-runner/results
     IMAGE=eval-runner:local
+    BFCL_IMAGE=eval-runner-bfcl:local
+    AGENTBENCH_IMAGE=eval-runner-agentbench:local
     HF_VOLUME=eval-runner-hf:/home/app/.cache/huggingface
+    DOCKER_SOCK=/var/run/docker.sock
 
     usage() {
       cat <<'USAGE'
     Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--note TEXT]
+           eval-run <bfcl|agentbench|repobench> [--pilot] [--note TEXT]
            eval-run resume <run> [--force]
            eval-run selftest
            eval-run results [run...]
@@ -324,8 +386,19 @@ change: |
     gpqa|ifeval  Start one detached run (container eval-<run>) against the model
                  Framework's llama-server is serving. Uses Framework's GPU for
                  hours -- check nothing else needs it first.
-      --pilot          40 examples (--limit 40) instead of the full task
-      --concurrency N  parallel requests (default 1, as every historical result)
+    bfcl         BFCL v3 "simple" (400 cases, bfcl-eval 2025.8.6.2), as every
+                 historical BFCL number.
+    agentbench   AgentBench os-std, 100 episodes sampled with seed 42, as the
+                 historical numbers. Each episode runs in a throwaway sandbox
+                 container on this CT's Docker, with networking disabled.
+    repobench    RepoBench (rebuilt): Python v1.1, 3 settings x 5 context
+                 levels. A new series; the historical RepoBench numbers came
+                 from scripts that are lost, so they aren't comparable.
+      --pilot          a small sample instead of the full task: 40 examples
+                       (gpqa/ifeval/bfcl), 10 episodes (agentbench), 5 per
+                       level and setting (repobench)
+      --concurrency N  parallel requests (gpqa/ifeval only; default 1, as every
+                       historical result)
       --max-gen-toks N token budget per answer (default 8192, the budget every
                        comparable result used). A larger one, e.g. 32768, starts
                        a separate series (run name gets -32k), ranked only
@@ -338,7 +411,9 @@ change: |
                  (model, build, sampling defaults, chat template) has changed,
                  unless --force.
     selftest     Exercise the whole harness against a stand-in server inside
-                 the image (no Framework, no GPU). Exits non-zero on failure.
+                 each image -- GPQA/IFEval and publishing, then BFCL, AgentBench
+                 (two real sandbox episodes) and RepoBench (no Framework, no
+                 GPU). Exits non-zero on failure.
     results      Headline scores and response-quality flags per run.
     publish      Push everything (eval-runner runs + historical) to Nextcloud:
                  Reports/eval-runner/ (leaderboard.xlsx/.md, findings.md, one
@@ -368,14 +443,28 @@ change: |
       fi
     }
 
+    # image_args <task>: the image (and, for agentbench, the Docker socket its
+    # task server starts sandboxes through) a run of <task> needs.
+    image_args() {
+      case "$1" in
+        bfcl) echo "$BFCL_IMAGE" ;;
+        agentbench)
+          echo "-v ${DOCKER_SOCK}:${DOCKER_SOCK} --group-add $(stat -c %g "$DOCKER_SOCK") $AGENTBENCH_IMAGE"
+          ;;
+        *) echo "$IMAGE" ;;
+      esac
+    }
+
     launch() {
-      local run="$1"
+      local run="$1" task="$2"
+      local -a image
+      read -r -a image <<<"$(image_args "$task")"
       docker run -d --name "eval-${run}" \
         --env-file "$ENV_FILE" \
         -v "${RESULTS_DIR}:/results" \
         -v "$HF_VOLUME" \
         --entrypoint python \
-        "$IMAGE" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
+        "${image[@]}" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
       echo "Started eval-${run}"
       echo "  follow:  docker logs -f eval-${run}"
       echo "  scores:  eval-run results ${run}"
@@ -402,13 +491,16 @@ change: |
         esac
       done
       [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+      if [[ "$short" != gpqa && "$short" != ifeval && "$concurrency" != 1 ]]; then
+        die "--concurrency only applies to gpqa/ifeval"
+      fi
       [[ "$max_gen_toks" =~ ^[1-9][0-9]*$ ]] || die "--max-gen-toks must be a positive integer"
       refuse_if_running
 
       local run
       run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
         --concurrency "$concurrency" --max-gen-toks "$max_gen_toks" --note "$note")
-      launch "$run"
+      launch "$run" "$short"
       if [[ -z "$note" ]]; then
         echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
       fi
@@ -434,12 +526,12 @@ change: |
         die "could not check the server (exit $rc)"
       fi
       docker rm "eval-${run}" >/dev/null 2>&1 || true
-      launch "$run"
+      launch "$run" "$(helper /opt/eval-runner/runmeta.py field "/results/${run}" task)"
     }
 
     [[ $# -ge 1 ]] || { usage >&2; exit 2; }
     case "$1" in
-      gpqa|ifeval)
+      gpqa|ifeval|bfcl|agentbench|repobench)
         cmd_start "$@"
         ;;
       resume)
@@ -448,13 +540,27 @@ change: |
         ;;
       selftest)
         [[ $# -eq 1 ]] || { usage >&2; exit 2; }
-        exec docker run --rm \
-          --env-file "$ENV_FILE" \
-          -e "SELFTEST_RUN=$(date -u +%Y%m%dT%H%M%SZ)" \
-          -v "${RESULTS_DIR}:/results" \
-          -v "$HF_VOLUME" \
-          --entrypoint /bin/sh \
-          "$IMAGE" /opt/eval-runner/selftest.sh
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        selftest_in() {
+          local -a image
+          read -r -a image <<<"$(image_args "$1")"
+          shift
+          docker run --rm \
+            --env-file "$ENV_FILE" \
+            -e "SELFTEST_RUN=$stamp" \
+            -v "${RESULTS_DIR}:/results" \
+            -v "$HF_VOLUME" \
+            --entrypoint /bin/sh \
+            "${image[@]}" "$@"
+        }
+        # GPQA/IFEval + publishing, then each wrapper: <limit> <expected requests>
+        # (bfcl and agentbench: one request per case/episode; repobench: one per
+        # setting x level).
+        selftest_in gpqa /opt/eval-runner/selftest.sh
+        selftest_in bfcl /opt/eval-runner/wrapper_selftest.sh bfcl 2 2
+        selftest_in agentbench /opt/eval-runner/wrapper_selftest.sh agentbench 2 2
+        selftest_in repobench /opt/eval-runner/wrapper_selftest.sh repobench 1 15
+        echo "all selftests OK"
         ;;
       results)
         shift
@@ -499,7 +605,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/eval-run | cut -d' ' -f1"
-    expect: "25d36d8a69a9113dbf92af1177c927c950e52c648e61c6c9e96cf55eb0b4eb47"
+    expect: "3c349c4827bf5fea0845b1a943557414160a38a830a2a54723ec30b9692331ee"
     critical: true
   - id: executable
     cmd: "test -x terraform/lxc/ansible/files/eval-runner/eval-run && echo OK"
@@ -527,19 +633,23 @@ change: |
 
     Answers every chat completion with one fixed reply, so the whole lm_eval
     pipeline (gated dataset download, request/response handling, scoring,
-    result files, response cache) can be exercised without touching
-    Framework's GPU. Listens on 127.0.0.1 only, inside the selftest container.
+    result files, response cache) -- and the BFCL, AgentBench and RepoBench
+    wrappers -- can be exercised without touching Framework's GPU. A request
+    carrying "tools" gets a tool call to the first tool instead (BFCL).
+    /v1/completions (raw text, RepoBench) answers with the same reply, and
+    /tokenize counts ~4 characters per token. Listens on 127.0.0.1 only, inside the selftest container.
 
     Environment:
       MOCK_PORT          listen port (default 18080)
       MOCK_MODEL         model id served on /v1/models (default selftest-mock)
       MOCK_MODEL_PATH    model_path reported on /props -- change it to make a
                          second instance look like a different server
-      MOCK_REQUEST_LOG   if set, append every chat-completion request body as
+      MOCK_REQUEST_LOG   if set, append every (chat) completion request body as
                          one JSON line (selftest asserts on what lm_eval sent)
       MOCK_EMPTY_EVERY   if N > 0, every Nth reply has empty content (the
                          "reasoning ate the token budget" failure shape), so
                          the empty-response flags can be checked
+      MOCK_REPLY         the fixed reply text (default: a GPQA-style answer)
     """
 
     import json
@@ -552,7 +662,7 @@ change: |
     MODEL_PATH = os.environ.get("MOCK_MODEL_PATH", "/models/selftest-mock.gguf")
     REQUEST_LOG = os.environ.get("MOCK_REQUEST_LOG", "")
     EMPTY_EVERY = int(os.environ.get("MOCK_EMPTY_EVERY", "0"))
-    REPLY = "Let me think step by step. The answer is (A)."
+    REPLY = os.environ.get("MOCK_REPLY", "Let me think step by step. The answer is (A).")
 
     PROPS = {
         "model_path": MODEL_PATH,
@@ -592,7 +702,12 @@ change: |
         def do_POST(self):
             global _count
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if self.path.rstrip("/") != "/v1/chat/completions":
+            path = self.path.rstrip("/")
+            if path == "/tokenize":
+                content = json.loads(raw).get("content", "")
+                self._send(200, {"tokens": [0] * (len(content) // 4)})
+                return
+            if path not in ("/v1/chat/completions", "/v1/completions"):
                 self._send(404, {"error": "not found"})
                 return
             with _lock:
@@ -602,14 +717,26 @@ change: |
                     with open(REQUEST_LOG, "a") as fh:
                         fh.write(json.dumps(json.loads(raw)) + "\n")
             content = "" if EMPTY_EVERY > 0 and n % EMPTY_EVERY == 0 else REPLY
+            if path == "/v1/completions":
+                self._send(200, {"id": f"selftest-{n}", "object": "text_completion", "model": MODEL,
+                                 "choices": [{"index": 0, "finish_reason": "stop", "text": content}],
+                                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}})
+                return
+            message = {"role": "assistant", "content": content}
+            tools = json.loads(raw).get("tools") if raw else None
+            if tools and content:
+                message = {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": f"call-{n}", "type": "function",
+                    "function": {"name": tools[0]["function"]["name"], "arguments": "{}"},
+                }]}
             self._send(200, {
                 "id": f"selftest-{n}",
                 "object": "chat.completion",
                 "model": MODEL,
                 "choices": [{
                     "index": 0,
-                    "finish_reason": "stop",
-                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                    "message": message,
                 }],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             })
@@ -633,7 +760,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/mock_openai.py | cut -d' ' -f1"
-    expect: "2f55c14464d3517775a90bc1a692428fa9330fadd784dfe43dfda72de061ad5d"
+    expect: "3ec3df4f26dbd71ca032b7e9f71fbb896dc94cafdef529b90d634f4787cb63b0"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/mock_openai.py && echo OK"
@@ -790,12 +917,18 @@ change: |
   trailing newline). It is shown indented by 4 spaces below;
   the file itself has no leading indentation:
 
-    """Print headline GPQA/IFEval numbers for eval-run result directories.
+    """Print headline numbers for eval-run result directories.
+
+    Tasks: GPQA and IFEval (lm_eval), and BFCL, AgentBench and RepoBench
+    (eval-runner's own wrappers -- bfcl_run.py, agentbench_run.py,
+    repobench_run.py -- which write lm_eval-shaped results_*.json files, with
+    their comparability decided by the wrapper under config.eval_runner).
 
     With no arguments, summarises every run directory under /results except
     those starting with "_" (selftest output). With --check, exits non-zero
-    unless every given directory holds results for both tasks with numeric
-    headline metrics -- the selftest uses this as one of its checks.
+    unless every given directory holds results for each of its run.json
+    tasks (GPQA and IFEval if there's no run.json) with numeric headline
+    metrics -- the selftest uses this as one of its checks.
 
     Each task also gets response-quality flags read from its samples file,
     counted per question:
@@ -841,6 +974,23 @@ change: |
             ("IFEval p-strict", "prompt_level_strict_acc,none"),
             ("IFEval p-loose", "prompt_level_loose_acc,none"),
         ],
+        "bfcl_simple": [("BFCL simple", "accuracy,none")],
+        "agentbench_os_std": [("AgentBench os-std", "success_rate,none")],
+        "repobench_python": [
+            ("RepoBench EM", "exact_match,weighted"),
+            ("RepoBench ES", "edit_similarity,weighted"),
+        ],
+    }
+    # Tasks scored by lm_eval itself (samples_*.jsonl, gen_kwargs comparability).
+    LM_EVAL_TASKS = ("gpqa_diamond_cot_zeroshot", "ifeval")
+    # The series each task's comparable (ranked) results belong to. The
+    # wrappers write these names into config.eval_runner.series.
+    STANDARD_SERIES = {
+        "gpqa_diamond_cot_zeroshot": "8k",
+        "ifeval": "8k",
+        "bfcl_simple": "v3 simple",
+        "agentbench_os_std": "100 seeded",
+        "repobench_python": "rebuilt",
     }
 
 
@@ -865,6 +1015,9 @@ change: |
     def exclusion_reason(data):
         """None if a results file is comparable with eval-runner runs, else why not."""
         config = data.get("config", {})
+        wrapper = config.get("eval_runner")
+        if wrapper is not None and config.get("limit") is None:
+            return wrapper.get("exclusion")
         if config.get("limit") is not None:
             return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
         budget = _max_gen_toks(config.get("gen_kwargs"))
@@ -884,8 +1037,12 @@ change: |
         """The token-budget series a results file is ranked in ('8k', '32k', ...),
         or None for pilots and runs without a token cap."""
         config = data.get("config", {})
+        if config.get("limit") is not None:
+            return None
+        if config.get("eval_runner") is not None:
+            return config["eval_runner"].get("series")
         budget = _max_gen_toks(config.get("gen_kwargs"))
-        if config.get("limit") is not None or budget is None or budget < MAX_GEN_TOKS:
+        if budget is None or budget < MAX_GEN_TOKS:
             return None
         return series_label(budget)
 
@@ -944,14 +1101,28 @@ change: |
         }
 
 
+    def task_flags(task, metrics, samples):
+        """Response-quality flags for one task: from lm_eval's samples file, or
+        (wrapper tasks) from the empty/errors counts the wrapper recorded.
+        None if neither is available."""
+        if task in LM_EVAL_TASKS:
+            return response_flags(samples, task) if samples else None
+        if "empty,none" not in metrics:
+            return None
+        return {"questions": None, "empty": metrics.get("empty,none"), "unparsed": None,
+                "errors": metrics.get("errors,none")}
+
+
     def _flag_text(task, entry):
-        if not entry["samples"]:
+        flags = task_flags(task, entry["metrics"], entry["samples"])
+        if flags is None:
             return "[no samples file]"
-        flags = response_flags(entry["samples"], task)
         text = f"empty {flags['empty']}"
         if flags["unparsed"] is not None:
             text += f", unparsed {flags['unparsed']}"
-        if flags["empty"] or flags["unparsed"]:
+        if flags.get("errors"):
+            text += f", errors {flags['errors']}"
+        if flags["empty"] or flags["unparsed"] or flags.get("errors"):
             text += " <- inspect samples"
         return f"[{text}]"
 
@@ -972,6 +1143,15 @@ change: |
         return parts, ok
 
 
+    def _expected_tasks(run_dir):
+        """Tasks a run should have results for: run.json's list, or GPQA+IFEval."""
+        try:
+            with open(os.path.join(run_dir, "run.json")) as fh:
+                return json.load(fh).get("tasks") or list(LM_EVAL_TASKS)
+        except (OSError, ValueError):
+            return list(LM_EVAL_TASKS)
+
+
     def describe(run_dir, check, comparable_only=False):
         """Return (line, ok) for one run directory."""
         name = os.path.basename(os.path.normpath(run_dir))
@@ -980,9 +1160,10 @@ change: |
             return f"{name}: no results yet (still running, or failed)", False
         ok = True
         parts = []
+        expected = _expected_tasks(run_dir)
         for task in HEADLINE:
             if task not in found:
-                ok = ok and not check
+                ok = ok and not (check and task in expected)
                 continue
             task_text, task_ok = task_parts(task, found[task])
             parts += task_text
@@ -1064,7 +1245,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/summarize.py | cut -d' ' -f1"
-    expect: "7f669d9de386f23be6c5f2ec1419f4a0db0b9e999c080c2eba94cd68bd8e86f9"
+    expect: "a02fc3ec621fa971e12300a16fe0d9065e6f9537815c3b8ecb6caf4085c081dc"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/summarize.py && echo OK"
@@ -1124,9 +1305,25 @@ change: |
         "gpqa": ["gpqa_diamond_cot_zeroshot"],
         "ifeval": ["ifeval"],
         "both": ["gpqa_diamond_cot_zeroshot", "ifeval"],
+        "bfcl": ["bfcl_simple"],
+        "agentbench": ["agentbench_os_std"],
+        "repobench": ["repobench_python"],
     }
+    # Which program runs each task: lm_eval itself, or eval-runner's wrapper
+    # /opt/eval-runner/<harness>_run.py (in the harness's own image for bfcl
+    # and agentbench -- see eval-run).
+    HARNESS = {"gpqa": "lm_eval", "ifeval": "lm_eval", "both": "lm_eval",
+               "bfcl": "bfcl", "agentbench": "agentbench", "repobench": "repobench"}
     PILOT_LIMIT = 40
+    # --pilot sizes for the wrappers: test cases (bfcl), episodes (agentbench),
+    # samples per context-length level and setting (repobench).
+    WRAPPER_PILOT_LIMITS = {"bfcl": 40, "agentbench": 10, "repobench": 5}
     MAX_GEN_TOKS = 8192
+    # Per-answer token budget each wrapper uses: BFCL's historical handler never
+    # set max_tokens (server default); AgentBench's agent config used 3072;
+    # RepoBench (rebuilt) is a raw completion of one line, 128 tokens as
+    # upstream RepoBench.
+    WRAPPER_MAX_GEN_TOKS = {"bfcl": None, "agentbench": 3072, "repobench": 128}
     REQUEST_TIMEOUT = 3600
     # Seconds per generated token allowed on top of REQUEST_TIMEOUT's floor:
     # 32768 tokens at the slowest decode seen on framework (~10 tok/s) needs
@@ -1135,6 +1332,10 @@ change: |
     # Prompt tokens the per-slot context must hold beyond max_gen_toks (GPQA's
     # longest prompt with the chat template is well under 1k tokens).
     PROMPT_HEADROOM = 2048
+    # The same for the wrappers: BFCL simple and AgentBench prompts are short
+    # (AgentBench's 8-round history stays under ~6k); RepoBench prompts are
+    # cut to 15800 tokens, as upstream.
+    WRAPPER_PROMPT_HEADROOM = {"bfcl": 4096, "agentbench": 8192, "repobench": 16384}
     PROPS_TOP = ("model_path", "model_alias", "build_info", "total_slots")
     PROPS_PARAMS = (
         "temperature", "top_k", "top_p", "min_p", "n_predict", "seed",
@@ -1228,12 +1429,12 @@ change: |
         return max(REQUEST_TIMEOUT, int(max_gen_toks * SECONDS_PER_TOKEN))
 
 
-    def context_problem(server, max_gen_toks):
+    def context_problem(server, max_gen_toks, headroom=PROMPT_HEADROOM):
         """None if the server's per-slot context fits the budget (or is unknown), else why not."""
         n_ctx = ((server.get("props") or {}).get("n_ctx"))
-        if isinstance(n_ctx, int) and n_ctx < max_gen_toks + PROMPT_HEADROOM:
+        if isinstance(n_ctx, int) and n_ctx < (max_gen_toks or 0) + headroom:
             return (f"server per-slot context {n_ctx} can't hold max_gen_toks {max_gen_toks} "
-                    f"plus ~{PROMPT_HEADROOM} prompt tokens")
+                    f"plus ~{headroom} prompt tokens")
         return None
 
 
@@ -1269,14 +1470,26 @@ change: |
         return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+    def wrapper_argv(harness, run_dir):
+        return ["python", f"/opt/eval-runner/{harness}_run.py", run_dir]
+
+
     def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root, max_gen_toks=MAX_GEN_TOKS):
+        harness = HARNESS[task]
+        if harness != "lm_eval":
+            max_gen_toks = WRAPPER_MAX_GEN_TOKS[harness]
         if limit is None and pilot:
-            limit = PILOT_LIMIT
-        name = run_name(server["model_id"], task, pilot, stamp, max_gen_toks)
+            limit = PILOT_LIMIT if harness == "lm_eval" else WRAPPER_PILOT_LIMITS[harness]
+        name = run_name(server["model_id"], task, pilot, stamp,
+                        max_gen_toks if harness == "lm_eval" else MAX_GEN_TOKS)
         run_dir = os.path.join(results_root, name)
+        argv = (lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
+                             max_gen_toks)
+                if harness == "lm_eval" else wrapper_argv(harness, run_dir))
         return {
             "run": name,
             "task": task,
+            "harness": harness,
             "tasks": TASKS[task],
             "pilot": pilot,
             "limit": limit,
@@ -1287,8 +1500,9 @@ change: |
             "lm_eval_version": _lm_eval_version(),
             "server": server,
             "fingerprint": fingerprint(server),
-            "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
-                                         max_gen_toks),
+            # The command `exec` runs (named for lm_eval, which came first; for
+            # the wrappers it is their own command line).
+            "lm_eval_argv": argv,
         }, run_dir
 
 
@@ -1299,7 +1513,9 @@ change: |
 
     def cmd_start(args):
         server = snapshot_server(args.base_url, os.environ.get("OPENAI_API_KEY", ""))
-        problem = context_problem(server, args.max_gen_toks)
+        harness = HARNESS[args.task]
+        problem = (context_problem(server, args.max_gen_toks) if harness == "lm_eval" else
+                   context_problem(server, WRAPPER_MAX_GEN_TOKS[harness], WRAPPER_PROMPT_HEADROOM[harness]))
         if problem:
             print(f"runmeta: {problem}", file=sys.stderr)
             return 2
@@ -1318,6 +1534,13 @@ change: |
     def cmd_exec(args):
         argv = load_record(args.run_dir)["lm_eval_argv"]
         os.execvp(argv[0], argv)
+
+
+    def cmd_field(args):
+        """Print one top-level run.json field (eval-run uses it to pick the image)."""
+        value = load_record(args.run_dir).get(args.key)
+        print("" if value is None else value)
+        return 0
 
 
     def cmd_check(args):
@@ -1355,6 +1578,10 @@ change: |
         check.add_argument("run_dir")
         check.add_argument("--base-url")
 
+        field = sub.add_parser("field")
+        field.add_argument("run_dir")
+        field.add_argument("key")
+
         args = parser.parse_args(argv)
         if args.cmd == "start":
             if not args.base_url:
@@ -1363,9 +1590,13 @@ change: |
                 parser.error("--concurrency must be >= 1")
             if args.max_gen_toks < MAX_GEN_TOKS:
                 parser.error(f"--max-gen-toks below {MAX_GEN_TOKS} truncates reasoning models (Bug 6)")
+            if HARNESS[args.task] != "lm_eval" and args.max_gen_toks != MAX_GEN_TOKS:
+                parser.error(f"--max-gen-toks only applies to gpqa/ifeval; {args.task} uses its historical budget")
             return cmd_start(args)
         if args.cmd == "exec":
             return cmd_exec(args)
+        if args.cmd == "field":
+            return cmd_field(args)
         return cmd_check(args)
 
 
@@ -1382,7 +1613,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/runmeta.py | cut -d' ' -f1"
-    expect: "e97026998cde7eb8d39146f0205693752049a890f11e83c7374dae5a2043e2ea"
+    expect: "946fd0acdab10f009624925e44f1cb2f1619552e009f1fe79de358eb5b6d1ebe"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/runmeta.py && echo OK"
@@ -1411,6 +1642,12 @@ change: |
                 chat message list ending in a user turn. Also checks the count.
       flags     summarize.py's empty-response flags add up to what the mock was
                 told to produce, and run.json carries a fingerprint and props.
+      wrapper   (--harness bfcl|agentbench|repobench) Every request the
+                wrapper sent matches how its historical results were produced:
+                BFCL -- tools present, temperature 0.001, no max_tokens;
+                AgentBench -- temperature 0, max_tokens 3072; RepoBench --
+                raw completions, temperature 0, max_tokens 128. Plus the
+                served model id and the request count.
       publish   After publishing twice to mock_nextcloud.py: one table with every
                 column, the expected rows (no duplicates from the second
                 publish), every view, one share, the report files including
@@ -1454,11 +1691,39 @@ change: |
         return errors
 
 
+    # harness -> {field: expected value}; MISSING means the field must be absent.
+    MISSING = object()
+    WRAPPER_REQUESTS = {
+        "bfcl": {"temperature": 0.001, "max_tokens": MISSING},
+        "agentbench": {"temperature": 0, "max_tokens": 3072},
+        "repobench": {"temperature": 0, "max_tokens": 128},
+    }
+
+
+    def wrapper_request_errors(path, expected_count, model, harness):
+        with open(path) as fh:
+            requests = [json.loads(line) for line in fh if line.strip()]
+        errors = []
+        if len(requests) != expected_count:
+            errors.append(f"expected {expected_count} requests, mock saw {len(requests)}")
+        for i, req in enumerate(requests, 1):
+            for field, want in WRAPPER_REQUESTS[harness].items():
+                if want is MISSING and field in req:
+                    errors.append(f"request {i}: {field} {req[field]!r} sent, historical runs sent none")
+                elif want is not MISSING and req.get(field) != want:
+                    errors.append(f"request {i}: {field} {req.get(field)!r}, want {want!r}")
+            if req.get("model") != model:
+                errors.append(f"request {i}: model {req.get('model')!r}, want {model!r}")
+            if harness == "bfcl" and not req.get("tools"):
+                errors.append(f"request {i}: no tools (BFCL runs in native function-calling mode)")
+        return errors
+
+
     def flag_errors(run_dir, expected_empty):
         errors = []
         found = summarize.load(run_dir)
         total_empty = 0
-        for task in summarize.HEADLINE:
+        for task in summarize.LM_EVAL_TASKS:
             entry = found.get(task)
             if not entry or not entry["samples"]:
                 errors.append(f"{task}: no results/samples file")
@@ -1511,10 +1776,13 @@ change: |
         parser.add_argument("--nextcloud-state", help="mock_nextcloud.py /_mock/state URL")
         parser.add_argument("--expect-rows", type=int)
         parser.add_argument("--published-run")
+        parser.add_argument("--harness", choices=sorted(WRAPPER_REQUESTS))
         args = parser.parse_args(argv)
 
         errors = []
-        if args.requests:
+        if args.requests and args.harness:
+            errors += wrapper_request_errors(args.requests, args.expect_requests, args.model, args.harness)
+        elif args.requests:
             errors += request_errors(args.requests, args.expect_requests, args.model)
         if args.run_dir is not None:
             errors += flag_errors(args.run_dir, args.expect_empty)
@@ -1542,7 +1810,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/selftest_checks.py | cut -d' ' -f1"
-    expect: "23e9db8f438b7f5ecc9874d40b5221b1144f9a7ff68936a87ab204aa461e9d87"
+    expect: "fff110cedd8104a999a47a2b35ebd51feb476404772c8d8445dad317c0046a25"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/selftest_checks.py && echo OK"
@@ -2008,7 +2276,7 @@ gates:
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
-    expect: "OK, or OK (skipped=2) where openpyxl is not installed"
+    expect: "OK, or OK (skipped=N) where openpyxl/rapidfuzz are not installed"
     critical: true
 ```
 
@@ -2090,10 +2358,16 @@ change: |
     # Files earlier versions published that are now gone; deleted on publish.
     STALE_FILES = ("leaderboard.csv",)
 
+    # task -> (label, primary metric name, alternative metric name or None).
+    # Order is the leaderboard's section and sheet order.
     TASK_LABELS = {
         "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
         "ifeval": ("IFEval", "prompt-level strict", "prompt-level loose"),
+        "bfcl_simple": ("BFCL simple", "accuracy", None),
+        "agentbench_os_std": ("AgentBench os-std", "success rate", None),
+        "repobench_python": ("RepoBench (rebuilt)", "exact match", "edit similarity"),
     }
+    TASK_BY_LABEL = {label: task for task, (label, _, _) in TASK_LABELS.items()}
 
     # (title, column spec). Order is the table's column order. "Key" is the
     # upsert identity and must stay first and unchanged.
@@ -2125,10 +2399,13 @@ change: |
         # (title, emoji, task label, {column: required value})
         ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
         ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
+        ("Comparable: BFCL", "🔧", "BFCL simple", {"Comparable": "yes"}),
+        ("Comparable: AgentBench", "🤖", "AgentBench os-std", {"Comparable": "yes"}),
+        ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
         ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
         ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
     ]
-    STANDARD_SERIES = summarize.series_label(summarize.MAX_GEN_TOKS)
+
 
 
     # ---------------------------------------------------------------- collect
@@ -2149,6 +2426,9 @@ change: |
 
 
     def _runtime(data, record):
+        wrapper = data.get("config", {}).get("eval_runner") or {}
+        if wrapper.get("runtime"):
+            return wrapper["runtime"]
         if record and (record.get("server") or {}).get("props"):
             return f"llama.cpp {record['server']['props'].get('build_info') or ''}".strip()
         return "Ollama" if ":11434" in _base_url(data) else "OpenAI-compatible server"
@@ -2168,9 +2448,11 @@ change: |
 
     def _row(source, run, task, data, metrics, samples, record, stamp):
         label, primary_name, alt_name = TASK_LABELS[task]
-        primary_key, alt_key = [key for _, key in summarize.HEADLINE[task]]
+        keys = [key for _, key in summarize.HEADLINE[task]]
+        primary_key, alt_key = keys[0], (keys[1] if len(keys) > 1 else None)
         n = data.get("n-samples", {}).get(task, {}).get("effective")
-        flags = summarize.response_flags(samples, task) if samples else {"empty": None, "unparsed": None}
+        flags = summarize.task_flags(task, metrics, samples) or {"empty": None, "unparsed": None}
+        wrapper = data.get("config", {}).get("eval_runner") or {}
         reason = summarize.exclusion_reason(data)
         model = (record or {}).get("server", {}).get("model_id") or summarize.model_name(data) or run
 
@@ -2184,7 +2466,7 @@ change: |
             "Task": label,
             "Score %": pct(metrics.get(primary_key)),
             "Alt score %": pct(metrics.get(alt_key)),
-            "Metrics": f"{primary_name} / {alt_name}",
+            "Metrics": f"{primary_name} / {alt_name}" if alt_name else primary_name,
             "Questions": n,
             "Empty answers": empty,
             "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
@@ -2195,8 +2477,8 @@ change: |
             "Why not comparable": reason or "",
             "Model file / tag": _model_file(model, record),
             "Runtime": _runtime(data, record),
-            "Note": (record or {}).get("note", ""),
-            "Source": "eval-runner" if source == "runs" else "historical (framework)",
+            "Note": (record or {}).get("note") or wrapper.get("note") or "",
+            "Source": "eval-runner" if source == "runs" else f"historical ({wrapper.get('origin') or 'framework'})",
             "Run": run,
             "Date": _date(data, _stamp_date((record or {}).get("created_utc", ""))),
             "Report": f"{FOLDER}/{source}/{run}/report.md",
@@ -2271,18 +2553,38 @@ change: |
     - **Series.** Full runs at a larger budget (e.g. 32k) are ranked in their
       own series, never against the 8k one: more budget lets reasoning models
       finish answers they would otherwise lose.
+    - **BFCL** is v3 "simple" (400 cases, bfcl-eval 2025.8.6.2) and
+      **AgentBench** is os-std on a seed-42 sample of 100 episodes, both as
+      every historical number. An AgentBench run over all 800 episodes is
+      its own series.
+    - **RepoBench (rebuilt)** is a new series: the scripts behind the
+      historical RepoBench numbers are lost, so those aren't ranked with it.
     - Per-question samples stay on the eval-runner CT, not in Nextcloud:
       GPQA's licence forbids reposting its questions.
     """
 
-    TASK_ORDER = ("GPQA diamond", "IFEval")
+    TASK_ORDER = tuple(label for label, _, _ in TASK_LABELS.values())
 
 
-    def series_order(all_rows):
-        """Series present in the rows: the standard (8k) one first, then by budget."""
-        found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Series"]}
-        found.setdefault(STANDARD_SERIES, summarize.MAX_GEN_TOKS)
-        return sorted(found, key=lambda name: (name != STANDARD_SERIES, found[name]))
+    def standard_series(label):
+        return summarize.STANDARD_SERIES[TASK_BY_LABEL[label]]
+
+
+    def series_order(all_rows, label):
+        """Series present for one task label: its standard series first (even
+        with no rows yet), then the others by token budget."""
+        standard = standard_series(label)
+        found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Task"] == label and r["Series"]}
+        found.setdefault(standard, 0)
+        return sorted(found, key=lambda name: (name != standard, found[name], name))
+
+
+    def series_heading(label, series):
+        standard = standard_series(label)
+        if series == standard:
+            return "comparable runs"
+        kind = "token budget series" if TASK_BY_LABEL[label] in summarize.LM_EVAL_TASKS else "series"
+        return f"{series} {kind}, not comparable with {standard}"
 
 
     def ranked(all_rows, label, series):
@@ -2291,8 +2593,9 @@ change: |
 
 
     def metric_names(label):
-        """(primary, alternative) metric names for a task label."""
-        return next((primary, alt) for lbl, primary, alt in TASK_LABELS.values() if lbl == label)
+        """(primary, alternative or None) metric names for a task label."""
+        _, primary, alt = TASK_LABELS[TASK_BY_LABEL[label]]
+        return primary, alt
 
 
     def render_report(source, run_dir, record, rows):
@@ -2354,16 +2657,12 @@ change: |
                  f"Generated {generated} by `eval-run publish`. The full detail is in "
                  f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
                  "Analysis: `findings.md`.", ""]
-        for series in series_order(all_rows):
-            for label in TASK_ORDER:
+        for label in TASK_ORDER:
+            for series in series_order(all_rows, label):
                 rows = ranked(all_rows, label, series)
-                if series != STANDARD_SERIES and not rows:
-                    continue
                 main, alt = metric_names(label)
-                heading = "comparable runs" if series == STANDARD_SERIES else \
-                    f"{series} token budget series, not comparable with 8k"
-                lines += [f"## {label}: {heading}", "", f"Ranked by {main}.", "",
-                          f"| # | Model | Score | {alt} | Empty answers | Date |",
+                lines += [f"## {label}: {series_heading(label, series)}", "", f"Ranked by {main}.", "",
+                          f"| # | Model | Score | {alt or '–'} | Empty answers | Date |",
                           "|---|---|---|---|---|---|"]
                 for i, r in enumerate(rows, 1):
                     lines.append(
@@ -2418,13 +2717,13 @@ change: |
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
         wb.properties.creator = "eval-runner"
-        for series in series_order(all_rows):
-            for label in TASK_ORDER:
+        for label in TASK_ORDER:
+            for series in series_order(all_rows, label):
                 rows = ranked(all_rows, label, series)
-                if series != STANDARD_SERIES and not rows:
+                if not rows:
                     continue
                 main, alt = metric_names(label)
-                headers = ["Rank", "Model", f"Score % ({main})", f"{alt} %", "Empty answers", "Questions",
+                headers = ["Rank", "Model", f"Score % ({main})", f"{alt or 'Alt score'} %", "Empty answers", "Questions",
                            "Empty %", "Unparsed", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run"]
                 body = [[i, r["Model"], r["Score %"], r["Alt score %"], r["Empty answers"], r["Questions"],
                          r["Empty %"], r["Unparsed"], r["Runtime"], r["Model file / tag"], r["Note"],
@@ -2726,7 +3025,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "b6cf5d40edc2c7b1156d2d49d4879c919a64956092d41a6538192a5e6068d54b"
+    expect: "18dbc52fde20bd504ec7996944a4ebb0c394c551ce28a31f06639835a8477463"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3225,7 +3524,7 @@ change: |
         @unittest.skipUnless(openpyxl, "openpyxl not installed")
         def test_xlsx_has_32k_sheet(self):
             wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
-            self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "GPQA (32k)", "All results", "Notes"])
+            self.assertEqual(wb.sheetnames, ["GPQA (8k)", "GPQA (32k)", "IFEval (8k)", "All results", "Notes"])
             self.assertEqual(wb["GPQA (32k)"].max_row, 2)
 
         def test_32k_views_filter_on_series(self):
@@ -3345,11 +3644,1896 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "33760183dec4b587a01ccef205764ccc1574c597a5bd37ac45e8eff16bca048d"
+    expect: "d388fd15add71e1fc4f5089793b2ecd154cb0f221cb0d4f1d84c086b29c04e47"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
-    expect: "OK, or OK (skipped=2) where openpyxl is not installed"
+    expect: "OK, or OK (skipped=N) where openpyxl/rapidfuzz are not installed"
+    critical: true
+```
+
+### eval-runner-11a-wrapper-common
+
+```yaml
+id: eval-runner-11a-wrapper-common
+title: Add the shared wrapper results writer
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/wrapper_common.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Shared by eval-runner's own benchmark wrappers (bfcl_run.py,
+    agentbench_run.py, repobench_run.py).
+
+    Each wrapper runs one benchmark against the server recorded in the run's
+    run.json, then writes <run>/<harness>/results_<stamp>.json in the same
+    shape as lm_eval's results files, so summarize.py, publish.py and the
+    Nextcloud table treat every benchmark alike:
+
+      {"results": {task: {metric: value, ..., "empty,none": n, "errors,none": n}},
+       "n-samples": {task: {"original": N, "effective": n}},
+       "config": {"limit": ..., "model_args": {...}, "gen_kwargs": {...},
+                  "eval_runner": {"harness", "version", "series", "exclusion",
+                                  "runtime", "origin", "note"}},
+       "date": <unix time>}
+
+    config.eval_runner decides comparability (summarize.exclusion_reason):
+    series is the task's STANDARD_SERIES name for a comparable result, and
+    exclusion explains why a full run is not comparable (None if it is).
+    """
+
+    import datetime
+    import json
+    import os
+    import time
+
+
+    def load_record(run_dir):
+        with open(os.path.join(run_dir, "run.json")) as fh:
+            return json.load(fh)
+
+
+    def server(record):
+        """(OpenAI-compatible /v1 base URL, served model id, API key)."""
+        base = record["server"]["base_url"].rstrip("/")
+        return f"{base}/v1", record["server"]["model_id"], os.environ.get("OPENAI_API_KEY", "")
+
+
+    def runtime(record):
+        props = (record.get("server") or {}).get("props") or {}
+        return f"llama.cpp {props.get('build_info') or ''}".strip() if props else "OpenAI-compatible server"
+
+
+    def now_stamp():
+        return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S.%f")
+
+
+    def write_results(out_dir, task, metrics, n_effective, n_original, *, limit, model, base_url,
+                      harness, version, series, exclusion=None, max_gen_toks=None, runtime=None,
+                      origin=None, note=None, date=None, stamp=None):
+        """Write one lm_eval-shaped results file; return its path."""
+        os.makedirs(out_dir, exist_ok=True)
+        data = {
+            "results": {task: metrics},
+            "n-samples": {task: {"original": n_original, "effective": n_effective}},
+            "config": {
+                "limit": limit,
+                "model_args": {"model": model, "base_url": base_url},
+                "gen_kwargs": {"max_gen_toks": max_gen_toks} if max_gen_toks else {},
+                "eval_runner": {"harness": harness, "version": version, "series": series,
+                                "exclusion": exclusion, "runtime": runtime, "origin": origin, "note": note},
+            },
+            "date": date if date is not None else time.time(),
+        }
+        path = os.path.join(out_dir, f"results_{stamp or now_stamp()}.json")
+        with open(path, "w") as fh:
+            json.dump(data, fh, indent=2)
+            fh.write("\n")
+        return path
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/wrapper_common.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/wrapper_common.py | cut -d' ' -f1"
+    expect: "89e086e5fec47303396bc48d3ec1be90a49cc360f5de1708ab28c1eb9a4bdac9"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/wrapper_common.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-11b-bfcl-run
+
+```yaml
+id: eval-runner-11b-bfcl-run
+title: Add the BFCL wrapper
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/bfcl_run.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """BFCL (Berkeley Function Calling Leaderboard) for eval-runner.
+
+    Runs BFCL v3's "simple" category (400 single-call Python cases) with
+    bfcl-eval 2025.8.6.2 against the server in <run>/run.json -- the same
+    category, package version, default temperature (0.001) and native
+    function-calling request shape as every historical BFCL number on
+    framework. There, each model had its own copy-pasted handler edited into
+    site-packages; here one generic handler ("eval-runner-FC") is registered
+    at start-up and pointed at whatever model the server is serving. Its
+    request is the historical handlers' (messages, model, temperature, tools;
+    no max_tokens, so the server's default length applies).
+
+    Usage (inside the eval-runner-bfcl image, via `runmeta.py exec`):
+      bfcl_run.py <run_dir>
+
+    Output, all under <run_dir>/bfcl/:
+      result/eval-runner-FC/BFCL_v3_simple_result.json   raw answers (BFCL's own)
+      score/eval-runner-FC/BFCL_v3_simple_score.json     per-case verdicts
+      results_<stamp>.json                               the eval-runner summary
+
+    Resuming re-runs only the cases with no answer yet, plus any that failed
+    with an inference error (a timeout, say). With a limit (--pilot), an evenly
+    spaced subset of the 400 cases is run and scored.
+    """
+
+    import json
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    import wrapper_common as wc  # noqa: E402
+
+    TASK = "bfcl_simple"
+    CATEGORY = "simple"
+    TOTAL_CASES = 400
+    MODEL_NAME = "eval-runner-FC"  # no "_": BFCL's checker maps "_" back to "/"
+    VERSION = "2025.8.6.2"
+    SERIES = "v3 simple"
+    TEMPERATURE = "0.001"  # `bfcl generate`'s default; no historical run changed it
+    RESULT_FILE = "BFCL_v3_simple_result.json"
+    ERROR_PREFIX = "Error during inference"
+
+
+    def pilot_ids(limit, total=TOTAL_CASES):
+        """An evenly spaced subset of case ids (the earlier BFCL pilots used every 20th)."""
+        stride = max(1, total // limit)
+        return [f"{CATEGORY}_{i * stride}" for i in range(min(limit, total))]
+
+
+    def drop_errored(path):
+        """Remove inference-error entries from a result file so a resume retries
+        them (BFCL itself treats any existing entry as done). Returns how many."""
+        if not os.path.exists(path):
+            return 0
+        with open(path) as fh:
+            entries = [json.loads(line) for line in fh if line.strip()]
+        keep = [e for e in entries if not str(e.get("result", "")).startswith(ERROR_PREFIX)]
+        if len(keep) != len(entries):
+            with open(path, "w") as fh:
+                for entry in keep:
+                    fh.write(json.dumps(entry) + "\n")
+        return len(entries) - len(keep)
+
+
+    def response_counts(entries):
+        """(empty, errors): answers with neither a tool call nor text, and
+        requests that failed outright."""
+        empty = sum(1 for e in entries if e.get("result") in ("", [], None))
+        errors = sum(1 for e in entries if str(e.get("result", "")).startswith(ERROR_PREFIX))
+        return empty, errors
+
+
+    def register(base_url, model_id, api_key):
+        """Add the generic eval-runner-FC model to BFCL's model table."""
+        from bfcl_eval.constants import model_config as mc
+        from bfcl_eval.model_handler.api_inference.openai_completion import OpenAICompletionsHandler
+        from openai import OpenAI
+
+        class EvalRunnerFCHandler(OpenAICompletionsHandler):
+            def __init__(self, model_name, temperature):
+                super().__init__(model_name, temperature)
+                self.client = OpenAI(base_url=base_url, api_key=api_key or "EMPTY", timeout=3600)
+
+            def _query_FC(self, inference_data):  # noqa: N802 (BFCL's name)
+                message = inference_data["message"]
+                tools = inference_data["tools"]
+                inference_data["inference_input_log"] = {"message": repr(message), "tools": tools}
+                kwargs = {"messages": message, "model": model_id, "temperature": self.temperature}
+                if len(tools) > 0:
+                    kwargs["tools"] = tools
+                return self.generate_with_backoff(**kwargs)
+
+        mc.MODEL_CONFIG_MAPPING[MODEL_NAME] = mc.ModelConfig(
+            model_name=MODEL_NAME, display_name=f"eval-runner: {model_id}", url="local", org="local",
+            license="n/a", model_handler=EvalRunnerFCHandler, input_price=None, output_price=None,
+            is_fc_model=True, underscore_to_dot=True,
+        )
+
+
+    def generate(limit, project_root):
+        import typer
+        from bfcl_eval.__main__ import cli
+
+        args = ["generate", "--model", MODEL_NAME, "--test-category", CATEGORY,
+                "--temperature", TEMPERATURE, "--num-threads", "1"]
+        if limit:
+            with open(os.path.join(project_root, "test_case_ids_to_generate.json"), "w") as fh:
+                json.dump({CATEGORY: pilot_ids(limit)}, fh)
+            args.append("--run-ids")
+        typer.main.get_command(cli)(args, standalone_mode=False)
+
+
+    def score():
+        """Score whatever has been generated with BFCL's own AST checker (the
+        path `bfcl evaluate` takes for "simple"), restricted to the generated
+        cases so a pilot subset scores too. Returns (accuracy, total, entries)."""
+        from bfcl_eval.constants.eval_config import POSSIBLE_ANSWER_PATH, PROMPT_PATH, RESULT_PATH, SCORE_PATH
+        from bfcl_eval.eval_checker.eval_runner import ast_file_runner, get_handler
+        from bfcl_eval.utils import find_file_with_suffix, load_file
+
+        entries = load_file(RESULT_PATH / MODEL_NAME / RESULT_FILE, sort_by_id=True)
+        ids = {e["id"] for e in entries}
+        prompt = [p for p in load_file(find_file_with_suffix(PROMPT_PATH, CATEGORY), sort_by_id=True) if p["id"] in ids]
+        answers = [a for a in load_file(find_file_with_suffix(POSSIBLE_ANSWER_PATH, CATEGORY), sort_by_id=True)
+                   if a["id"] in ids]
+        accuracy, total = ast_file_runner(get_handler(MODEL_NAME), entries, prompt, answers, "Python",
+                                          CATEGORY, MODEL_NAME, SCORE_PATH)
+        return accuracy, total, entries
+
+
+    def main(argv=None):
+        argv = argv if argv is not None else sys.argv[1:]
+        if len(argv) != 1:
+            print("usage: bfcl_run.py <run_dir>", file=sys.stderr)
+            return 2
+        run_dir = argv[0]
+        record = wc.load_record(run_dir)
+        project_root = os.path.join(run_dir, "bfcl")
+        os.makedirs(project_root, exist_ok=True)
+        # BFCL resolves its result/score paths from this at import time.
+        os.environ["BFCL_PROJECT_ROOT"] = project_root
+
+        base_url, model_id, api_key = wc.server(record)
+        register(base_url, model_id, api_key)
+        retried = drop_errored(os.path.join(project_root, "result", MODEL_NAME, RESULT_FILE))
+        if retried:
+            print(f"bfcl_run: retrying {retried} cases that failed with an inference error")
+        limit = record.get("limit")
+        generate(limit, project_root)
+        accuracy, total, entries = score()
+        empty, errors = response_counts(entries)
+        path = wc.write_results(
+            project_root, TASK,
+            {"accuracy,none": accuracy, "correct,none": round(accuracy * total), "empty,none": empty,
+             "errors,none": errors},
+            total, TOTAL_CASES, limit=limit, model=model_id, base_url=base_url, harness="bfcl",
+            version=VERSION, series=SERIES, runtime=wc.runtime(record),
+        )
+        print(f"bfcl_run: accuracy {accuracy:.4f} on {total} cases (empty {empty}, errors {errors}) -> {path}")
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/bfcl_run.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/bfcl_run.py | cut -d' ' -f1"
+    expect: "4678968c8b26a596eb3562152d3795732aac9a4b433b9de2227f49627446d931"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/bfcl_run.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-11c-agentbench-run
+
+```yaml
+id: eval-runner-11c-agentbench-run
+title: Add the AgentBench wrapper
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/agentbench_run.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """AgentBench os-std for eval-runner.
+
+    Runs AgentBench's os-std task (Eugleo/agent-bench at the pinned commit:
+    the prompt-injection variant of OS interaction, 800 episodes = 14 base
+    tasks x injection variants) on 100 episodes sampled with seed 42 -- the
+    same sample, agent settings (temperature 0, max_tokens 3072, HTTP agent,
+    role_content_dict prompter) and success metric as every historical
+    AgentBench number. Each episode runs in a throwaway local-os/default
+    container on the CT's Docker (socket mounted by `eval-run agentbench`),
+    with networking disabled; see Dockerfile.agentbench-sandbox for why that
+    doesn't change what the tasks see.
+
+    Usage (inside the eval-runner-agentbench image, via `runmeta.py exec`):
+      agentbench_run.py <run_dir>
+
+    Output, under <run_dir>/agentbench/:
+      outputs/eval-runner/os-std/runs.jsonl, overall.json   AgentBench's own
+      results_<stamp>.json                                  the eval-runner summary
+
+    Resuming re-runs only the episodes not yet in runs.jsonl (AgentBench's
+    assigner does this itself for an existing output folder).
+    """
+
+    import json
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    import wrapper_common as wc  # noqa: E402
+
+    AGENTBENCH_ROOT = "/opt/agentbench"
+    TASK = "agentbench_os_std"
+    AB_TASK = "os-std"
+    AGENT = "eval-runner"
+    SAMPLE_LIMIT = 100
+    SAMPLE_SEED = 42
+    TOTAL_EPISODES = 800
+    MAX_TOKENS = 3072
+    VERSION = "0cfef97+eval-runner.patch"
+    SERIES = "100 seeded"
+    CONTROLLER = "http://localhost:5000/api"
+    FAILED_STATUSES = ("unknown", "task error")
+
+
+    def agent_config(chat_url, model_id):
+        """AgentBench agent definition, as the historical per-model files on
+        garuda, except the API key comes from the environment at request time."""
+        return {AGENT: {
+            "module": "src.client.agents.HTTPAgent",
+            "parameters": {
+                "name": AGENT,
+                "url": chat_url,
+                "headers": {"Content-Type": "application/json", "Authorization": "Bearer ${OPENAI_API_KEY}"},
+                "body": {"model": model_id, "temperature": 0, "max_tokens": MAX_TOKENS},
+                "prompter": {"name": "role_content_dict", "args": {"agent_role": "assistant"}},
+                "return_format": "{response[choices][0][message][content]}",
+            },
+        }}
+
+
+    def assignment_config(agent_file, output_dir):
+        return {
+            "definition": {
+                "task": {
+                    "overwrite": {"module": "src.client.TaskClient",
+                                  "parameters": {"controller_address": CONTROLLER}},
+                    "import": os.path.join(AGENTBENCH_ROOT, "configs/tasks/task_assembly.yaml"),
+                },
+                "agent": {"import": [agent_file]},
+            },
+            "concurrency": {"task": {AB_TASK: 1}, "agent": {AGENT: 1}},
+            "assignments": [{"agent": [AGENT], "task": [AB_TASK]}],
+            "output": output_dir,
+        }
+
+
+    def episode_counts(runs_path):
+        """(episodes, empty, errors) from AgentBench's runs.jsonl: episodes whose
+        last agent turn was empty, and episodes that failed rather than being
+        judged (client error, or status unknown / task error)."""
+        episodes = empty = errors = 0
+        if not os.path.exists(runs_path):
+            return 0, 0, 0
+        with open(runs_path) as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                run = json.loads(line)
+                output = run.get("output") or {}
+                episodes += 1
+                turns = [h for h in output.get("history") or [] if h.get("role") == "agent"]
+                if turns and not str(turns[-1].get("content") or "").strip():
+                    empty += 1
+                if run.get("error") or output.get("status") in FAILED_STATUSES:
+                    errors += 1
+        return episodes, empty, errors
+
+
+    def injection_rate(runs_path):
+        """Share of injected episodes where the injection succeeded (lower is better)."""
+        injected = succeeded = 0
+        with open(runs_path) as fh:
+            for line in fh:
+                result = ((json.loads(line).get("output") or {}).get("result") or {})
+                if (result.get("metadata") or {}).get("injection_present"):
+                    injected += 1
+                    succeeded += bool(result.get("injection_successful"))
+        return succeeded / injected if injected else None
+
+
+    def wait_for_worker(timeout=120):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"{CONTROLLER}/list_workers", timeout=5) as resp:
+                    workers = json.load(resp)
+                if AB_TASK in json.dumps(workers):
+                    return
+            except OSError:
+                pass
+            time.sleep(2)
+        raise RuntimeError(f"AgentBench task worker for {AB_TASK} did not register within {timeout}s")
+
+
+    def write_yaml(path, data):
+        import yaml
+        with open(path, "w") as fh:
+            yaml.safe_dump(data, fh, sort_keys=False)
+
+
+    def main(argv=None):
+        argv = argv if argv is not None else sys.argv[1:]
+        if len(argv) != 1:
+            print("usage: agentbench_run.py <run_dir>", file=sys.stderr)
+            return 2
+        run_dir = argv[0]
+        record = wc.load_record(run_dir)
+        base_url, model_id, _ = wc.server(record)
+        limit = record.get("limit")
+        out_root = os.path.join(run_dir, "agentbench")
+        output_dir = os.path.join(out_root, "outputs")
+        os.makedirs(out_root, exist_ok=True)
+
+        conf_dir = "/tmp/eval-runner-agentbench"
+        os.makedirs(conf_dir, exist_ok=True)
+        agent_file = os.path.join(conf_dir, "agent.yaml")
+        assignment_file = os.path.join(conf_dir, "assignment.yaml")
+        write_yaml(agent_file, agent_config(f"{base_url}/chat/completions", model_id))
+        write_yaml(assignment_file, assignment_config(agent_file, output_dir))
+
+        env = dict(os.environ, AGENTBENCH_SAMPLE_LIMIT=str(limit or SAMPLE_LIMIT),
+                   AGENTBENCH_SAMPLE_SEED=str(SAMPLE_SEED))
+        server = subprocess.Popen([sys.executable, "-m", "src.start_task", "-a"], cwd=AGENTBENCH_ROOT, env=env,
+                                  start_new_session=True)
+        try:
+            wait_for_worker()
+            subprocess.run([sys.executable, "-m", "src.assigner", "--config", assignment_file],
+                           cwd=AGENTBENCH_ROOT, env=env, check=True)
+        finally:
+            os.killpg(server.pid, signal.SIGTERM)
+            server.wait(timeout=60)
+
+        task_dir = os.path.join(output_dir, AGENT, AB_TASK)
+        with open(os.path.join(task_dir, "overall.json")) as fh:
+            overall = json.load(fh)["custom"]["overall"]
+        runs_path = os.path.join(task_dir, "runs.jsonl")
+        episodes, empty, errors = episode_counts(runs_path)
+        path = wc.write_results(
+            out_root, TASK,
+            {"success_rate,none": overall["acc"], "passed,none": overall["pass"],
+             "injection_success_rate,none": injection_rate(runs_path), "empty,none": empty,
+             "errors,none": errors},
+            overall["total"], TOTAL_EPISODES, limit=limit, model=model_id, base_url=base_url,
+            harness="agentbench", version=VERSION, series=SERIES, max_gen_toks=MAX_TOKENS,
+            runtime=wc.runtime(record),
+        )
+        print(f"agentbench_run: success {overall['acc']:.2f} on {overall['total']} episodes "
+              f"({episodes} recorded, empty {empty}, errors {errors}) -> {path}")
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/agentbench_run.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/agentbench_run.py | cut -d' ' -f1"
+    expect: "b137117d517a84e3247850f3722e28ef0aa755447607f69938908614fd0f5520"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/agentbench_run.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-11d-repobench-run
+
+```yaml
+id: eval-runner-11d-repobench-run
+title: Add the RepoBench (rebuilt) wrapper
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/repobench_run.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """RepoBench (rebuilt) for eval-runner: next-line code completion.
+
+    The historical RepoBench numbers came from custom scripts that are lost
+    (they lived only on the deleted ai-stack LXC), so this is a rebuild from
+    upstream RepoBench's own code (Leolty/repobench @ e0cfd34: run.py,
+    data/utils.py, eval.py, evaluation/metrics.py) on the same data, and its
+    results are a new series -- not comparable with the historical numbers.
+
+    What it does, following upstream:
+      - data: tianyang/repobench_python_v1.1, settings cross_file_first,
+        cross_file_random and in_file, levels 2k/4k/8k/12k/16k (upstream's
+        default levels);
+      - prompt: upstream construct_prompt() -- "# Repo Name", the cross-file
+        snippets with "# Path" headers, then the in-file code -- with the
+        cross-file part cut back line by line until the whole prompt fits in
+        15800 tokens, counted by the served model's own tokenizer (llama-server
+        /tokenize);
+      - generation: raw text completion (/v1/completions, no chat template),
+        128 new tokens, then upstream's get_first_line_not_comment();
+      - metrics: exact match (whitespace-split equality) and edit similarity
+        (fuzz.ratio, 0-100), per setting, then the average weighted by sample
+        count (upstream eval.py). CodeBLEU is not computed (upstream's needs
+        tree-sitter grammars; EM/ES are the headline numbers).
+
+    Deviations from upstream, both to make runs reproducible and comparable
+    between models: greedy decoding (temperature 0, upstream samples at 0.2),
+    and a seeded sample of 100 examples per setting and level (upstream runs
+    everything in a one-month date window; the historical runs also sampled
+    100 per level). No date filter.
+
+    Usage (inside the eval-runner image, via `runmeta.py exec`):
+      repobench_run.py <run_dir>
+
+    Output, under <run_dir>/repobench/: predictions_<setting>.jsonl (one line
+    per answered example; a resume skips those) and results_<stamp>.json.
+    """
+
+    import json
+    import os
+    import random
+    import re
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    import wrapper_common as wc  # noqa: E402
+
+    TASK = "repobench_python"
+    DATASET = "tianyang/repobench_python_v1.1"
+    SETTINGS = ("cross_file_first", "cross_file_random", "in_file")
+    LEVELS = ("2k", "4k", "8k", "12k", "16k")
+    PER_LEVEL = 100
+    SEED = 42
+    MAX_PROMPT_TOKENS = 15800
+    MAX_NEW_TOKENS = 128
+    VERSION = "upstream e0cfd34 (rebuilt)"
+    SERIES = "rebuilt"
+    RETRIES = 3
+
+
+    # --------------------------------------------------------------- upstream
+
+    def get_first_line_not_comment(code, language="python"):
+        """Upstream run.py's helper (Python branch), unchanged in behaviour."""
+        code = code.lstrip("\n")
+        lines = code.split("\n")
+        in_multiline_comment = False
+        for line in lines:
+            if not line.strip():
+                continue
+            if not in_multiline_comment and (line.strip().startswith('"""') or line.strip().startswith("'''")):
+                in_multiline_comment = True
+                continue
+            if in_multiline_comment and (line.strip().endswith('"""') or line.strip().endswith("'''")):
+                in_multiline_comment = False
+                continue
+            if in_multiline_comment:
+                continue
+            if line.strip().startswith("#"):
+                continue
+            return line
+        return lines[0]
+
+
+    def prompt_parts(data):
+        """Upstream construct_prompt()'s cross-file and in-file parts (Python)."""
+        cross = f"# Repo Name: {data['repo_name']}\n"
+        for snippet in data["context"]:
+            cross += f"# Path: {snippet['path']}\n{snippet['snippet']}" + "\n\n"
+        in_file = f"# Path: {data['file_path']}\n{data['import_statement']}\n{data['cropped_code'].rstrip()}\n"
+        return cross, in_file
+
+
+    def construct_prompt(data, count_tokens, max_tokens=MAX_PROMPT_TOKENS):
+        """Upstream construct_prompt(). Upstream drops cross-file lines from the
+        end, subtracting each line's token count, until the excess is gone;
+        here the longest prefix of cross-file lines that fits is found by
+        binary search over whole-prefix token counts (a handful of /tokenize
+        calls instead of one per line -- the same cut up to token-boundary
+        effects at line joins)."""
+        cross, in_file = prompt_parts(data)
+        in_tokens = count_tokens(in_file)
+        if count_tokens(cross) + in_tokens > max_tokens:
+            lines = cross.split("\n")
+            lo, hi = 0, len(lines)  # invariant: lines[:lo] fits
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if count_tokens("\n".join(lines[:mid]) + "\n\n") + in_tokens <= max_tokens:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            cross = "\n".join(lines[:lo]) + "\n\n"
+        return re.sub(r"\n{4,}", "\n\n", cross + in_file)
+
+
+    def exact_match(pred, gt):
+        return pred.split() == gt.split()
+
+
+    def edit_similarity(pred, gt):
+        """fuzzywuzzy's fuzz.ratio (with python-Levenshtein): the normalised
+        Indel similarity x 100, rounded -- rapidfuzz computes the same ratio."""
+        from rapidfuzz import fuzz
+        return int(round(fuzz.ratio(pred, gt)))
+
+
+    def score(predictions):
+        """{setting: (n, EM %, ES)} plus the sample-weighted averages, as upstream
+        eval.py (per-setting EM rounded to 2 dp before weighting)."""
+        per_setting = {}
+        total = em_sum = es_sum = 0
+        for setting in SETTINGS:
+            rows = predictions.get(setting) or []
+            if not rows:
+                continue
+            n = len(rows)
+            em = round(100 * sum(exact_match(r["pred"], r["gt"]) for r in rows) / n, 2)
+            es = round(sum(edit_similarity(r["pred"], r["gt"]) for r in rows) / n, 2)
+            per_setting[setting] = (n, em, es)
+            total += n
+            em_sum += em * n
+            es_sum += es * n
+        if not total:
+            return per_setting, None, None, 0
+        return per_setting, round(em_sum / total, 2), round(es_sum / total, 2), total
+
+
+    # ------------------------------------------------------------------ data
+
+    def sample(rows_by_level, per_level, seed=SEED):
+        """Seeded sample of up to per_level dataset indices per level, in index order."""
+        rng = random.Random(seed)
+        chosen = []
+        for level in LEVELS:
+            indices = rows_by_level.get(level, [])
+            chosen += sorted(rng.sample(indices, min(per_level, len(indices))))
+        return chosen
+
+
+    def load_samples(per_level):
+        """{setting: [(dataset index, row)]} for the seeded sample."""
+        from datasets import load_dataset
+        out = {}
+        for setting in SETTINGS:
+            data = load_dataset(DATASET, split=setting)
+            by_level = {}
+            for i, level in enumerate(data["level"]):
+                by_level.setdefault(level, []).append(i)
+            out[setting] = [(i, data[i]) for i in sample(by_level, per_level)]
+        return out
+
+
+    # ---------------------------------------------------------------- server
+
+    class Server:
+        def __init__(self, base_url, model_id, api_key):
+            self.v1 = base_url  # .../v1
+            self.root = base_url[: -len("/v1")] if base_url.endswith("/v1") else base_url
+            self.model = model_id
+            self.headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            self.tokenize_ok = True
+
+        def _post(self, url, body, timeout):
+            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=self.headers, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.load(resp)
+
+        def count_tokens(self, text):
+            """llama-server /tokenize; ~4 characters per token if unavailable."""
+            if self.tokenize_ok:
+                try:
+                    return len(self._post(f"{self.root}/tokenize", {"content": text}, 300)["tokens"])
+                except (urllib.error.URLError, OSError, KeyError, ValueError):
+                    self.tokenize_ok = False
+                    print("repobench_run: /tokenize unavailable, estimating 4 characters per token")
+            return len(text) // 4
+
+        def complete(self, prompt):
+            body = {"model": self.model, "prompt": prompt, "max_tokens": MAX_NEW_TOKENS, "temperature": 0}
+            return self._post(f"{self.v1}/completions", body, 3600)["choices"][0].get("text") or ""
+
+
+    def read_done(path):
+        done = {}
+        if os.path.exists(path):
+            with open(path) as fh:
+                for line in fh:
+                    if line.strip():
+                        row = json.loads(line)
+                        done[row["idx"]] = row
+        return done
+
+
+    def main(argv=None):
+        argv = argv if argv is not None else sys.argv[1:]
+        if len(argv) != 1:
+            print("usage: repobench_run.py <run_dir>", file=sys.stderr)
+            return 2
+        run_dir = argv[0]
+        record = wc.load_record(run_dir)
+        base_url, model_id, api_key = wc.server(record)
+        limit = record.get("limit")
+        per_level = limit or PER_LEVEL
+        out_dir = os.path.join(run_dir, "repobench")
+        os.makedirs(out_dir, exist_ok=True)
+        server = Server(base_url, model_id, api_key)
+
+        predictions, errors = {}, 0
+        for setting, rows in load_samples(per_level).items():
+            path = os.path.join(out_dir, f"predictions_{setting}.jsonl")
+            done = read_done(path)
+            with open(path, "a") as fh:
+                for idx, data in rows:
+                    if idx in done:
+                        continue
+                    prompt = construct_prompt(data, server.count_tokens)
+                    for attempt in range(RETRIES):
+                        try:
+                            raw = server.complete(prompt)
+                            break
+                        except (urllib.error.URLError, OSError, KeyError, ValueError) as err:
+                            print(f"repobench_run: {setting} {idx} attempt {attempt + 1}: {err}")
+                            time.sleep(5 * (attempt + 1))
+                    else:
+                        errors += 1  # not recorded, so a resume retries it
+                        continue
+                    row = {"idx": idx, "level": data["level"], "pred": get_first_line_not_comment(raw),
+                           "gt": data["next_line"], "empty": not raw.strip()}
+                    fh.write(json.dumps(row) + "\n")
+                    fh.flush()
+                    done[idx] = row
+            predictions[setting] = [done[idx] for idx, _ in rows if idx in done]
+
+        per_setting, em, es, total = score(predictions)
+        metrics = {"exact_match,weighted": em / 100 if em is not None else None,
+                   "edit_similarity,weighted": es / 100 if es is not None else None,
+                   "empty,none": sum(r.get("empty", False) for rows in predictions.values() for r in rows),
+                   "errors,none": errors}
+        for setting, (n, s_em, s_es) in per_setting.items():
+            metrics[f"exact_match,{setting}"] = s_em / 100
+            metrics[f"edit_similarity,{setting}"] = s_es / 100
+            metrics[f"n,{setting}"] = n
+        path = wc.write_results(
+            out_dir, TASK, metrics, total, len(SETTINGS) * len(LEVELS) * PER_LEVEL, limit=limit, model=model_id,
+            base_url=base_url, harness="repobench", version=VERSION, series=SERIES, max_gen_toks=MAX_NEW_TOKENS,
+            runtime=wc.runtime(record),
+        )
+        print(f"repobench_run: EM {em} / ES {es} on {total} examples (errors {errors}) -> {path}")
+        return 0 if not errors else 1
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/repobench_run.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/repobench_run.py | cut -d' ' -f1"
+    expect: "b0d064e8b7758fd2619852844a6f3d54ff17aabd94151cb0cf538d5a614c2f08"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/repobench_run.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-11e-import-history
+
+```yaml
+id: eval-runner-11e-import-history
+title: Add the historical BFCL/AgentBench importer
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/import_history.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """One-off import of historical BFCL and AgentBench results into
+    eval-runner's results tree, as eval-runner results files (wrapper_common
+    format), so they appear in `eval-run results`, the leaderboard and the
+    Nextcloud table next to new runs -- as the GPQA/IFEval history already does.
+    Not part of any image; run by the operator (docs/eval-runner/plan.md).
+
+      probe-bfcl <site-packages dir>
+          Run with framework's BFCL venv python (~/bfcl-eval/venv/bin/python,
+          dir ~/bfcl-eval/venv/lib/python3.14/site-packages):
+          prints JSON describing every BFCL_v3_simple score in that venv --
+          accuracy, counts, empty/error answers, date, and the Ollama tag /
+          endpoint from each model's handler.
+      bfcl <probe.json> <results_root>
+          Write one results file per probed model under
+          <results_root>/_historical/bfcl-<model>/bfcl/.
+      agentbench <outputs_dir> <results_root>
+          For each <outputs_dir>/<stamp>/<agent>/os-std/overall.json (garuda's
+          ~/eval-harnesses/AgentBench/outputs), write a results file under
+          <results_root>/_historical/agentbench-<agent>-<stamp>/agentbench/.
+          100-episode runs are the comparable "100 seeded" series (the seed-42
+          sample every later run used); a full 800-episode run is listed as its
+          own series.
+    """
+
+    import datetime
+    import glob
+    import json
+    import os
+    import re
+    import sys
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    import wrapper_common as wc  # noqa: E402
+
+    BFCL_VERSION = "2025.8.6.2"
+
+
+    def probe_bfcl(root):
+        import inspect
+        os.environ.setdefault("BFCL_PROJECT_ROOT", "/tmp/bfcl-probe-root")
+        from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING
+        out = []
+        for score in sorted(glob.glob(f"{root}/score/*/BFCL_v3_simple_score.json")):
+            name = score.split("/")[-2]
+            with open(score) as fh:
+                head = json.loads(fh.readline())
+            result = f"{root}/result/{name}/BFCL_v3_simple_result.json"
+            empty = errors = 0
+            if os.path.exists(result):
+                with open(result) as fh:
+                    for line in fh:
+                        value = json.loads(line).get("result")
+                        empty += value in ("", [], None)
+                        errors += str(value).startswith("Error during inference")
+            cfg = MODEL_CONFIG_MAPPING.get(name)
+            tag = base = None
+            if cfg is not None:
+                src = inspect.getsource(cfg.model_handler)
+                tag = getattr(cfg.model_handler, "OLLAMA_MODEL_ID", None)
+                base_match = re.search(r'getenv\("\w+",\s*"([^"]+)"\)', src)
+                base = base_match.group(1) if base_match else None
+            out.append({"name": name, "score": head, "mtime": os.path.getmtime(score), "empty": empty,
+                        "errors": errors, "tag": tag, "base_url": base})
+        return out
+
+
+    def bfcl_runtime(entry):
+        base = entry.get("base_url") or ""
+        if ":11434" in base or "-Ollama-" in entry["name"]:
+            return "Ollama"
+        if ":8080" in base:
+            return "llama.cpp (router)"
+        return "llama.cpp (router, by name)"
+
+
+    def bfcl_note(name):
+        effort = re.search(r"-(High|Medium|Low|None)-Ollama", name)
+        return f"reasoning effort {effort.group(1).lower()}" if effort else ""
+
+
+    def import_bfcl(probe, results_root):
+        paths = []
+        for entry in probe:
+            score = entry["score"]
+            model = entry["tag"] or re.sub(r"-FC$", "", entry["name"])
+            full = score["total_count"] == 400
+            stamp = datetime.datetime.fromtimestamp(entry["mtime"], datetime.timezone.utc)
+            paths.append(wc.write_results(
+                os.path.join(results_root, "_historical", f"bfcl-{entry['name']}", "bfcl"), "bfcl_simple",
+                {"accuracy,none": score["accuracy"], "correct,none": score["correct_count"],
+                 "empty,none": entry["empty"], "errors,none": entry["errors"]},
+                score["total_count"], 400, limit=None if full else score["total_count"], model=model,
+                base_url=entry.get("base_url"), harness="bfcl", version=BFCL_VERSION,
+                series="v3 simple" if full else None, runtime=bfcl_runtime(entry), origin="framework",
+                note=bfcl_note(entry["name"]), date=entry["mtime"], stamp=stamp.strftime("%Y-%m-%dT%H-%M-%S.000000"),
+            ))
+        return paths
+
+
+    def import_agentbench(outputs_dir, results_root):
+        import agentbench_run
+        paths = []
+        for overall_path in sorted(glob.glob(os.path.join(outputs_dir, "*", "*", "os-std", "overall.json"))):
+            task_dir = os.path.dirname(overall_path)
+            agent = os.path.basename(os.path.dirname(task_dir))
+            run_stamp = os.path.basename(os.path.dirname(os.path.dirname(task_dir)))
+            with open(overall_path) as fh:
+                overall = json.load(fh)["custom"]["overall"]
+            runs = os.path.join(task_dir, "runs.jsonl")
+            _, empty, errors = agentbench_run.episode_counts(runs)
+            sampled = overall["total"] == agentbench_run.SAMPLE_LIMIT
+            series = agentbench_run.SERIES if sampled else f"{overall['total']} full"
+            exclusion = None if sampled else (f"all {overall['total']} episodes (separate series; the ranked "
+                                              f"series is the seed-42 sample of {agentbench_run.SAMPLE_LIMIT})")
+            when = datetime.datetime.strptime(run_stamp, "%Y-%m-%d-%H-%M-%S")
+            paths.append(wc.write_results(
+                os.path.join(results_root, "_historical", f"agentbench-{agent}-{run_stamp}", "agentbench"),
+                "agentbench_os_std",
+                {"success_rate,none": overall["acc"], "passed,none": overall["pass"],
+                 "injection_success_rate,none": agentbench_run.injection_rate(runs) if os.path.exists(runs) else None,
+                 "empty,none": empty, "errors,none": errors},
+                overall["total"], agentbench_run.TOTAL_EPISODES, limit=None, model=agent, base_url=None,
+                harness="agentbench", version="0cfef97 (garuda)", series=series, exclusion=exclusion,
+                max_gen_toks=agentbench_run.MAX_TOKENS, runtime="Ollama", origin="garuda",
+                date=when.replace(tzinfo=datetime.timezone.utc).timestamp(),
+                stamp=when.strftime("%Y-%m-%dT%H-%M-%S.000000"),
+            ))
+        return paths
+
+
+    def main(argv=None):
+        argv = argv if argv is not None else sys.argv[1:]
+        if argv[:1] == ["probe-bfcl"] and len(argv) == 2:
+            print(json.dumps(probe_bfcl(argv[1])))
+            return 0
+        if argv[:1] == ["bfcl"] and len(argv) == 3:
+            with open(argv[1]) as fh:
+                paths = import_bfcl(json.load(fh), argv[2])
+        elif argv[:1] == ["agentbench"] and len(argv) == 3:
+            paths = import_agentbench(argv[1], argv[2])
+        else:
+            print(__doc__, file=sys.stderr)
+            return 2
+        for path in paths:
+            print(path)
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/import_history.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/import_history.py | cut -d' ' -f1"
+    expect: "cc4f84ea4b8d254f8fa68a5719da1914374be450bb4eecd9703288aeafe4b762"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/import_history.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-11f-wrapper-selftest
+
+```yaml
+id: eval-runner-11f-wrapper-selftest
+title: Add the wrapper selftest script
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/wrapper_selftest.sh with exactly this content (byte for byte, including the
+  trailing newline), then run chmod 0755 on it. It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    #!/bin/sh
+    # Self-test for one of eval-runner's benchmark wrappers (bfcl, agentbench,
+    # repobench), run inside that wrapper's image by `eval-run selftest` (and
+    # by the deploy, as a gate). Same runmeta.py start/exec path as a real run,
+    # against mock_openai.py instead of Framework -- no GPU. Proves:
+    #   1. a --limit run completes and writes an eval-runner results file
+    #      that summarize.py accepts (numeric headline metric)
+    #   2. every request matched the historical request shape for this
+    #      benchmark (selftest_checks.py --harness), with the right count
+    #   3. resume: re-running the same run sends zero new requests
+    # Scores are meaningless (canned replies).
+    #
+    # Usage: wrapper_selftest.sh <harness> <limit> <expected requests>
+    set -eu
+
+    harness="$1"
+    limit="$2"
+    expect="$3"
+    d=/opt/eval-runner
+    root=/results/_selftest
+    log="/tmp/selftest-${harness}-requests.jsonl"
+    pids=""
+    cleanup() {
+      for pid in $pids; do
+        kill "$pid" 2>/dev/null || true
+      done
+    }
+    trap cleanup EXIT
+
+    # AgentBench's agent parses "Act: answer(...)" -- answering at once makes
+    # every episode one request long.
+    case "$harness" in
+      agentbench) reply="Think: done. Act: answer(0)" ;;
+      repobench) reply="return value" ;;
+      *) reply="ok" ;;
+    esac
+
+    rm -f "$log"
+    export OPENAI_API_KEY=selftest
+    MOCK_PORT=18082 MOCK_REQUEST_LOG="$log" MOCK_REPLY="$reply" python "$d/mock_openai.py" &
+    pids="$pids $!"
+    i=0
+    until python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18082/v1/models', timeout=1)" 2>/dev/null; do
+      i=$((i + 1))
+      if [ "$i" -ge 50 ]; then
+        echo "selftest FAILED: mock server did not start" >&2
+        exit 1
+      fi
+      sleep 0.2
+    done
+
+    mkdir -p "$root"
+    echo "== $harness 1. run at --limit $limit against the mock"
+    run=$(python "$d/runmeta.py" start --base-url http://127.0.0.1:18082 --task "$harness" --limit "$limit" \
+      --results-root "$root" --stamp "${SELFTEST_RUN:?SELFTEST_RUN must be set}" --note selftest)
+    dir="$root/$run"
+    python "$d/runmeta.py" exec "$dir"
+    python "$d/summarize.py" --check "$dir"
+
+    echo "== $harness 2. request shape"
+    python "$d/selftest_checks.py" --harness "$harness" --requests "$log" --expect-requests "$expect" \
+      --model selftest-mock
+
+    echo "== $harness 3. resume sends no new requests"
+    python "$d/runmeta.py" exec "$dir"
+    python "$d/selftest_checks.py" --harness "$harness" --requests "$log" --expect-requests "$expect" \
+      --model selftest-mock
+
+    echo "$harness selftest OK"
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/wrapper_selftest.sh
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/wrapper_selftest.sh | cut -d' ' -f1"
+    expect: "befb8dde8438ebb76160378443e0e5cb89b5538b7fedacc10afbc039cc4d0170"
+    critical: true
+  - id: shellcheck
+    cmd: "shellcheck -s sh terraform/lxc/ansible/files/eval-runner/wrapper_selftest.sh"
+    expect: "no output, exit 0"
+    critical: true
+```
+
+### eval-runner-11g-dockerfile-bfcl
+
+```yaml
+id: eval-runner-11g-dockerfile-bfcl
+title: Add the BFCL image
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/Dockerfile.bfcl with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # eval-runner-bfcl -- BFCL (bfcl-eval 2025.8.6.2) as a thin HTTP client of
+    # Framework's llama-server. Built locally on ai-services-stack by
+    # deploy-ai-services-stack.yml next to eval-runner:local and started one run
+    # at a time by /usr/local/bin/eval-run (`eval-run bfcl`). Its own image
+    # because bfcl-eval pins numpy/tree-sitter/openai versions that lm_eval's
+    # image doesn't share. See docs/eval-runner/plan.md.
+    FROM python:3.12-slim
+
+    # Same uid-1000 convention as eval-runner:local (results dir is owned by 1000).
+    RUN useradd --create-home --uid 1000 app
+
+    WORKDIR /results
+
+    # Constrained to the exact package set of the framework venv behind every
+    # historical BFCL number, so new scores stay comparable with them.
+    COPY bfcl-constraints.txt /tmp/bfcl-constraints.txt
+    RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt "bfcl-eval==2025.8.6.2" \
+        && rm /tmp/bfcl-constraints.txt
+
+    # The wrapper, run setup (runmeta.py exec), the shared results writer and
+    # the selftest pieces. summarize/publish/selftest_checks are what the
+    # selftest's checks import.
+    COPY bfcl_run.py mock_openai.py publish.py runmeta.py selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+    RUN chmod 0755 /opt/eval-runner/wrapper_selftest.sh
+
+    USER app
+    ENV HOME=/home/app
+    ENTRYPOINT ["python"]
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/Dockerfile.bfcl
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile.bfcl | cut -d' ' -f1"
+    expect: "f84419c54b47683ccd3bfff3a7c6ba4874e0dc1c9a15cce776de8816fe171700"
+    critical: true
+```
+
+### eval-runner-11h-bfcl-constraints
+
+```yaml
+id: eval-runner-11h-bfcl-constraints
+title: Add the BFCL pip constraints
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/bfcl-constraints.txt with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # Exact package set of the bfcl-eval venv on framework (~/bfcl-eval/venv,
+    # pip freeze 2026-10-01) that produced every historical BFCL number.
+    # Used as pip constraints by Dockerfile.bfcl. That venv ran Python 3.14;
+    # the image runs 3.12 (numpy 1.26.4 has no 3.14 wheels), same packages.
+    aiohappyeyeballs==2.7.1
+    aiohttp==3.14.3
+    aiosignal==1.4.0
+    annotated-doc==0.0.5
+    annotated-types==0.8.0
+    anthropic==0.53.0
+    anyio==4.14.2
+    argcomplete==3.7.0
+    attrs==26.1.0
+    black==26.5.1
+    boto3==1.43.62
+    botocore==1.43.62
+    certifi==2026.7.22
+    cffi==2.1.0
+    charset-normalizer==3.4.9
+    click==8.4.2
+    cohere==5.13.3
+    cryptography==50.0.0
+    dashscope==1.26.5
+    datamodel-code-generator==0.25.7
+    distro==1.9.0
+    dnspython==2.8.0
+    dotenv==0.9.9
+    email-validator==2.3.0
+    eval_type_backport==0.4.0
+    fastavro==1.12.2
+    filelock==3.32.2
+    frozenlist==1.8.0
+    fsspec==2026.7.0
+    genson==1.4.0
+    google-auth==2.56.2
+    google-genai==1.24.0
+    h11==0.16.0
+    hf-xet==1.5.2
+    httpcore==1.0.9
+    httpx==0.28.1
+    httpx-sse==0.4.0
+    huggingface_hub==1.26.0
+    idna==3.18
+    inflect==5.6.2
+    isort==5.13.2
+    Jinja2==3.1.6
+    jiter==0.16.0
+    jmespath==1.1.0
+    json5==0.15.0
+    jsonlines==4.0.0
+    jsonschema==4.26.0
+    jsonschema-specifications==2025.9.1
+    markdown-it-py==4.2.0
+    MarkupSafe==3.0.3
+    mdurl==0.1.2
+    mistralai==1.7.0
+    mpmath==1.3.0
+    multidict==6.7.1
+    mypy_extensions==1.1.0
+    numpy==1.26.4
+    openai==2.52.1
+    overrides==7.7.0
+    packaging==26.2
+    pandas==2.3.3
+    parameterized==0.9.0
+    pathlib==1.0.1
+    pathspec==1.1.1
+    pillow==12.3.0
+    platformdirs==4.11.0
+    propcache==0.5.2
+    pyasn1==0.6.4
+    pyasn1_modules==0.4.2
+    pycparser==3.0
+    pydantic==2.13.4
+    pydantic_core==2.46.4
+    Pygments==2.20.0
+    python-dateutil==2.9.0.post0
+    python-dotenv==1.2.2
+    pytokens==0.4.1
+    pytz==2026.3.post1
+    PyYAML==6.0.3
+    qwen-agent==0.0.34
+    referencing==0.37.0
+    regex==2026.7.19
+    requests==2.34.2
+    rich==15.0.0
+    rpds-py==2026.6.3
+    s3transfer==0.19.2
+    safetensors==0.8.0
+    shellingham==1.5.4
+    six==1.17.0
+    sniffio==1.3.1
+    soundfile==0.14.0
+    tabulate==0.10.0
+    tenacity==8.5.0
+    tiktoken==0.13.0
+    tokenizers==0.22.2
+    tqdm==4.70.0
+    transformers==5.14.1
+    tree-sitter==0.21.3
+    tree-sitter-java==0.21.0
+    tree-sitter-javascript==0.21.4
+    typer==0.27.1
+    types-requests==2.33.0.20260712
+    typing_extensions==4.16.0
+    typing-inspection==0.4.2
+    tzdata==2026.3
+    urllib3==2.7.0
+    websocket-client==1.9.0
+    websockets==15.0.1
+    writer-sdk==3.0.0
+    yarl==1.24.5
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/bfcl-constraints.txt
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/bfcl-constraints.txt | cut -d' ' -f1"
+    expect: "bc9b8f8bc3e17b2f4066870e1bd048022082bb0b7b03f99f14cf52fec8604247"
+    critical: true
+```
+
+### eval-runner-11i-dockerfile-agentbench
+
+```yaml
+id: eval-runner-11i-dockerfile-agentbench
+title: Add the AgentBench image
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # eval-runner-agentbench -- AgentBench os-std (Eugleo/agent-bench, pinned
+    # commit, plus agentbench.patch) as an HTTP client of Framework's
+    # llama-server. Built on ai-services-stack by deploy-ai-services-stack.yml
+    # and started one run at a time by `eval-run agentbench`, which mounts the
+    # CT's Docker socket: AgentBench's task worker starts one throwaway sandbox
+    # container (local-os/default, Dockerfile.agentbench-sandbox) per episode,
+    # with networking disabled. See docs/eval-runner/plan.md.
+    FROM python:3.11-slim
+
+    RUN apt-get update \
+        && apt-get install -y --no-install-recommends patch \
+        && rm -rf /var/lib/apt/lists/* \
+        && useradd --create-home --uid 1000 app
+
+    # The commit every historical AgentBench number ran from (garuda's
+    # ~/eval-harnesses/AgentBench), checksum-verified.
+    ARG AGENTBENCH_COMMIT=0cfef9785eedf4de13a7a994b6df486f56a38515
+    ARG AGENTBENCH_SHA256=7e5ea8a517a3dcfe98a1c78037570b11954d65ef2ee5edb7db6038f48d962806
+    COPY agentbench.patch /tmp/agentbench.patch
+    RUN python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/Eugleo/agent-bench/archive/${AGENTBENCH_COMMIT}.tar.gz', '/tmp/agentbench.tar.gz')" \
+        && echo "${AGENTBENCH_SHA256}  /tmp/agentbench.tar.gz" | sha256sum -c - \
+        && mkdir /opt/agentbench \
+        && tar -xzf /tmp/agentbench.tar.gz -C /opt/agentbench --strip-components=1 \
+        && patch -d /opt/agentbench -p1 < /tmp/agentbench.patch \
+        && rm /tmp/agentbench.tar.gz /tmp/agentbench.patch
+
+    # AgentBench's requirements.txt minus FastChat/accelerate/transformers (the
+    # HTTP agent doesn't need them, and they pull in torch), constrained to the
+    # historical venv's versions.
+    COPY agentbench-constraints.txt /tmp/agentbench-constraints.txt
+    RUN grep -v -E '^(fschat|accelerate|transformers)' /opt/agentbench/requirements.txt > /tmp/requirements.txt \
+        && pip install --no-cache-dir --only-binary=:all: -c /tmp/agentbench-constraints.txt -r /tmp/requirements.txt \
+        && rm /tmp/requirements.txt /tmp/agentbench-constraints.txt
+
+    WORKDIR /results
+    COPY agentbench_run.py mock_openai.py publish.py runmeta.py selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+    RUN chmod 0755 /opt/eval-runner/wrapper_selftest.sh
+
+    USER app
+    ENV HOME=/home/app
+    ENTRYPOINT ["python"]
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench | cut -d' ' -f1"
+    expect: "cd4c325ceb9135ee2532d1b0332cf5c37da27f19002dc2a01fd10a22c55e8f9b"
+    critical: true
+```
+
+### eval-runner-11j-agentbench-patch
+
+```yaml
+id: eval-runner-11j-agentbench-patch
+title: Add the AgentBench patch
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/agentbench.patch with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    diff -ru a/src/client/agents/http_agent.py b/src/client/agents/http_agent.py
+    --- a/src/client/agents/http_agent.py
+    +++ b/src/client/agents/http_agent.py
+    @@ -1,4 +1,5 @@
+     import contextlib
+    +import os
+     import time
+     import warnings
+
+    @@ -175,7 +176,10 @@
+             super().__init__(**kwargs)
+             self.url = url
+             self.proxies = proxies or {}
+    -        self.headers = headers or {}
+    +        # eval-runner: header values may reference environment variables
+    +        # ("Bearer ${OPENAI_API_KEY}"), so no API key is written into
+    +        # config files or the run's output config.yaml.
+    +        self.headers = {k: os.path.expandvars(str(v)) for k, v in (headers or {}).items()}
+             self.body = body or {}
+             self.return_format = return_format
+             self.prompter = Prompter.get_prompter(prompter)
+    @@ -192,7 +196,11 @@
+                     body.update(self._handle_history(history))
+                     with no_ssl_verification():
+                         resp = requests.post(
+    -                        self.url, json=body, headers=self.headers, proxies=self.proxies, timeout=120
+    +                        # eval-runner: 120s timed out slow models mid-answer
+    +                        # (3072 tokens at ~17 tok/s is ~180s); the timeout
+    +                        # doesn't change answers, only spurious failures.
+    +                        self.url, json=body, headers=self.headers, proxies=self.proxies,
+    +                        timeout=int(os.environ.get("AGENTBENCH_HTTP_TIMEOUT", "3600")),
+                         )
+                     # print(resp.status_code, resp.text)
+                     if resp.status_code != 200:
+    diff -ru a/src/client/agents/__init__.py b/src/client/agents/__init__.py
+    --- a/src/client/agents/__init__.py
+    +++ b/src/client/agents/__init__.py
+    @@ -1,2 +1,6 @@
+    -from .fastchat_client import FastChatAgent
+    +# eval-runner: FastChat pulls in torch/transformers; only HTTPAgent is used.
+    +try:
+    +    from .fastchat_client import FastChatAgent
+    +except ImportError:
+    +    FastChatAgent = None
+     from .http_agent import HTTPAgent
+    diff -ru a/src/server/tasks/os_interaction/task.py b/src/server/tasks/os_interaction/task.py
+    --- a/src/server/tasks/os_interaction/task.py
+    +++ b/src/server/tasks/os_interaction/task.py
+    @@ -31,6 +31,11 @@
+                 tty=True,
+                 stdin_open=True,
+                 remove=True,
+    +            # eval-runner: the model's shell commands run here, so no
+    +            # network. Every package the task inits would apt-get is baked
+    +            # into the local-os/default image instead (their apt-get then
+    +            # fails harmlessly -- init exit codes are ignored).
+    +            network_disabled=True,
+                 # name="os-pipeline-ubuntu",
+                 labels={"created_by": "os-pipeline"},
+             )
+    @@ -374,7 +379,32 @@
+             }
+
+         def get_indices(self) -> List[Any]:
+    -        return list(self.problem_configs.keys())
+    +        # NOTE: patched 2026-08-05 -- AgentBench's os-std has no built-in
+    +        # sample-count limit (800 episodes total, ~90-100s each at
+    +        # concurrency=1 == ~20+ hours for a single model). Set
+    +        # AGENTBENCH_SAMPLE_LIMIT to cap it for controlled/subsampled runs.
+    +        #
+    +        # NOTE: patched 2026-08-06 -- neither a plain prefix slice
+    +        # (indices[:N]) nor a fixed stride (indices[::k]) is representative:
+    +        # the 800 tasks are 14 base task_ids x ~70 injection-variant copies
+    +        # each, and BOTH the first-100 prefix AND a stride-8 sample landed
+    +        # on 0/100 pass by coincidence of how copies are ordered, against a
+    +        # model that scores 27% over the full 800. Set AGENTBENCH_SAMPLE_SEED
+    +        # (any int) alongside AGENTBENCH_SAMPLE_LIMIT to take a genuine
+    +        # random sample instead -- robust to whatever periodic structure
+    +        # the underlying ordering has. Falls back to a plain prefix slice
+    +        # if seed is unset, preserving old behavior.
+    +        import os
+    +        import random
+    +        indices = list(self.problem_configs.keys())
+    +        limit = os.getenv("AGENTBENCH_SAMPLE_LIMIT")
+    +        seed = os.getenv("AGENTBENCH_SAMPLE_SEED")
+    +        if limit and seed:
+    +            rng = random.Random(int(seed))
+    +            indices = rng.sample(indices, min(int(limit), len(indices)))
+    +        elif limit:
+    +            indices = indices[: int(limit)]
+    +        return indices
+
+         def extract_action(self, raw: str):
+             think_pattern = r"Think:\s*(.+)"
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/agentbench.patch
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/agentbench.patch | cut -d' ' -f1"
+    expect: "f8718d60ac84306fca23dfa4bdd314054ac6539eb6e2b1713bd6ab4a6020124a"
+    critical: true
+```
+
+### eval-runner-11k-agentbench-constraints
+
+```yaml
+id: eval-runner-11k-agentbench-constraints
+title: Add the AgentBench pip constraints
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/agentbench-constraints.txt with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # Package versions of the AgentBench venv on garuda (~/eval-harnesses/
+    # AgentBench/.venv, Python 3.9, pip freeze 2026-10-01) behind the historical
+    # AgentBench numbers. Pip constraints for Dockerfile.agentbench, which
+    # installs AgentBench's requirements.txt minus fschat/accelerate/
+    # transformers (FastChat's agent client isn't used, so neither is torch).
+    aiohttp==3.8.6
+    aiosignal==1.4.0
+    anthropic==0.4.1
+    anyio==3.7.1
+    async-timeout==4.0.3
+    attrs==26.1.0
+    certifi==2026.7.22
+    charset-normalizer==3.4.9
+    click==8.1.8
+    distro==1.9.0
+    docker==6.1.2
+    exceptiongroup==1.3.1
+    fastapi==0.101.1
+    filelock==3.19.1
+    frozenlist==1.8.0
+    fsspec==2025.10.0
+    h11==0.16.0
+    httpcore==1.0.9
+    httpx==0.28.1
+    huggingface-hub==0.17.3
+    idna==3.18
+    importlib_metadata==8.7.1
+    isodate==0.7.2
+    Jinja2==3.1.6
+    jsonlines==3.1.0
+    latex2mathml==3.78.1
+    markdown2==2.5.5
+    markdown-it-py==3.0.0
+    MarkupSafe==3.0.3
+    mdurl==0.1.2
+    mpmath==1.3.0
+    multidict==6.7.1
+    mysql-connector-python==8.0.33
+    networkx==2.8.8
+    nh3==0.3.6
+    numpy==1.23.5
+    packaging==26.3
+    prompt_toolkit==3.0.52
+    propcache==0.4.1
+    protobuf==3.20.3
+    psutil==7.2.2
+    pydantic==1.10.26
+    Pygments==2.20.0
+    pyparsing==3.3.2
+    PyYAML==6.0.3
+    rdflib==7.6.0
+    regex==2026.1.15
+    requests==2.28.2
+    rich==15.0.0
+    shortuuid==1.0.13
+    six==1.17.0
+    sniffio==1.3.1
+    SPARQLWrapper==2.0.0
+    starlette==0.27.0
+    svgwrite==1.4.3
+    sympy==1.14.0
+    tiktoken==0.13.0
+    tokenizers==0.14.1
+    tqdm==4.65.2
+    typing_extensions==4.16.0
+    urllib3==1.26.20
+    uvicorn==0.22.0
+    wavedrom==2.0.3.post3
+    wcwidth==0.8.2
+    websocket-client==1.9.0
+    yarl==1.22.0
+    zipp==3.23.1
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/agentbench-constraints.txt
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/agentbench-constraints.txt | cut -d' ' -f1"
+    expect: "667126fa8350d01a07eee9b494f4c2f70fb24cbb2e97420fc4b97f18690ef78b"
+    critical: true
+```
+
+### eval-runner-11l-dockerfile-sandbox
+
+```yaml
+id: eval-runner-11l-dockerfile-sandbox
+title: Add the AgentBench sandbox image
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench-sandbox with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # local-os/default -- the sandbox each AgentBench os-std episode runs in
+    # (one throwaway container per episode, networking disabled, started by
+    # eval-runner-agentbench's task worker). Same as AgentBench's own
+    # data/os_interaction/res/dockerfiles/default, but:
+    #   - pinned to ubuntu:26.04, the release the historical images were built
+    #     from (August 2026, `FROM ubuntu` = 26.04 then);
+    #   - with every package the os-std task inits apt-get at episode start
+    #     pre-installed (netcat-openbsd for "netcat", libssl-dev, wamerican,
+    #     and install_nettools.sh's net-tools/iproute2/lsof). With networking
+    #     disabled those apt-gets fail -- harmlessly, AgentBench ignores init
+    #     exit codes -- and the tools are already there, as they were when the
+    #     historical runs fetched them over the network.
+    ARG UBUNTU_IMAGE=ubuntu:26.04
+    FROM ${UBUNTU_IMAGE}
+    RUN apt-get update \
+        && apt-get install -y python3 python3-pip git vim curl wget unzip zip tree \
+           netcat-openbsd net-tools iproute2 lsof libssl-dev wamerican
+    CMD ["bash"]
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench-sandbox
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile.agentbench-sandbox | cut -d' ' -f1"
+    expect: "e5316dbfd2750ce69bef4f8f155fb4c31468b04238d581b8f352adbe35b165fb"
+    critical: true
+```
+
+### eval-runner-11m-test-wrappers
+
+```yaml
+id: eval-runner-11m-test-wrappers
+title: Add wrapper unit tests
+depends_on:
+  - eval-runner-11a-wrapper-common
+  - eval-runner-11b-bfcl-run
+  - eval-runner-11c-agentbench-run
+  - eval-runner-11d-repobench-run
+  - eval-runner-11e-import-history
+  - eval-runner-06j-test-publish
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/test_wrappers.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Unit tests for the benchmark wrappers' own logic (bfcl_run.py,
+    agentbench_run.py, repobench_run.py, wrapper_common.py) and how their
+    results flow into summarize/publish. The benchmarks themselves run only in
+    their images (eval-run selftest). Run with:
+    python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner -p "test_*.py"
+    """
+
+    import json
+    import os
+    import tempfile
+    import unittest
+
+    import agentbench_run
+    import bfcl_run
+    import publish
+    import repobench_run
+    import summarize
+    import wrapper_common as wc
+
+    try:
+        import rapidfuzz  # noqa: F401
+    except ImportError:  # in the image; locally: pip install rapidfuzz==3.14.6 in a venv
+        rapidfuzz = None
+
+
+    def write_jsonl(path, rows):
+        with open(path, "w") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+
+    class BfclTest(unittest.TestCase):
+        def test_pilot_ids_are_evenly_spaced(self):
+            self.assertEqual(bfcl_run.pilot_ids(20)[:3], ["simple_0", "simple_20", "simple_40"])
+            self.assertEqual(len(bfcl_run.pilot_ids(40)), 40)
+            self.assertEqual(bfcl_run.pilot_ids(2), ["simple_0", "simple_200"])
+
+        def test_errored_entries_are_dropped_for_retry(self):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, "r.json")
+                write_jsonl(path, [{"id": "simple_0", "result": [{"f": "{}"}]},
+                                   {"id": "simple_1", "result": "Error during inference: timeout"}])
+                self.assertEqual(bfcl_run.drop_errored(path), 1)
+                with open(path) as fh:
+                    self.assertEqual([json.loads(line)["id"] for line in fh], ["simple_0"])
+                self.assertEqual(bfcl_run.drop_errored(os.path.join(tmp, "missing.json")), 0)
+
+        def test_response_counts(self):
+            entries = [{"result": []}, {"result": ""}, {"result": "Error during inference: x"}, {"result": [{"f": "{}"}]}]
+            self.assertEqual(bfcl_run.response_counts(entries), (2, 1))
+
+
+    class AgentBenchTest(unittest.TestCase):
+        def test_agent_config_matches_history_without_a_secret(self):
+            conf = agentbench_run.agent_config("http://f:8080/v1/chat/completions", "glm")["eval-runner"]["parameters"]
+            self.assertEqual(conf["body"], {"model": "glm", "temperature": 0, "max_tokens": 3072})
+            self.assertEqual(conf["headers"]["Authorization"], "Bearer ${OPENAI_API_KEY}")
+            self.assertEqual(conf["prompter"], {"name": "role_content_dict", "args": {"agent_role": "assistant"}})
+            self.assertEqual(conf["return_format"], "{response[choices][0][message][content]}")
+
+        def test_assignment_points_at_output_and_controller(self):
+            conf = agentbench_run.assignment_config("/tmp/a.yaml", "/results/r/agentbench/outputs")
+            self.assertEqual(conf["output"], "/results/r/agentbench/outputs")
+            self.assertEqual(conf["assignments"], [{"agent": ["eval-runner"], "task": ["os-std"]}])
+            self.assertTrue(conf["definition"]["task"]["import"].startswith("/opt/agentbench/"))
+
+        def test_episode_counts_and_injection_rate(self):
+            runs = [
+                {"error": None, "output": {"status": "completed", "history": [{"role": "agent", "content": "Act: finish"}],
+                                           "result": {"metadata": {"injection_present": True},
+                                                      "injection_successful": True}}},
+                {"error": None, "output": {"status": "agent invalid action", "history": [{"role": "agent", "content": ""}],
+                                           "result": {"metadata": {"injection_present": True},
+                                                      "injection_successful": False}}},
+                {"error": "boom", "output": {"status": "unknown", "history": [], "result": {"metadata": {}}}},
+            ]
+            with tempfile.TemporaryDirectory() as tmp:
+                path = os.path.join(tmp, "runs.jsonl")
+                write_jsonl(path, runs)
+                self.assertEqual(agentbench_run.episode_counts(path), (3, 1, 1))
+                self.assertEqual(agentbench_run.injection_rate(path), 0.5)
+                self.assertEqual(agentbench_run.episode_counts(os.path.join(tmp, "none")), (0, 0, 0))
+
+
+    class RepoBenchTest(unittest.TestCase):
+        def test_first_line_not_comment(self):
+            f = repobench_run.get_first_line_not_comment
+            self.assertEqual(f("\n# comment\n    x = 1\ny = 2"), "    x = 1")
+            self.assertEqual(f('"""doc\nmore"""\nreturn a'), "return a")
+            self.assertEqual(f("# only\n# comments"), "# only")
+
+        def test_prompt_matches_upstream_when_it_fits(self):
+            data = {"repo_name": "r", "context": [{"path": "a.py", "snippet": "def a(): pass"}],
+                    "file_path": "b.py", "import_statement": "import a", "cropped_code": "x = a()\n\n"}
+            prompt = repobench_run.construct_prompt(data, lambda text: 0)
+            self.assertEqual(prompt, "# Repo Name: r\n# Path: a.py\ndef a(): pass\n\n# Path: b.py\nimport a\nx = a()\n")
+
+        def test_cross_file_part_is_cut_to_fit(self):
+            snippets = [{"path": f"m{i}.py", "snippet": "y" * 40} for i in range(10)]
+            data = {"repo_name": "r", "context": snippets, "file_path": "b.py", "import_statement": "",
+                    "cropped_code": "z"}
+            prompt = repobench_run.construct_prompt(data, len, max_tokens=200)  # 1 "token" per character
+            self.assertLessEqual(len(prompt), 200)
+            self.assertTrue(prompt.startswith("# Repo Name: r\n# Path: m0.py"))
+            self.assertTrue(prompt.endswith("# Path: b.py\n\nz\n"))
+
+        def test_sample_is_seeded_and_capped(self):
+            by_level = {"2k": list(range(50)), "4k": list(range(100, 103))}
+            first = repobench_run.sample(by_level, 5)
+            self.assertEqual(first, repobench_run.sample(by_level, 5))
+            self.assertEqual(len(first), 8)  # 5 from 2k, all 3 from 4k
+            self.assertEqual(first[-3:], [100, 101, 102])
+
+        @unittest.skipUnless(rapidfuzz, "rapidfuzz not installed")
+        def test_scores_are_weighted_by_sample_count(self):
+            preds = {"cross_file_first": [{"pred": "a = 1", "gt": "a  =  1"}, {"pred": "b", "gt": "c"}],
+                     "in_file": [{"pred": "x", "gt": "x"}] * 2}
+            per, em, es, total = repobench_run.score(preds)
+            self.assertEqual(per["cross_file_first"][:2], (2, 50.0))
+            self.assertEqual(per["in_file"], (2, 100.0, 100.0))
+            self.assertEqual((em, total), (75.0, 4))
+            self.assertEqual(repobench_run.edit_similarity("abc", "abd"), 67)
+
+
+    class ImportHistoryTest(unittest.TestCase):
+        def test_bfcl_probe_becomes_comparable_rows(self):
+            import import_history
+            probe = [
+                {"name": "Gemma4-26B-Ollama-FC", "score": {"accuracy": 0.94, "correct_count": 376, "total_count": 400},
+                 "mtime": 1785888000, "empty": 0, "errors": 0, "tag": "gemma4:26b", "base_url": "http://localhost:11434/v1"},
+                {"name": "Qwen3.8-27B-UDQ4KXL-High-Ollama-FC",
+                 "score": {"accuracy": 0.925, "correct_count": 370, "total_count": 400},
+                 "mtime": 1789000000, "empty": 1, "errors": 0, "tag": "qwen3.8-27b-q4kxl-ctx32k", "base_url": None},
+                {"name": "Laguna-S-2-1-UD-Q4-K-M-FC", "score": {"accuracy": 0.755, "correct_count": 302, "total_count": 400},
+                 "mtime": 1785888000, "empty": 34, "errors": 0, "tag": None, "base_url": "http://localhost:8080/v1"},
+            ]
+            with tempfile.TemporaryDirectory() as root:
+                import_history.import_bfcl(probe, root)
+                _, rows = publish.build_files(publish.collect(root), None, "NOW")
+            by_model = {r["Model"]: r for r in rows}
+            self.assertEqual(set(by_model), {"gemma4:26b", "qwen3.8-27b-q4kxl-ctx32k", "Laguna-S-2-1-UD-Q4-K-M"})
+            gemma = by_model["gemma4:26b"]
+            self.assertEqual((gemma["Score %"], gemma["Comparable"], gemma["Runtime"], gemma["Source"]),
+                             (94.0, "yes", "Ollama", "historical (framework)"))
+            self.assertEqual(by_model["qwen3.8-27b-q4kxl-ctx32k"]["Note"], "reasoning effort high")
+            self.assertEqual(by_model["Laguna-S-2-1-UD-Q4-K-M"]["Runtime"], "llama.cpp (router)")
+            self.assertEqual(by_model["Laguna-S-2-1-UD-Q4-K-M"]["Empty answers"], 34)
+
+        def test_agentbench_sampled_and_full_runs(self):
+            import import_history
+            with tempfile.TemporaryDirectory() as tmp:
+                outputs, root = os.path.join(tmp, "outputs"), os.path.join(tmp, "results")
+                for stamp, agent, total, passed in (("2026-08-06-08-20-09", "qwen36-35b", 100, 22),
+                                                    ("2026-08-05-21-14-17", "qwen3-coder-30b", 800, 216)):
+                    task_dir = os.path.join(outputs, stamp, agent, "os-std")
+                    os.makedirs(task_dir)
+                    with open(os.path.join(task_dir, "overall.json"), "w") as fh:
+                        json.dump({"total": total, "custom": {"overall": {"total": total, "pass": passed,
+                                                                          "acc": passed / total}}}, fh)
+                import_history.import_agentbench(outputs, root)
+                _, rows = publish.build_files(publish.collect(root), None, "NOW")
+            by_model = {r["Model"]: r for r in rows}
+            self.assertEqual((by_model["qwen36-35b"]["Score %"], by_model["qwen36-35b"]["Comparable"]), (22.0, "yes"))
+            coder = by_model["qwen3-coder-30b"]
+            self.assertEqual((coder["Comparable"], coder["Series"]), ("no", "800 full"))
+            self.assertIn("separate series", coder["Why not comparable"])
+            self.assertEqual(coder["Source"], "historical (garuda)")
+
+
+    class ResultsFlowTest(unittest.TestCase):
+        """A wrapper's results file goes through summarize and publish like lm_eval's."""
+
+        def _write(self, root, task, metrics, limit=None, series="v3 simple", exclusion=None):
+            run_dir = os.path.join(root, "glm-bfcl-S")
+            os.makedirs(run_dir, exist_ok=True)
+            with open(os.path.join(run_dir, "run.json"), "w") as fh:
+                json.dump({"run": "glm-bfcl-S", "tasks": [task], "created_utc": "20261002T000000Z", "note": "",
+                           "server": {"model_id": "glm", "props": {"build_info": "b1", "model_path": "/m/g.gguf"}}}, fh)
+            wc.write_results(os.path.join(run_dir, "bfcl"), task, metrics, 400, 400, limit=limit, model="glm",
+                             base_url="http://f:8080/v1", harness="bfcl", version="2025.8.6.2", series=series,
+                             exclusion=exclusion, runtime="llama.cpp b1", stamp="2026-10-02T00-00-00.000000")
+            return run_dir
+
+        def test_comparable_wrapper_result_is_ranked(self):
+            with tempfile.TemporaryDirectory() as root:
+                run_dir = self._write(root, "bfcl_simple", {"accuracy,none": 0.9425, "empty,none": 3, "errors,none": 1})
+                line, ok = summarize.describe(run_dir, check=True)
+                self.assertTrue(ok)
+                self.assertIn("BFCL simple 94.25%", line)
+                self.assertIn("empty 3, errors 1", line)
+                files, rows = publish.build_files(publish.collect(root), None, "NOW")
+            row = rows[0]
+            self.assertEqual((row["Task"], row["Score %"], row["Alt score %"], row["Metrics"]),
+                             ("BFCL simple", 94.25, None, "accuracy"))
+            self.assertEqual((row["Comparable"], row["Series"], row["Runtime"]), ("yes", "v3 simple", "llama.cpp b1"))
+            self.assertEqual(row["Empty answers"], 3)
+            self.assertIn("| 1 | glm | 94.25% | – |", files["leaderboard.md"].decode())
+
+        def test_pilot_wrapper_result_is_excluded(self):
+            with tempfile.TemporaryDirectory() as root:
+                self._write(root, "bfcl_simple", {"accuracy,none": 0.5, "empty,none": 0}, limit=40)
+                _, rows = publish.build_files(publish.collect(root), None, "NOW")
+            self.assertEqual((rows[0]["Comparable"], rows[0]["Why not comparable"]), ("no", "pilot (limit 40)"))
+            self.assertEqual(rows[0]["Series"], "")
+
+        def test_every_wrapper_task_has_labels_series_and_a_view(self):
+            view_tasks = {task for _, _, task, _ in publish.VIEWS}
+            for task in summarize.HEADLINE:
+                self.assertIn(task, publish.TASK_LABELS)
+                self.assertIn(task, summarize.STANDARD_SERIES)
+                self.assertIn(publish.TASK_LABELS[task][0], view_tasks)
+            self.assertEqual(summarize.STANDARD_SERIES["bfcl_simple"], bfcl_run.SERIES)
+            self.assertEqual(summarize.STANDARD_SERIES["agentbench_os_std"], agentbench_run.SERIES)
+            self.assertEqual(summarize.STANDARD_SERIES["repobench_python"], repobench_run.SERIES)
+
+
+    if __name__ == "__main__":
+        unittest.main()
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/test_wrappers.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_wrappers.py | cut -d' ' -f1"
+    expect: "7214c11260b2227ef676e9ff5eb623def560cf28f16479738f5600e52b792193"
+    critical: true
+  - id: unit-tests
+    cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
+    expect: "OK, or OK (skipped=N) where openpyxl/rapidfuzz are not installed"
     critical: true
 ```
 
@@ -3375,7 +5559,7 @@ change: |
     eval-runner image ships it and `eval-run publish` mirrors it into
     Nextcloud.
 
-    Last updated: 2026-10-01 (32k series added).
+    Last updated: 2026-10-01 (32k series; BFCL/AgentBench/RepoBench added).
 
     ## How results are produced
 
@@ -3462,11 +5646,42 @@ change: |
     The automatic rule (full run with `max_gen_toks=8192`) selects exactly the
     set the eval-battery doc treats as valid.
 
+    ### 5. BFCL, AgentBench and RepoBench history
+
+    - **BFCL simple (18 imported results)** clusters at 90-96% for every
+      usable model, so it separates broken tool calling more than it ranks
+      good models. Two outliers are runtime problems, not capability:
+      - Laguna S2.1 on the llama.cpp router scored 75.50% with 34 empty
+        answers, against 92.75% on Ollama (the reason Laguna stays on
+        Ollama).
+      - Llama4-Scout scored 16.25%.
+      The Qwen3.8-27B reasoning-effort variants (none/low/medium/high) all
+      land within 92.5-93.75%, so effort doesn't matter on single calls.
+    - **AgentBench os-std:** only two historical outputs survive.
+      - Qwen3.6-35B: 22% on the seed-42 sample of 100 (comparable).
+      - Qwen3-Coder-30B: 27% over all 800 episodes (its own series).
+      - The other historical numbers are known only from
+        `docs/framework/eval-battery-phase2-plan.md` and can't be imported:
+        Gemma4-26B 47%, the A4B-QAT 42%, Qwen3-Coder-Next 36% and
+        Laguna-Heretic 38%.
+      - Sampling noise is large: an identical-config Qwen3.6-35B repeat
+        swung 30% to 10% at n=10, which is why the floor is n=100.
+      - os-std is the prompt-injection variant, so eval-runner also records
+        `injection_success_rate` (lower is better) in each results file.
+    - **RepoBench:** the six historical results (for example Qwen3.6-35B EM
+      17.33% / ES 41.0%) came from lost scripts that sent chat prompts with
+      an "output only code" instruction, and scored a compliance rate as
+      well. The rebuilt series uses upstream's raw-completion method, so
+      expect different absolute numbers. It ranks only against itself.
+
     ## Open questions
 
     - **Budget:** how much do the 32k-series scores differ from the 8k ones
       for the same model? The first pair of runs (8k and 32k for one
       reasoning model) will show whether the 8k ranking holds up.
+    - **RepoBench calibration:** re-running one historical RepoBench model
+      in the rebuilt series would show how far the two methods differ. That
+      needs the same model served by llama.cpp.
     - **Comparability with history:** GLM-5.3-Flash runs on llama.cpp with
       server-side `reasoning_effort=high`, while the historical runs used
       Ollama defaults. A runtime or reasoning-mode difference is recorded per
@@ -3483,7 +5698,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum docs/eval-runner/findings.md | cut -d' ' -f1"
-    expect: "f232debd8cba538818b6f45c8cbed558ac2f70f985319c3e75aced11eba13a5c"
+    expect: "efcf5a5248366653ceffd1a035dd7810a3463e66b86a509327d85589dcc052ac"
     critical: true
 ```
 
@@ -3503,6 +5718,17 @@ depends_on:
   - eval-runner-06h-publish
   - eval-runner-06i-mock-nextcloud
   - eval-runner-08-findings
+  - eval-runner-11a-wrapper-common
+  - eval-runner-11b-bfcl-run
+  - eval-runner-11c-agentbench-run
+  - eval-runner-11d-repobench-run
+  - eval-runner-11f-wrapper-selftest
+  - eval-runner-11g-dockerfile-bfcl
+  - eval-runner-11h-bfcl-constraints
+  - eval-runner-11i-dockerfile-agentbench
+  - eval-runner-11j-agentbench-patch
+  - eval-runner-11k-agentbench-constraints
+  - eval-runner-11l-dockerfile-sandbox
 
 change: |
   Append to the end of terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
@@ -3511,7 +5737,7 @@ change: |
   indented by 4 spaces below; in the playbook the play starts at
   column 0 ("- name:"):
 
-    - name: Install eval-runner (lm_eval GPQA/IFEval against Framework's llama-server)
+    - name: Install eval-runner (GPQA/IFEval/BFCL/AgentBench/RepoBench against Framework's llama-server)
       hosts: all
       become: true
       gather_facts: false
@@ -3556,13 +5782,24 @@ change: |
             mode: "0644"
           loop:
             - Dockerfile
+            - Dockerfile.agentbench
+            - Dockerfile.agentbench-sandbox
+            - Dockerfile.bfcl
+            - agentbench-constraints.txt
+            - agentbench.patch
+            - agentbench_run.py
+            - bfcl-constraints.txt
+            - bfcl_run.py
             - mock_nextcloud.py
             - mock_openai.py
             - publish.py
+            - repobench_run.py
             - runmeta.py
             - selftest.sh
             - selftest_checks.py
             - summarize.py
+            - wrapper_common.py
+            - wrapper_selftest.sh
 
         # Canonical copy lives with the docs; the image ships it so `eval-run
         # publish` can mirror it into Nextcloud next to the leaderboard.
@@ -3580,14 +5817,24 @@ change: |
             name: eval-runner-hf-cache
             state: absent
 
-        - name: Build eval-runner image
+        # One image per harness (their pinned dependencies conflict), plus the
+        # sandbox AgentBench starts one throwaway container of per episode.
+        - name: Build eval-runner images
           community.docker.docker_image:
-            name: eval-runner
-            tag: local
+            name: "{{ item.name }}"
+            tag: "{{ item.tag }}"
             source: build
             build:
               path: "{{ eval_runner_build_dir }}"
+              dockerfile: "{{ item.dockerfile }}"
             force_source: true
+          loop:
+            - { name: eval-runner, tag: local, dockerfile: Dockerfile }
+            - { name: eval-runner-bfcl, tag: local, dockerfile: Dockerfile.bfcl }
+            - { name: eval-runner-agentbench, tag: local, dockerfile: Dockerfile.agentbench }
+            - { name: local-os/default, tag: latest, dockerfile: Dockerfile.agentbench-sandbox }
+          loop_control:
+            label: "{{ item.name }}:{{ item.tag }}"
 
         - name: Install eval-runner env file
           ansible.builtin.copy:
@@ -3623,10 +5870,13 @@ change: |
             msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"
 
         # Runs the real start/exec/check path against a stand-in server inside
-        # the image -- no Framework, no GPU. Proves the gated GPQA download,
+        # each image -- no Framework, no GPU. Proves the gated GPQA download,
         # IFEval's nltk data, scoring, the request settings lm_eval sends
         # (max_tokens 8192, temperature 0), the empty-response flags, resume from
-        # cache, and server-change detection on every deploy.
+        # cache and server-change detection; then BFCL, AgentBench (two real
+        # network-less sandbox episodes) and RepoBench (dataset download, raw
+        # completions) end to end, each with its historical request shape and
+        # resume, on every deploy.
         - name: Run eval-runner self-test
           ansible.builtin.command:
             argv:
@@ -3634,11 +5884,11 @@ change: |
               - selftest
           register: eval_runner_selftest
           changed_when: false
-          failed_when: eval_runner_selftest.rc != 0 or 'selftest OK' not in eval_runner_selftest.stdout
+          failed_when: eval_runner_selftest.rc != 0 or 'all selftests OK' not in eval_runner_selftest.stdout
 
         - name: Show eval-runner self-test summary
           ansible.builtin.debug:
-            msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|selftest OK|server )') | list }}"
+            msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|.*selftest OK|all selftests OK|server )') | list }}"
 
     - name: Share eval-runner's Nextcloud Reports folder with steve
       hosts: all
@@ -3665,12 +5915,12 @@ scope:
 
 gates:
   - id: exact-appended-play
-    cmd: "tail -n 142 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
-    expect: "a87a4a451c82715fdbe5444aacd7243a13960888a99f91c5941cb445fe579d11"
+    cmd: "tail -n 166 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
+    expect: "e9dbc7c3dd9ef5334c6682082488208be43b9be61cc84758931977da65d9366d"
     critical: true
   - id: append-only
     cmd: "git diff --numstat stable -- terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
-    expect: "143\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "167\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
     critical: true
   - id: syntax-check
     cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
@@ -3960,6 +6210,21 @@ PY
 tar cf - -C "$(dirname "$H")" _historical | ssh root@192.168.50.11 'tar xf - -C /srv/eval-runner/results/ && chown -R 1000:1000 /srv/eval-runner/results/_historical'
 ```
 
+### Operator (one-off): import historical BFCL and AgentBench results
+
+18 BFCL scores (framework's BFCL venv) and 2 AgentBench outputs (garuda)
+become eval-runner results files under `_historical/`. Run from the
+workstation (repo root):
+
+```bash
+D=terraform/lxc/ansible/files/eval-runner; H=$(mktemp -d)
+scp $D/import_history.py framework.gibbsgreatly.xyz:/tmp/
+ssh framework.gibbsgreatly.xyz '~/bfcl-eval/venv/bin/python /tmp/import_history.py probe-bfcl ~/bfcl-eval/venv/lib/python3.14/site-packages; rm /tmp/import_history.py' > "$H/bfcl.json"
+python3 $D/import_history.py bfcl "$H/bfcl.json" "$H/out"
+python3 $D/import_history.py agentbench ~/eval-harnesses/AgentBench/outputs "$H/out"
+tar cf - -C "$H/out" _historical | ssh root@192.168.50.11 'tar xf - -C /srv/eval-runner/results/ && chown -R 1000:1000 /srv/eval-runner/results/_historical'
+```
+
 ## Using it
 
 ```bash
@@ -3968,6 +6233,9 @@ eval-run selftest                         # ~30 s; no Framework, no GPU
 eval-run results                          # scores + empty/unparsed flags per run
 eval-run gpqa --pilot --note "reasoning_effort=high"   # 40 questions: GPU for ~1-2 h
 eval-run ifeval --note "..."              # full IFEval (541): many hours
+eval-run bfcl                             # BFCL simple (400 cases)
+eval-run agentbench                       # AgentBench os-std (100 episodes, sandboxes on this CT)
+eval-run repobench                        # RepoBench (rebuilt): 1500 completions, prompts up to 16k
 eval-run resume <run>                     # continue an interrupted run from its cache
 eval-run publish                          # push everything to Nextcloud (idempotent)
 eval-run publish --dry-run                # render into results/_publish-preview instead
@@ -3999,18 +6267,14 @@ docker ps --filter name=^eval-            # what's running (one real run at a ti
 
 ## Out of scope / follow-ups
 
-- **RepoBench, BFCL and AgentBench.** Their harnesses live on garuda, or
-  lived on the deleted `ai-stack` LXC (VMID 116). lm_eval's
-  `longbench_repobench-p` is a different RepoBench variant from the
-  eval-battery table's.
+- **Historical numbers with no surviving data** (listed in
+  `findings.md`, not importable): the six RepoBench results (scripts and
+  outputs were on the deleted ai-stack LXC) and the AgentBench numbers
+  run from ai-stack (Gemma4-26B, the A4B-QAT, Qwen3-Coder-Next,
+  Laguna-Heretic).
+- **Nextcloud Office** for opening `leaderboard.xlsx` in the browser:
+  the `eurooffice` app is enabled but has no Document Server. That is a
+  proposal in `README.md`, not part of this plan.
 - **Longer retention than PBS keep-last-2,** if wanted: a private
   Nextcloud push. GPQA's terms forbid public sharing of samples.
-- **Survey of the rest of the battery (2026-10-01):**
-  - The custom RepoBench scripts (`repobench_generate.py` and
-    `repobench_eval_local.py`) are gone: not on garuda or framework. They
-    lived only on the deleted ai-stack LXC.
-  - BFCL ran via the `bfcl` CLI on framework (logs and result dirs only;
-    garuda's `bfcl-rx9070xt` holds results only).
-  - AgentBench is a 6.7 GB checkout of `Eugleo/agent-bench` on garuda,
-    with Docker task servers.
 - **Running from the CyberSecEval panel** as another job type.
