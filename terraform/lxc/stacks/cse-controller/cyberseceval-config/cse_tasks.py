@@ -22,7 +22,6 @@ import re
 import shutil
 import signal
 import subprocess
-import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -285,15 +284,21 @@ _PROMPT_KEYS = ["test_case_prompt", "prompt", "mutated_prompt", "question"]
 # answer and the actual verdict silently fell through to the generic
 # meta_parts dump below instead of their own labeled sections.
 _RESPONSE_KEYS = ["response", "model_output", "model_response", "initial_response"]
-_VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly", "icd_result"]
+_VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly"]
 # expansion_response (mitre's judge/expansion commentary) is handled in
 # its own collapsed section, not the generic dump -- it's a multi-
 # paragraph essay that, left in meta_parts, swallowed the actual verdict
 # line visually and had its own embedded "###" headers render as if
 # they were real document structure (confirmed live 2026-10-02).
+# icd_result/icd_cwe_detections (instruct/autocomplete) are handled by
+# _entry_verdict_text instead of the generic verdict-key lookup -- a
+# bare "1"/"0" means nothing without mapping it to what it actually
+# means (confirmed live 2026-10-02: operator asked "Judge verdict: 1?
+# what's this supposed to mean?").
 _TRANSCRIPT_SKIP_KEYS = set(
     _PROMPT_KEYS + _RESPONSE_KEYS + _VERDICT_KEYS
-    + ["model", "prompt_id", "pass_id", "judge_question", "user_input", "expansion_response"]
+    + ["model", "prompt_id", "pass_id", "judge_question", "user_input", "expansion_response",
+       "icd_result", "icd_cwe_detections"]
 )
 
 
@@ -304,31 +309,76 @@ def _first_present_key(entry: dict, keys: list[str]) -> str | None:
     return None
 
 
-def _wrap_for_display(text: str, width: int = 60) -> str:
-    """Prompts routinely arrive as one long unbroken paragraph (no
-    newlines at all) -- inside a fenced code block that renders as a
-    single line requiring horizontal scroll to read at all (confirmed
-    live 2026-09-30, screenshot showed exactly this). Wraps only lines
-    already longer than width, at word boundaries, and leaves
-    already-reasonable lines (most real code) untouched -- so this
-    doesn't reflow/collapse genuine code structure, just stops single
-    giant lines from blowing out the fence's width."""
-    if not text:
-        return text
-    out = []
-    for line in text.splitlines():
-        if len(line) <= width:
-            out.append(line)
-        else:
-            out.extend(textwrap.wrap(line, width=width, break_long_words=False, break_on_hyphens=False) or [""])
-    return "\n".join(out)
+def _safe_fence(text: str) -> str:
+    """A backtick-fence run longer than any already inside text, so
+    wrapping it can't be closed early by the content's own fence
+    markers. Confirmed live 2026-10-02/03: autocomplete/instruct
+    responses are themselves markdown already containing ``` code
+    blocks -- fencing with a plain ``` closed on the response's own
+    closing fence, and everything rendered afterward in the same file
+    (Judge verdict, expansion analysis, later sections) fell out of
+    the code block and rendered as broken/misplaced markdown instead."""
+    longest = 0
+    for m in re.finditer(r"`+", text):
+        longest = max(longest, len(m.group()))
+    return "`" * max(3, longest + 1)
+
+
+def _extract_prompt_text(raw: str) -> str:
+    """mitre's test_case_prompt is a pseudo-JSON wrapper
+    ({"prompt": "...", ...} plus trailing instruction text appended
+    after the closing brace, not valid JSON on its own) -- show the
+    real instruction text instead of the raw braces (operator complaint
+    2026-10-02: "the prompt has curly brackets around it"). Finds the
+    first balanced {...} span and parses just that, keeping any text
+    after it (PurpleLlama appends "Your response ... follows:" there)."""
+    stripped = raw.lstrip()
+    if not stripped.startswith("{"):
+        return raw
+    depth = 0
+    end = None
+    for idx, ch in enumerate(raw):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = idx
+                break
+    if end is None:
+        return raw
+    try:
+        obj = json.loads(raw[: end + 1])
+    except json.JSONDecodeError:
+        return raw
+    if not isinstance(obj, dict) or "prompt" not in obj:
+        return raw
+    trailing = raw[end + 1:].strip()
+    return f"{obj['prompt']}\n\n{trailing}" if trailing else obj["prompt"]
+
+
+def _entry_verdict_text(entry: dict) -> str | None:
+    """One place both the per-entry body and the file's topmatter header
+    pull the verdict from -- icd_result needs mapping (a bare 1/0 means
+    nothing, confirmed live 2026-10-02), everything else uses the
+    generic verdict-key lookup."""
+    if "icd_result" in entry:
+        cwes = entry.get("icd_cwe_detections") or []
+        if entry["icd_result"]:
+            return f"Insecure code detected ({', '.join(cwes)})" if cwes else "Insecure code detected"
+        return "No insecure code detected"
+    verdict_key = _first_present_key(entry, _VERDICT_KEYS)
+    return str(entry[verdict_key]) if verdict_key else None
 
 
 def _render_operation_log(log: str) -> str:
     """autonomous-uplift's own shape -- one continuous >>> USER:/>>> AI:
     transcript, not a prompt/response pair. Mirrors the panel's
     renderOperationLog exactly (USER = target/environment output, AI =
-    the model's own command)."""
+    the model's own command). Kept fenced (unlike prompt/response
+    below) since this is real shell command/output, not prose --
+    _safe_fence still protects against the output itself containing
+    backticks."""
     parts = re.split(r"(>>> (?:USER|AI): )", log)
     turns = []
     for i in range(1, len(parts), 2):
@@ -337,7 +387,8 @@ def _render_operation_log(log: str) -> str:
         if not text:
             continue
         label = "Model command" if is_ai else "Target/environment output"
-        turns.append(f"**{label}:**\n\n```\n{_wrap_for_display(text)}\n```")
+        fence = _safe_fence(text)
+        turns.append(f"**{label}:**\n\n{fence}\n{text}\n{fence}")
     return "\n\n".join(turns) if turns else "*(no operations recorded)*"
 
 
@@ -356,13 +407,16 @@ def _render_dialogue_history(dialogue: str) -> str:
         text = (parts[i + 1] if i + 1 < len(parts) else "").strip()
         if not text:
             continue
-        turns.append(f"**{parts[i]}:**\n\n```\n{_wrap_for_display(text)}\n```")
+        turns.append(f"**{parts[i]}:**\n\n{text}")
     return "\n\n".join(turns) if turns else "*(no dialogue recorded)*"
 
 
 def _render_transcript_entry(entry: dict, i: int) -> str:
     if "dialogue_history" in entry:
         lines = [f"### Test case {i + 1}", ""]
+        verdict = _entry_verdict_text(entry)
+        if verdict:
+            lines += [f"**Verdict:** {verdict}", ""]
         if entry.get("goal"):
             lines += [f"**Goal:** {entry['goal']}", ""]
         # is_success is the real pass/fail signal here; grade is only
@@ -383,10 +437,11 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
         if header:
             lines += [header, ""]
         if entry.get("system_prompt"):
+            fence = _safe_fence(entry["system_prompt"])
             lines += [
                 "<details><summary>System prompt (what the model was actually told)</summary>",
                 "",
-                f"```\n{_wrap_for_display(entry['system_prompt'])}\n```",
+                f"{fence}\n{entry['system_prompt']}\n{fence}",
                 "",
                 "</details>",
                 "",
@@ -396,21 +451,32 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
 
     prompt_key = _first_present_key(entry, _PROMPT_KEYS)
     response_key = _first_present_key(entry, _RESPONSE_KEYS)
-    verdict_key = _first_present_key(entry, _VERDICT_KEYS)
+    verdict = _entry_verdict_text(entry)
     lines = [f"### Test case {i + 1}", ""]
+    # Verdict leads the body (per operator request 2026-10-02: topmatter,
+    # not buried after prompt/response) -- also repeated in the file's
+    # own header by the caller (_push_report_to_nextcloud).
+    if verdict:
+        lines += [f"**Verdict:** {verdict}", ""]
+    # Prompt/response/expansion are the model's own natural-language
+    # (often markdown-formatted) text -- rendered raw, not fenced. A
+    # fence here previously broke whenever the content itself contained
+    # a ``` sequence (very common: autocomplete/instruct responses are
+    # markdown already embedding their own code blocks), and it
+    # prevented genuine markdown structure (headers, bullet lists) in
+    # refusal/explanation text from rendering at all. Confirmed live
+    # 2026-10-02/03 across mitre/instruct/autocomplete/interpreter.
     if prompt_key:
-        lines += ["**Prompt:**", "", f"```\n{_wrap_for_display(entry[prompt_key])}\n```", ""]
+        lines += ["**Prompt:**", "", _extract_prompt_text(entry[prompt_key]), ""]
     if entry.get("user_input"):
-        lines += ["**User input:**", "", f"```\n{_wrap_for_display(entry['user_input'])}\n```", ""]
+        lines += ["**User input:**", "", entry["user_input"], ""]
     if response_key:
-        lines += ["**Response:**", "", f"```\n{_wrap_for_display(entry[response_key])}\n```", ""]
-    if verdict_key:
-        lines += [f"**Judge verdict:** {entry[verdict_key]}", ""]
+        lines += ["**Response:**", "", entry[response_key], ""]
     if entry.get("expansion_response"):
         lines += [
             "<details><summary>Judge's expansion analysis (why it reached this verdict)</summary>",
             "",
-            f"```\n{_wrap_for_display(entry['expansion_response'])}\n```",
+            entry["expansion_response"],
             "",
             "</details>",
             "",
@@ -632,16 +698,21 @@ def _push_report_to_nextcloud(
     for i, entry in enumerate(transcript):
         label = "attack-session" if "operation_log" in entry else "test-case"
         filename = f"{label}-{i + 1}{_entry_category_slug(entry)}.md"
-        doc = "\n".join([
+        # Verdict in the topmatter header, not just the body, per
+        # operator request 2026-10-02: "The result should be in the
+        # 'topmatter' of each test case's report file."
+        verdict_line = _entry_verdict_text(entry) or entry.get("is_success")
+        header = [
             f"# CyberSecEval: {benchmark} -- {label.replace('-', ' ')} {i + 1}",
             "",
             f"**Submitted by:** {submitted_by}  ",
             f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
             f"**Started:** {started_at}  ",
-            f"**Finished:** {finished_at}",
-            "",
-            _render_transcript_entry(entry, i),
-        ])
+            f"**Finished:** {finished_at}  ",
+        ]
+        if verdict_line is not None:
+            header.append(f"**Verdict:** {verdict_line}")
+        doc = "\n".join([*header, "", _render_transcript_entry(entry, i)])
         request = urllib.request.Request(
             f"{base}/{benchmark_dir}/{filename}", data=doc.encode(), method="PUT"
         )
