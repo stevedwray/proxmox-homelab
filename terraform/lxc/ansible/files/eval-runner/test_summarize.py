@@ -27,7 +27,9 @@ def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True
     n_samples = {}
     if "gpqa" in tasks:
         results["gpqa_diamond_cot_zeroshot"] = {"exact_match,flexible-extract": 0.5, "exact_match,strict-match": 0.25}
-        n_samples["gpqa_diamond_cot_zeroshot"] = {"original": 198, "effective": len(gpqa_rows or [])}
+        # lm_eval counts questions, not rows (GPQA has one row per filter)
+        n_samples["gpqa_diamond_cot_zeroshot"] = {"original": 198,
+                                                  "effective": len({r["doc_id"] for r in gpqa_rows or []})}
     if "ifeval" in tasks:
         results["ifeval"] = {"prompt_level_strict_acc,none": 0.9, "prompt_level_loose_acc,none": 0.95}
         n_samples["ifeval"] = {"original": 541, "effective": len(ifeval_rows or [])}

@@ -17,6 +17,7 @@ Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--note TEXT]
        eval-run resume <run> [--force]
        eval-run selftest
        eval-run results [run...]
+       eval-run publish [--dry-run]
 
 gpqa|ifeval  Start one detached run (container eval-<run>) against the model
              Framework's llama-server is serving. Uses Framework's GPU for
@@ -32,6 +33,11 @@ resume       Re-run an interrupted run. Answers already received are
 selftest     Exercise the whole harness against a stand-in server inside
              the image (no Framework, no GPU). Exits non-zero on failure.
 results      Headline scores and response-quality flags per run.
+publish      Push everything (eval-runner runs + historical) to Nextcloud:
+             Reports/eval-runner/ (leaderboard.md/.csv, findings.md, one
+             report.md + manifest.json per run) and the Tables table
+             "Model evaluations" (rows upserted, never duplicated).
+             --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
 USAGE
 }
 
@@ -152,6 +158,18 @@ case "$1" in
       -v "${RESULTS_DIR}:/results:ro" \
       --entrypoint python \
       "$IMAGE" /opt/eval-runner/summarize.py "${targets[@]}"
+    ;;
+  publish)
+    shift
+    if [[ "${1:-}" == "--dry-run" ]]; then
+      [[ $# -eq 1 ]] || die "unexpected arguments: $*"
+      rm -rf "${RESULTS_DIR}/_publish-preview"
+      helper /opt/eval-runner/publish.py --dry-run /results/_publish-preview
+      echo "preview: ${RESULTS_DIR}/_publish-preview/"
+    else
+      [[ $# -eq 0 ]] || die "unexpected arguments: $*"
+      helper /opt/eval-runner/publish.py
+    fi
     ;;
   -h|--help)
     usage

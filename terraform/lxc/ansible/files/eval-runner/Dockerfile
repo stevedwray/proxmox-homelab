@@ -32,10 +32,11 @@ RUN pip install --no-cache-dir \
       "nltk==3.10.1" \
       "tenacity==9.1.4"
 
-# Run setup (runmeta.py), scoring summary (summarize.py) and the selftest
-# pieces. Copied after the pip layer so editing them doesn't invalidate the
+# Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud
+# publishing (publish.py, findings.md -- copied in from docs/eval-runner/ by
+# the playbook) and the selftest pieces. Copied after the pip layer so editing them doesn't invalidate the
 # slow install. The test_*.py unit tests stay in the repo, not the image.
-COPY mock_openai.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
+COPY findings.md mock_nextcloud.py mock_openai.py publish.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
 RUN chmod 0755 /opt/eval-runner/selftest.sh
 
 USER app

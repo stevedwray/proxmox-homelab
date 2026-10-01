@@ -10,6 +10,9 @@
 #   3. resume: re-running the same run sends zero new requests (cache)
 #   4. `runmeta check` passes against the same server and exits 3 against
 #      a server that reports a different model_path
+#   5. publish (the real HTTP client) to mock_nextcloud.py twice: report
+#      files, one table with all columns and views, rows upserted without
+#      duplicates, the share, and no samples files uploaded
 # Scores are meaningless (canned replies).
 set -eu
 
@@ -76,5 +79,28 @@ if [ "$rc" -ne 3 ]; then
   echo "selftest FAILED: runmeta check returned $rc for a changed server, want 3" >&2
   exit 1
 fi
+
+echo "== 5. publish to a stand-in Nextcloud, twice (no duplicates)"
+MOCK_NC_PORT=18090 python "$d/mock_nextcloud.py" &
+pids="$pids $!"
+i=0
+until python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18090/_mock/state', timeout=1)" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 50 ]; then
+    echo "selftest FAILED: mock Nextcloud did not start" >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+pubroot=$(mktemp -d)
+cp -r "$dir" "$pubroot/"
+for _ in 1 2; do
+  NEXTCLOUD_EVAL_REPORTS_URL=http://127.0.0.1:18090 NEXTCLOUD_EVAL_REPORTS_USER=eval-reports \
+    NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD=selftest NEXTCLOUD_EVAL_TABLE_SHARE_WITH=steve \
+    python "$d/publish.py" --results-root "$pubroot"
+done
+python "$d/selftest_checks.py" --nextcloud-state http://127.0.0.1:18090/_mock/state \
+  --expect-rows 2 --published-run "$run"
+rm -rf "$pubroot"
 
 echo "selftest OK"

@@ -939,6 +939,13 @@
     eval_runner_framework_host: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}"
     eval_runner_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     eval_runner_hf_token: "{{ lookup('env', 'HF_TOKEN') | mandatory('HF_TOKEN env var is required') }}"
+    # Publishing to Nextcloud (eval-run publish). Only the app password is
+    # secret; until it exists in OpenBao it's empty and publish says it isn't
+    # configured, without failing the deploy.
+    eval_runner_nextcloud_url: "https://nextcloud.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    eval_runner_nextcloud_user: eval-reports
+    eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+    eval_runner_table_share_with: steve
   tasks:
     - name: Create eval-runner build and config directories
       ansible.builtin.file:
@@ -966,11 +973,21 @@
         mode: "0644"
       loop:
         - Dockerfile
+        - mock_nextcloud.py
         - mock_openai.py
+        - publish.py
         - runmeta.py
         - selftest.sh
         - selftest_checks.py
         - summarize.py
+
+    # Canonical copy lives with the docs; the image ships it so `eval-run
+    # publish` can mirror it into Nextcloud next to the leaderboard.
+    - name: Copy findings.md into the eval-runner build context
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/docs/eval-runner/findings.md"
+        dest: "{{ eval_runner_build_dir }}/findings.md"
+        mode: "0644"
 
     # The first deploy (2026-10-01) ran the image as root with this volume
     # at /root/.cache; the non-root image uses eval-runner-hf instead. Safe
@@ -997,6 +1014,10 @@
           LLM_BASE_URL=http://{{ eval_runner_framework_host }}:8080
           OPENAI_API_KEY={{ eval_runner_llm_api_key }}
           HF_TOKEN={{ eval_runner_hf_token }}
+          NEXTCLOUD_EVAL_REPORTS_URL={{ eval_runner_nextcloud_url }}
+          NEXTCLOUD_EVAL_REPORTS_USER={{ eval_runner_nextcloud_user }}
+          NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD={{ eval_runner_nextcloud_app_password }}
+          NEXTCLOUD_EVAL_TABLE_SHARE_WITH={{ eval_runner_table_share_with }}
       no_log: true
 
     - name: Install eval-run script
@@ -1035,3 +1056,17 @@
     - name: Show eval-runner self-test summary
       ansible.builtin.debug:
         msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|selftest OK|server )') | list }}"
+
+- name: Share eval-runner's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: eval_runner_nextcloud_app_password | length > 0
+      vars:
+        nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
+        nextcloud_folder_share_owner_user: eval-reports
+        nextcloud_folder_share_owner_password: "{{ eval_runner_nextcloud_app_password }}"
+        nextcloud_folder_share_folder: "Reports/eval-runner"
