@@ -1,18 +1,16 @@
 # eval-runner
 
-Status: **done and in place on pve-tiny (2026-10-01).** Every plan step
-is applied; all 26 plan gates and 27 unit tests pass. Historical results are
-imported for comparison, and nightly PBS backup coverage is confirmed. The deploy runs a
-four-stage GPU-free self-test, which passes:
-1. A run completes.
-2. Request settings and response flags are correct.
-3. A resume replays from cache.
-4. A server change is detected.
+Status: **done and in place (2026-10-01).** The harness runs on
+`ai-services-stack` (pve-tiny), with a five-stage GPU-free self-test as its
+deploy gate. Results publish to Nextcloud:
+- the Tables table **Model evaluations** (21 historical rows, two
+  comparable views, shared read-only with `steve`);
+- `Reports/eval-runner/` (leaderboard.md/.csv, findings.md, per-run
+  reports), shared with `steve`.
 
-No real scored run against Framework has been made yet; that is a
-separate operator decision. Branch `task/eval-runner` is not yet merged
-to `stable`.
-
+All 36 plan gates and 46 unit tests pass. No real scored run against
+Framework has been made yet; that is an operator decision. Branch
+`task/eval-runner` is not merged.
 
 Runs the eval battery's lm_eval tests (GPQA, IFEval) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -36,6 +34,8 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 | eval-runner-07-stack-yaml-pointer | done 2026-10-01, all critical gates pass |
 | eval-runner-06d–g (runmeta, selftest checks, unit tests) | done 2026-10-01, all critical gates pass |
 | Operator: deploy to pve-tiny | done 2026-10-01. Latest deploy (`dca91fc4`): `failed=0`, all 4 self-test stages OK |
+| eval-runner-06h–j, 08–10 (publish, Nextcloud, findings, manifest) | done 2026-10-01, all critical gates pass |
+| Operator: Nextcloud deploy + app password + publish | done 2026-10-01 |
 | Smoke test | replaced by the deploy-time `eval-run selftest` (passes). A real pilot against Framework is optional, operator's call |
 
 ## Hand-backs
@@ -253,3 +253,77 @@ Results are covered, with PBS keep-last-2 retention.
 - AgentBench is a 6.7 GB `Eugleo/agent-bench` checkout on garuda.
 
 None of these is packaged yet; that needs operator decisions.
+
+### 2026-10-01: results and findings in Nextcloud (Tables + reports)
+
+Operator direction: tabulate and document results nicely for comparison
+and analysis, in Nextcloud. Use existing data where possible and
+synthetic data where required.
+
+**Research:**
+- Nextcloud 35.0.0 had no table or spreadsheet app.
+- Tables 2.3.1 (stable) supports it.
+- Collabora/ONLYOFFICE were skipped: they're heavy and not needed for
+  sortable, filterable tables.
+
+**Built:** commits `842895fe`, `3efbf3ce` and `d77bc30c`.
+- `publish.py` with `--dry-run`, and `eval-run publish`.
+- `mock_nextcloud.py`, which enforces the Tables input contract.
+- Selftest stage 5: publish twice over real HTTP, no duplicates.
+- `docs/eval-runner/findings.md`.
+- Nextcloud playbook tasks: install Tables, create the `eval-reports`
+  account.
+- ai-services playbook: Nextcloud env, `findings.md` into the image, the
+  folder-share play.
+- Manifest field `services/nextcloud:NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`.
+- 46 unit tests.
+
+**Live sequence:**
+1. **Slip:** a probe `occ app:enable tables` installed Tables 2.3.1 on
+   prod outside the playbook (`app:enable` installs missing apps). It was
+   the intended end state. The playbook run then reported `ok`
+   (idempotent).
+2. **`nextcloud-stack` deploy on `pve`:** `ok=102 failed=0`, and
+   `eval-reports` was created (the app container wasn't restarted).
+   Side note: the existing `steve` user task sets `OC_PASS` without
+   `docker exec -e`, so it would only work if the user already exists.
+   Left as is.
+3. **App password:** the operator piped it straight into OpenBao
+   (`WRITE OK: services/nextcloud now at version 6`). Verified it loads
+   (72 alnum characters) and authenticates: WebDAV 207, Tables API 200.
+4. **ai-services deploy:** `failed=0`, self-test OK including stage 5,
+   folder share created.
+5. **First real publish: failed at `PUT /views/2` with HTTP 500.** The
+   Nextcloud log showed `foreach() argument must be of type array|object,
+   string given` in `ViewUpdateInput.php`. Read the Tables PHP source and
+   fixed it (`d77bc30c`):
+   - `columnSettings`, filter and sort are now sent as real arrays;
+   - views are re-applied on every publish, which repaired the
+     half-created one;
+   - the table column order and sort are set through OCS v2;
+   - network errors are reported cleanly;
+   - the mock now enforces the contract.
+6. **Later publishes:**
+   `published 21 files … 0 rows created, 0 updated, 21 unchanged`, both
+   times. The 21 rows were created by the failed attempt, and the
+   round-trip comparison is now proven.
+7. **Verified through the API:**
+   - table 2 "Model evaluations": 21 rows, 20 columns, Key first, sorted
+     Task ASC then Score DESC;
+   - views "Comparable: GPQA/IFEval" with is-equal filters and Score DESC
+     sort;
+   - table share to `steve`, read-only;
+   - folder `Reports/eval-runner` shared to `steve` (perms 1), with
+     leaderboard.md/.csv, findings.md and historical/.
+8. **Cleanup:** deleted the auto-created "Welcome to Nextcloud Tables!"
+   table owned by `eval-reports`.
+
+**Data used:** the published rows are the real historical results from
+framework. Synthetic data was only used where there was no real data
+yet: the selftest's mock-LLM run and the mock-Nextcloud publish, plus
+unit-test fixtures. No synthetic rows were published to the real
+Nextcloud.
+
+`plan.md` was regenerated (19 steps, 36 gates, all pass). Step 01's
+manifest gate is now scoped to its own entry, because the manifest
+legitimately has two additions.

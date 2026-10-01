@@ -55,6 +55,19 @@ without using Framework's GPU.
   "inspect raw output" rule.
 - **Non-root image (uid 1000).** The host script never reads secrets
   itself; containers get them only via `--env-file`.
+- **Results go to Nextcloud (operator request, 2026-10-01).** This uses
+  Nextcloud Tables, not an office suite. There is one table, "Model
+  evaluations": one row per (run, task), upserted by a Key column. It has
+  saved views "Comparable: GPQA" and "Comparable: IFEval" and is shared
+  read-only with `steve`.
+  - Files: per-run `report.md` and `manifest.json` (the reporting
+    `CONVENTION.md`), plus `leaderboard.md`/`.csv` and `findings.md`,
+    under `Reports/eval-runner/`. The folder is shared to `steve` by the
+    existing `nextcloud_folder_share` role.
+  - Publisher: the service account `eval-reports`. Only its app password
+    is secret (`services/nextcloud:NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`).
+  - `samples_*.jsonl` never leave the CT (GPQA licence).
+  - `findings.md` is written by hand, in the repo.
 - **`HF_TOKEN` goes in `shared/external-apis`.** GPQA is gated (anonymous
   fetch: HTTP 401). Framework's key is the existing
   `LLM_GPU_STACK_API_KEY`.
@@ -97,8 +110,32 @@ without using Framework's GPU.
   910) covers CT 50013. The root disk, which holds results, has no
   `backup=0`, and the Docker disk is `backup=1`. Snapshots of 50013 were
   confirmed for 2026-09-29 and 09-30. Retention is the PBS keep-last-2.
+- **Nextcloud (35.0.0) facts:**
+  - Apps before this work: text, viewer, office (landing page only),
+    no Tables or Collabora. The app store is reachable, and Tables 2.3.1
+    (stable) supports 35.x.
+  - The eval-runner container reaches
+    `https://nextcloud.lab.gibbsgreatly.xyz` with valid TLS.
+  - `occ app:enable` downloads and installs a missing app, not just
+    enables it.
+  - `occ user:auth-tokens:add -n` prints the token as its last line. That
+    token has "limited capabilities" (no login password) but works for
+    WebDAV (207) and the Tables API (200).
+  - Tables auto-creates a "Welcome to Nextcloud Tables!" table per user on
+    first use.
+- **Tables 2.3 API, verified live and from its PHP source:**
+  - Rows: `POST /tables/{id}/rows {"data": {colId: value}}`;
+    `PUT /rows/{id}`; rows come back as `[{columnId, value}]`.
+  - View settings (`PUT /views/{id}`) need real arrays:
+    `columnSettings [{columnId, order}]`, `filter
+    [[{columnId, operator, value}]]` (operator from `FilterOperator`, for
+    example `is-equal`), `sort [{columnId, mode: ASC|DESC}]`. The
+    deprecated `columns` key given as a JSON string gives HTTP 500.
+  - The table's own column order and sort are only settable through OCS
+    v2 `PUT /ocs/v2.php/apps/tables/api/2/tables/{id}`.
 - **Wrapper:** `ai-services-stack` is on `pve-tiny`, so deploys use
-  `./with-secrets-prod-tiny`.
+  `./with-secrets-prod-tiny`. `nextcloud-stack` is on `pve`, so its
+  deploys use `./with-secrets-prod`.
 
 ## Steps
 
@@ -130,12 +167,8 @@ scope:
 
 gates:
   - id: only-hf-token-added
-    cmd: "python3 -c \"import json,subprocess; new=json.load(open('secrets/manifest.json')); old=json.loads(subprocess.check_output(['git','show','stable:secrets/manifest.json'])); f=new['entries']['shared/external-apis']['fields']; assert f.count('HF_TOKEN')==1; f.remove('HF_TOKEN'); assert new==old; print('OK')\""
+    cmd: "python3 -c \"import json,subprocess; e='shared/external-apis'; new=json.load(open('secrets/manifest.json'))['entries'][e]; old=json.loads(subprocess.check_output(['git','show','stable:secrets/manifest.json']))['entries'][e]; f=new['fields']; assert f.count('HF_TOKEN')==1; f.remove('HF_TOKEN'); assert new==old; print('OK')\""
     expect: "prints OK, exit 0"
-    critical: true
-  - id: one-line-diff
-    cmd: "git diff --numstat stable -- secrets/manifest.json"
-    expect: "1\t1\tsecrets/manifest.json"
     critical: true
 ```
 
@@ -215,10 +248,11 @@ change: |
           "nltk==3.10.1" \
           "tenacity==9.1.4"
 
-    # Run setup (runmeta.py), scoring summary (summarize.py) and the selftest
-    # pieces. Copied after the pip layer so editing them doesn't invalidate the
+    # Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud
+    # publishing (publish.py, findings.md -- copied in from docs/eval-runner/ by
+    # the playbook) and the selftest pieces. Copied after the pip layer so editing them doesn't invalidate the
     # slow install. The test_*.py unit tests stay in the repo, not the image.
-    COPY mock_openai.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
+    COPY findings.md mock_nextcloud.py mock_openai.py publish.py runmeta.py selftest.sh selftest_checks.py summarize.py /opt/eval-runner/
     RUN chmod 0755 /opt/eval-runner/selftest.sh
 
     USER app
@@ -237,7 +271,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile | cut -d' ' -f1"
-    expect: "4a131859b8572dfd3b3606fe7977d7d8c4e8498879313c07103a70b2d8f858e7"
+    expect: "ae197e9decde2eb0c8488e64cea0fc933b9e57cee3ee3e0f44a571cb299306f1"
     critical: true
 ```
 
@@ -272,6 +306,7 @@ change: |
            eval-run resume <run> [--force]
            eval-run selftest
            eval-run results [run...]
+           eval-run publish [--dry-run]
 
     gpqa|ifeval  Start one detached run (container eval-<run>) against the model
                  Framework's llama-server is serving. Uses Framework's GPU for
@@ -287,6 +322,11 @@ change: |
     selftest     Exercise the whole harness against a stand-in server inside
                  the image (no Framework, no GPU). Exits non-zero on failure.
     results      Headline scores and response-quality flags per run.
+    publish      Push everything (eval-runner runs + historical) to Nextcloud:
+                 Reports/eval-runner/ (leaderboard.md/.csv, findings.md, one
+                 report.md + manifest.json per run) and the Tables table
+                 "Model evaluations" (rows upserted, never duplicated).
+                 --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
     USAGE
     }
 
@@ -408,6 +448,18 @@ change: |
           --entrypoint python \
           "$IMAGE" /opt/eval-runner/summarize.py "${targets[@]}"
         ;;
+      publish)
+        shift
+        if [[ "${1:-}" == "--dry-run" ]]; then
+          [[ $# -eq 1 ]] || die "unexpected arguments: $*"
+          rm -rf "${RESULTS_DIR}/_publish-preview"
+          helper /opt/eval-runner/publish.py --dry-run /results/_publish-preview
+          echo "preview: ${RESULTS_DIR}/_publish-preview/"
+        else
+          [[ $# -eq 0 ]] || die "unexpected arguments: $*"
+          helper /opt/eval-runner/publish.py
+        fi
+        ;;
       -h|--help)
         usage
         ;;
@@ -427,7 +479,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/eval-run | cut -d' ' -f1"
-    expect: "385f355ddc242ee33f6b68c6a4ce2f78081665ec0c51350619bdb0648b54bcd2"
+    expect: "827f2df566640e071e9492069af2b47cb6c4607299728fba71c9410fdac9e503"
     critical: true
   - id: executable
     cmd: "test -x terraform/lxc/ansible/files/eval-runner/eval-run && echo OK"
@@ -592,6 +644,9 @@ change: |
     #   3. resume: re-running the same run sends zero new requests (cache)
     #   4. `runmeta check` passes against the same server and exits 3 against
     #      a server that reports a different model_path
+    #   5. publish (the real HTTP client) to mock_nextcloud.py twice: report
+    #      files, one table with all columns and views, rows upserted without
+    #      duplicates, the share, and no samples files uploaded
     # Scores are meaningless (canned replies).
     set -eu
 
@@ -659,6 +714,29 @@ change: |
       exit 1
     fi
 
+    echo "== 5. publish to a stand-in Nextcloud, twice (no duplicates)"
+    MOCK_NC_PORT=18090 python "$d/mock_nextcloud.py" &
+    pids="$pids $!"
+    i=0
+    until python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18090/_mock/state', timeout=1)" 2>/dev/null; do
+      i=$((i + 1))
+      if [ "$i" -ge 50 ]; then
+        echo "selftest FAILED: mock Nextcloud did not start" >&2
+        exit 1
+      fi
+      sleep 0.2
+    done
+    pubroot=$(mktemp -d)
+    cp -r "$dir" "$pubroot/"
+    for _ in 1 2; do
+      NEXTCLOUD_EVAL_REPORTS_URL=http://127.0.0.1:18090 NEXTCLOUD_EVAL_REPORTS_USER=eval-reports \
+        NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD=selftest NEXTCLOUD_EVAL_TABLE_SHARE_WITH=steve \
+        python "$d/publish.py" --results-root "$pubroot"
+    done
+    python "$d/selftest_checks.py" --nextcloud-state http://127.0.0.1:18090/_mock/state \
+      --expect-rows 2 --published-run "$run"
+    rm -rf "$pubroot"
+
     echo "selftest OK"
 
 scope:
@@ -671,7 +749,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/selftest.sh | cut -d' ' -f1"
-    expect: "d83b8e643d27ebb80ddaae6eaf076a18b1b438a0f1c63432d407efdd622e6be8"
+    expect: "69f3263782fad1713d2216bd773f502ee182291066990fa5559abbc00a86c731"
     critical: true
   - id: shellcheck
     cmd: "shellcheck -s sh terraform/lxc/ansible/files/eval-runner/selftest.sh"
@@ -1244,15 +1322,20 @@ change: |
                 chat message list ending in a user turn. Also checks the count.
       flags     summarize.py's empty-response flags add up to what the mock was
                 told to produce, and run.json carries a fingerprint and props.
+      publish   After publishing twice to mock_nextcloud.py: one table with every
+                column, the expected rows (no duplicates from the second
+                publish), both views, one share, and the report files.
     """
 
     import argparse
     import json
     import os
     import sys
+    import urllib.request
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+    import publish  # noqa: E402
     import runmeta  # noqa: E402
     import summarize  # noqa: E402
 
@@ -1299,23 +1382,53 @@ change: |
         return errors
 
 
+    def publish_errors(state, expected_rows, run):
+        errors = []
+        if [t["title"] for t in state["tables"]] != [publish.TABLE_TITLE]:
+            errors.append(f"expected exactly one '{publish.TABLE_TITLE}' table, got {state['tables']}")
+        titles = [c["title"] for c in state["columns"]]
+        if titles != [t for t, _ in publish.COLUMNS]:
+            errors.append(f"columns {titles} don't match publish.COLUMNS")
+        if len(state["rows"]) != expected_rows:
+            errors.append(f"expected {expected_rows} rows, table has {len(state['rows'])}")
+        if state["tables"] and len(state["tables"][0].get("columnSettings") or []) != len(publish.COLUMNS):
+            errors.append("table column order (OCS v2 columnSettings) was not applied")
+        if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
+            errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
+                          f"{len(state['views'])} and {len(state['shares'])}")
+        for rel in ("leaderboard.md", "leaderboard.csv", "findings.md", f"runs/{run}/report.md", f"runs/{run}/manifest.json"):
+            if f"{publish.FOLDER}/{rel}" not in state["files"]:
+                errors.append(f"missing published file {rel}")
+        if any("samples_" in name for name in state["files"]):
+            errors.append("a samples file was published (GPQA questions must not leave the CT)")
+        return errors
+
+
     def main(argv=None):
         parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-        parser.add_argument("--requests", required=True)
-        parser.add_argument("--expect-requests", type=int, required=True)
-        parser.add_argument("--model", required=True)
+        parser.add_argument("--requests")
+        parser.add_argument("--expect-requests", type=int)
+        parser.add_argument("--model")
         parser.add_argument("--run-dir")
         parser.add_argument("--expect-empty", type=int)
+        parser.add_argument("--nextcloud-state", help="mock_nextcloud.py /_mock/state URL")
+        parser.add_argument("--expect-rows", type=int)
+        parser.add_argument("--published-run")
         args = parser.parse_args(argv)
 
-        errors = request_errors(args.requests, args.expect_requests, args.model)
+        errors = []
+        if args.requests:
+            errors += request_errors(args.requests, args.expect_requests, args.model)
         if args.run_dir is not None:
             errors += flag_errors(args.run_dir, args.expect_empty)
+        if args.nextcloud_state:
+            with urllib.request.urlopen(args.nextcloud_state, timeout=10) as resp:
+                errors += publish_errors(json.load(resp), args.expect_rows, args.published_run)
         for line in errors:
             print(f"FAIL: {line}", file=sys.stderr)
         if errors:
             return 1
-        print(f"checks OK ({args.expect_requests} requests)")
+        print("checks OK" + (f" ({args.expect_requests} requests)" if args.requests else " (publish)"))
         return 0
 
 
@@ -1332,7 +1445,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/selftest_checks.py | cut -d' ' -f1"
-    expect: "c58fa4baa59293aefebd0b15e9f56298a47a7dc5383066915251b24f18718ad5"
+    expect: "c1a1f887543e1ff4e081914b47ffcdd9ad02af677cfdb7511af44db5274b725e"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/selftest_checks.py && echo OK"
@@ -1568,7 +1681,9 @@ change: |
         n_samples = {}
         if "gpqa" in tasks:
             results["gpqa_diamond_cot_zeroshot"] = {"exact_match,flexible-extract": 0.5, "exact_match,strict-match": 0.25}
-            n_samples["gpqa_diamond_cot_zeroshot"] = {"original": 198, "effective": len(gpqa_rows or [])}
+            # lm_eval counts questions, not rows (GPQA has one row per filter)
+            n_samples["gpqa_diamond_cot_zeroshot"] = {"original": 198,
+                                                      "effective": len({r["doc_id"] for r in gpqa_rows or []})}
         if "ifeval" in tasks:
             results["ifeval"] = {"prompt_level_strict_acc,none": 0.9, "prompt_level_loose_acc,none": 0.95}
             n_samples["ifeval"] = {"original": 541, "effective": len(ifeval_rows or [])}
@@ -1738,11 +1853,1289 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_summarize.py | cut -d' ' -f1"
-    expect: "b66d403142a8ae400c6f2128135b2a94c6695a9cd1fa19462bbad772acf113f4"
+    expect: "f82cbf79e7b192080babbcfe7c22de756ca85193f92efdd888cb227da9d2df95"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
     expect: "OK"
+    critical: true
+```
+
+### eval-runner-06h-publish
+
+```yaml
+id: eval-runner-06h-publish
+title: Add the Nextcloud publisher
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/publish.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Publish eval results to Nextcloud.
+
+    What gets published (all under the service account, folder shared to the
+    operator by the deploy):
+
+      Reports/eval-runner/
+        leaderboard.md / leaderboard.csv   every result, comparable ones ranked
+        findings.md                        curated analysis (from the repo)
+        runs/<run>/report.md, manifest.json            eval-runner runs
+        historical/<source>/report.md, manifest.json   imported framework runs
+
+    and the Nextcloud Tables table "Model evaluations": one row per
+    (run, task, results file), upserted by its Key column, with saved views
+    for comparable GPQA / IFEval results.
+
+    The report/manifest layout follows docs/reporting-platform/CONVENTION.md.
+    samples_*.jsonl files are never uploaded: they contain GPQA questions,
+    whose licence forbids reposting them.
+
+    Environment (from /etc/eval-runner/eval-runner.env):
+      NEXTCLOUD_EVAL_REPORTS_URL           e.g. https://nextcloud.lab.gibbsgreatly.xyz
+      NEXTCLOUD_EVAL_REPORTS_USER          service account
+      NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD  its app password
+      NEXTCLOUD_EVAL_TABLE_SHARE_WITH      user to share the table with (optional)
+
+    Usage:
+      publish.py                    publish everything
+      publish.py --dry-run DIR      render everything into DIR, no network
+    """
+
+    import argparse
+    import base64
+    import csv
+    import datetime
+    import glob
+    import io
+    import json
+    import os
+    import sys
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    import summarize  # noqa: E402
+
+    RESULTS_ROOT = "/results"
+    FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
+    FOLDER = "Reports/eval-runner"
+    TABLE_TITLE = "Model evaluations"
+    TABLE_EMOJI = "📊"
+    TABLES_API = "/index.php/apps/tables/api/1"
+    TABLES_OCS_API = "/ocs/v2.php/apps/tables/api/2"
+
+    TASK_LABELS = {
+        "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
+        "ifeval": ("IFEval", "prompt-level strict", "prompt-level loose"),
+    }
+
+    # (title, column spec). Order is the table's column order. "Key" is the
+    # upsert identity and must stay first and unchanged.
+    COLUMNS = [
+        ("Key", {"type": "text", "subtype": "line"}),
+        ("Model", {"type": "text", "subtype": "line"}),
+        ("Task", {"type": "text", "subtype": "line"}),
+        ("Score %", {"type": "number", "numberDecimals": 2, "numberSuffix": "%"}),
+        ("Alt score %", {"type": "number", "numberDecimals": 2, "numberSuffix": "%"}),
+        ("Metrics", {"type": "text", "subtype": "line"}),
+        ("Questions", {"type": "number", "numberDecimals": 0}),
+        ("Empty answers", {"type": "number", "numberDecimals": 0}),
+        ("Empty %", {"type": "number", "numberDecimals": 1, "numberSuffix": "%"}),
+        ("Unparsed", {"type": "number", "numberDecimals": 0}),
+        ("Token budget", {"type": "number", "numberDecimals": 0}),
+        ("Comparable", {"type": "text", "subtype": "line"}),
+        ("Why not comparable", {"type": "text", "subtype": "line"}),
+        ("Model file / tag", {"type": "text", "subtype": "line"}),
+        ("Runtime", {"type": "text", "subtype": "line"}),
+        ("Note", {"type": "text", "subtype": "line"}),
+        ("Source", {"type": "text", "subtype": "line"}),
+        ("Run", {"type": "text", "subtype": "line"}),
+        ("Date", {"type": "text", "subtype": "line"}),
+        ("Report", {"type": "text", "subtype": "line"}),
+    ]
+
+    VIEWS = [
+        # (title, emoji, task label or None, comparable-only)
+        ("Comparable: GPQA", "🧠", "GPQA diamond", True),
+        ("Comparable: IFEval", "📋", "IFEval", True),
+    ]
+
+
+    # ---------------------------------------------------------------- collect
+
+    def _base_url(data):
+        model_args = data.get("config", {}).get("model_args")
+        if isinstance(model_args, dict):
+            return model_args.get("base_url", "")
+        pairs = dict(p.split("=", 1) for p in str(model_args or "").split(",") if "=" in p)
+        return pairs.get("base_url", "")
+
+
+    def _date(data, fallback):
+        stamp = data.get("date")
+        if isinstance(stamp, (int, float)):
+            return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m-%d")
+        return fallback
+
+
+    def _runtime(data, record):
+        if record and (record.get("server") or {}).get("props"):
+            return f"llama.cpp {record['server']['props'].get('build_info') or ''}".strip()
+        return "Ollama" if ":11434" in _base_url(data) else "OpenAI-compatible server"
+
+
+    def _model_file(model, record):
+        props = (record or {}).get("server", {}).get("props") or {}
+        if props.get("model_path"):
+            return os.path.basename(props["model_path"])
+        return model or ""
+
+
+    def _stamp_date(stamp):
+        """20261001T030837Z -> 2026-10-01"""
+        return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if len(stamp) >= 8 and stamp[:8].isdigit() else ""
+
+
+    def _row(source, run, task, data, metrics, samples, record, stamp):
+        label, primary_name, alt_name = TASK_LABELS[task]
+        primary_key, alt_key = [key for _, key in summarize.HEADLINE[task]]
+        n = data.get("n-samples", {}).get(task, {}).get("effective")
+        flags = summarize.response_flags(samples, task) if samples else {"empty": None, "unparsed": None}
+        reason = summarize.exclusion_reason(data)
+        model = (record or {}).get("server", {}).get("model_id") or summarize.model_name(data) or run
+
+        def pct(value):
+            return round(value * 100, 2) if isinstance(value, (int, float)) else None
+
+        empty = flags["empty"]
+        return {
+            "Key": f"{source}/{run}/{task}" + (f"/{stamp}" if source == "historical" else ""),
+            "Model": model,
+            "Task": label,
+            "Score %": pct(metrics.get(primary_key)),
+            "Alt score %": pct(metrics.get(alt_key)),
+            "Metrics": f"{primary_name} / {alt_name}",
+            "Questions": n,
+            "Empty answers": empty,
+            "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
+            "Unparsed": flags["unparsed"],
+            "Token budget": summarize._max_gen_toks(data.get("config", {}).get("gen_kwargs")),
+            "Comparable": "no" if reason else "yes",
+            "Why not comparable": reason or "",
+            "Model file / tag": _model_file(model, record),
+            "Runtime": _runtime(data, record),
+            "Note": (record or {}).get("note", ""),
+            "Source": "eval-runner" if source == "runs" else "historical (framework)",
+            "Run": run,
+            "Date": _date(data, _stamp_date((record or {}).get("created_utc", ""))),
+            "Report": f"{FOLDER}/{source}/{run}/report.md",
+        }
+
+
+    def _results_files(run_dir):
+        return sorted(glob.glob(os.path.join(run_dir, "**", "results_*.json"), recursive=True))
+
+
+    def collect_run(run_dir, source):
+        """Rows for one run directory. eval-runner runs: newest results file per
+        task (a resume supersedes earlier files). Historical: every results file,
+        so excluded pilots/Bug 6 runs stay visible with their reason."""
+        run = os.path.basename(os.path.normpath(run_dir))
+        record_path = os.path.join(run_dir, "run.json")
+        record = None
+        if os.path.exists(record_path):
+            with open(record_path) as fh:
+                record = json.load(fh)
+        rows = {}
+        for path in _results_files(run_dir):
+            with open(path) as fh:
+                data = json.load(fh)
+            stamp = summarize._results_stamp(path)
+            for task, metrics in data.get("results", {}).items():
+                if task not in summarize.HEADLINE:
+                    continue
+                samples = os.path.join(os.path.dirname(path), f"samples_{task}_{stamp}.jsonl")
+                row = _row(source, run, task, data, metrics,
+                           samples if os.path.exists(samples) else None, record, stamp)
+                rows[row["Key"]] = row
+        return record, list(rows.values())
+
+
+    def collect(results_root):
+        """[(source, run_dir, record, rows)] for every eval-runner and historical run."""
+        out = []
+        for run_dir in sorted(glob.glob(os.path.join(results_root, "*"))):
+            if os.path.isdir(run_dir) and not os.path.basename(run_dir).startswith("_"):
+                record, rows = collect_run(run_dir, "runs")
+                out.append(("runs", run_dir, record, rows))
+        hist = os.path.join(results_root, summarize.HISTORICAL_DIR)
+        for run_dir in sorted(glob.glob(os.path.join(hist, "*"))):
+            if os.path.isdir(run_dir):
+                record, rows = collect_run(run_dir, "historical")
+                out.append(("historical", run_dir, record, rows))
+        return out
+
+
+    # ----------------------------------------------------------------- render
+
+    def _fmt(value, suffix="", decimals=2):
+        if value is None or value == "":
+            return "–"
+        if isinstance(value, float):
+            return f"{value:.{decimals}f}{suffix}"
+        return f"{value}{suffix}"
+
+
+    CAVEATS = """\
+    - **Greedy decoding.** Both task configs pin `temperature: 0`, as every
+      historical result did.
+    - **Token budget.** `max_gen_toks` is 8192 unless the table says
+      otherwise. An *empty answer* means the model produced no answer
+      content, usually because its reasoning used up the budget. A score with
+      many empty answers mostly measures finishing inside the budget. Read
+      `findings.md` before comparing reasoning models.
+    - **Comparable** means a full run (no `--limit`) at the 8192 budget.
+      Pilots and runs without the cap (the Bug 6 era) are listed but not
+      ranked.
+    - Per-question samples stay on the eval-runner CT, not in Nextcloud:
+      GPQA's licence forbids reposting its questions.
+    """
+
+
+    def render_report(source, run_dir, record, rows):
+        run = os.path.basename(os.path.normpath(run_dir))
+        lines = [f"# {run}", ""]
+        if rows:
+            first = rows[0]
+            lines += [
+                f"- **Model:** {first['Model']} (`{first['Model file / tag']}`)",
+                f"- **Runtime:** {first['Runtime']}",
+                f"- **Source:** {first['Source']}",
+            ]
+        if record:
+            props = (record.get("server") or {}).get("props") or {}
+            params = props.get("params") or {}
+            lines += [
+                f"- **Started:** {record.get('created_utc', '')}",
+                f"- **Note:** {record.get('note') or '–'}",
+                f"- **Server:** n_ctx {props.get('n_ctx', '–')}, server-default sampling "
+                f"temperature {params.get('temperature', '–')} / top_p {params.get('top_p', '–')} "
+                "(requests override temperature to 0)",
+                f"- **Fingerprint:** `{record.get('fingerprint', '')[:16]}`",
+                f"- **lm_eval:** {record.get('lm_eval_version') or '–'}, "
+                f"limit {record.get('limit') or 'none'}, concurrency {record.get('concurrency')}",
+            ]
+        lines += ["", "## Results", "",
+                  "| Task | Score | Alt score | Metrics | Questions | Empty answers | Unparsed | Budget | Comparable | Date |",
+                  "|---|---|---|---|---|---|---|---|---|---|"]
+        for r in rows:
+            comparable = r["Comparable"] + (f" ({r['Why not comparable']})" if r["Why not comparable"] else "")
+            lines.append(
+                f"| {r['Task']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | {r['Metrics']} | "
+                f"{_fmt(r['Questions'])} | {_fmt(r['Empty answers'])} ({_fmt(r['Empty %'], '%', 1)}) | "
+                f"{_fmt(r['Unparsed'])} | {_fmt(r['Token budget'])} | {comparable} | {r['Date']} |"
+            )
+        if not rows:
+            lines.append("| – | no results yet | | | | | | | | |")
+        lines += ["", "## Caveats", "", CAVEATS]
+        return "\n".join(lines)
+
+
+    def render_manifest(source, run_dir, record, rows):
+        run = os.path.basename(os.path.normpath(run_dir))
+        dates = sorted(r["Date"] for r in rows if r["Date"])
+        scores = ", ".join(f"{r['Task']} {_fmt(r['Score %'], '%')}" for r in rows) or "no results yet"
+        return {
+            "project": "eval-runner",
+            "run_id": run,
+            "started_at": (record or {}).get("created_utc") or (dates[0] if dates else ""),
+            "finished_at": dates[-1] if dates else "",
+            "summary": f"{rows[0]['Model'] if rows else run}: {scores}",
+            "source": source,
+            "rows": rows,
+        }
+
+
+    def render_leaderboard(all_rows, generated):
+        lines = ["# Model evaluations: leaderboard", "",
+                 f"Generated {generated} by `eval-run publish`. The same data is in the "
+                 f"Nextcloud Tables table **{TABLE_TITLE}**. Analysis: `findings.md`.", ""]
+        for label in ("GPQA diamond", "IFEval"):
+            ranked = sorted((r for r in all_rows if r["Task"] == label and r["Comparable"] == "yes"),
+                            key=lambda r: -(r["Score %"] or 0))
+            alt = "strict-match" if label.startswith("GPQA") else "prompt-level loose"
+            main = "flexible-extract" if label.startswith("GPQA") else "prompt-level strict"
+            lines += [f"## {label} (comparable runs, ranked by {main})", "",
+                      f"| # | Model | Score | {alt} | Empty answers | Unparsed | Runtime | Date | Source |",
+                      "|---|---|---|---|---|---|---|---|---|"]
+            for i, r in enumerate(ranked, 1):
+                lines.append(
+                    f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
+                    f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} ({_fmt(r['Empty %'], '%', 1)}) | "
+                    f"{_fmt(r['Unparsed'])} | {r['Runtime']} | {r['Date']} | {r['Source']} |"
+                )
+            if not ranked:
+                lines.append("| – | none yet | | | | | | | |")
+            lines.append("")
+        excluded = [r for r in all_rows if r["Comparable"] != "yes"]
+        if excluded:
+            lines += ["## Not comparable (listed, not ranked)", "",
+                      "| Model | Task | Score | Why | Run |", "|---|---|---|---|---|"]
+            for r in sorted(excluded, key=lambda r: (r["Model"], r["Task"], r["Run"])):
+                lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | "
+                             f"{r['Why not comparable']} | {r['Run']} |")
+            lines.append("")
+        lines += ["## Caveats", "", CAVEATS]
+        return "\n".join(lines)
+
+
+    def render_csv(all_rows):
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=[title for title, _ in COLUMNS])
+        writer.writeheader()
+        for r in all_rows:
+            writer.writerow({k: ("" if v is None else v) for k, v in r.items()})
+        return buf.getvalue()
+
+
+    def build_files(collected, findings_text, generated):
+        """{relative path under FOLDER: bytes}"""
+        files = {}
+        all_rows = []
+        for source, run_dir, record, rows in collected:
+            run = os.path.basename(os.path.normpath(run_dir))
+            files[f"{source}/{run}/report.md"] = render_report(source, run_dir, record, rows).encode()
+            files[f"{source}/{run}/manifest.json"] = (
+                json.dumps(render_manifest(source, run_dir, record, rows), indent=2) + "\n").encode()
+            all_rows += rows
+        files["leaderboard.md"] = render_leaderboard(all_rows, generated).encode()
+        files["leaderboard.csv"] = render_csv(all_rows).encode()
+        if findings_text is not None:
+            files["findings.md"] = findings_text.encode()
+        return files, all_rows
+
+
+    # ------------------------------------------------------------------ client
+
+    class NextcloudError(RuntimeError):
+        pass
+
+
+    class Nextcloud:
+        def __init__(self, base_url, user, password, opener=None):
+            self.base = base_url.rstrip("/")
+            self.user = user
+            token = base64.b64encode(f"{user}:{password}".encode()).decode()
+            self.auth = f"Basic {token}"
+            self.opener = opener or urllib.request.urlopen
+
+        def request(self, method, path, body=None, raw=None, ok=(200, 201, 204)):
+            headers = {"Authorization": self.auth, "OCS-APIRequest": "true", "Accept": "application/json"}
+            data = raw
+            if body is not None:
+                data = json.dumps(body).encode()
+                headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+            try:
+                with self.opener(req, timeout=60) as resp:
+                    payload = resp.read()
+                    status = resp.status
+            except urllib.error.HTTPError as err:
+                status, payload = err.code, err.read()
+            except (urllib.error.URLError, OSError) as err:
+                raise NextcloudError(f"{method} {path} -> {type(err).__name__}: {err}") from err
+            if status not in ok:
+                raise NextcloudError(f"{method} {path} -> HTTP {status}: {payload[:300]!r}")
+            if payload and payload.lstrip()[:1] in (b"{", b"["):
+                return json.loads(payload)
+            return None
+
+        # WebDAV
+        def _dav(self, rel):
+            quoted = "/".join(urllib.parse.quote(part) for part in rel.split("/"))
+            return f"/remote.php/dav/files/{urllib.parse.quote(self.user)}/{quoted}"
+
+        def ensure_folder(self, rel):
+            parts = rel.strip("/").split("/")
+            for i in range(1, len(parts) + 1):
+                # 405 = already exists
+                self.request("MKCOL", self._dav("/".join(parts[:i])), ok=(201, 405))
+
+        def put_file(self, rel, content):
+            self.request("PUT", self._dav(rel), raw=content, ok=(201, 204))
+
+        # Tables
+        def tables(self, method, path, body=None):
+            return self.request(method, TABLES_API + path, body=body)
+
+
+    def ensure_table(nc):
+        for table in nc.tables("GET", "/tables") or []:
+            if table.get("title") == TABLE_TITLE:
+                return table["id"]
+        return nc.tables("POST", "/tables", {"title": TABLE_TITLE, "emoji": TABLE_EMOJI})["id"]
+
+
+    def ensure_columns(nc, table_id):
+        """{title: column id}, creating any missing columns in COLUMNS order."""
+        existing = {c["title"]: c["id"] for c in nc.tables("GET", f"/tables/{table_id}/columns") or []}
+        for title, spec in COLUMNS:
+            if title not in existing:
+                created = nc.tables("POST", f"/tables/{table_id}/columns",
+                                    {"title": title, "mandatory": False, **spec})
+                existing[title] = created["id"]
+        return existing
+
+
+    def _all_rows(nc, table_id, page=500):
+        rows, offset = [], 0
+        while True:
+            batch = nc.tables("GET", f"/tables/{table_id}/rows?limit={page}&offset={offset}") or []
+            rows += batch
+            if len(batch) < page:
+                return rows
+            offset += page
+
+
+    def _row_payload(row, col_ids):
+        return {str(col_ids[title]): row[title] for title, _ in COLUMNS if row.get(title) is not None}
+
+
+    def _same(a, b):
+        """Remote numbers can come back as 198.0 for 198 -- compare numerically."""
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return abs(a - b) < 1e-9
+        if isinstance(b, (int, float)) and isinstance(a, str):
+            try:
+                return abs(float(a) - b) < 1e-9
+            except ValueError:
+                return False
+        return a == b
+
+
+    def upsert_rows(nc, table_id, col_ids, rows):
+        """Create or update rows by Key. Returns (created, updated, unchanged)."""
+        key_col = col_ids["Key"]
+        existing = {}
+        for remote in _all_rows(nc, table_id):
+            values = {cell["columnId"]: cell["value"] for cell in remote.get("data", [])}
+            if values.get(key_col) is not None:
+                existing[values[key_col]] = (remote["id"], values)
+        created = updated = unchanged = 0
+        for row in rows:
+            payload = _row_payload(row, col_ids)
+            if row["Key"] not in existing:
+                nc.tables("POST", f"/tables/{table_id}/rows", {"data": payload})
+                created += 1
+                continue
+            row_id, values = existing[row["Key"]]
+            if all(_same(values.get(int(cid)), value) for cid, value in payload.items()):
+                unchanged += 1
+                continue
+            nc.tables("PUT", f"/rows/{row_id}", {"data": payload})
+            updated += 1
+        return created, updated, unchanged
+
+
+    def view_settings(col_ids, task, comparable_only):
+        """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
+        accepts (read from its source): columnSettings [{columnId, order}],
+        filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
+        sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
+        (the deprecated "columns" key breaks when given a string)."""
+        filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
+        if comparable_only:
+            filters.append({"columnId": col_ids["Comparable"], "operator": "is-equal", "value": "yes"})
+        shown = [title for title, _ in COLUMNS if title != "Key"]
+        return {
+            "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
+            "filter": [filters],
+            "sort": [{"columnId": col_ids["Score %"], "mode": "DESC"}],
+        }
+
+
+    def ensure_views(nc, table_id, col_ids):
+        """Create missing views, and (re)apply every view's settings each time,
+        so a view left half-configured by an earlier failure gets repaired."""
+        existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
+        for title, emoji, task, comparable_only in VIEWS:
+            view_id = existing.get(title)
+            if view_id is None:
+                view_id = nc.tables("POST", f"/tables/{table_id}/views", {"title": title, "emoji": emoji})["id"]
+            nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, comparable_only)})
+
+
+    def table_layout(col_ids):
+        """Body for the OCS v2 PUT /tables/{id}: the table's own column order
+        (COLUMNS order, Key first) and default sort (task, then score desc).
+        The v1 API has no way to set these; without it the base table shows
+        columns in an arbitrary order."""
+        return {
+            "columnSettings": [{"columnId": col_ids[title], "order": i} for i, (title, _) in enumerate(COLUMNS)],
+            "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
+        }
+
+
+    def ensure_table_layout(nc, table_id, col_ids):
+        nc.request("PUT", f"{TABLES_OCS_API}/tables/{table_id}", body=table_layout(col_ids))
+
+
+    def ensure_share(nc, table_id, user):
+        shares = nc.tables("GET", f"/tables/{table_id}/shares") or []
+        if any(s.get("receiver") == user for s in shares):
+            return
+        nc.tables("POST", f"/tables/{table_id}/shares", {
+            "receiver": user, "receiverType": "user", "permissionRead": True,
+            "permissionCreate": False, "permissionUpdate": False,
+            "permissionDelete": False, "permissionManage": False,
+        })
+
+
+    def publish(nc, files, rows, share_with=None):
+        nc.ensure_folder(FOLDER)
+        for rel in sorted(files):
+            parent = os.path.dirname(rel)
+            if parent:
+                nc.ensure_folder(f"{FOLDER}/{parent}")
+            nc.put_file(f"{FOLDER}/{rel}", files[rel])
+        table_id = ensure_table(nc)
+        col_ids = ensure_columns(nc, table_id)
+        counts = upsert_rows(nc, table_id, col_ids, rows)
+        ensure_table_layout(nc, table_id, col_ids)
+        ensure_views(nc, table_id, col_ids)
+        if share_with:
+            ensure_share(nc, table_id, share_with)
+        return table_id, counts
+
+
+    def main(argv=None):
+        parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        parser.add_argument("--dry-run", metavar="DIR", help="render into DIR instead of publishing")
+        parser.add_argument("--results-root", default=RESULTS_ROOT)
+        parser.add_argument("--findings", default=FINDINGS_FILE)
+        args = parser.parse_args(argv)
+
+        findings = None
+        if os.path.exists(args.findings):
+            with open(args.findings) as fh:
+                findings = fh.read()
+        generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        files, rows = build_files(collect(args.results_root), findings, generated)
+
+        if args.dry_run:
+            for rel, content in files.items():
+                path = os.path.join(args.dry_run, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(content)
+            print(f"dry run: {len(files)} files, {len(rows)} table rows -> {args.dry_run}")
+            return 0
+
+        env = os.environ
+        missing = [k for k in ("NEXTCLOUD_EVAL_REPORTS_URL", "NEXTCLOUD_EVAL_REPORTS_USER",
+                               "NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD") if not env.get(k)]
+        if missing:
+            print(f"publish: not configured, missing {', '.join(missing)}", file=sys.stderr)
+            return 2
+        nc = Nextcloud(env["NEXTCLOUD_EVAL_REPORTS_URL"], env["NEXTCLOUD_EVAL_REPORTS_USER"],
+                       env["NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD"])
+        try:
+            table_id, (created, updated, unchanged) = publish(
+                nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None)
+        except NextcloudError as err:
+            print(f"publish FAILED: {err}", file=sys.stderr)
+            return 1
+        print(f"published {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
+              f"{created} rows created, {updated} updated, {unchanged} unchanged")
+        return 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/publish.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
+    expect: "4c667440a25af43a255902b65aef36d3147ac1b2ecd79ece4f69076825fb8f57"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-06i-mock-nextcloud
+
+```yaml
+id: eval-runner-06i-mock-nextcloud
+title: Add the selftest stand-in Nextcloud
+depends_on: []
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """In-memory stand-in for the slice of Nextcloud that publish.py uses, for
+    `eval-run selftest`: WebDAV MKCOL/PUT under /remote.php/dav/files/<user>/,
+    and the Tables v1 API (tables, columns, rows, views, shares). Checks HTTP
+    basic auth against MOCK_NC_USER / MOCK_NC_PASSWORD.
+
+    GET /_mock/state returns everything stored, so selftest_checks.py can
+    assert on it. Listens on 127.0.0.1 only (MOCK_NC_PORT, default 18090).
+    """
+
+    import base64
+    import json
+    import os
+    import re
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    PORT = int(os.environ.get("MOCK_NC_PORT", "18090"))
+    USER = os.environ.get("MOCK_NC_USER", "eval-reports")
+    PASSWORD = os.environ.get("MOCK_NC_PASSWORD", "selftest")
+    API = "/index.php/apps/tables/api/1"
+    OCS_API = "/ocs/v2.php/apps/tables/api/2"
+
+    _lock = threading.Lock()
+    STATE = {}
+    _ids = {"n": 0}
+
+
+    def reset():
+        """Empty all stored state (unit tests reuse route() in-process)."""
+        STATE.clear()
+        STATE.update({"folders": [], "files": {}, "tables": [], "columns": [], "rows": [],
+                      "views": [], "shares": [], "requests": 0})
+        _ids["n"] = 0
+
+
+    reset()
+
+
+    def _next_id():
+        _ids["n"] += 1
+        return _ids["n"]
+
+
+    FILTER_OPERATORS = {"begins-with", "ends-with", "contains", "contains-item", "does-not-contain", "is-equal",
+                        "is-not-equal", "is-greater-than", "is-greater-than-or-equal", "is-lower-than",
+                        "is-lower-than-or-equal", "is-empty"}
+
+
+    def view_update_problem(data):
+        """Mirror of Tables 2.3 ViewUpdateInput's input contract (the real one
+        answers HTTP 500 for these): None if acceptable, else what's wrong."""
+        if "columns" in data and isinstance(data["columns"], str):
+            return "deprecated 'columns' given as a string (foreach on string)"
+        settings = data.get("columnSettings")
+        if settings is not None and not (isinstance(settings, list)
+                                         and all(isinstance(c, dict) and "columnId" in c for c in settings)):
+            return "columnSettings must be a list of {columnId, order}"
+        for group in data.get("filter") or []:
+            for f in group:
+                if not {"columnId", "operator", "value"} <= set(f) or f["operator"] not in FILTER_OPERATORS:
+                    return f"bad filter entry {f}"
+        for rule in data.get("sort") or []:
+            if not isinstance(rule, dict) or rule.get("mode") not in ("ASC", "DESC") or "columnId" not in rule:
+                return f"bad sort rule {rule}"
+        return None
+
+
+    def ocs_route(method, path, body):
+        """Tables OCS v2: only PUT /tables/{id} (column order + sort)."""
+        m = re.fullmatch(r"/tables/(\d+)", path)
+        if not (m and method == "PUT"):
+            return 404, {"ocs": {"meta": {"status": "failure"}, "data": []}}
+        table = next((t for t in STATE["tables"] if t["id"] == int(m.group(1))), None)
+        if table is None:
+            return 404, {"ocs": {"meta": {"status": "failure"}, "data": []}}
+        problem = view_update_problem({k: body.get(k) for k in ("columnSettings", "sort") if k in body})
+        if problem:
+            return 500, {"ocs": {"meta": {"status": "failure", "message": problem}, "data": []}}
+        table.update({k: body[k] for k in ("columnSettings", "sort") if k in body})
+        return 200, {"ocs": {"meta": {"status": "ok"}, "data": table}}
+
+
+    def route(method, path, body):
+        """Tables v1 routing: (status, json body). Caller holds _lock if threaded."""
+        m = re.fullmatch(r"/tables", path)
+        if m and method == "GET":
+            return 200, STATE["tables"]
+        if m and method == "POST":
+            table = {"id": _next_id(), "title": body["title"], "emoji": body.get("emoji")}
+            STATE["tables"].append(table)
+            return 200, table
+        m = re.fullmatch(r"/tables/(\d+)/(columns|rows|views|shares)", path)
+        if m:
+            table_id, kind = int(m.group(1)), m.group(2)
+            if method == "GET":
+                return 200, [x for x in STATE[kind] if x["tableId"] == table_id]
+            if kind == "columns":
+                item = {"id": _next_id(), "tableId": table_id, **body}
+            elif kind == "rows":
+                data = [{"columnId": int(k), "value": v} for k, v in body["data"].items()]
+                item = {"id": _next_id(), "tableId": table_id, "data": data}
+            elif kind == "views":
+                item = {"id": _next_id(), "tableId": table_id, "title": body["title"], "emoji": body.get("emoji")}
+            else:
+                item = {"id": _next_id(), "tableId": table_id, **body}
+            STATE[kind].append(item)
+            return 200, item
+        m = re.fullmatch(r"/rows/(\d+)", path)
+        if m and method == "PUT":
+            row = next((r for r in STATE["rows"] if r["id"] == int(m.group(1))), None)
+            if row is None:
+                return 404, {"message": "no such row"}
+            cells = {c["columnId"]: c["value"] for c in row["data"]}
+            cells.update({int(k): v for k, v in body["data"].items()})
+            row["data"] = [{"columnId": k, "value": v} for k, v in cells.items()]
+            return 200, row
+        m = re.fullmatch(r"/views/(\d+)", path)
+        if m and method == "PUT":
+            view = next((v for v in STATE["views"] if v["id"] == int(m.group(1))), None)
+            if view is None:
+                return 404, {"message": "no such view"}
+            problem = view_update_problem(body.get("data", {}))
+            if problem:
+                return 500, {"message": problem}
+            view.update(body["data"])
+            return 200, view
+        return 404, {"message": f"no route {method} {path}"}
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, code, body=None):
+            data = b"" if body is None else json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _authorised(self):
+            expected = "Basic " + base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+            if self.headers.get("Authorization") != expected:
+                self._send(401, {"message": "unauthorised"})
+                return False
+            return True
+
+        def _body(self):
+            raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            return raw
+
+        def _json(self):
+            raw = self._body()
+            return json.loads(raw) if raw else {}
+
+        def _dav_path(self):
+            prefix = f"/remote.php/dav/files/{USER}/"
+            return self.path[len(prefix):] if self.path.startswith(prefix) else None
+
+        def do_MKCOL(self):  # noqa: N802 (HTTP verb)
+            if not self._authorised():
+                return
+            path = self._dav_path()
+            with _lock:
+                STATE["requests"] += 1
+                if path in STATE["folders"]:
+                    self._send(405)
+                    return
+                STATE["folders"].append(path)
+            self._send(201)
+
+        def do_PUT(self):  # noqa: N802
+            if not self._authorised():
+                return
+            path = self._dav_path()
+            if path is not None:
+                body = self._body()
+                parent = path.rsplit("/", 1)[0]
+                with _lock:
+                    STATE["requests"] += 1
+                    if parent not in STATE["folders"]:
+                        self._send(409, {"message": f"parent {parent} missing"})
+                        return
+                    existed = path in STATE["files"]
+                    STATE["files"][path] = body.decode(errors="replace")
+                self._send(204 if existed else 201)
+                return
+            self._tables("PUT", self._json())
+
+        def do_GET(self):  # noqa: N802
+            if self.path == "/_mock/state":
+                with _lock:
+                    self._send(200, STATE)
+                return
+            if not self._authorised():
+                return
+            self._tables("GET", None)
+
+        def do_POST(self):  # noqa: N802
+            if not self._authorised():
+                return
+            self._tables("POST", self._json())
+
+        def _tables(self, method, body):
+            path = self.path.split("?", 1)[0]
+            if path.startswith(OCS_API):
+                with _lock:
+                    STATE["requests"] += 1
+                    code, result = ocs_route(method, path[len(OCS_API):], body or {})
+                self._send(code, result)
+                return
+            if not path.startswith(API):
+                self._send(404, {"message": "not found"})
+                return
+            sub = path[len(API):]
+            with _lock:
+                STATE["requests"] += 1
+                code, result = route(method, sub, body or {})
+            self._send(code, result)
+
+        def log_message(self, *args):
+            """Silence per-request access logging."""
+
+
+    if __name__ == "__main__":
+        # Plain HTTP on loopback inside a throwaway test container.
+        ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()  # NOSONAR
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py | cut -d' ' -f1"
+    expect: "bf669f50e0d98b70b2821715fc31f04e09b4309352152565ff812fbeaa889453"
+    critical: true
+  - id: compiles
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py && echo OK"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-06j-test-publish
+
+```yaml
+id: eval-runner-06j-test-publish
+title: Add publish unit tests
+depends_on:
+  - eval-runner-06h-publish
+  - eval-runner-06i-mock-nextcloud
+  - eval-runner-06g-test-summarize
+
+change: |
+  Create terraform/lxc/ansible/files/eval-runner/test_publish.py with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    """Unit tests for publish.py (synthetic results, in-process fake Nextcloud).
+    python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner -p "test_*.py"
+    """
+
+    import csv
+    import io
+    import json
+    import os
+    import tempfile
+    import unittest
+
+    import mock_nextcloud
+    import publish
+    import summarize
+    from test_summarize import gpqa_rows, ifeval_rows, write_run
+
+
+    class FakeNextcloud:
+        """publish.Nextcloud's interface, backed by mock_nextcloud's state and routing."""
+
+        def __init__(self):
+            mock_nextcloud.reset()
+            self.state = mock_nextcloud.STATE
+            self.calls = []
+
+        def ensure_folder(self, rel):
+            parts = rel.strip("/").split("/")
+            for i in range(1, len(parts) + 1):
+                path = "/".join(parts[:i])
+                if path not in self.state["folders"]:
+                    self.state["folders"].append(path)
+
+        def request(self, method, path, body=None):
+            self.calls.append((method, path))
+            assert path.startswith(mock_nextcloud.OCS_API), path
+            code, result = mock_nextcloud.ocs_route(method, path[len(mock_nextcloud.OCS_API):], body or {})
+            if code != 200:
+                raise publish.NextcloudError(f"{method} {path} -> {code} {result}")
+            return result
+
+        def put_file(self, rel, content):
+            assert os.path.dirname(rel) in self.state["folders"], rel
+            self.state["files"][rel] = content.decode()
+
+        def tables(self, method, path, body=None):
+            self.calls.append((method, path))
+            code, result = mock_nextcloud.route(method, path.split("?", 1)[0], body or {})
+            if code != 200:
+                raise publish.NextcloudError(f"{method} {path} -> {code} {result}")
+            return result
+
+
+    def make_tree(root):
+        """One eval-runner run (with run.json) and two historical sources (one excluded)."""
+        run_dir = write_run(root, "glm-5.3-flash-both-20261002T000000Z", ["gpqa", "ifeval"],
+                            gpqa_rows=gpqa_rows(["(A)", "", "(B)"]), ifeval_rows=ifeval_rows(["ok", ""]),
+                            run_json=False)
+        with open(os.path.join(run_dir, "run.json"), "w") as fh:
+            json.dump({"run": os.path.basename(run_dir), "note": "reasoning_effort=high", "created_utc": "20261002T000000Z",
+                       "fingerprint": "abcd" * 16, "limit": None, "concurrency": 1, "lm_eval_version": "0.4.12",
+                       "server": {"model_id": "glm-5.3-flash", "props": {
+                           "model_path": "/m/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf",
+                           "build_info": "b11309-a4d880fd5", "n_ctx": 131072,
+                           "params": {"temperature": 1.0, "top_p": 0.95}}}}, fh)
+        hist = os.path.join(root, summarize.HISTORICAL_DIR)
+        os.makedirs(hist)
+        write_run(hist, "qwen36-35b-redo", ["gpqa", "ifeval"], gpqa_rows=gpqa_rows(["(A)", ""]),
+                  ifeval_rows=ifeval_rows(["ok"]), run_json=False)
+        write_run(hist, "qwen36-35b", ["ifeval"], ifeval_rows=ifeval_rows(["x"]), run_json=False,
+                  config={"limit": None, "gen_kwargs": {}, "model_args": {"model": "eval-qwen36", "base_url": "http://f:11434/v1"}})
+        return run_dir
+
+
+    class CollectTest(unittest.TestCase):
+        def test_rows_from_runs_and_history(self):
+            with tempfile.TemporaryDirectory() as root:
+                make_tree(root)
+                rows = [r for _, _, _, rs in publish.collect(root) for r in rs]
+            by_key = {r["Key"]: r for r in rows}
+            self.assertEqual(len(rows), 5)
+            glm = by_key["runs/glm-5.3-flash-both-20261002T000000Z/gpqa_diamond_cot_zeroshot"]
+            self.assertEqual(glm["Model"], "glm-5.3-flash")
+            self.assertEqual(glm["Runtime"], "llama.cpp b11309-a4d880fd5")
+            self.assertEqual(glm["Model file / tag"], "GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf")
+            self.assertEqual(glm["Note"], "reasoning_effort=high")
+            self.assertEqual(glm["Date"], "2026-10-02")
+            self.assertEqual((glm["Score %"], glm["Empty answers"], glm["Unparsed"]), (50.0, 1, 1))
+            self.assertEqual(glm["Empty %"], 33.3)
+            self.assertEqual(glm["Comparable"], "yes")
+            bug6 = [r for r in rows if r["Run"] == "qwen36-35b"][0]
+            self.assertEqual(bug6["Comparable"], "no")
+            self.assertIn("Bug 6", bug6["Why not comparable"])
+            self.assertEqual(bug6["Runtime"], "Ollama")
+            self.assertTrue(bug6["Key"].startswith("historical/qwen36-35b/ifeval/"))
+
+
+    class RenderTest(unittest.TestCase):
+        def setUp(self):
+            self.tmp = tempfile.TemporaryDirectory()
+            make_tree(self.tmp.name)
+            self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), "# findings\n", "NOW")
+
+        def tearDown(self):
+            self.tmp.cleanup()
+
+        def test_expected_files(self):
+            self.assertIn("leaderboard.md", self.files)
+            self.assertIn("leaderboard.csv", self.files)
+            self.assertEqual(self.files["findings.md"], b"# findings\n")
+            self.assertIn("runs/glm-5.3-flash-both-20261002T000000Z/report.md", self.files)
+            self.assertIn("historical/qwen36-35b/manifest.json", self.files)
+            self.assertFalse(any("samples_" in name for name in self.files))
+
+        def test_markdown_tables_have_consistent_columns(self):
+            for name, content in self.files.items():
+                if not name.endswith(".md"):
+                    continue
+                header_cols = None
+                for line in content.decode().splitlines():
+                    if not line.startswith("|"):
+                        header_cols = None
+                        continue
+                    cols = line.count("|")
+                    header_cols = header_cols or cols
+                    self.assertEqual(cols, header_cols, f"{name}: {line}")
+
+        def test_leaderboard_ranks_and_lists_excluded(self):
+            board = self.files["leaderboard.md"].decode()
+            self.assertIn("| 1 | glm-5.3-flash | 50.00% |", board)
+            self.assertIn("## Not comparable", board)
+            self.assertIn("no max_gen_toks=8192", board)
+
+        def test_manifest_follows_convention(self):
+            manifest = json.loads(self.files["runs/glm-5.3-flash-both-20261002T000000Z/manifest.json"])
+            for key in ("project", "run_id", "started_at", "finished_at", "summary"):
+                self.assertIn(key, manifest)
+            self.assertEqual(manifest["project"], "eval-runner")
+
+        def test_csv_has_all_columns_and_rows(self):
+            reader = list(csv.DictReader(io.StringIO(self.files["leaderboard.csv"].decode())))
+            self.assertEqual(len(reader), 5)
+            self.assertEqual(list(reader[0].keys()), [t for t, _ in publish.COLUMNS])
+
+
+    class PublishTest(unittest.TestCase):
+        def setUp(self):
+            self.tmp = tempfile.TemporaryDirectory()
+            make_tree(self.tmp.name)
+            self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), None, "NOW")
+            self.nc = FakeNextcloud()
+
+        def tearDown(self):
+            self.tmp.cleanup()
+
+        def test_first_publish_creates_everything(self):
+            table_id, counts = publish.publish(self.nc, self.files, self.rows, share_with="steve")
+            self.assertEqual(counts, (5, 0, 0))
+            state = self.nc.state
+            self.assertEqual([t["title"] for t in state["tables"]], [publish.TABLE_TITLE])
+            self.assertEqual([c["title"] for c in state["columns"]], [t for t, _ in publish.COLUMNS])
+            self.assertEqual(len(state["rows"]), 5)
+            self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
+            view = state["views"][0]
+            self.assertEqual(view["filter"][0][0]["operator"], "is-equal")
+            self.assertEqual(view["sort"], [{"columnId": view["columnSettings"][2]["columnId"], "mode": "DESC"}])
+            self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
+            self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
+            self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
+            table = state["tables"][0]
+            key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
+            self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
+            self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
+
+        def test_republish_is_idempotent(self):
+            publish.publish(self.nc, self.files, self.rows, share_with="steve")
+            _, counts = publish.publish(self.nc, self.files, self.rows, share_with="steve")
+            self.assertEqual(counts, (0, 0, 5))
+            state = self.nc.state
+            self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
+                             (1, 5, 2, 1))
+
+        def test_half_configured_view_is_repaired(self):
+            table_id, _ = publish.publish(self.nc, self.files, self.rows)
+            self.nc.state["views"][0].pop("filter")
+            publish.publish(self.nc, self.files, self.rows)
+            self.assertIn("filter", self.nc.state["views"][0])
+            self.assertEqual(len(self.nc.state["views"]), len(publish.VIEWS))
+
+        def test_mock_rejects_the_old_string_format(self):
+            import mock_nextcloud
+            self.assertIsNotNone(mock_nextcloud.view_update_problem({"columns": "[1,2]"}))
+            self.assertIsNotNone(mock_nextcloud.view_update_problem({"sort": [{"columnId": 1, "mode": "down"}]}))
+            self.assertIsNone(mock_nextcloud.view_update_problem(publish.view_settings(
+                {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", True)))
+
+        def test_changed_value_updates_in_place(self):
+            publish.publish(self.nc, self.files, self.rows)
+            changed = [dict(r) for r in self.rows]
+            changed[0]["Note"] = "edited"
+            _, counts = publish.publish(self.nc, self.files, changed)
+            self.assertEqual(counts, (0, 1, 4))
+            self.assertEqual(len(self.nc.state["rows"]), 5)
+
+        def test_numbers_returned_as_floats_are_unchanged(self):
+            self.assertTrue(publish._same(198.0, 198))
+            self.assertTrue(publish._same("43.94", 43.94))
+            self.assertFalse(publish._same(43.0, 43.94))
+
+
+    class ClientTest(unittest.TestCase):
+        def test_network_error_becomes_nextcloud_error(self):
+            import urllib.error
+
+            def refuse(req, timeout=None):
+                raise urllib.error.URLError("connection refused")
+            nc = publish.Nextcloud("http://x", "u", "p", opener=refuse)
+            with self.assertRaises(publish.NextcloudError):
+                nc.tables("GET", "/tables")
+
+        def test_webdav_paths_are_quoted(self):
+            nc = publish.Nextcloud("https://nc/", "eval-reports", "p")
+            self.assertEqual(nc._dav("Reports/eval-runner/a b.md"),
+                             "/remote.php/dav/files/eval-reports/Reports/eval-runner/a%20b.md")
+
+
+    class MainTest(unittest.TestCase):
+        def test_dry_run_writes_files(self):
+            with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+                make_tree(root)
+                with unittest.mock.patch("builtins.print"):
+                    rc = publish.main(["--results-root", root, "--dry-run", out, "--findings", "/nonexistent"])
+                self.assertEqual(rc, 0)
+                self.assertTrue(os.path.exists(os.path.join(out, "leaderboard.md")))
+
+        def test_unconfigured_publish_exits_2(self):
+            with tempfile.TemporaryDirectory() as root:
+                with unittest.mock.patch.dict(os.environ, {}, clear=True), \
+                        unittest.mock.patch("sys.stderr", new_callable=io.StringIO):
+                    self.assertEqual(publish.main(["--results-root", root, "--findings", "/nonexistent"]), 2)
+
+
+    if __name__ == "__main__":
+        unittest.main()
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/eval-runner/test_publish.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
+    expect: "2dc98aaa63a42a66748b98de4aeb4308e0479fb094074a390052fc9d161853d9"
+    critical: true
+  - id: unit-tests
+    cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
+    expect: "OK"
+    critical: true
+```
+
+### eval-runner-08-findings
+
+```yaml
+id: eval-runner-08-findings
+title: Add the curated findings document
+depends_on: []
+
+change: |
+  Create docs/eval-runner/findings.md with exactly this content (byte for byte, including the
+  trailing newline). It is shown indented by 4 spaces below;
+  the file itself has no leading indentation:
+
+    # Model evaluation findings
+
+    Hand-written analysis to read alongside the generated `leaderboard.md`
+    and the Nextcloud Tables table **Model evaluations**. The numbers in those
+    come from `eval-run publish`; this file explains how far to trust them.
+    The canonical copy is `docs/eval-runner/findings.md` in the repo. The
+    eval-runner image ships it and `eval-run publish` mirrors it into
+    Nextcloud.
+
+    Last updated: 2026-10-01.
+
+    ## How results are produced
+
+    - **Harness.** lm-evaluation-harness 0.4.12, `local-chat-completions`
+      against an OpenAI-compatible server, with `--apply_chat_template`.
+      - GPQA: `gpqa_diamond_cot_zeroshot`, 198 questions.
+      - IFEval: 541 prompts.
+    - **Decoding.** Greedy: both task configs pin `temperature: 0`, overriding
+      any server default. The seed is 1234.
+    - **Token budget.** `max_gen_toks` is 8192 per answer, the same for every
+      historical result.
+    - **Historical results.** These were run on framework through Ollama in
+      August–September 2026. New results come from `eval-runner` on
+      `ai-services-stack`, against whatever llama-server serves.
+    - **Comparable** means a full run (no `--limit`) at the 8192 budget, as
+      recorded in lm_eval's own results file. Pilots and runs without the cap
+      are listed but not ranked.
+
+    ## Findings
+
+    ### 1. Under 8192 tokens, GPQA mostly measures whether the model finishes
+
+    Empty GPQA answers in the comparable historical runs:
+
+    | Model | GPQA flex | Empty answers | No parseable letter |
+    |---|---|---|---|
+    | Qwen3.6-35B-A3B (Q4_K_M) | 57.07% | 49 / 198 (24.7%) | 54 |
+    | Gemma4-26B (Q4) | 43.94% | 91 / 198 (46.0%) | 95 |
+    | Qwen3.8-27B (Q4_K_M) | 43.43% | 105 / 198 (53.0%) | 107 |
+    | Gemma4-26B-A4B-QAT (Q4_0) | 27.27% | 134 / 198 (67.7%) | 137 |
+    | Laguna S2.1 (Q4_K_M) | 24.24% | 114 / 198 (57.6%) | 127 |
+
+    An empty answer means the response had no answer content: the reasoning
+    used up the budget first. This matches the earlier observation that many
+    Qwen3.8-27B responses stopped at exactly 8192 tokens.
+
+    **Implications:**
+    - The GPQA ranking is largely a ranking of reasoning *length* against a
+      fixed budget, not of correctness. A model that thinks less can outscore
+      a more accurate one that thinks more.
+    - Don't compute "accuracy on the questions it answered" to correct for
+      this. The questions a model finishes inside the budget are likely the
+      easier ones, and they differ per model. That figure came out at an
+      implausible 94.5% for Qwen3.8-27B, so it isn't comparable either.
+    - The honest fix is a larger budget. That needs a decision: results at a
+      different budget aren't comparable with history, so both would need to
+      be kept and labelled.
+
+    ### 2. IFEval is far less affected
+
+    IFEval empty answers run from 0% to 4.8% in the same runs, because its
+    prompts need short outputs. The IFEval ranking is the more trustworthy of
+    the two:
+    - Gemma4-26B 92.98%
+    - Qwen3.6-35B 90.39%
+    - A4B-QAT 89.83%
+    - Qwen3.8-27B 89.46%
+    - Qwen3-Coder-30B 81.33%
+    - Laguna S2.1 75.42%
+
+    ### 3. GPQA "strict-match" is always 0% and carries no information
+
+    The task's strict filter only accepts the literal text `The answer is
+    (X)`. The zero-shot prompt never asks for that format, and models write
+    things like `The correct answer is **(C)**`. So strict-match scores 0.00%
+    for every model.
+
+    Use **flexible-extract** (the last `(A)`–`(D)` in the response) as the
+    GPQA score. The table shows strict-match only for completeness.
+
+    ### 4. Excluded historical runs, and why
+
+    - **Bug 6 (no token cap):** `lm_eval`'s client sent `max_tokens: 256`
+      unless `max_gen_toks` was passed.
+      - Qwen3.6-35B's first runs scored GPQA 0.00% and IFEval 17.74%
+        (redo: 57.07% / 90.39%).
+      - Qwen3-Coder-30B's first run (GPQA 11.62%, IFEval 79.11%) also used a
+        `ctx163k` Ollama tag, since found to degenerate on dense content.
+    - **Pilots** (`--limit 40`), for example Gemma4-26B's: these were for
+      checking the infrastructure, not for scoring.
+
+    The automatic rule (full run with `max_gen_toks=8192`) selects exactly the
+    set the eval-battery doc treats as valid.
+
+    ## Open questions
+
+    - **Budget:** should new runs (GLM-5.3-Flash first) also be measured at a
+      larger budget, such as 32k, kept separate from the comparable 8192
+      series?
+    - **Comparability with history:** GLM-5.3-Flash runs on llama.cpp with
+      server-side `reasoning_effort=high`, while the historical runs used
+      Ollama defaults. A runtime or reasoning-mode difference is recorded per
+      run (Runtime and Note columns), but it still limits how directly the
+      numbers compare.
+
+scope:
+  allowed_paths:
+    - docs/eval-runner/findings.md
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Running docker, the script, or any deploy"
+
+gates:
+  - id: exact-content
+    cmd: "sha256sum docs/eval-runner/findings.md | cut -d' ' -f1"
+    expect: "c499022fc551603003d862a57b2aa841a88591d3e279589da5203701c318532c"
     critical: true
 ```
 
@@ -1759,6 +3152,9 @@ depends_on:
   - eval-runner-06c-summarize
   - eval-runner-06d-runmeta
   - eval-runner-06e-selftest-checks
+  - eval-runner-06h-publish
+  - eval-runner-06i-mock-nextcloud
+  - eval-runner-08-findings
 
 change: |
   Append to the end of terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
@@ -1778,6 +3174,13 @@ change: |
         eval_runner_framework_host: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}"
         eval_runner_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
         eval_runner_hf_token: "{{ lookup('env', 'HF_TOKEN') | mandatory('HF_TOKEN env var is required') }}"
+        # Publishing to Nextcloud (eval-run publish). Only the app password is
+        # secret; until it exists in OpenBao it's empty and publish says it isn't
+        # configured, without failing the deploy.
+        eval_runner_nextcloud_url: "https://nextcloud.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+        eval_runner_nextcloud_user: eval-reports
+        eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+        eval_runner_table_share_with: steve
       tasks:
         - name: Create eval-runner build and config directories
           ansible.builtin.file:
@@ -1805,11 +3208,21 @@ change: |
             mode: "0644"
           loop:
             - Dockerfile
+            - mock_nextcloud.py
             - mock_openai.py
+            - publish.py
             - runmeta.py
             - selftest.sh
             - selftest_checks.py
             - summarize.py
+
+        # Canonical copy lives with the docs; the image ships it so `eval-run
+        # publish` can mirror it into Nextcloud next to the leaderboard.
+        - name: Copy findings.md into the eval-runner build context
+          ansible.builtin.copy:
+            src: "{{ repo_root }}/docs/eval-runner/findings.md"
+            dest: "{{ eval_runner_build_dir }}/findings.md"
+            mode: "0644"
 
         # The first deploy (2026-10-01) ran the image as root with this volume
         # at /root/.cache; the non-root image uses eval-runner-hf instead. Safe
@@ -1836,6 +3249,10 @@ change: |
               LLM_BASE_URL=http://{{ eval_runner_framework_host }}:8080
               OPENAI_API_KEY={{ eval_runner_llm_api_key }}
               HF_TOKEN={{ eval_runner_hf_token }}
+              NEXTCLOUD_EVAL_REPORTS_URL={{ eval_runner_nextcloud_url }}
+              NEXTCLOUD_EVAL_REPORTS_USER={{ eval_runner_nextcloud_user }}
+              NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD={{ eval_runner_nextcloud_app_password }}
+              NEXTCLOUD_EVAL_TABLE_SHARE_WITH={{ eval_runner_table_share_with }}
           no_log: true
 
         - name: Install eval-run script
@@ -1875,6 +3292,20 @@ change: |
           ansible.builtin.debug:
             msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|selftest OK|server )') | list }}"
 
+    - name: Share eval-runner's Nextcloud Reports folder with steve
+      hosts: all
+      gather_facts: false
+      vars:
+        eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+      roles:
+        - role: nextcloud_folder_share
+          when: eval_runner_nextcloud_app_password | length > 0
+          vars:
+            nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
+            nextcloud_folder_share_owner_user: eval-reports
+            nextcloud_folder_share_owner_password: "{{ eval_runner_nextcloud_app_password }}"
+            nextcloud_folder_share_folder: "Reports/eval-runner"
+
 scope:
   allowed_paths:
     - terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
@@ -1886,16 +3317,129 @@ scope:
 
 gates:
   - id: exact-appended-play
-    cmd: "tail -n 107 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
-    expect: "7e23680c7929de606ebb61db1197b5a41642b9140a172e89e5af810ea9c57a6b"
+    cmd: "tail -n 142 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
+    expect: "a87a4a451c82715fdbe5444aacd7243a13960888a99f91c5941cb445fe579d11"
     critical: true
   - id: append-only
     cmd: "git diff --numstat stable -- terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
-    expect: "108\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "143\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
     critical: true
   - id: syntax-check
     cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
     expect: "exit 0"
+    critical: true
+```
+
+### eval-runner-09-nextcloud-tables-and-account
+
+```yaml
+id: eval-runner-09-nextcloud-tables-and-account
+title: Install Tables and create the eval-reports account in deploy-nextcloud-stack.yml
+depends_on: []
+
+change: |
+  In terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml, insert exactly this block at the end of the
+  first play's tasks: immediately after the "Ensure the steve local account
+  exists and is an admin" task (after its "when: not ansible_check_mode"
+  line) and before the blank line preceding the "Provision the dedicated
+  GVM credentialed-scan account" play. Keep a blank line between this
+  block and that next play. It is shown indented by 4 spaces below; in
+  the playbook the comment and "- name:" lines sit at 4 spaces:
+
+        # Nextcloud Tables: eval-runner's "Model evaluations" table
+        # (docs/eval-runner/plan.md). app:install takes the newest release
+        # compatible with this Nextcloud (2.3.1 on 35.x as of 2026-10-01); there
+        # is no version pin, later updates come through normal app updates.
+        - name: Install the Nextcloud Tables app
+          ansible.builtin.command:
+            cmd: docker exec --user www-data nextcloud-stack-app php occ app:install tables
+          register: occ_install_tables
+          changed_when: "'installed' in occ_install_tables.stdout and 'already installed' not in occ_install_tables.stdout"
+          failed_when: occ_install_tables.rc != 0 and 'already installed' not in occ_install_tables.stdout
+          when: not ansible_check_mode
+
+        - name: Enable the Nextcloud Tables app
+          ansible.builtin.command:
+            cmd: docker exec --user www-data nextcloud-stack-app php occ app:enable tables
+          register: occ_enable_tables
+          changed_when: "'already enabled' not in occ_enable_tables.stdout"
+          when: not ansible_check_mode
+
+        # Service account eval-runner publishes as. Its login password is random
+        # and never stored: only an app password is used, created by the operator
+        # straight into OpenBao (docs/eval-runner/plan.md). -e forwards OC_PASS
+        # into the container; docker exec doesn't pass the host environment on
+        # its own.
+        - name: Ensure the eval-reports service account exists
+          ansible.builtin.command:
+            cmd: >-
+              docker exec -e OC_PASS --user www-data nextcloud-stack-app php occ user:add
+              --password-from-env --display-name=eval-runner eval-reports
+          environment:
+            OC_PASS: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
+          register: occ_add_eval_reports
+          changed_when: >-
+            'already exists' not in occ_add_eval_reports.stdout and
+            'already exists' not in occ_add_eval_reports.stderr
+          failed_when: >-
+            occ_add_eval_reports.rc != 0 and
+            'already exists' not in occ_add_eval_reports.stdout and
+            'already exists' not in occ_add_eval_reports.stderr
+          no_log: true
+          when: not ansible_check_mode
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Editing or deleting any existing line (the existing steve task's missing -e OC_PASS is out of scope)"
+    - "Running provision.sh or ansible-playbook against any host"
+
+gates:
+  - id: block-present
+    cmd: "python3 -c \"s=open('terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml').read(); print('OK' if s.count('- name: Install the Nextcloud Tables app')==1 and s.count('- name: Enable the Nextcloud Tables app')==1 and s.count('- name: Ensure the eval-reports service account exists')==1 and s.count('docker exec -e OC_PASS --user www-data nextcloud-stack-app php occ user:add')==1 else 'MISSING')\""
+    expect: "OK"
+    critical: true
+  - id: insert-only
+    cmd: "git diff --numstat stable -- terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "42\\t0\\tterraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    critical: true
+  - id: syntax-check
+    cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, terraform/lxc/ansible/playbooks/deploy-nextcloud-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+### eval-runner-10-manifest-nextcloud-app-password
+
+```yaml
+id: eval-runner-10-manifest-nextcloud-app-password
+title: Declare NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD in the secrets manifest
+depends_on:
+  - eval-runner-09-nextcloud-tables-and-account
+
+change: >
+  In secrets/manifest.json, in the "services/nextcloud" entry's "fields"
+  list, replace the exact text "NEXTCLOUD_DR_REPORTS_WEBDAV_URL", with
+  "NEXTCLOUD_DR_REPORTS_WEBDAV_URL", "NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD",
+  (one insertion, same quoting and spacing). Change nothing else. Do this
+  only after the eval-reports account exists (operator deploy below), and
+  have the operator write the value immediately after: until then every
+  ./with-secrets* load on the branch fails closed.
+
+scope:
+  allowed_paths:
+    - secrets/manifest.json
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+    - "Any other edit to secrets/manifest.json"
+    - "Running ./with-secrets*, openbao_write.py, provision.sh or ansible-playbook"
+
+gates:
+  - id: only-app-password-added
+    cmd: "python3 -c \"import json,subprocess; e='services/nextcloud'; new=json.load(open('secrets/manifest.json'))['entries'][e]; old=json.loads(subprocess.check_output(['git','show','stable:secrets/manifest.json']))['entries'][e]; f=new['fields']; assert f.count('NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD')==1; f.remove('NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD'); assert new==old; print('OK')\""
+    expect: "prints OK, exit 0"
     critical: true
 ```
 
@@ -2018,6 +3562,37 @@ Pass criteria:
 
 The self-test never touches Framework.
 
+### Operator: Nextcloud side (done 2026-10-01)
+
+In order:
+
+1. Deploy `nextcloud-stack` on `pve` (installs and enables Tables, and
+   creates `eval-reports`):
+
+   ```bash
+   export TASK_APPROVAL=eval-runner-nextcloud-publish
+   ./with-secrets-prod scripts/provision.sh --stack nextcloud-stack
+   ```
+
+2. Land step `eval-runner-10`, then straight away create the app password
+   and write it into OpenBao without ever displaying it. The `grep` only
+   passes a token-shaped value, so an `occ` error stores nothing:
+
+   ```bash
+   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+   ssh root@192.168.120.10 'docker exec --user www-data nextcloud-stack-app php occ user:auth-tokens:add -n --name=eval-runner eval-reports' \
+     | tail -n 1 | tr -d '\r' | grep -E '^[A-Za-z0-9]{40,}$' \
+     | LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/nextcloud NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD
+   unset BAO_TOKEN
+   ```
+
+3. Redeploy `ai-services-stack` (the deploy section above), then run
+   `ssh root@192.168.50.11 eval-run publish`. A second run must report
+   `0 rows created, 0 updated`.
+4. Optional cleanup: delete the auto-created "Welcome to Nextcloud
+   Tables!" table owned by `eval-reports`.
+
 ### Operator (one-off, done 2026-10-01): import historical results
 
 This copies the Ollama-era GPQA/IFEval result and sample files (~42 MB)
@@ -2046,6 +3621,8 @@ eval-run results                          # scores + empty/unparsed flags per ru
 eval-run gpqa --pilot --note "reasoning_effort=high"   # 40 questions: GPU for ~1-2 h
 eval-run ifeval --note "..."              # full IFEval (541): many hours
 eval-run resume <run>                     # continue an interrupted run from its cache
+eval-run publish                          # push everything to Nextcloud (idempotent)
+eval-run publish --dry-run                # render into results/_publish-preview instead
 docker ps --filter name=^eval-            # what's running (one real run at a time, enforced)
 ```
 
@@ -2063,8 +3640,11 @@ docker ps --filter name=^eval-            # what's running (one real run at a ti
 - A non-zero `empty` count means some answers never arrived, usually
   because reasoning used up the 8192-token budget. Read the samples before
   quoting the score.
-- Record headline numbers in the eval-battery doc's Phase 1 table, as
-  before. Remove finished containers with `docker rm eval-<run>`.
+- After a run, run `eval-run publish`. The Nextcloud table, leaderboard
+  and per-run report are the record from then on. Update
+  `docs/eval-runner/findings.md` by hand when a result changes the
+  analysis, and redeploy to mirror it.
+- Remove finished containers with `docker rm eval-<run>`.
 
 ## Out of scope / follow-ups
 
