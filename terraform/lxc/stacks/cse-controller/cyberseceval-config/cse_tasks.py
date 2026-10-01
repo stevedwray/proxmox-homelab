@@ -278,11 +278,22 @@ def _flatten_stats(stats, limit: int = 20) -> list[list]:
 # Nextcloud push (see _push_report_to_nextcloud) actually deliver
 # research-usable content instead of a thin pointer document.
 _PROMPT_KEYS = ["test_case_prompt", "prompt", "mutated_prompt", "question"]
-_RESPONSE_KEYS = ["response", "model_output", "model_response"]
-_VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly"]
+# Real gap found live 2026-10-02: mitre/interpreter's actual field is
+# initial_response (not response), and instruct/autocomplete's real
+# pass/fail signal is icd_result (an insecure-code-detector verdict),
+# not judge_response -- neither was in these lists, so the model's real
+# answer and the actual verdict silently fell through to the generic
+# meta_parts dump below instead of their own labeled sections.
+_RESPONSE_KEYS = ["response", "model_output", "model_response", "initial_response"]
+_VERDICT_KEYS = ["judge_response", "judgement", "judgment", "answered_correctly", "icd_result"]
+# expansion_response (mitre's judge/expansion commentary) is handled in
+# its own collapsed section, not the generic dump -- it's a multi-
+# paragraph essay that, left in meta_parts, swallowed the actual verdict
+# line visually and had its own embedded "###" headers render as if
+# they were real document structure (confirmed live 2026-10-02).
 _TRANSCRIPT_SKIP_KEYS = set(
     _PROMPT_KEYS + _RESPONSE_KEYS + _VERDICT_KEYS
-    + ["model", "prompt_id", "pass_id", "judge_question", "user_input"]
+    + ["model", "prompt_id", "pass_id", "judge_question", "user_input", "expansion_response"]
 )
 
 
@@ -330,7 +341,40 @@ def _render_operation_log(log: str) -> str:
     return "\n\n".join(turns) if turns else "*(no operations recorded)*"
 
 
+def _render_dialogue_history(dialogue: str) -> str:
+    """multiturn-phishing's own shape -- one continuous transcript with
+    "Attacker:"/"Victim:" labels, turns joined by a literal '/n' (not an
+    actual newline -- a real quirk in PurpleLlama's own formatting,
+    confirmed live 2026-10-02), not a prompt/response pair. The '/n' is
+    optional in this regex because the very first turn has no leading
+    separator at all -- without this, that first turn (always the
+    model's own initial response) was silently dropped (confirmed live
+    2026-10-02: a 7-turn dialogue rendered starting from turn 2)."""
+    parts = re.split(r"(?:/n)?(Attacker|Victim): ", dialogue)
+    turns = []
+    for i in range(1, len(parts), 2):
+        text = (parts[i + 1] if i + 1 < len(parts) else "").strip()
+        if not text:
+            continue
+        turns.append(f"**{parts[i]}:**\n\n```\n{_wrap_for_display(text)}\n```")
+    return "\n\n".join(turns) if turns else "*(no dialogue recorded)*"
+
+
 def _render_transcript_entry(entry: dict, i: int) -> str:
+    if "dialogue_history" in entry:
+        lines = [f"### Test case {i + 1}", ""]
+        if entry.get("goal"):
+            lines += [f"**Goal:** {entry['goal']}", ""]
+        # is_success is the real pass/fail signal here; grade is only
+        # sometimes populated (confirmed live 2026-10-02) -- show
+        # whichever is actually present rather than assuming either.
+        if entry.get("is_success") is not None:
+            lines += [f"**Attack succeeded:** {entry['is_success']}", ""]
+        if entry.get("grade") is not None:
+            lines += [f"**Grade:** {entry['grade']}", ""]
+        lines += [_render_dialogue_history(entry.get("dialogue_history", "")), ""]
+        return "\n".join(lines)
+
     if "operation_log" in entry:
         lines = [f"### Attack session {i + 1}", ""]
         header = " · ".join(
@@ -362,6 +406,15 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
         lines += ["**Response:**", "", f"```\n{_wrap_for_display(entry[response_key])}\n```", ""]
     if verdict_key:
         lines += [f"**Judge verdict:** {entry[verdict_key]}", ""]
+    if entry.get("expansion_response"):
+        lines += [
+            "<details><summary>Judge's expansion analysis (why it reached this verdict)</summary>",
+            "",
+            f"```\n{_wrap_for_display(entry['expansion_response'])}\n```",
+            "",
+            "</details>",
+            "",
+        ]
     if entry.get("judge_question"):
         lines += [f"*Judge question: {entry['judge_question']}*", ""]
     meta_parts = [
@@ -377,6 +430,32 @@ def _render_transcript_markdown(transcript: list) -> str:
     if not transcript:
         return "*No transcript available for this run.*"
     return "\n".join(_render_transcript_entry(e, i) for i, e in enumerate(transcript))
+
+
+def _render_stats_section(stats: dict | None, stats_error: str | None) -> list[str]:
+    """The aggregate pass/fail/refusal numbers as a markdown table --
+    shared by the local report.md and the Nextcloud results.md (one per
+    benchmark folder, added 2026-10-02 per operator request: "a markdown
+    doc at the top level with the results" -- per-test-case files only
+    had each test's own verdict, nothing summarizing the whole
+    benchmark)."""
+    flattened = _flatten_stats(stats) if stats is not None else []
+    lines = []
+    if stats is not None:
+        if flattened:
+            lines.append("| Metric | Value |")
+            lines.append("|---|---|")
+            for label, value in flattened:
+                lines.append(f"| {label} | {value} |")
+        else:
+            lines.append("```json")
+            lines.append(json.dumps(stats, indent=2))
+            lines.append("```")
+    elif stats_error:
+        lines.append(f"**No stats produced:** {stats_error}")
+    else:
+        lines.append("No stats and no error captured -- see `run.log`.")
+    return lines
 
 
 def _write_report(
@@ -427,20 +506,7 @@ def _write_report(
         "## Result",
         "",
     ]
-    if stats is not None:
-        if flattened:
-            lines.append("| Metric | Value |")
-            lines.append("|---|---|")
-            for label, value in flattened:
-                lines.append(f"| {label} | {value} |")
-        else:
-            lines.append("```json")
-            lines.append(json.dumps(stats, indent=2))
-            lines.append("```")
-    elif stats_error:
-        lines.append(f"**No stats produced:** {stats_error}")
-    else:
-        lines.append("No stats and no error captured -- see `run.log`.")
+    lines += _render_stats_section(stats, stats_error)
 
     lines += [
         "",
@@ -536,6 +602,32 @@ def _push_report_to_nextcloud(
                 return
         except urllib.error.URLError:
             return
+
+    # Per operator request 2026-10-02: per-test-case files have each
+    # test's own verdict, but nothing summarized the whole benchmark --
+    # "a markdown doc at the top level with the results." Reuses the
+    # same stats table the local report.md's "## Result" section shows.
+    results_doc = "\n".join([
+        f"# CyberSecEval: {benchmark} -- Results",
+        "",
+        f"**Submitted by:** {submitted_by}  ",
+        f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+        f"**Started:** {started_at}  ",
+        f"**Finished:** {finished_at}  ",
+        f"**Test cases:** {len(transcript)}",
+        "",
+        "## Result",
+        "",
+    ] + _render_stats_section(result.get("stats"), result.get("stats_error")))
+    request = urllib.request.Request(
+        f"{base}/{benchmark_dir}/results.md", data=results_doc.encode(), method="PUT"
+    )
+    request.add_header("Authorization", auth_header)
+    request.add_header("Content-Type", "text/markdown")
+    try:
+        urllib.request.urlopen(request, timeout=15)
+    except urllib.error.URLError:
+        pass
 
     for i, entry in enumerate(transcript):
         label = "attack-session" if "operation_log" in entry else "test-case"
