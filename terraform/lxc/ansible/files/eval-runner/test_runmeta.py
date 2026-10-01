@@ -158,6 +158,11 @@ class BudgetTest(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertEqual(os.listdir(root), [])
 
+    def test_selftest_mock_passes_the_context_check(self):
+        import mock_openai
+        server = runmeta.snapshot_server("http://m", "k", get_json=fake_get(props=mock_openai.PROPS))
+        self.assertIsNone(runmeta.context_problem(server, runmeta.MAX_GEN_TOKS))
+
     def test_budget_below_standard_rejected(self):
         with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
             runmeta.main(["start", "--base-url", "http://f:8080", "--task", "gpqa", "--max-gen-toks", "4096"])

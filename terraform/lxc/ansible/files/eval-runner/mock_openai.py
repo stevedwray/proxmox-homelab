@@ -36,7 +36,8 @@ PROPS = {
     "total_slots": 1,
     "chat_template": "{{ messages }}",
     "default_generation_settings": {
-        "n_ctx": 4096,
+        # Big enough for runmeta's context check at the default budget.
+        "n_ctx": 32768,
         "params": {"temperature": 1.0, "top_p": 0.95, "min_p": 0.01, "n_predict": -1},
     },
 }
