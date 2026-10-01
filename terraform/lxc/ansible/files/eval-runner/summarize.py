@@ -11,7 +11,15 @@ counted per question:
             used its whole token budget thinking, so the answer never came
   unparsed  (GPQA only) flexible-extract found no answer letter
 Treat a score with many of either as an infrastructure/config problem to
-inspect, not as the model's capability.
+inspect, not as the model's capability. (Deliberately no "accuracy on
+answered questions" figure: the questions a model finishes inside the
+token budget skew easy, and differ per model, so it isn't comparable.)
+
+Historical results (the Ollama-era runs on framework, imported once into
+/results/_historical/<source-dir>/) are listed in a second section. Only
+results that are comparable with eval-runner's are shown: full runs
+(no --limit) with max_gen_toks=8192. Everything else is listed as
+excluded, with the reason (pilot, or the Bug 6 missing token cap).
 """
 
 import argparse
@@ -21,6 +29,8 @@ import os
 import sys
 
 RESULTS_ROOT = "/results"
+HISTORICAL_DIR = "_historical"
+MAX_GEN_TOKS = 8192
 
 HEADLINE = {
     "gpqa_diamond_cot_zeroshot": [
@@ -39,13 +49,49 @@ def _results_stamp(path):
     return os.path.basename(path)[len("results_"):-len(".json")]
 
 
-def load(run_dir):
-    """Map task -> {metrics, n, samples}, the newest results file winning."""
+def _max_gen_toks(gen_kwargs):
+    """lm_eval records gen_kwargs as a dict or as a 'k=v,k=v' string."""
+    if isinstance(gen_kwargs, dict):
+        value = gen_kwargs.get("max_gen_toks")
+    else:
+        pairs = dict(part.split("=", 1) for part in str(gen_kwargs or "").split(",") if "=" in part)
+        value = pairs.get("max_gen_toks")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def exclusion_reason(data):
+    """None if a results file is comparable with eval-runner runs, else why not."""
+    config = data.get("config", {})
+    if config.get("limit") is not None:
+        return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
+    if _max_gen_toks(config.get("gen_kwargs")) != MAX_GEN_TOKS:
+        return f"no max_gen_toks={MAX_GEN_TOKS} (Bug 6 truncation risk)"
+    return None
+
+
+def model_name(data):
+    model_args = data.get("config", {}).get("model_args")
+    if isinstance(model_args, dict):
+        return model_args.get("model")
+    pairs = dict(part.split("=", 1) for part in str(model_args or "").split(",") if "=" in part)
+    return pairs.get("model")
+
+
+def load(run_dir, comparable_only=False):
+    """Map task -> {metrics, n, samples, model}, the newest results file winning.
+
+    With comparable_only, results files failing exclusion_reason() are skipped.
+    """
     found = {}
     pattern = os.path.join(run_dir, "**", "results_*.json")
     for path in sorted(glob.glob(pattern, recursive=True)):
         with open(path) as fh:
             data = json.load(fh)
+        if comparable_only and exclusion_reason(data):
+            continue
         stamp = _results_stamp(path)
         for task, metrics in data.get("results", {}).items():
             if task in HEADLINE:
@@ -54,6 +100,7 @@ def load(run_dir):
                     "metrics": metrics,
                     "n": data.get("n-samples", {}).get(task, {}).get("effective"),
                     "samples": samples if os.path.exists(samples) else None,
+                    "model": model_name(data),
                 }
     return found
 
@@ -79,10 +126,10 @@ def response_flags(samples_path, task):
     }
 
 
-def _flag_text(samples, task):
-    if not samples:
+def _flag_text(task, entry):
+    if not entry["samples"]:
         return "[no samples file]"
-    flags = response_flags(samples, task)
+    flags = response_flags(entry["samples"], task)
     text = f"empty {flags['empty']}"
     if flags["unparsed"] is not None:
         text += f", unparsed {flags['unparsed']}"
@@ -103,14 +150,14 @@ def task_parts(task, entry):
             parts.append(f"{label} ?")
             ok = False
     parts.append(f"n={entry['n']}")
-    parts.append(_flag_text(entry["samples"], task))
+    parts.append(_flag_text(task, entry))
     return parts, ok
 
 
-def describe(run_dir, check):
+def describe(run_dir, check, comparable_only=False):
     """Return (line, ok) for one run directory."""
     name = os.path.basename(os.path.normpath(run_dir))
-    found = load(run_dir)
+    found = load(run_dir, comparable_only=comparable_only)
     if not found:
         return f"{name}: no results yet (still running, or failed)", False
     ok = True
@@ -125,19 +172,52 @@ def describe(run_dir, check):
     return f"{name}: " + ", ".join(parts), ok
 
 
+def historical_lines(root):
+    """Comparable historical results first, then one line per excluded result."""
+    hist_root = os.path.join(root, HISTORICAL_DIR)
+    if not os.path.isdir(hist_root):
+        return []
+    lines = ["", f"historical (imported from framework; comparable = full run, max_gen_toks={MAX_GEN_TOKS}):"]
+    excluded = []
+    for source in sorted(d for d in glob.glob(os.path.join(hist_root, "*")) if os.path.isdir(d)):
+        found = load(source, comparable_only=True)
+        if found:
+            line, _ = describe(source, check=False, comparable_only=True)
+            model = next((e["model"] for e in found.values() if e["model"]), None)
+            lines.append(f"  {line}" + (f"  ({model})" if model else ""))
+        for path in sorted(glob.glob(os.path.join(source, "**", "results_*.json"), recursive=True)):
+            with open(path) as fh:
+                data = json.load(fh)
+            reason = exclusion_reason(data)
+            tasks = [t for t in data.get("results", {}) if t in HEADLINE]
+            line = f"  {os.path.basename(source)} {','.join(tasks)}: {reason}"
+            if reason and tasks and line not in excluded:
+                excluded.append(line)
+    if excluded:
+        lines.append("excluded:")
+        lines.extend(excluded)
+    return lines
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("dirs", nargs="*")
     args = parser.parse_args(argv)
 
-    dirs = args.dirs or sorted(
-        d for d in glob.glob(os.path.join(RESULTS_ROOT, "*"))
-        if os.path.isdir(d) and not os.path.basename(d).startswith("_")
-    )
-    if not dirs:
-        print("no runs yet")
+    if not args.dirs:
+        dirs = sorted(
+            d for d in glob.glob(os.path.join(RESULTS_ROOT, "*"))
+            if os.path.isdir(d) and not os.path.basename(d).startswith("_")
+        )
+        if not dirs:
+            print("no runs yet")
+        for run_dir in dirs:
+            print(describe(run_dir, check=False)[0])
+        for line in historical_lines(RESULTS_ROOT):
+            print(line)
         return 0
+    dirs = args.dirs
 
     all_ok = True
     for run_dir in dirs:

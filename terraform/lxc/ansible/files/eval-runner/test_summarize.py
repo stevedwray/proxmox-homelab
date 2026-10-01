@@ -15,7 +15,10 @@ import summarize
 STAMP = "2026-10-01T00-00-00.000000"
 
 
-def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True):
+COMPARABLE = {"limit": None, "gen_kwargs": {"max_gen_toks": 8192}, "model_args": {"model": "m:q4"}}
+
+
+def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True, config=None):
     """Create a run dir shaped like lm_eval's output (<run>/<model>/results_*.json)."""
     run_dir = os.path.join(root, name)
     model_dir = os.path.join(run_dir, "model")
@@ -29,7 +32,7 @@ def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True
         results["ifeval"] = {"prompt_level_strict_acc,none": 0.9, "prompt_level_loose_acc,none": 0.95}
         n_samples["ifeval"] = {"original": 541, "effective": len(ifeval_rows or [])}
     with open(os.path.join(model_dir, f"results_{STAMP}.json"), "w") as fh:
-        json.dump({"results": results, "n-samples": n_samples}, fh)
+        json.dump({"results": results, "n-samples": n_samples, "config": config or COMPARABLE}, fh)
     for task, rows in (("gpqa_diamond_cot_zeroshot", gpqa_rows), ("ifeval", ifeval_rows)):
         if rows is not None:
             with open(os.path.join(model_dir, f"samples_{task}_{STAMP}.jsonl"), "w") as fh:
@@ -105,6 +108,41 @@ class DescribeTest(unittest.TestCase):
             lines = [call.args[0] for call in printed.call_args_list]
             self.assertEqual(len(lines), 1)
             self.assertTrue(lines[0].startswith("real:"))
+
+
+class ComparabilityTest(unittest.TestCase):
+    def test_full_run_with_token_cap_is_comparable(self):
+        self.assertIsNone(summarize.exclusion_reason({"config": COMPARABLE}))
+        as_string = {"limit": None, "gen_kwargs": "max_gen_toks=8192,temperature=0"}
+        self.assertIsNone(summarize.exclusion_reason({"config": as_string}))
+
+    def test_pilot_and_bug6_excluded(self):
+        self.assertEqual(summarize.exclusion_reason({"config": {"limit": 40.0, "gen_kwargs": {"max_gen_toks": 8192}}}),
+                         "pilot (limit 40)")
+        self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {}}}))
+        self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
+
+    def test_model_name_dict_or_string(self):
+        self.assertEqual(summarize.model_name({"config": {"model_args": {"model": "x"}}}), "x")
+        self.assertEqual(summarize.model_name({"config": {"model_args": "base_url=u,model=y,num_concurrent=1"}}), "y")
+
+    def test_historical_section_filters_and_explains(self):
+        with tempfile.TemporaryDirectory() as root:
+            hist = os.path.join(root, summarize.HISTORICAL_DIR)
+            os.makedirs(hist)
+            write_run(hist, "good", ["gpqa", "ifeval"], gpqa_rows=gpqa_rows(["(A)"]), ifeval_rows=ifeval_rows(["ok"]))
+            write_run(hist, "bug6", ["ifeval"], ifeval_rows=ifeval_rows(["ok"]),
+                      config={"limit": None, "gen_kwargs": {}})
+            lines = summarize.historical_lines(root)
+        text = "\n".join(lines)
+        self.assertIn("  good: GPQA flex 50.00%", text)
+        self.assertIn("(m:q4)", text)
+        self.assertNotIn("  bug6: ", text)
+        self.assertIn("excluded:\n  bug6 ifeval: no max_gen_toks=8192", text)
+
+    def test_no_historical_dir_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(summarize.historical_lines(root), [])
 
 
 class SelftestChecksTest(unittest.TestCase):
