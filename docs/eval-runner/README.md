@@ -1,15 +1,7 @@
 # eval-runner
 
-Status:
-- **The whole battery is live on `ai-services-stack`** (pve-tiny),
-  deployed 2026-10-01: GPQA, IFEval, BFCL, AgentBench and RepoBench
-  (rebuilt), with Nextcloud publishing (`leaderboard.xlsx` and Tables).
-- **The deploy gate** is a set of GPU-free selftests, one per image.
-- **History:** 41 historical rows are published (18 of them BFCL and 2
-  AgentBench).
-- **No real scored run against Framework yet.** That is an operator
-  decision.
-- **Not merged:** branch `task/eval-runner`.
+Status: **the whole battery and its control panel are live (2026-10-02).**
+See "Where things stand" below. Branch `task/eval-runner` is not merged.
 
 Runs the eval battery (CyberSecEval aside: it has its own panel) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -19,76 +11,91 @@ VMID 116) was removed in the pve teardown.
 
 See [`plan.md`](./plan.md) for decisions, steps and usage.
 
-## Where things stand and what's next (checkpoint 2026-10-01, evening)
+## Where things stand and what's next (checkpoint 2026-10-02)
 
-**Live:**
-- **eval-runner on `ai-services-stack`** (pve-tiny, 192.168.50.11):
-  `eval-run gpqa|ifeval|resume|selftest|results|publish`, with
-  `--max-gen-toks` for the 32k series.
+**Live (all on pve-tiny):**
+- **eval-runner on `ai-services-stack`** (192.168.50.11): the whole
+  battery.
+  - `eval-run gpqa|ifeval|bfcl|agentbench|repobench [--pilot|--limit N]
+    [--note] [--max-gen-toks]`, plus `resume|selftest|results|publish`.
+  - The GPU-free selftests for every image are the deploy gate.
+- **Control panel:** cse-panel `/eval` ("Eval battery").
+  - `eval_battery.py` enqueues on the Redis queues `eval-runner` (runs)
+    and `eval-runner-ctl` (cancel, publish, status).
+  - On ai-services-stack, the `eval-runner-worker-runs` and
+    `eval-runner-worker-ctl` systemd units run `eval_tasks.py`, driving
+    `eval-run`. Each run waits for idle Framework slots.
+  - cse-panel's Redis requires `CSE_PANEL_REDIS_PASSWORD` (OpenBao
+    `services/cse-panel`).
+  - MikroTik rule `ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
+  - Plan and rollout log: `panel-plan.md`.
 - **Nextcloud:**
-  - Tables "Model evaluations" (table id 2): 21 historical rows, a Series
-    column, and Comparable and 32k-budget views. Shared read-only with
-    steve.
-  - `Reports/eval-runner/`: `leaderboard.xlsx` (replaced the CSV),
-    `leaderboard.md` (narrowed), `findings.md` and per-run reports.
-    Shared with steve.
-- **Framework :8080:** GLM-5.3-Flash, hand-started.
+  - Tables "Model evaluations" (table id 2), shared with steve with
+    *manage*. Manage keeps the views in the sidebar despite a Tables
+    2.3.1 UI race.
+  - Views: GPQA, IFEval, BFCL, AgentBench and RepoBench (rebuilt), each
+    showing every result with a Comparable column; two 32k views; Recent
+    eval-runner runs. No preset sorts, so every column header sorts.
+  - `Reports/eval-runner/`: `leaderboard.xlsx`, `leaderboard.md` (tables
+    at most 4 columns), `findings.md`, and per-run `report.md` with
+    Metric | Value tables.
+- **Data:**
+  - 41 historical rows (GPQA/IFEval, 18 BFCL, 2 AgentBench).
+  - 5 GLM-5.3-Flash smoke runs (2026-10-02, limit 3-15).
+  - **In progress at the checkpoint:** a full AgentBench run started from
+    the panel by steve at 22:38Z, `glm-5.3-flash-agentbench-20261001T223808Z`,
+    roughly 1.5-2.5 h. It has no note, so `reasoning_effort=high` isn't
+    recorded. It publishes automatically when done.
+- **Framework :8080:** GLM-5.3-Flash, hand-started (high effort, 131k
+  context).
 
-**Deployed (`eval-runner-battery`, 2026-10-01):** see the progress
-log at the end.
+**Working copy:** the main checkout `~/git/proxmox-homelab` belongs to
+another session (CSE work, branch `fix/cse-report-transcript-content`).
+eval-runner work happens in the worktree `~/git/proxmox-homelab-eval-runner`,
+on `task/eval-runner`. Deploy from that worktree: the secrets wrapper
+loads only the fields in the current checkout's `secrets/manifest.json`.
+- **eval-runner play only:**
+  `ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles ./with-secrets-prod-tiny ansible-playbook -i ~/git/proxmox-homelab/terraform/lxc/environments/pve-tiny/ai-services-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml --start-at-task 'Create eval-runner build and config directories'`,
+  wrapped in `script -qec … /dev/null`.
+- **Other stacks:** the same pattern, with that stack's inventory under
+  `~/git/proxmox-homelab/terraform/lxc/environments/pve-tiny/`.
 
-**Nextcloud Office (proposal, not started):**
-- **What's there:** the `eurooffice` app (Euro-Office, ONLYOFFICE-derived)
-  and `office` are enabled. There's no Document Server
-  (`DocumentServerUrl` unset), so `.xlsx` files don't open in the browser.
-- **Smallest working setup:**
-  - Add `ghcr.io/euro-office/documentserver`, pinned (v9.3.4-hotfix.1 is
-    the latest stable), as a service in nextcloud-stack's compose,
-    through Harbor's ghcr proxy.
-  - Give it its own Traefik route (for example
-    `office.lab.gibbsgreatly.xyz`), because browsers load the editor
-    from it directly.
-  - Store the JWT secret in OpenBao `services/nextcloud`.
-  - Set `occ config:app:set eurooffice DocumentServerUrl` and the JWT
-    key in `deploy-nextcloud-stack.yml`.
-  - Raise nextcloud-stack's memory: it is 4 GiB now, and the Document
-    Server wants about 2-4 GB.
-- **Caveat:** upstream calls that image "for testing and integration
-  purposes" for now.
-- **The alternative** is Collabora CODE (`richdocuments` +
-  `collabora/code`), which is mature but needs the same route, secret
-  and memory.
+**Branches (not merged; the operator decides):**
+- `task/eval-runner`: about 50 commits.
+- `task/glm-5.3-flash-eval`: 4 commits.
+- Merge note: the CSE branch also edits
+  `cse-panel-stack/app/app.py` (13 lines); `task/eval-runner` adds 5.
+  Whichever merges second resolves a small conflict.
 
-**Pending operator decisions:**
-1. Nextcloud Office: Euro-Office Document Server, Collabora, or leave
-   it.
-2. The first real scored run(s) against Framework: explicit go-ahead
-   only. Rough durations at about 17 tok/s:
-   - BFCL: about 1-2 h;
-   - AgentBench (100 episodes): several hours;
-   - RepoBench: prefill-bound, about 1 day on GLM;
-   - GPQA and IFEval: many hours each.
-3. Merging `task/eval-runner` and `task/glm-5.3-flash-eval`.
-
-**Known side issues (not fixed, out of scope):**
-- `deploy-nextcloud-stack.yml`'s steve-user task sets `OC_PASS` without
-  `docker exec -e`.
-- GLM CPU spin on Framework (GLM doc §8): diagnose with
-  `GGML_SCHED_DEBUG=2`, then try `--threads 4`, when Framework is idle.
+**Open / next:**
+1. Report the AgentBench full run's result when it finishes. It is
+   GLM's first comparable AgentBench number: os-std, 100 episodes,
+   seed 42.
+2. Nextcloud Office (an xlsx viewer): Euro-Office Document Server,
+   Collabora, or leave it. The operator hasn't decided.
+3. Cosmetic: the empty "Alt score %" cells show a lone "%" for BFCL and
+   AgentBench. Offered, not done.
+4. Not done: a shared Framework lock with CSE (v1 waits for idle slots
+   instead). Revisit after the CSE branch merges.
+5. Real scored runs of the other benchmarks need the operator's
+   go-ahead, or the operator starts them from the panel.
+6. Known side issues:
+   - the steve-user task in `deploy-nextcloud-stack.yml` lacks
+     `docker exec -e OC_PASS`;
+   - the GLM CPU spin (GLM doc §8);
+   - two failed `steve` logins in the Nextcloud log from my diagnostics
+     on 2026-10-01 at 21:36Z. Harmless, and the cause is known.
 
 **How to resume:**
-- Read `plan.md`. Its prose has the operator sequences, and all 56 gates
-  re-run green against the branch.
-- `plan.md` is generated from the repo files by
-  `python3 docs/eval-runner/artifacts/genplan.py`, run from the repo
-  root. That folder is git-ignored local scratch, and the script uses
-  `plan-head.md`, `plan-tail.md` and `step01.md` from the same folder.
-  Rerun it after changing any eval-runner file, then re-run every gate.
-  If artifacts/ is gone, edit `plan.md` by hand.
-- Unit tests: run `python3 -m unittest discover -s
-  terraform/lxc/ansible/files/eval-runner -p "test_*.py"` (70 tests;
-  the xlsx and edit-similarity tests skip without openpyxl or
-  rapidfuzz).
+- Read `plan.md`, `panel-plan.md` and this README.
+- `plan.md` is generated by `docs/eval-runner/artifacts/genplan.py`
+  (git-ignored; a copy is in both checkouts). Rerun it after changing any
+  eval-runner file, then re-run the gates.
+- Tests: about 90 in `terraform/lxc/ansible/files/eval-runner` and 8 in
+  `cse-panel-stack/app`. A venv with openpyxl, rapidfuzz, celery,
+  fastapi and httpx runs them all; without those, the affected tests
+  are skipped.
+- Check the job: `curl -s http://192.168.20.30:8000/eval/api/state`.
 
 ## Progress
 
