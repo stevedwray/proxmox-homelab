@@ -102,7 +102,7 @@ def route(method, path, body):
     if m:
         table_id, kind = int(m.group(1)), m.group(2)
         if method == "GET":
-            return 200, [x for x in STATE[kind] if x["tableId"] == table_id]
+            return 200, [x for x in STATE[kind] if x.get("tableId") == table_id]
         if kind == "columns":
             item = {"id": _next_id(), "tableId": table_id, **body}
         elif kind == "rows":
@@ -114,6 +114,13 @@ def route(method, path, body):
             item = {"id": _next_id(), "tableId": table_id, **body}
         STATE[kind].append(item)
         return 200, item
+    if path == "/shares" and method == "POST":
+        item = {"id": _next_id(), **body}
+        STATE["shares"].append(item)
+        return 200, item
+    m = re.fullmatch(r"/views/(\d+)/shares", path)
+    if m and method == "GET":
+        return 200, [x for x in STATE["shares"] if x.get("nodeType") == "view" and x["nodeId"] == int(m.group(1))]
     m = re.fullmatch(r"/rows/(\d+)", path)
     if m and method == "PUT":
         row = next((r for r in STATE["rows"] if r["id"] == int(m.group(1))), None)

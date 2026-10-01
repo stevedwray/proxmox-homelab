@@ -113,9 +113,11 @@ def publish_errors(state, expected_rows, run):
         errors.append(f"expected {expected_rows} rows, table has {len(state['rows'])}")
     if state["tables"] and len(state["tables"][0].get("columnSettings") or []) != len(publish.COLUMNS):
         errors.append("table column order (OCS v2 columnSettings) was not applied")
-    if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
-        errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
-                      f"{len(state['views'])} and {len(state['shares'])}")
+    view_shares = [s for s in state["shares"] if s.get("nodeType") == "view"]
+    if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1 + len(publish.VIEWS) \
+            or {s["nodeId"] for s in view_shares} != {v["id"] for v in state["views"]}:
+        errors.append(f"expected {len(publish.VIEWS)} views, shared along with the table, got "
+                      f"{len(state['views'])} views and {len(state['shares'])} shares")
     for rel in ("leaderboard.md", "leaderboard.xlsx", "findings.md", f"runs/{run}/report.md",
                 f"runs/{run}/manifest.json"):
         if f"{publish.FOLDER}/{rel}" not in state["files"]:

@@ -602,6 +602,17 @@ def upsert_rows(nc, table_id, col_ids, rows):
     return created, updated, unchanged
 
 
+# What a ranked view shows (operator, 2026-10-01: the full 20-column table
+# with the internal Key first was unreadable). The rest stays in the base
+# table.
+VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+# The base table's column order: what a person reads first, the internal
+# upsert Key last.
+TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
+               "Why not comparable", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run", "Metrics",
+               "Empty %", "Unparsed", "Token budget", "Report", "Key"]
+
+
 def view_settings(col_ids, task, required):
     """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
     accepts (read from its source): columnSettings [{columnId, order}],
@@ -611,7 +622,8 @@ def view_settings(col_ids, task, required):
     filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
     filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                 for column, value in required.items()]
-    shown = [title for title, _ in COLUMNS if title != "Key"]
+    has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
+    shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
         "filter": [filters],
@@ -632,11 +644,11 @@ def ensure_views(nc, table_id, col_ids):
 
 def table_layout(col_ids):
     """Body for the OCS v2 PUT /tables/{id}: the table's own column order
-    (COLUMNS order, Key first) and default sort (task, then score desc).
+    (TABLE_ORDER, Key last) and default sort (task, then score desc).
     The v1 API has no way to set these; without it the base table shows
     columns in an arbitrary order."""
     return {
-        "columnSettings": [{"columnId": col_ids[title], "order": i} for i, (title, _) in enumerate(COLUMNS)],
+        "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(TABLE_ORDER)],
         "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
     }
 
@@ -646,14 +658,24 @@ def ensure_table_layout(nc, table_id, col_ids):
 
 
 def ensure_share(nc, table_id, user):
+    """Share the table and every view read-only with user. A table share
+    doesn't make its views visible to the receiver: each view needs its own
+    share (POST /shares, nodeType "view") to appear under the table."""
     shares = nc.tables("GET", f"/tables/{table_id}/shares") or []
-    if any(s.get("receiver") == user for s in shares):
-        return
-    nc.tables("POST", f"/tables/{table_id}/shares", {
-        "receiver": user, "receiverType": "user", "permissionRead": True,
-        "permissionCreate": False, "permissionUpdate": False,
-        "permissionDelete": False, "permissionManage": False,
-    })
+    if not any(s.get("receiver") == user for s in shares):
+        nc.tables("POST", f"/tables/{table_id}/shares", {
+            "receiver": user, "receiverType": "user", "permissionRead": True,
+            "permissionCreate": False, "permissionUpdate": False,
+            "permissionDelete": False, "permissionManage": False,
+        })
+    for view in nc.tables("GET", f"/tables/{table_id}/views") or []:
+        if any(s.get("receiver") == user for s in nc.tables("GET", f"/views/{view['id']}/shares") or []):
+            continue
+        nc.tables("POST", "/shares", {
+            "nodeId": view["id"], "nodeType": "view", "receiver": user, "receiverType": "user",
+            "permissionRead": True, "permissionCreate": False, "permissionUpdate": False,
+            "permissionDelete": False, "permissionManage": False,
+        })
 
 
 def publish(nc, files, rows, share_with=None):

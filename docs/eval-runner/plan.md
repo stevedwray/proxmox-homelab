@@ -1748,9 +1748,11 @@ change: |
             errors.append(f"expected {expected_rows} rows, table has {len(state['rows'])}")
         if state["tables"] and len(state["tables"][0].get("columnSettings") or []) != len(publish.COLUMNS):
             errors.append("table column order (OCS v2 columnSettings) was not applied")
-        if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
-            errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
-                          f"{len(state['views'])} and {len(state['shares'])}")
+        view_shares = [s for s in state["shares"] if s.get("nodeType") == "view"]
+        if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1 + len(publish.VIEWS) \
+                or {s["nodeId"] for s in view_shares} != {v["id"] for v in state["views"]}:
+            errors.append(f"expected {len(publish.VIEWS)} views, shared along with the table, got "
+                          f"{len(state['views'])} views and {len(state['shares'])} shares")
         for rel in ("leaderboard.md", "leaderboard.xlsx", "findings.md", f"runs/{run}/report.md",
                     f"runs/{run}/manifest.json"):
             if f"{publish.FOLDER}/{rel}" not in state["files"]:
@@ -1810,7 +1812,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/selftest_checks.py | cut -d' ' -f1"
-    expect: "fff110cedd8104a999a47a2b35ebd51feb476404772c8d8445dad317c0046a25"
+    expect: "e175c8cdbf1beafa0607d9ddff3b85899c1c8d129b61ff3daa3756b71f79420b"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/selftest_checks.py && echo OK"
@@ -2896,6 +2898,17 @@ change: |
         return created, updated, unchanged
 
 
+    # What a ranked view shows (operator, 2026-10-01: the full 20-column table
+    # with the internal Key first was unreadable). The rest stays in the base
+    # table.
+    VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+    # The base table's column order: what a person reads first, the internal
+    # upsert Key last.
+    TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
+                   "Why not comparable", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run", "Metrics",
+                   "Empty %", "Unparsed", "Token budget", "Report", "Key"]
+
+
     def view_settings(col_ids, task, required):
         """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
         accepts (read from its source): columnSettings [{columnId, order}],
@@ -2905,7 +2918,8 @@ change: |
         filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
         filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
                     for column, value in required.items()]
-        shown = [title for title, _ in COLUMNS if title != "Key"]
+        has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
+        shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
             "filter": [filters],
@@ -2926,11 +2940,11 @@ change: |
 
     def table_layout(col_ids):
         """Body for the OCS v2 PUT /tables/{id}: the table's own column order
-        (COLUMNS order, Key first) and default sort (task, then score desc).
+        (TABLE_ORDER, Key last) and default sort (task, then score desc).
         The v1 API has no way to set these; without it the base table shows
         columns in an arbitrary order."""
         return {
-            "columnSettings": [{"columnId": col_ids[title], "order": i} for i, (title, _) in enumerate(COLUMNS)],
+            "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(TABLE_ORDER)],
             "sort": [{"columnId": col_ids["Task"], "mode": "ASC"}, {"columnId": col_ids["Score %"], "mode": "DESC"}],
         }
 
@@ -2940,14 +2954,24 @@ change: |
 
 
     def ensure_share(nc, table_id, user):
+        """Share the table and every view read-only with user. A table share
+        doesn't make its views visible to the receiver: each view needs its own
+        share (POST /shares, nodeType "view") to appear under the table."""
         shares = nc.tables("GET", f"/tables/{table_id}/shares") or []
-        if any(s.get("receiver") == user for s in shares):
-            return
-        nc.tables("POST", f"/tables/{table_id}/shares", {
-            "receiver": user, "receiverType": "user", "permissionRead": True,
-            "permissionCreate": False, "permissionUpdate": False,
-            "permissionDelete": False, "permissionManage": False,
-        })
+        if not any(s.get("receiver") == user for s in shares):
+            nc.tables("POST", f"/tables/{table_id}/shares", {
+                "receiver": user, "receiverType": "user", "permissionRead": True,
+                "permissionCreate": False, "permissionUpdate": False,
+                "permissionDelete": False, "permissionManage": False,
+            })
+        for view in nc.tables("GET", f"/tables/{table_id}/views") or []:
+            if any(s.get("receiver") == user for s in nc.tables("GET", f"/views/{view['id']}/shares") or []):
+                continue
+            nc.tables("POST", "/shares", {
+                "nodeId": view["id"], "nodeType": "view", "receiver": user, "receiverType": "user",
+                "permissionRead": True, "permissionCreate": False, "permissionUpdate": False,
+                "permissionDelete": False, "permissionManage": False,
+            })
 
 
     def publish(nc, files, rows, share_with=None):
@@ -3025,7 +3049,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "18dbc52fde20bd504ec7996944a4ebb0c394c551ce28a31f06639835a8477463"
+    expect: "8d3ba61d298a3af5d6c576019709edb6f6cf60e8058f9b288732d75d4c9c946b"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3149,7 +3173,7 @@ change: |
         if m:
             table_id, kind = int(m.group(1)), m.group(2)
             if method == "GET":
-                return 200, [x for x in STATE[kind] if x["tableId"] == table_id]
+                return 200, [x for x in STATE[kind] if x.get("tableId") == table_id]
             if kind == "columns":
                 item = {"id": _next_id(), "tableId": table_id, **body}
             elif kind == "rows":
@@ -3161,6 +3185,13 @@ change: |
                 item = {"id": _next_id(), "tableId": table_id, **body}
             STATE[kind].append(item)
             return 200, item
+        if path == "/shares" and method == "POST":
+            item = {"id": _next_id(), **body}
+            STATE["shares"].append(item)
+            return 200, item
+        m = re.fullmatch(r"/views/(\d+)/shares", path)
+        if m and method == "GET":
+            return 200, [x for x in STATE["shares"] if x.get("nodeType") == "view" and x["nodeId"] == int(m.group(1))]
         m = re.fullmatch(r"/rows/(\d+)", path)
         if m and method == "PUT":
             row = next((r for r in STATE["rows"] if r["id"] == int(m.group(1))), None)
@@ -3300,7 +3331,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py | cut -d' ' -f1"
-    expect: "cce4634eda90bd82a1643444fa5908a7add10b5f9ef4523d88cb54760d1b6448"
+    expect: "5801f8711ab2d1df1f50ba06c12e9b1916b55f7ddcd6ea19a72780597862e9af"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py && echo OK"
@@ -3551,16 +3582,24 @@ change: |
             self.assertEqual([c["title"] for c in state["columns"]], [t for t, _ in publish.COLUMNS])
             self.assertEqual(len(state["rows"]), 5)
             self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
-            view = state["views"][0]
-            self.assertEqual(view["filter"][0][0]["operator"], "is-equal")
-            self.assertEqual(view["sort"], [{"columnId": view["columnSettings"][2]["columnId"], "mode": "DESC"}])
-            self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
-            self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
+            titles = {c["id"]: c["title"] for c in state["columns"]}
+            gpqa = next(v for v in state["views"] if v["title"] == "Comparable: GPQA")
+            self.assertEqual(gpqa["filter"][0][0]["operator"], "is-equal")
+            self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
+            self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
+            bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
+            self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
+            # the table and every view are shared, so the views show up for steve
+            self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
+            self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
+                             {v["id"] for v in state["views"]})
             self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
             self.assertEqual(state["deleted"], [f"{publish.FOLDER}/leaderboard.csv"])
             table = state["tables"][0]
             key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
-            self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
+            self.assertEqual(titles[table["columnSettings"][0]["columnId"]], "Model")
+            self.assertEqual(table["columnSettings"][-1], {"columnId": key_id, "order": len(publish.COLUMNS) - 1})
+            self.assertEqual(sorted(publish.TABLE_ORDER), sorted(t for t, _ in publish.COLUMNS))
             self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
 
         def test_republish_is_idempotent(self):
@@ -3569,7 +3608,7 @@ change: |
             self.assertEqual(counts, (0, 0, 5))
             state = self.nc.state
             self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
-                             (1, 5, len(publish.VIEWS), 1))
+                             (1, 5, len(publish.VIEWS), 1 + len(publish.VIEWS)))
 
         def test_half_configured_view_is_repaired(self):
             table_id, _ = publish.publish(self.nc, self.files, self.rows)
@@ -3644,7 +3683,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "d388fd15add71e1fc4f5089793b2ecd154cb0f221cb0d4f1d84c086b29c04e47"
+    expect: "9c7135d563dc3c99a0f7a83be2ad2a83d9bdbdcf9c63300b62cd6eeda2971ec6"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"

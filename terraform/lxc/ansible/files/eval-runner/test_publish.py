@@ -226,16 +226,24 @@ class PublishTest(unittest.TestCase):
         self.assertEqual([c["title"] for c in state["columns"]], [t for t, _ in publish.COLUMNS])
         self.assertEqual(len(state["rows"]), 5)
         self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
-        view = state["views"][0]
-        self.assertEqual(view["filter"][0][0]["operator"], "is-equal")
-        self.assertEqual(view["sort"], [{"columnId": view["columnSettings"][2]["columnId"], "mode": "DESC"}])
-        self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
-        self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
+        titles = {c["id"]: c["title"] for c in state["columns"]}
+        gpqa = next(v for v in state["views"] if v["title"] == "Comparable: GPQA")
+        self.assertEqual(gpqa["filter"][0][0]["operator"], "is-equal")
+        self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
+        self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
+        bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
+        self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
+        # the table and every view are shared, so the views show up for steve
+        self.assertEqual({s["receiver"] for s in state["shares"]}, {"steve"})
+        self.assertEqual({s["nodeId"] for s in state["shares"] if s.get("nodeType") == "view"},
+                         {v["id"] for v in state["views"]})
         self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
         self.assertEqual(state["deleted"], [f"{publish.FOLDER}/leaderboard.csv"])
         table = state["tables"][0]
         key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
-        self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
+        self.assertEqual(titles[table["columnSettings"][0]["columnId"]], "Model")
+        self.assertEqual(table["columnSettings"][-1], {"columnId": key_id, "order": len(publish.COLUMNS) - 1})
+        self.assertEqual(sorted(publish.TABLE_ORDER), sorted(t for t, _ in publish.COLUMNS))
         self.assertEqual([r["mode"] for r in table["sort"]], ["ASC", "DESC"])
 
     def test_republish_is_idempotent(self):
@@ -244,7 +252,7 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(counts, (0, 0, 5))
         state = self.nc.state
         self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
-                         (1, 5, len(publish.VIEWS), 1))
+                         (1, 5, len(publish.VIEWS), 1 + len(publish.VIEWS)))
 
     def test_half_configured_view_is_repaired(self):
         table_id, _ = publish.publish(self.nc, self.files, self.rows)
