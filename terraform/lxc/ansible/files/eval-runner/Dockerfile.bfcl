@@ -12,9 +12,13 @@ RUN useradd --create-home --uid 1000 app
 WORKDIR /results
 
 # Constrained to the exact package set of the framework venv behind every
-# historical BFCL number, so new scores stay comparable with them.
+# historical BFCL number, so new scores stay comparable with them (109
+# packages, names and versions identical). soundfile, transformers and
+# safetensors aren't bfcl-eval dependencies but were installed in that venv
+# too -- qwen-agent, which bfcl-eval imports, fails without soundfile.
 COPY bfcl-constraints.txt /tmp/bfcl-constraints.txt
-RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt "bfcl-eval==2025.8.6.2" \
+RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt \
+      "bfcl-eval==2025.8.6.2" soundfile transformers safetensors \
     && rm /tmp/bfcl-constraints.txt
 
 # The wrapper, run setup (runmeta.py exec), the shared results writer and

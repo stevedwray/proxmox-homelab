@@ -4781,9 +4781,13 @@ change: |
     WORKDIR /results
 
     # Constrained to the exact package set of the framework venv behind every
-    # historical BFCL number, so new scores stay comparable with them.
+    # historical BFCL number, so new scores stay comparable with them (109
+    # packages, names and versions identical). soundfile, transformers and
+    # safetensors aren't bfcl-eval dependencies but were installed in that venv
+    # too -- qwen-agent, which bfcl-eval imports, fails without soundfile.
     COPY bfcl-constraints.txt /tmp/bfcl-constraints.txt
-    RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt "bfcl-eval==2025.8.6.2" \
+    RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt \
+          "bfcl-eval==2025.8.6.2" soundfile transformers safetensors \
         && rm /tmp/bfcl-constraints.txt
 
     # The wrapper, run setup (runmeta.py exec), the shared results writer and
@@ -4806,7 +4810,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile.bfcl | cut -d' ' -f1"
-    expect: "f84419c54b47683ccd3bfff3a7c6ba4874e0dc1c9a15cce776de8816fe171700"
+    expect: "954c225e1722e23590e11ff918e6e1b4c3f9eaf86683d5e680651445969a7df1"
     critical: true
 ```
 
