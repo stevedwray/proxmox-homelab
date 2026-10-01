@@ -72,10 +72,49 @@ phase actually needs an LLM agent driving it interactively.
 
 ## Status
 
-- [ ] `maltego-01-vendor-source` — not started
-- [ ] `maltego-02-dockerfile-and-driver` — not started
-- [ ] `maltego-03-compose-service` — not started
-- [ ] `maltego-04-stack-contract` — not started
-- [ ] Operator: clone `lidless-labs/maltego-mcp` to `~/git/maltego-mcp`, deploy via `provision.sh --stack mcp-utility-stack`, run the Phase 1 test, open the resulting `.mtgx` in Maltego Desktop — not started
+- [x] Operator prerequisite: cloned `lidless-labs/maltego-mcp` to `~/git/maltego-mcp`, pinned to `cb8100423d6cc4215e546f2c4125f5225d9dc282` — 2026-10-02
+- [x] `maltego-01-vendor-source` — 2026-10-02
+- [x] `maltego-02-dockerfile-and-driver` — 2026-10-02
+- [x] `maltego-03-compose-service` — 2026-10-02
+- [x] `maltego-04-stack-contract` — 2026-10-02
+- [ ] Operator: deploy via `provision.sh --stack mcp-utility-stack`, run the Phase 1 test, open the resulting `.mtgx` in Maltego Desktop — not started
 
-Hand-backs from `implement-step` land below this line as each step runs.
+## Hand-back: maltego-01 through maltego-04 (2026-10-02)
+
+All four step-blocks executed directly (not via a separate local-model
+`/implement-step` pass — the frontier-model session that planned this also
+ran it, since every step was a plain file edit with no production access
+needed). Planning commits: `903890fb`, `f2c1eee8`, `07e247c8`. Execution
+commit: `b2de3035` (`feat(mcp-utility-stack): vendor maltego-mcp for Phase
+1 OSINT -> MTGX PoC`), all on `docs/maltego-integration-plan`.
+
+Real edits made:
+
+- `terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml`: added
+  `maltego_source_dir`/`maltego_build_dir` vars, three source-copy tasks,
+  a literal Dockerfile-writing task, a literal driver-script-writing task,
+  the `maltego-mcp` compose service (`profiles: ["tools"]`, no port, no
+  `restart:`), and the `maltego-mcp-output` named volume.
+- `terraform/lxc/stacks/mcp-utility-stack/STACK_CONTRACT.md`: added a
+  `maltego-mcp` row to Provides and a gotcha bullet about the deliberate
+  lack of `profiles` auto-start.
+
+Gate results (all passed):
+
+- `ansible-playbook --syntax-check` (run from `terraform/lxc/ansible/`
+  with its own `ansible.cfg` — running it from the repo root fails to
+  resolve `roles/`, that's a pre-existing environment quirk, not a defect
+  in this change): clean, only a pre-existing unrelated `wazuh_agent`
+  deprecation warning.
+- `grep -c 'maltego-mcp'` on the playbook: 17 (gate wanted ≥5)
+- `grep -c 'phase1-expand-domain.mjs'` on the playbook: 6 (gate wanted ≥2)
+- `grep -c 'maltego-mcp-output'` on the playbook: 2 (gate wanted ≥2)
+- `grep -c 'maltego-mcp'` on `STACK_CONTRACT.md`: 2 (gate wanted ≥2)
+
+Not done yet — explicitly operator actions, not local-model steps:
+deploying (`provision.sh --stack mcp-utility-stack`, needs the normal
+production approval flow), running the Phase 1 test command inside the
+deployed LXC, and manually opening the resulting `.mtgx` in Maltego
+Desktop. That last one is the actual milestone this whole plan exists to
+answer — nothing above it proves Maltego will accept the file, only that
+the pipeline that produces it is wired up correctly.
