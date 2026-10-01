@@ -1,7 +1,8 @@
 # eval-runner
 
 Status: **done and in place on pve-tiny (2026-10-01).** Every plan step
-is applied; all 26 plan gates and 22 unit tests pass. The deploy runs a
+is applied; all 26 plan gates and 27 unit tests pass. Historical results are
+imported for comparison, and nightly PBS backup coverage is confirmed. The deploy runs a
 four-stage GPU-free self-test, which passes:
 1. A run completes.
 2. Request settings and response flags are correct.
@@ -200,3 +201,55 @@ local models. Commits `5181323c` and `dca91fc4`.
 `plan.md` was regenerated from the deployed files (13 steps, 26 gates).
 Embedded content was compared byte for byte with the repo, and all gates
 pass.
+
+### 2026-10-01: historical comparison, backup coverage, battery survey
+
+Commit `9e780305` (deployed: `ok=105 failed=0`, self-test OK).
+
+**Comparability rule (`summarize.exclusion_reason`):** a historical result
+counts only if lm_eval's own recorded config shows a full run
+(`limit: null`) with `max_gen_toks` 8192.
+- Surveyed all 22 historical GPQA/IFEval results on framework. The rule
+  selects exactly the eval-battery doc's valid set, with matching numbers:
+  Gemma4-26B 43.94/92.98, A4B-QAT 27.27/89.83, Laguna 24.24/75.42,
+  Qwen3.6-35B redo 57.07/90.39, Qwen3.8-27B 43.43/89.46, Qwen3-Coder-30B
+  IFEval redo 81.33.
+- It excludes the Gemma4 pilots, the Bug 6 Qwen3.6 runs (GPQA 0.00,
+  IFEval 17.74), and Qwen3-Coder-30B's uncapped `ctx163k` GPQA 11.62.
+
+**Import:** 36 files, ~42 MB, into `/srv/eval-runner/results/_historical/`
+(uid 1000). Exact commands are in `plan.md` ("import historical
+results"). `eval-run results` now prints a historical section plus an
+excluded list with reasons.
+
+**Finding: GPQA empty answers under the 8192 budget.**
+
+| Model | Empty GPQA answers (of 198) |
+|---|---|
+| Gemma4-26B | 91 |
+| Gemma4-26B-A4B-QAT | 134 |
+| Laguna S2.1 | 114 |
+| Qwen3.8-27B | 105 |
+| Qwen3.6-35B | 49 |
+
+Historical GPQA therefore largely measures finishing inside 8192 tokens.
+
+I tried a derived "accuracy on parsed answers" figure and removed it
+again. It was biased: answered subsets skew easy and differ per model (it
+gave Qwen3.8-27B an implausible 94.5%).
+
+**Backups, checked read-only on pve-tiny:**
+- Job `48087a29…`: 12:30, `all 1`, `exclude 910`, `pbs-iscsi`, enabled.
+- CT 50013 snapshots: 2026-09-29T23:32Z and 2026-09-30T23:34Z.
+- `rootfs` has no `backup=0`, and `mp0` (Docker) is `backup=1`.
+
+Results are covered, with PBS keep-last-2 retention.
+
+**Battery survey:**
+- The custom RepoBench scripts are lost; they were on the ai-stack LXC
+  only.
+- BFCL was run with the `bfcl` CLI on framework; only logs and results
+  remain.
+- AgentBench is a 6.7 GB `Eugleo/agent-bench` checkout on garuda.
+
+None of these is packaged yet; that needs operator decisions.

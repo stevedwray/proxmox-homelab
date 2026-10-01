@@ -84,6 +84,19 @@ without using Framework's GPU.
   documented numbers (GPQA 57.07%, IFEval 90.39%/91.87%) and flags 49 of
   198 empty GPQA answers and 16 of 541 empty IFEval answers. Both counts
   were cross-checked by hand.
+- **Historical comparability rule:** lm_eval records `config.limit` and
+  `config.gen_kwargs` in every results file. "Full run with
+  max_gen_toks=8192" selects exactly the runs the eval-battery doc treats
+  as valid and excludes pilots, the Bug 6 runs, and Qwen3-Coder-30B's
+  uncapped `ctx163k` GPQA.
+- **Historical empty-answer rates under that budget are large:** GPQA
+  empty counts of 91 (Gemma4-26B), 134 (A4B-QAT), 114 (Laguna), 105
+  (Qwen3.8-27B) and 49 (Qwen3.6-35B), each out of 198. So historical GPQA
+  largely measures finishing inside 8192 tokens.
+- **Durability:** pve-tiny's nightly PBS job (12:30, `--all 1`, exclude
+  910) covers CT 50013. The root disk, which holds results, has no
+  `backup=0`, and the Docker disk is `backup=1`. Snapshots of 50013 were
+  confirmed for 2026-09-29 and 09-30. Retention is the PBS keep-last-2.
 - **Wrapper:** `ai-services-stack` is on `pve-tiny`, so deploys use
   `./with-secrets-prod-tiny`.
 
@@ -691,7 +704,15 @@ change: |
                 used its whole token budget thinking, so the answer never came
       unparsed  (GPQA only) flexible-extract found no answer letter
     Treat a score with many of either as an infrastructure/config problem to
-    inspect, not as the model's capability.
+    inspect, not as the model's capability. (Deliberately no "accuracy on
+    answered questions" figure: the questions a model finishes inside the
+    token budget skew easy, and differ per model, so it isn't comparable.)
+
+    Historical results (the Ollama-era runs on framework, imported once into
+    /results/_historical/<source-dir>/) are listed in a second section. Only
+    results that are comparable with eval-runner's are shown: full runs
+    (no --limit) with max_gen_toks=8192. Everything else is listed as
+    excluded, with the reason (pilot, or the Bug 6 missing token cap).
     """
 
     import argparse
@@ -701,6 +722,8 @@ change: |
     import sys
 
     RESULTS_ROOT = "/results"
+    HISTORICAL_DIR = "_historical"
+    MAX_GEN_TOKS = 8192
 
     HEADLINE = {
         "gpqa_diamond_cot_zeroshot": [
@@ -719,13 +742,49 @@ change: |
         return os.path.basename(path)[len("results_"):-len(".json")]
 
 
-    def load(run_dir):
-        """Map task -> {metrics, n, samples}, the newest results file winning."""
+    def _max_gen_toks(gen_kwargs):
+        """lm_eval records gen_kwargs as a dict or as a 'k=v,k=v' string."""
+        if isinstance(gen_kwargs, dict):
+            value = gen_kwargs.get("max_gen_toks")
+        else:
+            pairs = dict(part.split("=", 1) for part in str(gen_kwargs or "").split(",") if "=" in part)
+            value = pairs.get("max_gen_toks")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
+    def exclusion_reason(data):
+        """None if a results file is comparable with eval-runner runs, else why not."""
+        config = data.get("config", {})
+        if config.get("limit") is not None:
+            return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
+        if _max_gen_toks(config.get("gen_kwargs")) != MAX_GEN_TOKS:
+            return f"no max_gen_toks={MAX_GEN_TOKS} (Bug 6 truncation risk)"
+        return None
+
+
+    def model_name(data):
+        model_args = data.get("config", {}).get("model_args")
+        if isinstance(model_args, dict):
+            return model_args.get("model")
+        pairs = dict(part.split("=", 1) for part in str(model_args or "").split(",") if "=" in part)
+        return pairs.get("model")
+
+
+    def load(run_dir, comparable_only=False):
+        """Map task -> {metrics, n, samples, model}, the newest results file winning.
+
+        With comparable_only, results files failing exclusion_reason() are skipped.
+        """
         found = {}
         pattern = os.path.join(run_dir, "**", "results_*.json")
         for path in sorted(glob.glob(pattern, recursive=True)):
             with open(path) as fh:
                 data = json.load(fh)
+            if comparable_only and exclusion_reason(data):
+                continue
             stamp = _results_stamp(path)
             for task, metrics in data.get("results", {}).items():
                 if task in HEADLINE:
@@ -734,6 +793,7 @@ change: |
                         "metrics": metrics,
                         "n": data.get("n-samples", {}).get(task, {}).get("effective"),
                         "samples": samples if os.path.exists(samples) else None,
+                        "model": model_name(data),
                     }
         return found
 
@@ -759,10 +819,10 @@ change: |
         }
 
 
-    def _flag_text(samples, task):
-        if not samples:
+    def _flag_text(task, entry):
+        if not entry["samples"]:
             return "[no samples file]"
-        flags = response_flags(samples, task)
+        flags = response_flags(entry["samples"], task)
         text = f"empty {flags['empty']}"
         if flags["unparsed"] is not None:
             text += f", unparsed {flags['unparsed']}"
@@ -783,14 +843,14 @@ change: |
                 parts.append(f"{label} ?")
                 ok = False
         parts.append(f"n={entry['n']}")
-        parts.append(_flag_text(entry["samples"], task))
+        parts.append(_flag_text(task, entry))
         return parts, ok
 
 
-    def describe(run_dir, check):
+    def describe(run_dir, check, comparable_only=False):
         """Return (line, ok) for one run directory."""
         name = os.path.basename(os.path.normpath(run_dir))
-        found = load(run_dir)
+        found = load(run_dir, comparable_only=comparable_only)
         if not found:
             return f"{name}: no results yet (still running, or failed)", False
         ok = True
@@ -805,19 +865,52 @@ change: |
         return f"{name}: " + ", ".join(parts), ok
 
 
+    def historical_lines(root):
+        """Comparable historical results first, then one line per excluded result."""
+        hist_root = os.path.join(root, HISTORICAL_DIR)
+        if not os.path.isdir(hist_root):
+            return []
+        lines = ["", f"historical (imported from framework; comparable = full run, max_gen_toks={MAX_GEN_TOKS}):"]
+        excluded = []
+        for source in sorted(d for d in glob.glob(os.path.join(hist_root, "*")) if os.path.isdir(d)):
+            found = load(source, comparable_only=True)
+            if found:
+                line, _ = describe(source, check=False, comparable_only=True)
+                model = next((e["model"] for e in found.values() if e["model"]), None)
+                lines.append(f"  {line}" + (f"  ({model})" if model else ""))
+            for path in sorted(glob.glob(os.path.join(source, "**", "results_*.json"), recursive=True)):
+                with open(path) as fh:
+                    data = json.load(fh)
+                reason = exclusion_reason(data)
+                tasks = [t for t in data.get("results", {}) if t in HEADLINE]
+                line = f"  {os.path.basename(source)} {','.join(tasks)}: {reason}"
+                if reason and tasks and line not in excluded:
+                    excluded.append(line)
+        if excluded:
+            lines.append("excluded:")
+            lines.extend(excluded)
+        return lines
+
+
     def main(argv=None):
         parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
         parser.add_argument("--check", action="store_true")
         parser.add_argument("dirs", nargs="*")
         args = parser.parse_args(argv)
 
-        dirs = args.dirs or sorted(
-            d for d in glob.glob(os.path.join(RESULTS_ROOT, "*"))
-            if os.path.isdir(d) and not os.path.basename(d).startswith("_")
-        )
-        if not dirs:
-            print("no runs yet")
+        if not args.dirs:
+            dirs = sorted(
+                d for d in glob.glob(os.path.join(RESULTS_ROOT, "*"))
+                if os.path.isdir(d) and not os.path.basename(d).startswith("_")
+            )
+            if not dirs:
+                print("no runs yet")
+            for run_dir in dirs:
+                print(describe(run_dir, check=False)[0])
+            for line in historical_lines(RESULTS_ROOT):
+                print(line)
             return 0
+        dirs = args.dirs
 
         all_ok = True
         for run_dir in dirs:
@@ -846,7 +939,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/summarize.py | cut -d' ' -f1"
-    expect: "6ea81f6de43b494f0917e1e0b7f25bbd488501f2d48c788b2bc4f38a9c9083df"
+    expect: "e8c24bcfd500a97ee287a7f17a3ce058c993c588d21edc645a4a2f9c5c34ffdb"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/summarize.py && echo OK"
@@ -1463,7 +1556,10 @@ change: |
     STAMP = "2026-10-01T00-00-00.000000"
 
 
-    def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True):
+    COMPARABLE = {"limit": None, "gen_kwargs": {"max_gen_toks": 8192}, "model_args": {"model": "m:q4"}}
+
+
+    def write_run(root, name, tasks, gpqa_rows=None, ifeval_rows=None, run_json=True, config=None):
         """Create a run dir shaped like lm_eval's output (<run>/<model>/results_*.json)."""
         run_dir = os.path.join(root, name)
         model_dir = os.path.join(run_dir, "model")
@@ -1477,7 +1573,7 @@ change: |
             results["ifeval"] = {"prompt_level_strict_acc,none": 0.9, "prompt_level_loose_acc,none": 0.95}
             n_samples["ifeval"] = {"original": 541, "effective": len(ifeval_rows or [])}
         with open(os.path.join(model_dir, f"results_{STAMP}.json"), "w") as fh:
-            json.dump({"results": results, "n-samples": n_samples}, fh)
+            json.dump({"results": results, "n-samples": n_samples, "config": config or COMPARABLE}, fh)
         for task, rows in (("gpqa_diamond_cot_zeroshot", gpqa_rows), ("ifeval", ifeval_rows)):
             if rows is not None:
                 with open(os.path.join(model_dir, f"samples_{task}_{STAMP}.jsonl"), "w") as fh:
@@ -1555,6 +1651,41 @@ change: |
                 self.assertTrue(lines[0].startswith("real:"))
 
 
+    class ComparabilityTest(unittest.TestCase):
+        def test_full_run_with_token_cap_is_comparable(self):
+            self.assertIsNone(summarize.exclusion_reason({"config": COMPARABLE}))
+            as_string = {"limit": None, "gen_kwargs": "max_gen_toks=8192,temperature=0"}
+            self.assertIsNone(summarize.exclusion_reason({"config": as_string}))
+
+        def test_pilot_and_bug6_excluded(self):
+            self.assertEqual(summarize.exclusion_reason({"config": {"limit": 40.0, "gen_kwargs": {"max_gen_toks": 8192}}}),
+                             "pilot (limit 40)")
+            self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {}}}))
+            self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
+
+        def test_model_name_dict_or_string(self):
+            self.assertEqual(summarize.model_name({"config": {"model_args": {"model": "x"}}}), "x")
+            self.assertEqual(summarize.model_name({"config": {"model_args": "base_url=u,model=y,num_concurrent=1"}}), "y")
+
+        def test_historical_section_filters_and_explains(self):
+            with tempfile.TemporaryDirectory() as root:
+                hist = os.path.join(root, summarize.HISTORICAL_DIR)
+                os.makedirs(hist)
+                write_run(hist, "good", ["gpqa", "ifeval"], gpqa_rows=gpqa_rows(["(A)"]), ifeval_rows=ifeval_rows(["ok"]))
+                write_run(hist, "bug6", ["ifeval"], ifeval_rows=ifeval_rows(["ok"]),
+                          config={"limit": None, "gen_kwargs": {}})
+                lines = summarize.historical_lines(root)
+            text = "\n".join(lines)
+            self.assertIn("  good: GPQA flex 50.00%", text)
+            self.assertIn("(m:q4)", text)
+            self.assertNotIn("  bug6: ", text)
+            self.assertIn("excluded:\n  bug6 ifeval: no max_gen_toks=8192", text)
+
+        def test_no_historical_dir_adds_nothing(self):
+            with tempfile.TemporaryDirectory() as root:
+                self.assertEqual(summarize.historical_lines(root), [])
+
+
     class SelftestChecksTest(unittest.TestCase):
         def _log(self, root, requests):
             path = os.path.join(root, "req.jsonl")
@@ -1607,7 +1738,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_summarize.py | cut -d' ' -f1"
-    expect: "1d1ef80633862b7bc812a75f8af10e0fddfa1f421692ed7485d899d12c2601b2"
+    expect: "b66d403142a8ae400c6f2128135b2a94c6695a9cd1fa19462bbad772acf113f4"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
@@ -1887,6 +2018,25 @@ Pass criteria:
 
 The self-test never touches Framework.
 
+### Operator (one-off, done 2026-10-01): import historical results
+
+This copies the Ollama-era GPQA/IFEval result and sample files (~42 MB)
+from framework into `_historical/`, so `eval-run results` shows them for
+comparison. `summarize.py` decides at display time which ones are
+comparable. Run from the workstation:
+
+```bash
+H=$(mktemp -d)/_historical; mkdir -p "$H"
+ssh steve@framework.gibbsgreatly.xyz 'cd ~/eval-harnesses/results && find . \( -name "results_*.json" -o -name "samples_gpqa_diamond_cot_zeroshot_*.jsonl" -o -name "samples_ifeval_*.jsonl" \) -print0 | xargs -0 tar cf - --' | tar xf - -C "$H"
+python3 - "$H" <<'PY'
+import glob, json, os, sys
+for f in glob.glob(sys.argv[1] + "/**/results_*.json", recursive=True):
+    if not any(t in ("gpqa_diamond_cot_zeroshot", "ifeval") for t in json.load(open(f)).get("results", {})):
+        os.remove(f)
+PY
+tar cf - -C "$(dirname "$H")" _historical | ssh root@192.168.50.11 'tar xf - -C /srv/eval-runner/results/ && chown -R 1000:1000 /srv/eval-runner/results/_historical'
+```
+
 ## Using it
 
 ```bash
@@ -1922,9 +2072,14 @@ docker ps --filter name=^eval-            # what's running (one real run at a ti
   lived on the deleted `ai-stack` LXC (VMID 116). lm_eval's
   `longbench_repobench-p` is a different RepoBench variant from the
   eval-battery table's.
-- **A comparison table of historical results** in `eval-run results`
-  (curated: only the runs the eval-battery doc marks as valid).
-- **Results durability.** Results are local to the CT (16 GB rootfs). The
-  pve-tiny backup coverage is not yet confirmed; the alternative is a
-  private Nextcloud push. GPQA's terms forbid public sharing of samples.
+- **Longer retention than PBS keep-last-2,** if wanted: a private
+  Nextcloud push. GPQA's terms forbid public sharing of samples.
+- **Survey of the rest of the battery (2026-10-01):**
+  - The custom RepoBench scripts (`repobench_generate.py` and
+    `repobench_eval_local.py`) are gone: not on garuda or framework. They
+    lived only on the deleted ai-stack LXC.
+  - BFCL ran via the `bfcl` CLI on framework (logs and result dirs only;
+    garuda's `bfcl-rx9070xt` holds results only).
+  - AgentBench is a 6.7 GB checkout of `Eugleo/agent-bench` on garuda,
+    with Docker task servers.
 - **Running from the CyberSecEval panel** as another job type.
