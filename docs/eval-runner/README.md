@@ -1,11 +1,16 @@
 # eval-runner
 
-Status: **done and in place on pve-tiny (2026-10-01).** Every plan step is
-applied, and all 19 plan gates pass against the branch. The deploy runs a
-GPU-free self-test (`eval-run selftest`), which passes. No real scored run
-against Framework has been made yet; that is a separate operator decision,
-because it occupies the GPU for hours. Branch `task/eval-runner` is not
-yet merged to `stable`.
+Status: **done and in place on pve-tiny (2026-10-01).** Every plan step
+is applied; all 26 plan gates and 22 unit tests pass. The deploy runs a
+four-stage GPU-free self-test, which passes:
+1. A run completes.
+2. Request settings and response flags are correct.
+3. A resume replays from cache.
+4. A server change is detected.
+
+No real scored run against Framework has been made yet; that is a
+separate operator decision. Branch `task/eval-runner` is not yet merged
+to `stable`.
 
 
 Runs the eval battery's lm_eval tests (GPQA, IFEval) from
@@ -28,7 +33,8 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 | eval-runner-05-battery-doc-pointer | done 2026-10-01, all critical gates pass |
 | eval-runner-06a/b/c (selftest server, script, summariser) | done 2026-10-01, all critical gates pass |
 | eval-runner-07-stack-yaml-pointer | done 2026-10-01, all critical gates pass |
-| Operator: deploy to pve-tiny | done 2026-10-01. Third deploy (`2793ec09`) is current: `failed=0`, self-test OK |
+| eval-runner-06d–g (runmeta, selftest checks, unit tests) | done 2026-10-01, all critical gates pass |
+| Operator: deploy to pve-tiny | done 2026-10-01. Latest deploy (`dca91fc4`): `failed=0`, all 4 self-test stages OK |
 | Smoke test | replaced by the deploy-time `eval-run selftest` (passes). A real pilot against Framework is optional, operator's call |
 
 ## Hand-backs
@@ -139,3 +145,58 @@ Manual checks on the CT afterwards:
 
 `plan.md` was regenerated so its literal content and hashes match the
 deployed files. All 19 gates were re-run against the branch and pass.
+
+### 2026-10-01: request guard, run metadata, resume, response flags, unit tests
+
+Operator direction: do everything possible before any run exercises the
+local models. Commits `5181323c` and `dca91fc4`.
+
+**Verified first, from lm_eval 0.4.12's installed source:**
+- The chat payload sends `max_tokens`, `temperature` (task default 0;
+  both tasks pin 0.0), `stop` and `seed: 1234`.
+- `--use_cache` commits each response as it arrives (`add_partial` into
+  `SqliteDict(autocommit=True)`).
+- The cache key ignores the model.
+- llama-server's `/props` doesn't expose `--chat-template-kwargs`.
+
+**Built:**
+- **`runmeta.py` (start/exec/check):** server fingerprint, run naming,
+  and the exact lm_eval argv, all in `run.json`.
+- **`eval-run resume`:** refuses if the fingerprint changed; `--force`
+  overrides.
+- **`--note`.**
+- **`selftest_checks.py`:** asserts what lm_eval actually sent.
+- **Response-quality flags** in `summarize.py`.
+- **`mock_openai.py` additions:** request log, every-Nth-empty replies,
+  `/props`, configurable port and model path.
+- **Selftest output pruning:** keeps the 5 most recent.
+- **22 unit tests:** `python3 -m unittest discover -s
+  terraform/lxc/ansible/files/eval-runner -p "test_*.py"`.
+
+**Evidence:**
+- **Selftest on the CT:**
+  1. `Cached requests: 0, Requests remaining: 4`, then `checks OK (4
+     requests)` (max_tokens 8192, temperature 0, seed 1234, model id), and
+     empty-flag total 2 as configured.
+  2. On resume: `Cached requests: 4, Requests remaining: 0`, and the mock
+     saw no new requests.
+  3. Change detection: `props.model_path: '/models/selftest-mock.gguf' ->
+     '/models/some-other-model.gguf'`, exit 3.
+- **Host paths on the CT:**
+  - Bad arguments, path traversal and unknown runs all exit 2 before
+    starting anything.
+  - A planted run whose recorded server differs from Framework was
+    refused by `eval-run resume`, with a field-by-field diff. That needed
+    only GETs of `/v1/models` and `/props`, with no inference and no
+    container started. It also confirmed that `runmeta` parses the real
+    llama-server `/props`.
+- **Flags on real history:** Qwen3.6-35B's GPQA redo has 49 of 198 empty
+  responses and 54 unparsed; its IFEval redo has 16 of 541 empty. These
+  match hand counts. Recorded in the eval-battery doc as a caveat on its
+  leading 57.07% GPQA score.
+- **Deploys:** `ok=105 failed=0` both times, self-test OK. Five selftest
+  dirs are kept, about 140 KB each.
+
+`plan.md` was regenerated from the deployed files (13 steps, 26 gates).
+Embedded content was compared byte for byte with the repo, and all gates
+pass.
