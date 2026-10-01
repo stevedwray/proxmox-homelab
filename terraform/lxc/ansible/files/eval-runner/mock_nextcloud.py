@@ -118,6 +118,13 @@ def route(method, path, body):
         item = {"id": _next_id(), **body}
         STATE["shares"].append(item)
         return 200, item
+    m = re.fullmatch(r"/shares/(\d+)", path)
+    if m and method == "PUT":
+        share = next((x for x in STATE["shares"] if x["id"] == int(m.group(1))), None)
+        if share is None:
+            return 404, {"message": "no such share"}
+        share["permission" + body["permissionType"].capitalize()] = body["permissionValue"]
+        return 200, share
     m = re.fullmatch(r"/views/(\d+)/shares", path)
     if m and method == "GET":
         return 200, [x for x in STATE["shares"] if x.get("nodeType") == "view" and x["nodeId"] == int(m.group(1))]

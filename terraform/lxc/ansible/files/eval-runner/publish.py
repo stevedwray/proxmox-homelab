@@ -701,16 +701,24 @@ def ensure_table_layout(nc, table_id, col_ids):
 
 
 def ensure_share(nc, table_id, user):
-    """Share the table and every view read-only with user. A table share
-    doesn't make its views visible to the receiver: each view needs its own
-    share (POST /shares, nodeType "view") to appear under the table."""
+    """Share the table (read + manage) and every view (read) with user.
+
+    Manage, because Tables 2.3.1 only sends a table's views along with the
+    table to its owner or a manager. A read-only receiver gets them from a
+    second request, and the web UI fires both in parallel and lets the
+    table reply overwrite the view list -- so the views under the table
+    vanish whenever that reply lands last (operator saw it, 2026-10-02).
+    The view shares are kept as well, for other clients."""
     shares = nc.tables("GET", f"/tables/{table_id}/shares") or []
-    if not any(s.get("receiver") == user for s in shares):
+    mine = next((s for s in shares if s.get("receiver") == user), None)
+    if mine is None:
         nc.tables("POST", f"/tables/{table_id}/shares", {
             "receiver": user, "receiverType": "user", "permissionRead": True,
             "permissionCreate": False, "permissionUpdate": False,
-            "permissionDelete": False, "permissionManage": False,
+            "permissionDelete": False, "permissionManage": True,
         })
+    elif not mine.get("permissionManage"):
+        nc.tables("PUT", f"/shares/{mine['id']}", {"permissionType": "manage", "permissionValue": True})
     for view in nc.tables("GET", f"/tables/{table_id}/views") or []:
         if any(s.get("receiver") == user for s in nc.tables("GET", f"/views/{view['id']}/shares") or []):
             continue

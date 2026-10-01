@@ -3007,16 +3007,24 @@ change: |
 
 
     def ensure_share(nc, table_id, user):
-        """Share the table and every view read-only with user. A table share
-        doesn't make its views visible to the receiver: each view needs its own
-        share (POST /shares, nodeType "view") to appear under the table."""
+        """Share the table (read + manage) and every view (read) with user.
+
+        Manage, because Tables 2.3.1 only sends a table's views along with the
+        table to its owner or a manager. A read-only receiver gets them from a
+        second request, and the web UI fires both in parallel and lets the
+        table reply overwrite the view list -- so the views under the table
+        vanish whenever that reply lands last (operator saw it, 2026-10-02).
+        The view shares are kept as well, for other clients."""
         shares = nc.tables("GET", f"/tables/{table_id}/shares") or []
-        if not any(s.get("receiver") == user for s in shares):
+        mine = next((s for s in shares if s.get("receiver") == user), None)
+        if mine is None:
             nc.tables("POST", f"/tables/{table_id}/shares", {
                 "receiver": user, "receiverType": "user", "permissionRead": True,
                 "permissionCreate": False, "permissionUpdate": False,
-                "permissionDelete": False, "permissionManage": False,
+                "permissionDelete": False, "permissionManage": True,
             })
+        elif not mine.get("permissionManage"):
+            nc.tables("PUT", f"/shares/{mine['id']}", {"permissionType": "manage", "permissionValue": True})
         for view in nc.tables("GET", f"/tables/{table_id}/views") or []:
             if any(s.get("receiver") == user for s in nc.tables("GET", f"/views/{view['id']}/shares") or []):
                 continue
@@ -3102,7 +3110,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "4dedf7689ff4fef77949e8d4372f055b3ca18babde0dbadde080b74e9e2cdb64"
+    expect: "b5f89898ff6e0a36aeb746322adfa43a6e650b80de052592df969500251b2d6a"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3242,6 +3250,13 @@ change: |
             item = {"id": _next_id(), **body}
             STATE["shares"].append(item)
             return 200, item
+        m = re.fullmatch(r"/shares/(\d+)", path)
+        if m and method == "PUT":
+            share = next((x for x in STATE["shares"] if x["id"] == int(m.group(1))), None)
+            if share is None:
+                return 404, {"message": "no such share"}
+            share["permission" + body["permissionType"].capitalize()] = body["permissionValue"]
+            return 200, share
         m = re.fullmatch(r"/views/(\d+)/shares", path)
         if m and method == "GET":
             return 200, [x for x in STATE["shares"] if x.get("nodeType") == "view" and x["nodeId"] == int(m.group(1))]
@@ -3384,7 +3399,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py | cut -d' ' -f1"
-    expect: "5801f8711ab2d1df1f50ba06c12e9b1916b55f7ddcd6ea19a72780597862e9af"
+    expect: "284919c918792020f546fced8a22889e56ec443cd634a78a27d4763e467a45f7"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py && echo OK"
@@ -3689,6 +3704,15 @@ change: |
             self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
                              (1, 5, len(publish.VIEWS), 1 + len(publish.VIEWS)))
 
+        def test_table_share_has_manage_and_old_read_only_share_is_upgraded(self):
+            publish.publish(self.nc, self.files, self.rows, share_with="steve")
+            table_share = next(s for s in self.nc.state["shares"] if "tableId" in s)
+            self.assertTrue(table_share["permissionManage"])
+            table_share["permissionManage"] = False  # as shared before 2026-10-02
+            publish.publish(self.nc, self.files, self.rows, share_with="steve")
+            self.assertTrue(table_share["permissionManage"])
+            self.assertEqual(len(self.nc.state["shares"]), 1 + len(publish.VIEWS))
+
         def test_half_configured_view_is_repaired(self):
             table_id, _ = publish.publish(self.nc, self.files, self.rows)
             self.nc.state["views"][0].pop("filter")
@@ -3762,7 +3786,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "5db886d07fbfc5719214ef007677919ae947be1c3ab062b654f9abe149bb4fba"
+    expect: "f308047ca7ea3b451020f736e0db615248565dc00173f5e509f88f6d10814ef5"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"

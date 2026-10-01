@@ -280,6 +280,15 @@ class PublishTest(unittest.TestCase):
         self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
                          (1, 5, len(publish.VIEWS), 1 + len(publish.VIEWS)))
 
+    def test_table_share_has_manage_and_old_read_only_share_is_upgraded(self):
+        publish.publish(self.nc, self.files, self.rows, share_with="steve")
+        table_share = next(s for s in self.nc.state["shares"] if "tableId" in s)
+        self.assertTrue(table_share["permissionManage"])
+        table_share["permissionManage"] = False  # as shared before 2026-10-02
+        publish.publish(self.nc, self.files, self.rows, share_with="steve")
+        self.assertTrue(table_share["permissionManage"])
+        self.assertEqual(len(self.nc.state["shares"]), 1 + len(publish.VIEWS))
+
     def test_half_configured_view_is_repaired(self):
         table_id, _ = publish.publish(self.nc, self.files, self.rows)
         self.nc.state["views"][0].pop("filter")
