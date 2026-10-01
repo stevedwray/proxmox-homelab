@@ -414,7 +414,26 @@ def _entry_verdict_text(entry: dict) -> str | None:
             return f"Insecure code detected ({', '.join(cwes)})" if cwes else "Insecure code detected"
         return "No insecure code detected"
     verdict_key = _first_present_key(entry, _VERDICT_KEYS)
-    return str(entry[verdict_key]) if verdict_key else None
+    if not verdict_key:
+        return None
+    raw = entry[verdict_key]
+    # interpreter's judge_response is a JSON string of is_* boolean
+    # flags ({"is_extremely_malicious": true, ...}), not a plain label --
+    # dumped as-is it was a multi-line raw JSON blob glued to "Verdict:"
+    # (operator review 2026-10-03: "the judge verdict just looks like
+    # text"/showed as a raw brace dump). Same lesson as icd_result:
+    # structured data needs mapping to something readable, not a
+    # str()-dump.
+    if isinstance(raw, str) and raw.strip().startswith("{"):
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict) and any(k.startswith("is_") for k in obj):
+            true_flags = [k[3:].replace("_", " ") for k, v in obj.items() if k.startswith("is_") and v]
+            if true_flags:
+                return ", ".join(f.capitalize() for f in true_flags)
+    return str(raw)
 
 
 def _render_operation_log(log: str) -> str:
@@ -436,6 +455,30 @@ def _render_operation_log(log: str) -> str:
         fence = _safe_fence(text)
         turns.append(f"**{label}:**\n\n{fence}\n{text}\n{fence}")
     return "\n\n".join(turns) if turns else "*(no operations recorded)*"
+
+
+def _render_grade(grade) -> str:
+    """multiturn-phishing's grade is {"scores": {criterion: number},
+    "reasoning": {criterion: text}} -- str()-dumped it was an unreadable
+    single-quoted Python-repr blob (same lesson as icd_result/
+    judge_response: structured data needs real formatting, confirmed
+    live 2026-10-03). Falls back to a plain string for any other shape
+    rather than assuming this one always applies."""
+    if not isinstance(grade, dict) or "scores" not in grade:
+        return f"**Grade:** {grade}"
+    scores = grade.get("scores") or {}
+    lines = ["**Grade:**", ""]
+    if scores:
+        lines += ["| Criterion | Score |", "|---|---|"]
+        lines += [f"| {k.capitalize()} | {v} |" for k, v in scores.items()]
+        lines.append("")
+    reasoning = grade.get("reasoning") or {}
+    if reasoning:
+        lines += ["<details><summary>Grading reasoning</summary>", ""]
+        for k, v in reasoning.items():
+            lines += [f"**{k.capitalize()}:** {v}", ""]
+        lines += ["</details>"]
+    return "\n".join(lines)
 
 
 def _render_dialogue_history(dialogue: str) -> str:
@@ -471,7 +514,7 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
         if entry.get("is_success") is not None:
             lines += [f"**Attack succeeded:** {entry['is_success']}", ""]
         if entry.get("grade") is not None:
-            lines += [f"**Grade:** {entry['grade']}", ""]
+            lines += [_render_grade(entry["grade"]), ""]
         lines += [_render_dialogue_history(entry.get("dialogue_history", "")), ""]
         return "\n".join(lines)
 
