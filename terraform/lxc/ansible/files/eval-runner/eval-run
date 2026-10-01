@@ -13,15 +13,45 @@ PILOT_LIMIT=40
 usage() {
   cat <<'USAGE'
 Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N]
+       eval-run selftest
+       eval-run results [run-dir-name...]
 
-Starts one detached container named eval-<run> and prints how to follow it.
+gpqa|ifeval  Start one detached container named eval-<run> against the model
+             Framework's llama-server is serving, and print how to follow it.
   --pilot          run 40 examples (--limit 40) instead of the full task
   --concurrency N  parallel requests to llama-server (default 1, which is
                    what every historical result used)
+selftest     Run both tasks at --limit 2 against a local stand-in server
+             inside the image (no Framework, no GPU) and check the result
+             files. Exits non-zero on failure.
+results      Print headline scores for every run (or the named ones).
 USAGE
 }
 
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  selftest)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    exec docker run --rm \
+      --env-file "$ENV_FILE" \
+      -e "SELFTEST_RUN=$(date -u +%Y%m%dT%H%M%SZ)" \
+      -v "${RESULTS_DIR}:/results" \
+      -v eval-runner-hf:/home/app/.cache/huggingface \
+      --entrypoint /bin/sh \
+      "$IMAGE" /opt/eval-runner/selftest.sh
+    ;;
+  results)
+    shift
+    targets=()
+    for name in "$@"; do
+      targets+=("/results/${name}")
+    done
+    exec docker run --rm \
+      -v "${RESULTS_DIR}:/results:ro" \
+      --entrypoint python \
+      "$IMAGE" /opt/eval-runner/summarize.py "${targets[@]}"
+    ;;
+esac
 case "$1" in
   gpqa) task=gpqa_diamond_cot_zeroshot ;;
   ifeval) task=ifeval ;;
@@ -70,7 +100,7 @@ fi
 docker run -d --name "eval-${run}" \
   --env-file "$ENV_FILE" \
   -v "${RESULTS_DIR}:/results" \
-  -v eval-runner-hf-cache:/root/.cache/huggingface \
+  -v eval-runner-hf:/home/app/.cache/huggingface \
   "$IMAGE" run \
   --model local-chat-completions \
   --model_args "base_url=${LLM_BASE_URL}/v1/chat/completions,model=${model},num_concurrent=${concurrency},tokenized_requests=False,timeout=3600" \
@@ -81,5 +111,5 @@ docker run -d --name "eval-${run}" \
 
 echo "Started eval-${run} (model: ${model}, task: ${task})"
 echo "  follow:  docker logs -f eval-${run}"
-echo "  results: ${RESULTS_DIR}/${run}/"
+echo "  results: ${RESULTS_DIR}/${run}/   (scores: eval-run results ${run})"
 echo "  cleanup: docker rm eval-${run}   (after it exits)"

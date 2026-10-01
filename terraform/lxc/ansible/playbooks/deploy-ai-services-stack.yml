@@ -940,21 +940,43 @@
     eval_runner_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     eval_runner_hf_token: "{{ lookup('env', 'HF_TOKEN') | mandatory('HF_TOKEN env var is required') }}"
   tasks:
-    - name: Create eval-runner build, config and results directories
+    - name: Create eval-runner build and config directories
       ansible.builtin.file:
-        path: "{{ item.path }}"
+        path: "{{ item }}"
         state: directory
-        mode: "{{ item.mode }}"
+        mode: "0700"
       loop:
-        - { path: "{{ eval_runner_build_dir }}", mode: "0750" }
-        - { path: /etc/eval-runner, mode: "0700" }
-        - { path: /srv/eval-runner/results, mode: "0755" }
+        - "{{ eval_runner_build_dir }}"
+        - /etc/eval-runner
 
-    - name: Copy eval-runner Dockerfile
+    # Owned by uid 1000: the image runs as its non-root `app` user (see the
+    # Dockerfile), which writes results here through a bind mount.
+    - name: Create eval-runner results directory
+      ansible.builtin.file:
+        path: /srv/eval-runner/results
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0755"
+
+    - name: Copy eval-runner build context (Dockerfile and image helpers)
       ansible.builtin.copy:
-        src: "{{ eval_runner_source_dir }}/Dockerfile"
-        dest: "{{ eval_runner_build_dir }}/Dockerfile"
+        src: "{{ eval_runner_source_dir }}/{{ item }}"
+        dest: "{{ eval_runner_build_dir }}/{{ item }}"
         mode: "0644"
+      loop:
+        - Dockerfile
+        - mock_openai.py
+        - selftest.sh
+        - summarize.py
+
+    # The first deploy (2026-10-01) ran the image as root with this volume
+    # at /root/.cache; the non-root image uses eval-runner-hf instead. Safe
+    # to drop: it only ever cached public/gated datasets, re-downloadable.
+    - name: Remove the old root-owned HF cache volume
+      community.docker.docker_volume:
+        name: eval-runner-hf-cache
+        state: absent
 
     - name: Build eval-runner image
       community.docker.docker_image:
@@ -993,3 +1015,19 @@
     - name: Report Framework reachability (non-fatal, Framework may be serving nothing right now)
       ansible.builtin.debug:
         msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"
+
+    # Runs both tasks at --limit 2 against a stand-in server inside the
+    # image -- no Framework, no GPU. Proves the gated GPQA download, IFEval's
+    # nltk data, scoring and result files on every deploy.
+    - name: Run eval-runner self-test
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/eval-run
+          - selftest
+      register: eval_runner_selftest
+      changed_when: false
+      failed_when: eval_runner_selftest.rc != 0 or 'selftest OK' not in eval_runner_selftest.stdout
+
+    - name: Show eval-runner self-test summary
+      ansible.builtin.debug:
+        msg: "{{ eval_runner_selftest.stdout_lines[-3:] }}"

@@ -26,6 +26,12 @@
 # back on 2026-09-16 (terragrunt plan hit unrelated drift at the time) but
 # was never brought back into this tracked file until now -- the live LXC
 # has been running at 6144 the whole time this said 4096.
+#
+# eval-runner added 2026-10-01 (docs/eval-runner/plan.md): a one-shot
+# lm_eval image + /usr/local/bin/eval-run for the eval battery's GPQA and
+# IFEval runs against Framework's llama-server. Not a compose service and
+# no published port; installed by its own play at the end of
+# deploy-ai-services-stack.yml.
 
 hostname: ai-services-stack
 ip_address: "${lab_ip_ai_services}/24"
