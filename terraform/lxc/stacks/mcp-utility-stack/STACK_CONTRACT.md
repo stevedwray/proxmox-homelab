@@ -57,6 +57,7 @@ allowlist).
 |---------|------|----------|-------|
 | `cve-mcp-http` | `8000` | `tcp` | MCP Streamable HTTP endpoint at `/api/mcp`. No built-in authentication — access control is network-level only (MikroTik inbound rule), see Security notes below. |
 | `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`, `get_document`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
+| `maltego-mcp` | (none — stdio/on-demand only, Phase 1) | invoked via `docker compose run --rm`, not a daemon | domain -> DNS/WHOIS/ASN/crt.sh -> `.mtgx`, see `docs/maltego-integration/plan.md`. Deliberately not `cve-mcp-server` (whose contract, repo, and name are CVE-only) — see that plan's `README.md` for why. |
 
 ## Dependencies
 
@@ -192,6 +193,12 @@ session (Laguna S 2.1 via Ollama) via `.vscode/mcp.json` — see
   protection rejecting the Host header) instead of the expected
   200/401/405/406, so the wait task times out even though the server is
   genuinely healthy.
+- **`maltego-mcp` has no `profiles` activation by default** (`docker
+  compose up -d` will not start it) — this is deliberate, not a bug,
+  because it speaks stdio and has nothing to serve as a background daemon
+  in Phase 1. Do not add `restart: unless-stopped` or remove the
+  `profiles: ["tools"]` line without re-reading
+  `docs/maltego-integration/README.md` first.
 
 ## Playbook
 
