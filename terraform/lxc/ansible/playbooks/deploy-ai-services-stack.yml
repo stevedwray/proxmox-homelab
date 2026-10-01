@@ -967,7 +967,9 @@
       loop:
         - Dockerfile
         - mock_openai.py
+        - runmeta.py
         - selftest.sh
+        - selftest_checks.py
         - summarize.py
 
     # The first deploy (2026-10-01) ran the image as root with this volume
@@ -1016,9 +1018,11 @@
       ansible.builtin.debug:
         msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"
 
-    # Runs both tasks at --limit 2 against a stand-in server inside the
-    # image -- no Framework, no GPU. Proves the gated GPQA download, IFEval's
-    # nltk data, scoring and result files on every deploy.
+    # Runs the real start/exec/check path against a stand-in server inside
+    # the image -- no Framework, no GPU. Proves the gated GPQA download,
+    # IFEval's nltk data, scoring, the request settings lm_eval sends
+    # (max_tokens 8192, temperature 0), the empty-response flags, resume from
+    # cache, and server-change detection on every deploy.
     - name: Run eval-runner self-test
       ansible.builtin.command:
         argv:
@@ -1030,4 +1034,4 @@
 
     - name: Show eval-runner self-test summary
       ansible.builtin.debug:
-        msg: "{{ eval_runner_selftest.stdout_lines[-3:] }}"
+        msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|selftest OK|server )') | list }}"

@@ -1,42 +1,143 @@
 #!/usr/bin/env bash
-# eval-run -- start one lm_eval GPQA or IFEval run against whatever model
-# Framework's llama-server is serving right now. Installed by
-# deploy-ai-services-stack.yml's "Install eval-runner" play; see
-# docs/eval-runner/plan.md.
+# eval-run -- start, resume, self-test and summarise lm_eval GPQA/IFEval
+# runs against whatever model Framework's llama-server is serving right
+# now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
+# play; see docs/eval-runner/plan.md. Secrets never pass through this
+# script: containers get them only via --env-file.
 set -euo pipefail
 
 ENV_FILE=/etc/eval-runner/eval-runner.env
 RESULTS_DIR=/srv/eval-runner/results
 IMAGE=eval-runner:local
-PILOT_LIMIT=40
+HF_VOLUME=eval-runner-hf:/home/app/.cache/huggingface
 
 usage() {
   cat <<'USAGE'
-Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N]
+Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--note TEXT]
+       eval-run resume <run> [--force]
        eval-run selftest
-       eval-run results [run-dir-name...]
+       eval-run results [run...]
 
-gpqa|ifeval  Start one detached container named eval-<run> against the model
-             Framework's llama-server is serving, and print how to follow it.
-  --pilot          run 40 examples (--limit 40) instead of the full task
-  --concurrency N  parallel requests to llama-server (default 1, which is
-                   what every historical result used)
-selftest     Run both tasks at --limit 2 against a local stand-in server
-             inside the image (no Framework, no GPU) and check the result
-             files. Exits non-zero on failure.
-results      Print headline scores for every run (or the named ones).
+gpqa|ifeval  Start one detached run (container eval-<run>) against the model
+             Framework's llama-server is serving. Uses Framework's GPU for
+             hours -- check nothing else needs it first.
+  --pilot          40 examples (--limit 40) instead of the full task
+  --concurrency N  parallel requests (default 1, as every historical result)
+  --note TEXT      stored in run.json. Use it for server settings the API
+                   can't show, e.g. "reasoning_effort=high"
+resume       Re-run an interrupted run. Answers already received are
+             replayed from its cache. Refuses if the server's fingerprint
+             (model, build, sampling defaults, chat template) has changed,
+             unless --force.
+selftest     Exercise the whole harness against a stand-in server inside
+             the image (no Framework, no GPU). Exits non-zero on failure.
+results      Headline scores and response-quality flags per run.
 USAGE
+}
+
+die() {
+  echo "eval-run: $*" >&2
+  exit 2
+}
+
+# Run a short helper container (runmeta.py / summarize.py) in the foreground.
+helper() {
+  docker run --rm --env-file "$ENV_FILE" -v "${RESULTS_DIR}:/results" \
+    --entrypoint python "$IMAGE" "$@"
+}
+
+refuse_if_running() {
+  local running
+  running=$(docker ps --filter 'name=^eval-' --format '{{.Names}}')
+  if [[ -n "$running" ]]; then
+    echo "eval-run: an eval is already running: $running" >&2
+    exit 1
+  fi
+}
+
+launch() {
+  local run="$1"
+  docker run -d --name "eval-${run}" \
+    --env-file "$ENV_FILE" \
+    -v "${RESULTS_DIR}:/results" \
+    -v "$HF_VOLUME" \
+    --entrypoint python \
+    "$IMAGE" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
+  echo "Started eval-${run}"
+  echo "  follow:  docker logs -f eval-${run}"
+  echo "  scores:  eval-run results ${run}"
+  echo "  resume:  eval-run resume ${run}   (if it's interrupted)"
+  echo "  cleanup: docker rm eval-${run}   (after it exits)"
+}
+
+valid_run_name() {
+  [[ "$1" =~ ^[A-Za-z0-9_.-]+$ ]] && [[ -f "${RESULTS_DIR}/$1/run.json" ]]
+}
+
+cmd_start() {
+  local short="$1"
+  shift
+  local -a extra=()
+  local concurrency=1 note=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pilot) extra+=(--pilot); shift ;;
+      --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
+      --note) note="${2?--note needs a value}"; shift 2 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+  refuse_if_running
+
+  local run
+  run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
+    --concurrency "$concurrency" --note "$note")
+  launch "$run"
+  if [[ -z "$note" ]]; then
+    echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
+  fi
+}
+
+cmd_resume() {
+  local run="${1:-}" force=0
+  [[ -n "$run" ]] || die "resume needs a run name (see: ls ${RESULTS_DIR})"
+  shift
+  if [[ "${1:-}" == "--force" ]]; then
+    force=1
+    shift
+  fi
+  [[ $# -eq 0 ]] || die "unexpected arguments: $*"
+  valid_run_name "$run" || die "no run named '$run' under ${RESULTS_DIR}"
+  refuse_if_running
+
+  local rc=0
+  helper /opt/eval-runner/runmeta.py check "/results/${run}" || rc=$?
+  if [[ $rc -eq 3 && $force -eq 0 ]]; then
+    die "server changed since this run started; resuming would mix answers from two configurations (use --force to override)"
+  elif [[ $rc -ne 0 && $rc -ne 3 ]]; then
+    die "could not check the server (exit $rc)"
+  fi
+  docker rm "eval-${run}" >/dev/null 2>&1 || true
+  launch "$run"
 }
 
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }
 case "$1" in
+  gpqa|ifeval)
+    cmd_start "$@"
+    ;;
+  resume)
+    shift
+    cmd_resume "$@"
+    ;;
   selftest)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     exec docker run --rm \
       --env-file "$ENV_FILE" \
       -e "SELFTEST_RUN=$(date -u +%Y%m%dT%H%M%SZ)" \
       -v "${RESULTS_DIR}:/results" \
-      -v eval-runner-hf:/home/app/.cache/huggingface \
+      -v "$HF_VOLUME" \
       --entrypoint /bin/sh \
       "$IMAGE" /opt/eval-runner/selftest.sh
     ;;
@@ -44,6 +145,7 @@ case "$1" in
     shift
     targets=()
     for name in "$@"; do
+      [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "bad run name '$name'"
       targets+=("/results/${name}")
     done
     exec docker run --rm \
@@ -51,65 +153,11 @@ case "$1" in
       --entrypoint python \
       "$IMAGE" /opt/eval-runner/summarize.py "${targets[@]}"
     ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
 esac
-case "$1" in
-  gpqa) task=gpqa_diamond_cot_zeroshot ;;
-  ifeval) task=ifeval ;;
-  -h|--help) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
-short="$1"
-shift
-
-pilot=0
-concurrency=1
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --pilot) pilot=1; shift ;;
-    --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
-    *) usage >&2; exit 2 ;;
-  esac
-done
-[[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || { echo "eval-run: --concurrency must be a positive integer" >&2; exit 2; }
-
-running=$(docker ps --filter 'name=^eval-' --format '{{.Names}}')
-if [[ -n "$running" ]]; then
-  echo "eval-run: an eval is already running: $running" >&2
-  exit 1
-fi
-
-# LLM_BASE_URL, OPENAI_API_KEY (Framework's llama-server key), HF_TOKEN
-# shellcheck source=/dev/null
-source "$ENV_FILE"
-
-model=$(curl -fsS -m 10 -H "Authorization: Bearer ${OPENAI_API_KEY}" "${LLM_BASE_URL}/v1/models" \
-  | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"][0]["id"])')
-safe_model=$(printf '%s' "$model" | tr -c 'A-Za-z0-9_.-' '-')
-
-run="${safe_model}-${short}"
-if [[ $pilot -eq 1 ]]; then
-  run="${run}-pilot"
-fi
-run="${run}-$(date -u +%Y%m%dT%H%M%SZ)"
-
-limit_args=()
-if [[ $pilot -eq 1 ]]; then
-  limit_args=(--limit "$PILOT_LIMIT")
-fi
-
-docker run -d --name "eval-${run}" \
-  --env-file "$ENV_FILE" \
-  -v "${RESULTS_DIR}:/results" \
-  -v eval-runner-hf:/home/app/.cache/huggingface \
-  "$IMAGE" run \
-  --model local-chat-completions \
-  --model_args "base_url=${LLM_BASE_URL}/v1/chat/completions,model=${model},num_concurrent=${concurrency},tokenized_requests=False,timeout=3600" \
-  --tasks "$task" --apply_chat_template --log_samples \
-  --gen_kwargs max_gen_toks=8192 \
-  "${limit_args[@]}" \
-  --output_path "/results/${run}" >/dev/null
-
-echo "Started eval-${run} (model: ${model}, task: ${task})"
-echo "  follow:  docker logs -f eval-${run}"
-echo "  results: ${RESULTS_DIR}/${run}/   (scores: eval-run results ${run})"
-echo "  cleanup: docker rm eval-${run}   (after it exits)"
