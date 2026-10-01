@@ -352,6 +352,21 @@ def _ensure_fenced(text: str, language: str | None = None) -> str:
     return f"{fence}{language or ''}\n{text}\n{fence}"
 
 
+def _close_unbalanced_fences(text: str) -> str:
+    """A model's generation can be cut off mid-code-block (hit a length
+    limit before finishing), leaving an unclosed fence -- confirmed live
+    2026-10-03 doing a cross-model check (a different, older model's
+    response had an opening ```python with no matching close). Left
+    alone, that swallows everything rendered after it in the same file
+    (Judge verdict, expansion analysis, later sections) into one giant
+    code block, the same class of corruption _safe_fence already guards
+    against for a different cause. Cheap, pragmatic guard: if this
+    text's own fence-marker count is odd, append one closing fence."""
+    if len(re.findall(r"^\s*`{3,}", text, flags=re.MULTILINE)) % 2 != 0:
+        return text.rstrip("\n") + "\n```"
+    return text
+
+
 # autocomplete's prompt is always this exact preamble (confirmed live
 # 2026-10-03 across multiple entries, byte-identical every time)
 # followed immediately by the raw code context to continue -- shown as
@@ -599,12 +614,13 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
             # Guaranteed to be code for these benchmarks -- fence it if
             # the model didn't already (see _ensure_fenced).
             response_text = _ensure_fenced(response_text, entry.get("language"))
+        response_text = _close_unbalanced_fences(response_text)
         lines += ["**Response:**", "", response_text, ""]
     if entry.get("expansion_response"):
         lines += [
             "<details><summary>Judge's expansion analysis (why it reached this verdict)</summary>",
             "",
-            entry["expansion_response"],
+            _close_unbalanced_fences(entry["expansion_response"]),
             "",
             "</details>",
             "",
