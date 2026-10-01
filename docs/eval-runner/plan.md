@@ -2636,19 +2636,27 @@ change: |
                 f"- **lm_eval:** {record.get('lm_eval_version') or '–'}, "
                 f"limit {record.get('limit') or 'none'}, concurrency {record.get('concurrency')}",
             ]
-        lines += ["", "## Results", "",
-                  "| Task | Score | Alt score | Metrics | Questions | Empty answers | Unparsed | Budget | Comparable | Date |",
-                  "|---|---|---|---|---|---|---|---|---|---|"]
+        # One narrow Metric | Value table per task: Nextcloud's markdown viewer
+        # scrolls wide tables sideways (operator, 2026-10-02).
+        lines += ["", "## Results", ""]
         for r in rows:
-            comparable = r["Comparable"] + (f" ({r['Why not comparable']})" if r["Why not comparable"] else "")
-            lines.append(
-                f"| {r['Task']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | {r['Metrics']} | "
-                f"{_fmt(r['Questions'])} | {_fmt(r['Empty answers'])} ({_fmt(r['Empty %'], '%', 1)}) | "
-                f"{_fmt(r['Unparsed'])} | {_fmt(r['Token budget'])} | {comparable} | {r['Date']} |"
-            )
+            primary, alt = metric_names(r["Task"])
+            pairs = [(f"Score ({primary})", _fmt(r["Score %"], "%"))]
+            if alt:
+                pairs.append((alt.capitalize(), _fmt(r["Alt score %"], "%")))
+            pairs += [("Questions", _fmt(r["Questions"])),
+                      ("Empty answers", f"{_fmt(r['Empty answers'])} ({_fmt(r['Empty %'], '%', 1)})")]
+            if r["Unparsed"] is not None:
+                pairs.append(("Unparsed", _fmt(r["Unparsed"])))
+            pairs += [("Token budget", _fmt(r["Token budget"]) if r["Token budget"] else "server default"),
+                      ("Comparable", r["Comparable"] + (f": {r['Why not comparable']}" if r["Why not comparable"] else "")),
+                      ("Date", r["Date"] or "–")]
+            lines += [f"### {r['Task']}", "", "| Metric | Value |", "|---|---|"]
+            lines += [f"| {name} | {value} |" for name, value in pairs]
+            lines.append("")
         if not rows:
-            lines.append("| – | no results yet | | | | | | | | |")
-        lines += ["", "## Caveats", "", CAVEATS]
+            lines += ["No results yet.", ""]
+        lines += ["## Caveats", "", CAVEATS]
         return "\n".join(lines)
 
 
@@ -2667,32 +2675,42 @@ change: |
         }
 
 
+    RECENT_RUNS = 10
+
+
     def render_leaderboard(all_rows, generated):
         lines = ["# Model evaluations: leaderboard", "",
                  f"Generated {generated} by `eval-run publish`. The full detail is in "
                  f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
                  "Analysis: `findings.md`.", ""]
+        # Narrow tables only: Nextcloud's markdown viewer scrolls wide ones
+        # sideways (operator, 2026-10-02). Alt scores, runtimes and dates are in
+        # the xlsx and the Tables views.
+        recent = sorted((r for r in all_rows if r["Source"] == "eval-runner"),
+                        key=lambda r: (r["Date"], r["Run"]), reverse=True)[:RECENT_RUNS]
+        if recent:
+            lines += ["## Latest eval-runner runs", "", "Newest first, including smoke tests (not ranked).", "",
+                      "| Date | Model | Task | Score |", "|---|---|---|---|"]
+            lines += [f"| {r['Date']} | {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} |" for r in recent]
+            lines.append("")
         for label in TASK_ORDER:
             for series in series_order(all_rows, label):
                 rows = ranked(all_rows, label, series)
                 main, alt = metric_names(label)
                 lines += [f"## {label}: {series_heading(label, series)}", "", f"Ranked by {main}.", "",
-                          f"| # | Model | Score | {alt or '–'} | Empty answers | Date |",
-                          "|---|---|---|---|---|---|"]
+                          "| # | Model | Score | Empty |", "|---|---|---|---|"]
                 for i, r in enumerate(rows, 1):
-                    lines.append(
-                        f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
-                        f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} | {r['Date']} |"
-                    )
+                    lines.append(f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | "
+                                 f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} |")
                 if not rows:
-                    lines.append("| – | none yet | | | | |")
+                    lines.append("| – | none yet | | |")
                 lines.append("")
         excluded = [r for r in all_rows if not r["Series"]]
         if excluded:
-            lines += ["## Not comparable (listed, not ranked)", "",
-                      "| Model | Task | Score | Why |", "|---|---|---|---|"]
+            lines += ["## Not comparable (listed, not ranked)", ""]
             for r in sorted(excluded, key=lambda r: (r["Model"], r["Task"], r["Run"])):
-                lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | {r['Why not comparable']} |")
+                lines.append(f"- **{r['Model']}**, {r['Task']}: {_fmt(r['Score %'], '%')} "
+                             f"({r['Why not comparable']})")
             lines.append("")
         lines += ["## Caveats", "", CAVEATS]
         return "\n".join(lines)
@@ -3068,7 +3086,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "aea2a1c154e7f147c8b5abeb677f1b9bb38ef9cdbf605ba6f1765eeee432bb8b"
+    expect: "87979bda09073442cb8b44448b3085a02ee6c30e23f9d8efce7631fa01504d70"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3518,7 +3536,7 @@ change: |
 
         def test_leaderboard_ranks_and_lists_excluded(self):
             board = self.files["leaderboard.md"].decode()
-            self.assertIn("| 1 | glm-5.3-flash | 50.00% |", board)
+            self.assertIn("| 1 | glm-5.3-flash | 50.00% | 1/3 |", board)
             self.assertIn("## Not comparable", board)
             self.assertIn("no max_gen_toks=8192", board)
 
@@ -3529,9 +3547,24 @@ change: |
             self.assertEqual(manifest["project"], "eval-runner")
 
         def test_markdown_tables_stay_narrow(self):
-            for line in self.files["leaderboard.md"].decode().splitlines():
-                if line.startswith("|"):
-                    self.assertLessEqual(line.count("|") - 1, 6, line)
+            """No markdown table wider than 4 columns (Nextcloud scrolls wider ones)."""
+            for name, content in self.files.items():
+                if name.endswith(".md"):
+                    for line in content.decode().splitlines():
+                        if line.startswith("|"):
+                            self.assertLessEqual(line.count("|") - 1, 4, f"{name}: {line}")
+
+        def test_report_has_metric_value_table_per_task(self):
+            report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+            self.assertIn("### GPQA diamond\n\n| Metric | Value |", report)
+            self.assertIn("| Score (flexible-extract) | 50.00% |", report)
+            self.assertIn("| Strict-match | 25.00% |", report)
+            self.assertIn("| Empty answers | 1 (33.3%) |", report)
+
+        def test_leaderboard_lists_latest_eval_runner_runs(self):
+            board = self.files["leaderboard.md"].decode()
+            self.assertIn("## Latest eval-runner runs", board)
+            self.assertIn("| 2026-10-02 | glm-5.3-flash | GPQA diamond | 50.00% |", board)
 
         @unittest.skipUnless(openpyxl, "openpyxl not installed")
         def test_xlsx_sheets_rank_and_hold_every_row(self):
@@ -3706,7 +3739,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "33bfb56c2741764a7420853b11e5880e2fcdf69e818614f67a3b15dc93d80f5c"
+    expect: "d70de7b0be5c466861c7d907f922c8e0b18c59289480d01d25f0ea9f52333302"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
@@ -5579,7 +5612,7 @@ change: |
                              ("BFCL simple", 94.25, None, "accuracy"))
             self.assertEqual((row["Comparable"], row["Series"], row["Runtime"]), ("yes", "v3 simple", "llama.cpp b1"))
             self.assertEqual(row["Empty answers"], 3)
-            self.assertIn("| 1 | glm | 94.25% | – |", files["leaderboard.md"].decode())
+            self.assertIn("| 1 | glm | 94.25% | 3/400 |", files["leaderboard.md"].decode())
 
         def test_pilot_wrapper_result_is_excluded(self):
             with tempfile.TemporaryDirectory() as root:
@@ -5612,7 +5645,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_wrappers.py | cut -d' ' -f1"
-    expect: "dece1f1aa562c1e8f41a00b00072867b6d77750366d7057f34b61e45ee22fe07"
+    expect: "eae82dd2d451affb4121424fa36efd27b0a7787b83c80af7f3eb2cbff6b6f2b6"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"

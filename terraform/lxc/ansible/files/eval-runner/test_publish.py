@@ -143,7 +143,7 @@ class RenderTest(unittest.TestCase):
 
     def test_leaderboard_ranks_and_lists_excluded(self):
         board = self.files["leaderboard.md"].decode()
-        self.assertIn("| 1 | glm-5.3-flash | 50.00% |", board)
+        self.assertIn("| 1 | glm-5.3-flash | 50.00% | 1/3 |", board)
         self.assertIn("## Not comparable", board)
         self.assertIn("no max_gen_toks=8192", board)
 
@@ -154,9 +154,24 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(manifest["project"], "eval-runner")
 
     def test_markdown_tables_stay_narrow(self):
-        for line in self.files["leaderboard.md"].decode().splitlines():
-            if line.startswith("|"):
-                self.assertLessEqual(line.count("|") - 1, 6, line)
+        """No markdown table wider than 4 columns (Nextcloud scrolls wider ones)."""
+        for name, content in self.files.items():
+            if name.endswith(".md"):
+                for line in content.decode().splitlines():
+                    if line.startswith("|"):
+                        self.assertLessEqual(line.count("|") - 1, 4, f"{name}: {line}")
+
+    def test_report_has_metric_value_table_per_task(self):
+        report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+        self.assertIn("### GPQA diamond\n\n| Metric | Value |", report)
+        self.assertIn("| Score (flexible-extract) | 50.00% |", report)
+        self.assertIn("| Strict-match | 25.00% |", report)
+        self.assertIn("| Empty answers | 1 (33.3%) |", report)
+
+    def test_leaderboard_lists_latest_eval_runner_runs(self):
+        board = self.files["leaderboard.md"].decode()
+        self.assertIn("## Latest eval-runner runs", board)
+        self.assertIn("| 2026-10-02 | glm-5.3-flash | GPQA diamond | 50.00% |", board)
 
     @unittest.skipUnless(openpyxl, "openpyxl not installed")
     def test_xlsx_sheets_rank_and_hold_every_row(self):

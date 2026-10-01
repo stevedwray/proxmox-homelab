@@ -330,19 +330,27 @@ def render_report(source, run_dir, record, rows):
             f"- **lm_eval:** {record.get('lm_eval_version') or '–'}, "
             f"limit {record.get('limit') or 'none'}, concurrency {record.get('concurrency')}",
         ]
-    lines += ["", "## Results", "",
-              "| Task | Score | Alt score | Metrics | Questions | Empty answers | Unparsed | Budget | Comparable | Date |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+    # One narrow Metric | Value table per task: Nextcloud's markdown viewer
+    # scrolls wide tables sideways (operator, 2026-10-02).
+    lines += ["", "## Results", ""]
     for r in rows:
-        comparable = r["Comparable"] + (f" ({r['Why not comparable']})" if r["Why not comparable"] else "")
-        lines.append(
-            f"| {r['Task']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | {r['Metrics']} | "
-            f"{_fmt(r['Questions'])} | {_fmt(r['Empty answers'])} ({_fmt(r['Empty %'], '%', 1)}) | "
-            f"{_fmt(r['Unparsed'])} | {_fmt(r['Token budget'])} | {comparable} | {r['Date']} |"
-        )
+        primary, alt = metric_names(r["Task"])
+        pairs = [(f"Score ({primary})", _fmt(r["Score %"], "%"))]
+        if alt:
+            pairs.append((alt.capitalize(), _fmt(r["Alt score %"], "%")))
+        pairs += [("Questions", _fmt(r["Questions"])),
+                  ("Empty answers", f"{_fmt(r['Empty answers'])} ({_fmt(r['Empty %'], '%', 1)})")]
+        if r["Unparsed"] is not None:
+            pairs.append(("Unparsed", _fmt(r["Unparsed"])))
+        pairs += [("Token budget", _fmt(r["Token budget"]) if r["Token budget"] else "server default"),
+                  ("Comparable", r["Comparable"] + (f": {r['Why not comparable']}" if r["Why not comparable"] else "")),
+                  ("Date", r["Date"] or "–")]
+        lines += [f"### {r['Task']}", "", "| Metric | Value |", "|---|---|"]
+        lines += [f"| {name} | {value} |" for name, value in pairs]
+        lines.append("")
     if not rows:
-        lines.append("| – | no results yet | | | | | | | | |")
-    lines += ["", "## Caveats", "", CAVEATS]
+        lines += ["No results yet.", ""]
+    lines += ["## Caveats", "", CAVEATS]
     return "\n".join(lines)
 
 
@@ -361,32 +369,42 @@ def render_manifest(source, run_dir, record, rows):
     }
 
 
+RECENT_RUNS = 10
+
+
 def render_leaderboard(all_rows, generated):
     lines = ["# Model evaluations: leaderboard", "",
              f"Generated {generated} by `eval-run publish`. The full detail is in "
              f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
              "Analysis: `findings.md`.", ""]
+    # Narrow tables only: Nextcloud's markdown viewer scrolls wide ones
+    # sideways (operator, 2026-10-02). Alt scores, runtimes and dates are in
+    # the xlsx and the Tables views.
+    recent = sorted((r for r in all_rows if r["Source"] == "eval-runner"),
+                    key=lambda r: (r["Date"], r["Run"]), reverse=True)[:RECENT_RUNS]
+    if recent:
+        lines += ["## Latest eval-runner runs", "", "Newest first, including smoke tests (not ranked).", "",
+                  "| Date | Model | Task | Score |", "|---|---|---|---|"]
+        lines += [f"| {r['Date']} | {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} |" for r in recent]
+        lines.append("")
     for label in TASK_ORDER:
         for series in series_order(all_rows, label):
             rows = ranked(all_rows, label, series)
             main, alt = metric_names(label)
             lines += [f"## {label}: {series_heading(label, series)}", "", f"Ranked by {main}.", "",
-                      f"| # | Model | Score | {alt or '–'} | Empty answers | Date |",
-                      "|---|---|---|---|---|---|"]
+                      "| # | Model | Score | Empty |", "|---|---|---|---|"]
             for i, r in enumerate(rows, 1):
-                lines.append(
-                    f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
-                    f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} | {r['Date']} |"
-                )
+                lines.append(f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | "
+                             f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} |")
             if not rows:
-                lines.append("| – | none yet | | | | |")
+                lines.append("| – | none yet | | |")
             lines.append("")
     excluded = [r for r in all_rows if not r["Series"]]
     if excluded:
-        lines += ["## Not comparable (listed, not ranked)", "",
-                  "| Model | Task | Score | Why |", "|---|---|---|---|"]
+        lines += ["## Not comparable (listed, not ranked)", ""]
         for r in sorted(excluded, key=lambda r: (r["Model"], r["Task"], r["Run"])):
-            lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | {r['Why not comparable']} |")
+            lines.append(f"- **{r['Model']}**, {r['Task']}: {_fmt(r['Score %'], '%')} "
+                         f"({r['Why not comparable']})")
         lines.append("")
     lines += ["## Caveats", "", CAVEATS]
     return "\n".join(lines)

@@ -194,7 +194,7 @@ class ResultsFlowTest(unittest.TestCase):
                          ("BFCL simple", 94.25, None, "accuracy"))
         self.assertEqual((row["Comparable"], row["Series"], row["Runtime"]), ("yes", "v3 simple", "llama.cpp b1"))
         self.assertEqual(row["Empty answers"], 3)
-        self.assertIn("| 1 | glm | 94.25% | – |", files["leaderboard.md"].decode())
+        self.assertIn("| 1 | glm | 94.25% | 3/400 |", files["leaderboard.md"].decode())
 
     def test_pilot_wrapper_result_is_excluded(self):
         with tempfile.TemporaryDirectory() as root:
