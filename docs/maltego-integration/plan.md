@@ -28,6 +28,22 @@ Target: `mcp-utility-stack` (`ai_seg`, pve-tiny, LXC VMID 50011,
 `192.168.50.10`) — the existing MCP services' home. Deployment file:
 `terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml`.
 
+## Before running any step below
+
+`maltego-01-vendor-source` copies from a local clone on the ansible
+controller (this operator's workstation), same pattern as `cve-mcp-server`'s
+own `mcp_source_dir`. That clone does not exist yet. Run this first, on the
+workstation, before `implement-step` is pointed at `maltego-01`:
+
+```bash
+git clone https://github.com/lidless-labs/maltego-mcp.git ~/git/maltego-mcp
+cd ~/git/maltego-mcp
+git checkout cb8100423d6cc4215e546f2c4125f5225d9dc282
+```
+
+This pins to the exact commit inspected during planning (see `README.md`).
+Re-inspect the source before ever moving this pin forward.
+
 ---
 
 ### maltego-01-vendor-source
@@ -335,24 +351,20 @@ gates:
 ## After the step-blocks (operator actions, not local-model steps)
 
 These need a human, in this order -- not written as step-blocks because
-each is either a one-time workstation action outside this repo, a
-production mutation needing the normal approval flow, or a manual
-Maltego Desktop check nothing here can script:
+each is either a production mutation needing the normal approval flow or
+a manual Maltego Desktop check nothing here can script (the one-time
+workstation clone is covered above, before `maltego-01`):
 
-1. `git clone https://github.com/lidless-labs/maltego-mcp.git ~/git/maltego-mcp
-   && cd ~/git/maltego-mcp && git checkout cb8100423d6cc4215e546f2c4125f5225d9dc282`
-   -- pin to the exact commit that was inspected during planning (see
-   `README.md`). Re-inspect before moving off this pin.
-2. Deploy: `./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`
+1. Deploy: `./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`
    under the normal production approval flow (Preflight Summary ->
    approval -> `TASK_APPROVAL` -> execute).
-3. Run the Phase 1 test from the mcp-utility-stack LXC:
+2. Run the Phase 1 test from the mcp-utility-stack LXC:
    `docker compose run --rm maltego-mcp node phase1-expand-domain.mjs
    example.com test-example-com.mtgx`, then confirm the file exists at
    `/opt/mcp-utility-stack/maltego-mcp-output/test-example-com.mtgx` (or
    via `docker run --rm -v maltego-mcp-output:/v busybox ls /v`) and that
    `unzip -l` on it shows `Graphs/Graph1.graphml`.
-4. Copy the `.mtgx` file to a workstation with free Maltego Desktop
+3. Copy the `.mtgx` file to a workstation with free Maltego Desktop
    installed and open it there. This is the actual milestone: does it
    open without error and show a legible graph. Record the result (and a
    screenshot if useful) in this workspace's `README.md`.
