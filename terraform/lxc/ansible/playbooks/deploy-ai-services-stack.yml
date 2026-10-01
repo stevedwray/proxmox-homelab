@@ -1027,6 +1027,15 @@
       loop_control:
         label: "{{ item.name }}:{{ item.tag }}"
 
+    # Every force_source rebuild leaves the previous image untagged; 13 of
+    # those (plus 4 old deep-research builds) had filled /var/lib/docker
+    # to 86% by 2026-10-01. Dangling only: tagged and in-use images stay.
+    - name: Remove dangling images left by rebuilds
+      community.docker.docker_prune:
+        images: true
+        images_filters:
+          dangling: true
+
     - name: Install eval-runner env file
       ansible.builtin.copy:
         dest: /etc/eval-runner/eval-runner.env

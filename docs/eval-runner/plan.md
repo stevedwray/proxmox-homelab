@@ -5836,6 +5836,15 @@ change: |
           loop_control:
             label: "{{ item.name }}:{{ item.tag }}"
 
+        # Every force_source rebuild leaves the previous image untagged; 13 of
+        # those (plus 4 old deep-research builds) had filled /var/lib/docker
+        # to 86% by 2026-10-01. Dangling only: tagged and in-use images stay.
+        - name: Remove dangling images left by rebuilds
+          community.docker.docker_prune:
+            images: true
+            images_filters:
+              dangling: true
+
         - name: Install eval-runner env file
           ansible.builtin.copy:
             dest: /etc/eval-runner/eval-runner.env
@@ -5915,12 +5924,12 @@ scope:
 
 gates:
   - id: exact-appended-play
-    cmd: "tail -n 166 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
-    expect: "e9dbc7c3dd9ef5334c6682082488208be43b9be61cc84758931977da65d9366d"
+    cmd: "tail -n 175 terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml | sha256sum | cut -d' ' -f1"
+    expect: "e486f3a22b7b8cf78384bd64b064872260acda32b62f61c16f6b5207f83f7821"
     critical: true
   - id: append-only
     cmd: "git diff --numstat stable -- terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
-    expect: "167\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "176\\t0\\tterraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
     critical: true
   - id: syntax-check
     cmd: "ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ansible-playbook --syntax-check -i localhost, terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
