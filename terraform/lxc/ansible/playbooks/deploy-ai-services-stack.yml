@@ -927,3 +927,69 @@
         nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
         nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/deep-research-agent"
+
+- name: Install eval-runner (lm_eval GPQA/IFEval against Framework's llama-server)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    repo_root: "{{ (playbook_dir + '/../../../..') | realpath }}"
+    eval_runner_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/eval-runner"
+    eval_runner_build_dir: /opt/eval-runner
+    eval_runner_framework_host: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}"
+    eval_runner_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+    eval_runner_hf_token: "{{ lookup('env', 'HF_TOKEN') | mandatory('HF_TOKEN env var is required') }}"
+  tasks:
+    - name: Create eval-runner build, config and results directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ eval_runner_build_dir }}", mode: "0750" }
+        - { path: /etc/eval-runner, mode: "0700" }
+        - { path: /srv/eval-runner/results, mode: "0755" }
+
+    - name: Copy eval-runner Dockerfile
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/Dockerfile"
+        dest: "{{ eval_runner_build_dir }}/Dockerfile"
+        mode: "0644"
+
+    - name: Build eval-runner image
+      community.docker.docker_image:
+        name: eval-runner
+        tag: local
+        source: build
+        build:
+          path: "{{ eval_runner_build_dir }}"
+        force_source: true
+
+    - name: Install eval-runner env file
+      ansible.builtin.copy:
+        dest: /etc/eval-runner/eval-runner.env
+        mode: "0600"
+        content: |
+          LLM_BASE_URL=http://{{ eval_runner_framework_host }}:8080
+          OPENAI_API_KEY={{ eval_runner_llm_api_key }}
+          HF_TOKEN={{ eval_runner_hf_token }}
+      no_log: true
+
+    - name: Install eval-run script
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/eval-run"
+        dest: /usr/local/bin/eval-run
+        mode: "0755"
+
+    - name: Check Framework's llama-server is reachable with this key
+      ansible.builtin.uri:
+        url: "http://{{ eval_runner_framework_host }}:8080/v1/models"
+        headers:
+          Authorization: "Bearer {{ eval_runner_llm_api_key }}"
+      register: eval_runner_models
+      failed_when: false
+      no_log: true
+
+    - name: Report Framework reachability (non-fatal, Framework may be serving nothing right now)
+      ansible.builtin.debug:
+        msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# eval-run -- start one lm_eval GPQA or IFEval run against whatever model
+# Framework's llama-server is serving right now. Installed by
+# deploy-ai-services-stack.yml's "Install eval-runner" play; see
+# docs/eval-runner/plan.md.
+set -euo pipefail
+
+ENV_FILE=/etc/eval-runner/eval-runner.env
+RESULTS_DIR=/srv/eval-runner/results
+IMAGE=eval-runner:local
+PILOT_LIMIT=40
+
+usage() {
+  cat <<'USAGE'
+Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N]
+
+Starts one detached container named eval-<run> and prints how to follow it.
+  --pilot          run 40 examples (--limit 40) instead of the full task
+  --concurrency N  parallel requests to llama-server (default 1, which is
+                   what every historical result used)
+USAGE
+}
+
+[[ $# -ge 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  gpqa) task=gpqa_diamond_cot_zeroshot ;;
+  ifeval) task=ifeval ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+short="$1"
+shift
+
+pilot=0
+concurrency=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pilot) pilot=1; shift ;;
+    --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || { echo "eval-run: --concurrency must be a positive integer" >&2; exit 2; }
+
+running=$(docker ps --filter 'name=^eval-' --format '{{.Names}}')
+if [[ -n "$running" ]]; then
+  echo "eval-run: an eval is already running: $running" >&2
+  exit 1
+fi
+
+# LLM_BASE_URL, OPENAI_API_KEY (Framework's llama-server key), HF_TOKEN
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+
+model=$(curl -fsS -m 10 -H "Authorization: Bearer ${OPENAI_API_KEY}" "${LLM_BASE_URL}/v1/models" \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"][0]["id"])')
+safe_model=$(printf '%s' "$model" | tr -c 'A-Za-z0-9_.-' '-')
+
+run="${safe_model}-${short}"
+if [[ $pilot -eq 1 ]]; then
+  run="${run}-pilot"
+fi
+run="${run}-$(date -u +%Y%m%dT%H%M%SZ)"
+
+limit_args=()
+if [[ $pilot -eq 1 ]]; then
+  limit_args=(--limit "$PILOT_LIMIT")
+fi
+
+docker run -d --name "eval-${run}" \
+  --env-file "$ENV_FILE" \
+  -v "${RESULTS_DIR}:/results" \
+  -v eval-runner-hf-cache:/root/.cache/huggingface \
+  "$IMAGE" run \
+  --model local-chat-completions \
+  --model_args "base_url=${LLM_BASE_URL}/v1/chat/completions,model=${model},num_concurrent=${concurrency},tokenized_requests=False,timeout=3600" \
+  --tasks "$task" --apply_chat_template --log_samples \
+  --gen_kwargs max_gen_toks=8192 \
+  "${limit_args[@]}" \
+  --output_path "/results/${run}" >/dev/null
+
+echo "Started eval-${run} (model: ${model}, task: ${task})"
+echo "  follow:  docker logs -f eval-${run}"
+echo "  results: ${RESULTS_DIR}/${run}/"
+echo "  cleanup: docker rm eval-${run}   (after it exits)"

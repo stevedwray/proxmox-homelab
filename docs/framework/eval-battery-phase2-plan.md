@@ -560,3 +560,13 @@ are ordered by how directly they unblock an actual pending decision
       copy-pasted per script
 - [ ] Any 0%/near-zero/"0 scored" result is inspected at the raw-output
       level before being reported as a real number
+
+## Running GPQA/IFEval from eval-runner (2026-10)
+
+GPQA and IFEval no longer run on `framework` or garuda. They run from the
+`eval-runner` image on `ai-services-stack` (`ai_seg`), as an HTTP client
+of whatever model Framework's llama-server is serving on `:8080`. Use
+`eval-run gpqa|ifeval [--pilot] [--concurrency N]` on that CT. It pins the
+same lm_eval 0.4.12 and `--gen_kwargs max_gen_toks=8192` as every result
+above, so new numbers stay comparable. Setup and usage:
+`docs/eval-runner/plan.md`.
