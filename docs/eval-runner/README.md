@@ -1,8 +1,7 @@
 # eval-runner
 
-Status: **repo steps 01–05 done (2026-10-01). Blocked on the operator
-writing `HF_TOKEN` to OpenBao.** After that: deploy to pve-tiny and the
-smoke test.
+Status: **deployed to pve-tiny (2026-10-01); smoke test (IFEval + GPQA
+pilots against GLM-5.3-Flash) in progress.**
 
 Runs the eval battery's lm_eval tests (GPQA, IFEval) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -17,13 +16,13 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 | Step | Status |
 |---|---|
 | eval-runner-01-manifest-hf-token | done 2026-10-01, all critical gates pass |
-| Operator: write HF_TOKEN | **next: waiting on operator** |
+| Operator: write HF_TOKEN | done 2026-10-01 (loads via `printenv`; token fetches `gpqa_diamond.csv` with HTTP 206, anonymous gets 401) |
 | eval-runner-02-dockerfile | done 2026-10-01, all critical gates pass |
 | eval-runner-03-eval-run-script | done 2026-10-01, all critical gates pass |
 | eval-runner-04-playbook-play | done 2026-10-01, all critical gates pass |
 | eval-runner-05-battery-doc-pointer | done 2026-10-01, all critical gates pass |
-| Operator: deploy to pve-tiny | not started |
-| Operator: smoke test (IFEval + GPQA pilots) | not started |
+| Operator: deploy to pve-tiny | done 2026-10-01, second attempt (`failed=0`); first attempt failed on the image build, fixed in `156fc493` |
+| Operator: smoke test (IFEval + GPQA pilots) | in progress |
 
 ## Hand-backs
 
@@ -43,3 +42,26 @@ content was generated from. Gate results:
 From this commit until the `HF_TOKEN` value is written, `./with-secrets*`
 loads on this branch fail closed. Nothing should deploy from the branch
 before that.
+
+### 2026-10-01: deploy to pve-tiny
+
+Ran `TASK_APPROVAL=eval-runner-deploy ./with-secrets-prod-tiny
+scripts/provision.sh --stack ai-services-stack` (inventory target
+`192.168.50.11` checked first).
+
+- **First attempt, rc=1:** the image build failed after `pip install`
+  had succeeded. `python -c "import nltk; ..."` raised `ImportError:
+  Blocked import of locale from current working directory`. nltk 3.10.1
+  refuses imports that resolve under the cwd, and the build's default cwd
+  is `/`, which contains the stdlib. Reproduced on framework (same nltk):
+  `-P` doesn't help, running from any other directory does.
+- **Fix (`156fc493`):** move `WORKDIR /results` above the `RUN`. The
+  plan's literal Dockerfile and step 02's hash were updated to match
+  (`11e7dce6…7e85`).
+- **Second attempt, rc=0:** recap `ok=101 changed=9 failed=0 ignored=1`.
+  The one ignored failure is the existing `Timeout when waiting for
+  192.168.20.11:443` check in the Docker-base play, unrelated. The
+  eval-runner play's reachability task printed `Framework /v1/models
+  returned HTTP 200`. Image `eval-runner:local` is 780 MB. `curl` and
+  `python3` are both present on the CT, which settles the open question in
+  `plan.md`.
