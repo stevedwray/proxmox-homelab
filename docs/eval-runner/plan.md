@@ -58,12 +58,23 @@ without using Framework's GPU.
 - **Results go to Nextcloud (operator request, 2026-10-01).** This uses
   Nextcloud Tables, not an office suite. There is one table, "Model
   evaluations": one row per (run, task), upserted by a Key column. It has
-  saved views "Comparable: GPQA" and "Comparable: IFEval" and is shared
-  read-only with `steve`.
+  saved views "Comparable: GPQA", "Comparable: IFEval" and the two
+  "32k budget" views, and is shared read-only with `steve`.
   - Files: per-run `report.md` and `manifest.json` (the reporting
-    `CONVENTION.md`), plus `leaderboard.md`/`.csv` and `findings.md`,
-    under `Reports/eval-runner/`. The folder is shared to `steve` by the
-    existing `nextcloud_folder_share` role.
+    `CONVENTION.md`), plus `leaderboard.xlsx`, `leaderboard.md` and
+    `findings.md`, under `Reports/eval-runner/`. The folder is shared to
+    `steve` by the existing `nextcloud_folder_share` role.
+  - `leaderboard.xlsx` replaced `leaderboard.csv` (operator, 2026-10-01:
+    the CSV opened as plain text, and wide markdown tables read badly).
+    It has one ranked sheet per task and token-budget series, an "All
+    results" sheet with filters, and a "Notes" sheet. It opens as a
+    spreadsheet in Nextcloud Office. `publish` deletes the old CSV.
+- **Token-budget series (operator, 2026-10-01).** `--max-gen-toks N`
+  (N above 8192, e.g. 32768) starts a separate series: the run name gets
+  `-32k`, the row gets Series `32k` and Comparable `no`, and it is ranked
+  only against runs at the same budget. Budgets below 8192 are refused
+  (that's Bug 6). `start` also refuses a budget the server's per-slot
+  context can't hold, and the request timeout grows with the budget.
   - Publisher: the service account `eval-reports`. Only its app password
     is secret (`services/nextcloud:NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`).
   - `samples_*.jsonl` never leave the CT (GPQA licence).
@@ -238,7 +249,8 @@ change: |
     # every GPQA/IFEval number in docs/framework/eval-battery-phase2-plan.md,
     # so new results stay comparable with the old ones. No torch/transformers:
     # the API model path doesn't need them. Not --only-binary: langdetect,
-    # rouge-score, sqlitedict and word2number only ship as sdists.
+    # rouge-score, sqlitedict and word2number only ship as sdists. openpyxl is
+    # publish.py's (leaderboard.xlsx), not lm_eval's.
     RUN pip install --no-cache-dir \
           "aiohttp==3.14.3" \
           "datasets==5.0.1" \
@@ -246,6 +258,7 @@ change: |
           "langdetect==1.0.9" \
           "lm_eval[api,ifeval]==0.4.12" \
           "nltk==3.10.1" \
+          "openpyxl==3.1.5" \
           "tenacity==9.1.4"
 
     # Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud
@@ -271,7 +284,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/Dockerfile | cut -d' ' -f1"
-    expect: "ae197e9decde2eb0c8488e64cea0fc933b9e57cee3ee3e0f44a571cb299306f1"
+    expect: "f7c459dcf5c5a391877ef2eed5c369fe3606e8048c0f7166b692cc92aa127928"
     critical: true
 ```
 
@@ -302,7 +315,7 @@ change: |
 
     usage() {
       cat <<'USAGE'
-    Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--note TEXT]
+    Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--note TEXT]
            eval-run resume <run> [--force]
            eval-run selftest
            eval-run results [run...]
@@ -313,6 +326,11 @@ change: |
                  hours -- check nothing else needs it first.
       --pilot          40 examples (--limit 40) instead of the full task
       --concurrency N  parallel requests (default 1, as every historical result)
+      --max-gen-toks N token budget per answer (default 8192, the budget every
+                       comparable result used). A larger one, e.g. 32768, starts
+                       a separate series (run name gets -32k), ranked only
+                       against runs at the same budget. Expect several times
+                       the 8192 run's duration.
       --note TEXT      stored in run.json. Use it for server settings the API
                        can't show, e.g. "reasoning_effort=high"
     resume       Re-run an interrupted run. Answers already received are
@@ -323,7 +341,7 @@ change: |
                  the image (no Framework, no GPU). Exits non-zero on failure.
     results      Headline scores and response-quality flags per run.
     publish      Push everything (eval-runner runs + historical) to Nextcloud:
-                 Reports/eval-runner/ (leaderboard.md/.csv, findings.md, one
+                 Reports/eval-runner/ (leaderboard.xlsx/.md, findings.md, one
                  report.md + manifest.json per run) and the Tables table
                  "Model evaluations" (rows upserted, never duplicated).
                  --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
@@ -373,21 +391,23 @@ change: |
       local short="$1"
       shift
       local -a extra=()
-      local concurrency=1 note=""
+      local concurrency=1 note="" max_gen_toks=8192
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --pilot) extra+=(--pilot); shift ;;
           --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
+          --max-gen-toks) max_gen_toks="${2:?--max-gen-toks needs a value}"; shift 2 ;;
           --note) note="${2?--note needs a value}"; shift 2 ;;
           *) usage >&2; exit 2 ;;
         esac
       done
       [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+      [[ "$max_gen_toks" =~ ^[1-9][0-9]*$ ]] || die "--max-gen-toks must be a positive integer"
       refuse_if_running
 
       local run
       run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
-        --concurrency "$concurrency" --note "$note")
+        --concurrency "$concurrency" --max-gen-toks "$max_gen_toks" --note "$note")
       launch "$run"
       if [[ -z "$note" ]]; then
         echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
@@ -479,7 +499,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/eval-run | cut -d' ' -f1"
-    expect: "827f2df566640e071e9492069af2b47cb6c4607299728fba71c9410fdac9e503"
+    expect: "25d36d8a69a9113dbf92af1177c927c950e52c648e61c6c9e96cf55eb0b4eb47"
     critical: true
   - id: executable
     cmd: "test -x terraform/lxc/ansible/files/eval-runner/eval-run && echo OK"
@@ -790,7 +810,15 @@ change: |
     /results/_historical/<source-dir>/) are listed in a second section. Only
     results that are comparable with eval-runner's are shown: full runs
     (no --limit) with max_gen_toks=8192. Everything else is listed as
-    excluded, with the reason (pilot, or the Bug 6 missing token cap).
+    excluded, with the reason (pilot, the Bug 6 missing token cap, or a
+    different token budget).
+
+    Token budget series: a full run at a larger max_gen_toks (eval-run
+    --max-gen-toks, e.g. 32768) is a separate series. (Smaller budgets are
+    treated like Bug 6: truncation, not a series.) It is ranked only
+    against other runs at the same budget, never against the 8192 series --
+    a bigger budget lets reasoning models finish answers they'd otherwise
+    lose, so the scores measure something different.
     """
 
     import argparse
@@ -838,9 +866,27 @@ change: |
         config = data.get("config", {})
         if config.get("limit") is not None:
             return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
-        if _max_gen_toks(config.get("gen_kwargs")) != MAX_GEN_TOKS:
+        budget = _max_gen_toks(config.get("gen_kwargs"))
+        if budget is None or budget < MAX_GEN_TOKS:
             return f"no max_gen_toks={MAX_GEN_TOKS} (Bug 6 truncation risk)"
+        if budget != MAX_GEN_TOKS:
+            return f"token budget {budget} (separate {series_label(budget)} series)"
         return None
+
+
+    def series_label(budget):
+        """8192 -> '8k', 32768 -> '32k', other values unchanged."""
+        return f"{budget // 1024}k" if budget % 1024 == 0 else str(budget)
+
+
+    def series(data):
+        """The token-budget series a results file is ranked in ('8k', '32k', ...),
+        or None for pilots and runs without a token cap."""
+        config = data.get("config", {})
+        budget = _max_gen_toks(config.get("gen_kwargs"))
+        if config.get("limit") is not None or budget is None or budget < MAX_GEN_TOKS:
+            return None
+        return series_label(budget)
 
 
     def model_name(data):
@@ -1017,7 +1063,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/summarize.py | cut -d' ' -f1"
-    expect: "e8c24bcfd500a97ee287a7f17a3ce058c993c588d21edc645a4a2f9c5c34ffdb"
+    expect: "7f669d9de386f23be6c5f2ec1419f4a0db0b9e999c080c2eba94cd68bd8e86f9"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/summarize.py && echo OK"
@@ -1057,6 +1103,11 @@ change: |
     --chat-template-kwargs '{"reasoning_effort":"high"}') are not visible
     over the API, so they cannot be part of the fingerprint. Record them with
     --note.
+
+    --max-gen-toks (default 8192, the budget every comparable result used)
+    starts a separate token-budget series: the run name gets a -32k style
+    suffix and summarize.py ranks it only against runs at the same budget.
+    `start` refuses a budget the server's per-slot context can't hold.
     """
 
     import argparse
@@ -1076,6 +1127,13 @@ change: |
     PILOT_LIMIT = 40
     MAX_GEN_TOKS = 8192
     REQUEST_TIMEOUT = 3600
+    # Seconds per generated token allowed on top of REQUEST_TIMEOUT's floor:
+    # 32768 tokens at the slowest decode seen on framework (~10 tok/s) needs
+    # well over an hour.
+    SECONDS_PER_TOKEN = 0.15
+    # Prompt tokens the per-slot context must hold beyond max_gen_toks (GPQA's
+    # longest prompt with the chat template is well under 1k tokens).
+    PROMPT_HEADROOM = 2048
     PROPS_TOP = ("model_path", "model_alias", "build_info", "total_slots")
     PROPS_PARAMS = (
         "temperature", "top_k", "top_p", "min_p", "n_predict", "seed",
@@ -1152,21 +1210,42 @@ change: |
         return re.sub(r"[^A-Za-z0-9_.-]", "-", text)
 
 
-    def run_name(model_id, task, pilot, stamp):
-        parts = [safe_name(model_id), task] + (["pilot"] if pilot else []) + [stamp]
+    def budget_suffix(max_gen_toks):
+        """'' for the standard budget, else '32k' style (matches summarize.series_label)."""
+        if max_gen_toks == MAX_GEN_TOKS:
+            return ""
+        return f"{max_gen_toks // 1024}k" if max_gen_toks % 1024 == 0 else str(max_gen_toks)
+
+
+    def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS):
+        suffix = budget_suffix(max_gen_toks)
+        parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + (["pilot"] if pilot else []) + [stamp]
         return "-".join(parts)
 
 
-    def lm_eval_argv(base_url, model_id, tasks, concurrency, limit, run_dir):
+    def request_timeout(max_gen_toks):
+        return max(REQUEST_TIMEOUT, int(max_gen_toks * SECONDS_PER_TOKEN))
+
+
+    def context_problem(server, max_gen_toks):
+        """None if the server's per-slot context fits the budget (or is unknown), else why not."""
+        n_ctx = ((server.get("props") or {}).get("n_ctx"))
+        if isinstance(n_ctx, int) and n_ctx < max_gen_toks + PROMPT_HEADROOM:
+            return (f"server per-slot context {n_ctx} can't hold max_gen_toks {max_gen_toks} "
+                    f"plus ~{PROMPT_HEADROOM} prompt tokens")
+        return None
+
+
+    def lm_eval_argv(base_url, model_id, tasks, concurrency, limit, run_dir, max_gen_toks=MAX_GEN_TOKS):
         argv = [
             "lm_eval", "run",
             "--model", "local-chat-completions",
             "--model_args",
             f"base_url={base_url}/v1/chat/completions,model={model_id},"
-            f"num_concurrent={concurrency},tokenized_requests=False,timeout={REQUEST_TIMEOUT}",
+            f"num_concurrent={concurrency},tokenized_requests=False,timeout={request_timeout(max_gen_toks)}",
             "--tasks", ",".join(tasks),
             "--apply_chat_template", "--log_samples",
-            "--gen_kwargs", f"max_gen_toks={MAX_GEN_TOKS}",
+            "--gen_kwargs", f"max_gen_toks={max_gen_toks}",
         ]
         if limit:
             argv += ["--limit", str(limit)]
@@ -1189,10 +1268,10 @@ change: |
         return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-    def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root):
+    def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root, max_gen_toks=MAX_GEN_TOKS):
         if limit is None and pilot:
             limit = PILOT_LIMIT
-        name = run_name(server["model_id"], task, pilot, stamp)
+        name = run_name(server["model_id"], task, pilot, stamp, max_gen_toks)
         run_dir = os.path.join(results_root, name)
         return {
             "run": name,
@@ -1201,12 +1280,14 @@ change: |
             "pilot": pilot,
             "limit": limit,
             "concurrency": concurrency,
+            "max_gen_toks": max_gen_toks,
             "note": note,
             "created_utc": stamp,
             "lm_eval_version": _lm_eval_version(),
             "server": server,
             "fingerprint": fingerprint(server),
-            "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir),
+            "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
+                                         max_gen_toks),
         }, run_dir
 
 
@@ -1217,9 +1298,13 @@ change: |
 
     def cmd_start(args):
         server = snapshot_server(args.base_url, os.environ.get("OPENAI_API_KEY", ""))
+        problem = context_problem(server, args.max_gen_toks)
+        if problem:
+            print(f"runmeta: {problem}", file=sys.stderr)
+            return 2
         record, run_dir = build_record(
             server, args.task, args.pilot, args.limit, args.concurrency, args.note,
-            args.stamp or _now_stamp(), args.results_root,
+            args.stamp or _now_stamp(), args.results_root, args.max_gen_toks,
         )
         os.makedirs(run_dir)  # fails loudly if the run already exists
         with open(os.path.join(run_dir, "run.json"), "w") as fh:
@@ -1258,6 +1343,7 @@ change: |
         start.add_argument("--limit", type=int)
         start.add_argument("--concurrency", type=int, default=1)
         start.add_argument("--note", default="")
+        start.add_argument("--max-gen-toks", type=int, default=MAX_GEN_TOKS)
         start.add_argument("--stamp")
         start.add_argument("--results-root", default="/results")
 
@@ -1274,6 +1360,8 @@ change: |
                 parser.error("--base-url or LLM_BASE_URL is required")
             if args.concurrency < 1:
                 parser.error("--concurrency must be >= 1")
+            if args.max_gen_toks < MAX_GEN_TOKS:
+                parser.error(f"--max-gen-toks below {MAX_GEN_TOKS} truncates reasoning models (Bug 6)")
             return cmd_start(args)
         if args.cmd == "exec":
             return cmd_exec(args)
@@ -1293,7 +1381,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/runmeta.py | cut -d' ' -f1"
-    expect: "09d626fb2053e57640968c75f6bf6337726d8f944353fac8058f46b1a252ac8c"
+    expect: "e97026998cde7eb8d39146f0205693752049a890f11e83c7374dae5a2043e2ea"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/runmeta.py && echo OK"
@@ -1324,7 +1412,8 @@ change: |
                 told to produce, and run.json carries a fingerprint and props.
       publish   After publishing twice to mock_nextcloud.py: one table with every
                 column, the expected rows (no duplicates from the second
-                publish), both views, one share, and the report files.
+                publish), every view, one share, the report files including
+                leaderboard.xlsx, and the stale leaderboard.csv deleted.
     """
 
     import argparse
@@ -1396,9 +1485,16 @@ change: |
         if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
             errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
                           f"{len(state['views'])} and {len(state['shares'])}")
-        for rel in ("leaderboard.md", "leaderboard.csv", "findings.md", f"runs/{run}/report.md", f"runs/{run}/manifest.json"):
+        for rel in ("leaderboard.md", "leaderboard.xlsx", "findings.md", f"runs/{run}/report.md",
+                    f"runs/{run}/manifest.json"):
             if f"{publish.FOLDER}/{rel}" not in state["files"]:
                 errors.append(f"missing published file {rel}")
+        xlsx = state["files"].get(f"{publish.FOLDER}/leaderboard.xlsx", "")
+        if xlsx and not (xlsx.startswith("<binary") and xlsx.endswith(" zip>")):
+            errors.append(f"leaderboard.xlsx is not a zip container: {xlsx[:60]!r}")
+        for rel in publish.STALE_FILES:
+            if f"{publish.FOLDER}/{rel}" not in state.get("deleted", []):
+                errors.append(f"stale file {rel} was not deleted")
         if any("samples_" in name for name in state["files"]):
             errors.append("a samples file was published (GPQA questions must not leave the CT)")
         return errors
@@ -1445,7 +1541,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/selftest_checks.py | cut -d' ' -f1"
-    expect: "c1a1f887543e1ff4e081914b47ffcdd9ad02af677cfdb7511af44db5274b725e"
+    expect: "23e9db8f438b7f5ecc9874d40b5221b1144f9a7ff68936a87ab204aa461e9d87"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/selftest_checks.py && echo OK"
@@ -1590,6 +1686,46 @@ change: |
             self.assertEqual(runmeta.safe_name("org/model:q4 x"), "org-model-q4-x")
 
 
+    class BudgetTest(unittest.TestCase):
+        def setUp(self):
+            self.server = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get())
+
+        def test_32k_series_named_recorded_and_timed(self):
+            record, _ = runmeta.build_record(self.server, "gpqa", False, None, 1, "", "S", "/results", 32768)
+            self.assertEqual(record["run"], "glm-5.3-flash-gpqa-32k-S")
+            self.assertEqual(record["max_gen_toks"], 32768)
+            argv = record["lm_eval_argv"]
+            self.assertEqual(argv[argv.index("--gen_kwargs") + 1], "max_gen_toks=32768")
+            self.assertIn(f"timeout={runmeta.request_timeout(32768)}", argv[argv.index("--model_args") + 1])
+            self.assertGreater(runmeta.request_timeout(32768), runmeta.REQUEST_TIMEOUT)
+
+        def test_standard_budget_keeps_old_name_and_timeout(self):
+            record, _ = runmeta.build_record(self.server, "gpqa", True, None, 1, "", "S", "/results")
+            self.assertEqual(record["run"], "glm-5.3-flash-gpqa-pilot-S")
+            self.assertEqual(record["max_gen_toks"], runmeta.MAX_GEN_TOKS)
+            self.assertEqual(runmeta.request_timeout(runmeta.MAX_GEN_TOKS), runmeta.REQUEST_TIMEOUT)
+
+        def test_context_too_small_refused(self):
+            small = copy.deepcopy(PROPS)
+            small["default_generation_settings"]["n_ctx"] = 32768
+            server = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get(props=small))
+            self.assertIsNotNone(runmeta.context_problem(server, 32768))
+            self.assertIsNone(runmeta.context_problem(server, 8192))
+            no_props = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get(props=None))
+            self.assertIsNone(runmeta.context_problem(no_props, 32768))
+            with tempfile.TemporaryDirectory() as root:
+                with mock.patch.object(runmeta, "_get_json", fake_get(props=small)), \
+                        mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+                    rc = runmeta.main(["start", "--base-url", "http://f:8080", "--task", "gpqa", "--stamp", "S",
+                                       "--results-root", root, "--max-gen-toks", "32768"])
+                self.assertEqual(rc, 2)
+                self.assertEqual(os.listdir(root), [])
+
+        def test_budget_below_standard_rejected(self):
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                runmeta.main(["start", "--base-url", "http://f:8080", "--task", "gpqa", "--max-gen-toks", "4096"])
+
+
     class CommandTest(unittest.TestCase):
         def test_start_then_check_and_changed_exit_code(self):
             with tempfile.TemporaryDirectory() as root:
@@ -1632,7 +1768,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_runmeta.py | cut -d' ' -f1"
-    expect: "60a4ab5df24177735a98fca7a09a22e63bd8b8c3a7e01707fc70fd6e12ac7b49"
+    expect: "bb4cbe39db2e9256c0074a3ed71bda4245782f505eb0e3af0dff04d9ca8c8b2f"
     critical: true
 ```
 
@@ -1778,6 +1914,15 @@ change: |
             self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {}}}))
             self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
 
+        def test_larger_budget_is_its_own_series(self):
+            big = {"limit": None, "gen_kwargs": {"max_gen_toks": 32768}}
+            self.assertEqual(summarize.exclusion_reason({"config": big}), "token budget 32768 (separate 32k series)")
+            self.assertEqual(summarize.series({"config": big}), "32k")
+            self.assertEqual(summarize.series({"config": COMPARABLE}), "8k")
+            self.assertIsNone(summarize.series({"config": {"limit": 40, "gen_kwargs": {"max_gen_toks": 32768}}}))
+            self.assertIsNone(summarize.series({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
+            self.assertIsNone(summarize.series({"config": {"limit": None, "gen_kwargs": {}}}))
+
         def test_model_name_dict_or_string(self):
             self.assertEqual(summarize.model_name({"config": {"model_args": {"model": "x"}}}), "x")
             self.assertEqual(summarize.model_name({"config": {"model_args": "base_url=u,model=y,num_concurrent=1"}}), "y")
@@ -1853,11 +1998,11 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_summarize.py | cut -d' ' -f1"
-    expect: "f82cbf79e7b192080babbcfe7c22de756ca85193f92efdd888cb227da9d2df95"
+    expect: "c48d2b920cd3ccbfcee64b96bf298173ea22ed7c7d91b1525121a55507b17297"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
-    expect: "OK"
+    expect: "OK, or OK (skipped=2) where openpyxl is not installed"
     critical: true
 ```
 
@@ -1879,8 +2024,11 @@ change: |
     operator by the deploy):
 
       Reports/eval-runner/
-        leaderboard.md / leaderboard.csv   every result, comparable ones ranked
-        findings.md                        curated analysis (from the repo)
+        leaderboard.xlsx    the spreadsheet: one ranked sheet per task and
+                            token-budget series, plus every result on one
+                            filterable sheet (opens in Nextcloud Office)
+        leaderboard.md      the ranked lists as plain text
+        findings.md         curated analysis (from the repo)
         runs/<run>/report.md, manifest.json            eval-runner runs
         historical/<source>/report.md, manifest.json   imported framework runs
 
@@ -1905,7 +2053,6 @@ change: |
 
     import argparse
     import base64
-    import csv
     import datetime
     import glob
     import io
@@ -1920,6 +2067,13 @@ change: |
 
     import summarize  # noqa: E402
 
+    try:  # only needed to render leaderboard.xlsx; in the image, see the Dockerfile
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError:  # pragma: no cover - unit tests skip the xlsx checks
+        openpyxl = None
+
     RESULTS_ROOT = "/results"
     FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
     FOLDER = "Reports/eval-runner"
@@ -1927,6 +2081,8 @@ change: |
     TABLE_EMOJI = "📊"
     TABLES_API = "/index.php/apps/tables/api/1"
     TABLES_OCS_API = "/ocs/v2.php/apps/tables/api/2"
+    # Files earlier versions published that are now gone; deleted on publish.
+    STALE_FILES = ("leaderboard.csv",)
 
     TASK_LABELS = {
         "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
@@ -1947,6 +2103,7 @@ change: |
         ("Empty %", {"type": "number", "numberDecimals": 1, "numberSuffix": "%"}),
         ("Unparsed", {"type": "number", "numberDecimals": 0}),
         ("Token budget", {"type": "number", "numberDecimals": 0}),
+        ("Series", {"type": "text", "subtype": "line"}),
         ("Comparable", {"type": "text", "subtype": "line"}),
         ("Why not comparable", {"type": "text", "subtype": "line"}),
         ("Model file / tag", {"type": "text", "subtype": "line"}),
@@ -1959,10 +2116,13 @@ change: |
     ]
 
     VIEWS = [
-        # (title, emoji, task label or None, comparable-only)
-        ("Comparable: GPQA", "🧠", "GPQA diamond", True),
-        ("Comparable: IFEval", "📋", "IFEval", True),
+        # (title, emoji, task label, {column: required value})
+        ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
+        ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
+        ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
+        ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
     ]
+    STANDARD_SERIES = summarize.series_label(summarize.MAX_GEN_TOKS)
 
 
     # ---------------------------------------------------------------- collect
@@ -2024,6 +2184,7 @@ change: |
             "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
             "Unparsed": flags["unparsed"],
             "Token budget": summarize._max_gen_toks(data.get("config", {}).get("gen_kwargs")),
+            "Series": summarize.series(data) or "",
             "Comparable": "no" if reason else "yes",
             "Why not comparable": reason or "",
             "Model file / tag": _model_file(model, record),
@@ -2101,9 +2262,31 @@ change: |
     - **Comparable** means a full run (no `--limit`) at the 8192 budget.
       Pilots and runs without the cap (the Bug 6 era) are listed but not
       ranked.
+    - **Series.** Full runs at a larger budget (e.g. 32k) are ranked in their
+      own series, never against the 8k one: more budget lets reasoning models
+      finish answers they would otherwise lose.
     - Per-question samples stay on the eval-runner CT, not in Nextcloud:
       GPQA's licence forbids reposting its questions.
     """
+
+    TASK_ORDER = ("GPQA diamond", "IFEval")
+
+
+    def series_order(all_rows):
+        """Series present in the rows: the standard (8k) one first, then by budget."""
+        found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Series"]}
+        found.setdefault(STANDARD_SERIES, summarize.MAX_GEN_TOKS)
+        return sorted(found, key=lambda name: (name != STANDARD_SERIES, found[name]))
+
+
+    def ranked(all_rows, label, series):
+        return sorted((r for r in all_rows if r["Task"] == label and r["Series"] == series),
+                      key=lambda r: -(r["Score %"] or 0))
+
+
+    def metric_names(label):
+        """(primary, alternative) metric names for a task label."""
+        return next((primary, alt) for lbl, primary, alt in TASK_LABELS.values() if lbl == label)
 
 
     def render_report(source, run_dir, record, rows):
@@ -2162,43 +2345,105 @@ change: |
 
     def render_leaderboard(all_rows, generated):
         lines = ["# Model evaluations: leaderboard", "",
-                 f"Generated {generated} by `eval-run publish`. The same data is in the "
-                 f"Nextcloud Tables table **{TABLE_TITLE}**. Analysis: `findings.md`.", ""]
-        for label in ("GPQA diamond", "IFEval"):
-            ranked = sorted((r for r in all_rows if r["Task"] == label and r["Comparable"] == "yes"),
-                            key=lambda r: -(r["Score %"] or 0))
-            alt = "strict-match" if label.startswith("GPQA") else "prompt-level loose"
-            main = "flexible-extract" if label.startswith("GPQA") else "prompt-level strict"
-            lines += [f"## {label} (comparable runs, ranked by {main})", "",
-                      f"| # | Model | Score | {alt} | Empty answers | Unparsed | Runtime | Date | Source |",
-                      "|---|---|---|---|---|---|---|---|---|"]
-            for i, r in enumerate(ranked, 1):
-                lines.append(
-                    f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
-                    f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} ({_fmt(r['Empty %'], '%', 1)}) | "
-                    f"{_fmt(r['Unparsed'])} | {r['Runtime']} | {r['Date']} | {r['Source']} |"
-                )
-            if not ranked:
-                lines.append("| – | none yet | | | | | | | |")
-            lines.append("")
-        excluded = [r for r in all_rows if r["Comparable"] != "yes"]
+                 f"Generated {generated} by `eval-run publish`. The full detail is in "
+                 f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
+                 "Analysis: `findings.md`.", ""]
+        for series in series_order(all_rows):
+            for label in TASK_ORDER:
+                rows = ranked(all_rows, label, series)
+                if series != STANDARD_SERIES and not rows:
+                    continue
+                main, alt = metric_names(label)
+                heading = "comparable runs" if series == STANDARD_SERIES else \
+                    f"{series} token budget series, not comparable with 8k"
+                lines += [f"## {label}: {heading}", "", f"Ranked by {main}.", "",
+                          f"| # | Model | Score | {alt} | Empty answers | Date |",
+                          "|---|---|---|---|---|---|"]
+                for i, r in enumerate(rows, 1):
+                    lines.append(
+                        f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
+                        f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} | {r['Date']} |"
+                    )
+                if not rows:
+                    lines.append("| – | none yet | | | | |")
+                lines.append("")
+        excluded = [r for r in all_rows if not r["Series"]]
         if excluded:
             lines += ["## Not comparable (listed, not ranked)", "",
-                      "| Model | Task | Score | Why | Run |", "|---|---|---|---|---|"]
+                      "| Model | Task | Score | Why |", "|---|---|---|---|"]
             for r in sorted(excluded, key=lambda r: (r["Model"], r["Task"], r["Run"])):
-                lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | "
-                             f"{r['Why not comparable']} | {r['Run']} |")
+                lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | {r['Why not comparable']} |")
             lines.append("")
         lines += ["## Caveats", "", CAVEATS]
         return "\n".join(lines)
 
 
-    def render_csv(all_rows):
-        buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=[title for title, _ in COLUMNS])
-        writer.writeheader()
-        for r in all_rows:
-            writer.writerow({k: ("" if v is None else v) for k, v in r.items()})
+    # Number formats for leaderboard.xlsx, by column title.
+    XLSX_FORMATS = {"Score %": '0.00"%"', "Alt score %": '0.00"%"', "Empty %": '0.0"%"'}
+    XLSX_HEADER_FILL = "DDE4EE"
+
+
+    def _xlsx_sheet(wb, title, headers, rows, freeze):
+        """One sheet: bold shaded header, frozen panes, autofilter, number
+        formats and column widths sized to the content."""
+        ws = wb.create_sheet(title)
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill("solid", fgColor=XLSX_HEADER_FILL)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+        for idx, header in enumerate(headers, 1):
+            letter = get_column_letter(idx)
+            fmt = XLSX_FORMATS.get(header)
+            if fmt:
+                for cell in ws[letter][1:]:
+                    cell.number_format = fmt
+            longest = max([len(header)] + [len(str(v)) for v in ws[letter][1:] for v in [v.value] if v is not None])
+            ws.column_dimensions[letter].width = min(max(longest + 2, 8), 60)
+        ws.freeze_panes = freeze
+        ws.auto_filter.ref = ws.dimensions
+        return ws
+
+
+    def render_xlsx(all_rows, generated):
+        """leaderboard.xlsx: ranked sheets (task x series), All results, Notes."""
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        wb.properties.creator = "eval-runner"
+        for series in series_order(all_rows):
+            for label in TASK_ORDER:
+                rows = ranked(all_rows, label, series)
+                if series != STANDARD_SERIES and not rows:
+                    continue
+                main, alt = metric_names(label)
+                headers = ["Rank", "Model", f"Score % ({main})", f"{alt} %", "Empty answers", "Questions",
+                           "Empty %", "Unparsed", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run"]
+                body = [[i, r["Model"], r["Score %"], r["Alt score %"], r["Empty answers"], r["Questions"],
+                         r["Empty %"], r["Unparsed"], r["Runtime"], r["Model file / tag"], r["Note"],
+                         r["Date"], r["Source"], r["Run"]] for i, r in enumerate(rows, 1)]
+                ws = _xlsx_sheet(wb, f"{label.split()[0]} ({series})", headers, body, "C2")
+                for col in "CD":
+                    for cell in ws[col][1:]:
+                        cell.number_format = XLSX_FORMATS["Score %"]
+                for cell in ws["G"][1:]:
+                    cell.number_format = XLSX_FORMATS["Empty %"]
+        titles = [t for t, _ in COLUMNS if t != "Key"]
+        everything = sorted(all_rows, key=lambda r: (r["Task"], r["Series"] or "~", -(r["Score %"] or 0)))
+        _xlsx_sheet(wb, "All results", titles, [[r.get(t) for t in titles] for r in everything], "C2")
+        notes = wb.create_sheet("Notes")
+        notes.append([f"Generated {generated} by eval-run publish. Same data as the Nextcloud Tables "
+                      f"table '{TABLE_TITLE}'. Analysis: findings.md."])
+        notes.append([])
+        for para in CAVEATS.replace("\n  ", " ").splitlines():
+            notes.append([para.replace("**", "").replace("`", "").lstrip("- ")])
+        notes.column_dimensions["A"].width = 120
+        for row in notes.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+        buf = io.BytesIO()
+        wb.save(buf)
         return buf.getvalue()
 
 
@@ -2213,7 +2458,8 @@ change: |
                 json.dumps(render_manifest(source, run_dir, record, rows), indent=2) + "\n").encode()
             all_rows += rows
         files["leaderboard.md"] = render_leaderboard(all_rows, generated).encode()
-        files["leaderboard.csv"] = render_csv(all_rows).encode()
+        if openpyxl is not None:  # always installed in the image; selftest checks the file is there
+            files["leaderboard.xlsx"] = render_xlsx(all_rows, generated)
         if findings_text is not None:
             files["findings.md"] = findings_text.encode()
         return files, all_rows
@@ -2267,6 +2513,10 @@ change: |
 
         def put_file(self, rel, content):
             self.request("PUT", self._dav(rel), raw=content, ok=(201, 204))
+
+        def delete_file(self, rel):
+            # 404 = already gone
+            self.request("DELETE", self._dav(rel), ok=(204, 404))
 
         # Tables
         def tables(self, method, path, body=None):
@@ -2341,15 +2591,15 @@ change: |
         return created, updated, unchanged
 
 
-    def view_settings(col_ids, task, comparable_only):
+    def view_settings(col_ids, task, required):
         """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
         accepts (read from its source): columnSettings [{columnId, order}],
         filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
         sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
         (the deprecated "columns" key breaks when given a string)."""
         filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
-        if comparable_only:
-            filters.append({"columnId": col_ids["Comparable"], "operator": "is-equal", "value": "yes"})
+        filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
+                    for column, value in required.items()]
         shown = [title for title, _ in COLUMNS if title != "Key"]
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
@@ -2362,11 +2612,11 @@ change: |
         """Create missing views, and (re)apply every view's settings each time,
         so a view left half-configured by an earlier failure gets repaired."""
         existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
-        for title, emoji, task, comparable_only in VIEWS:
+        for title, emoji, task, required in VIEWS:
             view_id = existing.get(title)
             if view_id is None:
                 view_id = nc.tables("POST", f"/tables/{table_id}/views", {"title": title, "emoji": emoji})["id"]
-            nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, comparable_only)})
+            nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, required)})
 
 
     def table_layout(col_ids):
@@ -2402,6 +2652,9 @@ change: |
             if parent:
                 nc.ensure_folder(f"{FOLDER}/{parent}")
             nc.put_file(f"{FOLDER}/{rel}", files[rel])
+        for rel in STALE_FILES:
+            if rel not in files:
+                nc.delete_file(f"{FOLDER}/{rel}")
         table_id = ensure_table(nc)
         col_ids = ensure_columns(nc, table_id)
         counts = upsert_rows(nc, table_id, col_ids, rows)
@@ -2467,7 +2720,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "4c667440a25af43a255902b65aef36d3147ac1b2ecd79ece4f69076825fb8f57"
+    expect: "b6cf5d40edc2c7b1156d2d49d4879c919a64956092d41a6538192a5e6068d54b"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -2488,7 +2741,7 @@ change: |
   the file itself has no leading indentation:
 
     """In-memory stand-in for the slice of Nextcloud that publish.py uses, for
-    `eval-run selftest`: WebDAV MKCOL/PUT under /remote.php/dav/files/<user>/,
+    `eval-run selftest`: WebDAV MKCOL/PUT/DELETE under /remote.php/dav/files/<user>/,
     and the Tables v1 API (tables, columns, rows, views, shares). Checks HTTP
     basic auth against MOCK_NC_USER / MOCK_NC_PASSWORD.
 
@@ -2517,12 +2770,21 @@ change: |
     def reset():
         """Empty all stored state (unit tests reuse route() in-process)."""
         STATE.clear()
-        STATE.update({"folders": [], "files": {}, "tables": [], "columns": [], "rows": [],
+        STATE.update({"folders": [], "files": {}, "deleted": [], "tables": [], "columns": [], "rows": [],
                       "views": [], "shares": [], "requests": 0})
         _ids["n"] = 0
 
 
     reset()
+
+
+    def stored_content(body):
+        """Text files as text; anything else (leaderboard.xlsx) as a marker that
+        records its size and whether it's a zip container."""
+        try:
+            return body.decode()
+        except UnicodeDecodeError:
+            return f"<binary {len(body)} bytes{' zip' if body[:2] == b'PK' else ''}>"
 
 
     def _next_id():
@@ -2669,10 +2931,20 @@ change: |
                         self._send(409, {"message": f"parent {parent} missing"})
                         return
                     existed = path in STATE["files"]
-                    STATE["files"][path] = body.decode(errors="replace")
+                    STATE["files"][path] = stored_content(body)
                 self._send(204 if existed else 201)
                 return
             self._tables("PUT", self._json())
+
+        def do_DELETE(self):  # noqa: N802
+            if not self._authorised():
+                return
+            path = self._dav_path()
+            with _lock:
+                STATE["requests"] += 1
+                STATE["deleted"].append(path)
+                existed = STATE["files"].pop(path, None) is not None
+            self._send(204 if existed else 404)
 
         def do_GET(self):  # noqa: N802
             if self.path == "/_mock/state":
@@ -2723,7 +2995,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py | cut -d' ' -f1"
-    expect: "bf669f50e0d98b70b2821715fc31f04e09b4309352152565ff812fbeaa889453"
+    expect: "cce4634eda90bd82a1643444fa5908a7add10b5f9ef4523d88cb54760d1b6448"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/mock_nextcloud.py && echo OK"
@@ -2750,7 +3022,6 @@ change: |
     python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner -p "test_*.py"
     """
 
-    import csv
     import io
     import json
     import os
@@ -2759,6 +3030,11 @@ change: |
 
     import mock_nextcloud
     import publish
+
+    try:
+        import openpyxl
+    except ImportError:  # the image has it; locally: pip install openpyxl==3.1.5 in a venv
+        openpyxl = None
     import summarize
     from test_summarize import gpqa_rows, ifeval_rows, write_run
 
@@ -2788,7 +3064,11 @@ change: |
 
         def put_file(self, rel, content):
             assert os.path.dirname(rel) in self.state["folders"], rel
-            self.state["files"][rel] = content.decode()
+            self.state["files"][rel] = mock_nextcloud.stored_content(content)
+
+        def delete_file(self, rel):
+            self.state["deleted"].append(rel)
+            self.state["files"].pop(rel, None)
 
         def tables(self, method, path, body=None):
             self.calls.append((method, path))
@@ -2817,6 +3097,13 @@ change: |
         write_run(hist, "qwen36-35b", ["ifeval"], ifeval_rows=ifeval_rows(["x"]), run_json=False,
                   config={"limit": None, "gen_kwargs": {}, "model_args": {"model": "eval-qwen36", "base_url": "http://f:11434/v1"}})
         return run_dir
+
+
+    def add_32k_run(root):
+        """A full GPQA run at the 32k budget: its own series, not comparable with 8k."""
+        write_run(root, "glm-5.3-flash-gpqa-32k-20261003T000000Z", ["gpqa"], gpqa_rows=gpqa_rows(["(A)", "(B)"]),
+                  run_json=False, config={"limit": None, "gen_kwargs": {"max_gen_toks": 32768},
+                                          "model_args": {"model": "glm-5.3-flash"}})
 
 
     class CollectTest(unittest.TestCase):
@@ -2853,7 +3140,9 @@ change: |
 
         def test_expected_files(self):
             self.assertIn("leaderboard.md", self.files)
-            self.assertIn("leaderboard.csv", self.files)
+            self.assertNotIn("leaderboard.csv", self.files)
+            if openpyxl:
+                self.assertIn("leaderboard.xlsx", self.files)
             self.assertEqual(self.files["findings.md"], b"# findings\n")
             self.assertIn("runs/glm-5.3-flash-both-20261002T000000Z/report.md", self.files)
             self.assertIn("historical/qwen36-35b/manifest.json", self.files)
@@ -2884,10 +3173,59 @@ change: |
                 self.assertIn(key, manifest)
             self.assertEqual(manifest["project"], "eval-runner")
 
-        def test_csv_has_all_columns_and_rows(self):
-            reader = list(csv.DictReader(io.StringIO(self.files["leaderboard.csv"].decode())))
-            self.assertEqual(len(reader), 5)
-            self.assertEqual(list(reader[0].keys()), [t for t, _ in publish.COLUMNS])
+        def test_markdown_tables_stay_narrow(self):
+            for line in self.files["leaderboard.md"].decode().splitlines():
+                if line.startswith("|"):
+                    self.assertLessEqual(line.count("|") - 1, 6, line)
+
+        @unittest.skipUnless(openpyxl, "openpyxl not installed")
+        def test_xlsx_sheets_rank_and_hold_every_row(self):
+            wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
+            self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "All results", "Notes"])
+            gpqa = wb["GPQA (8k)"]
+            self.assertEqual(gpqa["A1"].value, "Rank")
+            self.assertEqual(gpqa["B2"].value, "glm-5.3-flash")
+            self.assertEqual(gpqa["C2"].value, 50.0)
+            self.assertEqual(gpqa["C2"].number_format, '0.00"%"')
+            self.assertEqual(gpqa.freeze_panes, "C2")
+            self.assertIsNotNone(gpqa.auto_filter.ref)
+            everything = wb["All results"]
+            self.assertEqual(everything.max_row, 1 + len(self.rows))
+            self.assertEqual([c.value for c in everything[1]], [t for t, _ in publish.COLUMNS if t != "Key"])
+
+
+    class SeriesTest(unittest.TestCase):
+        def setUp(self):
+            self.tmp = tempfile.TemporaryDirectory()
+            make_tree(self.tmp.name)
+            add_32k_run(self.tmp.name)
+            self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), None, "NOW")
+
+        def tearDown(self):
+            self.tmp.cleanup()
+
+        def test_32k_row_is_its_own_series(self):
+            row = next(r for r in self.rows if "32k" in r["Run"])
+            self.assertEqual((row["Series"], row["Comparable"], row["Token budget"]), ("32k", "no", 32768))
+            self.assertIn("separate 32k series", row["Why not comparable"])
+
+        def test_leaderboard_ranks_32k_separately(self):
+            board = self.files["leaderboard.md"].decode()
+            self.assertIn("## GPQA diamond: 32k token budget series, not comparable with 8k", board)
+            self.assertNotIn("## IFEval: 32k", board)
+            not_comparable = board.split("## Not comparable")[1]
+            self.assertNotIn("separate 32k series", not_comparable)
+
+        @unittest.skipUnless(openpyxl, "openpyxl not installed")
+        def test_xlsx_has_32k_sheet(self):
+            wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
+            self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "GPQA (32k)", "All results", "Notes"])
+            self.assertEqual(wb["GPQA (32k)"].max_row, 2)
+
+        def test_32k_views_filter_on_series(self):
+            col_ids = {t: i for i, (t, _) in enumerate(publish.COLUMNS)}
+            settings = publish.view_settings(col_ids, "GPQA diamond", {"Series": "32k"})
+            self.assertIn({"columnId": col_ids["Series"], "operator": "is-equal", "value": "32k"}, settings["filter"][0])
 
 
     class PublishTest(unittest.TestCase):
@@ -2914,6 +3252,7 @@ change: |
             self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
             self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
             self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
+            self.assertEqual(state["deleted"], [f"{publish.FOLDER}/leaderboard.csv"])
             table = state["tables"][0]
             key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
             self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
@@ -2925,7 +3264,7 @@ change: |
             self.assertEqual(counts, (0, 0, 5))
             state = self.nc.state
             self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
-                             (1, 5, 2, 1))
+                             (1, 5, len(publish.VIEWS), 1))
 
         def test_half_configured_view_is_repaired(self):
             table_id, _ = publish.publish(self.nc, self.files, self.rows)
@@ -2939,7 +3278,7 @@ change: |
             self.assertIsNotNone(mock_nextcloud.view_update_problem({"columns": "[1,2]"}))
             self.assertIsNotNone(mock_nextcloud.view_update_problem({"sort": [{"columnId": 1, "mode": "down"}]}))
             self.assertIsNone(mock_nextcloud.view_update_problem(publish.view_settings(
-                {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", True)))
+                {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", {"Comparable": "yes"})))
 
         def test_changed_value_updates_in_place(self):
             publish.publish(self.nc, self.files, self.rows)
@@ -3000,11 +3339,11 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "2dc98aaa63a42a66748b98de4aeb4308e0479fb094074a390052fc9d161853d9"
+    expect: "33760183dec4b587a01ccef205764ccc1574c597a5bd37ac45e8eff16bca048d"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
-    expect: "OK"
+    expect: "OK, or OK (skipped=2) where openpyxl is not installed"
     critical: true
 ```
 
@@ -3022,14 +3361,15 @@ change: |
 
     # Model evaluation findings
 
-    Hand-written analysis to read alongside the generated `leaderboard.md`
-    and the Nextcloud Tables table **Model evaluations**. The numbers in those
+    Hand-written analysis to read alongside the generated `leaderboard.xlsx`
+    (or `leaderboard.md`) and the Nextcloud Tables table **Model
+    evaluations**. The numbers in those
     come from `eval-run publish`; this file explains how far to trust them.
     The canonical copy is `docs/eval-runner/findings.md` in the repo. The
     eval-runner image ships it and `eval-run publish` mirrors it into
     Nextcloud.
 
-    Last updated: 2026-10-01.
+    Last updated: 2026-10-01 (32k series added).
 
     ## How results are produced
 
@@ -3040,7 +3380,8 @@ change: |
     - **Decoding.** Greedy: both task configs pin `temperature: 0`, overriding
       any server default. The seed is 1234.
     - **Token budget.** `max_gen_toks` is 8192 per answer, the same for every
-      historical result.
+      historical result. Runs at a larger budget (`--max-gen-toks 32768`)
+      form a separate **32k series**, ranked only among themselves.
     - **Historical results.** These were run on framework through Ollama in
       August–September 2026. New results come from `eval-runner` on
       `ai-services-stack`, against whatever llama-server serves.
@@ -3074,9 +3415,10 @@ change: |
       this. The questions a model finishes inside the budget are likely the
       easier ones, and they differ per model. That figure came out at an
       implausible 94.5% for Qwen3.8-27B, so it isn't comparable either.
-    - The honest fix is a larger budget. That needs a decision: results at a
-      different budget aren't comparable with history, so both would need to
-      be kept and labelled.
+    - The honest fix is a larger budget. Results at a different budget
+      aren't comparable with history, so they are kept as a separate,
+      labelled series: the 32k series (decided 2026-10-01). No 32k results
+      exist yet.
 
     ### 2. IFEval is far less affected
 
@@ -3116,9 +3458,9 @@ change: |
 
     ## Open questions
 
-    - **Budget:** should new runs (GLM-5.3-Flash first) also be measured at a
-      larger budget, such as 32k, kept separate from the comparable 8192
-      series?
+    - **Budget:** how much do the 32k-series scores differ from the 8k ones
+      for the same model? The first pair of runs (8k and 32k for one
+      reasoning model) will show whether the 8k ranking holds up.
     - **Comparability with history:** GLM-5.3-Flash runs on llama.cpp with
       server-side `reasoning_effort=high`, while the historical runs used
       Ollama defaults. A runtime or reasoning-mode difference is recorded per
@@ -3135,7 +3477,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum docs/eval-runner/findings.md | cut -d' ' -f1"
-    expect: "c499022fc551603003d862a57b2aa841a88591d3e279589da5203701c318532c"
+    expect: "f232debd8cba538818b6f45c8cbed558ac2f70f985319c3e75aced11eba13a5c"
     critical: true
 ```
 
@@ -3640,6 +3982,9 @@ docker ps --filter name=^eval-            # what's running (one real run at a ti
 - A non-zero `empty` count means some answers never arrived, usually
   because reasoning used up the 8192-token budget. Read the samples before
   quoting the score.
+- For reasoning models that run out of budget at 8192 (many empty
+  answers), a second run with `--max-gen-toks 32768` gives the 32k
+  series. Expect several times the 8192 run's duration.
 - After a run, run `eval-run publish`. The Nextcloud table, leaderboard
   and per-run report are the record from then on. Update
   `docs/eval-runner/findings.md` by hand when a result changes the

@@ -124,6 +124,15 @@ class ComparabilityTest(unittest.TestCase):
         self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {}}}))
         self.assertIn("Bug 6", summarize.exclusion_reason({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
 
+    def test_larger_budget_is_its_own_series(self):
+        big = {"limit": None, "gen_kwargs": {"max_gen_toks": 32768}}
+        self.assertEqual(summarize.exclusion_reason({"config": big}), "token budget 32768 (separate 32k series)")
+        self.assertEqual(summarize.series({"config": big}), "32k")
+        self.assertEqual(summarize.series({"config": COMPARABLE}), "8k")
+        self.assertIsNone(summarize.series({"config": {"limit": 40, "gen_kwargs": {"max_gen_toks": 32768}}}))
+        self.assertIsNone(summarize.series({"config": {"limit": None, "gen_kwargs": {"max_gen_toks": 256}}}))
+        self.assertIsNone(summarize.series({"config": {"limit": None, "gen_kwargs": {}}}))
+
     def test_model_name_dict_or_string(self):
         self.assertEqual(summarize.model_name({"config": {"model_args": {"model": "x"}}}), "x")
         self.assertEqual(summarize.model_name({"config": {"model_args": "base_url=u,model=y,num_concurrent=1"}}), "y")

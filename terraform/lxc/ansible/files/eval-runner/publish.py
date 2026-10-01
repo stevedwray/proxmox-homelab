@@ -4,8 +4,11 @@ What gets published (all under the service account, folder shared to the
 operator by the deploy):
 
   Reports/eval-runner/
-    leaderboard.md / leaderboard.csv   every result, comparable ones ranked
-    findings.md                        curated analysis (from the repo)
+    leaderboard.xlsx    the spreadsheet: one ranked sheet per task and
+                        token-budget series, plus every result on one
+                        filterable sheet (opens in Nextcloud Office)
+    leaderboard.md      the ranked lists as plain text
+    findings.md         curated analysis (from the repo)
     runs/<run>/report.md, manifest.json            eval-runner runs
     historical/<source>/report.md, manifest.json   imported framework runs
 
@@ -30,7 +33,6 @@ Usage:
 
 import argparse
 import base64
-import csv
 import datetime
 import glob
 import io
@@ -45,6 +47,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import summarize  # noqa: E402
 
+try:  # only needed to render leaderboard.xlsx; in the image, see the Dockerfile
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+except ImportError:  # pragma: no cover - unit tests skip the xlsx checks
+    openpyxl = None
+
 RESULTS_ROOT = "/results"
 FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
 FOLDER = "Reports/eval-runner"
@@ -52,6 +61,8 @@ TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
 TABLES_API = "/index.php/apps/tables/api/1"
 TABLES_OCS_API = "/ocs/v2.php/apps/tables/api/2"
+# Files earlier versions published that are now gone; deleted on publish.
+STALE_FILES = ("leaderboard.csv",)
 
 TASK_LABELS = {
     "gpqa_diamond_cot_zeroshot": ("GPQA diamond", "flexible-extract", "strict-match"),
@@ -72,6 +83,7 @@ COLUMNS = [
     ("Empty %", {"type": "number", "numberDecimals": 1, "numberSuffix": "%"}),
     ("Unparsed", {"type": "number", "numberDecimals": 0}),
     ("Token budget", {"type": "number", "numberDecimals": 0}),
+    ("Series", {"type": "text", "subtype": "line"}),
     ("Comparable", {"type": "text", "subtype": "line"}),
     ("Why not comparable", {"type": "text", "subtype": "line"}),
     ("Model file / tag", {"type": "text", "subtype": "line"}),
@@ -84,10 +96,13 @@ COLUMNS = [
 ]
 
 VIEWS = [
-    # (title, emoji, task label or None, comparable-only)
-    ("Comparable: GPQA", "🧠", "GPQA diamond", True),
-    ("Comparable: IFEval", "📋", "IFEval", True),
+    # (title, emoji, task label, {column: required value})
+    ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
+    ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
+    ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
+    ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
 ]
+STANDARD_SERIES = summarize.series_label(summarize.MAX_GEN_TOKS)
 
 
 # ---------------------------------------------------------------- collect
@@ -149,6 +164,7 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
         "Unparsed": flags["unparsed"],
         "Token budget": summarize._max_gen_toks(data.get("config", {}).get("gen_kwargs")),
+        "Series": summarize.series(data) or "",
         "Comparable": "no" if reason else "yes",
         "Why not comparable": reason or "",
         "Model file / tag": _model_file(model, record),
@@ -226,9 +242,31 @@ CAVEATS = """\
 - **Comparable** means a full run (no `--limit`) at the 8192 budget.
   Pilots and runs without the cap (the Bug 6 era) are listed but not
   ranked.
+- **Series.** Full runs at a larger budget (e.g. 32k) are ranked in their
+  own series, never against the 8k one: more budget lets reasoning models
+  finish answers they would otherwise lose.
 - Per-question samples stay on the eval-runner CT, not in Nextcloud:
   GPQA's licence forbids reposting its questions.
 """
+
+TASK_ORDER = ("GPQA diamond", "IFEval")
+
+
+def series_order(all_rows):
+    """Series present in the rows: the standard (8k) one first, then by budget."""
+    found = {r["Series"]: r["Token budget"] or 0 for r in all_rows if r["Series"]}
+    found.setdefault(STANDARD_SERIES, summarize.MAX_GEN_TOKS)
+    return sorted(found, key=lambda name: (name != STANDARD_SERIES, found[name]))
+
+
+def ranked(all_rows, label, series):
+    return sorted((r for r in all_rows if r["Task"] == label and r["Series"] == series),
+                  key=lambda r: -(r["Score %"] or 0))
+
+
+def metric_names(label):
+    """(primary, alternative) metric names for a task label."""
+    return next((primary, alt) for lbl, primary, alt in TASK_LABELS.values() if lbl == label)
 
 
 def render_report(source, run_dir, record, rows):
@@ -287,43 +325,105 @@ def render_manifest(source, run_dir, record, rows):
 
 def render_leaderboard(all_rows, generated):
     lines = ["# Model evaluations: leaderboard", "",
-             f"Generated {generated} by `eval-run publish`. The same data is in the "
-             f"Nextcloud Tables table **{TABLE_TITLE}**. Analysis: `findings.md`.", ""]
-    for label in ("GPQA diamond", "IFEval"):
-        ranked = sorted((r for r in all_rows if r["Task"] == label and r["Comparable"] == "yes"),
-                        key=lambda r: -(r["Score %"] or 0))
-        alt = "strict-match" if label.startswith("GPQA") else "prompt-level loose"
-        main = "flexible-extract" if label.startswith("GPQA") else "prompt-level strict"
-        lines += [f"## {label} (comparable runs, ranked by {main})", "",
-                  f"| # | Model | Score | {alt} | Empty answers | Unparsed | Runtime | Date | Source |",
-                  "|---|---|---|---|---|---|---|---|---|"]
-        for i, r in enumerate(ranked, 1):
-            lines.append(
-                f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
-                f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} ({_fmt(r['Empty %'], '%', 1)}) | "
-                f"{_fmt(r['Unparsed'])} | {r['Runtime']} | {r['Date']} | {r['Source']} |"
-            )
-        if not ranked:
-            lines.append("| – | none yet | | | | | | | |")
-        lines.append("")
-    excluded = [r for r in all_rows if r["Comparable"] != "yes"]
+             f"Generated {generated} by `eval-run publish`. The full detail is in "
+             f"`leaderboard.xlsx` and the Nextcloud Tables table **{TABLE_TITLE}**. "
+             "Analysis: `findings.md`.", ""]
+    for series in series_order(all_rows):
+        for label in TASK_ORDER:
+            rows = ranked(all_rows, label, series)
+            if series != STANDARD_SERIES and not rows:
+                continue
+            main, alt = metric_names(label)
+            heading = "comparable runs" if series == STANDARD_SERIES else \
+                f"{series} token budget series, not comparable with 8k"
+            lines += [f"## {label}: {heading}", "", f"Ranked by {main}.", "",
+                      f"| # | Model | Score | {alt} | Empty answers | Date |",
+                      "|---|---|---|---|---|---|"]
+            for i, r in enumerate(rows, 1):
+                lines.append(
+                    f"| {i} | {r['Model']} | {_fmt(r['Score %'], '%')} | {_fmt(r['Alt score %'], '%')} | "
+                    f"{_fmt(r['Empty answers'])}/{_fmt(r['Questions'])} | {r['Date']} |"
+                )
+            if not rows:
+                lines.append("| – | none yet | | | | |")
+            lines.append("")
+    excluded = [r for r in all_rows if not r["Series"]]
     if excluded:
         lines += ["## Not comparable (listed, not ranked)", "",
-                  "| Model | Task | Score | Why | Run |", "|---|---|---|---|---|"]
+                  "| Model | Task | Score | Why |", "|---|---|---|---|"]
         for r in sorted(excluded, key=lambda r: (r["Model"], r["Task"], r["Run"])):
-            lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | "
-                         f"{r['Why not comparable']} | {r['Run']} |")
+            lines.append(f"| {r['Model']} | {r['Task']} | {_fmt(r['Score %'], '%')} | {r['Why not comparable']} |")
         lines.append("")
     lines += ["## Caveats", "", CAVEATS]
     return "\n".join(lines)
 
 
-def render_csv(all_rows):
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=[title for title, _ in COLUMNS])
-    writer.writeheader()
-    for r in all_rows:
-        writer.writerow({k: ("" if v is None else v) for k, v in r.items()})
+# Number formats for leaderboard.xlsx, by column title.
+XLSX_FORMATS = {"Score %": '0.00"%"', "Alt score %": '0.00"%"', "Empty %": '0.0"%"'}
+XLSX_HEADER_FILL = "DDE4EE"
+
+
+def _xlsx_sheet(wb, title, headers, rows, freeze):
+    """One sheet: bold shaded header, frozen panes, autofilter, number
+    formats and column widths sized to the content."""
+    ws = wb.create_sheet(title)
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor=XLSX_HEADER_FILL)
+        cell.alignment = Alignment(vertical="top", wrap_text=True)
+    for idx, header in enumerate(headers, 1):
+        letter = get_column_letter(idx)
+        fmt = XLSX_FORMATS.get(header)
+        if fmt:
+            for cell in ws[letter][1:]:
+                cell.number_format = fmt
+        longest = max([len(header)] + [len(str(v)) for v in ws[letter][1:] for v in [v.value] if v is not None])
+        ws.column_dimensions[letter].width = min(max(longest + 2, 8), 60)
+    ws.freeze_panes = freeze
+    ws.auto_filter.ref = ws.dimensions
+    return ws
+
+
+def render_xlsx(all_rows, generated):
+    """leaderboard.xlsx: ranked sheets (task x series), All results, Notes."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    wb.properties.creator = "eval-runner"
+    for series in series_order(all_rows):
+        for label in TASK_ORDER:
+            rows = ranked(all_rows, label, series)
+            if series != STANDARD_SERIES and not rows:
+                continue
+            main, alt = metric_names(label)
+            headers = ["Rank", "Model", f"Score % ({main})", f"{alt} %", "Empty answers", "Questions",
+                       "Empty %", "Unparsed", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run"]
+            body = [[i, r["Model"], r["Score %"], r["Alt score %"], r["Empty answers"], r["Questions"],
+                     r["Empty %"], r["Unparsed"], r["Runtime"], r["Model file / tag"], r["Note"],
+                     r["Date"], r["Source"], r["Run"]] for i, r in enumerate(rows, 1)]
+            ws = _xlsx_sheet(wb, f"{label.split()[0]} ({series})", headers, body, "C2")
+            for col in "CD":
+                for cell in ws[col][1:]:
+                    cell.number_format = XLSX_FORMATS["Score %"]
+            for cell in ws["G"][1:]:
+                cell.number_format = XLSX_FORMATS["Empty %"]
+    titles = [t for t, _ in COLUMNS if t != "Key"]
+    everything = sorted(all_rows, key=lambda r: (r["Task"], r["Series"] or "~", -(r["Score %"] or 0)))
+    _xlsx_sheet(wb, "All results", titles, [[r.get(t) for t in titles] for r in everything], "C2")
+    notes = wb.create_sheet("Notes")
+    notes.append([f"Generated {generated} by eval-run publish. Same data as the Nextcloud Tables "
+                  f"table '{TABLE_TITLE}'. Analysis: findings.md."])
+    notes.append([])
+    for para in CAVEATS.replace("\n  ", " ").splitlines():
+        notes.append([para.replace("**", "").replace("`", "").lstrip("- ")])
+    notes.column_dimensions["A"].width = 120
+    for row in notes.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -338,7 +438,8 @@ def build_files(collected, findings_text, generated):
             json.dumps(render_manifest(source, run_dir, record, rows), indent=2) + "\n").encode()
         all_rows += rows
     files["leaderboard.md"] = render_leaderboard(all_rows, generated).encode()
-    files["leaderboard.csv"] = render_csv(all_rows).encode()
+    if openpyxl is not None:  # always installed in the image; selftest checks the file is there
+        files["leaderboard.xlsx"] = render_xlsx(all_rows, generated)
     if findings_text is not None:
         files["findings.md"] = findings_text.encode()
     return files, all_rows
@@ -392,6 +493,10 @@ class Nextcloud:
 
     def put_file(self, rel, content):
         self.request("PUT", self._dav(rel), raw=content, ok=(201, 204))
+
+    def delete_file(self, rel):
+        # 404 = already gone
+        self.request("DELETE", self._dav(rel), ok=(204, 404))
 
     # Tables
     def tables(self, method, path, body=None):
@@ -466,15 +571,15 @@ def upsert_rows(nc, table_id, col_ids, rows):
     return created, updated, unchanged
 
 
-def view_settings(col_ids, task, comparable_only):
+def view_settings(col_ids, task, required):
     """Body for PUT /views/{id}, in the shapes Tables 2.3's ViewUpdateInput
     accepts (read from its source): columnSettings [{columnId, order}],
     filter [[{columnId, operator, value}]] (groups OR-ed, entries AND-ed),
     sort [{columnId, mode: ASC|DESC}] -- real arrays, not JSON strings
     (the deprecated "columns" key breaks when given a string)."""
     filters = [{"columnId": col_ids["Task"], "operator": "is-equal", "value": task}]
-    if comparable_only:
-        filters.append({"columnId": col_ids["Comparable"], "operator": "is-equal", "value": "yes"})
+    filters += [{"columnId": col_ids[column], "operator": "is-equal", "value": value}
+                for column, value in required.items()]
     shown = [title for title, _ in COLUMNS if title != "Key"]
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
@@ -487,11 +592,11 @@ def ensure_views(nc, table_id, col_ids):
     """Create missing views, and (re)apply every view's settings each time,
     so a view left half-configured by an earlier failure gets repaired."""
     existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
-    for title, emoji, task, comparable_only in VIEWS:
+    for title, emoji, task, required in VIEWS:
         view_id = existing.get(title)
         if view_id is None:
             view_id = nc.tables("POST", f"/tables/{table_id}/views", {"title": title, "emoji": emoji})["id"]
-        nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, comparable_only)})
+        nc.tables("PUT", f"/views/{view_id}", {"data": view_settings(col_ids, task, required)})
 
 
 def table_layout(col_ids):
@@ -527,6 +632,9 @@ def publish(nc, files, rows, share_with=None):
         if parent:
             nc.ensure_folder(f"{FOLDER}/{parent}")
         nc.put_file(f"{FOLDER}/{rel}", files[rel])
+    for rel in STALE_FILES:
+        if rel not in files:
+            nc.delete_file(f"{FOLDER}/{rel}")
     table_id = ensure_table(nc)
     col_ids = ensure_columns(nc, table_id)
     counts = upsert_rows(nc, table_id, col_ids, rows)

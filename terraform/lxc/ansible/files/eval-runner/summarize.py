@@ -19,7 +19,15 @@ Historical results (the Ollama-era runs on framework, imported once into
 /results/_historical/<source-dir>/) are listed in a second section. Only
 results that are comparable with eval-runner's are shown: full runs
 (no --limit) with max_gen_toks=8192. Everything else is listed as
-excluded, with the reason (pilot, or the Bug 6 missing token cap).
+excluded, with the reason (pilot, the Bug 6 missing token cap, or a
+different token budget).
+
+Token budget series: a full run at a larger max_gen_toks (eval-run
+--max-gen-toks, e.g. 32768) is a separate series. (Smaller budgets are
+treated like Bug 6: truncation, not a series.) It is ranked only
+against other runs at the same budget, never against the 8192 series --
+a bigger budget lets reasoning models finish answers they'd otherwise
+lose, so the scores measure something different.
 """
 
 import argparse
@@ -67,9 +75,27 @@ def exclusion_reason(data):
     config = data.get("config", {})
     if config.get("limit") is not None:
         return f"pilot (limit {config['limit']:g})" if isinstance(config["limit"], (int, float)) else "pilot"
-    if _max_gen_toks(config.get("gen_kwargs")) != MAX_GEN_TOKS:
+    budget = _max_gen_toks(config.get("gen_kwargs"))
+    if budget is None or budget < MAX_GEN_TOKS:
         return f"no max_gen_toks={MAX_GEN_TOKS} (Bug 6 truncation risk)"
+    if budget != MAX_GEN_TOKS:
+        return f"token budget {budget} (separate {series_label(budget)} series)"
     return None
+
+
+def series_label(budget):
+    """8192 -> '8k', 32768 -> '32k', other values unchanged."""
+    return f"{budget // 1024}k" if budget % 1024 == 0 else str(budget)
+
+
+def series(data):
+    """The token-budget series a results file is ranked in ('8k', '32k', ...),
+    or None for pilots and runs without a token cap."""
+    config = data.get("config", {})
+    budget = _max_gen_toks(config.get("gen_kwargs"))
+    if config.get("limit") is not None or budget is None or budget < MAX_GEN_TOKS:
+        return None
+    return series_label(budget)
 
 
 def model_name(data):

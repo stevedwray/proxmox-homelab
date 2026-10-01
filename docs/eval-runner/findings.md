@@ -1,13 +1,14 @@
 # Model evaluation findings
 
-Hand-written analysis to read alongside the generated `leaderboard.md`
-and the Nextcloud Tables table **Model evaluations**. The numbers in those
+Hand-written analysis to read alongside the generated `leaderboard.xlsx`
+(or `leaderboard.md`) and the Nextcloud Tables table **Model
+evaluations**. The numbers in those
 come from `eval-run publish`; this file explains how far to trust them.
 The canonical copy is `docs/eval-runner/findings.md` in the repo. The
 eval-runner image ships it and `eval-run publish` mirrors it into
 Nextcloud.
 
-Last updated: 2026-10-01.
+Last updated: 2026-10-01 (32k series added).
 
 ## How results are produced
 
@@ -18,7 +19,8 @@ Last updated: 2026-10-01.
 - **Decoding.** Greedy: both task configs pin `temperature: 0`, overriding
   any server default. The seed is 1234.
 - **Token budget.** `max_gen_toks` is 8192 per answer, the same for every
-  historical result.
+  historical result. Runs at a larger budget (`--max-gen-toks 32768`)
+  form a separate **32k series**, ranked only among themselves.
 - **Historical results.** These were run on framework through Ollama in
   August–September 2026. New results come from `eval-runner` on
   `ai-services-stack`, against whatever llama-server serves.
@@ -52,9 +54,10 @@ Qwen3.8-27B responses stopped at exactly 8192 tokens.
   this. The questions a model finishes inside the budget are likely the
   easier ones, and they differ per model. That figure came out at an
   implausible 94.5% for Qwen3.8-27B, so it isn't comparable either.
-- The honest fix is a larger budget. That needs a decision: results at a
-  different budget aren't comparable with history, so both would need to
-  be kept and labelled.
+- The honest fix is a larger budget. Results at a different budget
+  aren't comparable with history, so they are kept as a separate,
+  labelled series: the 32k series (decided 2026-10-01). No 32k results
+  exist yet.
 
 ### 2. IFEval is far less affected
 
@@ -94,9 +97,9 @@ set the eval-battery doc treats as valid.
 
 ## Open questions
 
-- **Budget:** should new runs (GLM-5.3-Flash first) also be measured at a
-  larger budget, such as 32k, kept separate from the comparable 8192
-  series?
+- **Budget:** how much do the 32k-series scores differ from the 8k ones
+  for the same model? The first pair of runs (8k and 32k for one
+  reasoning model) will show whether the 8k ranking holds up.
 - **Comparability with history:** GLM-5.3-Flash runs on llama.cpp with
   server-side `reasoning_effort=high`, while the historical runs used
   Ollama defaults. A runtime or reasoning-mode difference is recorded per

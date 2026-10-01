@@ -9,7 +9,8 @@
             told to produce, and run.json carries a fingerprint and props.
   publish   After publishing twice to mock_nextcloud.py: one table with every
             column, the expected rows (no duplicates from the second
-            publish), both views, one share, and the report files.
+            publish), every view, one share, the report files including
+            leaderboard.xlsx, and the stale leaderboard.csv deleted.
 """
 
 import argparse
@@ -81,9 +82,16 @@ def publish_errors(state, expected_rows, run):
     if len(state["views"]) != len(publish.VIEWS) or len(state["shares"]) != 1:
         errors.append(f"expected {len(publish.VIEWS)} views and 1 share, got "
                       f"{len(state['views'])} and {len(state['shares'])}")
-    for rel in ("leaderboard.md", "leaderboard.csv", "findings.md", f"runs/{run}/report.md", f"runs/{run}/manifest.json"):
+    for rel in ("leaderboard.md", "leaderboard.xlsx", "findings.md", f"runs/{run}/report.md",
+                f"runs/{run}/manifest.json"):
         if f"{publish.FOLDER}/{rel}" not in state["files"]:
             errors.append(f"missing published file {rel}")
+    xlsx = state["files"].get(f"{publish.FOLDER}/leaderboard.xlsx", "")
+    if xlsx and not (xlsx.startswith("<binary") and xlsx.endswith(" zip>")):
+        errors.append(f"leaderboard.xlsx is not a zip container: {xlsx[:60]!r}")
+    for rel in publish.STALE_FILES:
+        if f"{publish.FOLDER}/{rel}" not in state.get("deleted", []):
+            errors.append(f"stale file {rel} was not deleted")
     if any("samples_" in name for name in state["files"]):
         errors.append("a samples file was published (GPQA questions must not leave the CT)")
     return errors

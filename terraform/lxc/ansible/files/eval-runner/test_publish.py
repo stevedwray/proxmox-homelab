@@ -2,7 +2,6 @@
 python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner -p "test_*.py"
 """
 
-import csv
 import io
 import json
 import os
@@ -11,6 +10,11 @@ import unittest
 
 import mock_nextcloud
 import publish
+
+try:
+    import openpyxl
+except ImportError:  # the image has it; locally: pip install openpyxl==3.1.5 in a venv
+    openpyxl = None
 import summarize
 from test_summarize import gpqa_rows, ifeval_rows, write_run
 
@@ -40,7 +44,11 @@ class FakeNextcloud:
 
     def put_file(self, rel, content):
         assert os.path.dirname(rel) in self.state["folders"], rel
-        self.state["files"][rel] = content.decode()
+        self.state["files"][rel] = mock_nextcloud.stored_content(content)
+
+    def delete_file(self, rel):
+        self.state["deleted"].append(rel)
+        self.state["files"].pop(rel, None)
 
     def tables(self, method, path, body=None):
         self.calls.append((method, path))
@@ -69,6 +77,13 @@ def make_tree(root):
     write_run(hist, "qwen36-35b", ["ifeval"], ifeval_rows=ifeval_rows(["x"]), run_json=False,
               config={"limit": None, "gen_kwargs": {}, "model_args": {"model": "eval-qwen36", "base_url": "http://f:11434/v1"}})
     return run_dir
+
+
+def add_32k_run(root):
+    """A full GPQA run at the 32k budget: its own series, not comparable with 8k."""
+    write_run(root, "glm-5.3-flash-gpqa-32k-20261003T000000Z", ["gpqa"], gpqa_rows=gpqa_rows(["(A)", "(B)"]),
+              run_json=False, config={"limit": None, "gen_kwargs": {"max_gen_toks": 32768},
+                                      "model_args": {"model": "glm-5.3-flash"}})
 
 
 class CollectTest(unittest.TestCase):
@@ -105,7 +120,9 @@ class RenderTest(unittest.TestCase):
 
     def test_expected_files(self):
         self.assertIn("leaderboard.md", self.files)
-        self.assertIn("leaderboard.csv", self.files)
+        self.assertNotIn("leaderboard.csv", self.files)
+        if openpyxl:
+            self.assertIn("leaderboard.xlsx", self.files)
         self.assertEqual(self.files["findings.md"], b"# findings\n")
         self.assertIn("runs/glm-5.3-flash-both-20261002T000000Z/report.md", self.files)
         self.assertIn("historical/qwen36-35b/manifest.json", self.files)
@@ -136,10 +153,59 @@ class RenderTest(unittest.TestCase):
             self.assertIn(key, manifest)
         self.assertEqual(manifest["project"], "eval-runner")
 
-    def test_csv_has_all_columns_and_rows(self):
-        reader = list(csv.DictReader(io.StringIO(self.files["leaderboard.csv"].decode())))
-        self.assertEqual(len(reader), 5)
-        self.assertEqual(list(reader[0].keys()), [t for t, _ in publish.COLUMNS])
+    def test_markdown_tables_stay_narrow(self):
+        for line in self.files["leaderboard.md"].decode().splitlines():
+            if line.startswith("|"):
+                self.assertLessEqual(line.count("|") - 1, 6, line)
+
+    @unittest.skipUnless(openpyxl, "openpyxl not installed")
+    def test_xlsx_sheets_rank_and_hold_every_row(self):
+        wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
+        self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "All results", "Notes"])
+        gpqa = wb["GPQA (8k)"]
+        self.assertEqual(gpqa["A1"].value, "Rank")
+        self.assertEqual(gpqa["B2"].value, "glm-5.3-flash")
+        self.assertEqual(gpqa["C2"].value, 50.0)
+        self.assertEqual(gpqa["C2"].number_format, '0.00"%"')
+        self.assertEqual(gpqa.freeze_panes, "C2")
+        self.assertIsNotNone(gpqa.auto_filter.ref)
+        everything = wb["All results"]
+        self.assertEqual(everything.max_row, 1 + len(self.rows))
+        self.assertEqual([c.value for c in everything[1]], [t for t, _ in publish.COLUMNS if t != "Key"])
+
+
+class SeriesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        make_tree(self.tmp.name)
+        add_32k_run(self.tmp.name)
+        self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), None, "NOW")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_32k_row_is_its_own_series(self):
+        row = next(r for r in self.rows if "32k" in r["Run"])
+        self.assertEqual((row["Series"], row["Comparable"], row["Token budget"]), ("32k", "no", 32768))
+        self.assertIn("separate 32k series", row["Why not comparable"])
+
+    def test_leaderboard_ranks_32k_separately(self):
+        board = self.files["leaderboard.md"].decode()
+        self.assertIn("## GPQA diamond: 32k token budget series, not comparable with 8k", board)
+        self.assertNotIn("## IFEval: 32k", board)
+        not_comparable = board.split("## Not comparable")[1]
+        self.assertNotIn("separate 32k series", not_comparable)
+
+    @unittest.skipUnless(openpyxl, "openpyxl not installed")
+    def test_xlsx_has_32k_sheet(self):
+        wb = openpyxl.load_workbook(io.BytesIO(self.files["leaderboard.xlsx"]))
+        self.assertEqual(wb.sheetnames, ["GPQA (8k)", "IFEval (8k)", "GPQA (32k)", "All results", "Notes"])
+        self.assertEqual(wb["GPQA (32k)"].max_row, 2)
+
+    def test_32k_views_filter_on_series(self):
+        col_ids = {t: i for i, (t, _) in enumerate(publish.COLUMNS)}
+        settings = publish.view_settings(col_ids, "GPQA diamond", {"Series": "32k"})
+        self.assertIn({"columnId": col_ids["Series"], "operator": "is-equal", "value": "32k"}, settings["filter"][0])
 
 
 class PublishTest(unittest.TestCase):
@@ -166,6 +232,7 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(len(view["columnSettings"]), len(publish.COLUMNS) - 1)
         self.assertEqual([s["receiver"] for s in state["shares"]], ["steve"])
         self.assertIn(f"{publish.FOLDER}/leaderboard.md", state["files"])
+        self.assertEqual(state["deleted"], [f"{publish.FOLDER}/leaderboard.csv"])
         table = state["tables"][0]
         key_id = next(c["id"] for c in state["columns"] if c["title"] == "Key")
         self.assertEqual(table["columnSettings"][0], {"columnId": key_id, "order": 0})
@@ -177,7 +244,7 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(counts, (0, 0, 5))
         state = self.nc.state
         self.assertEqual((len(state["tables"]), len(state["rows"]), len(state["views"]), len(state["shares"])),
-                         (1, 5, 2, 1))
+                         (1, 5, len(publish.VIEWS), 1))
 
     def test_half_configured_view_is_repaired(self):
         table_id, _ = publish.publish(self.nc, self.files, self.rows)
@@ -191,7 +258,7 @@ class PublishTest(unittest.TestCase):
         self.assertIsNotNone(mock_nextcloud.view_update_problem({"columns": "[1,2]"}))
         self.assertIsNotNone(mock_nextcloud.view_update_problem({"sort": [{"columnId": 1, "mode": "down"}]}))
         self.assertIsNone(mock_nextcloud.view_update_problem(publish.view_settings(
-            {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", True)))
+            {t: i for i, (t, _) in enumerate(publish.COLUMNS)}, "IFEval", {"Comparable": "yes"})))
 
     def test_changed_value_updates_in_place(self):
         publish.publish(self.nc, self.files, self.rows)

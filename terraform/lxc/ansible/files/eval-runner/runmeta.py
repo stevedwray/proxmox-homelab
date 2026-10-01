@@ -18,6 +18,11 @@ Server-side chat-template kwargs (for example llama-server's
 --chat-template-kwargs '{"reasoning_effort":"high"}') are not visible
 over the API, so they cannot be part of the fingerprint. Record them with
 --note.
+
+--max-gen-toks (default 8192, the budget every comparable result used)
+starts a separate token-budget series: the run name gets a -32k style
+suffix and summarize.py ranks it only against runs at the same budget.
+`start` refuses a budget the server's per-slot context can't hold.
 """
 
 import argparse
@@ -37,6 +42,13 @@ TASKS = {
 PILOT_LIMIT = 40
 MAX_GEN_TOKS = 8192
 REQUEST_TIMEOUT = 3600
+# Seconds per generated token allowed on top of REQUEST_TIMEOUT's floor:
+# 32768 tokens at the slowest decode seen on framework (~10 tok/s) needs
+# well over an hour.
+SECONDS_PER_TOKEN = 0.15
+# Prompt tokens the per-slot context must hold beyond max_gen_toks (GPQA's
+# longest prompt with the chat template is well under 1k tokens).
+PROMPT_HEADROOM = 2048
 PROPS_TOP = ("model_path", "model_alias", "build_info", "total_slots")
 PROPS_PARAMS = (
     "temperature", "top_k", "top_p", "min_p", "n_predict", "seed",
@@ -113,21 +125,42 @@ def safe_name(text):
     return re.sub(r"[^A-Za-z0-9_.-]", "-", text)
 
 
-def run_name(model_id, task, pilot, stamp):
-    parts = [safe_name(model_id), task] + (["pilot"] if pilot else []) + [stamp]
+def budget_suffix(max_gen_toks):
+    """'' for the standard budget, else '32k' style (matches summarize.series_label)."""
+    if max_gen_toks == MAX_GEN_TOKS:
+        return ""
+    return f"{max_gen_toks // 1024}k" if max_gen_toks % 1024 == 0 else str(max_gen_toks)
+
+
+def run_name(model_id, task, pilot, stamp, max_gen_toks=MAX_GEN_TOKS):
+    suffix = budget_suffix(max_gen_toks)
+    parts = [safe_name(model_id), task] + ([suffix] if suffix else []) + (["pilot"] if pilot else []) + [stamp]
     return "-".join(parts)
 
 
-def lm_eval_argv(base_url, model_id, tasks, concurrency, limit, run_dir):
+def request_timeout(max_gen_toks):
+    return max(REQUEST_TIMEOUT, int(max_gen_toks * SECONDS_PER_TOKEN))
+
+
+def context_problem(server, max_gen_toks):
+    """None if the server's per-slot context fits the budget (or is unknown), else why not."""
+    n_ctx = ((server.get("props") or {}).get("n_ctx"))
+    if isinstance(n_ctx, int) and n_ctx < max_gen_toks + PROMPT_HEADROOM:
+        return (f"server per-slot context {n_ctx} can't hold max_gen_toks {max_gen_toks} "
+                f"plus ~{PROMPT_HEADROOM} prompt tokens")
+    return None
+
+
+def lm_eval_argv(base_url, model_id, tasks, concurrency, limit, run_dir, max_gen_toks=MAX_GEN_TOKS):
     argv = [
         "lm_eval", "run",
         "--model", "local-chat-completions",
         "--model_args",
         f"base_url={base_url}/v1/chat/completions,model={model_id},"
-        f"num_concurrent={concurrency},tokenized_requests=False,timeout={REQUEST_TIMEOUT}",
+        f"num_concurrent={concurrency},tokenized_requests=False,timeout={request_timeout(max_gen_toks)}",
         "--tasks", ",".join(tasks),
         "--apply_chat_template", "--log_samples",
-        "--gen_kwargs", f"max_gen_toks={MAX_GEN_TOKS}",
+        "--gen_kwargs", f"max_gen_toks={max_gen_toks}",
     ]
     if limit:
         argv += ["--limit", str(limit)]
@@ -150,10 +183,10 @@ def _now_stamp():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
-def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root):
+def build_record(server, task, pilot, limit, concurrency, note, stamp, results_root, max_gen_toks=MAX_GEN_TOKS):
     if limit is None and pilot:
         limit = PILOT_LIMIT
-    name = run_name(server["model_id"], task, pilot, stamp)
+    name = run_name(server["model_id"], task, pilot, stamp, max_gen_toks)
     run_dir = os.path.join(results_root, name)
     return {
         "run": name,
@@ -162,12 +195,14 @@ def build_record(server, task, pilot, limit, concurrency, note, stamp, results_r
         "pilot": pilot,
         "limit": limit,
         "concurrency": concurrency,
+        "max_gen_toks": max_gen_toks,
         "note": note,
         "created_utc": stamp,
         "lm_eval_version": _lm_eval_version(),
         "server": server,
         "fingerprint": fingerprint(server),
-        "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir),
+        "lm_eval_argv": lm_eval_argv(server["base_url"], server["model_id"], TASKS[task], concurrency, limit, run_dir,
+                                     max_gen_toks),
     }, run_dir
 
 
@@ -178,9 +213,13 @@ def load_record(run_dir):
 
 def cmd_start(args):
     server = snapshot_server(args.base_url, os.environ.get("OPENAI_API_KEY", ""))
+    problem = context_problem(server, args.max_gen_toks)
+    if problem:
+        print(f"runmeta: {problem}", file=sys.stderr)
+        return 2
     record, run_dir = build_record(
         server, args.task, args.pilot, args.limit, args.concurrency, args.note,
-        args.stamp or _now_stamp(), args.results_root,
+        args.stamp or _now_stamp(), args.results_root, args.max_gen_toks,
     )
     os.makedirs(run_dir)  # fails loudly if the run already exists
     with open(os.path.join(run_dir, "run.json"), "w") as fh:
@@ -219,6 +258,7 @@ def main(argv=None):
     start.add_argument("--limit", type=int)
     start.add_argument("--concurrency", type=int, default=1)
     start.add_argument("--note", default="")
+    start.add_argument("--max-gen-toks", type=int, default=MAX_GEN_TOKS)
     start.add_argument("--stamp")
     start.add_argument("--results-root", default="/results")
 
@@ -235,6 +275,8 @@ def main(argv=None):
             parser.error("--base-url or LLM_BASE_URL is required")
         if args.concurrency < 1:
             parser.error("--concurrency must be >= 1")
+        if args.max_gen_toks < MAX_GEN_TOKS:
+            parser.error(f"--max-gen-toks below {MAX_GEN_TOKS} truncates reasoning models (Bug 6)")
         return cmd_start(args)
     if args.cmd == "exec":
         return cmd_exec(args)

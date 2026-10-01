@@ -22,7 +22,8 @@ WORKDIR /results
 # every GPQA/IFEval number in docs/framework/eval-battery-phase2-plan.md,
 # so new results stay comparable with the old ones. No torch/transformers:
 # the API model path doesn't need them. Not --only-binary: langdetect,
-# rouge-score, sqlitedict and word2number only ship as sdists.
+# rouge-score, sqlitedict and word2number only ship as sdists. openpyxl is
+# publish.py's (leaderboard.xlsx), not lm_eval's.
 RUN pip install --no-cache-dir \
       "aiohttp==3.14.3" \
       "datasets==5.0.1" \
@@ -30,6 +31,7 @@ RUN pip install --no-cache-dir \
       "langdetect==1.0.9" \
       "lm_eval[api,ifeval]==0.4.12" \
       "nltk==3.10.1" \
+      "openpyxl==3.1.5" \
       "tenacity==9.1.4"
 
 # Run setup (runmeta.py), scoring summary (summarize.py), Nextcloud

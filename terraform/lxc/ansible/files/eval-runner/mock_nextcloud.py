@@ -1,5 +1,5 @@
 """In-memory stand-in for the slice of Nextcloud that publish.py uses, for
-`eval-run selftest`: WebDAV MKCOL/PUT under /remote.php/dav/files/<user>/,
+`eval-run selftest`: WebDAV MKCOL/PUT/DELETE under /remote.php/dav/files/<user>/,
 and the Tables v1 API (tables, columns, rows, views, shares). Checks HTTP
 basic auth against MOCK_NC_USER / MOCK_NC_PASSWORD.
 
@@ -28,12 +28,21 @@ _ids = {"n": 0}
 def reset():
     """Empty all stored state (unit tests reuse route() in-process)."""
     STATE.clear()
-    STATE.update({"folders": [], "files": {}, "tables": [], "columns": [], "rows": [],
+    STATE.update({"folders": [], "files": {}, "deleted": [], "tables": [], "columns": [], "rows": [],
                   "views": [], "shares": [], "requests": 0})
     _ids["n"] = 0
 
 
 reset()
+
+
+def stored_content(body):
+    """Text files as text; anything else (leaderboard.xlsx) as a marker that
+    records its size and whether it's a zip container."""
+    try:
+        return body.decode()
+    except UnicodeDecodeError:
+        return f"<binary {len(body)} bytes{' zip' if body[:2] == b'PK' else ''}>"
 
 
 def _next_id():
@@ -180,10 +189,20 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(409, {"message": f"parent {parent} missing"})
                     return
                 existed = path in STATE["files"]
-                STATE["files"][path] = body.decode(errors="replace")
+                STATE["files"][path] = stored_content(body)
             self._send(204 if existed else 201)
             return
         self._tables("PUT", self._json())
+
+    def do_DELETE(self):  # noqa: N802
+        if not self._authorised():
+            return
+        path = self._dav_path()
+        with _lock:
+            STATE["requests"] += 1
+            STATE["deleted"].append(path)
+            existed = STATE["files"].pop(path, None) is not None
+        self._send(204 if existed else 404)
 
     def do_GET(self):  # noqa: N802
         if self.path == "/_mock/state":

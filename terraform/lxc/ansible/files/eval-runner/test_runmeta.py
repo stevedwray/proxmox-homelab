@@ -123,6 +123,46 @@ class RecordTest(unittest.TestCase):
         self.assertEqual(runmeta.safe_name("org/model:q4 x"), "org-model-q4-x")
 
 
+class BudgetTest(unittest.TestCase):
+    def setUp(self):
+        self.server = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get())
+
+    def test_32k_series_named_recorded_and_timed(self):
+        record, _ = runmeta.build_record(self.server, "gpqa", False, None, 1, "", "S", "/results", 32768)
+        self.assertEqual(record["run"], "glm-5.3-flash-gpqa-32k-S")
+        self.assertEqual(record["max_gen_toks"], 32768)
+        argv = record["lm_eval_argv"]
+        self.assertEqual(argv[argv.index("--gen_kwargs") + 1], "max_gen_toks=32768")
+        self.assertIn(f"timeout={runmeta.request_timeout(32768)}", argv[argv.index("--model_args") + 1])
+        self.assertGreater(runmeta.request_timeout(32768), runmeta.REQUEST_TIMEOUT)
+
+    def test_standard_budget_keeps_old_name_and_timeout(self):
+        record, _ = runmeta.build_record(self.server, "gpqa", True, None, 1, "", "S", "/results")
+        self.assertEqual(record["run"], "glm-5.3-flash-gpqa-pilot-S")
+        self.assertEqual(record["max_gen_toks"], runmeta.MAX_GEN_TOKS)
+        self.assertEqual(runmeta.request_timeout(runmeta.MAX_GEN_TOKS), runmeta.REQUEST_TIMEOUT)
+
+    def test_context_too_small_refused(self):
+        small = copy.deepcopy(PROPS)
+        small["default_generation_settings"]["n_ctx"] = 32768
+        server = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get(props=small))
+        self.assertIsNotNone(runmeta.context_problem(server, 32768))
+        self.assertIsNone(runmeta.context_problem(server, 8192))
+        no_props = runmeta.snapshot_server("http://f:8080", "k", get_json=fake_get(props=None))
+        self.assertIsNone(runmeta.context_problem(no_props, 32768))
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(runmeta, "_get_json", fake_get(props=small)), \
+                    mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+                rc = runmeta.main(["start", "--base-url", "http://f:8080", "--task", "gpqa", "--stamp", "S",
+                                   "--results-root", root, "--max-gen-toks", "32768"])
+            self.assertEqual(rc, 2)
+            self.assertEqual(os.listdir(root), [])
+
+    def test_budget_below_standard_rejected(self):
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            runmeta.main(["start", "--base-url", "http://f:8080", "--task", "gpqa", "--max-gen-toks", "4096"])
+
+
 class CommandTest(unittest.TestCase):
     def test_start_then_check_and_changed_exit_code(self):
         with tempfile.TemporaryDirectory() as root:

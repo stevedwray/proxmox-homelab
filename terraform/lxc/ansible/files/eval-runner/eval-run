@@ -13,7 +13,7 @@ HF_VOLUME=eval-runner-hf:/home/app/.cache/huggingface
 
 usage() {
   cat <<'USAGE'
-Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--note TEXT]
+Usage: eval-run <gpqa|ifeval> [--pilot] [--concurrency N] [--max-gen-toks N] [--note TEXT]
        eval-run resume <run> [--force]
        eval-run selftest
        eval-run results [run...]
@@ -24,6 +24,11 @@ gpqa|ifeval  Start one detached run (container eval-<run>) against the model
              hours -- check nothing else needs it first.
   --pilot          40 examples (--limit 40) instead of the full task
   --concurrency N  parallel requests (default 1, as every historical result)
+  --max-gen-toks N token budget per answer (default 8192, the budget every
+                   comparable result used). A larger one, e.g. 32768, starts
+                   a separate series (run name gets -32k), ranked only
+                   against runs at the same budget. Expect several times
+                   the 8192 run's duration.
   --note TEXT      stored in run.json. Use it for server settings the API
                    can't show, e.g. "reasoning_effort=high"
 resume       Re-run an interrupted run. Answers already received are
@@ -34,7 +39,7 @@ selftest     Exercise the whole harness against a stand-in server inside
              the image (no Framework, no GPU). Exits non-zero on failure.
 results      Headline scores and response-quality flags per run.
 publish      Push everything (eval-runner runs + historical) to Nextcloud:
-             Reports/eval-runner/ (leaderboard.md/.csv, findings.md, one
+             Reports/eval-runner/ (leaderboard.xlsx/.md, findings.md, one
              report.md + manifest.json per run) and the Tables table
              "Model evaluations" (rows upserted, never duplicated).
              --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
@@ -84,21 +89,23 @@ cmd_start() {
   local short="$1"
   shift
   local -a extra=()
-  local concurrency=1 note=""
+  local concurrency=1 note="" max_gen_toks=8192
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --pilot) extra+=(--pilot); shift ;;
       --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
+      --max-gen-toks) max_gen_toks="${2:?--max-gen-toks needs a value}"; shift 2 ;;
       --note) note="${2?--note needs a value}"; shift 2 ;;
       *) usage >&2; exit 2 ;;
     esac
   done
   [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+  [[ "$max_gen_toks" =~ ^[1-9][0-9]*$ ]] || die "--max-gen-toks must be a positive integer"
   refuse_if_running
 
   local run
   run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
-    --concurrency "$concurrency" --note "$note")
+    --concurrency "$concurrency" --max-gen-toks "$max_gen_toks" --note "$note")
   launch "$run"
   if [[ -z "$note" ]]; then
     echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
