@@ -3980,6 +3980,13 @@ change: |
 
     Resuming re-runs only the episodes not yet in runs.jsonl (AgentBench's
     assigner does this itself for an existing output folder).
+
+    The final overall.json can be missed: the worker's 8 s heartbeat stalls
+    while a sandbox is torn down (`docker stop` waits out bash's 10 s), the
+    controller marks it dead after 11 s, and the assigner's closing
+    calculate_overall call fails with "No workers available". The episodes are
+    unaffected; the wrapper then waits for the heartbeat and re-runs the
+    assigner, which (all episodes done) sends no requests and only recalculates.
     """
 
     import json
@@ -4006,6 +4013,8 @@ change: |
     SERIES = "100 seeded"
     CONTROLLER = "http://localhost:5000/api"
     FAILED_STATUSES = ("unknown", "task error")
+    OVERALL_ATTEMPTS = 3
+    HEARTBEAT_WAIT = 20  # seconds; > the controller's 11 s heartbeat tolerance
 
 
     def agent_config(chat_url, model_id):
@@ -4118,15 +4127,23 @@ change: |
                    AGENTBENCH_SAMPLE_SEED=str(SAMPLE_SEED))
         server = subprocess.Popen([sys.executable, "-m", "src.start_task", "-a"], cwd=AGENTBENCH_ROOT, env=env,
                                   start_new_session=True)
+        task_dir = os.path.join(output_dir, AGENT, AB_TASK)
         try:
             wait_for_worker()
-            subprocess.run([sys.executable, "-m", "src.assigner", "--config", assignment_file],
-                           cwd=AGENTBENCH_ROOT, env=env, check=True)
+            for attempt in range(OVERALL_ATTEMPTS):
+                subprocess.run([sys.executable, "-m", "src.assigner", "--config", assignment_file],
+                               cwd=AGENTBENCH_ROOT, env=env, check=True)
+                if os.path.exists(os.path.join(task_dir, "overall.json")):
+                    break
+                print(f"agentbench_run: no overall.json yet (attempt {attempt + 1}); waiting "
+                      f"{HEARTBEAT_WAIT}s for the worker heartbeat, then recalculating")
+                time.sleep(HEARTBEAT_WAIT)
+            else:
+                raise RuntimeError(f"AgentBench never wrote overall.json after {OVERALL_ATTEMPTS} attempts")
         finally:
             os.killpg(server.pid, signal.SIGTERM)
             server.wait(timeout=60)
 
-        task_dir = os.path.join(output_dir, AGENT, AB_TASK)
         with open(os.path.join(task_dir, "overall.json")) as fh:
             overall = json.load(fh)["custom"]["overall"]
         runs_path = os.path.join(task_dir, "runs.jsonl")
@@ -4158,7 +4175,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/agentbench_run.py | cut -d' ' -f1"
-    expect: "b137117d517a84e3247850f3722e28ef0aa755447607f69938908614fd0f5520"
+    expect: "fe3820782709346cadf1790cdd112b58cfe58b2cfd6b5dc3198bc2ec5370345b"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/agentbench_run.py && echo OK"
