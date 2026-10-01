@@ -230,8 +230,14 @@
           ENV MALTEGO_MCP_OUTPUT_DIR=/home/app/MaltegoGraphs
           RUN mkdir -p /home/app/MaltegoGraphs && chown -R app:app /home/app
           USER app
-          ENTRYPOINT ["node"]
-          CMD ["dist/mcp-server.js"]
+          # No ENTRYPOINT ["node"] -- found live 2026-10-02: with it, `docker
+          # compose run --rm maltego-mcp node phase1-expand-domain.mjs ...`
+          # doubled up into `node node phase1-expand-domain.mjs`, which
+          # tried (and failed) to run a file literally named "node". A bare
+          # CMD lets `docker compose run` fully override it with the real
+          # command (e.g. `docker compose run --rm maltego-mcp node
+          # phase1-expand-domain.mjs <domain> <outputFileName>`).
+          CMD ["node", "dist/mcp-server.js"]
 
     - name: Write maltego-mcp Phase 1 driver script
       ansible.builtin.copy:
