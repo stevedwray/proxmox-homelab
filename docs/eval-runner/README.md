@@ -1,9 +1,12 @@
 # eval-runner
 
-Status: **deployed to pve-tiny (2026-10-01). The infrastructure path is
-proven up to lm_eval sending requests to Framework. No scored pilot yet:
-the IFEval pilot was stopped at operator request. Run a pilot when
-Framework's GPU is free for it.**
+Status: **done and in place on pve-tiny (2026-10-01).** Every plan step is
+applied, and all 19 plan gates pass against the branch. The deploy runs a
+GPU-free self-test (`eval-run selftest`), which passes. No real scored run
+against Framework has been made yet; that is a separate operator decision,
+because it occupies the GPU for hours. Branch `task/eval-runner` is not
+yet merged to `stable`.
+
 
 Runs the eval battery's lm_eval tests (GPQA, IFEval) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -23,8 +26,10 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
 | eval-runner-03-eval-run-script | done 2026-10-01, all critical gates pass |
 | eval-runner-04-playbook-play | done 2026-10-01, all critical gates pass |
 | eval-runner-05-battery-doc-pointer | done 2026-10-01, all critical gates pass |
-| Operator: deploy to pve-tiny | done 2026-10-01, second attempt (`failed=0`); first attempt failed on the image build, fixed in `156fc493` |
-| Operator: smoke test (IFEval + GPQA pilots) | partial: request path proven, no completed pilot (stopped, see below) |
+| eval-runner-06a/b/c (selftest server, script, summariser) | done 2026-10-01, all critical gates pass |
+| eval-runner-07-stack-yaml-pointer | done 2026-10-01, all critical gates pass |
+| Operator: deploy to pve-tiny | done 2026-10-01. Third deploy (`2793ec09`) is current: `failed=0`, self-test OK |
+| Smoke test | replaced by the deploy-time `eval-run selftest` (passes). A real pilot against Framework is optional, operator's call |
 
 ## Hand-backs
 
@@ -94,3 +99,43 @@ IFEval answer from GLM-5.3-Flash ran to 6,387 tokens. Sharing the server
 with another client roughly halves per-request speed (10 vs ~18 tok/s).
 Budget a couple of hours for a 40-prompt pilot, and run it when nothing
 else is using Framework.
+
+### 2026-10-01: GPU-free self-test, results summary, non-root image
+
+Operator direction: build the harness out thoroughly and put it in place,
+without running GPU jobs. Added in `2793ec09`:
+
+- **`eval-run selftest`:** runs `mock_openai.py` (a stdlib stand-in
+  OpenAI server, `127.0.0.1:18080`) inside the image, then both tasks at
+  `--limit 2` with the real run's lm_eval flags. `summarize.py --check`
+  is the pass/fail. The deploy runs it as a gate.
+- **`eval-run results`:** headline GPQA (flex/strict) and IFEval
+  (prompt strict/loose) per run. Checked locally against framework's
+  historical Qwen3.6-35B `results_*.json`, where it reproduces 57.07% and
+  90.39%/91.87%. `--check` correctly fails a GPQA-only directory.
+- **Non-root image (uid 1000):** the results directory is chowned to 1000
+  (that uid is the CT's existing `automation` account), and the HF cache
+  moved to the `eval-runner-hf` volume. The old root-owned
+  `eval-runner-hf-cache` volume is removed by the play.
+- **Sorted pip pins**, plus a comment on why `--only-binary` isn't
+  possible (Sonar S7018/S8541). The "2 high vulnerabilities" Sonar flag
+  is in the `python:3.12-slim` base image, which deep-research uses too.
+  Not addressed here.
+- **A pointer in `ai-services-stack/stack.yaml`'s header comment.**
+
+Deploy: `ok=105 changed=11 failed=0 ignored=1` (the usual
+`192.168.20.11:443` check). The self-test summary was `GPQA flex 0.00%,
+GPQA strict 0.00%, n=2, IFEval p-strict 50.00%, IFEval p-loose 50.00%,
+n=2` / `selftest OK`. These scores are meaningless (canned replies). What
+counts is that the gated GPQA dataset downloaded as the non-root user and
+both tasks scored.
+
+Manual checks on the CT afterwards:
+- `eval-run --help` works, and `eval-run results` prints `no runs yet`.
+- A second self-test takes 15 s with cached datasets.
+- The `samples_ifeval_*.jsonl` response is the mock's reply, so the
+  request path works end to end.
+- No leftover `eval-*` containers.
+
+`plan.md` was regenerated so its literal content and hashes match the
+deployed files. All 19 gates were re-run against the branch and pass.
