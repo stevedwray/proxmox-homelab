@@ -463,3 +463,36 @@ sandbox image, the historical importer, and 70 unit tests passing.
   - 7 views, each with two filters;
   - `leaderboard.xlsx`, `leaderboard.md` and `findings.md` in the
     folder, and no CSV.
+
+### 2026-10-02: first real smoke runs (GLM-5.3-Flash)
+
+**Operator go-ahead:** Framework is quiet, so run brief smoke tests to
+produce real data for the reports.
+
+**Change:** commit `9d5b7a97`.
+- `eval-run --limit N` for smoke runs.
+- A "Recent eval-runner runs" Tables view listing every eval-runner run,
+  newest first. Pilots and smoke runs never rank, so the ranked views
+  hide them.
+- Deployed by running only the eval-runner play (`--start-at-task`)
+  under `eval-runner-smoke`. All selftests OK.
+
+**Runs:** against `glm-5.3-flash` (llama.cpp, `reasoning_effort=high`),
+all exit 0, in 32 minutes total:
+
+| Run | Size | Score | Time | Notes |
+|---|---|---|---|---|
+| BFCL | 10 cases | 80% | 1 min | |
+| IFEval | 10 prompts | 60% strict | 13 min | 1 empty answer |
+| GPQA | 5 questions | 80% flexible-extract | 3 min | reasoning goes to llama-server's separate reasoning field, so answers are short |
+| AgentBench | 3 episodes | 33% | 4 min | |
+| RepoBench | 15 completions | EM 66.67% / ES 83.0 | 11 min | |
+
+**Gotcha found:** the first eval-runner-only deploy ran the secrets
+wrapper from the main checkout. That checkout was on another branch,
+whose `secrets/manifest.json` lacks `NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`,
+so the env file got an empty password and `publish` refused to run.
+
+**Fixed:** re-ran the play from the `task/eval-runner` worktree, then
+published (71 files, 5 rows created). Verified through the API that the
+new view is shared with steve and holds the 5 rows.
