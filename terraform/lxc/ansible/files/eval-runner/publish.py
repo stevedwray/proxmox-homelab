@@ -102,18 +102,28 @@ COLUMNS = [
 ]
 
 VIEWS = [
-    # (title, emoji, task label, {column: required value})
-    ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
-    ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
-    ("Comparable: BFCL", "🔧", "BFCL simple", {"Comparable": "yes"}),
-    ("Comparable: AgentBench", "🤖", "AgentBench os-std", {"Comparable": "yes"}),
-    ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
-    ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
-    ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
-    # Every eval-runner run, newest first -- including smoke tests and
-    # pilots, which the ranked views leave out.
+    # (title, emoji, task label or None for all, {column: required value}).
+    # Per-benchmark views show every result for that benchmark (operator,
+    # 2026-10-02: smoke runs must be visible there too); comparable full
+    # runs sort first, by score, and the Comparable column says which.
+    ("GPQA", "\U0001F9E0", "GPQA diamond", {}),
+    ("IFEval", "\U0001F4CB", "IFEval", {}),
+    ("BFCL", "\U0001F527", "BFCL simple", {}),
+    ("AgentBench", "\U0001F916", "AgentBench os-std", {}),
+    ("RepoBench (rebuilt)", "\U0001F4BB", "RepoBench (rebuilt)", {}),
+    ("32k budget: GPQA", "\u23F3", "GPQA diamond", {"Series": "32k"}),
+    ("32k budget: IFEval", "\u23F3", "IFEval", {"Series": "32k"}),
+    # Every eval-runner run, newest first.
     ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
 ]
+# Earlier view titles, renamed in place on publish (same view id, so
+# shares and any manual tweaks survive).
+RENAMED_VIEWS = {
+    "Comparable: GPQA": "GPQA",
+    "Comparable: IFEval": "IFEval",
+    "Comparable: BFCL": "BFCL",
+    "Comparable: AgentBench": "AgentBench",
+}
 
 
 
@@ -642,7 +652,8 @@ def upsert_rows(nc, table_id, col_ids, rows):
 # What a ranked view shows (operator, 2026-10-01: the full 20-column table
 # with the internal Key first was unreadable). The rest stays in the base
 # table.
-VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Runtime", "Note",
+                "Date"]
 RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
                      "Comparable", "Why not comparable", "Note", "Run"]
 # The base table's column order: what a person reads first, the internal
@@ -666,7 +677,9 @@ def view_settings(col_ids, task, required):
     else:
         has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
         shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
-        sort = [{"columnId": col_ids["Score %"], "mode": "DESC"}]
+        # "yes" sorts after "no", so DESC puts comparable full runs first.
+        sort = [{"columnId": col_ids["Comparable"], "mode": "DESC"},
+                {"columnId": col_ids["Score %"], "mode": "DESC"}]
     return {
         "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
         "filter": [filters],
@@ -678,6 +691,10 @@ def ensure_views(nc, table_id, col_ids):
     """Create missing views, and (re)apply every view's settings each time,
     so a view left half-configured by an earlier failure gets repaired."""
     existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
+    for old, new in RENAMED_VIEWS.items():
+        if old in existing and new not in existing:
+            nc.tables("PUT", f"/views/{existing[old]}", {"data": {"title": new}})
+            existing[new] = existing.pop(old)
     for title, emoji, task, required in VIEWS:
         view_id = existing.get(title)
         if view_id is None:

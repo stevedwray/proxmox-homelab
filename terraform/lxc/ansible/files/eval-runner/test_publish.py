@@ -249,11 +249,13 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(len(state["rows"]), 5)
         self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
         titles = {c["id"]: c["title"] for c in state["columns"]}
-        gpqa = next(v for v in state["views"] if v["title"] == "Comparable: GPQA")
-        self.assertEqual(gpqa["filter"][0][0]["operator"], "is-equal")
+        gpqa = next(v for v in state["views"] if v["title"] == "GPQA")
+        self.assertEqual(gpqa["filter"], [[{"columnId": next(i for i, t in titles.items() if t == "Task"),
+                                             "operator": "is-equal", "value": "GPQA diamond"}]])
         self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
-        self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
-        bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
+        self.assertEqual([(titles[r["columnId"]], r["mode"]) for r in gpqa["sort"]],
+                         [("Comparable", "DESC"), ("Score %", "DESC")])
+        bfcl = next(v for v in state["views"] if v["title"] == "BFCL")
         self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
         runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
         self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
@@ -288,6 +290,16 @@ class PublishTest(unittest.TestCase):
         publish.publish(self.nc, self.files, self.rows, share_with="steve")
         self.assertTrue(table_share["permissionManage"])
         self.assertEqual(len(self.nc.state["shares"]), 1 + len(publish.VIEWS))
+
+    def test_old_view_titles_are_renamed_in_place(self):
+        table_id = publish.ensure_table(self.nc)
+        col_ids = publish.ensure_columns(self.nc, table_id)
+        old = self.nc.tables("POST", f"/tables/{table_id}/views", {"title": "Comparable: GPQA", "emoji": "x"})
+        publish.ensure_views(self.nc, table_id, col_ids)
+        titles = [v["title"] for v in self.nc.state["views"]]
+        self.assertEqual(len(titles), len(publish.VIEWS))
+        self.assertNotIn("Comparable: GPQA", titles)
+        self.assertEqual(next(v for v in self.nc.state["views"] if v["id"] == old["id"])["title"], "GPQA")
 
     def test_half_configured_view_is_repaired(self):
         table_id, _ = publish.publish(self.nc, self.files, self.rows)

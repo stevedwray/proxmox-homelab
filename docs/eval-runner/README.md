@@ -496,3 +496,29 @@ so the env file got an empty password and `publish` refused to run.
 **Fixed:** re-ran the play from the `task/eval-runner` worktree, then
 published (71 files, 5 rows created). Verified through the API that the
 new view is shared with steve and holds the 5 rows.
+
+### 2026-10-02: report and Tables usability fixes (from the operator's first look)
+
+Everything below was regenerated from stored results; nothing was rerun.
+Each fix was applied by one `publish` run with the new `publish.py`
+mounted. The images pick it up at the next eval-runner deploy.
+
+- **Markdown:** no table is wider than 4 columns (Nextcloud scrolls wider
+  ones), and a test enforces it.
+  - Run reports have one Metric | Value table per benchmark.
+  - Leaderboard ranks show `# | Model | Score | Empty`.
+  - Non-comparable results are a bullet list.
+  - New "Latest eval-runner runs" section at the top.
+- **Report header:** readable start time, rounded sampling parameters,
+  and a harness line that's correct for every benchmark.
+- **Views vanishing from the sidebar:** this is a Tables 2.3.1 UI race.
+  Tables and shared views load in parallel, and the tables reply
+  overwrites the view list. The table share now carries manage
+  permission, so the views come with the table. Existing shares are
+  upgraded on publish.
+- **Smoke runs missing from the per-benchmark views:** those views were
+  full-runs-only.
+  - They are renamed in place (same ids) to just GPQA, IFEval, BFCL,
+    AgentBench and RepoBench (rebuilt).
+  - Each now shows every result for its benchmark, with a Comparable
+    column; comparable runs sort first, then by score.

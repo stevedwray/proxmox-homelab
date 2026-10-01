@@ -60,8 +60,11 @@ harness has to be verifiable without using Framework's GPU.
 - **Results go to Nextcloud (operator request, 2026-10-01).** This uses
   Nextcloud Tables, not an office suite. There is one table, "Model
   evaluations": one row per (run, task), upserted by a Key column. It has
-  saved views "Comparable: GPQA", "Comparable: IFEval" and the two
-  "32k budget" views, and is shared read-only with `steve`.
+  one view per benchmark (GPQA, IFEval, BFCL, AgentBench, RepoBench),
+  showing every result for it with comparable full runs first, plus two
+  "32k budget" views and "Recent eval-runner runs". It is shared with
+  `steve` with manage permission, which keeps the views in the sidebar
+  (a Tables 2.3.1 UI race otherwise drops them).
   - Files: per-run `report.md` and `manifest.json` (the reporting
     `CONVENTION.md`), plus `leaderboard.xlsx`, `leaderboard.md` and
     `findings.md`, under `Reports/eval-runner/`. The folder is shared to
@@ -2408,18 +2411,28 @@ change: |
     ]
 
     VIEWS = [
-        # (title, emoji, task label, {column: required value})
-        ("Comparable: GPQA", "🧠", "GPQA diamond", {"Comparable": "yes"}),
-        ("Comparable: IFEval", "📋", "IFEval", {"Comparable": "yes"}),
-        ("Comparable: BFCL", "🔧", "BFCL simple", {"Comparable": "yes"}),
-        ("Comparable: AgentBench", "🤖", "AgentBench os-std", {"Comparable": "yes"}),
-        ("RepoBench (rebuilt)", "💻", "RepoBench (rebuilt)", {"Comparable": "yes"}),
-        ("32k budget: GPQA", "⏳", "GPQA diamond", {"Series": "32k"}),
-        ("32k budget: IFEval", "⏳", "IFEval", {"Series": "32k"}),
-        # Every eval-runner run, newest first -- including smoke tests and
-        # pilots, which the ranked views leave out.
+        # (title, emoji, task label or None for all, {column: required value}).
+        # Per-benchmark views show every result for that benchmark (operator,
+        # 2026-10-02: smoke runs must be visible there too); comparable full
+        # runs sort first, by score, and the Comparable column says which.
+        ("GPQA", "\U0001F9E0", "GPQA diamond", {}),
+        ("IFEval", "\U0001F4CB", "IFEval", {}),
+        ("BFCL", "\U0001F527", "BFCL simple", {}),
+        ("AgentBench", "\U0001F916", "AgentBench os-std", {}),
+        ("RepoBench (rebuilt)", "\U0001F4BB", "RepoBench (rebuilt)", {}),
+        ("32k budget: GPQA", "\u23F3", "GPQA diamond", {"Series": "32k"}),
+        ("32k budget: IFEval", "\u23F3", "IFEval", {"Series": "32k"}),
+        # Every eval-runner run, newest first.
         ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
     ]
+    # Earlier view titles, renamed in place on publish (same view id, so
+    # shares and any manual tweaks survive).
+    RENAMED_VIEWS = {
+        "Comparable: GPQA": "GPQA",
+        "Comparable: IFEval": "IFEval",
+        "Comparable: BFCL": "BFCL",
+        "Comparable: AgentBench": "AgentBench",
+    }
 
 
 
@@ -2948,7 +2961,8 @@ change: |
     # What a ranked view shows (operator, 2026-10-01: the full 20-column table
     # with the internal Key first was unreadable). The rest stays in the base
     # table.
-    VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Empty answers", "Questions", "Runtime", "Note", "Date"]
+    VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Runtime", "Note",
+                    "Date"]
     RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
                          "Comparable", "Why not comparable", "Note", "Run"]
     # The base table's column order: what a person reads first, the internal
@@ -2972,7 +2986,9 @@ change: |
         else:
             has_alt = TASK_LABELS[TASK_BY_LABEL[task]][2] is not None
             shown = [title for title in VIEW_COLUMNS if has_alt or title != "Alt score %"]
-            sort = [{"columnId": col_ids["Score %"], "mode": "DESC"}]
+            # "yes" sorts after "no", so DESC puts comparable full runs first.
+            sort = [{"columnId": col_ids["Comparable"], "mode": "DESC"},
+                    {"columnId": col_ids["Score %"], "mode": "DESC"}]
         return {
             "columnSettings": [{"columnId": col_ids[title], "order": i} for i, title in enumerate(shown)],
             "filter": [filters],
@@ -2984,6 +3000,10 @@ change: |
         """Create missing views, and (re)apply every view's settings each time,
         so a view left half-configured by an earlier failure gets repaired."""
         existing = {v["title"]: v["id"] for v in nc.tables("GET", f"/tables/{table_id}/views") or []}
+        for old, new in RENAMED_VIEWS.items():
+            if old in existing and new not in existing:
+                nc.tables("PUT", f"/views/{existing[old]}", {"data": {"title": new}})
+                existing[new] = existing.pop(old)
         for title, emoji, task, required in VIEWS:
             view_id = existing.get(title)
             if view_id is None:
@@ -3110,7 +3130,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/publish.py | cut -d' ' -f1"
-    expect: "b5f89898ff6e0a36aeb746322adfa43a6e650b80de052592df969500251b2d6a"
+    expect: "f554fd303cd0f4b24ebcb5e6584f59afec71d89cadecf4dc688326af266f705d"
     critical: true
   - id: compiles
     cmd: "python3 -m py_compile terraform/lxc/ansible/files/eval-runner/publish.py && echo OK"
@@ -3673,11 +3693,13 @@ change: |
             self.assertEqual(len(state["rows"]), 5)
             self.assertEqual({v["title"] for v in state["views"]}, {v[0] for v in publish.VIEWS})
             titles = {c["id"]: c["title"] for c in state["columns"]}
-            gpqa = next(v for v in state["views"] if v["title"] == "Comparable: GPQA")
-            self.assertEqual(gpqa["filter"][0][0]["operator"], "is-equal")
+            gpqa = next(v for v in state["views"] if v["title"] == "GPQA")
+            self.assertEqual(gpqa["filter"], [[{"columnId": next(i for i, t in titles.items() if t == "Task"),
+                                                 "operator": "is-equal", "value": "GPQA diamond"}]])
             self.assertEqual([titles[c["columnId"]] for c in gpqa["columnSettings"]], publish.VIEW_COLUMNS)
-            self.assertEqual(titles[gpqa["sort"][0]["columnId"]], "Score %")
-            bfcl = next(v for v in state["views"] if v["title"] == "Comparable: BFCL")
+            self.assertEqual([(titles[r["columnId"]], r["mode"]) for r in gpqa["sort"]],
+                             [("Comparable", "DESC"), ("Score %", "DESC")])
+            bfcl = next(v for v in state["views"] if v["title"] == "BFCL")
             self.assertNotIn("Alt score %", [titles[c["columnId"]] for c in bfcl["columnSettings"]])
             runs = next(v for v in state["views"] if v["title"] == "Recent eval-runner runs")
             self.assertEqual([titles[c["columnId"]] for c in runs["columnSettings"]], publish.RUNS_VIEW_COLUMNS)
@@ -3712,6 +3734,16 @@ change: |
             publish.publish(self.nc, self.files, self.rows, share_with="steve")
             self.assertTrue(table_share["permissionManage"])
             self.assertEqual(len(self.nc.state["shares"]), 1 + len(publish.VIEWS))
+
+        def test_old_view_titles_are_renamed_in_place(self):
+            table_id = publish.ensure_table(self.nc)
+            col_ids = publish.ensure_columns(self.nc, table_id)
+            old = self.nc.tables("POST", f"/tables/{table_id}/views", {"title": "Comparable: GPQA", "emoji": "x"})
+            publish.ensure_views(self.nc, table_id, col_ids)
+            titles = [v["title"] for v in self.nc.state["views"]]
+            self.assertEqual(len(titles), len(publish.VIEWS))
+            self.assertNotIn("Comparable: GPQA", titles)
+            self.assertEqual(next(v for v in self.nc.state["views"] if v["id"] == old["id"])["title"], "GPQA")
 
         def test_half_configured_view_is_repaired(self):
             table_id, _ = publish.publish(self.nc, self.files, self.rows)
@@ -3786,7 +3818,7 @@ scope:
 gates:
   - id: exact-content
     cmd: "sha256sum terraform/lxc/ansible/files/eval-runner/test_publish.py | cut -d' ' -f1"
-    expect: "f308047ca7ea3b451020f736e0db615248565dc00173f5e509f88f6d10814ef5"
+    expect: "7c2f221775d8936d15360e2cff302cb14ffb247efe25b009763a1fb39f977b7f"
     critical: true
   - id: unit-tests
     cmd: "python3 -m unittest discover -s terraform/lxc/ansible/files/eval-runner/ -p 'test_*.py' 2>&1 | tail -1"
