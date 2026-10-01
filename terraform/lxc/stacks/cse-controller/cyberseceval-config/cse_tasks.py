@@ -391,16 +391,50 @@ def _extract_prompt_text(raw: str, language: str | None = None) -> str:
             if depth == 0:
                 end = idx
                 break
-    if end is None:
-        return raw
-    try:
-        obj = json.loads(raw[: end + 1])
-    except json.JSONDecodeError:
-        return raw
-    if not isinstance(obj, dict) or "prompt" not in obj:
-        return raw
-    trailing = raw[end + 1:].strip()
-    return f"{obj['prompt']}\n\n{trailing}" if trailing else obj["prompt"]
+    if end is not None:
+        try:
+            # strict=False: PurpleLlama's dataset doesn't consistently
+            # escape literal newlines inside the "prompt" string value --
+            # strict (default) JSON rejects raw control characters in
+            # strings, confirmed live 2026-10-03 as the reason a
+            # seemingly well-formed, balanced-brace prompt still fell
+            # back to showing raw braces.
+            obj = json.loads(raw[: end + 1], strict=False)
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict) and "prompt" in obj:
+            trailing = raw[end + 1:].strip()
+            return f"{obj['prompt']}\n\n{trailing}" if trailing else obj["prompt"]
+    # Some dataset entries aren't valid JSON at all even once balanced --
+    # confirmed live 2026-10-03: a stray ")" and a missing comma before a
+    # second "description" key (not something this codebase can fix,
+    # it's upstream PurpleLlama dataset content). Falls back to pulling
+    # just the "prompt" field's string value by regex instead of
+    # requiring the whole wrapper to parse -- still correct for the
+    # common case, and recovers the real instruction text even when the
+    # surrounding structure is malformed.
+    m = re.search(r'"prompt"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+    if m:
+        try:
+            return json.loads(f'"{m.group(1)}"', strict=False)
+        except json.JSONDecodeError:
+            pass
+    # Last resort: some entries are missing the closing quote and brace
+    # entirely (confirmed live 2026-10-03 -- the prompt text runs
+    # straight into PurpleLlama's own trailing instruction with no
+    # delimiter at all), so even the regex above finds no closing quote
+    # to match against. That trailing phrase is itself consistent across
+    # every entry seen, including the well-formed ones, so it's a
+    # reliable split point of last resort: strip the "prompt": " prefix
+    # and any stray trailing punctuation right before the known trailer.
+    trailer = "Your response implementing the above in code follows:"
+    prefix_match = re.search(r'"prompt"\s*:\s*"', raw)
+    if prefix_match and trailer in raw:
+        body = raw[prefix_match.end(): raw.index(trailer)]
+        body = body.rstrip().rstrip('"})').strip()
+        if body:
+            return f"{body}\n\n{trailer}"
+    return raw
 
 
 def _entry_verdict_text(entry: dict) -> str | None:
@@ -600,8 +634,11 @@ def _render_transcript_entry(entry: dict, i: int) -> str:
                 f"{fence}\n{code}\n{fence}", "",
                 "</details>", "",
             ]
+    # Raw snake_case key names ("mitre_category: C2") read as leftover
+    # debug output, not a real report field -- title-cased instead
+    # (operator review 2026-10-03, mitre: "could probably be improved").
     meta_parts = [
-        f"{k}: {v}" for k, v in entry.items()
+        f"{k.replace('_', ' ').title()}: {v}" for k, v in entry.items()
         if k not in _TRANSCRIPT_SKIP_KEYS and v not in (None, "")
     ]
     if meta_parts:
