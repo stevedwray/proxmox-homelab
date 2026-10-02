@@ -111,6 +111,11 @@
     # though the server itself was healthy.
     docs_rag_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8001,127.0.0.1:8001"
     docs_rag_postgres_password: "{{ lookup('env', 'DOCS_RAG_POSTGRES_PASSWORD') | mandatory('DOCS_RAG_POSTGRES_PASSWORD env var is required') }}"
+    # osint-mcp (Phase 3) -- same DNS-rebinding-protection gotcha as
+    # docs-rag-mcp above: must include 127.0.0.1 for in-container checks,
+    # plus the LXC's real IP for deep-research-agent's cross-container
+    # calls. See docs/maltego-integration/README.md's Phase 3 section.
+    osint_mcp_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8010,127.0.0.1:8010"
     # Pulled through Harbor's proxy-cache, not directly from Docker Hub --
     # same convention as every other third-party image in this repo (e.g.
     # PentAGI's own pgvector, ollama:rocm). FQDN via Traefik/edge_seg, not
@@ -621,7 +626,25 @@
             return server;
           }
 
-          const app = createMcpExpressApp();
+          // createMcpExpressApp() defaults to localhost-only DNS-rebinding
+          // protection (host: "127.0.0.1"), rejecting any request whose Host
+          // header isn't literally 127.0.0.1/localhost/::1 with a 403 -- found
+          // live 2026-10-02: a cross-container call using the LXC's real IP
+          // (192.168.50.10) got rejected before auth even ran. Explicit
+          // allowedHosts opts out of that default and allows the real reachable
+          // addresses instead, same pattern as cve-mcp-server's own
+          // MCP_ALLOWED_HOSTS (must include 127.0.0.1 too, for in-container
+          // health checks -- same gotcha documented for docs-rag-mcp).
+          // hostHeaderValidation() compares against hostname only, port-agnostic --
+          // found live 2026-10-02: passing "192.168.50.10:8010" verbatim never
+          // matched the parsed hostname "192.168.50.10", 403 on every real request.
+          // OSINT_MCP_ALLOWED_HOSTS still takes the familiar "host:port,host:port"
+          // shape (matching cve-mcp-server's own MCP_ALLOWED_HOSTS convention) --
+          // the port is stripped here before passing to allowedHosts.
+          const allowedHosts = (process.env.OSINT_MCP_ALLOWED_HOSTS ?? "127.0.0.1:8010")
+            .split(",")
+            .map((entry) => entry.trim().replace(/:\d+$/, ""));
+          const app = createMcpExpressApp({ host: "0.0.0.0", allowedHosts });
 
           app.use((req, res, next) => {
             const auth = req.headers.authorization ?? "";
@@ -657,7 +680,6 @@
           app.listen(PORT, () => {
             console.log(`osint-mcp listening on :${PORT}`);
           });
-
     # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
     # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
     # `COPY pyproject.toml README.md ./` never copies LICENSE into the
@@ -944,6 +966,11 @@
                 # osint-mcp-server.ts) rather than ever listening
                 # unauthenticated. See docs/maltego-integration/README.md.
                 OSINT_MCP_TOKEN: "{{ mcp_osint_mcp_token }}"
+                # createMcpExpressApp() defaults to localhost-only DNS-
+                # rebinding protection -- a cross-container call using the
+                # LXC's real IP got rejected 403 before auth even ran until
+                # this was set explicitly. See osint-mcp-server.ts.
+                OSINT_MCP_ALLOWED_HOSTS: "{{ osint_mcp_allowed_hosts }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
