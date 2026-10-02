@@ -255,23 +255,97 @@
         mode: "0640"
         content: |
           // Phase 1 driver: domain -> DNS + WHOIS + ASN(per A record) + crt.sh ->
-          // .mtgx. Calls maltego-mcp's own exported lookup/graph functions
-          // directly -- no MCP stdio protocol involved, see
-          // docs/maltego-integration/README.md for why. Bundled by tsup at
-          // image build time into dist/phase1-expand-domain.js (see
-          // Dockerfile) -- import specifiers use the project's own ".js"-
-          // for-.ts-source convention (see cli.ts/mcp-server.ts), resolved
-          // against this file's real location at /app (sibling of src/).
-          // Usage:
-          //   node dist/phase1-expand-domain.js <domain> <outputFileName>
-          // outputFileName is relative to MALTEGO_MCP_OUTPUT_DIR.
+          // .mtgx. Calls maltego-mcp's own exported lookup/graph functions for
+          // data gathering and graph bookkeeping, but serializes the .mtgx itself
+          // with a native writer below -- writeMtgxFile's yFiles-style y:Geometry
+          // node graphics is not understood by real Maltego Desktop 4.13's own
+          // reader (com.paterva.maltego.ui.graph.imex.StaxGraphReader), which
+          // expects Maltego's own mtg:EntityRenderer/mtg:Position schema instead
+          // (confirmed against pcbje/pymtgx, an independent, older, proven-working
+          // library) and throws "Cannot read field 'x' because 'center' is null"
+          // -- silently, on a background thread, leaving the import UI spinning
+          // forever with no error dialog. Found live 2026-10-02 via Maltego's own
+          // ~/.maltego/v4.13.0/var/log/messages.log.
           import { join } from "node:path";
+          import { writeFile, mkdir } from "node:fs/promises";
+          import { dirname } from "node:path";
+          import JSZip from "jszip";
           import { Graph } from "./src/graph/graph.js";
-          import { writeMtgxFile } from "./src/graph/writer.js";
           import { dnsLookup } from "./src/lookups/dns.js";
           import { whoisLookup } from "./src/lookups/whois.js";
           import { asnLookup } from "./src/lookups/asn.js";
           import { crtshLookup } from "./src/lookups/crtsh.js";
+
+          // Each Maltego entity type has its own "main value" field name,
+          // authoritative source: this machine's installed Maltego entity
+          // definitions (~/.maltego/v4.13.0/.../com-paterva-maltego-entities-
+          // common.jar, maltego.<Type>.entity's <Properties value="..."> attribute)
+          // -- found live 2026-10-02 after a v2 fix rendered correctly (icons,
+          // links, topology) but every entity showed "<empty>" because
+          // "properties.value" isn't a real field on any of these entity types.
+          const VALUE_FIELD_NAME: Record<string, string> = {
+            "maltego.Domain": "fqdn",
+            "maltego.IPv4Address": "ipv4-address",
+            "maltego.AS": "as.number",
+            "maltego.Phrase": "text",
+          };
+
+          function escapeXml(value: unknown): string {
+            return String(value)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;");
+          }
+
+          async function writeMtgxNative(graph: Graph, outputPath: string): Promise<void> {
+            graph.applyLayout();
+
+            const nodeXml = graph.allEntities().map((e) => {
+              const props = [
+                `<mtg:Property name="${escapeXml(VALUE_FIELD_NAME[e.type] ?? "properties.value")}" displayName="Value" type="string"><mtg:Value>${escapeXml(e.value)}</mtg:Value></mtg:Property>`,
+                ...Object.entries(e.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              const x = e.position?.x ?? 0;
+              const y = e.position?.y ?? 0;
+              return `    <node id="${e.id}">
+                <data key="d0"><mtg:MaltegoEntity xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="${escapeXml(e.type)}"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoEntity></data>
+                <data key="d1"><mtg:EntityRenderer xmlns:mtg="http://maltego.paterva.com/xml/mtgx"><mtg:Position x="${x}" y="${y}"/></mtg:EntityRenderer></data>
+              </node>`;
+            }).join("\n");
+
+            const edgeXml = graph.allLinks().map((l) => {
+              const props = [
+                l.label ? `<mtg:Property name="maltego.link.manual.type" displayName="Label" type="string"><mtg:Value>${escapeXml(l.label)}</mtg:Value></mtg:Property>` : "",
+                ...Object.entries(l.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              return `    <edge id="${l.id}" source="${l.from}" target="${l.to}">
+                <data key="d2"><mtg:MaltegoLink xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="maltego.link.manual-link"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoLink></data>
+              </edge>`;
+            }).join("\n");
+
+            const graphml = `<?xml version="1.0" encoding="UTF-8"?>
+          <graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:mtg="http://maltego.paterva.com/xml/mtgx" xmlns:y="http://www.yworks.com/xml/graphml">
+            <key id="d0" for="node" attr.name="MaltegoEntity"/>
+            <key id="d1" for="node" attr.name="EntityRenderer" yfiles.type="nodegraphics"/>
+            <key id="d2" for="edge" attr.name="MaltegoLink"/>
+            <graph id="G" edgedefault="directed">
+          ${nodeXml}
+          ${edgeXml}
+            </graph>
+          </graphml>`;
+
+            const zip = new JSZip();
+            zip.file("Graphs/Graph1.graphml", graphml);
+            zip.file("version.properties", "maltego.graph.version=1.3\nmaltego.client.version=4.13\n");
+            const bytes = await zip.generateAsync({ type: "uint8array" });
+            await mkdir(dirname(outputPath), { recursive: true });
+            await writeFile(outputPath, bytes);
+          }
 
           const [domain, outputFileName] = process.argv.slice(2);
           if (!domain || !outputFileName) {
@@ -338,9 +412,8 @@
             console.error(`crt.sh lookup failed: ${crtsh.error}`);
           }
 
-          await writeMtgxFile(graph, outputPath);
+          await writeMtgxNative(graph, outputPath);
           console.log(`wrote ${outputPath} (${graph.entityCount()} entities, ${graph.linkCount()} links)`);
-
     # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
     # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
     # `COPY pyproject.toml README.md ./` never copies LICENSE into the
