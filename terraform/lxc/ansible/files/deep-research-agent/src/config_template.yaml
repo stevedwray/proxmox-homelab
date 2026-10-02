@@ -38,7 +38,20 @@ settings:
                               # exhausting after ~1 subagent's worth of searches, starving every other angle
                               # and silently degrading multi-angle reports to single-angle. Tavily usage
                               # confirmed live at 41/1500 monthly searches, so plenty of headroom for this.
-    fetch_url_to_workspace: 16
+    # Found 2026-10-02 (docs/maltego-integration/README.md Phase 3c): left
+    # at its original value while web_search's identical sibling quota was
+    # already bumped 20->60 on 2026-09-22 for this exact documented reason
+    # ("pool was exhausting after ~1 subagent's worth... starving every
+    # other angle"). With max_concurrent_tasks: 1, Searchers run
+    # sequentially, not concurrently -- but the pool is still SHARED, so
+    # one Searcher using more than its fair share on a harder angle can
+    # starve every later sequential Searcher's fetches entirely, exactly
+    # matching a real observed failure: "All three Searcher delegations
+    # failed... exceeding fetch_url_to_workspace quota." Doubled, not
+    # tripled like web_search -- a fetch is real disk/processing cost per
+    # call, unlike a search API call backed by a 1500/month external quota
+    # with "plenty of headroom."
+    fetch_url_to_workspace: 32
     write_workspace_file: 5   # Orchestrator only writes final_report.md (and maybe todos state)
     read_workspace_file:
       limit: 40
