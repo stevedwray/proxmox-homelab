@@ -81,7 +81,7 @@ phase actually needs an LLM agent driving it interactively.
 - [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` — 2026-10-02
 - [x] **Operator opened the file in real Maltego Desktop 4.13.0 and confirmed it renders correctly** — 2026-10-02: correct entity icons (Domain/IPv4Address/AS/Phrase), correct values (not placeholder text), correct link labels (`resolves_to`/`has_nameserver`/`hosted_in`/`certificate`/`SAN`), correct topology. **This is the actual Phase 1 milestone, and it's done.** Confirmed artifact saved at `artifacts/test-example-com-v4-confirmed-working.mtgx`.
 - [x] **Phase 2 Tier 1 enrichment (VirusTotal/Shodan/GreyNoise) — done 2026-10-02.** See "Growing Phase 2" below.
-- [x] **Phase 2 Tier 2 code (AlienVault OTX) — written and deployed 2026-10-02, but functionally inert.** `otxLookup()` is live in the driver and wired through to the compose service, but **no `OTX_API_KEY` exists in OpenBao yet** — needs the operator to sign up at otx.alienvault.com (free) first. Deliberately not added to `secrets/manifest.json` yet (see "Growing Phase 2" below for why). Safe to deploy as-is; just a no-op until the key exists.
+- [x] **Phase 2 Tier 2 (AlienVault OTX) — fully live, confirmed 2026-10-02.** Operator provisioned a real key, written to OpenBao and added to `secrets/manifest.json`. Confirmed live on pve-tiny: real pulse data for `example.com` (50 pulses on the domain, 2 and 0 on its two IPs). Saved at `artifacts/test-example-com-tier2-otx-confirmed-prod.mtgx`.
 - [ ] Phase 2 Tier 3 (OCCRP Aleph) — scoped, not started
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
@@ -254,9 +254,9 @@ given the broken key. Saved at
 **Not done yet**: Tier 3 (OCCRP Aleph — needs an account application
 first).
 
-## Tier 2: AlienVault OTX (code deployed, key still needed)
+## Tier 2: AlienVault OTX (done)
 
-`otxLookup()` added to the driver: `GET /api/v1/indicators/{domain|IPv4}/
+`otxLookup()` in the driver: `GET /api/v1/indicators/{domain|IPv4}/
 {value}/general` with header `X-OTX-API-KEY`, enriching the root `Domain`
 and every `IPv4Address` entity with `otx_pulse_count`/`otx_pulse_names`.
 Endpoint verified against the official LevelBlue docs
@@ -265,39 +265,37 @@ unrelated, older community gist showed a different `/indicator/`
 (singular) path that looked plausible but didn't match the canonical
 source — checked rather than trusted.
 
-No `OTX_API_KEY` exists in OpenBao yet. Deliberately **not** added to
-`secrets/manifest.json` either, on purpose: adding a field name there
-before the real OpenBao value exists trips `secrets_env.py`'s
-fail-closed check for every stack on every node profile that includes
-`shared/external-apis` — which is all of them. This exact failure mode
-already happened once during the deep-research Nextcloud push work
-earlier this cycle (see `reference_nextcloud_trusted_domains_fqdn`-
-adjacent memory / `docs/nextcloud-stack/plan.md`). Instead, the compose
-service's `OTX_API_KEY` uses a plain `default('', true)` lookup, not
-`mandatory()` — safe to deploy now, confirmed live on pve-tiny with both
-no key (clean no-op) and a deliberately bogus key (clean no-op, no
-crash) before shipping.
-
-**To finish Tier 2** (operator action, not something I can do — agents
-don't get OpenBao write access). Exact commands (per
-`docs/reference/secrets-management.md`'s "Adding or rotating a secret"):
+Shipped in two stages, deliberately: code first with a safe
+`default('', true)` env lookup (no manifest entry, confirmed live with
+both no key and a deliberately bogus key — clean no-op either way, never
+a crash), *then* the real secret once the operator had provisioned one.
+Adding a manifest field before the real value exists would trip
+`secrets_env.py`'s fail-closed check for every stack on every node
+profile that includes `shared/external-apis` (all of them) — the exact
+failure mode already hit once during the deep-research Nextcloud push
+work. The actual write used the exact commands in
+`docs/reference/secrets-management.md`'s "Adding or rotating a secret"
+(the entry is `shared/external-apis`, not `services/external-apis` as an
+earlier draft of this doc wrongly said):
 
 ```bash
-# 1. Sign up free at otx.alienvault.com, grab the API key from your profile page.
-# 2. Log in and write it -- the entry is shared/external-apis (verified
-#    against secrets/manifest.json, not services/external-apis as an
-#    earlier draft of this doc said):
 export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
 export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # Authentik, group homelab-admins
 LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py shared/external-apis OTX_API_KEY
 unset BAO_TOKEN
 ```
 
-It'll prompt for the value (hidden input) and trigger a post-write
-snapshot automatically. Tell me once it's written — I'll verify via a
-scratch-manifest `--check` dry run, add `OTX_API_KEY` to the real
-manifest, switch the compose env var to `mandatory()`, redeploy, and
-confirm live.
+Verified before trusting it: a scratch-manifest `--check` dry run
+confirmed the field was non-empty and 64 hex characters (matching OTX's
+real key format, unlike the still-broken 23-char `VIRUSTOTAL_KEY`), then
+a direct `curl` with the real key against the real API confirmed actual
+data (`pulse_info.count: 50` for `example.com`) before the real
+`secrets/manifest.json` was touched at all. Then: added `OTX_API_KEY` to
+the real manifest (re-verified `--check` passes for both `pve` and
+`pve-tiny`), switched the compose var to `mandatory()`, redeployed, and
+confirmed live on pve-tiny — real pulse data for `example.com` itself
+(50 pulses) and both its IPs (2 and 0). Saved at
+`artifacts/test-example-com-tier2-otx-confirmed-prod.mtgx`.
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
