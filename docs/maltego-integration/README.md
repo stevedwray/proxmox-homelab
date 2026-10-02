@@ -77,7 +77,61 @@ phase actually needs an LLM agent driving it interactively.
 - [x] `maltego-02-dockerfile-and-driver` — 2026-10-02
 - [x] `maltego-03-compose-service` — 2026-10-02
 - [x] `maltego-04-stack-contract` — 2026-10-02
-- [ ] Operator: deploy via `provision.sh --stack mcp-utility-stack`, run the Phase 1 test, open the resulting `.mtgx` in Maltego Desktop — not started
+- [x] Deployed to `pve-tiny` (`provision.sh --stack mcp-utility-stack`) — 2026-10-02, after 5 rounds of real bugs found and fixed via live testing (see below)
+- [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` (6 entities, 6 links for `example.com`) — 2026-10-02, saved to `artifacts/test-example-com.mtgx`
+- [ ] Operator: open `artifacts/test-example-com.mtgx` in Maltego Desktop — **this is the actual milestone, not done yet**
+
+## Real bugs found and fixed via live deployment (2026-10-02)
+
+The plan's four step-blocks all passed their gates (syntax-check, grep
+counts) on first execution, but gates only prove the file edits landed —
+none of them actually build or run the image. Every one of the following
+was found by actually deploying and running it, not by review:
+
+1. **`provision.sh` silently skipped the deploy** the first time —
+   resolved its repo root to the unrelated `proxmox-homelab-eval-runner`
+   git worktree (inventory.yml is gitignored/per-checkout, not shared
+   between worktrees). Fix: run from the main checkout.
+2. **`maltego-mcp`'s image was never built at all** on the first real
+   deploy — `community.docker.docker_compose_v2`'s `state: present`
+   only touches default-profile services, and `maltego-mcp` is
+   deliberately `profiles: ["tools"]` (see README above). Added an
+   explicit `docker compose --profile tools build maltego-mcp` task.
+3. **`tsup.config.ts` needs `scripts/demo-basic.ts`** as a build entry —
+   `maltego-01`'s copy list never included `scripts/`, so `npm run
+   build` failed outright on the very first build attempt.
+4. **`ENTRYPOINT ["node"]` doubled up with the run command** —
+   `docker compose run --rm maltego-mcp node dist/phase1-expand-domain.js`
+   became `node node dist/phase1-expand-domain.js` (MODULE_NOT_FOUND).
+   Dropped the entrypoint; a bare `CMD` lets `run` fully override it.
+5. **The driver script's whole import strategy was wrong.**
+   `tsup.config.ts` has `splitting: false`, so each entry bundles into
+   one flat file (confirmed locally: `npm run build` produces
+   `dist/index.js`, `dist/cli.js`, etc. — never `dist/graph/`,
+   `dist/lookups/`). The original driver imported from assumed
+   `./dist/graph/graph.js`-style paths that could never have existed.
+   Rewrote it as `phase1-expand-domain.ts` importing from `./src/...`
+   and bundled it with the project's own `tsup`/esbuild mechanism in
+   the builder stage — this also incidentally fixed a file-ownership
+   bug (tsup output is world-readable like the project's own entries,
+   no `--chown` workaround needed).
+6. **`Graph.addEntity` throws on a duplicate type+value pair** — a
+   domain with multiple A records on one ASN (e.g. `example.com` →
+   `AS13335` for every IP) crashed on the second occurrence. Switched
+   every entity that can legitimately repeat (IP, ASN, nameserver,
+   cert) to `ensureEntity`.
+7. **`"DNSName"` and `"Certificate"` aren't valid entity types** — this
+   project has a fixed 12-type allowlist
+   (`src/graph/entities.ts`:`ENTITY_TYPES`) and throws immediately on
+   anything else, not a silent fallback. Nameservers now use `"Domain"`;
+   certificates use `"Phrase"` with a `"[Certificate] "` prefix, matching
+   the project's own convention for anything without a dedicated type.
+
+Each fix was verified locally against the real pinned `~/git/maltego-mcp`
+clone before being redeployed, to avoid burning repeated full
+`provision.sh` cycles on fixes that could be proven wrong (or right)
+faster with a local `tsup`/`node` run. See commit history on
+`docs/maltego-integration-plan` for the individual fixes.
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
