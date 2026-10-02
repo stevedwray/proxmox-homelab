@@ -487,3 +487,105 @@ pipeline — from a domain name, through DNS/WHOIS/ASN/crt.sh and four
 threat-intel providers, through a real authenticated MCP server, into
 the actual production research agent's own tool list — is live and
 confirmed working end to end.
+
+## Phase 3c: the first live conversation, a 52-minute hang, and its real fix (done)
+
+Every check above was a direct, scripted verification — nobody had yet
+asked the live agent a real question and watched it *choose*
+`osint_investigate` on its own. The first attempt (a headless
+`--prompt` run asking it to investigate `openai.com`'s DNS, hosting,
+and threat-intel posture) hung for 52+ minutes with zero progress, then
+had to be killed.
+
+**Root-causing it took two follow-up tests, not a guess:**
+
+1. An **isolated single-task repro** — just `client.as_agent(tools=
+   [osint_investigate])`, bypassing the full multi-subagent dispatcher
+   entirely — completed correctly in 43.9s with a real, accurate
+   answer. This proved the MCP wiring itself was never the problem. It
+   also surfaced a real secondary issue: a
+   `RuntimeError: Attempted to exit cancel scope in a different task
+   than it was entered in`, thrown during `MCPStreamableHTTPTool`'s
+   async-generator cleanup — harmless here (the process still exited 0
+   after the warning), but a clue worth keeping.
+2. A **full-orchestrator retest**, run after landing two initial
+   defensive fixes (below), produced the identical cross-task
+   cancel-scope error at the identical cleanup point — but this time
+   the process never exited. Its own `EXITCODE=` marker, written right
+   after the Python invocation in the wrapping shell command, was never
+   reached. That pinned it down precisely: the hang isn't in the
+   research loop at all, it's in **`asyncio.run()`'s own post-completion
+   teardown**, which the broken cancel scope leaves permanently wedged.
+
+This re-explains the original 52-minute hang far better than either fix
+alone would: the real work (LLM calls, searches) most likely completed
+in the first ~30 minutes, after which the process sat wedged in
+teardown for the rest of the time it was observed — consistent with
+only checking llama.cpp's own decode-token counter for the *last* 20
+minutes of the run (it was flat for that whole window, but nothing
+proves it was flat earlier too), and with `osint-mcp`'s access log
+showing zero hits if that particular run's Searcher sub-agent happened
+to exhaust its tool-call quota before ever reaching `osint_investigate`
+— which is exactly the failure mode a later retest with the same broad
+multi-angle prompt independently produced.
+
+**Three fixes landed, in order of how the investigation found them:**
+
+- **`tools/osint.py`**: `MCPStreamableHTTPTool` never set
+  `request_timeout`, so `ClientSession.read_timeout_seconds` stayed
+  `None` — a stalled or silently-dropped connection left the tool-call
+  await completely unbounded. Fixed with `request_timeout=60` (generous
+  headroom; `osint-mcp`'s own lookups complete in low single-digit
+  seconds).
+- **`engine/orchestrator.py`**: the subagent streaming loop
+  (`_run_single_task`) had no bound at all on time between successive
+  `update`s from the stream. Fixed with a generic idle-timeout guard —
+  `subagent_idle_timeout_seconds` (default 300s, comfortably above the
+  worst documented single-tool-call latency: `web_search` measured at
+  145-147s under load) — that aborts with a clear error instead of
+  waiting forever. This protects against *any* future stall in that
+  loop, not specifically an MCP one.
+- **`engine/tui.py`** — the fix that actually mattered for the real
+  observed hang. The `--prompt`/`--prompt-file` headless CLI path now
+  runs its coroutine on a raw event loop and calls `os._exit(0)`
+  immediately afterward, deliberately skipping `asyncio.run()`'s
+  guaranteed-clean (but here, broken) teardown phase. Safe specifically
+  because this is a one-shot process about to terminate regardless —
+  the OS reclaims every socket and file handle on exit either way, so
+  there is nothing left to leak by skipping a cleanup phase that can't
+  complete. Does **not** touch `--web` mode, which is a long-lived
+  server that must still shut down cleanly, and which ran continuously
+  and healthily through this entire investigation without ever hanging.
+
+See [[reference_asyncio_run_mcp_teardown_hang]] for the generalized,
+reusable version of this finding (useful for any future one-shot CLI in
+this repo that adopts an `agent_framework` `MCPTool`).
+
+**Confirmed fixed** via a clean, narrowly-scoped retest (one single
+delegation, not a multi-angle prompt): `"Delegate exactly ONE research
+task... investigate openai.com using your investigate_domain tool"`
+completed in 375.0 seconds, printed its own real exit-code marker
+(`REAL_EXITCODE=0`), and produced a correct, detailed final report
+(WHOIS registration via MarkMonitor, DNS hosted on Azure nameservers,
+Cloudflare CDN/WAF fronting, VirusTotal and GreyNoise both clean, 24
+AlienVault OTX pulses reflecting brand-phishing abuse rather than any
+actual compromise). The process exited cleanly on its own — no
+post-completion hang.
+
+**A separate, unrelated, still-open bug was found along the way**: two
+earlier retests using a broader multi-angle prompt (asking for DNS
+setup, hosting/ASN, *and* threat-intel in one request) instead hit a
+different, pre-existing issue — some subagent invocations (observed
+under the names `dns-setup-retry` and `openai_dnschecker.md`) get stuck
+emitting repeated malformed/empty tool calls (logged as `[Agent]
+Calling ...` with no function name) in a tight, genuinely active retry
+loop, until the quota system eventually terminates them. This is
+**not** a hang — confirmed via a real `SIGUSR1` `faulthandler` stack
+dump (this codebase already has a `faulthandler.register(signal.
+SIGUSR1)` hook from an earlier, differently-shaped 2026-09-22
+incident) showing a perfectly healthy event loop idling in
+`selectors.select()`, not frozen anywhere. It's wasteful and degrades
+multi-angle report quality, but it is unrelated to MCP/`osint_
+investigate` and was not investigated further here — a real open item
+for whoever next touches subagent tool-call handling in
+`engine/orchestrator.py`.
