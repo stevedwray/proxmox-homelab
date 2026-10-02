@@ -1,39 +1,47 @@
 # maltego-integration — plan
 
-Phase 1 only (see `README.md` for why). Phases 2-6 from `brief.md` are
-deliberately left as prose, not step-blocks, until Phase 1's result is known:
+**Status 2026-10-02: Phases 1-3 (+3b) all done and confirmed live.**
+This file's step-blocks below are Phase 1's literal, already-executed
+plan (kept as the historical record of what was actually run — don't
+re-run them). Phases 2/3 happened as direct follow-on implementation
+work once Phase 1 was confirmed, not as further step-blocks in this
+file — the full narrative, every real bug found, and every live
+verification is in `README.md`, which is the up-to-date source of truth
+for status. Summary:
 
-- **Phase 2** — generalize into a proper OSINT service layer with caching,
-  provenance records, and error handling. Enrichment lookups (IP
-  reputation, domain intel, Shodan, etc. — the capabilities `cve-mcp-
-  server` happens to already have dormant upstream) get built as **new
-  tools on `maltego-mcp` itself**, not enabled on `cve-mcp-server` —
-  decided 2026-10-02 after reconsidering: `cve-mcp-server`'s name, repo,
-  and contract all say CVE-only, and its one real consumer
-  (`cve_enrichment_sync.py`) has nothing to do with Maltego investigations.
-  Mixing them would share one quota/blast-radius story across two
-  unrelated purposes with no record of why. See `README.md`.
-- **Phase 3** — wire `deep-research-agent` to call the OSINT service via a
-  true MCP client (new pattern for that codebase — see `README.md`).
-- **Phase 4** — interactive Maltego Desktop transform calling the backend
-  over HTTP, with real authentication (neither `cve-mcp-server` nor
-  `docs-rag-mcp` currently has app-level auth; the brief requires it even
-  for LAN-only — do not copy their no-auth precedent forward here).
-- **Phase 5** — investigation persistence (`observations.jsonl` /
-  `relationships.jsonl` / `hypotheses.jsonl` per the brief's storage layout).
-- **Phase 6** — expanded providers, prioritized by usefulness once Phase 1-3
-  show real investigation patterns.
+- **Phase 2 Tier 1 (VirusTotal/Shodan/GreyNoise)** — done. New tools
+  added directly to `maltego-mcp`'s driver (`investigate.ts`), not to
+  `cve-mcp-server` — decided after reconsidering mid-stream: `cve-mcp-
+  server`'s name, repo, and contract are CVE-only, and its one real
+  consumer (`cve_enrichment_sync.py`) has nothing to do with Maltego
+  investigations. Mixing them would share one quota/blast-radius story
+  across two unrelated purposes with no record of why.
+- **Phase 2 Tier 2 (AlienVault OTX)** — done, real key live in OpenBao.
+- **Phase 2 Tier 3 (OCCRP Aleph)** — dropped. Needs a vetted journalist/
+  public-interest application, not a self-serve signup; a poor fit for
+  a homelab lab with no guarantee of approval.
+- **Phase 3 (`osint-mcp`)** — done. A new, purpose-built Streamable HTTP
+  MCP server (same precedent as `docs-rag-mcp`: in-repo, not vendored)
+  exposing `investigate_domain`, with real bearer-token auth (the brief
+  asked for this even on LAN; `cve-mcp-server`/`docs-rag-mcp` have none
+  — this is the first service to actually do it).
+- **Phase 3b (`deep-research-agent` wiring)** — done. The Searcher
+  sub-agent now holds `osint_investigate`, a real
+  `agent_framework.MCPStreamableHTTPTool` — the first `MCPTool` this
+  codebase has used. Confirmed live in the running production container.
+- **Phase 4** (interactive Maltego Desktop transform) and **Phase 5**
+  (investigation persistence) — not started.
 
 Target: `mcp-utility-stack` (`ai_seg`, pve-tiny, LXC VMID 50011,
 `192.168.50.10`) — the existing MCP services' home. Deployment file:
 `terraform/lxc/ansible/playbooks/deploy-mcp-utility-stack.yml`.
 
-## Before running any step below
+## Before running any step below (already done — historical record)
 
 `maltego-01-vendor-source` copies from a local clone on the ansible
 controller (this operator's workstation), same pattern as `cve-mcp-server`'s
-own `mcp_source_dir`. That clone does not exist yet. Run this first, on the
-workstation, before `implement-step` is pointed at `maltego-01`:
+own `mcp_source_dir`. This was the one-time setup needed before the first
+run of `maltego-01` (already done 2026-10-02):
 
 ```bash
 git clone https://github.com/lidless-labs/maltego-mcp.git ~/git/maltego-mcp
@@ -348,23 +356,22 @@ gates:
 
 ---
 
-## After the step-blocks (operator actions, not local-model steps)
+## After the step-blocks (done — historical record)
 
-These need a human, in this order -- not written as step-blocks because
-each is either a production mutation needing the normal approval flow or
-a manual Maltego Desktop check nothing here can script (the one-time
-workstation clone is covered above, before `maltego-01`):
+These needed a human, and all three happened 2026-10-02 (with several
+real bugs found and fixed in between — see `README.md`'s full account,
+not just this summary):
 
 1. Deploy: `./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`
-   under the normal production approval flow (Preflight Summary ->
-   approval -> `TASK_APPROVAL` -> execute).
-2. Run the Phase 1 test from the mcp-utility-stack LXC:
-   `docker compose run --rm maltego-mcp node phase1-expand-domain.mjs
-   example.com test-example-com.mtgx`, then confirm the file exists at
-   `/opt/mcp-utility-stack/maltego-mcp-output/test-example-com.mtgx` (or
-   via `docker run --rm -v maltego-mcp-output:/v busybox ls /v`) and that
-   `unzip -l` on it shows `Graphs/Graph1.graphml`.
-3. Copy the `.mtgx` file to a workstation with free Maltego Desktop
-   installed and open it there. This is the actual milestone: does it
-   open without error and show a legible graph. Record the result (and a
-   screenshot if useful) in this workspace's `README.md`.
+   — done, after fixing 7 real bugs surfaced by actually deploying.
+2. Ran the Phase 1 test from the mcp-utility-stack LXC — produced a
+   valid `.mtgx` confirmed via `unzip -l`.
+3. Operator opened the file in real Maltego Desktop 4.13.0 — **initially
+   hung indefinitely with no error** (a real bug in `maltego-mcp`'s own
+   writer, not file corruption — see `README.md`'s "The real finding"
+   section for the full root-cause story). Fixed with a native writer;
+   confirmed rendering correctly (icons, values, links, topology) on
+   retest. This was the actual Phase 1 milestone, and it's done.
+
+Phases 2-3b then followed as direct implementation (not further
+step-blocks) once this milestone was confirmed — see `README.md`.
