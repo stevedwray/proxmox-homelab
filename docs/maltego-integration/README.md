@@ -82,7 +82,8 @@ phase actually needs an LLM agent driving it interactively.
 - [x] **Operator opened the file in real Maltego Desktop 4.13.0 and confirmed it renders correctly** — 2026-10-02: correct entity icons (Domain/IPv4Address/AS/Phrase), correct values (not placeholder text), correct link labels (`resolves_to`/`has_nameserver`/`hosted_in`/`certificate`/`SAN`), correct topology. **This is the actual Phase 1 milestone, and it's done.** Confirmed artifact saved at `artifacts/test-example-com-v4-confirmed-working.mtgx`.
 - [x] **Phase 2 Tier 1 enrichment (VirusTotal/Shodan/GreyNoise) — done 2026-10-02.** See "Growing Phase 2" below.
 - [x] **Phase 2 Tier 2 (AlienVault OTX) — fully live, confirmed 2026-10-02.** Operator provisioned a real key, written to OpenBao and added to `secrets/manifest.json`. Confirmed live on pve-tiny: real pulse data for `example.com` (50 pulses on the domain, 2 and 0 on its two IPs). Saved at `artifacts/test-example-com-tier2-otx-confirmed-prod.mtgx`.
-- [ ] Phase 2 Tier 3 (OCCRP Aleph) — scoped, not started
+- [x] Phase 2 Tier 3 (OCCRP Aleph) — **dropped, not pursued.** Requires a vetted journalist/public-interest application (organization affiliation, evidence of prior work), not a self-serve signup like OTX. A poor fit for a homelab OSINT lab, with no guarantee of approval. Operator decision 2026-10-02: skip it, move to Phase 3 instead.
+- [x] **Phase 3: osint-mcp, a real HTTP MCP server — fully live, confirmed 2026-10-02.** `investigate_domain` MCP tool, Streamable HTTP, bearer-token auth, confirmed reachable end-to-end from `deep-research-agent`'s actual container across the container boundary. See "Phase 3" section below. `deep-research-agent` itself has not been wired to call it yet — that's the next real step.
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
 
@@ -336,3 +337,98 @@ deployed LXC, and manually opening the resulting `.mtgx` in Maltego
 Desktop. That last one is the actual milestone this whole plan exists to
 answer — nothing above it proves Maltego will accept the file, only that
 the pipeline that produces it is wired up correctly.
+
+## Phase 3: osint-mcp, a real HTTP MCP server (done)
+
+The brief's own architecture called for `deep-research-agent` to call
+the OSINT backend as a real MCP client, not a plain HTTP tool (decided
+earlier, see "Key decisions"). Before writing any code, confirmed two
+things that weren't already known:
+
+- **`agent_framework`'s actual MCP client support**, by reading the
+  package installed inside the real `deep-research` container
+  (`/usr/local/lib/python3.12/site-packages/agent_framework/_mcp.py`):
+  `MCPStdioTool`, `MCPStreamableHTTPTool`, and `MCPWebsocketTool` are all
+  real, built-in classes. No need to hand-roll an MCP client.
+- **`maltego-mcp`'s own `mcp-server.ts` speaks stdio only** — a stdio
+  transport spawns a child process in the *caller's* own container and
+  cannot reach a server running in a *different* container. Since
+  `deep-research-agent` (`ai-services-stack`) and `maltego-mcp`
+  (`mcp-utility-stack`) are genuinely separate LXCs on the same pve-tiny
+  host, stdio literally cannot work here. The serving side needs
+  Streamable HTTP — the same pattern `cve-mcp-server`/`docs-rag-mcp`
+  already use in this stack.
+
+Built `osint-mcp-server.ts`, a new purpose-built server (same precedent
+as `docs-rag-mcp`: written in-repo, not a vendored dependency) exposing
+one real MCP tool, `investigate_domain`, over Streamable HTTP. Used the
+MCP SDK's own `createMcpExpressApp()` + `StreamableHTTPServerTransport`
+(the SDK's own stateless example was the template, not invented wiring)
+— `express` is already a transitive dependency of
+`@modelcontextprotocol/sdk` itself, no new package needed.
+
+**Refactored first**: `phase1-expand-domain.ts`'s lookup/graph-building
+logic (previously one top-level-await script) moved into a new shared
+`investigate.ts` module (`investigateDomain()`/`writeMtgxNative()`), so
+the CLI driver and the new MCP server share one implementation instead
+of duplicating Tier 1/2 enrichment logic. Verified the CLI still behaved
+identically after the refactor before building anything on top of it.
+
+**Auth, a deliberate departure from precedent**: unlike `cve-mcp-server`/
+`docs-rag-mcp` (zero app-layer auth, network-only via MikroTik rules),
+`osint-mcp` requires `Authorization: Bearer <OSINT_MCP_TOKEN>` on every
+request — the original brief explicitly asked for real auth even on
+LAN, and this is the first new network-reachable surface since that
+requirement was written, so it was worth actually doing rather than
+repeating the existing gap. The server calls `process.exit(1)` if no
+token is configured, rather than ever listening unauthenticated.
+
+Token provisioning followed the same safe pattern as `OTX_API_KEY`
+(generate-then-verify-then-promote), but since this is an *internal*
+secret (not a third-party API key), it lives in `services/mcp-utility`
+(same entry as `DOCS_RAG_POSTGRES_PASSWORD`), not `shared/external-apis`:
+
+```bash
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+openssl rand -hex 32   # the operator generates this value themselves
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/mcp-utility OSINT_MCP_TOKEN
+unset BAO_TOKEN
+```
+
+**Three real bugs found via live testing**, none caught by local testing
+alone:
+
+1. **`restart: unless-stopped` + no token = an active crash-loop**, not
+   a quiet stopped container — found live (`docker ps` showed
+   `Restarting (1)` every ~10s). Stopped manually while the token was
+   being provisioned; resolved cleanly once the real token landed.
+2. **`createMcpExpressApp()` defaults to localhost-only DNS-rebinding
+   protection** (`host: "127.0.0.1"`) — any request with a Host header
+   other than `127.0.0.1`/`localhost`/`::1` gets a 403 *before auth even
+   runs*. A real call from `deep-research-agent`'s container to the
+   LXC's actual IP (`192.168.50.10:8010`) was rejected outright. Fixed
+   with explicit `allowedHosts` — the same class of gotcha already
+   documented for `docs-rag-mcp`'s own `MCP_ALLOWED_HOSTS`, hit a second
+   time on a different service.
+3. **`hostHeaderValidation()` compares hostname only, port-agnostic** —
+   the first fix attempt passed `"192.168.50.10:8010"` verbatim as an
+   allowed host, which never matched the parsed hostname
+   `"192.168.50.10"` alone, so it still 403'd. `OSINT_MCP_ALLOWED_HOSTS`
+   keeps the familiar `host:port,host:port` shape operators already know
+   from `MCP_ALLOWED_HOSTS`; the port is stripped in code before being
+   passed to `allowedHosts`.
+
+**Confirmed working fully end-to-end**, the real path this whole phase
+exists to prove: a request from inside `deep-research-agent`'s actual
+Docker container, across the container boundary, to `osint-mcp`'s real
+LXC IP, with the real `OSINT_MCP_TOKEN`, returning a real `tools/list`
+result over HTTP 200. Not simulated, not same-host-only — the actual
+cross-container call.
+
+**Not done yet**: `deep-research-agent` itself has not been changed —
+no `MCPStreamableHTTPTool` has been added to its tool list, so nothing
+in the running agent can call `osint-mcp` yet. That's the next real
+step, and it touches a different, actively-in-use codebase (the
+deep-research agent's own `app.py`/tool registration), not just this
+stack's own files.
