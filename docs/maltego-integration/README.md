@@ -589,3 +589,96 @@ multi-angle report quality, but it is unrelated to MCP/`osint_
 investigate` and was not investigated further here — a real open item
 for whoever next touches subagent tool-call handling in
 `engine/orchestrator.py`.
+
+## Phase 4: Company and person OSINT (planned, not started)
+
+The operator asked directly: can this pipeline find information on
+people or companies, not just domains? Honest answer at the time: the
+general `deep-research-agent` (`web_search`/`fetch_url_to_workspace`)
+already can, generically, the same way it researched `discord.com`'s
+organizational context — no new work needed for that baseline.
+`investigate_domain` specifically cannot — it is scoped to DNS/WHOIS/
+ASN/threat-intel for a domain name, nothing more. This phase is the
+*dedicated* tooling: structured company-registry lookups and
+legitimate, free-tier person/footprint tools, exposed as new `osint-mcp`
+tools the same way `investigate_domain` was.
+
+### Scope decisions (made by the operator, not defaulted)
+
+- **Both companies and people are in scope.**
+- **People-OSINT use case: general person lookup** (not narrowed to
+  employee/attack-surface enumeration specifically) — the broader,
+  more dual-use framing. Given this repo's established context (GVM/
+  Wazuh/Greenbone/cve-mcp/T-Pot — a defensive security research
+  homelab, not a public-facing product), tools in this phase are built
+  from **public, legitimate, ToS-compliant sources only** — the kind a
+  journalist, security researcher, or licensed investigator would use —
+  not data-broker/people-search aggregators (Spokeo, BeenVerified,
+  Pipl-style services), which are mostly paid, often ToS-grey, and a
+  meaningfully different risk/legitimacy class. Each new tool's own
+  description should say what it's for (due diligence, security
+  research, OSINT footprint discovery) so the model doesn't need to
+  guess at appropriate use the way it had to guess at preferring
+  `investigate_domain` over `web_search` — see Phase 3c's finding that
+  silent tool availability isn't enough, the model needs to be told.
+
+### Provider research (done 2026-10-03, via live web search, not assumed)
+
+| Provider | Covers | Cost | Verdict |
+|---|---|---|---|
+| **UK Companies House API** | Any UK-registered company: profile, officers, PSC (beneficial owners), filing history | **Free**, no usage fees, 600 req/5min, 5-minute signup at `developer.company-information.service.gov.uk` | **Use it.** Official UK government registry, genuinely free, generous limit. |
+| **SEC EDGAR (full-text + submissions API)** | US public companies only: filings, CIK lookup, full-text search since 2001 | **Free**, no API key needed at all | **Use it.** Official US government source. Real limitation: public companies only — most small/private businesses won't appear. |
+| **Hunter.io** | Domain Search (finds a company's email-address pattern) + Email Finder/Verifier (person+company → likely email) | **Free**: 50 credits/month, no card required | **Use it.** The real company→person bridge tool — finding a person's professional email given their name and employer's domain is exactly the legitimate use case this phase should lead with. |
+| **Sherlock** (`sherlock-project/sherlock` on GitHub) | Checks a given username across 400+ social/web platforms for an existing account | **Free**, open-source (actively maintained, v0.16.2 as of Sept 2026) | **Use it**, vendored the same way `maltego-mcp` was (pinned commit, source inspected before trusting it — same supply-chain caution as before). |
+| **OpenCorporates** | The largest open global company database (200M+ companies, 140+ jurisdictions) | **No longer free** as of 2026 — every endpoint 401s without a paid `api_token`. Paid tiers start at £2,250/yr. A free public-benefit (journalism/NGO/academic) tier exists via a manual contact-form application, not guaranteed and not automatable. | **Operator decision needed**: skip entirely (Companies House + SEC EDGAR cover UK/US; everything else falls back to generic `web_search`), or apply for the public-benefit tier yourself (I cannot submit this on your behalf — it requires representing who you are and why). |
+| **HaveIBeenPwned** | Breach-check for a specific email address (confirms if it appears in a known breach) | **Paid-only** for the person-relevant endpoint, from $4.39/mo. The only free part (Pwned Passwords range API) checks password hashes, not people. | **Operator decision needed**: worth the ~$4.39/mo for a genuinely useful, narrow capability (confirming an email's breach exposure is a real, common, legitimate security-research question), or skip and stay fully free-tier like every other provider so far. |
+
+### Proposed architecture
+
+Same pattern as Phase 2/3 — new lookup functions in `osint-mcp`'s own
+TypeScript source (`investigate.ts` or a new sibling module), each
+wired to a new MCP tool, not new Python logic in `deep-research-agent`
+(which only ever calls MCP tools, never implements OSINT lookups
+itself):
+
+- **`investigate_company(name, domain?)`** — Companies House lookup by
+  name (UK) and/or SEC EDGAR lookup by name/ticker (US public), plus
+  Hunter.io Domain Search if a domain is known or discoverable via
+  `web_search`. Degrades gracefully per-provider exactly like
+  `investigate_domain`'s Tier 1/2 providers do (missing API key →
+  that provider's section just doesn't appear, never an error).
+- **`find_person_email(name, domain)`** — Hunter.io Email Finder: given
+  a person's name and their employer's domain, returns the likely
+  email address and Hunter's own confidence score.
+- **`find_username(username)`** — Sherlock, checking the given username
+  across its 400+ platform list, returning which platforms have a
+  matching account.
+- **`check_email_breach(email)`** (only if the operator opts into the
+  HIBP paid tier) — confirms whether an email appears in a known
+  breach, and which ones.
+
+All four would be added to the Searcher's tool list in `app.py` the
+same conditional way `osint_investigate` was (`None` when unconfigured,
+never a hard error), and `prompts.py`'s `SEARCH_SUBAGENT_INSTRUCTIONS`
+needs a second `{tool_note}`-style section explicitly telling the
+model when to prefer these over `web_search` — Phase 3c proved this
+step is not optional.
+
+### What's needed before implementation can start
+
+1. **Operator decisions** on OpenCorporates and HaveIBeenPwned (table
+   above) — everything else in this phase is free-tier, no-decision
+   building blocks.
+2. **New OpenBao secrets**: `COMPANIES_HOUSE_API_KEY`, `HUNTER_API_KEY`
+   (both free signups, same safe-staging procedure as `OTX_API_KEY` —
+   scratch-manifest `--check` dry run before touching the real
+   manifest), plus `HIBP_API_KEY` only if that paid tier is approved.
+3. **Sherlock vendoring**: inspect the actual source at a pinned commit
+   before trusting it (same supply-chain step taken for `maltego-mcp`
+   and `lidless-labs/maltego-mcp`) — it's a larger, more actively-
+   contributed project than either of those, so this should be a
+   lighter check, but still a real one, not skipped.
+
+Not started. No code written for this phase yet — this section is the
+plan only, written at the operator's request after they asked whether
+the existing pipeline could do people/company research.
