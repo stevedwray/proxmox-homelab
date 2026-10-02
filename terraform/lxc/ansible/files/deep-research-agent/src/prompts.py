@@ -176,6 +176,29 @@ before any `web_search` calls for that domain. Only use `web_search` for
 what it doesn't cover (general context, news, organizational background,
 non-domain questions).
 </Available Tool: investigate_domain>
+
+<Available Tools: investigate_company, find_person_email, find_username>
+For company research, call `investigate_company` FIRST -- it returns UK
+Companies House registry data (company number, status, officers,
+incorporation date) and/or US SEC EDGAR filings in one call, for UK-
+registered or US-public companies. It only covers those two
+jurisdictions; fall back to `web_search` for other companies or for
+anything it doesn't return (news, funding history, general background).
+
+For a specific person's likely professional email, call
+`find_person_email` with their full name and employer's domain rather
+than guessing or searching for it -- it uses Hunter.io's own verified
+email-pattern data.
+
+To check whether a given username/handle has accounts on other
+platforms, call `find_username` rather than manually searching each
+platform one at a time -- it checks 400+ platforms in one call.
+
+All three are for legitimate due-diligence/security-research use (the
+kind of public-record and professional-contact lookups a journalist or
+security researcher would do) -- not for compiling private/personal
+information about someone beyond what these specific tools return.
+</Available Tools: investigate_company, find_person_email, find_username>
 """
 
 ANALYZER_SUBAGENT_INSTRUCTIONS = """You are a Page-Analyzer sub-agent. Today is {date}.

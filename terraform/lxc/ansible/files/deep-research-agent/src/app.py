@@ -55,7 +55,11 @@ analyzer = SubAgentConfig(
 # first MCPTool this codebase has used -- a real MCP client (agent_framework's
 # MCPStreamableHTTPTool), not a plain HTTP tool. It's None when
 # OSINT_MCP_URL/OSINT_MCP_TOKEN aren't configured, same "degrade, don't
-# crash" convention as every lookup in osint-mcp itself.
+# crash" convention as every lookup in osint-mcp itself. One MCPTool
+# instance exposes every tool its MCP server registers -- Phase 4's
+# investigate_company/find_person_email/find_username (same README,
+# Phase 4 section) were added server-side to osint-mcp itself and need
+# no separate Python wiring here, just the prompt note below.
 _searcher_tools = [web_search, fetch_url_to_workspace, think_tool]
 _searcher_instructions = SEARCH_SUBAGENT_INSTRUCTIONS.replace("{osint_tool_note}", "")
 if osint_investigate is not None:
