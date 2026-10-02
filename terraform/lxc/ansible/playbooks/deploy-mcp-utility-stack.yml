@@ -211,8 +211,8 @@
           #
           # Phase 1 only: this image has no long-running server command. It is
           # invoked per-call via `docker compose run --rm maltego-mcp node
-          # phase1-expand-domain.mjs <domain> <outputPath>`, never `docker compose
-          # up`. See docs/maltego-integration/plan.md.
+          # dist/phase1-expand-domain.js <domain> <outputPath>`, never `docker
+          # compose up`. See docs/maltego-integration/plan.md.
           FROM node:20-slim AS builder
           WORKDIR /app
           COPY package.json package-lock.json tsconfig.json tsup.config.ts ./
@@ -220,52 +220,62 @@
           COPY src ./src
           COPY scripts ./scripts
           RUN npm ci && npm run build
+          # Bundle the Phase 1 driver the same way tsup.config.ts's own
+          # entries are bundled (tsup/esbuild resolves the whole src/
+          # dependency graph from one entry file; it does not need to be
+          # listed in tsup.config.ts itself). Found live 2026-10-02: an
+          # earlier version of this driver imported from "./dist/graph/
+          # graph.js" etc. assuming dist/ mirrors src/'s directory
+          # structure -- it does not. tsup.config.ts has splitting:false,
+          # so each entry bundles into one flat file with no per-module
+          # output at all; dist/graph/, dist/lookups/ never exist.
+          COPY phase1-expand-domain.ts ./
+          RUN npx tsup phase1-expand-domain.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
 
           FROM node:20-slim
           RUN useradd --create-home --shell /usr/sbin/nologin app
           WORKDIR /app
           COPY --from=builder /app/node_modules ./node_modules
           COPY --from=builder /app/dist ./dist
-          # --chown=app:app -- found live 2026-10-02: the Ansible-written
-          # source file is root-owned mode 0640, and without --chown here
-          # COPY preserves root ownership into the image, which the
-          # non-root `app` user (USER app, below) can't read -- EACCES at
-          # runtime, not at build time.
-          COPY --chown=app:app phase1-expand-domain.mjs ./
           ENV MALTEGO_MCP_OUTPUT_DIR=/home/app/MaltegoGraphs
           RUN mkdir -p /home/app/MaltegoGraphs && chown -R app:app /home/app
           USER app
           # No ENTRYPOINT ["node"] -- found live 2026-10-02: with it, `docker
-          # compose run --rm maltego-mcp node phase1-expand-domain.mjs ...`
-          # doubled up into `node node phase1-expand-domain.mjs`, which
+          # compose run --rm maltego-mcp node dist/phase1-expand-domain.js ...`
+          # doubled up into `node node dist/phase1-expand-domain.js`, which
           # tried (and failed) to run a file literally named "node". A bare
           # CMD lets `docker compose run` fully override it with the real
           # command (e.g. `docker compose run --rm maltego-mcp node
-          # phase1-expand-domain.mjs <domain> <outputFileName>`).
+          # dist/phase1-expand-domain.js <domain> <outputFileName>`).
           CMD ["node", "dist/mcp-server.js"]
 
     - name: Write maltego-mcp Phase 1 driver script
       ansible.builtin.copy:
-        dest: "{{ maltego_build_dir }}/phase1-expand-domain.mjs"
+        dest: "{{ maltego_build_dir }}/phase1-expand-domain.ts"
         mode: "0640"
         content: |
           // Phase 1 driver: domain -> DNS + WHOIS + ASN(per A record) + crt.sh ->
           // .mtgx. Calls maltego-mcp's own exported lookup/graph functions
           // directly -- no MCP stdio protocol involved, see
-          // docs/maltego-integration/README.md for why. Usage:
-          //   node phase1-expand-domain.mjs <domain> <outputFileName>
+          // docs/maltego-integration/README.md for why. Bundled by tsup at
+          // image build time into dist/phase1-expand-domain.js (see
+          // Dockerfile) -- import specifiers use the project's own ".js"-
+          // for-.ts-source convention (see cli.ts/mcp-server.ts), resolved
+          // against this file's real location at /app (sibling of src/).
+          // Usage:
+          //   node dist/phase1-expand-domain.js <domain> <outputFileName>
           // outputFileName is relative to MALTEGO_MCP_OUTPUT_DIR.
           import { join } from "node:path";
-          import { Graph } from "./dist/graph/graph.js";
-          import { writeMtgxFile } from "./dist/graph/writer.js";
-          import { dnsLookup } from "./dist/lookups/dns.js";
-          import { whoisLookup } from "./dist/lookups/whois.js";
-          import { asnLookup } from "./dist/lookups/asn.js";
-          import { crtshLookup } from "./dist/lookups/crtsh.js";
+          import { Graph } from "./src/graph/graph.js";
+          import { writeMtgxFile } from "./src/graph/writer.js";
+          import { dnsLookup } from "./src/lookups/dns.js";
+          import { whoisLookup } from "./src/lookups/whois.js";
+          import { asnLookup } from "./src/lookups/asn.js";
+          import { crtshLookup } from "./src/lookups/crtsh.js";
 
           const [domain, outputFileName] = process.argv.slice(2);
           if (!domain || !outputFileName) {
-            console.error("usage: node phase1-expand-domain.mjs <domain> <outputFileName>");
+            console.error("usage: node dist/phase1-expand-domain.js <domain> <outputFileName>");
             process.exit(1);
           }
 
@@ -283,11 +293,11 @@
 
           if (dns.ok) {
             for (const ip of dns.data.a) {
-              const ipEntity = graph.addEntity({ type: "IPv4Address", value: ip, properties: {} });
+              const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
               graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
               const asn = await asnLookup(ip);
               if (asn.ok) {
-                const asnEntity = graph.addEntity({
+                const asnEntity = graph.ensureEntity({
                   type: "AS",
                   value: `AS${asn.data.asn}`,
                   properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
@@ -296,7 +306,7 @@
               }
             }
             for (const ns of dns.data.ns) {
-              const nsEntity = graph.addEntity({ type: "DNSName", value: ns, properties: {} });
+              const nsEntity = graph.ensureEntity({ type: "Domain", value: ns, properties: {} });
               graph.addLink({ from: domainEntity.id, to: nsEntity.id, label: "has_nameserver", properties: { source: "dns" } });
             }
           } else {
@@ -312,9 +322,9 @@
 
           if (crtsh.ok) {
             for (const cert of crtsh.data.certs.slice(0, 20)) {
-              const certEntity = graph.addEntity({
-                type: "Certificate",
-                value: cert.commonName,
+              const certEntity = graph.ensureEntity({
+                type: "Phrase",
+                value: `[Certificate] ${cert.commonName}`,
                 properties: { issuer: cert.issuer, notBefore: cert.notBefore, notAfter: cert.notAfter },
               });
               graph.addLink({ from: domainEntity.id, to: certEntity.id, label: "certificate", properties: { source: "crt.sh" } });
