@@ -108,6 +108,8 @@ set the eval-battery doc treats as valid.
   land within 92.5-93.75%, so effort doesn't matter on single calls.
 - **AgentBench os-std:** only two historical outputs survive.
   - Qwen3.6-35B: 22% on the seed-42 sample of 100 (comparable).
+  - GLM-5.3-Flash: 55% on the same seed-42 sample of 100 (2026-10-02,
+    first full run from the panel; 0 empty, 0 errors, 2 h 01 m).
   - Qwen3-Coder-30B: 27% over all 800 episodes (its own series).
   - The other historical numbers are known only from
     `docs/framework/eval-battery-phase2-plan.md` and can't be imported:
