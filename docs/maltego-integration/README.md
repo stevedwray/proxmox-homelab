@@ -630,8 +630,8 @@ tools the same way `investigate_domain` was.
 | **SEC EDGAR (full-text + submissions API)** | US public companies only: filings, CIK lookup, full-text search since 2001 | **Free**, no API key needed at all | **Use it.** Official US government source. Real limitation: public companies only — most small/private businesses won't appear. |
 | **Hunter.io** | Domain Search (finds a company's email-address pattern) + Email Finder/Verifier (person+company → likely email) | **Free**: 50 credits/month, no card required | **Use it.** The real company→person bridge tool — finding a person's professional email given their name and employer's domain is exactly the legitimate use case this phase should lead with. |
 | **Sherlock** (`sherlock-project/sherlock` on GitHub) | Checks a given username across 400+ social/web platforms for an existing account | **Free**, open-source (actively maintained, v0.16.2 as of Sept 2026) | **Use it**, vendored the same way `maltego-mcp` was (pinned commit, source inspected before trusting it — same supply-chain caution as before). |
-| **OpenCorporates** | The largest open global company database (200M+ companies, 140+ jurisdictions) | **No longer free** as of 2026 — every endpoint 401s without a paid `api_token`. Paid tiers start at £2,250/yr. A free public-benefit (journalism/NGO/academic) tier exists via a manual contact-form application, not guaranteed and not automatable. | **Operator decision needed**: skip entirely (Companies House + SEC EDGAR cover UK/US; everything else falls back to generic `web_search`), or apply for the public-benefit tier yourself (I cannot submit this on your behalf — it requires representing who you are and why). |
-| **HaveIBeenPwned** | Breach-check for a specific email address (confirms if it appears in a known breach) | **Paid-only** for the person-relevant endpoint, from $4.39/mo. The only free part (Pwned Passwords range API) checks password hashes, not people. | **Operator decision needed**: worth the ~$4.39/mo for a genuinely useful, narrow capability (confirming an email's breach exposure is a real, common, legitimate security-research question), or skip and stay fully free-tier like every other provider so far. |
+| **OpenCorporates** | The largest open global company database (200M+ companies, 140+ jurisdictions) | **No longer free** as of 2026 — every endpoint 401s without a paid `api_token`. Paid tiers start at £2,250/yr. | **SKIPPED (operator decision 2026-10-03)**: Companies House + SEC EDGAR cover UK/US; everything else falls back to generic `web_search`. Not revisited unless a real gap shows up in practice. |
+| **HaveIBeenPwned** | Breach-check for a specific email address (confirms if it appears in a known breach) | **Paid-only** for the person-relevant endpoint, from $4.39/mo. | **SKIPPED (operator decision 2026-10-03)**: stay fully free-tier, same as every other provider in this project so far. |
 
 ### Proposed architecture
 
@@ -653,11 +653,11 @@ itself):
 - **`find_username(username)`** — Sherlock, checking the given username
   across its 400+ platform list, returning which platforms have a
   matching account.
-- **`check_email_breach(email)`** (only if the operator opts into the
-  HIBP paid tier) — confirms whether an email appears in a known
-  breach, and which ones.
 
-All four would be added to the Searcher's tool list in `app.py` the
+OpenCorporates and HaveIBeenPwned skipped per operator decision
+2026-10-03 (table above) — only these three tools, all free-tier.
+
+All three would be added to the Searcher's tool list in `app.py` the
 same conditional way `osint_investigate` was (`None` when unconfigured,
 never a hard error), and `prompts.py`'s `SEARCH_SUBAGENT_INSTRUCTIONS`
 needs a second `{tool_note}`-style section explicitly telling the
@@ -666,13 +666,12 @@ step is not optional.
 
 ### What's needed before implementation can start
 
-1. **Operator decisions** on OpenCorporates and HaveIBeenPwned (table
-   above) — everything else in this phase is free-tier, no-decision
-   building blocks.
+1. ~~Operator decisions on OpenCorporates and HaveIBeenPwned~~ — **done
+   2026-10-03**, both skipped, free-tier only.
 2. **New OpenBao secrets**: `COMPANIES_HOUSE_API_KEY`, `HUNTER_API_KEY`
    (both free signups, same safe-staging procedure as `OTX_API_KEY` —
    scratch-manifest `--check` dry run before touching the real
-   manifest), plus `HIBP_API_KEY` only if that paid tier is approved.
+   manifest).
 3. **Sherlock vendoring**: inspect the actual source at a pinned commit
    before trusting it (same supply-chain step taken for `maltego-mcp`
    and `lidless-labs/maltego-mcp`) — it's a larger, more actively-
