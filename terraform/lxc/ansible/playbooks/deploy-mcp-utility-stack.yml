@@ -234,8 +234,8 @@
           # structure -- it does not. tsup.config.ts has splitting:false,
           # so each entry bundles into one flat file with no per-module
           # output at all; dist/graph/, dist/lookups/ never exist.
-          COPY phase1-expand-domain.ts ./
-          RUN npx tsup phase1-expand-domain.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
+          COPY phase1-expand-domain.ts investigate.ts osint-mcp-server.ts ./
+          RUN npx tsup phase1-expand-domain.ts osint-mcp-server.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
 
           FROM node:20-slim
           RUN useradd --create-home --shell /usr/sbin/nologin app
@@ -259,19 +259,37 @@
         dest: "{{ maltego_build_dir }}/phase1-expand-domain.ts"
         mode: "0640"
         content: |
-          // Phase 1 driver: domain -> DNS + WHOIS + ASN(per A record) + crt.sh ->
-          // .mtgx. Calls maltego-mcp's own exported lookup/graph functions for
-          // data gathering and graph bookkeeping, but serializes the .mtgx itself
-          // with a native writer below -- writeMtgxFile's yFiles-style y:Geometry
-          // node graphics is not understood by real Maltego Desktop 4.13's own
-          // reader (com.paterva.maltego.ui.graph.imex.StaxGraphReader), which
-          // expects Maltego's own mtg:EntityRenderer/mtg:Position schema instead
-          // (confirmed against pcbje/pymtgx, an independent, older, proven-working
-          // library) and throws "Cannot read field 'x' because 'center' is null"
-          // -- silently, on a background thread, leaving the import UI spinning
-          // forever with no error dialog. Found live 2026-10-02 via Maltego's own
-          // ~/.maltego/v4.13.0/var/log/messages.log.
+          // Thin CLI wrapper around investigate.ts's shared investigateDomain()/
+          // writeMtgxNative(). Logic moved to investigate.ts 2026-10-02 so
+          // osint-mcp-server.ts can reuse it without duplicating lookup/graph code.
+          // Usage:
+          //   node dist/phase1-expand-domain.js <domain> <outputFileName>
+          // outputFileName is relative to MALTEGO_MCP_OUTPUT_DIR.
           import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+
+          const [domain, outputFileName] = process.argv.slice(2);
+          if (!domain || !outputFileName) {
+            console.error("usage: node dist/phase1-expand-domain.js <domain> <outputFileName>");
+            process.exit(1);
+          }
+
+          const outputDir = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
+          const outputPath = join(outputDir, outputFileName);
+
+          const graph = await investigateDomain(domain);
+          await writeMtgxNative(graph, outputPath);
+          console.log(`wrote ${outputPath} (${graph.entityCount()} entities, ${graph.linkCount()} links)`);
+    - name: Write maltego-mcp shared investigate.ts module
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/investigate.ts"
+        mode: "0640"
+        content: |
+          // Shared investigation logic: domain -> DNS + WHOIS + ASN(per A record) +
+          // crt.sh + VirusTotal/Shodan/GreyNoise/AlienVault OTX enrichment -> Graph.
+          // Extracted from phase1-expand-domain.ts (2026-10-02) so the same logic
+          // can be called from both the CLI driver and osint-mcp-server.ts -- was
+          // previously a single top-level-await script, not reusable.
           import { writeFile, mkdir } from "node:fs/promises";
           import { dirname } from "node:path";
           import JSZip from "jszip";
@@ -341,9 +359,8 @@
           // stale/wrong; verified against the official docs instead of guessing.
           // Confirmed live 2026-10-02 with a real operator-provisioned key
           // (pulse_info.count/pulses matched this exact shape against the real
-          // API before this comment was updated). Still degrades gracefully to
-          // undefined on a missing/invalid key or network error, same as every
-          // other enrichment call here.
+          // API). Still degrades gracefully to undefined on a missing/invalid key
+          // or network error, same as every other enrichment call here.
           async function otxLookup(kind: "domain" | "IPv4", value: string): Promise<{ pulseCount: number; pulseNames: string[] } | undefined> {
             const key = process.env.OTX_API_KEY;
             if (!key) return undefined;
@@ -365,7 +382,7 @@
           // -- found live 2026-10-02 after a v2 fix rendered correctly (icons,
           // links, topology) but every entity showed "<empty>" because
           // "properties.value" isn't a real field on any of these entity types.
-          const VALUE_FIELD_NAME: Record<string, string> = {
+          export const VALUE_FIELD_NAME: Record<string, string> = {
             "maltego.Domain": "fqdn",
             "maltego.IPv4Address": "ipv4-address",
             "maltego.AS": "as.number",
@@ -380,7 +397,7 @@
               .replace(/"/g, "&quot;");
           }
 
-          async function writeMtgxNative(graph: Graph, outputPath: string): Promise<void> {
+          export async function writeMtgxNative(graph: Graph, outputPath: string): Promise<void> {
             graph.applyLayout();
 
             const nodeXml = graph.allEntities().map((e) => {
@@ -429,110 +446,214 @@
             await writeFile(outputPath, bytes);
           }
 
-          const [domain, outputFileName] = process.argv.slice(2);
-          if (!domain || !outputFileName) {
-            console.error("usage: node dist/phase1-expand-domain.js <domain> <outputFileName>");
+          export async function investigateDomain(domain: string): Promise<Graph> {
+            const graph = new Graph(`investigate-${domain}`, `Investigate: ${domain}`);
+            const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
+
+            const [dns, whois, crtsh, domainVt, domainOtx] = await Promise.all([
+              dnsLookup(domain),
+              whoisLookup(domain),
+              crtshLookup(domain),
+              vtLookup("domains", domain),
+              otxLookup("domain", domain),
+            ]);
+
+            if (domainVt?.stats) {
+              domainEntity.properties.vt_malicious = String(domainVt.stats.malicious ?? 0);
+              domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
+              if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
+            }
+            if (domainOtx) {
+              domainEntity.properties.otx_pulse_count = String(domainOtx.pulseCount);
+              if (domainOtx.pulseNames.length > 0) domainEntity.properties.otx_pulse_names = domainOtx.pulseNames.join(", ");
+            }
+
+            if (dns.ok) {
+              for (const ip of dns.data.a) {
+                const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
+                const [asn, vt, shodan, greynoise, otx] = await Promise.all([
+                  asnLookup(ip),
+                  vtLookup("ip_addresses", ip),
+                  shodanLookup(ip),
+                  greynoiseLookup(ip),
+                  otxLookup("IPv4", ip),
+                ]);
+                if (asn.ok) {
+                  const asnEntity = graph.ensureEntity({
+                    type: "AS",
+                    value: `AS${asn.data.asn}`,
+                    properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
+                  });
+                  graph.addLink({ from: ipEntity.id, to: asnEntity.id, label: "hosted_in", properties: { source: "team-cymru" } });
+                }
+                if (vt?.stats) {
+                  ipEntity.properties.vt_malicious = String(vt.stats.malicious ?? 0);
+                  ipEntity.properties.vt_suspicious = String(vt.stats.suspicious ?? 0);
+                  if (vt.reputation !== undefined) ipEntity.properties.vt_reputation = String(vt.reputation);
+                }
+                if (shodan) {
+                  ipEntity.properties.shodan_org = shodan.org ?? "";
+                  ipEntity.properties.shodan_ports = (shodan.ports ?? []).join(",");
+                  if ((shodan.vulns ?? []).length > 0) ipEntity.properties.shodan_vulns = shodan.vulns!.join(",");
+                }
+                if (greynoise) {
+                  ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
+                  ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
+                  ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
+                }
+                if (otx) {
+                  ipEntity.properties.otx_pulse_count = String(otx.pulseCount);
+                  if (otx.pulseNames.length > 0) ipEntity.properties.otx_pulse_names = otx.pulseNames.join(", ");
+                }
+              }
+              for (const ns of dns.data.ns) {
+                const nsEntity = graph.ensureEntity({ type: "Domain", value: ns, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: nsEntity.id, label: "has_nameserver", properties: { source: "dns" } });
+              }
+            }
+
+            if (whois.ok) {
+              domainEntity.properties.registrar = whois.data.registrar ?? "";
+              domainEntity.properties.creationDate = whois.data.creationDate ?? "";
+            }
+
+            if (crtsh.ok) {
+              for (const cert of crtsh.data.certs.slice(0, 20)) {
+                const certEntity = graph.ensureEntity({
+                  type: "Phrase",
+                  value: `[Certificate] ${cert.commonName}`,
+                  properties: { issuer: cert.issuer, notBefore: cert.notBefore, notAfter: cert.notAfter },
+                });
+                graph.addLink({ from: domainEntity.id, to: certEntity.id, label: "certificate", properties: { source: "crt.sh" } });
+                for (const san of cert.sans) {
+                  if (san === domain) continue;
+                  const sanEntity = graph.ensureEntity({ type: "Domain", value: san, properties: {} });
+                  graph.addLink({ from: certEntity.id, to: sanEntity.id, label: "SAN", properties: { source: "crt.sh" } });
+                }
+              }
+            }
+
+            return graph;
+          }
+
+    - name: Write osint-mcp-server.ts (Phase 3 HTTP MCP server)
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/osint-mcp-server.ts"
+        mode: "0640"
+        content: |
+          // OSINT MCP server, Phase 3: exposes investigateDomain() (DNS/WHOIS/ASN/
+          // crt.sh + VirusTotal/Shodan/GreyNoise/OTX enrichment) as one real MCP
+          // tool over Streamable HTTP, so deep-research-agent (a different
+          // container on the same pve-tiny LXC host) can call it over the network
+          // -- maltego-mcp's own mcp-server.ts speaks stdio only, which cannot
+          // cross a container boundary, so this is a separate purpose-built server
+          // (same precedent as docs-rag-mcp: in-repo, not vendored), reusing
+          // investigate.ts's logic rather than duplicating it.
+          //
+          // Auth: a single shared-secret bearer token (OSINT_MCP_TOKEN), checked
+          // on every request before the MCP transport ever sees it. Unlike
+          // cve-mcp-server/docs-rag-mcp (no app-layer auth, network-only via
+          // MikroTik rules), this is a new network-reachable surface and the
+          // original design brief explicitly asked for real auth even on LAN --
+          // see docs/maltego-integration/README.md.
+          import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+          import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+          import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+          import { z } from "zod";
+          import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+
+          const TOKEN = process.env.OSINT_MCP_TOKEN;
+          if (!TOKEN) {
+            console.error("fatal: OSINT_MCP_TOKEN is not set");
             process.exit(1);
           }
 
-          const outputDir = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
-          const outputPath = join(outputDir, outputFileName);
+          const PORT = Number(process.env.PORT ?? "8010");
+          const OUTPUT_DIR = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
 
-          const graph = new Graph(`phase1-${domain}`, `Phase 1: ${domain}`);
-          const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
-
-          const [dns, whois, crtsh, domainVt, domainOtx] = await Promise.all([
-            dnsLookup(domain),
-            whoisLookup(domain),
-            crtshLookup(domain),
-            vtLookup("domains", domain),
-            otxLookup("domain", domain),
-          ]);
-
-          if (domainVt?.stats) {
-            domainEntity.properties.vt_malicious = String(domainVt.stats.malicious ?? 0);
-            domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
-            if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
+          function getServer(): McpServer {
+            const server = new McpServer({ name: "osint-mcp", version: "1.0.0" });
+            server.registerTool(
+              "investigate_domain",
+              {
+                description:
+                  "Investigate a domain: DNS resolution, WHOIS, certificate transparency (crt.sh), " +
+                  "ASN/hosting info, and threat-intel enrichment (VirusTotal, Shodan, GreyNoise, AlienVault OTX " +
+                  "-- each best-effort, degrading silently if its API key is unset or the call fails). " +
+                  "Returns a text summary and, if writeMtgx is true, saves a .mtgx file Maltego Desktop can open.",
+                inputSchema: {
+                  domain: z.string().describe("Domain name to investigate, e.g. example.com"),
+                  writeMtgx: z.boolean().optional().describe("Also write a .mtgx file to the shared output directory (default: false)"),
+                  outputFileName: z.string().optional().describe("File name for the .mtgx, relative to the output directory (required if writeMtgx is true)"),
+                },
+              },
+              async ({ domain, writeMtgx, outputFileName }) => {
+                const graph = await investigateDomain(domain);
+                let mtgxPath: string | undefined;
+                if (writeMtgx) {
+                  if (!outputFileName) {
+                    return { content: [{ type: "text", text: "error: outputFileName is required when writeMtgx is true" }], isError: true };
+                  }
+                  mtgxPath = join(OUTPUT_DIR, outputFileName);
+                  await writeMtgxNative(graph, mtgxPath);
+                }
+                const entities = graph.allEntities();
+                const lines = [
+                  `Investigated ${domain}: ${entities.length} entities, ${graph.allLinks().length} links.`,
+                  ...entities.map((e) => {
+                    const notable = Object.entries(e.properties)
+                      .filter(([k]) => k.startsWith("vt_") || k.startsWith("shodan_") || k.startsWith("greynoise_") || k.startsWith("otx_"))
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(" ");
+                    return `- [${e.type.replace("maltego.", "")}] ${e.value}${notable ? ` (${notable})` : ""}`;
+                  }),
+                ];
+                if (mtgxPath) lines.push(`Saved .mtgx to ${mtgxPath}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              },
+            );
+            return server;
           }
-          if (domainOtx) {
-            domainEntity.properties.otx_pulse_count = String(domainOtx.pulseCount);
-            if (domainOtx.pulseNames.length > 0) domainEntity.properties.otx_pulse_names = domainOtx.pulseNames.join(", ");
-          }
 
-          if (dns.ok) {
-            for (const ip of dns.data.a) {
-              const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
-              graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
-              const [asn, vt, shodan, greynoise, otx] = await Promise.all([
-                asnLookup(ip),
-                vtLookup("ip_addresses", ip),
-                shodanLookup(ip),
-                greynoiseLookup(ip),
-                otxLookup("IPv4", ip),
-              ]);
-              if (asn.ok) {
-                const asnEntity = graph.ensureEntity({
-                  type: "AS",
-                  value: `AS${asn.data.asn}`,
-                  properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
-                });
-                graph.addLink({ from: ipEntity.id, to: asnEntity.id, label: "hosted_in", properties: { source: "team-cymru" } });
-              }
-              if (vt?.stats) {
-                ipEntity.properties.vt_malicious = String(vt.stats.malicious ?? 0);
-                ipEntity.properties.vt_suspicious = String(vt.stats.suspicious ?? 0);
-                if (vt.reputation !== undefined) ipEntity.properties.vt_reputation = String(vt.reputation);
-              }
-              if (shodan) {
-                ipEntity.properties.shodan_org = shodan.org ?? "";
-                ipEntity.properties.shodan_ports = (shodan.ports ?? []).join(",");
-                if ((shodan.vulns ?? []).length > 0) ipEntity.properties.shodan_vulns = shodan.vulns!.join(",");
-              }
-              if (greynoise) {
-                ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
-                ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
-                ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
-              }
-              if (otx) {
-                ipEntity.properties.otx_pulse_count = String(otx.pulseCount);
-                if (otx.pulseNames.length > 0) ipEntity.properties.otx_pulse_names = otx.pulseNames.join(", ");
-              }
+          const app = createMcpExpressApp();
+
+          app.use((req, res, next) => {
+            const auth = req.headers.authorization ?? "";
+            if (auth !== `Bearer ${TOKEN}`) {
+              res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "unauthorized" }, id: null });
+              return;
             }
-            for (const ns of dns.data.ns) {
-              const nsEntity = graph.ensureEntity({ type: "Domain", value: ns, properties: {} });
-              graph.addLink({ from: domainEntity.id, to: nsEntity.id, label: "has_nameserver", properties: { source: "dns" } });
-            }
-          } else {
-            console.error(`dns lookup failed: ${dns.error}`);
-          }
+            next();
+          });
 
-          if (whois.ok) {
-            domainEntity.properties.registrar = whois.data.registrar ?? "";
-            domainEntity.properties.creationDate = whois.data.creationDate ?? "";
-          } else {
-            console.error(`whois lookup failed: ${whois.error}`);
-          }
-
-          if (crtsh.ok) {
-            for (const cert of crtsh.data.certs.slice(0, 20)) {
-              const certEntity = graph.ensureEntity({
-                type: "Phrase",
-                value: `[Certificate] ${cert.commonName}`,
-                properties: { issuer: cert.issuer, notBefore: cert.notBefore, notAfter: cert.notAfter },
+          app.post("/mcp", async (req, res) => {
+            const server = getServer();
+            try {
+              const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+              await server.connect(transport);
+              await transport.handleRequest(req, res, req.body);
+              res.on("close", () => {
+                transport.close();
+                server.close();
               });
-              graph.addLink({ from: domainEntity.id, to: certEntity.id, label: "certificate", properties: { source: "crt.sh" } });
-              for (const san of cert.sans) {
-                if (san === domain) continue;
-                const sanEntity = graph.ensureEntity({ type: "Domain", value: san, properties: {} });
-                graph.addLink({ from: certEntity.id, to: sanEntity.id, label: "SAN", properties: { source: "crt.sh" } });
+            } catch (error) {
+              console.error("error handling MCP request:", error);
+              if (!res.headersSent) {
+                res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "internal server error" }, id: null });
               }
             }
-          } else {
-            console.error(`crt.sh lookup failed: ${crtsh.error}`);
-          }
+          });
 
-          await writeMtgxNative(graph, outputPath);
-          console.log(`wrote ${outputPath} (${graph.entityCount()} entities, ${graph.linkCount()} links)`);
+          app.get("/mcp", (_req, res) => {
+            res.writeHead(405).end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "method not allowed" }, id: null }));
+          });
+
+          app.listen(PORT, () => {
+            console.log(`osint-mcp listening on :${PORT}`);
+          });
+
     # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
     # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
     # `COPY pyproject.toml README.md ./` never copies LICENSE into the
@@ -788,6 +909,38 @@
                 # before being promoted to mandatory() here -- see
                 # docs/maltego-integration/README.md's Tier 2 section.
                 OTX_API_KEY: "{{ mcp_otx_api_key }}"
+              volumes:
+                - maltego-mcp-output:/home/app/MaltegoGraphs
+
+            osint-mcp:
+              # Phase 3: a real, always-on MCP server (Streamable HTTP) so
+              # deep-research-agent -- a different container, same pve-tiny
+              # LXC host -- can call investigate_domain() over the network.
+              # maltego-mcp's own mcp-server.ts speaks stdio only, which
+              # cannot cross a container boundary, so this is a separate
+              # purpose-built server sharing the same build context/image
+              # (same source, same node_modules) but a different command.
+              # See docs/maltego-integration/README.md's Phase 3 section.
+              build:
+                context: ./maltego-mcp
+              container_name: osint-mcp
+              command: ["node", "dist/osint-mcp-server.js"]
+              restart: unless-stopped
+              ports:
+                - "8010:8010"
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
+                # Shared-secret bearer token -- the brief explicitly asked
+                # for real auth even on LAN (unlike cve-mcp-server/
+                # docs-rag-mcp, which have none). Not yet in OpenBao as of
+                # this commit; defaults to empty, and the server refuses to
+                # start at all without it (process.exit(1) in
+                # osint-mcp-server.ts) rather than ever listening
+                # unauthenticated. See docs/maltego-integration/README.md.
+                OSINT_MCP_TOKEN: "{{ lookup('env', 'OSINT_MCP_TOKEN') | default('', true) }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 

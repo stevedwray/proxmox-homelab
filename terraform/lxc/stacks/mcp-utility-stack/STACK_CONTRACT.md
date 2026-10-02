@@ -58,6 +58,7 @@ allowlist).
 | `cve-mcp-http` | `8000` | `tcp` | MCP Streamable HTTP endpoint at `/api/mcp`. No built-in authentication — access control is network-level only (MikroTik inbound rule), see Security notes below. |
 | `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`, `get_document`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
 | `maltego-mcp` | (none — stdio/on-demand only, Phase 1) | invoked via `docker compose run --rm`, not a daemon | domain -> DNS/WHOIS/ASN/crt.sh -> `.mtgx`, see `docs/maltego-integration/plan.md`. Deliberately not `cve-mcp-server` (whose contract, repo, and name are CVE-only) — see that plan's `README.md` for why. |
+| `osint-mcp` | `8010` | `tcp`, MCP Streamable HTTP at `/mcp` | Phase 3: same investigation logic as `maltego-mcp` (domain -> DNS/WHOIS/ASN/crt.sh + VirusTotal/Shodan/GreyNoise/OTX enrichment), exposed as a real `investigate_domain` MCP tool for `deep-research-agent` (a different container, same LXC host) to call over the network. **Unlike its two siblings, this one requires `Authorization: Bearer <OSINT_MCP_TOKEN>`** — the brief explicitly asked for real auth even on LAN. Refuses to start at all without a token configured (`process.exit(1)`), never listens unauthenticated. See `docs/maltego-integration/README.md`'s Phase 3 section. |
 
 ## Dependencies
 
@@ -199,6 +200,11 @@ session (Laguna S 2.1 via Ollama) via `.vscode/mcp.json` — see
   in Phase 1. Do not add `restart: unless-stopped` or remove the
   `profiles: ["tools"]` line without re-reading
   `docs/maltego-integration/README.md` first.
+- **`osint-mcp` refuses to start at all without `OSINT_MCP_TOKEN` set**
+  (`process.exit(1)` in `osint-mcp-server.ts`) — this is deliberate, not
+  a startup bug. Never remove that check to "fix" a container that won't
+  come up; the fix is to configure the token, not bypass auth on a
+  network-reachable service.
 
 ## Playbook
 
