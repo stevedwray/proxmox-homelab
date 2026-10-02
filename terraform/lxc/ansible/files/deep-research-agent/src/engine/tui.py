@@ -1225,6 +1225,26 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
         run_id = f"run_{int(time.time())}"
         session_token = session_dir_ctx.set(run_id)
 
+    # Found 2026-10-02: agent_framework_openai's own streaming layer
+    # deliberately stabilizes content.call_id to a non-empty value on
+    # EVERY chunk of a multi-chunk tool call (see _inner_get_response's
+    # _stream(), tool_call_identities dict) so downstream code can
+    # correlate a call's chunks -- but it does NOT similarly stabilize
+    # content.name, which stays empty after the real first chunk. The
+    # print logic below only gated on `if call_id:`, which is true for
+    # every argument-delta chunk, not just the first -- so a single real
+    # tool call with a moderately long `arguments` JSON (e.g.
+    # delegate_tasks's `instructions` field) can print "Calling ...\x1b[0m"
+    # (empty name) dozens of times, looking exactly like a malformed/
+    # infinite retry loop when it's really one call's streaming progress.
+    # Confirmed via raw curl against Framework's own llama.cpp endpoint:
+    # its wire format is correct (name arrives whole in the first chunk),
+    # the duplication happens after agent_framework's own id-stabilization
+    # pass. Track seen call_ids so each real call prints exactly once.
+    # See docs/maltego-integration/README.md Phase 3c and
+    # reference_agent_framework_streaming_callid_stabilization.
+    seen_function_call_ids: set[str] = set()
+
     async def cli_subagent_callback(update, is_subagent=True, is_done=False, **kwargs):
         agent_name = kwargs.get("agent_name") or getattr(update, "author_name", None) or "Sub-Agent"
 
@@ -1258,7 +1278,8 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
                 log_stream_content(agent_name, "function_call", {
                     "call_id": call_id, "name": name, "arguments": arguments
                 })
-                if call_id:
+                if call_id and call_id not in seen_function_call_ids:
+                    seen_function_call_ids.add(call_id)
                     sys.stdout.write(f"\n\033[93m[{agent_name}] Calling {name}...\033[0m\n")
             elif content.type == "function_result":
                 call_id = getattr(content, "call_id", None)
@@ -1372,7 +1393,8 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
                             log_stream_content("Agent", "function_call", {
                                 "call_id": call_id, "name": name, "arguments": arguments
                             })
-                            if call_id:
+                            if call_id and call_id not in seen_function_call_ids:
+                                seen_function_call_ids.add(call_id)
                                 sys.stdout.write(f"\n\033[96m[Agent] Calling {name}...\033[0m\n")
                         elif content.type == "function_result":
                             call_id = getattr(content, "call_id", None)
