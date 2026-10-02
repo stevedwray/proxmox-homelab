@@ -60,7 +60,22 @@ def _get_default_options():
     # OpenAI's official API rejects "chat_template_kwargs"
     if "api.openai.com" not in config.cfg.get("api", {}).get("openai_base_url", ""):
         options["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": config.cfg["settings"].get("enable_thinking", False)}
+            "chat_template_kwargs": {"enable_thinking": config.cfg["settings"].get("enable_thinking", False)},
+            # Found 2026-10-03: a live run got stuck generating the exact
+            # same sentence ("Discord's ASN is AS62041? ") forever -- a
+            # real, observed degenerate-repetition loop, not a dispatcher/
+            # quota bug. temperature: 0.0 is fully greedy/deterministic
+            # decoding with zero randomness to break out of a loop once
+            # the model enters one, and no repetition penalty was set
+            # anywhere. Confirmed `repeat_penalty` is accepted by this
+            # llama.cpp server (HTTP 200 on a direct request) before
+            # adding it. 1.15 is llama.cpp's own common default value --
+            # not tuned here, just enabled where it was previously fully
+            # absent. Left temperature at 0.0 -- that's a deliberate
+            # existing design choice (deterministic reasoning), and
+            # repeat_penalty is a narrower, more surgical mitigation for
+            # literal token-sequence repetition specifically.
+            "repeat_penalty": 1.15,
         }
     return options
 
