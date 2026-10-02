@@ -77,9 +77,9 @@ phase actually needs an LLM agent driving it interactively.
 - [x] `maltego-02-dockerfile-and-driver` — 2026-10-02
 - [x] `maltego-03-compose-service` — 2026-10-02
 - [x] `maltego-04-stack-contract` — 2026-10-02
-- [x] Deployed to `pve-tiny` (`provision.sh --stack mcp-utility-stack`) — 2026-10-02, after 5 rounds of real bugs found and fixed via live testing (see below)
-- [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` (6 entities, 6 links for `example.com`) — 2026-10-02, saved to `artifacts/test-example-com.mtgx`
-- [ ] Operator: open `artifacts/test-example-com.mtgx` in Maltego Desktop — **this is the actual milestone, not done yet**
+- [x] Deployed to `pve-tiny` (`provision.sh --stack mcp-utility-stack`) — 2026-10-02, 8 total deploy rounds across the two bug-fixing passes below
+- [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` — 2026-10-02
+- [x] **Operator opened the file in real Maltego Desktop 4.13.0 and confirmed it renders correctly** — 2026-10-02: correct entity icons (Domain/IPv4Address/AS/Phrase), correct values (not placeholder text), correct link labels (`resolves_to`/`has_nameserver`/`hosted_in`/`certificate`/`SAN`), correct topology. **This is the actual Phase 1 milestone, and it's done.** Confirmed artifact saved at `artifacts/test-example-com-v4-confirmed-working.mtgx`.
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
 
@@ -132,6 +132,59 @@ clone before being redeployed, to avoid burning repeated full
 `provision.sh` cycles on fixes that could be proven wrong (or right)
 faster with a local `tsup`/`node` run. See commit history on
 `docs/maltego-integration-plan` for the individual fixes.
+
+## The real finding: maltego-mcp's writer doesn't work against real Maltego Desktop
+
+The 7 bugs above all got the pipeline running, but the resulting file
+produced an import that **spun forever with no error** in real Maltego
+Desktop 4.13.0 — not a hang in the usual sense, confirmed by reading
+Maltego's own `~/.maltego/v4.13.0/var/log/messages.log`: the graph loader
+threw a `NullPointerException` on a background thread every time
+(`StaxGraphReader.flushEntities`, "Cannot read field 'x' because 'center'
+is null"), and the exception never reached the UI, so the tab just sat
+there loading indefinitely. This reproduced identically even on a
+hand-built single-entity, zero-edge file — ruling out anything about
+*our* graph content and pointing at the library's writer itself.
+
+Root cause, found by comparing against `pcbje/pymtgx` (a different,
+older, independently-written library that genuinely works against real
+Maltego): `maltego-mcp`'s `writeMtgxFile` emits node position as generic
+yFiles GraphML (`y:ShapeNode`/`y:Geometry`). Real Maltego Desktop's own
+graph reader does not read position from that at all — it expects
+Maltego's own `mtg:EntityRenderer`/`mtg:Position` element. This is a
+genuine bug in the upstream library against current Maltego Desktop, not
+a misuse on our part — its own test suite only round-trips through its
+own reader, never against a real Maltego installation, so this was never
+caught. This directly answers `brief.md`'s open question #1/#2 ("how does
+maltego-mcp actually construct MTGX files" / "is its graph model
+sufficient") — **no, not as shipped.**
+
+**The fix**: stopped using `writeMtgxFile` entirely. The driver script
+now uses `maltego-mcp`'s `Graph` class and lookup functions (`dnsLookup`,
+`whoisLookup`, `asnLookup`, `crtshLookup` — these are fine, just HTTP
+calls) for building and deduplication, but serializes the final
+`.mtgx` itself with a small native writer matching the proven
+`mtg:EntityRenderer`/`mtg:Position` schema. Two further bugs surfaced by
+the same live-Maltego-Desktop testing loop, both real and both confirmed
+against this machine's actual installed Maltego:
+
+1. **`<edge>` needs an explicit `id` attribute.** GraphML allows omitting
+   it; Maltego's `StaxGraphReader.readEdge` throws "Mandatory attribute
+   does not exist: id" without it.
+2. **Every entity rendered (correct icon, correct links, correct
+   topology) but showed `<empty>` as its value.** `"properties.value"`
+   isn't a real field on any Maltego entity type. Extracted the actual
+   per-type field names directly from this machine's installed Maltego
+   entity definitions (`com-paterva-maltego-entities-common.jar`,
+   `maltego.<Type>.entity`'s `<Properties value="...">` attribute):
+   `maltego.Domain` → `fqdn`, `maltego.IPv4Address` → `ipv4-address`,
+   `maltego.AS` → `as.number`, `maltego.Phrase` → `text`.
+
+**Confirmed working end-to-end by the operator**, not just inspected
+locally: the resulting `.mtgx` opens in real Maltego Desktop 4.13.0 with
+correct entity icons, correct values, correct link labels, and correct
+topology for `example.com`. Saved at
+`artifacts/test-example-com-v4-confirmed-working.mtgx`.
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
