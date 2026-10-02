@@ -268,9 +268,21 @@
           # single-purpose container image like this one. python3-pip is
           # purged after install -- it's an installer, not a runtime
           # dependency of the installed package.
-          RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && \
+          #
+          # Found live 2026-10-03: a bare `apt-get update` on this LXC
+          # times out connecting directly to deb.debian.org -- confirmed
+          # via a direct reproduction, not assumed from the generic exit-
+          # code-100 error alone. This LXC's own apt-cacher-ng proxy
+          # ({{ apt_cacher_host }}:3142, already in its inventory for the
+          # host's own apt sources) is required for any apt-get inside a
+          # Docker build here too -- Docker builds don't inherit the
+          # host's own apt.conf.d proxy config automatically, confirmed by
+          # testing both ways. PyPI (pip) is reachable directly -- only
+          # the Debian mirror itself needs the proxy.
+          RUN echo 'Acquire::http::Proxy "http://{{ apt_cacher_host }}:3142";' > /etc/apt/apt.conf.d/01proxy && \
+              apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && \
               pip install --break-system-packages --no-cache-dir sherlock-project==0.16.2 && \
-              apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+              apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy
           WORKDIR /app
           COPY --from=builder /app/node_modules ./node_modules
           COPY --from=builder /app/dist ./dist
