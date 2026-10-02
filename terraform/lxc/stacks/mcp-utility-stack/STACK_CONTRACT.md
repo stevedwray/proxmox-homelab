@@ -40,7 +40,7 @@ folding it in here instead of a new stack.
 | `NVD_API_KEY` | secrets.common.enc.yaml | Raises NVD rate limit from 5/30s to 50/30s |
 | `GITHUB_TOKEN` | secrets.common.enc.yaml | GitHub Advisories/Code Search rate limit |
 | `VULNCHECK_TOKEN` | secrets.common.enc.yaml | NVD++ fallback source |
-| `VIRUSTOTAL_KEY` | secrets.common.enc.yaml | Threat-intel cluster, deliberately in scope per 2026-08-01 operator decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment (same key, not duplicated) — see `docs/maltego-integration/README.md`. **Known broken as of 2026-10-02**: returns HTTP 401 "Wrong API key" against the real VirusTotal v3 API; the stored value (23 chars) doesn't match VT's real 64-hex-char key format. Needs rotation. |
+| `VIRUSTOTAL_KEY` | secrets.common.enc.yaml | Threat-intel cluster, deliberately in scope per 2026-08-01 operator decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment (same key, not duplicated) — see `docs/maltego-integration/README.md`. Was broken 2026-08-01 through 2026-10-02 (401 "Wrong API key", stored value was 23 chars vs VT's real 64-hex-char format); operator rotated it 2026-10-02, confirmed working live against the real VirusTotal v3 API. |
 | `SHODAN_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment — confirmed working live 2026-10-02. |
 | `GREYNOISE_API_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment — confirmed working live 2026-10-02 against the real `/v3/ip/{ip}` endpoint (its old free `/v3/community` endpoint was deprecated Jan 2026, found via this operator's own `cve-mcp-server` fork). |
 
