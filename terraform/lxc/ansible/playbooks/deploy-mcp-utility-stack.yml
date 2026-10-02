@@ -276,6 +276,59 @@
           import { asnLookup } from "./src/lookups/asn.js";
           import { crtshLookup } from "./src/lookups/crtsh.js";
 
+          // Tier 1 enrichment: VirusTotal/Shodan/GreyNoise. Request/response shapes
+          // verified 2026-10-02 against this operator's own already-working
+          // cve-mcp-server fork (~/git/cve-mcp-server/src/cve_mcp/api/{ip_intel,
+          // shodan_client,hash_intel}.py), not re-derived from scratch. All three
+          // use the same OpenBao-managed keys already live in shared/external-apis
+          // (no new secret needed for this batch). GreyNoise note: its free
+          // /v3/community endpoint was deprecated Jan 2026 (per that same cve-mcp
+          // fork's own comment) -- this calls the real /v3/ip/{ip} endpoint, which
+          // needs a real (possibly paid-tier) key, not the old free-community one.
+          // Every call degrades gracefully on missing key, non-200, or network
+          // error -- enrichment is best-effort, never blocks graph generation.
+          interface VtStats { malicious: number; suspicious: number; harmless: number; undetected: number }
+          async function vtLookup(kind: "ip_addresses" | "domains", value: string): Promise<{ stats?: VtStats; reputation?: number; asOwner?: string } | undefined> {
+            const key = process.env.VIRUSTOTAL_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://www.virustotal.com/api/v3/${kind}/${encodeURIComponent(value)}`, { headers: { "x-apikey": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const attrs = body?.data?.attributes ?? {};
+              return { stats: attrs.last_analysis_stats, reputation: attrs.reputation, asOwner: attrs.as_owner };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function shodanLookup(ip: string): Promise<{ org?: string; ports?: number[]; hostnames?: string[]; vulns?: string[] } | undefined> {
+            const key = process.env.SHODAN_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(ip)}?key=${key}`);
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              return { org: body.org, ports: body.ports, hostnames: body.hostnames, vulns: Object.keys(body.vulns ?? {}) };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function greynoiseLookup(ip: string): Promise<{ noise?: boolean; riot?: boolean; classification?: string; name?: string } | undefined> {
+            const key = process.env.GREYNOISE_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.greynoise.io/v3/ip/${encodeURIComponent(ip)}`, { headers: { key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              if (body.error) return undefined;
+              return { noise: body.noise, riot: body.riot, classification: body.classification, name: body.name };
+            } catch {
+              return undefined;
+            }
+          }
+
           // Each Maltego entity type has its own "main value" field name,
           // authoritative source: this machine's installed Maltego entity
           // definitions (~/.maltego/v4.13.0/.../com-paterva-maltego-entities-
@@ -359,17 +412,29 @@
           const graph = new Graph(`phase1-${domain}`, `Phase 1: ${domain}`);
           const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
 
-          const [dns, whois, crtsh] = await Promise.all([
+          const [dns, whois, crtsh, domainVt] = await Promise.all([
             dnsLookup(domain),
             whoisLookup(domain),
             crtshLookup(domain),
+            vtLookup("domains", domain),
           ]);
+
+          if (domainVt?.stats) {
+            domainEntity.properties.vt_malicious = String(domainVt.stats.malicious ?? 0);
+            domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
+            if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
+          }
 
           if (dns.ok) {
             for (const ip of dns.data.a) {
               const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
               graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
-              const asn = await asnLookup(ip);
+              const [asn, vt, shodan, greynoise] = await Promise.all([
+                asnLookup(ip),
+                vtLookup("ip_addresses", ip),
+                shodanLookup(ip),
+                greynoiseLookup(ip),
+              ]);
               if (asn.ok) {
                 const asnEntity = graph.ensureEntity({
                   type: "AS",
@@ -377,6 +442,21 @@
                   properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
                 });
                 graph.addLink({ from: ipEntity.id, to: asnEntity.id, label: "hosted_in", properties: { source: "team-cymru" } });
+              }
+              if (vt?.stats) {
+                ipEntity.properties.vt_malicious = String(vt.stats.malicious ?? 0);
+                ipEntity.properties.vt_suspicious = String(vt.stats.suspicious ?? 0);
+                if (vt.reputation !== undefined) ipEntity.properties.vt_reputation = String(vt.reputation);
+              }
+              if (shodan) {
+                ipEntity.properties.shodan_org = shodan.org ?? "";
+                ipEntity.properties.shodan_ports = (shodan.ports ?? []).join(",");
+                if ((shodan.vulns ?? []).length > 0) ipEntity.properties.shodan_vulns = shodan.vulns!.join(",");
+              }
+              if (greynoise) {
+                ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
+                ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
+                ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
               }
             }
             for (const ns of dns.data.ns) {
@@ -655,6 +735,14 @@
               # phase1-expand-domain.mjs <domain> <outputFileName>`, never started
               # by `docker compose up`. See docs/maltego-integration/plan.md.
               profiles: ["tools"]
+              # Tier 1 enrichment keys (VirusTotal/Shodan/GreyNoise) --
+              # reusing the same OpenBao-backed vars already defined above
+              # for cve-mcp-server's own use, not a new secret. See
+              # docs/maltego-integration/README.md's Phase 2 notes.
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
