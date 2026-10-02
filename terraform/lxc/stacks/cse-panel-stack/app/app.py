@@ -844,11 +844,18 @@ def index():
         // all, even if its value is an empty string -- an empty response
         // is a real (if uninteresting) result and should say so, not
         // silently vanish as if that field didn't exist.
+        // Kept in sync with cse-controller's cse_tasks.py equivalents --
+        // real gap found live 2026-10-02: mitre/interpreter's actual
+        // response field is initial_response (not response), and
+        // instruct/autocomplete's real pass/fail signal is icd_result,
+        // not judge_response. Neither was covered, so both silently fell
+        // through to the generic metadata dump instead of their own
+        // labeled Response/Judge verdict rows.
         const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt', 'question'];
-        const RESPONSE_KEYS = ['response', 'model_output', 'model_response'];
-        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment', 'answered_correctly'];
+        const RESPONSE_KEYS = ['response', 'model_output', 'model_response', 'initial_response'];
+        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment', 'answered_correctly', 'icd_result'];
         const SKIP_KEYS = new Set([...PROMPT_KEYS, ...RESPONSE_KEYS, ...VERDICT_KEYS,
-          'model', 'prompt_id', 'pass_id', 'judge_question', 'user_input']);
+          'model', 'prompt_id', 'pass_id', 'judge_question', 'user_input', 'expansion_response']);
 
         function firstPresentKey(entry, keys) {{
           for (const k of keys) {{ if (entry[k] !== undefined) return k; }}

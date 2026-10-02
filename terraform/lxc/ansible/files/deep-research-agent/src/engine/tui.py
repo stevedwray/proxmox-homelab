@@ -1437,6 +1437,35 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
             from tools.fs import session_dir_ctx
             session_dir_ctx.reset(session_token)
 
+def _run_headless_and_exit(coro):
+    """Run a headless (--prompt/--prompt-file) invocation and hard-exit.
+
+    Found 2026-10-02: two separate live runs completed their real agentic
+    work correctly (final report produced, "Task completed in Ns" printed)
+    but then hung indefinitely -- not in the research loop, but in
+    asyncio.run()'s own event-loop teardown afterward. Root cause: a
+    cross-task cancel-scope RuntimeError from MCPStreamableHTTPTool's
+    async-generator cleanup ("Attempted to exit cancel scope in a
+    different task than it was entered in") leaves something
+    shutdown_asyncgens()/shutdown_default_executor() can't resolve. See
+    docs/maltego-integration/README.md for the full investigation.
+
+    This is a one-shot CLI invocation about to terminate the whole process
+    regardless, so skip asyncio.run()'s guaranteed-clean teardown entirely:
+    run the coroutine to completion, then hard-exit before any cleanup
+    phase gets a chance to hang. The OS reclaims every socket/file handle
+    on process exit either way -- there is nothing left to leak by
+    skipping it. Does not apply to --web mode, which is a long-lived
+    server that must shut down normally.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(coro)
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
 def cli_main(builder):
     parser = argparse.ArgumentParser(description="Basic Agent TUI / CLI Scaffold")
     parser.add_argument("--config", "-c", type=str, help="Path to config.yaml", default=None)
@@ -1477,9 +1506,9 @@ def cli_main(builder):
         sys.exit(0)
 
     if args.prompt_file:
-        asyncio.run(run_cli(builder, prompt_file=args.prompt_file, session_id=args.resume))
+        _run_headless_and_exit(run_cli(builder, prompt_file=args.prompt_file, session_id=args.resume))
     elif args.prompt:
-        asyncio.run(run_cli(builder, prompt=args.prompt, session_id=args.resume))
+        _run_headless_and_exit(run_cli(builder, prompt=args.prompt, session_id=args.resume))
     elif args.web:
         try:
             from textual_serve.server import Server

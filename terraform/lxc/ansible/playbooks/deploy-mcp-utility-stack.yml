@@ -72,6 +72,8 @@
     # not part of this repo, a sibling checkout. See
     # docs/mcp-stack/plan.md and ~/git/cve-mcp-server/docs/api-service-plan.md.
     mcp_source_dir: "{{ lookup('env', 'CVE_MCP_SOURCE_DIR') | default('/home/steve/git/cve-mcp-server', true) }}"
+    maltego_source_dir: "{{ lookup('env', 'MALTEGO_MCP_SOURCE_DIR') | default('/home/steve/git/maltego-mcp', true) }}"
+    maltego_build_dir: "{{ mcp_compose_dir }}/maltego-mcp"
 
     # Secrets -- OpenBao (see secrets/manifest.json). Full key set per
     # the operator's 2026-08-01 decision (includes the threat-intel cluster,
@@ -82,6 +84,15 @@
     mcp_virustotal_key: "{{ lookup('env', 'VIRUSTOTAL_KEY') | mandatory('VIRUSTOTAL_KEY env var is required') }}"
     mcp_shodan_key: "{{ lookup('env', 'SHODAN_KEY') | mandatory('SHODAN_KEY env var is required') }}"
     mcp_greynoise_api_key: "{{ lookup('env', 'GREYNOISE_API_KEY') | mandatory('GREYNOISE_API_KEY env var is required') }}"
+    # Tier 2 (maltego-mcp enrichment only, not consumed by cve-mcp-server).
+    # Confirmed live in OpenBao 2026-10-02 (64-char key, real API call
+    # verified) before being added here -- see
+    # docs/maltego-integration/README.md's Tier 2 section.
+    mcp_otx_api_key: "{{ lookup('env', 'OTX_API_KEY') | mandatory('OTX_API_KEY env var is required') }}"
+    # Phase 3 osint-mcp auth. Confirmed live in OpenBao 2026-10-02 (64-char
+    # operator-generated token) before being added here -- see
+    # docs/maltego-integration/README.md's Phase 3 section.
+    mcp_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -100,6 +111,11 @@
     # though the server itself was healthy.
     docs_rag_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8001,127.0.0.1:8001"
     docs_rag_postgres_password: "{{ lookup('env', 'DOCS_RAG_POSTGRES_PASSWORD') | mandatory('DOCS_RAG_POSTGRES_PASSWORD env var is required') }}"
+    # osint-mcp (Phase 3) -- same DNS-rebinding-protection gotcha as
+    # docs-rag-mcp above: must include 127.0.0.1 for in-container checks,
+    # plus the LXC's real IP for deep-research-agent's cross-container
+    # calls. See docs/maltego-integration/README.md's Phase 3 section.
+    osint_mcp_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8010,127.0.0.1:8010"
     # Pulled through Harbor's proxy-cache, not directly from Docker Hub --
     # same convention as every other third-party image in this repo (e.g.
     # PentAGI's own pgvector, ollama:rocm). FQDN via Traefik/edge_seg, not
@@ -143,6 +159,527 @@
         dest: "{{ mcp_build_dir }}/"
         mode: preserve
 
+    # --- maltego-mcp: vendored from https://github.com/lidless-labs/maltego-mcp
+    # (MIT, inspected and pinned at commit cb810042 2026-10-02 -- see
+    # docs/maltego-integration/README.md). Phase 1 only: no HTTP daemon, no
+    # MCP protocol usage -- invoked on demand via `docker compose run --rm`
+    # against a small driver script that calls its own exported lookup/graph
+    # functions directly. See docs/maltego-integration/plan.md. ---
+
+    - name: Create maltego-mcp build directory
+      ansible.builtin.file:
+        path: "{{ maltego_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy maltego-mcp source files from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/{{ item }}"
+        dest: "{{ maltego_build_dir }}/{{ item }}"
+        mode: preserve
+      loop:
+        - package.json
+        - package-lock.json
+        - tsconfig.json
+        - tsup.config.ts
+        - index.ts
+        - cli.ts
+        - mcp-bin.ts
+        - mcp-server.ts
+        - README.md
+        - LICENSE
+
+    # dest is the *parent* dir here, not "{{ maltego_build_dir }}/src" --
+    # same ansible.builtin.copy trailing-slash semantics as the
+    # cve-mcp-server src/ copy above.
+    - name: Copy maltego-mcp src/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/src"
+        dest: "{{ maltego_build_dir }}/"
+        mode: preserve
+
+    # tsup.config.ts declares a "demo-basic" build entry pointing at
+    # scripts/demo-basic.ts -- omitting scripts/ makes `npm run build` fail
+    # with "Cannot find demo-basic: scripts/demo-basic.ts" (found live
+    # 2026-10-02, first real build attempt). Copy the whole directory
+    # rather than patching tsup.config.ts to drop the entry, to stay
+    # faithful to the pinned upstream build as-is.
+    - name: Copy maltego-mcp scripts/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/scripts"
+        dest: "{{ maltego_build_dir }}/"
+        mode: preserve
+
+    - name: Write maltego-mcp Dockerfile
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/Dockerfile"
+        mode: "0640"
+        content: |
+          # syntax=docker/dockerfile:1
+          #
+          # maltego-mcp, vendored from https://github.com/lidless-labs/maltego-mcp
+          # (MIT license, inspected and pinned at commit cb810042 2026-10-02 --
+          # see docs/maltego-integration/README.md). Not pulled through Harbor --
+          # same convention as cve-mcp-server's own Dockerfile in this stack
+          # (single small image, no second consumer yet).
+          #
+          # Phase 1 only: this image has no long-running server command. It is
+          # invoked per-call via `docker compose run --rm maltego-mcp node
+          # dist/phase1-expand-domain.js <domain> <outputPath>`, never `docker
+          # compose up`. See docs/maltego-integration/plan.md.
+          FROM node:20-slim AS builder
+          WORKDIR /app
+          COPY package.json package-lock.json tsconfig.json tsup.config.ts ./
+          COPY index.ts cli.ts mcp-bin.ts mcp-server.ts ./
+          COPY src ./src
+          COPY scripts ./scripts
+          RUN npm ci && npm run build
+          # Bundle the Phase 1 driver the same way tsup.config.ts's own
+          # entries are bundled (tsup/esbuild resolves the whole src/
+          # dependency graph from one entry file; it does not need to be
+          # listed in tsup.config.ts itself). Found live 2026-10-02: an
+          # earlier version of this driver imported from "./dist/graph/
+          # graph.js" etc. assuming dist/ mirrors src/'s directory
+          # structure -- it does not. tsup.config.ts has splitting:false,
+          # so each entry bundles into one flat file with no per-module
+          # output at all; dist/graph/, dist/lookups/ never exist.
+          COPY phase1-expand-domain.ts investigate.ts osint-mcp-server.ts ./
+          RUN npx tsup phase1-expand-domain.ts osint-mcp-server.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
+
+          FROM node:20-slim
+          RUN useradd --create-home --shell /usr/sbin/nologin app
+          WORKDIR /app
+          COPY --from=builder /app/node_modules ./node_modules
+          COPY --from=builder /app/dist ./dist
+          ENV MALTEGO_MCP_OUTPUT_DIR=/home/app/MaltegoGraphs
+          RUN mkdir -p /home/app/MaltegoGraphs && chown -R app:app /home/app
+          USER app
+          # No ENTRYPOINT ["node"] -- found live 2026-10-02: with it, `docker
+          # compose run --rm maltego-mcp node dist/phase1-expand-domain.js ...`
+          # doubled up into `node node dist/phase1-expand-domain.js`, which
+          # tried (and failed) to run a file literally named "node". A bare
+          # CMD lets `docker compose run` fully override it with the real
+          # command (e.g. `docker compose run --rm maltego-mcp node
+          # dist/phase1-expand-domain.js <domain> <outputFileName>`).
+          CMD ["node", "dist/mcp-server.js"]
+
+    - name: Write maltego-mcp Phase 1 driver script
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/phase1-expand-domain.ts"
+        mode: "0640"
+        content: |
+          // Thin CLI wrapper around investigate.ts's shared investigateDomain()/
+          // writeMtgxNative(). Logic moved to investigate.ts 2026-10-02 so
+          // osint-mcp-server.ts can reuse it without duplicating lookup/graph code.
+          // Usage:
+          //   node dist/phase1-expand-domain.js <domain> <outputFileName>
+          // outputFileName is relative to MALTEGO_MCP_OUTPUT_DIR.
+          import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+
+          const [domain, outputFileName] = process.argv.slice(2);
+          if (!domain || !outputFileName) {
+            console.error("usage: node dist/phase1-expand-domain.js <domain> <outputFileName>");
+            process.exit(1);
+          }
+
+          const outputDir = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
+          const outputPath = join(outputDir, outputFileName);
+
+          const graph = await investigateDomain(domain);
+          await writeMtgxNative(graph, outputPath);
+          console.log(`wrote ${outputPath} (${graph.entityCount()} entities, ${graph.linkCount()} links)`);
+    - name: Write maltego-mcp shared investigate.ts module
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/investigate.ts"
+        mode: "0640"
+        content: |
+          // Shared investigation logic: domain -> DNS + WHOIS + ASN(per A record) +
+          // crt.sh + VirusTotal/Shodan/GreyNoise/AlienVault OTX enrichment -> Graph.
+          // Extracted from phase1-expand-domain.ts (2026-10-02) so the same logic
+          // can be called from both the CLI driver and osint-mcp-server.ts -- was
+          // previously a single top-level-await script, not reusable.
+          import { writeFile, mkdir } from "node:fs/promises";
+          import { dirname } from "node:path";
+          import JSZip from "jszip";
+          import { Graph } from "./src/graph/graph.js";
+          import { dnsLookup } from "./src/lookups/dns.js";
+          import { whoisLookup } from "./src/lookups/whois.js";
+          import { asnLookup } from "./src/lookups/asn.js";
+          import { crtshLookup } from "./src/lookups/crtsh.js";
+
+          // Tier 1 enrichment: VirusTotal/Shodan/GreyNoise. Request/response shapes
+          // verified 2026-10-02 against this operator's own already-working
+          // cve-mcp-server fork (~/git/cve-mcp-server/src/cve_mcp/api/{ip_intel,
+          // shodan_client,hash_intel}.py), not re-derived from scratch. All three
+          // use the same OpenBao-managed keys already live in shared/external-apis
+          // (no new secret needed for this batch). GreyNoise note: its free
+          // /v3/community endpoint was deprecated Jan 2026 (per that same cve-mcp
+          // fork's own comment) -- this calls the real /v3/ip/{ip} endpoint, which
+          // needs a real (possibly paid-tier) key, not the old free-community one.
+          // Every call degrades gracefully on missing key, non-200, or network
+          // error -- enrichment is best-effort, never blocks graph generation.
+          interface VtStats { malicious: number; suspicious: number; harmless: number; undetected: number }
+          async function vtLookup(kind: "ip_addresses" | "domains", value: string): Promise<{ stats?: VtStats; reputation?: number; asOwner?: string } | undefined> {
+            const key = process.env.VIRUSTOTAL_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://www.virustotal.com/api/v3/${kind}/${encodeURIComponent(value)}`, { headers: { "x-apikey": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const attrs = body?.data?.attributes ?? {};
+              return { stats: attrs.last_analysis_stats, reputation: attrs.reputation, asOwner: attrs.as_owner };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function shodanLookup(ip: string): Promise<{ org?: string; ports?: number[]; hostnames?: string[]; vulns?: string[] } | undefined> {
+            const key = process.env.SHODAN_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(ip)}?key=${key}`);
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              return { org: body.org, ports: body.ports, hostnames: body.hostnames, vulns: Object.keys(body.vulns ?? {}) };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function greynoiseLookup(ip: string): Promise<{ noise?: boolean; riot?: boolean; classification?: string; name?: string } | undefined> {
+            const key = process.env.GREYNOISE_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.greynoise.io/v3/ip/${encodeURIComponent(ip)}`, { headers: { key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              if (body.error) return undefined;
+              return { noise: body.noise, riot: body.riot, classification: body.classification, name: body.name };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Tier 2: AlienVault OTX. Endpoint/header confirmed 2026-10-02 against
+          // the official LevelBlue docs (otx.alienvault.com/assets/static/
+          // external_api.html) -- a different, unaffiliated source (an old gist)
+          // showed a singular "/indicator/" path that looked plausible but was
+          // stale/wrong; verified against the official docs instead of guessing.
+          // Confirmed live 2026-10-02 with a real operator-provisioned key
+          // (pulse_info.count/pulses matched this exact shape against the real
+          // API). Still degrades gracefully to undefined on a missing/invalid key
+          // or network error, same as every other enrichment call here.
+          async function otxLookup(kind: "domain" | "IPv4", value: string): Promise<{ pulseCount: number; pulseNames: string[] } | undefined> {
+            const key = process.env.OTX_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://otx.alienvault.com/api/v1/indicators/${kind}/${encodeURIComponent(value)}/general`, { headers: { "X-OTX-API-KEY": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const pulses: Array<{ name?: string }> = body?.pulse_info?.pulses ?? [];
+              return { pulseCount: body?.pulse_info?.count ?? 0, pulseNames: pulses.slice(0, 5).map((p) => p.name ?? "").filter(Boolean) };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Each Maltego entity type has its own "main value" field name,
+          // authoritative source: this machine's installed Maltego entity
+          // definitions (~/.maltego/v4.13.0/.../com-paterva-maltego-entities-
+          // common.jar, maltego.<Type>.entity's <Properties value="..."> attribute)
+          // -- found live 2026-10-02 after a v2 fix rendered correctly (icons,
+          // links, topology) but every entity showed "<empty>" because
+          // "properties.value" isn't a real field on any of these entity types.
+          export const VALUE_FIELD_NAME: Record<string, string> = {
+            "maltego.Domain": "fqdn",
+            "maltego.IPv4Address": "ipv4-address",
+            "maltego.AS": "as.number",
+            "maltego.Phrase": "text",
+          };
+
+          function escapeXml(value: unknown): string {
+            return String(value)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;");
+          }
+
+          export async function writeMtgxNative(graph: Graph, outputPath: string): Promise<void> {
+            graph.applyLayout();
+
+            const nodeXml = graph.allEntities().map((e) => {
+              const props = [
+                `<mtg:Property name="${escapeXml(VALUE_FIELD_NAME[e.type] ?? "properties.value")}" displayName="Value" type="string"><mtg:Value>${escapeXml(e.value)}</mtg:Value></mtg:Property>`,
+                ...Object.entries(e.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              const x = e.position?.x ?? 0;
+              const y = e.position?.y ?? 0;
+              return `    <node id="${e.id}">
+                <data key="d0"><mtg:MaltegoEntity xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="${escapeXml(e.type)}"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoEntity></data>
+                <data key="d1"><mtg:EntityRenderer xmlns:mtg="http://maltego.paterva.com/xml/mtgx"><mtg:Position x="${x}" y="${y}"/></mtg:EntityRenderer></data>
+              </node>`;
+            }).join("\n");
+
+            const edgeXml = graph.allLinks().map((l) => {
+              const props = [
+                l.label ? `<mtg:Property name="maltego.link.manual.type" displayName="Label" type="string"><mtg:Value>${escapeXml(l.label)}</mtg:Value></mtg:Property>` : "",
+                ...Object.entries(l.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              return `    <edge id="${l.id}" source="${l.from}" target="${l.to}">
+                <data key="d2"><mtg:MaltegoLink xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="maltego.link.manual-link"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoLink></data>
+              </edge>`;
+            }).join("\n");
+
+            const graphml = `<?xml version="1.0" encoding="UTF-8"?>
+          <graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:mtg="http://maltego.paterva.com/xml/mtgx" xmlns:y="http://www.yworks.com/xml/graphml">
+            <key id="d0" for="node" attr.name="MaltegoEntity"/>
+            <key id="d1" for="node" attr.name="EntityRenderer" yfiles.type="nodegraphics"/>
+            <key id="d2" for="edge" attr.name="MaltegoLink"/>
+            <graph id="G" edgedefault="directed">
+          ${nodeXml}
+          ${edgeXml}
+            </graph>
+          </graphml>`;
+
+            const zip = new JSZip();
+            zip.file("Graphs/Graph1.graphml", graphml);
+            zip.file("version.properties", "maltego.graph.version=1.3\nmaltego.client.version=4.13\n");
+            const bytes = await zip.generateAsync({ type: "uint8array" });
+            await mkdir(dirname(outputPath), { recursive: true });
+            await writeFile(outputPath, bytes);
+          }
+
+          export async function investigateDomain(domain: string): Promise<Graph> {
+            const graph = new Graph(`investigate-${domain}`, `Investigate: ${domain}`);
+            const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
+
+            const [dns, whois, crtsh, domainVt, domainOtx] = await Promise.all([
+              dnsLookup(domain),
+              whoisLookup(domain),
+              crtshLookup(domain),
+              vtLookup("domains", domain),
+              otxLookup("domain", domain),
+            ]);
+
+            if (domainVt?.stats) {
+              domainEntity.properties.vt_malicious = String(domainVt.stats.malicious ?? 0);
+              domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
+              if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
+            }
+            if (domainOtx) {
+              domainEntity.properties.otx_pulse_count = String(domainOtx.pulseCount);
+              if (domainOtx.pulseNames.length > 0) domainEntity.properties.otx_pulse_names = domainOtx.pulseNames.join(", ");
+            }
+
+            if (dns.ok) {
+              for (const ip of dns.data.a) {
+                const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
+                const [asn, vt, shodan, greynoise, otx] = await Promise.all([
+                  asnLookup(ip),
+                  vtLookup("ip_addresses", ip),
+                  shodanLookup(ip),
+                  greynoiseLookup(ip),
+                  otxLookup("IPv4", ip),
+                ]);
+                if (asn.ok) {
+                  const asnEntity = graph.ensureEntity({
+                    type: "AS",
+                    value: `AS${asn.data.asn}`,
+                    properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
+                  });
+                  graph.addLink({ from: ipEntity.id, to: asnEntity.id, label: "hosted_in", properties: { source: "team-cymru" } });
+                }
+                if (vt?.stats) {
+                  ipEntity.properties.vt_malicious = String(vt.stats.malicious ?? 0);
+                  ipEntity.properties.vt_suspicious = String(vt.stats.suspicious ?? 0);
+                  if (vt.reputation !== undefined) ipEntity.properties.vt_reputation = String(vt.reputation);
+                }
+                if (shodan) {
+                  ipEntity.properties.shodan_org = shodan.org ?? "";
+                  ipEntity.properties.shodan_ports = (shodan.ports ?? []).join(",");
+                  if ((shodan.vulns ?? []).length > 0) ipEntity.properties.shodan_vulns = shodan.vulns!.join(",");
+                }
+                if (greynoise) {
+                  ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
+                  ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
+                  ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
+                }
+                if (otx) {
+                  ipEntity.properties.otx_pulse_count = String(otx.pulseCount);
+                  if (otx.pulseNames.length > 0) ipEntity.properties.otx_pulse_names = otx.pulseNames.join(", ");
+                }
+              }
+              for (const ns of dns.data.ns) {
+                const nsEntity = graph.ensureEntity({ type: "Domain", value: ns, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: nsEntity.id, label: "has_nameserver", properties: { source: "dns" } });
+              }
+            }
+
+            if (whois.ok) {
+              domainEntity.properties.registrar = whois.data.registrar ?? "";
+              domainEntity.properties.creationDate = whois.data.creationDate ?? "";
+            }
+
+            if (crtsh.ok) {
+              for (const cert of crtsh.data.certs.slice(0, 20)) {
+                const certEntity = graph.ensureEntity({
+                  type: "Phrase",
+                  value: `[Certificate] ${cert.commonName}`,
+                  properties: { issuer: cert.issuer, notBefore: cert.notBefore, notAfter: cert.notAfter },
+                });
+                graph.addLink({ from: domainEntity.id, to: certEntity.id, label: "certificate", properties: { source: "crt.sh" } });
+                for (const san of cert.sans) {
+                  if (san === domain) continue;
+                  const sanEntity = graph.ensureEntity({ type: "Domain", value: san, properties: {} });
+                  graph.addLink({ from: certEntity.id, to: sanEntity.id, label: "SAN", properties: { source: "crt.sh" } });
+                }
+              }
+            }
+
+            return graph;
+          }
+
+    - name: Write osint-mcp-server.ts (Phase 3 HTTP MCP server)
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/osint-mcp-server.ts"
+        mode: "0640"
+        content: |
+          // OSINT MCP server, Phase 3: exposes investigateDomain() (DNS/WHOIS/ASN/
+          // crt.sh + VirusTotal/Shodan/GreyNoise/OTX enrichment) as one real MCP
+          // tool over Streamable HTTP, so deep-research-agent (a different
+          // container on the same pve-tiny LXC host) can call it over the network
+          // -- maltego-mcp's own mcp-server.ts speaks stdio only, which cannot
+          // cross a container boundary, so this is a separate purpose-built server
+          // (same precedent as docs-rag-mcp: in-repo, not vendored), reusing
+          // investigate.ts's logic rather than duplicating it.
+          //
+          // Auth: a single shared-secret bearer token (OSINT_MCP_TOKEN), checked
+          // on every request before the MCP transport ever sees it. Unlike
+          // cve-mcp-server/docs-rag-mcp (no app-layer auth, network-only via
+          // MikroTik rules), this is a new network-reachable surface and the
+          // original design brief explicitly asked for real auth even on LAN --
+          // see docs/maltego-integration/README.md.
+          import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+          import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+          import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+          import { z } from "zod";
+          import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+
+          const TOKEN = process.env.OSINT_MCP_TOKEN;
+          if (!TOKEN) {
+            console.error("fatal: OSINT_MCP_TOKEN is not set");
+            process.exit(1);
+          }
+
+          const PORT = Number(process.env.PORT ?? "8010");
+          const OUTPUT_DIR = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
+
+          function getServer(): McpServer {
+            const server = new McpServer({ name: "osint-mcp", version: "1.0.0" });
+            server.registerTool(
+              "investigate_domain",
+              {
+                description:
+                  "Investigate a domain: DNS resolution, WHOIS, certificate transparency (crt.sh), " +
+                  "ASN/hosting info, and threat-intel enrichment (VirusTotal, Shodan, GreyNoise, AlienVault OTX " +
+                  "-- each best-effort, degrading silently if its API key is unset or the call fails). " +
+                  "Returns a text summary and, if writeMtgx is true, saves a .mtgx file Maltego Desktop can open.",
+                inputSchema: {
+                  domain: z.string().describe("Domain name to investigate, e.g. example.com"),
+                  writeMtgx: z.boolean().optional().describe("Also write a .mtgx file to the shared output directory (default: false)"),
+                  outputFileName: z.string().optional().describe("File name for the .mtgx, relative to the output directory (required if writeMtgx is true)"),
+                },
+              },
+              async ({ domain, writeMtgx, outputFileName }) => {
+                const graph = await investigateDomain(domain);
+                let mtgxPath: string | undefined;
+                if (writeMtgx) {
+                  if (!outputFileName) {
+                    return { content: [{ type: "text", text: "error: outputFileName is required when writeMtgx is true" }], isError: true };
+                  }
+                  mtgxPath = join(OUTPUT_DIR, outputFileName);
+                  await writeMtgxNative(graph, mtgxPath);
+                }
+                const entities = graph.allEntities();
+                const lines = [
+                  `Investigated ${domain}: ${entities.length} entities, ${graph.allLinks().length} links.`,
+                  ...entities.map((e) => {
+                    const notable = Object.entries(e.properties)
+                      .filter(([k]) => k.startsWith("vt_") || k.startsWith("shodan_") || k.startsWith("greynoise_") || k.startsWith("otx_"))
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(" ");
+                    return `- [${e.type.replace("maltego.", "")}] ${e.value}${notable ? ` (${notable})` : ""}`;
+                  }),
+                ];
+                if (mtgxPath) lines.push(`Saved .mtgx to ${mtgxPath}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              },
+            );
+            return server;
+          }
+
+          // createMcpExpressApp() defaults to localhost-only DNS-rebinding
+          // protection (host: "127.0.0.1"), rejecting any request whose Host
+          // header isn't literally 127.0.0.1/localhost/::1 with a 403 -- found
+          // live 2026-10-02: a cross-container call using the LXC's real IP
+          // (192.168.50.10) got rejected before auth even ran. Explicit
+          // allowedHosts opts out of that default and allows the real reachable
+          // addresses instead, same pattern as cve-mcp-server's own
+          // MCP_ALLOWED_HOSTS (must include 127.0.0.1 too, for in-container
+          // health checks -- same gotcha documented for docs-rag-mcp).
+          // hostHeaderValidation() compares against hostname only, port-agnostic --
+          // found live 2026-10-02: passing "192.168.50.10:8010" verbatim never
+          // matched the parsed hostname "192.168.50.10", 403 on every real request.
+          // OSINT_MCP_ALLOWED_HOSTS still takes the familiar "host:port,host:port"
+          // shape (matching cve-mcp-server's own MCP_ALLOWED_HOSTS convention) --
+          // the port is stripped here before passing to allowedHosts.
+          const allowedHosts = (process.env.OSINT_MCP_ALLOWED_HOSTS ?? "127.0.0.1:8010")
+            .split(",")
+            .map((entry) => entry.trim().replace(/:\d+$/, ""));
+          const app = createMcpExpressApp({ host: "0.0.0.0", allowedHosts });
+
+          app.use((req, res, next) => {
+            const auth = req.headers.authorization ?? "";
+            if (auth !== `Bearer ${TOKEN}`) {
+              res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "unauthorized" }, id: null });
+              return;
+            }
+            next();
+          });
+
+          app.post("/mcp", async (req, res) => {
+            const server = getServer();
+            try {
+              const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+              await server.connect(transport);
+              await transport.handleRequest(req, res, req.body);
+              res.on("close", () => {
+                transport.close();
+                server.close();
+              });
+            } catch (error) {
+              console.error("error handling MCP request:", error);
+              if (!res.headersSent) {
+                res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "internal server error" }, id: null });
+              }
+            }
+          });
+
+          app.get("/mcp", (_req, res) => {
+            res.writeHead(405).end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "method not allowed" }, id: null }));
+          });
+
+          app.listen(PORT, () => {
+            console.log(`osint-mcp listening on :${PORT}`);
+          });
     # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
     # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
     # `COPY pyproject.toml README.md ./` never copies LICENSE into the
@@ -375,6 +912,68 @@
               volumes:
                 - mcp-home:/home/app
 
+            maltego-mcp:
+              build:
+                context: ./maltego-mcp
+              container_name: maltego-mcp
+              # Phase 1 only -- no HTTP port, no long-running server. This service
+              # is invoked on demand via `docker compose run --rm maltego-mcp node
+              # phase1-expand-domain.mjs <domain> <outputFileName>`, never started
+              # by `docker compose up`. See docs/maltego-integration/plan.md.
+              profiles: ["tools"]
+              # Tier 1 enrichment keys (VirusTotal/Shodan/GreyNoise) --
+              # reusing the same OpenBao-backed vars already defined above
+              # for cve-mcp-server's own use, not a new secret. See
+              # docs/maltego-integration/README.md's Phase 2 notes.
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                # Tier 2: AlienVault OTX. Key written to OpenBao and added
+                # to secrets/manifest.json 2026-10-02, verified via a
+                # scratch-manifest --check dry run plus a real API call
+                # before being promoted to mandatory() here -- see
+                # docs/maltego-integration/README.md's Tier 2 section.
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
+              volumes:
+                - maltego-mcp-output:/home/app/MaltegoGraphs
+
+            osint-mcp:
+              # Phase 3: a real, always-on MCP server (Streamable HTTP) so
+              # deep-research-agent -- a different container, same pve-tiny
+              # LXC host -- can call investigate_domain() over the network.
+              # maltego-mcp's own mcp-server.ts speaks stdio only, which
+              # cannot cross a container boundary, so this is a separate
+              # purpose-built server sharing the same build context/image
+              # (same source, same node_modules) but a different command.
+              # See docs/maltego-integration/README.md's Phase 3 section.
+              build:
+                context: ./maltego-mcp
+              container_name: osint-mcp
+              command: ["node", "dist/osint-mcp-server.js"]
+              restart: unless-stopped
+              ports:
+                - "8010:8010"
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
+                # Shared-secret bearer token -- the brief explicitly asked
+                # for real auth even on LAN (unlike cve-mcp-server/
+                # docs-rag-mcp, which have none). The server refuses to
+                # start at all without it (process.exit(1) in
+                # osint-mcp-server.ts) rather than ever listening
+                # unauthenticated. See docs/maltego-integration/README.md.
+                OSINT_MCP_TOKEN: "{{ mcp_osint_mcp_token }}"
+                # createMcpExpressApp() defaults to localhost-only DNS-
+                # rebinding protection -- a cross-container call using the
+                # LXC's real IP got rejected 403 before auth even ran until
+                # this was set explicitly. See osint-mcp-server.ts.
+                OSINT_MCP_ALLOWED_HOSTS: "{{ osint_mcp_allowed_hosts }}"
+              volumes:
+                - maltego-mcp-output:/home/app/MaltegoGraphs
+
             pgvector:
               image: "{{ mcp_registry_host }}/dockerhub/pgvector/pgvector:pg16"
               container_name: docs-rag-pgvector
@@ -424,6 +1023,7 @@
 
           volumes:
             mcp-home:
+            maltego-mcp-output:
             docs-rag-pgdata:
       no_log: true
 
@@ -432,6 +1032,26 @@
         project_src: "{{ mcp_compose_dir }}"
         build: always
         state: present
+
+    # maltego-mcp has profiles: ["tools"] (deliberate -- it's stdio-only,
+    # invoked on demand, never a daemon, see docs/maltego-integration/
+    # README.md). docker_compose_v2's state:present above only builds/
+    # starts default-profile services, so it silently never touches
+    # maltego-mcp (found live 2026-10-02: provision.sh reported changed=4
+    # with no maltego-mcp container or volume ever created). Build it
+    # explicitly here, but never `up` it -- `--profile tools up` would
+    # start it as a long-running daemon, which is not what Phase 1 wants.
+    - name: Build maltego-mcp image (profile-gated, not started as a daemon)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --profile
+          - tools
+          - build
+          - maltego-mcp
+        chdir: "{{ mcp_compose_dir }}"
+      changed_when: true
 
     - name: Wait for cve-mcp-server HTTP endpoint to come up
       ansible.builtin.uri:
