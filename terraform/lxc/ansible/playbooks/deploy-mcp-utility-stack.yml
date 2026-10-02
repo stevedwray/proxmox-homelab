@@ -93,6 +93,15 @@
     # operator-generated token) before being added here -- see
     # docs/maltego-integration/README.md's Phase 3 section.
     mcp_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
+    # Phase 4 (company/person OSINT, docs/maltego-integration/README.md).
+    # Staged default('', true), NOT mandatory() -- these keys don't exist
+    # in OpenBao yet (the operator needs to sign up for free accounts
+    # first). Functionally inert until real values are provisioned and
+    # this is switched to mandatory(), same safe-staging pattern used for
+    # every other new secret in this project (see OTX_API_KEY/
+    # OSINT_MCP_TOKEN's own history above).
+    mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | default('', true) }}"
+    mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | default('', true) }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -243,11 +252,25 @@
           # structure -- it does not. tsup.config.ts has splitting:false,
           # so each entry bundles into one flat file with no per-module
           # output at all; dist/graph/, dist/lookups/ never exist.
-          COPY phase1-expand-domain.ts investigate.ts osint-mcp-server.ts ./
+          COPY phase1-expand-domain.ts investigate.ts osint-mcp-server.ts company_person.ts ./
           RUN npx tsup phase1-expand-domain.ts osint-mcp-server.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
 
           FROM node:20-slim
           RUN useradd --create-home --shell /usr/sbin/nologin app
+          # Phase 4 (docs/maltego-integration/README.md): Sherlock
+          # (sherlock-project/sherlock on GitHub, MIT, actively maintained,
+          # pinned to the version confirmed live 2026-10-03) for
+          # find_username -- shelled out to the real upstream tool rather
+          # than reimplementing its 400+-site detection logic, same
+          # vendoring principle as maltego-mcp itself. --break-system-packages
+          # is the standard escape hatch for Debian bookworm's PEP 668
+          # "externally managed environment" guard in a disposable,
+          # single-purpose container image like this one. python3-pip is
+          # purged after install -- it's an installer, not a runtime
+          # dependency of the installed package.
+          RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && \
+              pip install --break-system-packages --no-cache-dir sherlock-project==0.16.2 && \
+              apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
           WORKDIR /app
           COPY --from=builder /app/node_modules ./node_modules
           COPY --from=builder /app/dist ./dist
@@ -572,6 +595,7 @@
           import { z } from "zod";
           import { join } from "node:path";
           import { investigateDomain, writeMtgxNative } from "./investigate.js";
+          import { companiesHouseLookup, secEdgarLookup, hunterDomainSearch, hunterEmailFinder, sherlockUsernameCheck } from "./company_person.js";
 
           const TOKEN = process.env.OSINT_MCP_TOKEN;
           if (!TOKEN) {
@@ -623,6 +647,119 @@
                 return { content: [{ type: "text", text: lines.join("\n") }] };
               },
             );
+
+            // Phase 4 (docs/maltego-integration/README.md): company and person
+            // OSINT, free-tier only (OpenCorporates/HaveIBeenPwned skipped per
+            // operator decision 2026-10-03). Each new tool degrades to a plain
+            // "no data" message rather than an error when its provider's key is
+            // unset -- same convention as investigate_domain's own Tier 1/2
+            // providers above.
+            server.registerTool(
+              "investigate_company",
+              {
+                description:
+                  "Look up a company by name: UK Companies House registry data (company number, status, " +
+                  "incorporation date, registered address, SIC codes, officers) and/or US SEC EDGAR filings " +
+                  "(CIK, recent filings) if it's a US public company. Optionally pass a known domain to also " +
+                  "run Hunter.io Domain Search for the company's email pattern and known people. Covers UK-" +
+                  "registered and US-public companies only -- other jurisdictions fall back to general web search.",
+                inputSchema: {
+                  name: z.string().describe("Company name to search for"),
+                  domain: z.string().optional().describe("The company's domain, if known, to also look up email patterns"),
+                },
+              },
+              async ({ name, domain }) => {
+                const [companiesHouse, secEdgar, hunter] = await Promise.all([
+                  companiesHouseLookup(name),
+                  secEdgarLookup(name),
+                  domain ? hunterDomainSearch(domain) : Promise.resolve(undefined),
+                ]);
+                const lines: string[] = [`Company lookup for "${name}":`];
+                if (companiesHouse) {
+                  lines.push(
+                    `\nUK Companies House: ${companiesHouse.companyName} (${companiesHouse.companyNumber})`,
+                    `  Status: ${companiesHouse.companyStatus ?? "unknown"}, incorporated: ${companiesHouse.dateOfCreation ?? "unknown"}`,
+                    `  Registered office: ${companiesHouse.registeredOfficeAddress ?? "unknown"}`,
+                    `  SIC codes: ${(companiesHouse.sicCodes ?? []).join(", ") || "none listed"}`,
+                  );
+                  if (companiesHouse.officers?.length) {
+                    lines.push(`  Officers: ${companiesHouse.officers.map((o) => `${o.name} (${o.role ?? "officer"})`).join("; ")}`);
+                  }
+                }
+                if (secEdgar) {
+                  lines.push(
+                    `\nUS SEC EDGAR: ${secEdgar.title} (CIK ${secEdgar.cik}, ticker ${secEdgar.ticker})`,
+                    `  SIC: ${secEdgar.sicDescription ?? "unknown"}`,
+                    `  Recent filings: ${secEdgar.recentFilings.slice(0, 5).map((f) => `${f.form} (${f.filingDate})`).join(", ") || "none"}`,
+                  );
+                }
+                if (hunter) {
+                  lines.push(
+                    `\nHunter.io domain search for ${domain}: email pattern ${hunter.pattern ?? "unknown"}`,
+                    `  Known people: ${hunter.emails.slice(0, 10).map((e) => `${e.value}${e.position ? ` (${e.position})` : ""}`).join(", ") || "none found"}`,
+                  );
+                }
+                if (!companiesHouse && !secEdgar && !hunter) {
+                  lines.push("\nNo data found from any configured provider -- try general web search, or the company may not be UK-registered/US-public.");
+                }
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              },
+            );
+
+            server.registerTool(
+              "find_person_email",
+              {
+                description:
+                  "Find a person's likely professional email address given their full name and their employer's " +
+                  "domain, using Hunter.io's Email Finder. Returns the likely email, a confidence score, and " +
+                  "their position if known. For legitimate due-diligence/security-research use -- this finds a " +
+                  "probable professional contact address, not personal/private information.",
+                inputSchema: {
+                  fullName: z.string().describe("The person's full name, e.g. 'Jane Smith'"),
+                  domain: z.string().describe("Their employer's domain, e.g. example.com"),
+                },
+              },
+              async ({ fullName, domain }) => {
+                const result = await hunterEmailFinder(fullName, domain);
+                if (!result?.email) {
+                  return { content: [{ type: "text", text: `No email found for ${fullName} at ${domain} (Hunter.io has no data, or HUNTER_API_KEY is unset).` }] };
+                }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `${fullName} at ${domain}: ${result.email} (confidence ${result.score ?? "unknown"}/100${result.position ? `, position: ${result.position}` : ""}${result.verificationStatus ? `, verification: ${result.verificationStatus}` : ""})`,
+                    },
+                  ],
+                };
+              },
+            );
+
+            server.registerTool(
+              "find_username",
+              {
+                description:
+                  "Check whether a given username exists across 400+ social media and web platforms, using the " +
+                  "open-source Sherlock tool. Returns which platforms have a matching account. Useful for " +
+                  "correlating a person's or organization's public footprint across platforms given one known " +
+                  "handle -- does not access private/non-public account data.",
+                inputSchema: {
+                  username: z.string().describe("The username/handle to check across platforms"),
+                },
+              },
+              async ({ username }) => {
+                const matches = await sherlockUsernameCheck(username);
+                if (!matches) {
+                  return { content: [{ type: "text", text: `Username check for "${username}" failed (Sherlock unavailable or timed out).` }] };
+                }
+                if (matches.length === 0) {
+                  return { content: [{ type: "text", text: `No matches found for username "${username}" across checked platforms.` }] };
+                }
+                const lines = [`Found "${username}" on ${matches.length} platform(s):`, ...matches.map((m) => `- ${m.site}: ${m.url}`)];
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              },
+            );
+
             return server;
           }
 
@@ -680,13 +817,250 @@
           app.listen(PORT, () => {
             console.log(`osint-mcp listening on :${PORT}`);
           });
-    # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
-    # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
-    # `COPY pyproject.toml README.md ./` never copies LICENSE into the
-    # build context that hatchling actually sees, so `uv sync --no-dev`
-    # fails validating the license field. Nobody had built this image
-    # before this deployment (see cve-mcp-server's own docs/api-service-plan.md).
-    # Patch the copied Dockerfile rather than the upstream source tree.
+    - name: Write maltego-mcp company_person.ts module (Phase 4)
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/company_person.ts"
+        mode: "0640"
+        content: |
+          // Phase 4 (docs/maltego-integration/README.md): company and person OSINT
+          // lookups. Same best-effort, never-throws convention as every provider in
+          // investigate.ts -- missing API key, non-200, or network error all
+          // degrade to `undefined`, never block or throw. Free-tier only: operator
+          // decision 2026-10-03 skipped OpenCorporates (no longer free) and
+          // HaveIBeenPwned (paid-only for the person-relevant endpoint).
+          import { execFile } from "node:child_process";
+          import { promisify } from "node:util";
+          import { mkdtemp, readFile, rm } from "node:fs/promises";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+
+          const execFileAsync = promisify(execFile);
+
+          // Companies House: HTTP Basic auth with the API key as username and an
+          // EMPTY password (not a bearer token, not a custom header) -- confirmed
+          // against the official docs 2026-10-03; Companies House's own support
+          // forum calls this out as the most common first-timer mistake. Free, no
+          // usage fees, 600 req/5min, UK-registered companies only.
+          export interface CompanyHouseResult {
+            companyNumber: string;
+            companyName: string;
+            companyStatus?: string;
+            dateOfCreation?: string;
+            registeredOfficeAddress?: string;
+            sicCodes?: string[];
+            officers?: Array<{ name: string; role?: string; appointedOn?: string }>;
+          }
+
+          function companiesHouseAuthHeader(key: string): string {
+            return `Basic ${Buffer.from(`${key}:`).toString("base64")}`;
+          }
+
+          export async function companiesHouseLookup(name: string): Promise<CompanyHouseResult | undefined> {
+            const key = process.env.COMPANIES_HOUSE_API_KEY;
+            if (!key) return undefined;
+            try {
+              const authHeader = companiesHouseAuthHeader(key);
+              const searchRes = await fetch(
+                `https://api.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(name)}&items_per_page=1`,
+                { headers: { Authorization: authHeader } },
+              );
+              if (!searchRes.ok) return undefined;
+              const searchBody = await searchRes.json();
+              const best = searchBody?.items?.[0];
+              if (!best?.company_number) return undefined;
+
+              const [profileRes, officersRes] = await Promise.all([
+                fetch(`https://api.company-information.service.gov.uk/company/${best.company_number}`, { headers: { Authorization: authHeader } }),
+                fetch(`https://api.company-information.service.gov.uk/company/${best.company_number}/officers?items_per_page=10`, { headers: { Authorization: authHeader } }),
+              ]);
+
+              const result: CompanyHouseResult = { companyNumber: best.company_number, companyName: best.title ?? best.company_name ?? name };
+              if (profileRes.ok) {
+                const profile = await profileRes.json();
+                result.companyStatus = profile.company_status;
+                result.dateOfCreation = profile.date_of_creation;
+                result.sicCodes = profile.sic_codes;
+                const addr = profile.registered_office_address;
+                if (addr) {
+                  result.registeredOfficeAddress = [addr.address_line_1, addr.address_line_2, addr.locality, addr.postal_code, addr.country]
+                    .filter(Boolean)
+                    .join(", ");
+                }
+              }
+              if (officersRes.ok) {
+                const officers = await officersRes.json();
+                result.officers = (officers.items ?? []).slice(0, 10).map((o: any) => ({
+                  name: o.name,
+                  role: o.officer_role,
+                  appointedOn: o.appointed_on,
+                }));
+              }
+              return result;
+            } catch {
+              return undefined;
+            }
+          }
+
+          // SEC EDGAR: free, no API key, US public companies only. SEC.gov requires
+          // a descriptive User-Agent identifying the requester on all automated
+          // requests (their own stated policy) -- a generic/missing one risks being
+          // rate-limited or blocked. company_tickers.json is a small (~1400-entry)
+          // static file mapping ticker/name to CIK, cached in-process since it
+          // rarely changes and SEC explicitly asks callers not to hammer it.
+          // Confirmed live 2026-10-03: SEC.gov rejects requests with HTTP 403 unless
+          // the User-Agent follows their exact documented format, "Company/Project
+          // Name contact@domain.com" -- a vague descriptive string (what this was
+          // originally) gets blocked, not just a missing header. Needs a real,
+          // identifying contact per their fair-access policy, so this is an
+          // operator-configurable env var (non-secret -- it's an identifying
+          // convention, not sensitive, same class as a User-Agent string) rather
+          // than a guessed value baked into source.
+          const SEC_USER_AGENT = process.env.SEC_EDGAR_USER_AGENT ?? "homelab-osint-research admin@gibbsgreatly.xyz";
+
+          interface SecTickerEntry { cik_str: number; ticker: string; title: string }
+          let secTickersCache: SecTickerEntry[] | undefined;
+
+          async function secEdgarFindCik(nameOrTicker: string): Promise<SecTickerEntry | undefined> {
+            try {
+              if (!secTickersCache) {
+                const res = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: { "User-Agent": SEC_USER_AGENT } });
+                if (!res.ok) return undefined;
+                const body = await res.json();
+                secTickersCache = Object.values(body) as SecTickerEntry[];
+              }
+              const q = nameOrTicker.toLowerCase();
+              return (
+                secTickersCache.find((e) => e.ticker.toLowerCase() === q) ??
+                secTickersCache.find((e) => e.title.toLowerCase().includes(q))
+              );
+            } catch {
+              return undefined;
+            }
+          }
+
+          export interface SecEdgarResult {
+            cik: string;
+            ticker: string;
+            title: string;
+            sicDescription?: string;
+            recentFilings: Array<{ form: string; filingDate: string; accessionNumber: string }>;
+          }
+
+          export async function secEdgarLookup(nameOrTicker: string): Promise<SecEdgarResult | undefined> {
+            try {
+              const match = await secEdgarFindCik(nameOrTicker);
+              if (!match) return undefined;
+              const cik = String(match.cik_str).padStart(10, "0");
+              const res = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: { "User-Agent": SEC_USER_AGENT } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const recent = body.filings?.recent;
+              const recentFilings = recent
+                ? recent.form.slice(0, 10).map((form: string, i: number) => ({
+                    form,
+                    filingDate: recent.filingDate[i],
+                    accessionNumber: recent.accessionNumber[i],
+                  }))
+                : [];
+              return { cik, ticker: match.ticker, title: match.title, sicDescription: body.sicDescription, recentFilings };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Hunter.io: free tier, 50 credits/month, no card required. Domain Search
+          // finds a company's email pattern and known people at that domain; Email
+          // Finder returns one specific likely email given a name + domain. Request/
+          // response shapes verified against the official v2 API docs 2026-10-03.
+          export interface HunterDomainResult {
+            organization?: string;
+            pattern?: string;
+            emails: Array<{ value: string; firstName?: string; lastName?: string; position?: string; confidence: number }>;
+          }
+
+          export async function hunterDomainSearch(domain: string): Promise<HunterDomainResult | undefined> {
+            const key = process.env.HUNTER_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${key}&limit=10`);
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const data = body.data;
+              if (!data) return undefined;
+              return {
+                organization: data.organization,
+                pattern: data.pattern,
+                emails: (data.emails ?? []).map((e: any) => ({
+                  value: e.value,
+                  firstName: e.first_name,
+                  lastName: e.last_name,
+                  position: e.position,
+                  confidence: e.confidence,
+                })),
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          export interface HunterEmailResult {
+            email?: string;
+            score?: number;
+            position?: string;
+            verificationStatus?: string;
+          }
+
+          export async function hunterEmailFinder(fullName: string, domain: string): Promise<HunterEmailResult | undefined> {
+            const key = process.env.HUNTER_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(
+                `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&full_name=${encodeURIComponent(fullName)}&api_key=${key}`,
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const data = body.data;
+              if (!data?.email) return undefined;
+              return { email: data.email, score: data.score, position: data.position, verificationStatus: data.verification?.status };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Sherlock (sherlock-project/sherlock on GitHub, MIT, actively maintained):
+          // checks a username across 400+ platforms. Shelled out to the real
+          // upstream tool (vendored via pip in the Dockerfile, pinned version) --
+          // using the actual tool rather than reimplementing its site-detection
+          // logic, same principle as maltego-mcp itself. No native JSON output
+          // confirmed via its own argparse source 2026-10-03 -- --csv is the most
+          // structured machine-parseable format it has (username, site, URL,
+          // status, HTTP code, response time columns).
+          export interface SherlockMatch { site: string; url: string }
+
+          export async function sherlockUsernameCheck(username: string): Promise<SherlockMatch[] | undefined> {
+            let dir: string | undefined;
+            try {
+              dir = await mkdtemp(join(tmpdir(), "sherlock-"));
+              await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 90_000 });
+              const csv = await readFile(join(dir, `${username}.csv`), "utf-8");
+              const lines = csv.trim().split("\n").slice(1); // skip header row
+              return lines
+                .map((line) => {
+                  // Naive comma split: Sherlock's own site names and URLs don't
+                  // contain unescaped commas in practice. Acceptable for a
+                  // best-effort OSINT tool, same resilience trade-off as every
+                  // other lookup in this file.
+                  const [, site, url] = line.split(",");
+                  return { site, url };
+                })
+                .filter((r) => r.site && r.url);
+            } catch {
+              return undefined;
+            } finally {
+              if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+            }
+          }
+
     - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
       ansible.builtin.replace:
         path: "{{ mcp_build_dir }}/Dockerfile"
@@ -971,6 +1345,17 @@
                 # LXC's real IP got rejected 403 before auth even ran until
                 # this was set explicitly. See osint-mcp-server.ts.
                 OSINT_MCP_ALLOWED_HOSTS: "{{ osint_mcp_allowed_hosts }}"
+                # Phase 4: company/person OSINT. Both keys default('', true)
+                # staged -- investigate_company/find_person_email degrade to
+                # "no data from this provider" when unset, same convention
+                # as every Tier 1/2 enrichment lookup above. Not a secret --
+                # SEC.gov's own fair-access policy requires a real
+                # identifying User-Agent on automated requests (confirmed
+                # live 2026-10-03: a generic one gets HTTP 403, not just a
+                # missing header).
+                COMPANIES_HOUSE_API_KEY: "{{ mcp_companies_house_api_key }}"
+                HUNTER_API_KEY: "{{ mcp_hunter_api_key }}"
+                SEC_EDGAR_USER_AGENT: "homelab-osint-research admin@gibbsgreatly.xyz"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
