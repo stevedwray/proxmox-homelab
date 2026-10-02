@@ -80,6 +80,9 @@ phase actually needs an LLM agent driving it interactively.
 - [x] Deployed to `pve-tiny` (`provision.sh --stack mcp-utility-stack`) — 2026-10-02, 8 total deploy rounds across the two bug-fixing passes below
 - [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` — 2026-10-02
 - [x] **Operator opened the file in real Maltego Desktop 4.13.0 and confirmed it renders correctly** — 2026-10-02: correct entity icons (Domain/IPv4Address/AS/Phrase), correct values (not placeholder text), correct link labels (`resolves_to`/`has_nameserver`/`hosted_in`/`certificate`/`SAN`), correct topology. **This is the actual Phase 1 milestone, and it's done.** Confirmed artifact saved at `artifacts/test-example-com-v4-confirmed-working.mtgx`.
+- [x] **Phase 2 Tier 1 enrichment (VirusTotal/Shodan/GreyNoise) — done 2026-10-02.** See "Growing Phase 2" below.
+- [ ] Phase 2 Tier 2 (AlienVault OTX) — scoped, not started
+- [ ] Phase 2 Tier 3 (OCCRP Aleph) — scoped, not started
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
 
@@ -185,6 +188,71 @@ locally: the resulting `.mtgx` opens in real Maltego Desktop 4.13.0 with
 correct entity icons, correct values, correct link labels, and correct
 topology for `example.com`. Saved at
 `artifacts/test-example-com-v4-confirmed-working.mtgx`.
+
+## Growing Phase 2: Tier 1 enrichment (VirusTotal/Shodan/GreyNoise)
+
+Prompted by the operator noticing how many genuinely useful free-tier
+providers show up in Maltego's own Data Hub tab — those tiles themselves
+can't be invoked headlessly (they're Transform Distribution Server
+transforms, designed around an interactive Desktop client, gated behind
+Maltego's paid automation products for anything else), but many of their
+*underlying providers* have perfectly good standalone REST APIs we can
+call directly. VirusTotal, Shodan, and GreyNoise were picked as the
+simplest possible first batch: `shared/external-apis` in OpenBao already
+has live, populated keys for all three from earlier work, so this needed
+zero new secrets, zero new firewall rules — just new code.
+
+Verified current API terms before building anything (per this repo's own
+"don't assume a free tier is still free" rule): VirusTotal Public API is
+still free (500/day, 4/min, non-commercial), GreyNoise Community is
+limited (50/week with a business-email account), AlienVault OTX (Tier 2,
+not yet built) is the most generous of the bunch (10,000/hr with a key,
+no paid tier even required).
+
+Rather than re-deriving request/response shapes from API docs, pulled the
+exact verified shapes from this operator's own already-working
+`cve-mcp-server` fork (`~/git/cve-mcp-server/src/cve_mcp/api/{ip_intel,
+shodan_client,hash_intel}.py`) — real code already running in this
+infrastructure, not documentation that might be stale. That comparison
+surfaced two real, separate findings:
+
+- **GreyNoise's free `/v3/community` endpoint was deprecated in January
+  2026** (per that fork's own code comment) — this operator's own prior
+  work had already discovered and adapted to this. The new enrichment
+  code calls the real `/v3/ip/{ip}` endpoint instead of the officially-
+  documented-but-dead community one.
+- **`VIRUSTOTAL_KEY` in OpenBao is broken** — confirmed live with a real
+  test call: HTTP 401 "Wrong API key". The stored value is 23 characters;
+  real VT v3 keys are 64-character hex strings, so this was likely never
+  a valid key, not an expired one. This isn't new — `cve-mcp-server`'s
+  own already-deployed hash-lookup code uses this exact same key and has
+  been silently failing the same way (caught by try/except, logged as a
+  warning no one sees) in production this whole time. Documented in
+  `terraform/lxc/stacks/mcp-utility-stack/STACK_CONTRACT.md`'s Inputs
+  table; rotating the key is a separate, operator-owned fix, out of scope
+  here.
+
+Implementation: three new best-effort lookup functions added directly to
+`phase1-expand-domain.ts` (not to `maltego-mcp`'s own vendored source —
+this is our own driver, extending it is the lowest-friction path and
+keeps the pinned upstream library untouched). Each degrades gracefully
+on a missing/invalid key or network error — enrichment never blocks
+graph generation. VirusTotal enriches the root `Domain` and every
+`IPv4Address` entity with `vt_malicious`/`vt_suspicious`/`vt_reputation`;
+Shodan adds `shodan_org`/`shodan_ports`/`shodan_vulns`; GreyNoise adds
+`greynoise_classification`/`greynoise_noise`/`greynoise_riot`. The
+`maltego-mcp` compose service, which previously had no `environment:`
+block at all, now passes through the three keys from the same Ansible
+vars already used for `cve-mcp-server`.
+
+**Confirmed working live on pve-tiny** (not just locally): Shodan
+returned real org/port data for `example.com`'s Cloudflare IPs, GreyNoise
+returned a real (negative) classification. VirusTotal absent as expected
+given the broken key. Saved at
+`artifacts/test-example-com-tier1-confirmed-prod.mtgx`.
+
+**Not done yet**: Tier 2 (AlienVault OTX — needs one new OpenBao field)
+and Tier 3 (OCCRP Aleph — needs an account application first).
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
