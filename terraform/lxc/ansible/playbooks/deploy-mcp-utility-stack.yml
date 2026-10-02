@@ -84,6 +84,11 @@
     mcp_virustotal_key: "{{ lookup('env', 'VIRUSTOTAL_KEY') | mandatory('VIRUSTOTAL_KEY env var is required') }}"
     mcp_shodan_key: "{{ lookup('env', 'SHODAN_KEY') | mandatory('SHODAN_KEY env var is required') }}"
     mcp_greynoise_api_key: "{{ lookup('env', 'GREYNOISE_API_KEY') | mandatory('GREYNOISE_API_KEY env var is required') }}"
+    # Tier 2 (maltego-mcp enrichment only, not consumed by cve-mcp-server).
+    # Confirmed live in OpenBao 2026-10-02 (64-char key, real API call
+    # verified) before being added here -- see
+    # docs/maltego-integration/README.md's Tier 2 section.
+    mcp_otx_api_key: "{{ lookup('env', 'OTX_API_KEY') | mandatory('OTX_API_KEY env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -334,11 +339,11 @@
           // external_api.html) -- a different, unaffiliated source (an old gist)
           // showed a singular "/indicator/" path that looked plausible but was
           // stale/wrong; verified against the official docs instead of guessing.
-          // UNTESTED against a real key as of this commit -- no OTX_API_KEY exists
-          // in OpenBao yet (requires the operator to sign up at otx.alienvault.com
-          // first; agents don't get OpenBao write access). Degrades identically to
-          // every other enrichment call when the key is absent, so this is safe to
-          // deploy now and will simply start working once the key exists.
+          // Confirmed live 2026-10-02 with a real operator-provisioned key
+          // (pulse_info.count/pulses matched this exact shape against the real
+          // API before this comment was updated). Still degrades gracefully to
+          // undefined on a missing/invalid key or network error, same as every
+          // other enrichment call here.
           async function otxLookup(kind: "domain" | "IPv4", value: string): Promise<{ pulseCount: number; pulseNames: string[] } | undefined> {
             const key = process.env.OTX_API_KEY;
             if (!key) return undefined;
@@ -777,19 +782,12 @@
                 VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
                 SHODAN_KEY: "{{ mcp_shodan_key }}"
                 GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
-                # Tier 2: AlienVault OTX. Deliberately NOT a mandatory
-                # OpenBao lookup and NOT yet in secrets/manifest.json --
-                # no OTX_API_KEY exists in OpenBao as of 2026-10-02 (needs
-                # the operator to sign up at otx.alienvault.com first).
-                # Defaults to empty so this stays safe to deploy now; the
-                # driver code already degrades gracefully with no key.
-                # Once the operator writes the real value to OpenBao,
-                # add OTX_API_KEY to secrets/manifest.json's
-                # shared/external-apis entry (verify via a scratch-manifest
-                # --check dry run first -- see docs/maltego-integration/
-                # README.md and the Nextcloud-push incident this pattern
-                # comes from) and switch this to mandatory().
-                OTX_API_KEY: "{{ lookup('env', 'OTX_API_KEY') | default('', true) }}"
+                # Tier 2: AlienVault OTX. Key written to OpenBao and added
+                # to secrets/manifest.json 2026-10-02, verified via a
+                # scratch-manifest --check dry run plus a real API call
+                # before being promoted to mandatory() here -- see
+                # docs/maltego-integration/README.md's Tier 2 section.
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
