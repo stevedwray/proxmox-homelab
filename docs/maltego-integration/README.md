@@ -279,14 +279,25 @@ no key (clean no-op) and a deliberately bogus key (clean no-op, no
 crash) before shipping.
 
 **To finish Tier 2** (operator action, not something I can do — agents
-don't get OpenBao write access):
-1. Sign up at otx.alienvault.com (free) and get an API key.
-2. `bao login -method=oidc -no-store`, then
-   `scripts/openbao_write.py services/external-apis OTX_API_KEY`
-   (confirm the exact entry path against `secrets/manifest.json` first).
-3. Tell me once it's written — I'll verify via a scratch-manifest
-   `--check` dry run, add `OTX_API_KEY` to the real manifest, switch the
-   compose env var to `mandatory()`, redeploy, and confirm live.
+don't get OpenBao write access). Exact commands (per
+`docs/reference/secrets-management.md`'s "Adding or rotating a secret"):
+
+```bash
+# 1. Sign up free at otx.alienvault.com, grab the API key from your profile page.
+# 2. Log in and write it -- the entry is shared/external-apis (verified
+#    against secrets/manifest.json, not services/external-apis as an
+#    earlier draft of this doc said):
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # Authentik, group homelab-admins
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py shared/external-apis OTX_API_KEY
+unset BAO_TOKEN
+```
+
+It'll prompt for the value (hidden input) and trigger a post-write
+snapshot automatically. Tell me once it's written — I'll verify via a
+scratch-manifest `--check` dry run, add `OTX_API_KEY` to the real
+manifest, switch the compose env var to `mandatory()`, redeploy, and
+confirm live.
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
