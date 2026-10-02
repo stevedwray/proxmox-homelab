@@ -33,7 +33,14 @@ settings:
     # covering up to ~4 concurrent Searchers, not 5-per-searcher literally --
     # see docs/deep-research/current-state.md for this finding, captured
     # during Stage A implementation.
-    delegate_tasks: 20        # shared by Orchestrator's angle delegations AND every Searcher's Analyzer delegations
+    # Found 2026-10-02, same investigation as fetch_url_to_workspace below:
+    # this pool is consumed roughly 1:1 with fetch_url_to_workspace (each
+    # fetched page gets delegated to an Analyzer), plus the Orchestrator's
+    # own initial angle delegations. Raising fetch_url_to_workspace alone
+    # (16->32) without raising this proportionally would just move the
+    # same starvation failure onto this quota's name instead of actually
+    # fixing it. Doubled to match.
+    delegate_tasks: 40        # shared by Orchestrator's angle delegations AND every Searcher's Analyzer delegations
     web_search: 60            # shared across all Searcher instances -- bumped from 20 2026-09-22: pool was
                               # exhausting after ~1 subagent's worth of searches, starving every other angle
                               # and silently degrading multi-angle reports to single-angle. Tavily usage
