@@ -329,6 +329,30 @@
             }
           }
 
+          // Tier 2: AlienVault OTX. Endpoint/header confirmed 2026-10-02 against
+          // the official LevelBlue docs (otx.alienvault.com/assets/static/
+          // external_api.html) -- a different, unaffiliated source (an old gist)
+          // showed a singular "/indicator/" path that looked plausible but was
+          // stale/wrong; verified against the official docs instead of guessing.
+          // UNTESTED against a real key as of this commit -- no OTX_API_KEY exists
+          // in OpenBao yet (requires the operator to sign up at otx.alienvault.com
+          // first; agents don't get OpenBao write access). Degrades identically to
+          // every other enrichment call when the key is absent, so this is safe to
+          // deploy now and will simply start working once the key exists.
+          async function otxLookup(kind: "domain" | "IPv4", value: string): Promise<{ pulseCount: number; pulseNames: string[] } | undefined> {
+            const key = process.env.OTX_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://otx.alienvault.com/api/v1/indicators/${kind}/${encodeURIComponent(value)}/general`, { headers: { "X-OTX-API-KEY": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const pulses: Array<{ name?: string }> = body?.pulse_info?.pulses ?? [];
+              return { pulseCount: body?.pulse_info?.count ?? 0, pulseNames: pulses.slice(0, 5).map((p) => p.name ?? "").filter(Boolean) };
+            } catch {
+              return undefined;
+            }
+          }
+
           // Each Maltego entity type has its own "main value" field name,
           // authoritative source: this machine's installed Maltego entity
           // definitions (~/.maltego/v4.13.0/.../com-paterva-maltego-entities-
@@ -412,11 +436,12 @@
           const graph = new Graph(`phase1-${domain}`, `Phase 1: ${domain}`);
           const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
 
-          const [dns, whois, crtsh, domainVt] = await Promise.all([
+          const [dns, whois, crtsh, domainVt, domainOtx] = await Promise.all([
             dnsLookup(domain),
             whoisLookup(domain),
             crtshLookup(domain),
             vtLookup("domains", domain),
+            otxLookup("domain", domain),
           ]);
 
           if (domainVt?.stats) {
@@ -424,16 +449,21 @@
             domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
             if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
           }
+          if (domainOtx) {
+            domainEntity.properties.otx_pulse_count = String(domainOtx.pulseCount);
+            if (domainOtx.pulseNames.length > 0) domainEntity.properties.otx_pulse_names = domainOtx.pulseNames.join(", ");
+          }
 
           if (dns.ok) {
             for (const ip of dns.data.a) {
               const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
               graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
-              const [asn, vt, shodan, greynoise] = await Promise.all([
+              const [asn, vt, shodan, greynoise, otx] = await Promise.all([
                 asnLookup(ip),
                 vtLookup("ip_addresses", ip),
                 shodanLookup(ip),
                 greynoiseLookup(ip),
+                otxLookup("IPv4", ip),
               ]);
               if (asn.ok) {
                 const asnEntity = graph.ensureEntity({
@@ -457,6 +487,10 @@
                 ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
                 ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
                 ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
+              }
+              if (otx) {
+                ipEntity.properties.otx_pulse_count = String(otx.pulseCount);
+                if (otx.pulseNames.length > 0) ipEntity.properties.otx_pulse_names = otx.pulseNames.join(", ");
               }
             }
             for (const ns of dns.data.ns) {
@@ -743,6 +777,19 @@
                 VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
                 SHODAN_KEY: "{{ mcp_shodan_key }}"
                 GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                # Tier 2: AlienVault OTX. Deliberately NOT a mandatory
+                # OpenBao lookup and NOT yet in secrets/manifest.json --
+                # no OTX_API_KEY exists in OpenBao as of 2026-10-02 (needs
+                # the operator to sign up at otx.alienvault.com first).
+                # Defaults to empty so this stays safe to deploy now; the
+                # driver code already degrades gracefully with no key.
+                # Once the operator writes the real value to OpenBao,
+                # add OTX_API_KEY to secrets/manifest.json's
+                # shared/external-apis entry (verify via a scratch-manifest
+                # --check dry run first -- see docs/maltego-integration/
+                # README.md and the Nextcloud-push incident this pattern
+                # comes from) and switch this to mandatory().
+                OTX_API_KEY: "{{ lookup('env', 'OTX_API_KEY') | default('', true) }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
