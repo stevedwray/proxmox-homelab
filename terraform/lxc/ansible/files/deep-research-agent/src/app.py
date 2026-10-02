@@ -23,6 +23,7 @@ from tools import (
     write_todos,
     read_todos,
     think_tool,
+    osint_investigate,
 )
 from prompts import (
     ORCHESTRATOR_INSTRUCTIONS,
@@ -49,10 +50,19 @@ analyzer = SubAgentConfig(
 # 2. Middle agent: Searcher -- web search and fetch only, no direct file
 #    reading. This forces it to delegate page inspection to the Analyzer
 #    rather than reading fetched pages itself.
+# osint_investigate (Phase 3, docs/maltego-integration/README.md) is the
+# first MCPTool this codebase has used -- a real MCP client (agent_framework's
+# MCPStreamableHTTPTool), not a plain HTTP tool. It's None when
+# OSINT_MCP_URL/OSINT_MCP_TOKEN aren't configured, same "degrade, don't
+# crash" convention as every lookup in osint-mcp itself.
+_searcher_tools = [web_search, fetch_url_to_workspace, think_tool]
+if osint_investigate is not None:
+    _searcher_tools.append(osint_investigate)
+
 searcher = SubAgentConfig(
     name="Searcher",
     instructions=SEARCH_SUBAGENT_INSTRUCTIONS,
-    tools=[web_search, fetch_url_to_workspace, think_tool],
+    tools=_searcher_tools,
     sub_agents=[analyzer],
 )
 
