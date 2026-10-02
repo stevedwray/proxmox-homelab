@@ -1,7 +1,7 @@
 from datetime import datetime
 from textual import work, on
 from textual.app import App, ComposeResult
-from textual.widgets import Input, OptionList, Static, Collapsible, RichLog, Button
+from textual.widgets import Input, OptionList, Static, Collapsible, RichLog, Button, TextArea
 from textual.containers import VerticalScroll, Horizontal, Vertical
 from rich.markdown import Markdown
 from engine.orchestrator import create_local_agent, reset_session, delegation_depth_ctx
@@ -13,6 +13,7 @@ import time
 import config
 from agent_framework import Message, Content
 from textual import events
+from textual.message import Message as TextualMessage
 import os
 import uuid
 import re
@@ -175,12 +176,52 @@ def log_stream_content(source: str, content_type: str, raw_data_dict: dict, dept
     # chunk (see _write_log's own top-of-file comment for why that matters).
     _write_log()
 
-class PromptInput(Input):
-    """An Input that maintains command history navigated with Up/Down arrows."""
+class PromptInput(TextArea):
+    """A multi-line TextArea that submits on Enter (Ctrl+J for a literal
+    newline) and maintains command history navigated with Up/Down at the
+    first/last line.
+
+    Replaces an earlier single-line Input (2026-10-03): Input._on_paste()
+    does `event.text.splitlines()[0]` -- pasting multi-line text silently
+    DISCARDED everything after the first line, not just failed to display
+    it. Found live when a multi-angle prompt pasted into the web UI only
+    showed its first line with no way to scroll/see the rest -- the rest
+    had actually been dropped at paste time, not merely hidden.
+
+    Enter submits rather than TextArea's own default (insert a newline)
+    to preserve existing single-line UX unchanged. Shift+Enter is NOT a
+    real option here -- confirmed no `ShiftEnter` exists anywhere in
+    Textual's own key constants, because plain terminal protocols can't
+    distinguish Shift+Enter from Enter (both are just a carriage-return
+    byte). Ctrl+J (linefeed, a byte terminals CAN send distinctly from
+    Enter's carriage-return even over textual-serve's browser transport)
+    is the established real-world convention other terminal chat tools
+    use for exactly this problem, and needs no special-case handling here
+    since TextArea already inserts it as a normal "\\n" character.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._history: list[str] = []
         self._history_index: int = -1
+
+    class Submitted(TextualMessage):
+        """Mirrors Input.Submitted's shape (.input, .value) so the
+        existing app-level handler needs no structural changes."""
+        def __init__(self, text_area: "PromptInput", value: str) -> None:
+            self.input = text_area
+            self.value = value
+            super().__init__()
+
+    def _set_text_and_move_to_end(self, value: str) -> None:
+        # self.document lags one reactive cycle behind self.text (confirmed
+        # via a headless Pilot test: reading self.document.lines right
+        # after setting self.text saw the PREVIOUS value, placing the
+        # cursor mid-text instead of at the real end) -- compute the end
+        # position from the string being assigned instead of reading it
+        # back from the widget.
+        self.text = value
+        lines = value.split("\n")
+        self.move_cursor((len(lines) - 1, len(lines[-1])))
 
     def on_key(self, event: events.Key) -> None:
         try:
@@ -202,36 +243,58 @@ class PromptInput(Input):
                     if opt_list.highlighted is not None:
                         opt = opt_list.get_option_at_index(opt_list.highlighted)
                         cmd = str(opt.prompt).split(" - ")[0]
-                        self.value = cmd
-                        self.cursor_position = len(cmd)
+                        self._set_text_and_move_to_end(cmd)
                     event.prevent_default()
                     return
                 elif event.key == "enter":
                     if opt_list.highlighted is not None:
                         opt = opt_list.get_option_at_index(opt_list.highlighted)
                         cmd = str(opt.prompt).split(" - ")[0]
-                        self.value = cmd
-                        self.cursor_position = len(cmd)
-                    # allow enter to propagate
+                        self._set_text_and_move_to_end(cmd)
+                    # allow enter to propagate to the submit handling below
         except Exception:
             pass
 
-        if event.key == "up":
+        # TextArea, unlike the old single-line Input, has real default
+        # actions bound to Up/Down/Enter (cursor movement, newline
+        # insertion). event.prevent_default() alone wasn't enough to stop
+        # them from also firing -- confirmed via a headless Pilot test
+        # where an explicit move_cursor() took effect immediately but was
+        # silently overwritten by TextArea's own default action moments
+        # later. event.stop() is required alongside it to fully suppress
+        # dispatch to TextArea's own bindings.
+        if event.key == "enter":
+            value = self.text
+            self.clear()
+            self.post_message(self.Submitted(self, value))
+            event.prevent_default()
+            event.stop()
+        elif event.key == "ctrl+j":
+            # TextArea only auto-inserts a newline for the literal "enter"
+            # key event, not generically for any key producing "\n" --
+            # confirmed via a headless Pilot test, not assumed. Since
+            # "enter" is intercepted above for submit, insert it ourselves.
+            self.insert("\n")
+            event.prevent_default()
+            event.stop()
+        elif event.key == "up" and self.cursor_at_first_line:
             if self._history and self._history_index > 0:
                 self._history_index -= 1
-                self.value = self._history[self._history_index]
+                self._set_text_and_move_to_end(self._history[self._history_index])
             elif self._history and self._history_index == -1:
                 self._history_index = len(self._history) - 1
-                self.value = self._history[self._history_index]
+                self._set_text_and_move_to_end(self._history[self._history_index])
             event.prevent_default()
-        elif event.key == "down":
+            event.stop()
+        elif event.key == "down" and self.cursor_at_last_line:
             if self._history_index != -1 and self._history_index < len(self._history) - 1:
                 self._history_index += 1
-                self.value = self._history[self._history_index]
+                self._set_text_and_move_to_end(self._history[self._history_index])
             elif self._history_index == len(self._history) - 1:
                 self._history_index = -1
-                self.value = ""
+                self.clear()
             event.prevent_default()
+            event.stop()
 
     def record_history(self, val: str) -> None:
         if val:
@@ -446,6 +509,11 @@ class BasicTuiAgent(App):
     .title-copy-btn { dock: right; width: auto; height: 1; min-width: 3; border: none; background: transparent; color: #888888; padding: 0; margin: 0 1 0 0; }
     .title-copy-btn:hover { color: white; background: transparent; }
     #command-list { height: auto; max-height: 15; padding: 0 1; }
+    /* TextArea's own default CSS is height: 1fr, which would compete with
+       #chat-container's own 1fr and swallow roughly half the screen.
+       Grows with real multi-line content up to a cap instead of staying
+       fixed at the single row the old Input always was. */
+    #prompt-input { height: auto; min-height: 3; max-height: 8; }
     """
 
     SLASH_COMMANDS = [("/stop", "Stop execution"), ("/new", "New conversation"), ("/exit", "Quit app"), ("/toggle_thinking", "Toggle reasoning trace capability"), ("/toggle_persistence", "Toggle session history saving"), ("/config", "Show current configuration"), ("/files", "Browse memory workspace files"), ("/sessions", "List saved sessions"), ("/resume", "Resume a saved session")]
@@ -459,7 +527,7 @@ class BasicTuiAgent(App):
         opt_list = OptionList(id="command-list")
         opt_list.display = False
         yield opt_list
-        yield PromptInput(id="prompt-input", placeholder="Type a message or /command...")
+        yield PromptInput(id="prompt-input", placeholder="Type a message or /command... (Enter to send, Ctrl+J for a new line)")
 
     def _banner_widget(self) -> Static:
         try:
@@ -503,10 +571,12 @@ class BasicTuiAgent(App):
         if getattr(self, "session_to_resume", None):
             await self._load_session_by_id(self.session_to_resume)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if not isinstance(event.text_area, PromptInput):
+            return
         if getattr(self, "_file_picker_active", False) or getattr(self, "_session_picker_active", False):
             return
-        val = event.value
+        val = event.text_area.text
         opt_list = self.query_one("#command-list", OptionList)
         if val.startswith("/"):
             filtered = [(cmd, desc) for cmd, desc in self.SLASH_COMMANDS if cmd.startswith(val.lower())]
@@ -521,11 +591,9 @@ class BasicTuiAgent(App):
         else:
             opt_list.display = False
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_prompt_input_submitted(self, event: "PromptInput.Submitted") -> None:
         query = event.value.strip()
-        event.input.value = ""
-        if isinstance(event.input, PromptInput):
-            event.input.record_history(query)
+        event.input.record_history(query)
 
         if getattr(self, "_file_picker_active", False):
             self._open_selected_file(query)
