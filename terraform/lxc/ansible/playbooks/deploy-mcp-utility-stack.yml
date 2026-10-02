@@ -89,6 +89,10 @@
     # verified) before being added here -- see
     # docs/maltego-integration/README.md's Tier 2 section.
     mcp_otx_api_key: "{{ lookup('env', 'OTX_API_KEY') | mandatory('OTX_API_KEY env var is required') }}"
+    # Phase 3 osint-mcp auth. Confirmed live in OpenBao 2026-10-02 (64-char
+    # operator-generated token) before being added here -- see
+    # docs/maltego-integration/README.md's Phase 3 section.
+    mcp_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -935,12 +939,11 @@
                 OTX_API_KEY: "{{ mcp_otx_api_key }}"
                 # Shared-secret bearer token -- the brief explicitly asked
                 # for real auth even on LAN (unlike cve-mcp-server/
-                # docs-rag-mcp, which have none). Not yet in OpenBao as of
-                # this commit; defaults to empty, and the server refuses to
+                # docs-rag-mcp, which have none). The server refuses to
                 # start at all without it (process.exit(1) in
                 # osint-mcp-server.ts) rather than ever listening
                 # unauthenticated. See docs/maltego-integration/README.md.
-                OSINT_MCP_TOKEN: "{{ lookup('env', 'OSINT_MCP_TOKEN') | default('', true) }}"
+                OSINT_MCP_TOKEN: "{{ mcp_osint_mcp_token }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 
