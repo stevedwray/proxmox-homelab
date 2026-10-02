@@ -83,7 +83,8 @@ phase actually needs an LLM agent driving it interactively.
 - [x] **Phase 2 Tier 1 enrichment (VirusTotal/Shodan/GreyNoise) — done 2026-10-02.** See "Growing Phase 2" below.
 - [x] **Phase 2 Tier 2 (AlienVault OTX) — fully live, confirmed 2026-10-02.** Operator provisioned a real key, written to OpenBao and added to `secrets/manifest.json`. Confirmed live on pve-tiny: real pulse data for `example.com` (50 pulses on the domain, 2 and 0 on its two IPs). Saved at `artifacts/test-example-com-tier2-otx-confirmed-prod.mtgx`.
 - [x] Phase 2 Tier 3 (OCCRP Aleph) — **dropped, not pursued.** Requires a vetted journalist/public-interest application (organization affiliation, evidence of prior work), not a self-serve signup like OTX. A poor fit for a homelab OSINT lab, with no guarantee of approval. Operator decision 2026-10-02: skip it, move to Phase 3 instead.
-- [x] **Phase 3: osint-mcp, a real HTTP MCP server — fully live, confirmed 2026-10-02.** `investigate_domain` MCP tool, Streamable HTTP, bearer-token auth, confirmed reachable end-to-end from `deep-research-agent`'s actual container across the container boundary. See "Phase 3" section below. `deep-research-agent` itself has not been wired to call it yet — that's the next real step.
+- [x] **Phase 3: osint-mcp, a real HTTP MCP server — fully live, confirmed 2026-10-02.** `investigate_domain` MCP tool, Streamable HTTP, bearer-token auth, confirmed reachable end-to-end from `deep-research-agent`'s actual container across the container boundary. See "Phase 3" section below.
+- [x] **Phase 3b: deep-research-agent itself wired as a real MCP client — fully live, confirmed 2026-10-02.** `osint_investigate` (a real `agent_framework.MCPStreamableHTTPTool`) confirmed present in the Searcher's tool list in the live, running production container. See "Phase 3b" section below. **This completes the plan's originally-scoped end-to-end pipeline.**
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
 
@@ -426,9 +427,63 @@ LXC IP, with the real `OSINT_MCP_TOKEN`, returning a real `tools/list`
 result over HTTP 200. Not simulated, not same-host-only — the actual
 cross-container call.
 
-**Not done yet**: `deep-research-agent` itself has not been changed —
-no `MCPStreamableHTTPTool` has been added to its tool list, so nothing
-in the running agent can call `osint-mcp` yet. That's the next real
-step, and it touches a different, actively-in-use codebase (the
-deep-research agent's own `app.py`/tool registration), not just this
-stack's own files.
+## Phase 3b: wiring deep-research-agent itself (done)
+
+`deep-research-agent`'s Searcher sub-agent now has `osint_investigate`
+as a real MCP client tool — `agent_framework.MCPStreamableHTTPTool`, the
+first `MCPTool` this codebase has ever used, not a hand-rolled HTTP
+wrapper.
+
+Two things were verified by reading the actual installed package before
+writing any code, not assumed:
+
+- **`agent_framework`'s `ChatAgent`** (what `engine/orchestrator.py`'s
+  `client.as_agent()` builds) **already auto-manages `MCPTool` connection
+  lifecycle** — confirmed by reading `agent_framework/_agents.py`
+  directly: it detects `MCPTool` instances in a tools list and connects/
+  disconnects them via its own internal `AsyncExitStack`. No manual
+  `async with` needed anywhere in this codebase's own code, despite the
+  SDK's own docstring example showing that pattern explicitly.
+- **`MCPTool` has no `__call__`**, which meant `engine/sdk.py`'s
+  `SubAgentConfig.tools: List[Callable]` (a Pydantic field) rejected it
+  outright at construction time — confirmed live with a real
+  `MCPStreamableHTTPTool` instance before touching the type. Widened to
+  `List[Any]`, the narrowest fix that admits it without touching
+  anything else about the type's validation behavior.
+
+`tools/osint.py` constructs `osint_investigate` as `None` when
+`OSINT_MCP_URL`/`OSINT_MCP_TOKEN` aren't configured (same "degrade,
+don't crash" convention as every enrichment lookup inside `osint-mcp`
+itself); `app.py` only appends it to the Searcher's tool list when not
+`None`.
+
+**Verified at every step against the real, live containers, not
+simulated:**
+
+1. Full `app.py` import in a scratch copy inside the real `deep-research`
+   container (not the live source — nothing running was touched), both
+   with and without the env vars set: confirmed the Searcher's tool list
+   correctly includes/excludes `osint_investigate` in each case and
+   nothing else broke.
+2. A real `agent_framework.MCPStreamableHTTPTool` connection from inside
+   `deep-research`'s actual container to `osint-mcp`'s real LXC IP, with
+   the real `OSINT_MCP_TOKEN` — confirmed `is_connected: True`, the
+   genuine cross-container MCP handshake, before ever touching the live
+   deployment.
+3. After redeploying (checked for active sessions first — none in the
+   last 10 minutes, safe to restart): confirmed in the **live, running**
+   production container (not a scratch copy) that
+   `app.searcher.tools` really does include `osint_investigate`.
+
+`OSINT_MCP_URL`/`OSINT_MCP_TOKEN` added to `deploy-ai-services-stack.yml`
+using `mandatory()` directly (not a staged default-empty rollout like
+`OSINT_MCP_TOKEN`'s own first introduction in `mcp-utility-stack`) —
+the secret already existed in OpenBao and `ai-services-stack`'s own
+`pve-tiny` profile already includes the `services/mcp-utility` entry
+that provides it, so there was no ordering risk to guard against here.
+
+**This is the actual end of the originally-scoped Phase 3.** The whole
+pipeline — from a domain name, through DNS/WHOIS/ASN/crt.sh and four
+threat-intel providers, through a real authenticated MCP server, into
+the actual production research agent's own tool list — is live and
+confirmed working end to end.
