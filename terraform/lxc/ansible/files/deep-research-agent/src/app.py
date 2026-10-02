@@ -30,6 +30,7 @@ from prompts import (
     SEARCH_SUBAGENT_INSTRUCTIONS,
     ANALYZER_SUBAGENT_INSTRUCTIONS,
     SUBAGENT_DELEGATION_INSTRUCTIONS,
+    OSINT_TOOL_NOTE,
 )
 import config
 
@@ -56,12 +57,20 @@ analyzer = SubAgentConfig(
 # OSINT_MCP_URL/OSINT_MCP_TOKEN aren't configured, same "degrade, don't
 # crash" convention as every lookup in osint-mcp itself.
 _searcher_tools = [web_search, fetch_url_to_workspace, think_tool]
+_searcher_instructions = SEARCH_SUBAGENT_INSTRUCTIONS.replace("{osint_tool_note}", "")
 if osint_investigate is not None:
     _searcher_tools.append(osint_investigate)
+    # Found 2026-10-03: without this note, a real run called web_search 74
+    # times and investigate_domain only once -- the tool being present in
+    # the list wasn't enough, it had to be told to prefer it. .replace(),
+    # not .format(): the full string is formatted again later in
+    # engine/orchestrator.py with {date}/{task_name}/etc, which aren't
+    # known yet here.
+    _searcher_instructions = SEARCH_SUBAGENT_INSTRUCTIONS.replace("{osint_tool_note}", OSINT_TOOL_NOTE)
 
 searcher = SubAgentConfig(
     name="Searcher",
-    instructions=SEARCH_SUBAGENT_INSTRUCTIONS,
+    instructions=_searcher_instructions,
     tools=_searcher_tools,
     sub_agents=[analyzer],
 )

@@ -104,7 +104,7 @@ Find relevant sources via `web_search`, fetch the promising ones with
 `delegate_tasks` to extract the relevant information -- do not read fetched
 pages yourself, you have no file-reading tools for exactly this reason.
 </Task>
-
+{osint_tool_note}
 <Strategy>
 1. Formulate focused search queries for your assigned angle. Avoid vague
    modifiers like "latest" -- be specific about what you're looking for.
@@ -148,6 +148,34 @@ If you exceed a quota, gracefully state that you could not complete the
 deep-dive due to limits and return what you have found so far, with whatever
 real source URLs you already gathered.
 </Hard Limits>
+"""
+
+# Found 2026-10-03 (docs/maltego-integration/README.md Phase 3c): a real
+# interactive run investigating discord.com's threat-intel posture called
+# `investigate_domain` exactly ONCE and `web_search` 74 times, exhausting
+# the shared web_search quota before the other two research angles could
+# even start. osint_investigate/investigate_domain was never mentioned
+# anywhere in this file -- it was just silently present in the Searcher's
+# tool list, with nothing steering the model to prefer it over manually
+# searching for each threat-intel provider's results one at a time. This
+# note is inserted into SEARCH_SUBAGENT_INSTRUCTIONS (via a .replace(), not
+# .format(), in app.py -- the full instructions string is formatted again
+# later in engine/orchestrator.py with other placeholders like {date}/
+# {task_name} that aren't known yet at app.py's import time) only when
+# osint_investigate is actually configured for this deployment.
+OSINT_TOOL_NOTE = """
+<Available Tool: investigate_domain>
+You have a dedicated `investigate_domain` tool for domain/infrastructure/
+threat-intel questions. It returns DNS, WHOIS, certificate transparency,
+ASN/hosting info, AND threat-intel enrichment (VirusTotal, Shodan,
+GreyNoise, AlienVault OTX) for one domain in a single call -- more
+accurate and far cheaper than manually searching for each of those
+separately. If your assigned angle involves a specific domain's
+infrastructure or threat-intel posture, call `investigate_domain` FIRST,
+before any `web_search` calls for that domain. Only use `web_search` for
+what it doesn't cover (general context, news, organizational background,
+non-domain questions).
+</Available Tool: investigate_domain>
 """
 
 ANALYZER_SUBAGENT_INSTRUCTIONS = """You are a Page-Analyzer sub-agent. Today is {date}.
