@@ -158,13 +158,32 @@ def create_local_agent(builder, subagent_callback=None, session_data=None):
                 final_text = ""
                 current_input = instructions
                 has_requests = True
+                # Found 2026-10-02: a live run hung 52+ minutes with zero
+                # progress (llama.cpp's own decode counter flat, osint-mcp
+                # never reached) -- no step of this loop had any bound, so
+                # a stalled tool/connection (the specific case found: the
+                # MCP osint_investigate tool's session-level response await
+                # had no timeout -- now fixed in tools/osint.py) hung
+                # silently forever with no error. This is a second,
+                # generic guard: if the stream produces no update at all
+                # for this long, treat it as hung rather than wait forever.
+                # 300s is well above the worst documented single-tool-call
+                # latency (web_search measured at 145-147s under load).
+                idle_timeout = config.cfg.get("settings", {}).get("concurrency", {}).get(
+                    "subagent_idle_timeout_seconds", 300
+                )
                 while has_requests:
                     has_requests = False
                     user_input_requests = []
 
                     try:
                         stream = sub_agent.run(current_input, stream=True)
-                        async for update in stream:
+                        stream_iter = stream.__aiter__()
+                        while True:
+                            try:
+                                update = await asyncio.wait_for(stream_iter.__anext__(), timeout=idle_timeout)
+                            except StopAsyncIteration:
+                                break
                             if subagent_callback:
                                 await subagent_callback(update, is_subagent=True, agent_name=f"SubAgent_{task_name}")
                             for c in update.contents:
@@ -175,6 +194,11 @@ def create_local_agent(builder, subagent_callback=None, session_data=None):
                                 user_input_requests.extend(update.user_input_requests)
                     except QuotaAbortException as e:
                         return f"## Error for {task_name}\nTask forcefully aborted: {str(e)}\n---"
+                    except asyncio.TimeoutError:
+                        return (
+                            f"## Error for {task_name}\nSub-agent produced no progress for "
+                            f"{idle_timeout}s and was aborted as hung.\n---"
+                        )
 
                     if user_input_requests:
                         has_requests = True

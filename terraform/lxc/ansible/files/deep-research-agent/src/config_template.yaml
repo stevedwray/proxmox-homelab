@@ -13,6 +13,16 @@ settings:
     # searcher at a time, then test two concurrent searchers"). Raise only
     # after measuring throughput/quality, not by default.
     max_concurrent_tasks: 1
+    # Found 2026-10-02: a live run hung 52+ minutes with zero progress (a
+    # stalled MCP tool connection with no session-level timeout -- see
+    # docs/maltego-integration/README.md). orchestrator.py's subagent
+    # streaming loop now aborts with a clear error if no update arrives
+    # within this many seconds, instead of waiting forever. Default (code
+    # fallback, applies even if this key is absent -- see
+    # reference_deep_research_config_template_staleness) is 300s, set
+    # above the worst documented single-tool-call latency (web_search
+    # measured at 145-147s under load).
+    subagent_idle_timeout_seconds: 300
   quotas:
     # IMPORTANT (scaffold behavior, not a plan.md assumption): these quotas
     # are GLOBAL, shared across every agent instance using that tool name --

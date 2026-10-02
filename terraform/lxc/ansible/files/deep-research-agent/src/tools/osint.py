@@ -31,6 +31,15 @@ osint_investigate = (
             "GreyNoise, AlienVault OTX). Exposes one remote tool, investigate_domain."
         ),
         static_headers={"Authorization": f"Bearer {_OSINT_MCP_TOKEN}"},
+        # Found 2026-10-02: left unset, ClientSession's read_timeout_seconds
+        # is None (see agent_framework._mcp's _connect_on_owner), so a
+        # stalled/dropped connection leaves the tool-call await unbounded --
+        # a real 52+ minute silent hang in a live run, invisible at the TCP
+        # layer by the time it was inspected (socket already gone, nothing
+        # to time it out). osint-mcp's own lookups complete in seconds;
+        # 60s is generous headroom while turning any future stall into a
+        # fast, loud failure instead of an indefinite silent one.
+        request_timeout=60,
     )
     if _OSINT_MCP_URL and _OSINT_MCP_TOKEN
     else None
