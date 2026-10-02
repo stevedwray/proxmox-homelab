@@ -1077,32 +1077,63 @@ there, since they're nextcloud-side work.
 
 ### Step: nextcloud-P2-01-research-push-hook
 
-**Not a step block yet — research needed before this can be written as
-literal content.** Before authoring a real step:
+**Research done 2026-09-30 (reading the actual code, not guessing) —
+findings below correct three assumptions this section originally made.
+Real step blocks are `nextcloud-P2-08` through `nextcloud-P2-13`, after
+CyberSecEval's own steps.**
 
-1. Read `docs/reporting-platform/plan.md`'s Phase 1 (the `deep-research`
-   adopter work) and the actual `deep-research` code path that writes
-   `reports/deep-research/<run-id>/{report.md,manifest.json}` to find
-   exactly where a post-write hook belongs.
-2. Decide: does `deep-research` push via a WebDAV PUT immediately after
-   writing each run's `report.md`/`manifest.json`, or does a small
-   separate sync script poll `reports/deep-research/` and push new run
-   directories to Nextcloud on an interval? Prefer the former if
-   `deep-research`'s run-completion code path is a single identifiable
-   function; prefer the latter if it isn't, to avoid coupling Nextcloud
-   availability to `deep-research`'s own run success/failure.
-3. Per `docs/reporting-platform/CONVENTION.md`'s security expectations,
-   this needs its own scoped Nextcloud app password / WebDAV credential
-   — never a shared or admin credential, and scoped to a
-   `deep-research`-only folder in Nextcloud, not full account access.
-4. Confirm `apps_seg` firewall reachability from `ai_seg` (a new rule:
-   `from: ai_seg, to: apps_seg, protocol: tcp, ports: [8080]` — not yet
-   added anywhere in this plan; add it to nextcloud-01's policy block,
-   or as its own follow-up step, once the push direction is confirmed).
-
-Once these are resolved, write `nextcloud-P2-02-...` as a real step
-block with literal file paths and exact content, following the same
-literal-vs-constrained discipline as Phase 1 above.
+1. **`deep-research` does not write `reports/deep-research/<run-id>/
+   {report.md,manifest.json}`.** `CONVENTION.md`'s own text says as much
+   ("not yet adopted by any project") — this plan's original wording
+   assumed adoption that never happened. The real, live path is
+   `~/.deep-research-agent/workspace/run_<epoch>/final_report.md` (config
+   key `settings.workspace.dir`, run folder name from
+   `f"run_{int(time.time())}"` in `engine/tui.py`, gated by
+   `settings.workspace.session_isolation: true` in `config_template.yaml`
+   — confirmed enabled). No `manifest.json` is ever written. The push
+   steps below work with this real shape rather than forcing full
+   `CONVENTION.md` adoption as a prerequisite (that's separate, larger
+   scope, not part of this ask).
+2. **There is no single run-completion function, unlike CyberSecEval's
+   one Celery task.** `deep-research` has two structurally different run
+   paths in `engine/tui.py`: headless mode (`run_cli`, completion point
+   after its `_write_log(force=True)  # Task completed` line, ~1419) and
+   interactive `--web` mode (`BasicTuiAgent.run_agent`, an async Textual
+   worker; completion point is `self._is_agent_running = False` at
+   line 1101) — the one actually fronting
+   `deep-research.lab.gibbsgreatly.xyz` in production. Both need the
+   push wired in separately (`nextcloud-P2-10`).
+3. Unlike headless mode (which has a `required_artifact: "final_report.md"`
+   enforcement loop, forcing the agent to write it before letting the run
+   end), **interactive mode has no equivalent enforcement** — a run can
+   end with no `final_report.md` ever written. Per operator decision
+   2026-09-30: the push checks for the file and silently skips if it's
+   missing (mirrors CyberSecEval's own "if no transcript, return early"
+   pattern) rather than porting the enforcement loop into interactive
+   mode too.
+4. **The `ai_seg -> apps_seg:8080` firewall rule this section flagged as
+   missing is still missing** — confirmed directly against
+   `terraform/lxc/network/pve.yaml` (only `to: apps_seg` rule that exists
+   at all is `edge_seg -> apps_seg:8080` for Traefik). **CyberSecEval's own
+   equivalent (`cse_seg -> 192.168.120.10:8080`, described in this file's
+   own "Operator-only actions" step 3 below) is also still missing** —
+   meaning `_push_report_to_nextcloud` in `cse_tasks.py` has likely been
+   silently no-op-failing on every real run since it shipped (by design:
+   it swallows `URLError` on the `MKCOL` calls and returns). Per operator
+   decision 2026-09-30, `nextcloud-P2-08` fixes both, not just
+   `deep-research`'s.
+5. Per operator decision 2026-09-30: a new scoped OpenBao-backed
+   credential (`dr-reports`, not a reuse of CyberSecEval's `cse-reports`),
+   per `CONVENTION.md`'s "never a shared write credential across
+   projects" rule.
+6. Secrets provisioning below uses the **current OpenBao-backed flow**
+   (`scripts/openbao_write.py` after explicit human `bao login`), not the
+   `sops`/`secrets.common.enc.yaml` procedure CyberSecEval's own
+   "Operator-only actions" section describes further below — that section
+   predates the OpenBao migration and is now stale for *new* secrets
+   (SOPS files are frozen, per CLAUDE.md's Secrets Storage section); it's
+   left as-is here as a historical record of how `cse-reports` was
+   actually provisioned at the time, not corrected retroactively.
 
 ### CyberSecEval → Nextcloud report push
 
@@ -1454,6 +1485,19 @@ change: >
           nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
           nextcloud_folder_share_folder: "Reports/cyberseceval"
 
+  **Correction, 2026-09-30 (see nextcloud-P2-08's superseded note):** this
+  literal `nextcloud_folder_share_base_url` value is wrong -- confirmed
+  live that the bare IP gets Nextcloud's own "Access through untrusted
+  domain" 400 rejection, since `trusted_domains` only lists
+  `nextcloud.lab.gibbsgreatly.xyz` (and the Pangolin FQDN), never a bare
+  IP. Whether `deploy-cse-controller.yml`'s actually-deployed play matches
+  this doc's literal text, or was hand-corrected to the FQDN at some point
+  without this doc being updated, was not checked as part of today's
+  deep-research work (out of scope -- would mean touching cse-controller's
+  own deploy while its job was running). If this play has never
+  successfully run, it needs the same `https://nextcloud.lab.gibbsgreatly.xyz`
+  fix as `nextcloud-P2-13` below.
+
   Guarded the same way `nextcloud-P2-05` guards the worker env file --
   this play must no-op cleanly (not fail the whole deploy) when the
   Nextcloud credential hasn't been provisioned yet.
@@ -1525,6 +1569,377 @@ actually created (or found already-present) the share, then trigger one
 real benchmark run and confirm `report.md` appears in `steve`'s own
 Nextcloud Files view under Reports/cyberseceval/, readable via the Text
 app — not just that the push returned success.
+
+---
+
+### `deep-research` → Nextcloud report push
+
+Adapted from CyberSecEval's push above (see `nextcloud-P2-01`'s findings
+higher up this file), simplified to match `deep-research`'s real,
+single-file-per-run output shape — one `MKCOL` for `<run-id>`, one `PUT`
+of `final_report.md`, no per-test-case fan-out, no benchmark subfolder
+level.
+
+#### nextcloud-P2-08-firewall-ai-seg-and-cse-seg-to-nextcloud — SUPERSEDED, do not implement
+
+**Withdrawn 2026-09-30, the same day it was written, before ever being
+applied live.** This step assumed both pushes hit `192.168.120.10:8080`
+directly (the "raw container port, not through Traefik" design this whole
+Phase 2 section originally reasoned from). Live testing during rollout
+proved that assumption wrong on both sides:
+
+- CyberSecEval's real, already-deployed `NEXTCLOUD_REPORTS_WEBDAV_URL`
+  (`cse-controller:/srv/cyberseceval/config/worker.env`, read directly,
+  not guessed) uses `nextcloud.lab.gibbsgreatly.xyz`, not the bare IP --
+  the plan doc's own illustrative example value was simply wrong relative
+  to what was actually configured. The operator confirmed this push has
+  been working and producing real reports in Nextcloud all along.
+- `nextcloud.lab.gibbsgreatly.xyz` resolves to `192.168.30.10` (Traefik,
+  `edge_seg`), confirmed via `getent hosts` run from `cse-controller`'s own
+  host. The real, working traffic path is `cse_seg -> edge_seg -> apps_seg`,
+  not `cse_seg -> apps_seg` directly -- and no `cse_seg -> edge_seg` (or
+  `-> 192.168.30.10`) rule exists in `pve.yaml` either, yet it demonstrably
+  works. The live network already permits this path even though it isn't
+  declared in this policy file (a separate, pre-existing doc/reality gap
+  this step does not attempt to resolve).
+- Separately, and independent of network path entirely: `deep-research`'s
+  own `dr-reports` push, configured with the bare-IP pattern this step's
+  sibling steps originally specified, failed live with Nextcloud's own
+  `400 Bad Request` / "Access through untrusted domain" guest page --
+  confirmed by reading the actual HTTP response body. `trusted_domains`
+  (checked via `occ config:system:get trusted_domains`) lists only
+  `localhost`, `nextcloud.lab.gibbsgreatly.xyz`, and
+  `nextcloud.pan.gibbsgreatly.xyz` -- no bare IP, in either FQDN or IP
+  form. **This means the bare-IP design was never going to work at the
+  application layer, regardless of what firewall rules existed.**
+
+`ai_seg -> edge_seg:443` already exists (found while investigating this),
+so once `nextcloud-P2-10`/`P2-13` are corrected to use the FQDN instead of
+the bare IP (see their updated content below), `deep-research`'s push
+needs **no new firewall rule at all**. The two rules this step would have
+added were reverted from `pve.yaml` the same session they were written,
+never applied to the live MikroTik. Left here, marked superseded, rather
+than deleted, so a future reader doesn't re-derive and re-add the same
+wrong rules from the same wrong assumption this plan originally made.
+
+#### nextcloud-P2-09-provision-dr-reports-openbao-fields
+
+```yaml
+id: nextcloud-P2-09-provision-dr-reports-openbao-fields
+title: Add dr-reports credential field names to the services/nextcloud OpenBao entry
+depends_on: []
+
+change: >
+  In secrets/manifest.json, extend the existing "services/nextcloud"
+  entry's "fields" array (do not create a new top-level entry -- this is
+  the same Nextcloud instance/KV path, just three more field names for a
+  second, separately-scoped service account) to include:
+
+  "NEXTCLOUD_DR_REPORTS_WEBDAV_URL",
+  "NEXTCLOUD_DR_REPORTS_USER",
+  "NEXTCLOUD_DR_REPORTS_APP_PASSWORD"
+
+  This entry is already listed in every node profile's "entries" array
+  (pve, pve-tiny, pve-framework, pve-test-vm, pve-test), so no profile
+  edit is needed -- only the fields list grows. The actual secret values
+  are written separately by the operator (see Operator-only actions
+  below); this step only declares that secrets_env.py should expect and
+  export these three field names once they exist.
+
+scope:
+  allowed_paths:
+    - secrets/manifest.json
+  forbidden_actions:
+    - "Removing or renaming any existing field in services/nextcloud"
+    - "Writing an actual secret value -- this is a manifest/schema edit only, never a value"
+
+gates:
+  - id: valid-json
+    cmd: "python3 -c \"import json; json.load(open('secrets/manifest.json'))\""
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-10-deep-research-nextcloud-webdav-push
+
+```yaml
+id: nextcloud-P2-10-deep-research-nextcloud-webdav-push
+title: Add a best-effort WebDAV push of final_report.md to Nextcloud
+depends_on: [nextcloud-P2-09-provision-dr-reports-openbao-fields]
+
+change: >
+  Create a new file
+  terraform/lxc/ansible/files/deep-research-agent/src/engine/nextcloud_push.py
+  with exactly this content (stdlib only, matching cse_tasks.py's own
+  "never raise" discipline; imports at module level here since, unlike
+  cse_tasks.py, this isn't a Celery worker module shared with unrelated
+  task code):
+
+  """Best-effort WebDAV push of a completed run's final_report.md into
+  Nextcloud, per docs/nextcloud-stack/plan.md Phase 2. Never raises --
+  final_report.md is already durable on this container's own workspace
+  volume; Nextcloud being briefly unreachable or a rotated credential
+  must never fail or block a run that has already completed."""
+  import base64
+  import os
+  import urllib.error
+  import urllib.request
+  from pathlib import Path
+
+
+  def push_report_to_nextcloud(run_id: str) -> None:
+      webdav_url = os.environ.get("NEXTCLOUD_DR_REPORTS_WEBDAV_URL", "")
+      user = os.environ.get("NEXTCLOUD_DR_REPORTS_USER", "")
+      password = os.environ.get("NEXTCLOUD_DR_REPORTS_APP_PASSWORD", "")
+      if not (webdav_url and user and password):
+          return
+
+      from tools.fs import _get_workspace_dir
+      report_path = Path(_get_workspace_dir()) / run_id / "final_report.md"
+      if not report_path.is_file():
+          return
+
+      auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+      base = webdav_url.rstrip("/")
+      for collection_url in (f"{base}/deep-research-agent", f"{base}/deep-research-agent/{run_id}"):
+          request = urllib.request.Request(collection_url, method="MKCOL")
+          request.add_header("Authorization", auth_header)
+          try:
+              urllib.request.urlopen(request, timeout=15)
+          except urllib.error.HTTPError as exc:
+              if exc.code not in (405, 301):
+                  return
+          except urllib.error.URLError:
+              return
+
+      put_url = f"{base}/deep-research-agent/{run_id}/final_report.md"
+      request = urllib.request.Request(
+          put_url, data=report_path.read_bytes(), method="PUT"
+      )
+      request.add_header("Authorization", auth_header)
+      request.add_header("Content-Type", "text/markdown")
+      try:
+          urllib.request.urlopen(request, timeout=15)
+      except (urllib.error.HTTPError, urllib.error.URLError):
+          pass
+
+  Do not add a module-level `import requests` or any new third-party
+  dependency; do not add `curl` to the container.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/deep-research-agent/src/engine/nextcloud_push.py
+  forbidden_actions:
+    - "Any new third-party dependency"
+    - "Raising an exception out of push_report_to_nextcloud under any circumstance"
+    - "Editing tui.py in this step -- wiring the call site is nextcloud-P2-11, kept separate so this step's gate stays a pure syntax check"
+
+gates:
+  - id: syntax-check
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/deep-research-agent/src/engine/nextcloud_push.py"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-11-wire-push-into-run-completion
+
+```yaml
+id: nextcloud-P2-11-wire-push-into-run-completion
+title: Call push_report_to_nextcloud from both deep-research run-completion points
+depends_on: [nextcloud-P2-10-deep-research-nextcloud-webdav-push]
+
+change: >
+  In terraform/lxc/ansible/files/deep-research-agent/src/engine/tui.py,
+  add near the top-level imports: `from engine.nextcloud_push import push_report_to_nextcloud`
+
+  Two call sites, both guarded by `session_isolation` being the only mode
+  this supports (matching how `session_token`/`run_id` already only
+  exist under that config flag in both functions):
+
+  Both `run_cli` and `run_agent` currently generate the run's folder
+  name inline, only as an argument to `session_dir_ctx.set(...)`:
+
+     session_token = session_dir_ctx.set(f"run_{int(time.time())}")
+
+  In both functions, change this to capture the string first so it's
+  available later as a plain local variable:
+
+     run_id = f"run_{int(time.time())}"
+     session_token = session_dir_ctx.set(run_id)
+
+  (`session_token` stays `None`, and `run_id` is simply never used, on
+  the existing early-return path when `session_isolation` is off --
+  no behavior change there.)
+
+  1. In `run_cli` (headless mode), immediately after the line
+     `_write_log(force=True)  # Task completed -- always capture final state.`
+     and before the `elapsed = datetime.now() - start_time` line, add:
+
+     if session_token is not None:
+         push_report_to_nextcloud(run_id)
+
+  2. In `BasicTuiAgent.run_agent` (interactive `--web` mode), immediately
+     before the existing line `self._is_agent_running = False` at the
+     end of the method, add:
+
+     if session_token is not None:
+         push_report_to_nextcloud(run_id)
+
+  In both cases this runs synchronously on the same thread right before
+  the run is considered finished -- acceptable per `push_report_to_nextcloud`'s
+  own 15s-per-request timeout budget and "never raises" contract; it
+  cannot hang the run past ~30s worst case (two requests: MKCOL then PUT)
+  and cannot fail it.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/deep-research-agent/src/engine/tui.py
+  forbidden_actions:
+    - "Making the push required for a run to be considered complete"
+    - "Adding push_report_to_nextcloud as an LLM-callable @tool -- this is an internal engine hook, not agent-invokable"
+    - "Porting run_cli's required_artifact enforcement loop into run_agent -- operator decision 2026-09-30 was check-and-skip only"
+
+gates:
+  - id: syntax-check
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/deep-research-agent/src/engine/tui.py"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-12-wire-nextcloud-env-vars-into-deep-research
+
+```yaml
+id: nextcloud-P2-12-wire-nextcloud-env-vars-into-deep-research
+title: Wire the three NEXTCLOUD_DR_REPORTS_* env vars into deep-research's container
+depends_on: [nextcloud-P2-09-provision-dr-reports-openbao-fields]
+
+change: >
+  In terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml, in the
+  `deep-research` service's existing `environment:` block (the one that
+  already sets `OPENAI_API_BASE` and `TAVILY_API_KEY`), add three more
+  keys:
+
+  NEXTCLOUD_DR_REPORTS_WEBDAV_URL: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_WEBDAV_URL') | default('', true) }}"
+  NEXTCLOUD_DR_REPORTS_USER: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+  NEXTCLOUD_DR_REPORTS_APP_PASSWORD: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
+
+  Deliberately `default('', true)`, not `mandatory` -- matching
+  `nextcloud-P2-05`'s own reasoning: a missing/not-yet-provisioned
+  Nextcloud credential must never block a deep-research deploy, the same
+  way `push_report_to_nextcloud` itself no-ops silently on empty values.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
+  forbidden_actions:
+    - "Making these three vars mandatory"
+    - "Running provision.sh or any deploy -- this step is a file edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+#### nextcloud-P2-13-nextcloud-folder-share-for-deep-research
+
+```yaml
+id: nextcloud-P2-13-nextcloud-folder-share-for-deep-research
+title: Invoke nextcloud_folder_share for deep-research's Reports folder
+depends_on: [nextcloud-P2-09-provision-dr-reports-openbao-fields]
+
+change: >
+  In terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml, add a
+  new play at the end of the file (same shape as `nextcloud-P2-07`'s
+  play for CyberSecEval):
+
+  - name: Share deep-research's Nextcloud Reports folder with steve
+    hosts: all
+    gather_facts: false
+    vars:
+      nextcloud_dr_reports_user: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+      nextcloud_dr_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
+    roles:
+      - role: nextcloud_folder_share
+        when: nextcloud_dr_reports_user | length > 0 and nextcloud_dr_reports_app_password | length > 0
+        vars:
+          # NOT the bare apps_seg IP -- confirmed live 2026-09-30 that
+          # Nextcloud's trusted_domains rejects it (400 "Access through
+          # untrusted domain"). Matches CyberSecEval's own real, working
+          # NEXTCLOUD_REPORTS_WEBDAV_URL, which already uses this FQDN.
+          nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
+          nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
+          nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
+          nextcloud_folder_share_folder: "Reports/deep-research-agent"
+
+  Guarded the same way `nextcloud-P2-07` guards its own play -- must
+  no-op cleanly when the credential hasn't been provisioned yet, never
+  fail the whole deploy.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml
+  forbidden_actions:
+    - "Making this play required (must stay skippable when the credential is unset)"
+    - "Running provision.sh or any deploy -- this step is a file edit only"
+
+gates:
+  - id: syntax-check
+    cmd: "ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+#### Operator-only actions (not step blocks — not local-model-executable)
+
+Same class of manual, non-automatable actions as CyberSecEval's own list
+above, adapted for the current OpenBao-backed secrets flow (not SOPS):
+
+1. **Create a scoped Nextcloud service account** (`dr-reports`), member
+   of no admin group. Generate an app password for it (Settings →
+   Security → Devices & sessions) — never its real login password, never
+   `steve`'s or an admin account.
+2. **Write the three secret values to OpenBao** under the existing
+   `kv/data/services/nextcloud` path (same KV entry as `cse-reports`'
+   fields, per `nextcloud-P2-09`): `NEXTCLOUD_DR_REPORTS_WEBDAV_URL`
+   (the FQDN, not the bare IP -- confirmed live 2026-09-30 that Nextcloud's
+   `trusted_domains` rejects the bare IP with a 400; use
+   `https://nextcloud.lab.gibbsgreatly.xyz/remote.php/dav/files/dr-reports`,
+   matching CyberSecEval's own real, working value),
+   `NEXTCLOUD_DR_REPORTS_USER=dr-reports`,
+   `NEXTCLOUD_DR_REPORTS_APP_PASSWORD=<generated app password>`. Per
+   CLAUDE.md's Secrets Storage section: `bao login -method=oidc
+   -no-store` first (explicit human OIDC login, never a stored write
+   token), then `scripts/openbao_write.py` — agents never get OpenBao
+   write access, this step is the operator's alone.
+3. **Add and apply the two MikroTik firewall rules from
+   `nextcloud-P2-08`** by hand on the actual MikroTik device (no
+   automated wrapper for this device, same gap already flagged elsewhere
+   in persistent memory) — the file edit alone doesn't reach the live
+   router. Verify with a real request from each source zone before
+   relying on the runtime push, e.g. from a pve-tiny container in
+   `ai_seg`: `curl -f http://192.168.120.10:8080/status.php`.
+
+#### Deploy and verify
+
+After the six code steps (`nextcloud-P2-08` through `nextcloud-P2-13`)
+land and the three operator actions above are done: Preflight Summary
+(target `pve-tiny`, mutating, exact object = `ai-services-stack`'s
+`deep-research` container env/code, plus a firewall change on `pve` and
+a folder-share call against Nextcloud made from the operator's own
+workstation, out-of-scope = everything else) → operator "Proceed" →
+`export TASK_APPROVAL="nextcloud-P2-deep-research-reports-push"` →
+`./with-secrets-prod-tiny scripts/provision.sh --stack ai-services-stack`
+→ confirm the deploy's own output shows `nextcloud-P2-13`'s role
+actually created (or found already-present) the share, then run one real
+`deep-research` session end-to-end and confirm `final_report.md` appears
+in `steve`'s own Nextcloud Files view under
+Reports/deep-research-agent/, readable via the Text app — not just that
+the push returned success. Also re-verify CyberSecEval's own push now
+actually lands in Nextcloud (it previously did not, per this section's
+`nextcloud-P2-01` findings), since `nextcloud-P2-08` fixed its firewall
+gap too.
 
 ---
 

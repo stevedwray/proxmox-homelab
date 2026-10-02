@@ -5,6 +5,7 @@ from textual.widgets import Input, OptionList, Static, Collapsible, RichLog, But
 from textual.containers import VerticalScroll, Horizontal, Vertical
 from rich.markdown import Markdown
 from engine.orchestrator import create_local_agent, reset_session, delegation_depth_ctx
+from engine.nextcloud_push import push_report_to_nextcloud
 import engine.orchestrator as orchestrator_module
 import asyncio
 import json
@@ -901,10 +902,13 @@ class BasicTuiAgent(App):
         # Session directory isolation: when enabled, ALL workspace file operations
         # for this run are transparently mapped to a timestamped subfolder (e.g. run_1748192400/).
         # Toggle via config.yaml: settings.workspace.session_isolation: true
+        session_token = None
+        run_id = None
         if config.cfg.get("settings", {}).get("workspace", {}).get("session_isolation", False):
             import time
             from tools.fs import session_dir_ctx
-            session_token = session_dir_ctx.set(f"run_{int(time.time())}")
+            run_id = f"run_{int(time.time())}"
+            session_token = session_dir_ctx.set(run_id)
 
         # Initialize tool quotas from config
         config_quotas = config.cfg.get("settings", {}).get("quotas", {})
@@ -1098,6 +1102,8 @@ class BasicTuiAgent(App):
                 current_input = new_inputs
 
         tool_quotas_ctx.reset(token)
+        if session_token is not None:
+            push_report_to_nextcloud(run_id)
         self._is_agent_running = False
 
     def _render_cmd_list(self) -> None:
@@ -1212,10 +1218,12 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
     token = tool_quotas_ctx.set(sub_quotas)
 
     session_token = None
+    run_id = None
     if config.cfg.get("settings", {}).get("workspace", {}).get("session_isolation", False):
         import time
         from tools.fs import session_dir_ctx
-        session_token = session_dir_ctx.set(f"run_{int(time.time())}")
+        run_id = f"run_{int(time.time())}"
+        session_token = session_dir_ctx.set(run_id)
 
     async def cli_subagent_callback(update, is_subagent=True, is_done=False, **kwargs):
         agent_name = kwargs.get("agent_name") or getattr(update, "author_name", None) or "Sub-Agent"
@@ -1417,6 +1425,8 @@ async def run_cli(builder, prompt: str = None, prompt_file: str = None, session_
                         pass
 
         _write_log(force=True)  # Task completed -- always capture final state.
+        if session_token is not None:
+            push_report_to_nextcloud(run_id)
         elapsed = datetime.now() - start_time
         sys.stdout.write(f"\n\n\033[1mTask completed in {elapsed.total_seconds():.1f} seconds.\033[0m\n")
     except Exception as e:
