@@ -81,7 +81,7 @@ phase actually needs an LLM agent driving it interactively.
 - [x] Phase 1 test run on pve-tiny: produced a valid `.mtgx` — 2026-10-02
 - [x] **Operator opened the file in real Maltego Desktop 4.13.0 and confirmed it renders correctly** — 2026-10-02: correct entity icons (Domain/IPv4Address/AS/Phrase), correct values (not placeholder text), correct link labels (`resolves_to`/`has_nameserver`/`hosted_in`/`certificate`/`SAN`), correct topology. **This is the actual Phase 1 milestone, and it's done.** Confirmed artifact saved at `artifacts/test-example-com-v4-confirmed-working.mtgx`.
 - [x] **Phase 2 Tier 1 enrichment (VirusTotal/Shodan/GreyNoise) — done 2026-10-02.** See "Growing Phase 2" below.
-- [ ] Phase 2 Tier 2 (AlienVault OTX) — scoped, not started
+- [x] **Phase 2 Tier 2 code (AlienVault OTX) — written and deployed 2026-10-02, but functionally inert.** `otxLookup()` is live in the driver and wired through to the compose service, but **no `OTX_API_KEY` exists in OpenBao yet** — needs the operator to sign up at otx.alienvault.com (free) first. Deliberately not added to `secrets/manifest.json` yet (see "Growing Phase 2" below for why). Safe to deploy as-is; just a no-op until the key exists.
 - [ ] Phase 2 Tier 3 (OCCRP Aleph) — scoped, not started
 
 ## Real bugs found and fixed via live deployment (2026-10-02)
@@ -251,8 +251,42 @@ returned a real (negative) classification. VirusTotal absent as expected
 given the broken key. Saved at
 `artifacts/test-example-com-tier1-confirmed-prod.mtgx`.
 
-**Not done yet**: Tier 2 (AlienVault OTX — needs one new OpenBao field)
-and Tier 3 (OCCRP Aleph — needs an account application first).
+**Not done yet**: Tier 3 (OCCRP Aleph — needs an account application
+first).
+
+## Tier 2: AlienVault OTX (code deployed, key still needed)
+
+`otxLookup()` added to the driver: `GET /api/v1/indicators/{domain|IPv4}/
+{value}/general` with header `X-OTX-API-KEY`, enriching the root `Domain`
+and every `IPv4Address` entity with `otx_pulse_count`/`otx_pulse_names`.
+Endpoint verified against the official LevelBlue docs
+(`otx.alienvault.com/assets/static/external_api.html`) after an
+unrelated, older community gist showed a different `/indicator/`
+(singular) path that looked plausible but didn't match the canonical
+source — checked rather than trusted.
+
+No `OTX_API_KEY` exists in OpenBao yet. Deliberately **not** added to
+`secrets/manifest.json` either, on purpose: adding a field name there
+before the real OpenBao value exists trips `secrets_env.py`'s
+fail-closed check for every stack on every node profile that includes
+`shared/external-apis` — which is all of them. This exact failure mode
+already happened once during the deep-research Nextcloud push work
+earlier this cycle (see `reference_nextcloud_trusted_domains_fqdn`-
+adjacent memory / `docs/nextcloud-stack/plan.md`). Instead, the compose
+service's `OTX_API_KEY` uses a plain `default('', true)` lookup, not
+`mandatory()` — safe to deploy now, confirmed live on pve-tiny with both
+no key (clean no-op) and a deliberately bogus key (clean no-op, no
+crash) before shipping.
+
+**To finish Tier 2** (operator action, not something I can do — agents
+don't get OpenBao write access):
+1. Sign up at otx.alienvault.com (free) and get an API key.
+2. `bao login -method=oidc -no-store`, then
+   `scripts/openbao_write.py services/external-apis OTX_API_KEY`
+   (confirm the exact entry path against `secrets/manifest.json` first).
+3. Tell me once it's written — I'll verify via a scratch-manifest
+   `--check` dry run, add `OTX_API_KEY` to the real manifest, switch the
+   compose env var to `mandatory()`, redeploy, and confirm live.
 
 ## Hand-back: maltego-01 through maltego-04 (2026-10-02)
 
