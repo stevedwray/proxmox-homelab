@@ -56,7 +56,22 @@ def _safe_format(template: str, **kwargs) -> str:
     return template.format_map(_SafeDict(**kwargs))
 
 def _get_default_options():
-    options = {"temperature": 0.0}
+    # Found live 2026-10-03: a test run sat "stuck" for over an hour --
+    # not actually hung, confirmed via the llama.cpp /slots endpoint
+    # (OPENAI_API_KEY auth): is_processing=true, n_decoded=65369 and
+    # climbing, max_tokens/n_predict both -1 (unbounded). The repeat_penalty
+    # fix above only guards against an exact short-window repeated token
+    # sequence (repeat_last_n=64) -- this was a longer-period degenerate
+    # pattern that evades that window but still never produces a real stop
+    # token. The existing 300s HTTP client timeout (see the comment below)
+    # never fires either, since it's a PER-READ timeout that resets on every
+    # streamed token -- a pathological-but-still-streaming generation looks
+    # "alive" to it forever. A hard max_tokens cap is the only backstop that
+    # actually bounds a single turn's output regardless of streaming
+    # behavior. 16384 is generous for any legitimate single turn (tool call,
+    # reasoning, or even a full final_report.md write) while guaranteeing a
+    # hard stop far short of actually exhausting the 131072 context window.
+    options = {"temperature": 0.0, "max_tokens": 16384}
     # OpenAI's official API rejects "chat_template_kwargs"
     if "api.openai.com" not in config.cfg.get("api", {}).get("openai_base_url", ""):
         options["extra_body"] = {
