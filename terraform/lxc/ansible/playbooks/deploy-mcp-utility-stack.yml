@@ -895,7 +895,9 @@
                 description:
                   "Look up a Twitch channel by username: display name, bio/description, account creation date, " +
                   "broadcaster type. Does NOT return follower count -- Twitch decommissioned cross-user follower " +
-                  "lookups in 2023; the replacement endpoint only works for a channel's own moderators.",
+                  "lookups in 2023; the replacement endpoint only works for a channel's own moderators. Also does " +
+                  "NOT return a view count -- Twitch froze that field in 2022 and officially deprecated it, so it " +
+                  "no longer reflects real data for any channel.",
                 inputSchema: {
                   username: z.string().describe("The channel's Twitch login/username"),
                 },
@@ -908,7 +910,7 @@
                 const lines = [
                   `Twitch channel "${result.displayName}" (id ${result.id}):`,
                   `  Broadcaster type: ${result.broadcasterType || "normal"}, Created: ${result.createdAt ?? "unknown"}`,
-                  `  Total view count: ${result.viewCount ?? "unknown"} (follower count unavailable -- see tool description)`,
+                  `  (follower count and view count both unavailable -- see tool description)`,
                 ];
                 if (result.description) lines.push(`  Bio: ${result.description.slice(0, 300)}`);
                 return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -1452,14 +1454,20 @@
           // THAT specific channel, which is useless for arbitrary third-party
           // lookups -- so this tool reports bio/profile metadata only and is
           // explicit that follower count isn't available, rather than silently
-          // omitting it without explanation.
+          // omitting it without explanation. view_count is deliberately NOT exposed
+          // here either: confirmed live 2026-10-04 (Get Users returned 0 for a
+          // streamer with billions of real views) and verified against Twitch's own
+          // deprecation announcement -- the underlying view-tracking service was
+          // shut down 2022-04-14, the field froze permanently that day, and Twitch's
+          // own changelog (2022-06-27) tells developers to stop displaying it. It
+          // isn't just unreliable, it's a frozen historical artifact, so surfacing
+          // it (even labeled "deprecated") would still risk being read as real data.
           export interface TwitchChannelResult {
             id: string;
             displayName: string;
             description?: string;
             createdAt?: string;
             broadcasterType?: string;
-            viewCount?: number;
           }
 
           let twitchAppToken: { token: string; expiresAt: number } | undefined;
@@ -1501,7 +1509,6 @@
                 description: user.description,
                 createdAt: user.created_at,
                 broadcasterType: user.broadcaster_type || undefined,
-                viewCount: user.view_count,
               };
             } catch {
               return undefined;
