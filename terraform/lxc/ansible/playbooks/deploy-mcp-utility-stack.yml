@@ -1045,8 +1045,15 @@
           // using the actual tool rather than reimplementing its site-detection
           // logic, same principle as maltego-mcp itself. No native JSON output
           // confirmed via its own argparse source 2026-10-03 -- --csv is the most
-          // structured machine-parseable format it has (username, site, URL,
-          // status, HTTP code, response time columns).
+          // structured machine-parseable format it has. Real column order
+          // confirmed live against actual output (not assumed from the source
+          // read alone -- a live run's result looked wrong, every URL was a
+          // platform's generic homepage, not a real per-user profile link):
+          // username,name,url_main,url_user,exists,http_status,response_time_s --
+          // url_user (index 3) is the real profile URL, url_main (index 2) is just
+          // the platform's homepage. The CSV file already contains claimed/found
+          // results only, but `exists` is still checked defensively in case that
+          // ever changes.
           export interface SherlockMatch { site: string; url: string }
 
           export async function sherlockUsernameCheck(username: string): Promise<SherlockMatch[] | undefined> {
@@ -1062,17 +1069,17 @@
                   // contain unescaped commas in practice. Acceptable for a
                   // best-effort OSINT tool, same resilience trade-off as every
                   // other lookup in this file.
-                  const [, site, url] = line.split(",");
-                  return { site, url };
+                  const parts = line.split(",");
+                  return { site: parts[1], url: parts[3], exists: parts[4] };
                 })
-                .filter((r) => r.site && r.url);
+                .filter((r) => r.site && r.url && r.exists === "Claimed")
+                .map(({ site, url }) => ({ site, url }));
             } catch {
               return undefined;
             } finally {
               if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
             }
           }
-
     - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
       ansible.builtin.replace:
         path: "{{ mcp_build_dir }}/Dockerfile"
