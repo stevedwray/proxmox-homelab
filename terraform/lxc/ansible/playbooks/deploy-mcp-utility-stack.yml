@@ -1396,7 +1396,7 @@
             realName?: string;
             countryCode?: string;
             currentGame?: string;
-            visibility: "public" | "private" | "unknown";
+            visibility: "public" | "private" | "friends_only" | "unknown";
           }
 
           export async function steamProfileLookup(vanityOrId: string): Promise<SteamProfileResult | undefined> {
@@ -1422,11 +1422,16 @@
               const summaryBody = await summaryRes.json();
               const player = summaryBody.response?.players?.[0];
               if (!player) return undefined;
-              // communityvisibilitystate: 1 = private, 3 = public (2 is a legacy
-              // "friends only" value Steam's own docs say is no longer used).
-              let visibility: "public" | "private" | "unknown" = "unknown";
+              // communityvisibilitystate: 1 = private, 3 = public. The code here
+              // previously treated 2 ("Friends Only") as a dead legacy value per
+              // Steam's own docs -- confirmed live 2026-10-04 that's wrong: a real
+              // profile (Gabe Newell's own) returned exactly 2, so it's very much
+              // still in active use. Mapped properly now instead of falling through
+              // to "unknown".
+              let visibility: "public" | "private" | "friends_only" | "unknown" = "unknown";
               if (player.communityvisibilitystate === 3) visibility = "public";
               else if (player.communityvisibilitystate === 1) visibility = "private";
+              else if (player.communityvisibilitystate === 2) visibility = "friends_only";
               return {
                 steamId: player.steamid,
                 personaName: player.personaname,
