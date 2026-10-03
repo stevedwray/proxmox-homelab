@@ -2,6 +2,7 @@ import contextvars
 import functools
 import asyncio
 import multiprocessing
+import multiprocessing.resource_tracker
 import queue as queue_module
 
 # Real production incident 2026-09-22: agent_framework itself wraps every
@@ -43,8 +44,44 @@ _MP_CONTEXT = multiprocessing.get_context("spawn")
 # resource_tracker.register() monkey-patched to count calls) that this
 # Pipe-based version makes zero register() calls under 50-way concurrency,
 # which makes the "bad value(s) in fds_to_keep" failure structurally
-# impossible here, not just less likely. The old serializing lock is removed
-# since nothing it protected still exists.
+# impossible here, not just less likely. The old serializing lock was
+# removed on the theory that nothing it protected still exists.
+#
+# WRONG, confirmed live 2026-10-04: raising max_concurrent_tasks 1->3 (a
+# separate same-day fix, for an unrelated queue-starvation bug) brought the
+# EXACT SAME "bad value(s) in fds_to_keep" crash right back -- 0/34
+# fetch_url_to_workspace failures at concurrency 1, 14/14 failures at
+# concurrency 3, same error, same session. The real full traceback this
+# time showed a DIFFERENT call site: Process.start() -> Popen._launch() ->
+# resource_tracker.getfd() -> ensure_running() -- not Queue's register() at
+# all. getfd() is called UNCONDITIONALLY by every spawn-context
+# Process.start(), regardless of what IPC primitive (Queue, Pipe, or none)
+# is used, specifically so the child can inherit the tracker's fd. Removing
+# Queue closed the register() call site but never touched this one.
+# Could NOT reproduce this specific race with a standalone repro script
+# (15/15 concurrent fetches succeeded there, matching the earlier 50/50
+# synthetic Queue test) -- something about the real agent runtime's broader
+# concurrent state (other tools, the MCP client's own background
+# connections, etc.) is a necessary ingredient this isolated script doesn't
+# have. Given a solid live A/B (concurrency 1 vs 3, same code, same
+# session type, opposite outcomes) but no isolated repro to validate a fix
+# against, this applies two independent, low-cost mitigations rather than
+# one unverifiable guess:
+# 1. Eagerly start the resource tracker here, at module import time --
+#    single-threaded, long before any concurrent request handling begins.
+#    ensure_running() is idempotent and fast-paths to a plain is-it-alive
+#    check once _fd is already set, so by the time real concurrent
+#    Process.start() calls happen, they should just read the cached fd
+#    rather than ever re-entering the tracker's own launch sequence.
+multiprocessing.resource_tracker.ensure_running()
+# 2. Serialize just the start() call itself (not the network wait that
+#    follows it) behind a lock, so even if two fetches' Process.start()
+#    calls land close together, they can't both be inside the tracker's
+#    launch/bootstrap window at once. This reintroduces a narrower version
+#    of the 2026-09-30 lock -- scoped to start() only, not Queue/Pipe
+#    creation -- so most of the latency benefit of concurrency 3 (the
+#    actual network I/O wait) is preserved.
+_process_start_lock = asyncio.Lock()
 
 
 async def run_with_hard_kill(target, args: tuple, timeout: float):
@@ -58,7 +95,8 @@ async def run_with_hard_kill(target, args: tuple, timeout: float):
     """
     parent_conn, child_conn = _MP_CONTEXT.Pipe(duplex=False)
     process = _MP_CONTEXT.Process(target=target, args=(*args, child_conn), daemon=True)
-    process.start()
+    async with _process_start_lock:
+        process.start()
     child_conn.close()
     try:
         if not await asyncio.to_thread(parent_conn.poll, timeout):
