@@ -616,6 +616,38 @@
           const PORT = Number(process.env.PORT ?? "8010");
           const OUTPUT_DIR = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
 
+          // Found live 2026-10-03: this server had ZERO per-request logging --
+          // diagnosing a real find_username failure required reconstructing the
+          // whole call from deep-research-agent's own session JSON (a different
+          // container) instead of just reading this server's own logs. Every tool
+          // call now logs start/outcome/duration to stdout (captured by `docker
+          // logs`), so a future failure is diagnosable from this container alone.
+          // Deliberately plain console.log (stdout, picked up by the Docker json-file
+          // log driver like every other stack here) rather than a logging
+          // dependency -- this is a low-traffic internal tool server, not worth a
+          // new library for.
+          function withLogging<Args extends Record<string, unknown>>(
+            toolName: string,
+            handler: (args: Args) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>,
+          ) {
+            return async (args: Args) => {
+              const start = Date.now();
+              console.log(`[${new Date(start).toISOString()}] ${toolName} start args=${JSON.stringify(args).slice(0, 300)}`);
+              try {
+                const result = await handler(args);
+                const ms = Date.now() - start;
+                const outcome = result.isError ? "error" : "ok";
+                const preview = result.content?.[0]?.text?.slice(0, 200) ?? "";
+                console.log(`[${new Date().toISOString()}] ${toolName} ${outcome} (${ms}ms): ${preview}`);
+                return result;
+              } catch (err: any) {
+                const ms = Date.now() - start;
+                console.error(`[${new Date().toISOString()}] ${toolName} threw (${ms}ms): ${err?.stack ?? err}`);
+                throw err;
+              }
+            };
+          }
+
           function getServer(): McpServer {
             const server = new McpServer({ name: "osint-mcp", version: "1.0.0" });
             server.registerTool(
@@ -632,7 +664,7 @@
                   outputFileName: z.string().optional().describe("File name for the .mtgx, relative to the output directory (required if writeMtgx is true)"),
                 },
               },
-              async ({ domain, writeMtgx, outputFileName }) => {
+              withLogging("investigate_domain", async ({ domain, writeMtgx, outputFileName }) => {
                 const graph = await investigateDomain(domain);
                 let mtgxPath: string | undefined;
                 if (writeMtgx) {
@@ -655,7 +687,7 @@
                 ];
                 if (mtgxPath) lines.push(`Saved .mtgx to ${mtgxPath}`);
                 return { content: [{ type: "text", text: lines.join("\n") }] };
-              },
+              }),
             );
 
             // Phase 4 (docs/maltego-integration/README.md): company and person
@@ -678,7 +710,7 @@
                   domain: z.string().optional().describe("The company's domain, if known, to also look up email patterns"),
                 },
               },
-              async ({ name, domain }) => {
+              withLogging("investigate_company", async ({ name, domain }) => {
                 const [companiesHouse, secEdgar, hunter] = await Promise.all([
                   withRetry(() => companiesHouseLookup(name)),
                   withRetry(() => secEdgarLookup(name)),
@@ -713,7 +745,7 @@
                   lines.push("\nNo data found from any configured provider -- try general web search, or the company may not be UK-registered/US-public.");
                 }
                 return { content: [{ type: "text", text: lines.join("\n") }] };
-              },
+              }),
             );
 
             server.registerTool(
@@ -729,7 +761,7 @@
                   domain: z.string().describe("Their employer's domain, e.g. example.com"),
                 },
               },
-              async ({ fullName, domain }) => {
+              withLogging("find_person_email", async ({ fullName, domain }) => {
                 const result = await withRetry(() => hunterEmailFinder(fullName, domain));
                 if (!result?.email) {
                   return { content: [{ type: "text", text: `No email found for ${fullName} at ${domain} (Hunter.io has no data, or HUNTER_API_KEY is unset).` }] };
@@ -742,7 +774,7 @@
                     },
                   ],
                 };
-              },
+              }),
             );
 
             server.registerTool(
@@ -757,17 +789,21 @@
                   username: z.string().describe("The username/handle to check across platforms"),
                 },
               },
-              async ({ username }) => {
-                const matches = await sherlockUsernameCheck(username);
-                if (!matches) {
-                  return { content: [{ type: "text", text: `Username check for "${username}" failed (Sherlock unavailable or timed out).` }] };
+              withLogging("find_username", async ({ username }) => {
+                const result = await sherlockUsernameCheck(username);
+                if (!result.ok) {
+                  // Reason surfaced all the way through now (2026-10-03 fix) --
+                  // previously this collapsed every distinct failure into one
+                  // generic "unavailable or timed out" message with no way to tell
+                  // them apart without SSHing into the container.
+                  return { content: [{ type: "text", text: `Username check for "${username}" failed: ${result.reason}` }], isError: true };
                 }
-                if (matches.length === 0) {
+                if (result.matches.length === 0) {
                   return { content: [{ type: "text", text: `No matches found for username "${username}" across checked platforms.` }] };
                 }
-                const lines = [`Found "${username}" on ${matches.length} platform(s):`, ...matches.map((m) => `- ${m.site}: ${m.url}`)];
+                const lines = [`Found "${username}" on ${result.matches.length} platform(s):`, ...result.matches.map((m) => `- ${m.site}: ${m.url}`)];
                 return { content: [{ type: "text", text: lines.join("\n") }] };
-              },
+              }),
             );
 
             return server;
@@ -827,6 +863,7 @@
           app.listen(PORT, () => {
             console.log(`osint-mcp listening on :${PORT}`);
           });
+
     - name: Write maltego-mcp company_person.ts module (Phase 4)
       ansible.builtin.copy:
         dest: "{{ maltego_build_dir }}/company_person.ts"
@@ -1083,13 +1120,23 @@
           // ever changes.
           export interface SherlockMatch { site: string; url: string }
 
-          export async function sherlockUsernameCheck(username: string): Promise<SherlockMatch[] | undefined> {
+          // Found live 2026-10-03: a real run reported two find_username calls that
+          // both failed (one "Error: Function failed.", one with no result at all)
+          // but this function's catch-all swallowed the real reason into a bare
+          // `undefined` -- the MCP layer could only ever report "Sherlock unavailable
+          // or timed out" regardless of which it actually was. Now returns a tagged
+          // result so the caller (and the logging wrapper in osint-mcp-server.ts) can
+          // tell execFileAsync's hard 90s timeout apart from a missing/corrupt CSV or
+          // any other failure, instead of re-diagnosing via SSH every time.
+          export type SherlockResult = { ok: true; matches: SherlockMatch[] } | { ok: false; reason: string };
+
+          export async function sherlockUsernameCheck(username: string): Promise<SherlockResult> {
             let dir: string | undefined;
             try {
               dir = await mkdtemp(join(tmpdir(), "sherlock-"));
               try {
                 await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 90_000 });
-              } catch {
+              } catch (execErr: any) {
                 // Confirmed live 2026-10-03: Sherlock routinely exits non-zero
                 // (observed exit code 1) even after successfully writing a
                 // complete, valid CSV with real results -- across 400+ sites,
@@ -1100,11 +1147,17 @@
                 // perfectly good results on what looked like "transient failures"
                 // but was actually this exit-code mismatch every time. Fall
                 // through and try reading the CSV regardless -- only a genuinely
-                // missing/unreadable file below means real failure.
+                // missing/unreadable file below means real failure. But a timeout
+                // kill (SIGTERM, execErr.signal/killed set) means the CSV may
+                // genuinely not exist yet -- remember this specific cause so the
+                // outer catch can report it accurately rather than a generic one.
+                if (execErr?.killed || execErr?.signal) {
+                  throw Object.assign(new Error(`sherlock killed after 90s timeout (signal ${execErr.signal ?? "?"})`), { cause: "timeout" });
+                }
               }
               const csv = await readFile(join(dir, `${username}.csv`), "utf-8");
               const lines = csv.trim().split("\n").slice(1); // skip header row
-              return lines
+              const matches = lines
                 .map((line) => {
                   // Naive comma split: Sherlock's own site names and URLs don't
                   // contain unescaped commas in practice. Acceptable for a
@@ -1115,12 +1168,14 @@
                 })
                 .filter((r) => r.site && r.url && r.exists === "Claimed")
                 .map(({ site, url }) => ({ site, url }));
-            } catch {
-              return undefined;
+              return { ok: true, matches };
+            } catch (err: any) {
+              return { ok: false, reason: err?.message ?? String(err) };
             } finally {
               if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
             }
           }
+
     - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
       ansible.builtin.replace:
         path: "{{ mcp_build_dir }}/Dockerfile"
