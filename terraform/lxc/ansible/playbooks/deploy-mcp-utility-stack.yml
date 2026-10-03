@@ -100,6 +100,18 @@
     # project (see OTX_API_KEY/OSINT_MCP_TOKEN's own history above).
     mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | mandatory('COMPANIES_HOUSE_API_KEY env var is required') }}"
     mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | mandatory('HUNTER_API_KEY env var is required') }}"
+    # Phase 5 (content-creator OSINT, docs/maltego-integration/README.md).
+    # Staged with default('', true) rather than mandatory() -- these are
+    # not yet confirmed live in OpenBao. Same safe-staging pattern as every
+    # other new secret in this project: do not promote to mandatory() until
+    # a scratch-manifest --check dry run confirms the real value exists for
+    # every profile, since services/mcp-utility is shared across all of
+    # them and an empty/missing field trips secrets_env.py's fail-closed
+    # check for ALL profiles, not just this one.
+    mcp_youtube_api_key: "{{ lookup('env', 'YOUTUBE_API_KEY') | default('', true) }}"
+    mcp_steam_api_key: "{{ lookup('env', 'STEAM_API_KEY') | default('', true) }}"
+    mcp_twitch_client_id: "{{ lookup('env', 'TWITCH_CLIENT_ID') | default('', true) }}"
+    mcp_twitch_client_secret: "{{ lookup('env', 'TWITCH_CLIENT_SECRET') | default('', true) }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -605,7 +617,18 @@
           import { z } from "zod";
           import { join } from "node:path";
           import { investigateDomain, writeMtgxNative } from "./investigate.js";
-          import { companiesHouseLookup, secEdgarLookup, hunterDomainSearch, hunterEmailFinder, sherlockUsernameCheck, withRetry } from "./company_person.js";
+          import {
+            companiesHouseLookup,
+            secEdgarLookup,
+            hunterDomainSearch,
+            hunterEmailFinder,
+            sherlockUsernameCheck,
+            withRetry,
+            youtubeChannelLookup,
+            steamProfileLookup,
+            twitchChannelLookup,
+            findCreatorContactEmails,
+          } from "./company_person.js";
 
           const TOKEN = process.env.OSINT_MCP_TOKEN;
           if (!TOKEN) {
@@ -803,6 +826,116 @@
                 }
                 const lines = [`Found "${username}" on ${result.matches.length} platform(s):`, ...result.matches.map((m) => `- ${m.site}: ${m.url}`)];
                 return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            // Phase 5 (docs/maltego-integration/README.md, 2026-10-04): content-
+            // creator research. TikTok deliberately has no tool here -- confirmed
+            // during scoping that its official API requires the TARGET's own OAuth
+            // consent to read their stats, so there is no way to look up a third
+            // party's profile at all, free or paid.
+            server.registerTool(
+              "investigate_youtube_channel",
+              {
+                description:
+                  "Look up a YouTube channel by its @handle: title, description, country, creation date, " +
+                  "subscriber/view/video counts. Does NOT return a business contact email -- YouTube Data API v3 " +
+                  "does not expose that field even though it may be shown on the channel's public About page.",
+                inputSchema: {
+                  handle: z.string().describe("The channel's @handle, e.g. @mkbhd (the @ is optional)"),
+                },
+              },
+              withLogging("investigate_youtube_channel", async ({ handle }) => {
+                const result = await withRetry(() => youtubeChannelLookup(handle));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No YouTube channel found for "${handle}" (or YOUTUBE_API_KEY is unset).` }] };
+                }
+                const lines = [
+                  `YouTube channel "${result.title}" (${result.channelId}):`,
+                  `  Subscribers: ${result.subscriberCount ?? "hidden"}, Views: ${result.viewCount ?? "unknown"}, Videos: ${result.videoCount ?? "unknown"}`,
+                  `  Country: ${result.country ?? "unknown"}, Created: ${result.publishedAt ?? "unknown"}`,
+                ];
+                if (result.description) lines.push(`  Description: ${result.description.slice(0, 300)}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "investigate_steam_profile",
+              {
+                description:
+                  "Look up a Steam profile by its vanity URL name or SteamID64: persona name, real name (if " +
+                  "public), country, current game, and profile visibility. Respects the profile owner's own " +
+                  "privacy settings -- a private profile returns minimal data, which is reported explicitly.",
+                inputSchema: {
+                  vanityOrId: z.string().describe("The profile's vanity URL slug (e.g. 'gaben') or a 17-digit SteamID64"),
+                },
+              },
+              withLogging("investigate_steam_profile", async ({ vanityOrId }) => {
+                const result = await withRetry(() => steamProfileLookup(vanityOrId));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No Steam profile found for "${vanityOrId}" (or STEAM_API_KEY is unset).` }] };
+                }
+                const lines = [
+                  `Steam profile "${result.personaName}" (${result.steamId}): ${result.profileUrl}`,
+                  `  Visibility: ${result.visibility}`,
+                ];
+                if (result.realName) lines.push(`  Real name: ${result.realName}`);
+                if (result.countryCode) lines.push(`  Country: ${result.countryCode}`);
+                if (result.currentGame) lines.push(`  Currently playing: ${result.currentGame}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "investigate_twitch_channel",
+              {
+                description:
+                  "Look up a Twitch channel by username: display name, bio/description, account creation date, " +
+                  "broadcaster type. Does NOT return follower count -- Twitch decommissioned cross-user follower " +
+                  "lookups in 2023; the replacement endpoint only works for a channel's own moderators.",
+                inputSchema: {
+                  username: z.string().describe("The channel's Twitch login/username"),
+                },
+              },
+              withLogging("investigate_twitch_channel", async ({ username }) => {
+                const result = await withRetry(() => twitchChannelLookup(username));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No Twitch channel found for "${username}" (or TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET is unset).` }] };
+                }
+                const lines = [
+                  `Twitch channel "${result.displayName}" (id ${result.id}):`,
+                  `  Broadcaster type: ${result.broadcasterType || "normal"}, Created: ${result.createdAt ?? "unknown"}`,
+                  `  Total view count: ${result.viewCount ?? "unknown"} (follower count unavailable -- see tool description)`,
+                ];
+                if (result.description) lines.push(`  Bio: ${result.description.slice(0, 300)}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "find_creator_contact_email",
+              {
+                description:
+                  "Fetch a creator's own bio/contact page (YouTube About tab, a Twitch panel, a Linktree-style " +
+                  "bio-link page, etc.) and extract any email address published on it. This is NOT a lookup API -- " +
+                  "no platform exposes an individual creator's email via any API, free or paid -- it automates the " +
+                  "one thing that does work: reading a page the creator themselves chose to publish contact info on. " +
+                  "JS-rendered reveal-on-click email buttons (common on YouTube About tabs) will often yield nothing, " +
+                  "which is reported honestly rather than guessed.",
+                inputSchema: {
+                  url: z.string().describe("The full URL of the creator's bio/about/contact page to check"),
+                },
+              },
+              withLogging("find_creator_contact_email", async ({ url }) => {
+                const result = await findCreatorContactEmails(url);
+                if (!result) {
+                  return { content: [{ type: "text", text: `Could not fetch ${url}.` }] };
+                }
+                if (result.emails.length === 0) {
+                  return { content: [{ type: "text", text: `No email address found on ${url} (page may require JS to reveal it, or publishes none).` }] };
+                }
+                return { content: [{ type: "text", text: `Found on ${url}: ${result.emails.join(", ")}` }] };
               }),
             );
 
@@ -1199,6 +1332,218 @@
             }
           }
 
+          // Phase 5 (2026-10-04): content-creator research, added after scoping
+          // which platforms genuinely have a free, low-friction, third-party-lookup
+          // API. Confirmed via research before building (verify-before-encode
+          // policy): TikTok's official API requires the TARGET's own OAuth consent
+          // to read their stats -- there is no way to look up someone else's public
+          // profile, so it's skipped entirely, not just deprioritized. YouTube Data
+          // API v3 does NOT expose a channel's "for business inquiries" email at
+          // the API level even though it's shown on the public About page --
+          // confirmed before building rather than assumed, so this tool returns
+          // stats/metadata only and is honest about not having the email.
+          export interface YoutubeChannelResult {
+            channelId: string;
+            title: string;
+            description?: string;
+            country?: string;
+            publishedAt?: string;
+            subscriberCount?: string;
+            viewCount?: string;
+            videoCount?: string;
+          }
+
+          export async function youtubeChannelLookup(handle: string): Promise<YoutubeChannelResult | undefined> {
+            const key = process.env.YOUTUBE_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              const forHandle = handle.startsWith("@") ? handle : `@${handle}`;
+              const res = await fetch(
+                `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=${encodeURIComponent(forHandle)}&key=${key}`,
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const item = body.items?.[0];
+              if (!item) return undefined;
+              return {
+                channelId: item.id,
+                title: item.snippet?.title,
+                description: item.snippet?.description,
+                country: item.snippet?.country,
+                publishedAt: item.snippet?.publishedAt,
+                subscriberCount: item.statistics?.subscriberCount,
+                viewCount: item.statistics?.viewCount,
+                videoCount: item.statistics?.videoCount,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Steam Web API: free, one-time key signup at steamcommunity.com/dev/apikey
+          // (requires the account to own at least one purchase). ResolveVanityURL
+          // turns a profile's custom URL slug into a SteamID64, which
+          // GetPlayerSummaries then looks up -- a two-step flow because Steam has no
+          // single "look up by vanity name" endpoint. Respects the profile's own
+          // privacy settings: realname/lastlogoff/gameextrainfo are only present if
+          // the owner made their profile public.
+          export interface SteamProfileResult {
+            steamId: string;
+            personaName: string;
+            profileUrl: string;
+            realName?: string;
+            countryCode?: string;
+            currentGame?: string;
+            visibility: "public" | "private" | "unknown";
+          }
+
+          export async function steamProfileLookup(vanityOrId: string): Promise<SteamProfileResult | undefined> {
+            const key = process.env.STEAM_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              // A raw 17-digit SteamID64 can be used directly; anything else is
+              // treated as a vanity URL slug needing resolution first.
+              let steamId = /^\d{17}$/.test(vanityOrId) ? vanityOrId : undefined;
+              if (!steamId) {
+                const resolveRes = await fetch(
+                  `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?key=${key}&vanityurl=${encodeURIComponent(vanityOrId)}`,
+                );
+                if (!resolveRes.ok) return undefined;
+                const resolveBody = await resolveRes.json();
+                if (resolveBody.response?.success !== 1) return undefined;
+                steamId = resolveBody.response.steamid;
+              }
+              const summaryRes = await fetch(
+                `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${key}&steamids=${steamId}`,
+              );
+              if (!summaryRes.ok) return undefined;
+              const summaryBody = await summaryRes.json();
+              const player = summaryBody.response?.players?.[0];
+              if (!player) return undefined;
+              // communityvisibilitystate: 1 = private, 3 = public (2 is a legacy
+              // "friends only" value Steam's own docs say is no longer used).
+              let visibility: "public" | "private" | "unknown" = "unknown";
+              if (player.communityvisibilitystate === 3) visibility = "public";
+              else if (player.communityvisibilitystate === 1) visibility = "private";
+              return {
+                steamId: player.steamid,
+                personaName: player.personaname,
+                profileUrl: player.profileurl,
+                realName: player.realname,
+                countryCode: player.loccountrycode,
+                currentGame: player.gameextrainfo,
+                visibility,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Twitch Helix API: free, light signup (Twitch dev console, no approval
+          // queue) -- but unlike the others, this is OAuth-based even for public
+          // read-only endpoints. Uses the client_credentials grant (app-only token,
+          // no user ever needs to log in) and caches the resulting app token
+          // in-process since Twitch tokens are valid ~60 days, to avoid re-minting
+          // one on every call. Confirmed before building: Twitch decommissioned
+          // cross-user follower lookups in 2023 ("Get Users Follows" removed); the
+          // replacement "Get Channel Followers" needs a moderator-scoped token for
+          // THAT specific channel, which is useless for arbitrary third-party
+          // lookups -- so this tool reports bio/profile metadata only and is
+          // explicit that follower count isn't available, rather than silently
+          // omitting it without explanation.
+          export interface TwitchChannelResult {
+            id: string;
+            displayName: string;
+            description?: string;
+            createdAt?: string;
+            broadcasterType?: string;
+            viewCount?: number;
+          }
+
+          let twitchAppToken: { token: string; expiresAt: number } | undefined;
+
+          async function getTwitchAppToken(clientId: string, clientSecret: string): Promise<string | undefined> {
+            if (twitchAppToken && twitchAppToken.expiresAt > Date.now()) return twitchAppToken.token;
+            try {
+              const res = await fetch(
+                `https://id.twitch.tv/oauth2/token?client_id=${clientId}&client_secret=${clientSecret}&grant_type=client_credentials`,
+                { method: "POST" },
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              if (!body.access_token) return undefined;
+              twitchAppToken = { token: body.access_token, expiresAt: Date.now() + (body.expires_in - 60) * 1000 };
+              return twitchAppToken.token;
+            } catch {
+              return undefined;
+            }
+          }
+
+          export async function twitchChannelLookup(username: string): Promise<TwitchChannelResult | undefined> {
+            const clientId = process.env.TWITCH_CLIENT_ID?.trim();
+            const clientSecret = process.env.TWITCH_CLIENT_SECRET?.trim();
+            if (!clientId || !clientSecret) return undefined;
+            try {
+              const token = await getTwitchAppToken(clientId, clientSecret);
+              if (!token) return undefined;
+              const res = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`, {
+                headers: { "Client-Id": clientId, Authorization: `Bearer ${token}` },
+              });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const user = body.data?.[0];
+              if (!user) return undefined;
+              return {
+                id: user.id,
+                displayName: user.display_name,
+                description: user.description,
+                createdAt: user.created_at,
+                broadcasterType: user.broadcaster_type || undefined,
+                viewCount: user.view_count,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Creator bio-page email scraper: NOT an API -- confirmed during scoping
+          // that no platform exposes an individual creator's contact email via any
+          // API, free or paid. This automates the one thing that does work: a
+          // creator who chooses to publish a contact email on a page they control
+          // (YouTube About tab, a Twitch panel, a Linktree-style bio-link page) can
+          // have that page fetched and the email extracted, same as a human OSINT
+          // researcher would do by reading the page. Best-effort and page-specific:
+          // JS-rendered pages (e.g. a YouTube About tab's email button is revealed
+          // by a client-side "reveal" click, not present in the raw HTML) will
+          // often yield nothing, which this reports honestly rather than guessing.
+          // Every quantifier here is explicitly bounded (not unbounded `+`/`*`), so
+          // there's no input-length-dependent backtracking blowup possible -- worst
+          // case is a small fixed amount of work regardless of how long the page is.
+          const EMAIL_REGEX = /[a-zA-Z0-9._%+-]{1,64}@(?:[a-zA-Z0-9-]{1,63}\.){1,8}[a-zA-Z]{2,24}/g;
+
+          export interface CreatorContactResult {
+            url: string;
+            emails: string[];
+          }
+
+          export async function findCreatorContactEmails(url: string): Promise<CreatorContactResult | undefined> {
+            try {
+              const res = await fetch(url, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
+              });
+              if (!res.ok) return undefined;
+              const text = await res.text();
+              const matches = [...new Set(text.match(EMAIL_REGEX) ?? [])]
+                // Filter out the most common false positives: image/font/CSS
+                // asset references and tracking-pixel-style filenames that match
+                // the email regex shape but are evidently not contact addresses.
+                .filter((m) => !/\.(png|jpg|jpeg|gif|svg|webp|css|js|woff2?)$/i.test(m));
+              return { url, emails: matches };
+            } catch {
+              return undefined;
+            }
+          }
+
     - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
       ansible.builtin.replace:
         path: "{{ mcp_build_dir }}/Dockerfile"
@@ -1492,6 +1837,15 @@
                 COMPANIES_HOUSE_API_KEY: "{{ mcp_companies_house_api_key }}"
                 HUNTER_API_KEY: "{{ mcp_hunter_api_key }}"
                 SEC_EDGAR_USER_AGENT: "homelab-osint-research admin@gibbsgreatly.xyz"
+                # Phase 5: content-creator OSINT. Not yet confirmed live in
+                # OpenBao -- staged with default('', true) above, same
+                # degrade-gracefully convention as every other provider key
+                # in company_person.ts (empty key -> tool reports "unset"
+                # rather than erroring).
+                YOUTUBE_API_KEY: "{{ mcp_youtube_api_key }}"
+                STEAM_API_KEY: "{{ mcp_steam_api_key }}"
+                TWITCH_CLIENT_ID: "{{ mcp_twitch_client_id }}"
+                TWITCH_CLIENT_SECRET: "{{ mcp_twitch_client_secret }}"
               volumes:
                 - maltego-mcp-output:/home/app/MaltegoGraphs
 

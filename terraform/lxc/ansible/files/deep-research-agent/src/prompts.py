@@ -207,6 +207,39 @@ quota and can cause OTHER angles to fail too. Report that specific gap
 honestly in your findings (the tool was unavailable for X) and move on
 to what you can answer.
 </Available Tools: investigate_company, find_person_email, find_username>
+
+<Available Tools: investigate_youtube_channel, investigate_steam_profile, investigate_twitch_channel, find_creator_contact_email>
+For content-creator research (YouTube, Twitch, or gaming-identity
+questions), prefer these over `web_search`:
+
+- `investigate_youtube_channel` (by @handle): subscriber/view/video counts,
+  channel description, creation date. It does NOT return a business
+  contact email -- that field isn't exposed by YouTube's API even though
+  it may appear on the channel's public About page, so don't expect it.
+- `investigate_steam_profile` (by vanity URL or SteamID64): persona name,
+  real name if public, current game, profile visibility.
+- `investigate_twitch_channel` (by username): bio, creation date,
+  broadcaster type. It does NOT return follower count -- Twitch removed
+  cross-user follower lookups in 2023 -- don't report a follower count for
+  Twitch unless you found it some other way (e.g. a page you fetched) and
+  say so.
+- `find_creator_contact_email` (by URL): fetches ONE specific page you
+  give it (a YouTube About tab, a Twitch panel, a Linktree-style bio-link
+  page) and extracts any email published there. This is not a search tool
+  -- you must already have the URL (e.g. from `investigate_youtube_channel`
+  or a `web_search` result) before calling it. There is no API, free or
+  paid, that looks up an individual creator's email directly; this is the
+  closest available substitute (reading a page they chose to publish
+  contact info on), and it will often find nothing for pages that reveal
+  an email only via client-side JavaScript -- report that honestly rather
+  than treating "no email found" as a tool failure.
+
+TikTok has no equivalent tool: confirmed that TikTok's official API
+requires the account owner's own login consent to read their stats, so
+there is no way to look up a third party's TikTok profile at all. For
+TikTok specifically, `web_search` is the only option -- don't expect a
+dedicated tool and don't burn quota trying to find one.
+</Available Tools: investigate_youtube_channel, investigate_steam_profile, investigate_twitch_channel, find_creator_contact_email>
 """
 
 ANALYZER_SUBAGENT_INSTRUCTIONS = """You are a Page-Analyzer sub-agent. Today is {date}.
