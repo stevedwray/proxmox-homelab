@@ -9,10 +9,26 @@ api:
 settings:
   enable_thinking: false
   concurrency:
-    # Start at 1 for the first Stage A runs (plan.md 2.3: "start with one
-    # searcher at a time, then test two concurrent searchers"). Raise only
-    # after measuring throughput/quality, not by default.
-    max_concurrent_tasks: 1
+    # Started at 1 for the first Stage A runs (plan.md 2.3: "start with one
+    # searcher at a time, then test two concurrent searchers"), with intent
+    # to "raise only after measuring throughput/quality" -- never raised
+    # since. Found live 2026-10-03: this is a SINGLE global asyncio.Semaphore
+    # shared across the ENTIRE agent tree (Orchestrator delegations, every
+    # Searcher's own Analyzer delegations, all of it -- orchestrator.py:145,
+    # one `sem` object passed to all three levels), not a per-level limit.
+    # Traced a real run's final report incorrectly saying "Companies House:
+    # not verified" despite investigate_company succeeding instantly all 3
+    # times it was called: the Searcher that got the good data was simply
+    # queued behind 13 other subagents (confirmed via session log, all
+    # serialized one-at-a-time) for 20+ minutes, and the Orchestrator's own
+    # "has this angle hung" wall-clock heuristic gave up on it, discarding
+    # real results that were already in hand. Raised to 3 -- the Framework
+    # llama.cpp backend has 4 parallel inference slots (confirmed via its
+    # own /slots endpoint), so this leaves headroom rather than maxing out
+    # the backend, while cutting most of the pure-serialization wall-clock
+    # cost that was dominating total run time (a 69-minute run for what
+    # should be a 10-15 minute multi-angle task).
+    max_concurrent_tasks: 3
     # Found 2026-10-02: a live run hung 52+ minutes with zero progress (a
     # stalled MCP tool connection with no session-level timeout -- see
     # docs/maltego-integration/README.md). orchestrator.py's subagent
