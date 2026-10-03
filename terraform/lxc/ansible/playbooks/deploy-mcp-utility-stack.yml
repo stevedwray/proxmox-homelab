@@ -1130,12 +1130,35 @@
           // any other failure, instead of re-diagnosing via SSH every time.
           export type SherlockResult = { ok: true; matches: SherlockMatch[] } | { ok: false; reason: string };
 
-          export async function sherlockUsernameCheck(username: string): Promise<SherlockResult> {
+          // Found live 2026-10-03 (now diagnosable thanks to the tagged SherlockResult
+          // above): two concurrent find_username calls both hit the 90s exec timeout
+          // and got SIGTERM-killed, even though a single solo run only takes ~63s.
+          // Reproduced directly against the live server -- this isn't a rare race,
+          // it's the expected outcome of two full 400+-site Sherlock scans
+          // contending for the same CPU/network on this LXC's limited resources.
+          // Rather than just raising the timeout (which only buys a bit of margin
+          // before the same contention reappears at 3+ concurrent calls), Sherlock
+          // runs are serialized in-process: a queued second caller waits for the
+          // first to finish rather than racing it for resources, so each individual
+          // run gets to complete in its normal ~60-70s window. The outer timeout is
+          // still bumped to give a solo run comfortable headroom over the observed
+          // 63s.
+          let sherlockQueue: Promise<unknown> = Promise.resolve();
+
+          export function sherlockUsernameCheck(username: string): Promise<SherlockResult> {
+            const task = sherlockQueue.then(() => runSherlock(username));
+            // Keep the queue chain alive even if this run fails -- a failed run must
+            // not permanently wedge every later queued call behind a rejected promise.
+            sherlockQueue = task.catch(() => undefined);
+            return task;
+          }
+
+          async function runSherlock(username: string): Promise<SherlockResult> {
             let dir: string | undefined;
             try {
               dir = await mkdtemp(join(tmpdir(), "sherlock-"));
               try {
-                await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 90_000 });
+                await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 120_000 });
               } catch (execErr: any) {
                 // Confirmed live 2026-10-03: Sherlock routinely exits non-zero
                 // (observed exit code 1) even after successfully writing a
@@ -1152,7 +1175,7 @@
                 // genuinely not exist yet -- remember this specific cause so the
                 // outer catch can report it accurately rather than a generic one.
                 if (execErr?.killed || execErr?.signal) {
-                  throw Object.assign(new Error(`sherlock killed after 90s timeout (signal ${execErr.signal ?? "?"})`), { cause: "timeout" });
+                  throw Object.assign(new Error(`sherlock killed after 120s timeout (signal ${execErr.signal ?? "?"})`), { cause: "timeout" });
                 }
               }
               const csv = await readFile(join(dir, `${username}.csv`), "utf-8");
