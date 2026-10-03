@@ -101,17 +101,19 @@
     mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | mandatory('COMPANIES_HOUSE_API_KEY env var is required') }}"
     mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | mandatory('HUNTER_API_KEY env var is required') }}"
     # Phase 5 (content-creator OSINT, docs/maltego-integration/README.md).
-    # Staged with default('', true) rather than mandatory() -- these are
-    # not yet confirmed live in OpenBao. Same safe-staging pattern as every
-    # other new secret in this project: do not promote to mandatory() until
-    # a scratch-manifest --check dry run confirms the real value exists for
-    # every profile, since services/mcp-utility is shared across all of
-    # them and an empty/missing field trips secrets_env.py's fail-closed
-    # check for ALL profiles, not just this one.
-    mcp_youtube_api_key: "{{ lookup('env', 'YOUTUBE_API_KEY') | default('', true) }}"
+    # YOUTUBE_API_KEY/TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET confirmed live
+    # in OpenBao 2026-10-04 (scratch-manifest --check dry run passed for
+    # all 5 profiles before promoting to mandatory() here -- same
+    # safe-staging pattern as every other new secret in this project).
+    # STEAM_API_KEY deliberately left staged with default('', true):
+    # operator deferred the one-time $10 Steam purchase needed to activate
+    # a key, so this one has NOT been written to OpenBao yet and stays
+    # optional (investigate_steam_profile degrades to "API key unset")
+    # until/if that changes -- no code change needed then, just the key.
+    mcp_youtube_api_key: "{{ lookup('env', 'YOUTUBE_API_KEY') | mandatory('YOUTUBE_API_KEY env var is required') }}"
     mcp_steam_api_key: "{{ lookup('env', 'STEAM_API_KEY') | default('', true) }}"
-    mcp_twitch_client_id: "{{ lookup('env', 'TWITCH_CLIENT_ID') | default('', true) }}"
-    mcp_twitch_client_secret: "{{ lookup('env', 'TWITCH_CLIENT_SECRET') | default('', true) }}"
+    mcp_twitch_client_id: "{{ lookup('env', 'TWITCH_CLIENT_ID') | mandatory('TWITCH_CLIENT_ID env var is required') }}"
+    mcp_twitch_client_secret: "{{ lookup('env', 'TWITCH_CLIENT_SECRET') | mandatory('TWITCH_CLIENT_SECRET env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
