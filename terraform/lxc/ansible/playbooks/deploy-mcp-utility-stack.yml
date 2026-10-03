@@ -866,7 +866,12 @@
           }
 
           export async function companiesHouseLookup(name: string): Promise<CompanyHouseResult | undefined> {
-            const key = process.env.COMPANIES_HOUSE_API_KEY;
+            // .trim() found necessary live 2026-10-03: the real operator-provisioned
+            // key in OpenBao had a stray leading tab character (a copy-paste
+            // artifact), which silently broke Basic Auth with a 400 "Invalid
+            // Authorization header" -- not an obviously-key-related error message,
+            // so worth defending against generally rather than assuming clean input.
+            const key = process.env.COMPANIES_HOUSE_API_KEY?.trim();
             if (!key) return undefined;
             try {
               const authHeader = companiesHouseAuthHeader(key);
@@ -930,6 +935,17 @@
           interface SecTickerEntry { cik_str: number; ticker: string; title: string }
           let secTickersCache: SecTickerEntry[] | undefined;
 
+          // Found live 2026-10-03: a plain substring match on lowercase title
+          // failed for "Tesla Inc" against SEC's own registered title "Tesla,
+          // Inc." -- the comma broke the match even though it's obviously the
+          // same company. Strips punctuation before comparing, since a model's
+          // natural phrasing of a company name ("Apple Inc", "Microsoft
+          // Corporation") will rarely match the exact registered title's
+          // formatting ("Apple Inc.", "MICROSOFT CORP") otherwise.
+          function normalizeCompanyName(s: string): string {
+            return s.toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, " ").trim();
+          }
+
           async function secEdgarFindCik(nameOrTicker: string): Promise<SecTickerEntry | undefined> {
             try {
               if (!secTickersCache) {
@@ -938,10 +954,10 @@
                 const body = await res.json();
                 secTickersCache = Object.values(body) as SecTickerEntry[];
               }
-              const q = nameOrTicker.toLowerCase();
+              const q = normalizeCompanyName(nameOrTicker);
               return (
-                secTickersCache.find((e) => e.ticker.toLowerCase() === q) ??
-                secTickersCache.find((e) => e.title.toLowerCase().includes(q))
+                secTickersCache.find((e) => e.ticker.toLowerCase() === nameOrTicker.toLowerCase()) ??
+                secTickersCache.find((e) => normalizeCompanyName(e.title).includes(q))
               );
             } catch {
               return undefined;
@@ -989,7 +1005,7 @@
           }
 
           export async function hunterDomainSearch(domain: string): Promise<HunterDomainResult | undefined> {
-            const key = process.env.HUNTER_API_KEY;
+            const key = process.env.HUNTER_API_KEY?.trim();
             if (!key) return undefined;
             try {
               const res = await fetch(`https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${key}&limit=10`);
@@ -1021,7 +1037,7 @@
           }
 
           export async function hunterEmailFinder(fullName: string, domain: string): Promise<HunterEmailResult | undefined> {
-            const key = process.env.HUNTER_API_KEY;
+            const key = process.env.HUNTER_API_KEY?.trim();
             if (!key) return undefined;
             try {
               const res = await fetch(
