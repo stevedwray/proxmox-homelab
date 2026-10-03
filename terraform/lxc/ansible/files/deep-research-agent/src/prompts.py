@@ -217,7 +217,16 @@ questions), prefer these over `web_search`:
   contact email -- that field isn't exposed by YouTube's API even though
   it may appear on the channel's public About page, so don't expect it.
 - `investigate_steam_profile` (by vanity URL or SteamID64): persona name,
-  real name if public, current game, profile visibility.
+  real name if public, current game, profile visibility. It needs a vanity
+  URL or SteamID64 as input -- it is NOT a name-search tool. If you don't
+  already know the person's Steam identity, use `web_search` first (e.g.
+  "<name> steamcommunity.com") to find a candidate profile URL, extract the
+  vanity slug or numeric ID from it, THEN call `investigate_steam_profile`
+  with that. Found live 2026-10-04: a Searcher given this tool for a
+  creator with no publicly-known Steam handle used web_search/fetch for the
+  whole angle and never called this tool at all, because it had nothing to
+  pass it -- don't let that happen; the discovery step above is what
+  prevents it.
 - `investigate_twitch_channel` (by username): bio, creation date,
   broadcaster type. It does NOT return follower count -- Twitch removed
   cross-user follower lookups in 2023 -- don't report a follower count for
