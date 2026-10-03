@@ -94,14 +94,12 @@
     # docs/maltego-integration/README.md's Phase 3 section.
     mcp_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
     # Phase 4 (company/person OSINT, docs/maltego-integration/README.md).
-    # Staged default('', true), NOT mandatory() -- these keys don't exist
-    # in OpenBao yet (the operator needs to sign up for free accounts
-    # first). Functionally inert until real values are provisioned and
-    # this is switched to mandatory(), same safe-staging pattern used for
-    # every other new secret in this project (see OTX_API_KEY/
-    # OSINT_MCP_TOKEN's own history above).
-    mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | default('', true) }}"
-    mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | default('', true) }}"
+    # Confirmed live in OpenBao 2026-10-03 (scratch-manifest --check dry
+    # run passed for all 5 profiles before promoting to mandatory() here)
+    # -- same safe-staging pattern as every other new secret in this
+    # project (see OTX_API_KEY/OSINT_MCP_TOKEN's own history above).
+    mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | mandatory('COMPANIES_HOUSE_API_KEY env var is required') }}"
+    mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | mandatory('HUNTER_API_KEY env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -1364,14 +1362,12 @@
                 # LXC's real IP got rejected 403 before auth even ran until
                 # this was set explicitly. See osint-mcp-server.ts.
                 OSINT_MCP_ALLOWED_HOSTS: "{{ osint_mcp_allowed_hosts }}"
-                # Phase 4: company/person OSINT. Both keys default('', true)
-                # staged -- investigate_company/find_person_email degrade to
-                # "no data from this provider" when unset, same convention
-                # as every Tier 1/2 enrichment lookup above. Not a secret --
-                # SEC.gov's own fair-access policy requires a real
-                # identifying User-Agent on automated requests (confirmed
-                # live 2026-10-03: a generic one gets HTTP 403, not just a
-                # missing header).
+                # Phase 4: company/person OSINT. Confirmed live in OpenBao
+                # 2026-10-03 (both are now mandatory() above). SEC_EDGAR_
+                # USER_AGENT is not a secret -- SEC.gov's own fair-access
+                # policy requires a real identifying User-Agent on
+                # automated requests (confirmed live 2026-10-03: a generic
+                # one gets HTTP 403, not just a missing header).
                 COMPANIES_HOUSE_API_KEY: "{{ mcp_companies_house_api_key }}"
                 HUNTER_API_KEY: "{{ mcp_hunter_api_key }}"
                 SEC_EDGAR_USER_AGENT: "homelab-osint-research admin@gibbsgreatly.xyz"
