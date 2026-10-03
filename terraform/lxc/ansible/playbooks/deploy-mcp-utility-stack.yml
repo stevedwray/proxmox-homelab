@@ -605,7 +605,7 @@
           import { z } from "zod";
           import { join } from "node:path";
           import { investigateDomain, writeMtgxNative } from "./investigate.js";
-          import { companiesHouseLookup, secEdgarLookup, hunterDomainSearch, hunterEmailFinder, sherlockUsernameCheck } from "./company_person.js";
+          import { companiesHouseLookup, secEdgarLookup, hunterDomainSearch, hunterEmailFinder, sherlockUsernameCheck, withRetry } from "./company_person.js";
 
           const TOKEN = process.env.OSINT_MCP_TOKEN;
           if (!TOKEN) {
@@ -680,9 +680,9 @@
               },
               async ({ name, domain }) => {
                 const [companiesHouse, secEdgar, hunter] = await Promise.all([
-                  companiesHouseLookup(name),
-                  secEdgarLookup(name),
-                  domain ? hunterDomainSearch(domain) : Promise.resolve(undefined),
+                  withRetry(() => companiesHouseLookup(name)),
+                  withRetry(() => secEdgarLookup(name)),
+                  domain ? withRetry(() => hunterDomainSearch(domain)) : Promise.resolve(undefined),
                 ]);
                 const lines: string[] = [`Company lookup for "${name}":`];
                 if (companiesHouse) {
@@ -730,7 +730,7 @@
                 },
               },
               async ({ fullName, domain }) => {
-                const result = await hunterEmailFinder(fullName, domain);
+                const result = await withRetry(() => hunterEmailFinder(fullName, domain));
                 if (!result?.email) {
                   return { content: [{ type: "text", text: `No email found for ${fullName} at ${domain} (Hunter.io has no data, or HUNTER_API_KEY is unset).` }] };
                 }
@@ -845,6 +845,19 @@
           import { join } from "node:path";
 
           const execFileAsync = promisify(execFile);
+
+          // A single automatic retry for a transient network blip (timeout,
+          // connection reset) on an otherwise-correct request -- distinct from a
+          // real failure (bad auth, 404, rate limit), which retrying wouldn't fix
+          // and would just waste a second round-trip on. One retry, not a full
+          // backoff/retry policy -- these are interactive, single-shot OSINT
+          // lookups inside a live agent turn, not a background batch job.
+          export async function withRetry<T>(fn: () => Promise<T | undefined>): Promise<T | undefined> {
+            const first = await fn();
+            if (first !== undefined) return first;
+            await new Promise((r) => setTimeout(r, 500));
+            return fn();
+          }
 
           // Companies House: HTTP Basic auth with the API key as username and an
           // EMPTY password (not a bearer token, not a custom header) -- confirmed
@@ -1074,7 +1087,21 @@
             let dir: string | undefined;
             try {
               dir = await mkdtemp(join(tmpdir(), "sherlock-"));
-              await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 90_000 });
+              try {
+                await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 90_000 });
+              } catch {
+                // Confirmed live 2026-10-03: Sherlock routinely exits non-zero
+                // (observed exit code 1) even after successfully writing a
+                // complete, valid CSV with real results -- across 400+ sites,
+                // something failing/timing out individually is the norm, not the
+                // exception, and Sherlock's own exit code reflects that rather
+                // than "did it produce usable output overall." execFileAsync
+                // throws on any non-zero exit, which was silently discarding
+                // perfectly good results on what looked like "transient failures"
+                // but was actually this exit-code mismatch every time. Fall
+                // through and try reading the CSV regardless -- only a genuinely
+                // missing/unreadable file below means real failure.
+              }
               const csv = await readFile(join(dir, `${username}.csv`), "utf-8");
               const lines = csv.trim().split("\n").slice(1); // skip header row
               return lines

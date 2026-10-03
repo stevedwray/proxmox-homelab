@@ -198,6 +198,14 @@ All three are for legitimate due-diligence/security-research use (the
 kind of public-record and professional-contact lookups a journalist or
 security researcher would do) -- not for compiling private/personal
 information about someone beyond what these specific tools return.
+
+If one of these tools returns an error or no data, do NOT try to
+manually replicate its specific function with many `web_search` calls
+(e.g. searching each of 400+ platforms individually to compensate for a
+failed `find_username`) -- that burns through the shared `web_search`
+quota and can cause OTHER angles to fail too. Report that specific gap
+honestly in your findings (the tool was unavailable for X) and move on
+to what you can answer.
 </Available Tools: investigate_company, find_person_email, find_username>
 """
 
