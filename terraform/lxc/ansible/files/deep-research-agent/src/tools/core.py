@@ -22,37 +22,48 @@ import queue as queue_module
 # fetch_url_to_workspace -- shared here so it isn't duplicated per tool.
 _MP_CONTEXT = multiprocessing.get_context("spawn")
 
-# Real production incident 2026-09-30: under real multi-subagent concurrent
-# load (many fetch_url_to_workspace calls in flight from different subagents
-# at once), multiple coroutines raced to create a multiprocessing.Queue()
-# simultaneously. Queue()/Lock() creation registers a semaphore with
-# multiprocessing's process-wide resource_tracker singleton, which is not
-# safe against concurrent initialization -- the race corrupted its internal
-# fd bookkeeping and crashed with "ValueError: bad value(s) in fds_to_keep"
-# (from _posixsubprocess.fork_exec via resource_tracker.ensure_running()),
-# 18 times in one real session, each one silently burning a unit of that
-# tool's quota for a call that never actually ran. Serializing only the
-# creation+start of the Queue/Process (not the wait, which stays fully
-# concurrent across subagents) closes the race without limiting real
-# throughput.
-_spawn_lock = asyncio.Lock()
+# Real production incident 2026-09-30, and STILL HAPPENING as of 2026-10-03
+# (11/11 fetch_url_to_workspace calls failed in one live multi-subagent run
+# despite the fix below): under real concurrent load, multiprocessing.Queue()
+# crashed with "ValueError: bad value(s) in fds_to_keep" (from
+# _posixsubprocess.fork_exec via resource_tracker.ensure_running()).
+# The 2026-09-30 fix serialized Queue()/Process() creation behind a lock on
+# the theory that concurrent creation was racing to register Queue's
+# internal Lock with multiprocessing's process-wide resource_tracker
+# singleton. That did NOT hold up live -- confirmed by direct reproduction
+# on the real deployed container: even 50 fully concurrent Queue()-based
+# spawns in a tight loop never reproduced the crash, so simple creation
+# concurrency was never the real trigger; something about this process's
+# actual long-running, high-churn conditions (many other fds/threads/async
+# tasks in flight) is. Rather than chase that exact trigger, this switches
+# off the vulnerable mechanism entirely: a Queue carries an internal Lock
+# for write synchronization, and only Lock/Semaphore/SharedMemory objects
+# ever call resource_tracker.register() -- a plain Pipe() does not, since
+# it's just two bare fds. Confirmed directly on the deployed container (with
+# resource_tracker.register() monkey-patched to count calls) that this
+# Pipe-based version makes zero register() calls under 50-way concurrency,
+# which makes the "bad value(s) in fds_to_keep" failure structurally
+# impossible here, not just less likely. The old serializing lock is removed
+# since nothing it protected still exists.
 
 
 async def run_with_hard_kill(target, args: tuple, timeout: float):
-    """Runs `target(*args, result_queue)` in a spawned subprocess and
+    """Runs `target(*args, result_conn)` in a spawned subprocess and
     guarantees it's dead -- via SIGTERM then SIGKILL -- if it doesn't
     finish in time. `target` must be a module-level function (picklable
-    for spawn) that puts ("ok", value) or ("error", message) onto the
-    queue it receives as its last argument; never raises across the
+    for spawn) that sends ("ok", value) or ("error", message) on the
+    connection it receives as its last argument; never raises across the
     process boundary itself. Raises asyncio.TimeoutError on timeout, or
     RuntimeError(message) if the worker reported its own failure.
     """
-    async with _spawn_lock:
-        result_queue = _MP_CONTEXT.Queue()
-        process = _MP_CONTEXT.Process(target=target, args=(*args, result_queue), daemon=True)
-        process.start()
+    parent_conn, child_conn = _MP_CONTEXT.Pipe(duplex=False)
+    process = _MP_CONTEXT.Process(target=target, args=(*args, child_conn), daemon=True)
+    process.start()
+    child_conn.close()
     try:
-        status, payload = await asyncio.to_thread(result_queue.get, True, timeout)
+        if not await asyncio.to_thread(parent_conn.poll, timeout):
+            raise queue_module.Empty
+        status, payload = parent_conn.recv()
     except queue_module.Empty:
         process.terminate()
         await asyncio.to_thread(process.join, 5)
@@ -67,6 +78,8 @@ async def run_with_hard_kill(target, args: tuple, timeout: float):
         if status == "error":
             raise RuntimeError(payload)
         return payload
+    finally:
+        parent_conn.close()
 
 
 # --- TOOL QUOTA SYSTEM ---
