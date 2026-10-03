@@ -678,6 +678,50 @@ step is not optional.
    contributed project than either of those, so this should be a
    lighter check, but still a real one, not skipped.
 
-Not started. No code written for this phase yet — this section is the
-plan only, written at the operator's request after they asked whether
-the existing pipeline could do people/company research.
+**DONE and confirmed live 2026-10-03.** All three tools built, deployed,
+and verified end-to-end with real data against the actual running
+`osint-mcp` server (not just unit-level checks):
+
+- `find_username("torvalds")` → 90 real per-user profile URLs across
+  GitHub, Bitbucket, Codeforces, etc.
+- `investigate_company("Monzo Bank", domain="monzo.com")` → real
+  Companies House data (company number 09446231, status, officers,
+  registered address, SIC codes) + Hunter.io domain search (real email
+  pattern + 10 real employee emails/positions).
+- `investigate_company("Tesla Inc")` → both UK Companies House (a real,
+  unrelated dissolved shell company literally named "TESLA INC.
+  LIMITED" — a genuine name collision, not a bug) and US SEC EDGAR
+  (correctly resolved to the real Tesla, Inc., CIK 0001318605, with
+  real recent filings).
+- `find_person_email("Rob Whelan", "monzo.com")` → exact match
+  (`robwhelan@monzo.com`, 85/100 confidence, verification: valid).
+
+Two real bugs found and fixed via this live testing, not assumed from
+code review:
+
+1. **Docker builds on this LXC can't reach `deb.debian.org` directly**
+   (confirmed via direct reproduction: TCP connect timeout) — any
+   `apt-get` inside a Docker build needs to route through this LXC's own
+   apt-cacher-ng proxy explicitly; Docker builds don't inherit the
+   host's own apt.conf.d proxy config automatically. PyPI is reachable
+   directly without any proxy.
+2. **Sherlock's CSV column order** is
+   `username,name,url_main,url_user,exists,http_status,response_time_s`
+   — an early version extracted `url_main` (the platform's generic
+   homepage) instead of `url_user` (the real per-user profile URL),
+   confirmed by actually reading Sherlock's real output, not re-derived
+   from its source alone.
+3. **The operator's own Companies House key had a stray leading tab
+   character** (a copy-paste artifact) that silently broke HTTP Basic
+   Auth with a non-obvious "Invalid Authorization header" error —
+   defended against generally with `.trim()` rather than assuming clean
+   secret input going forward.
+4. **SEC EDGAR's name matching was too strict**: "Tesla Inc" didn't
+   match SEC's own registered title "Tesla, Inc." due to the comma.
+   Fixed by normalizing punctuation on both sides before comparing.
+
+`COMPANIES_HOUSE_API_KEY`/`HUNTER_API_KEY` are live in OpenBao
+(`services/mcp-utility`, confirmed via a scratch-manifest `--check` dry
+run across all 5 profiles before promoting to `mandatory()`).
+`OpenCorporates`/`HaveIBeenPwned` remain skipped per the operator's
+earlier decision. Not yet merged to `stable`.
