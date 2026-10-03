@@ -1526,18 +1526,46 @@
             emails: string[];
           }
 
+          // Confirmed live 2026-10-04 against a real page (monzo.com/press/): the
+          // naive regex also pulled in a placeholder form example (you@example.com),
+          // a Sentry error-tracking ingest ID that happens to match the email shape
+          // (a long hex string @ an ingest.sentry.io domain), and one real match
+          // corrupted by an adjacent un-decoded JSON unicode escape inside an inline
+          // <script> blob (`>` bleeding directly into the next word with no
+          // boundary for the regex to stop at, since "u003ehelp@monzo.com" is all
+          // valid local-part characters). None of these are hypothetical -- all
+          // three appeared in one real fetch.
+          const PLACEHOLDER_DOMAINS = new Set(["example.com", "example.org", "example.net", "test.com", "yourdomain.com", "domain.com"]);
+          const TRACKING_DOMAINS = new Set(["sentry.io", "ingest.sentry.io", "google-analytics.com", "googletagmanager.com", "doubleclick.net", "segment.io", "amplitude.com"]);
+
+          function isLikelyRealEmail(email: string): boolean {
+            const [localPart, domain] = email.toLowerCase().split("@");
+            if (!domain) return false;
+            if (PLACEHOLDER_DOMAINS.has(domain)) return false;
+            if ([...TRACKING_DOMAINS].some((d) => domain === d || domain.endsWith(`.${d}`))) return false;
+            // A long hex-only local part is a tracking/error-reporting ID, not a
+            // human-published contact address (e.g. Sentry's own ingest keys).
+            if (/^[0-9a-f]{16,}$/.test(localPart)) return false;
+            return true;
+          }
+
           export async function findCreatorContactEmails(url: string): Promise<CreatorContactResult | undefined> {
             try {
               const res = await fetch(url, {
                 headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
               });
               if (!res.ok) return undefined;
-              const text = await res.text();
+              // Decode the common JSON/JS unicode-escaped HTML entities that show up
+              // inline inside <script> blobs (e.g. ">" for ">") to a plain
+              // space before matching, so one doesn't silently fuse into the start
+              // of an adjacent real email's local part.
+              const text = (await res.text()).replace(/\\u00[23][0-9a-f]/gi, " ");
               const matches = [...new Set(text.match(EMAIL_REGEX) ?? [])]
                 // Filter out the most common false positives: image/font/CSS
                 // asset references and tracking-pixel-style filenames that match
                 // the email regex shape but are evidently not contact addresses.
-                .filter((m) => !/\.(png|jpg|jpeg|gif|svg|webp|css|js|woff2?)$/i.test(m));
+                .filter((m) => !/\.(png|jpg|jpeg|gif|svg|webp|css|js|woff2?)$/i.test(m))
+                .filter(isLikelyRealEmail);
               return { url, emails: matches };
             } catch {
               return undefined;
