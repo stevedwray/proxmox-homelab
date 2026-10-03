@@ -725,3 +725,41 @@ code review:
 run across all 5 profiles before promoting to `mandatory()`).
 `OpenCorporates`/`HaveIBeenPwned` remain skipped per the operator's
 earlier decision. Not yet merged to `stable`.
+
+### Hardening against the one real failure found in a live run
+
+A full three-angle test run (Companies House + Hunter.io + Sherlock, all
+in one request) surfaced a genuine failure in the `find_username` angle,
+with the shared `web_search` quota exhausted trying to manually
+compensate. Root-caused, not just retried blindly: **Sherlock routinely
+exits non-zero (observed exit code 1) even after successfully writing a
+complete, valid CSV with real results** — across 400+ sites, something
+failing/timing out individually is normal, not exceptional, and the
+process exit code reflects that rather than "did it produce usable
+output." `execFileAsync` throws on any non-zero exit, so this was
+silently discarding perfectly good results every time it happened —
+looking exactly like "transient flakiness" but actually a consistent,
+reproducible bug.
+
+Fixed: `find_username` now reads the CSV regardless of Sherlock's exit
+code, only failing on a genuinely missing/unreadable file. Verified the
+fix holds across several fresh usernames afterward (a common word and a
+deliberately obscure one, both completed cleanly in 55-66 seconds).
+Also added a single automatic retry (500ms delay, fetch-based lookups
+only — not Sherlock, whose own 58-second-plus runtime makes blind
+retries expensive) for genuine transient network blips on the four
+quick API calls, and explicit prompt guidance telling the Searcher to
+report a tool failure honestly rather than burning the shared quota
+trying to replicate its function manually.
+
+**Separate, unrelated finding from the same round**: a redeploy of
+`ai-services-stack` failed with `[Errno 28] No space left on device` —
+`/var/lib/docker` on that LXC is its own dedicated 24GB volume
+(independent of `/`'s own free space) and had filled to 98% from
+repeated same-day rebuilds. Fixed with `docker image prune -a -f` +
+`docker builder prune -f` (~9GB freed, unused images/build cache only,
+no volumes touched). Also caught that piping a background deploy
+command through `| tail -N` reports `tail`'s own exit code, not the
+real command's — this masked the disk-full failure as "exit code 0"
+once, caught only by a direct container check afterward. See
+[[feedback_pipe_tail_masks_exit_code]].
