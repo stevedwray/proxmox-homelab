@@ -104,18 +104,42 @@ the correct 3-router/3-service block. `panel-ui` uses ~90MB RSS in the
 LXC, 723Mi still available — **no `stack.yaml` resource bump needed**
 (§6-B resolved: measure, don't guess — the real footprint was small).
 
-**Not yet verified — needs a human in a browser:** visiting
-`https://cse-panel-ui-dev.lab.gibbsgreatly.xyz` and confirming it shows
-your *real* Authentik username (not the placeholder string) after
-logging in. This is Phase 0's actual acceptance check per plan.md §8 —
-nothing above proves the `X-Authentik-Username` header actually reaches
-`panel-ui` correctly, only that routing/auth-gating itself works.
+**Phase 0 acceptance confirmed by operator 2026-10-07**, in browser:
+page showed real username ("Logged in as: steve") and
+`panel-web /healthz: 200 {"status":"ok"}` — the auth-header-forwarding
+path works end-to-end.
+
+## Hand-back: panel-dash-07-submission-form (2026-10-07)
+
+Extended `app-ui/app.py`: duplicated `KNOWN_BENCHMARKS`/`BENCHMARK_INFO`
+verbatim from `app/app.py` (per the step's instruction — no shared
+import path between the two apps); added a "Submit a run" card with a
+`dbc.Checklist` (10 benchmarks, switch style, each row showing the real
+description text), a test-case-count `dcc.Slider`, and a submit button;
+added a callback that reads `X-Authentik-Username` off the inbound
+request, forwards it as a header, and POSTs to `panel-web`'s real
+`/jobs` (single benchmark) or `/suites` (multiple) endpoints —
+unchanged API, exactly as the plan specified.
+
+Gates: python-syntax PASS, benchmark-count PASS, forwards-auth-header
+PASS (3 occurrences ≥ 1). Deployed via
+`./with-secrets-prod-tiny scripts/provision.sh --stack cse-panel-stack`
+(`failed=0`); `docker logs cse-panel-ui` confirms clean gunicorn startup,
+both workers booted, no import errors.
+
+**Not yet verified — needs a human in a browser:** actually checking a
+benchmark and clicking Submit, confirming a real job/suite appears
+(e.g. via Flower or `GET /jobs`) — this is Phase 1's real acceptance
+check per plan.md §8, and nothing above proves the click-through flow
+itself works, only that the code is syntactically sound and the
+container starts cleanly.
 
 ## Next step
 
-Operator: open `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz` in a
-browser and confirm the username + `panel-web` healthz line are
-correct. Once confirmed, move to Phase 1 (`panel-dash-07`). `panel-dash-10`
+Operator: on `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`, check one
+benchmark, submit, and confirm a real job shows up. Then check 2+
+benchmarks and confirm a real suite submits. Once confirmed, move to
+Phase 2 (`panel-dash-08`, the status/results table). `panel-dash-10`
 (the OCCULT tab) stays unwritten until `docs/mitre-occult/plan.md`
 Phase 1 is real — don't pre-author it.
 
