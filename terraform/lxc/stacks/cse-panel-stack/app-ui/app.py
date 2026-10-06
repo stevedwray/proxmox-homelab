@@ -79,66 +79,75 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
 server = app.server
 app.title = "CyberSecEval Control Panel"
 
+run_tab = dbc.Card(dbc.CardBody([
+    html.P(id="whoami"),
+    html.P(id="api-health"),
+    html.Hr(),
+    html.H4("Submit a run", className="card-title mb-3"),
+    dbc.Checklist(
+        id="benchmarks",
+        switch=True,
+        inline=False,
+        options=[
+            {"label": f"{b} — {BENCHMARK_INFO[b]['description']}", "value": b}
+            for b in KNOWN_BENCHMARKS
+        ],
+        value=[],
+        className="mb-3",
+    ),
+    dbc.Label("Test cases"),
+    dcc.Slider(
+        id="num-test-cases",
+        min=1, max=50, step=1, value=2,
+        tooltip={"placement": "bottom", "always_visible": True},
+    ),
+    dbc.Button("Submit run(s)", id="submit-btn", color="primary", className="mt-3"),
+    dbc.Alert(id="submit-result", is_open=False, className="mt-3"),
+]))
+
+results_tab = html.Div([
+    dbc.Card(className="mt-3", children=dbc.CardBody([
+        html.H4("Recent runs", className="card-title mb-3"),
+        html.P("Click a row to see its full results below. Click the × to delete a run.",
+               className="text-muted small"),
+        dash_table.DataTable(
+            id="jobs-table",
+            columns=[
+                {"name": "Job ID", "id": "job_id"},
+                {"name": "Benchmark", "id": "benchmark"},
+                {"name": "Backend", "id": "backend"},
+                {"name": "Submitted by", "id": "submitted_by"},
+                {"name": "Submitted at", "id": "submitted_at"},
+                {"name": "State", "id": "state_label"},
+            ],
+            data=[],
+            row_deletable=True,
+            row_selectable="single",
+            selected_rows=[],
+            style_table={"width": "100%", "overflowX": "auto"},
+            style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
+            style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
+                        "padding": "8px", "textAlign": "left", "whiteSpace": "normal"},
+            style_as_list_view=True,
+        ),
+        dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
+        dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
+    ])),
+    dbc.Card(className="mt-3", children=dbc.CardBody(id="run-detail", children=[
+        html.P("Select a run above to see its results.", className="text-muted"),
+    ])),
+])
+
 app.layout = dbc.Container(
     fluid=True,
-    style={"padding": "32px", "maxWidth": "700px"},
+    style={"padding": "32px", "maxWidth": "900px"},
     children=[
-        html.H1("CyberSecEval — panel-ui scaffold"),
-        dbc.Card(dbc.CardBody([
-            html.P(id="whoami"),
-            html.P(id="api-health"),
-        ])),
-
-        dbc.Card(className="mt-4", children=dbc.CardBody([
-            html.H4("Submit a run", className="card-title mb-3"),
-            dbc.Checklist(
-                id="benchmarks",
-                switch=True,
-                inline=False,
-                options=[
-                    {"label": f"{b} — {BENCHMARK_INFO[b]['description']}", "value": b}
-                    for b in KNOWN_BENCHMARKS
-                ],
-                value=[],
-                className="mb-3",
-            ),
-            dbc.Label("Test cases"),
-            dcc.Slider(
-                id="num-test-cases",
-                min=1, max=50, step=1, value=2,
-                tooltip={"placement": "bottom", "always_visible": True},
-            ),
-            dbc.Button("Submit run(s)", id="submit-btn", color="primary", className="mt-3"),
-            dbc.Alert(id="submit-result", is_open=False, className="mt-3"),
-        ])),
-
-        dbc.Card(className="mt-4", children=dbc.CardBody([
-            html.H4("Recent runs", className="card-title mb-3"),
-            dash_table.DataTable(
-                id="jobs-table",
-                columns=[
-                    {"name": "Job ID", "id": "job_id"},
-                    {"name": "Benchmark", "id": "benchmark"},
-                    {"name": "Backend", "id": "backend"},
-                    {"name": "Submitted by", "id": "submitted_by"},
-                    {"name": "Submitted at", "id": "submitted_at"},
-                    {"name": "State", "id": "state_label"},
-                    {"name": "Summary", "id": "summary"},
-                ],
-                data=[],
-                style_table={"width": "100%", "overflowX": "auto"},
-                style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
-                style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
-                            "padding": "8px", "textAlign": "left", "whiteSpace": "normal"},
-                style_as_list_view=True,
-            ),
-            dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
-            dbc.Row(className="mt-3", children=[
-                dbc.Col(dbc.Input(id="delete-job-id", placeholder="job_id to delete"), width=8),
-                dbc.Col(dbc.Button("Delete job", id="delete-btn", color="danger", className="w-100"), width=4),
-            ]),
-            dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
-        ])),
+        html.H1("CyberSecEval Control Panel"),
+        dcc.Store(id="jobs-store"),
+        dbc.Tabs(id="tabs", active_tab="run-tab", className="mt-3", children=[
+            dbc.Tab(run_tab, tab_id="run-tab", label="Run"),
+            dbc.Tab(results_tab, tab_id="results-tab", label="Results"),
+        ]),
     ],
 )
 
@@ -202,13 +211,6 @@ def submit_run(n_clicks, benchmarks, num_test_cases):
     return f"Job submitted: {data['job_id']} ({data['benchmark']})", "success", True
 
 
-def _job_row_summary(job):
-    if job.get("state") == "FAILURE" and job.get("error"):
-        return str(job["error"])
-    stats_summary = job.get("stats_summary") or []
-    return "; ".join(f"{k}: {v}" for k, v in stats_summary)
-
-
 @app.callback(
     Output("jobs-table", "data"),
     Input("poll-interval", "n_intervals"),
@@ -219,39 +221,73 @@ def poll_jobs(_n):
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-
-    rows = []
-    for job in jobs:
-        row = dict(job)
-        row["summary"] = _job_row_summary(job)
-        rows.append(row)
-    return rows
+    return [dict(job) for job in jobs]
 
 
 @app.callback(
     Output("delete-result", "children"),
     Output("delete-result", "color"),
     Output("delete-result", "is_open"),
-    Input("delete-btn", "n_clicks"),
-    State("delete-job-id", "value"),
+    Input("jobs-table", "data"),
+    State("jobs-table", "data_previous"),
     prevent_initial_call=True,
 )
-def delete_job(n_clicks, job_id):
-    if not job_id:
+def handle_row_delete(data, data_previous):
+    if not data_previous:
+        raise PreventUpdate
+    current_ids = {row["job_id"] for row in data}
+    previous_ids = {row["job_id"] for row in data_previous}
+    removed = previous_ids - current_ids
+    if not removed:
         raise PreventUpdate
 
-    try:
-        resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10)
-        data = resp.json()
-        if data.get("in_progress"):
-            resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10)
-            data = resp.json()
-    except requests.RequestException as exc:
-        return f"Delete failed: {exc}", "danger", True
+    results = []
+    for job_id in removed:
+        try:
+            resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10)
+            d = resp.json()
+            if d.get("in_progress"):
+                resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10)
+                d = resp.json()
+            results.append(f"{job_id[:8]}: {'deleted' if 'deleted' in d else d.get('error', '?')}")
+        except requests.RequestException as exc:
+            results.append(f"{job_id[:8]}: ERROR {exc}")
+    return "; ".join(results), "info", True
 
-    if "error" in data:
-        return f"Delete failed: {data['error']}", "danger", True
-    return f"Deleted: {data['deleted']}", "success", True
+
+@app.callback(
+    Output("run-detail", "children"),
+    Input("jobs-table", "selected_rows"),
+    State("jobs-table", "data"),
+)
+def show_run_detail(selected_rows, data):
+    if not selected_rows or not data:
+        return [html.P("Select a run above to see its results.", className="text-muted")]
+
+    job = data[selected_rows[0]]
+    header = [
+        html.H4(f"{job.get('benchmark', '?')} — {job.get('job_id', '?')}", className="card-title"),
+        html.P([
+            html.Strong("State: "), job.get("state_label", "?"), "  ·  ",
+            html.Strong("Backend: "), job.get("backend", "?"), "  ·  ",
+            html.Strong("Submitted by: "), job.get("submitted_by", "?"),
+            " at ", job.get("submitted_at", "?"),
+        ], className="text-muted"),
+    ]
+
+    if job.get("state") == "FAILURE":
+        return header + [dbc.Alert(str(job.get("error", "unknown error")), color="danger")]
+
+    stats_summary = job.get("stats_summary") or []
+    if not stats_summary:
+        return header + [html.P("No results yet.", className="text-muted")]
+
+    rows = [html.Tr([html.Td(k), html.Td(str(v))]) for k, v in stats_summary]
+    table = dbc.Table(
+        [html.Thead(html.Tr([html.Th("Metric"), html.Th("Value")])), html.Tbody(rows)],
+        bordered=True, hover=True, size="sm", className="mt-3",
+    )
+    return header + [table]
 
 
 if __name__ == "__main__":
