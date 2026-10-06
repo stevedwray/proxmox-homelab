@@ -167,6 +167,38 @@ Phase 2 (`panel-dash-08`, the status/results table with live polling
 and delete controls). `panel-dash-10` (the OCCULT tab) stays unwritten
 until `docs/mitre-occult/plan.md` Phase 1 is real — don't pre-author it.
 
+## Hand-back: panel-dash-08-status-table (2026-10-07)
+
+Extended `app-ui/app.py`: a "Recent runs" `dash_table.DataTable`
+(job_id/benchmark/backend/submitted_by/submitted_at/state/summary
+columns — summary flattens `stats_summary`'s `[key, value]` pairs or
+shows the `error` field on `FAILURE`), a `dcc.Interval` polling
+`GET /jobs` every 4s (matching the old UI's cadence), and a job-id
+input + delete button calling `DELETE /jobs/{id}` with an automatic
+`?force=true` retry if the first response has `"in_progress": true`.
+No suites-specific table yet — deliberately deferred per the step's own
+scope (jobs only, suites left for a later step if wanted).
+
+Gates: python-syntax PASS, has-poll-interval PASS (1 ≥ 1). Deployed via
+`./with-secrets-prod-tiny scripts/provision.sh --stack cse-panel-stack`
+(`failed=0`); `docker logs cse-panel-ui` confirms clean gunicorn
+startup, both workers booted, no import errors.
+
+**Not yet verified — needs a human in a browser:** confirming the table
+actually renders and updates live (e.g. watching the `f0bd378e-...`
+mitre job's row, or a fresh submission, transition states without a
+page reload), and that Delete actually removes a row. Nothing above
+proves the click-through/live-update behavior, only that the code is
+sound and the container starts cleanly.
+
+## Next step
+
+Operator: on `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`, confirm
+the Recent runs table shows real job history and updates live, then
+test Delete on one job. Once confirmed, move to Phase 3a
+(`panel-dash-09`, the results chart). `panel-dash-10` (OCCULT tab)
+stays gated as noted above.
+
 ## Open item found while writing the step packets — resolved 2026-10-07
 
 Writing `panel-dash-11`'s acceptance check surfaced a real gap: once

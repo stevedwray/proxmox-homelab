@@ -9,7 +9,7 @@ import os
 import dash
 import dash_bootstrap_components as dbc
 import requests
-from dash import Input, Output, State, dcc, html
+from dash import Input, Output, State, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import request
 
@@ -111,6 +111,34 @@ app.layout = dbc.Container(
             dbc.Button("Submit run(s)", id="submit-btn", color="primary", className="mt-3"),
             dbc.Alert(id="submit-result", is_open=False, className="mt-3"),
         ])),
+
+        dbc.Card(className="mt-4", children=dbc.CardBody([
+            html.H4("Recent runs", className="card-title mb-3"),
+            dash_table.DataTable(
+                id="jobs-table",
+                columns=[
+                    {"name": "Job ID", "id": "job_id"},
+                    {"name": "Benchmark", "id": "benchmark"},
+                    {"name": "Backend", "id": "backend"},
+                    {"name": "Submitted by", "id": "submitted_by"},
+                    {"name": "Submitted at", "id": "submitted_at"},
+                    {"name": "State", "id": "state_label"},
+                    {"name": "Summary", "id": "summary"},
+                ],
+                data=[],
+                style_table={"width": "100%", "overflowX": "auto"},
+                style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
+                style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
+                            "padding": "8px", "textAlign": "left", "whiteSpace": "normal"},
+                style_as_list_view=True,
+            ),
+            dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
+            dbc.Row(className="mt-3", children=[
+                dbc.Col(dbc.Input(id="delete-job-id", placeholder="job_id to delete"), width=8),
+                dbc.Col(dbc.Button("Delete job", id="delete-btn", color="danger", className="w-100"), width=4),
+            ]),
+            dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
+        ])),
     ],
 )
 
@@ -172,6 +200,58 @@ def submit_run(n_clicks, benchmarks, num_test_cases):
     if "suite_id" in data:
         return f"Suite submitted: {data['suite_id']} ({len(data['jobs'])} jobs)", "success", True
     return f"Job submitted: {data['job_id']} ({data['benchmark']})", "success", True
+
+
+def _job_row_summary(job):
+    if job.get("state") == "FAILURE" and job.get("error"):
+        return str(job["error"])
+    stats_summary = job.get("stats_summary") or []
+    return "; ".join(f"{k}: {v}" for k, v in stats_summary)
+
+
+@app.callback(
+    Output("jobs-table", "data"),
+    Input("poll-interval", "n_intervals"),
+)
+def poll_jobs(_n):
+    try:
+        resp = requests.get(f"{PANEL_API_BASE_URL}/jobs", timeout=10)
+        jobs = resp.json().get("jobs", [])
+    except requests.RequestException:
+        raise PreventUpdate
+
+    rows = []
+    for job in jobs:
+        row = dict(job)
+        row["summary"] = _job_row_summary(job)
+        rows.append(row)
+    return rows
+
+
+@app.callback(
+    Output("delete-result", "children"),
+    Output("delete-result", "color"),
+    Output("delete-result", "is_open"),
+    Input("delete-btn", "n_clicks"),
+    State("delete-job-id", "value"),
+    prevent_initial_call=True,
+)
+def delete_job(n_clicks, job_id):
+    if not job_id:
+        raise PreventUpdate
+
+    try:
+        resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10)
+        data = resp.json()
+        if data.get("in_progress"):
+            resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10)
+            data = resp.json()
+    except requests.RequestException as exc:
+        return f"Delete failed: {exc}", "danger", True
+
+    if "error" in data:
+        return f"Delete failed: {data['error']}", "danger", True
+    return f"Deleted: {data['deleted']}", "success", True
 
 
 if __name__ == "__main__":
