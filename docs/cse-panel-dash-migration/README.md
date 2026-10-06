@@ -1,6 +1,7 @@
 # cse-panel-dash-migration (planning workspace)
 
-Status: **step packets written, nothing deployed yet.** Entrypoint per
+Status: **Phases 0-1 live and verified end-to-end (real job ran on
+Framework GPU through the new UI), 2026-10-07.** Entrypoint per
 `docs/workflow/documentation-workspaces.md`. `plan.md` §5 holds 11
 executable step blocks (`panel-dash-01` through `12`, minus the
 deliberately-not-yet-written `panel-dash-10`) per
@@ -134,14 +135,37 @@ check per plan.md §8, and nothing above proves the click-through flow
 itself works, only that the code is syntactically sound and the
 container starts cleanly.
 
+## Phase 1 acceptance confirmed live, plus a real pre-existing bug found along the way (2026-10-07)
+
+Operator submitted a real `mitre` job through the new UI. First
+submission got stuck `PENDING` with no GPU activity — traced to a
+**genuine, pre-existing config drift in `cse-controller`, unrelated to
+this migration**: the *live deployed* `docker-compose.yml` on the
+`cse-controller` host still referenced `${CSE_PANEL_REDIS_PASSWORD}` in
+its Celery broker URL, but the *repo's* `docker-compose.yml` for that
+stack has never had a password in it (confirmed via `git log -p`), and
+`cse-panel-redis` genuinely has no `requirepass` set (matches
+`STACK_CONTRACT.md`'s documented "no secret inputs"). The host was
+simply never redeployed since whenever that password was removed from
+the repo — the worker had been failing to connect to its broker this
+whole time, silently. Fixed by redeploying `cse-controller`
+(`scripts/provision.sh --stack cse-controller` on `pve-tiny`); worker
+reconnected cleanly (`Connected to redis://192.168.20.30:6379/0`).
+
+The original stuck test job (`ebe57cd0-...`) landed in Redis's
+`unacked` hash — a known behavior this project already has a memory
+entry for (`task_acks_late=True` + a task delivered-then-disconnected
+sits unacked until the 12h visibility timeout, not instantly
+redelivered). Not chased further; operator resubmitted fresh through
+the UI instead, which queued and ran immediately with **confirmed real
+GPU activity on Framework** — full path verified end-to-end: Dash UI →
+`panel-web` → Celery → `cse-controller` worker → Framework inference.
+
 ## Next step
 
-Operator: on `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`, check one
-benchmark, submit, and confirm a real job shows up. Then check 2+
-benchmarks and confirm a real suite submits. Once confirmed, move to
-Phase 2 (`panel-dash-08`, the status/results table). `panel-dash-10`
-(the OCCULT tab) stays unwritten until `docs/mitre-occult/plan.md`
-Phase 1 is real — don't pre-author it.
+Phase 2 (`panel-dash-08`, the status/results table with live polling
+and delete controls). `panel-dash-10` (the OCCULT tab) stays unwritten
+until `docs/mitre-occult/plan.md` Phase 1 is real — don't pre-author it.
 
 ## Open item found while writing the step packets — resolved 2026-10-07
 
