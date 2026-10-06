@@ -230,3 +230,35 @@ entirely. Checked the repo for an actual consumer first — found none
 `cse-panel-api.${LAB_DOMAIN}` → `panel-web:8000` route anyway, per the
 API's own "stays usable for other integrations" design intent even
 with no current consumer. `panel-dash-11` now creates this route.
+
+## Hand-back: panel-dash-09-results-chart (2026-10-07)
+
+Added a "Results chart" card (`dcc.Graph`) to the Results tab. Extended
+`poll_jobs` to also compute a Plotly figure in the same callback (per
+the step's instruction): one bar per `SUCCESS` job, reading the first
+`stats_summary` entry whose value string has a parseable `(NN%)` (the
+primary headline metric most benchmarks surface first — e.g. mitre's
+`C2.Malicious: 1/1 (100%)`). `plotly_dark`/transparent-background
+styling matching the spike. Renders an explicit "No completed runs
+yet." annotation (not a blank chart, not mock data) when nothing
+qualifies yet.
+
+Gates: python-syntax PASS, has-graph-component PASS (1 ≥ 1). Deployed
+via `./with-secrets-prod-tiny scripts/provision.sh --stack cse-panel-stack`
+(`failed=0`). One harmless, expected error in `docker logs
+cse-panel-ui` immediately after deploy (`KeyError:
+'jobs-table.data'`) — a stale already-open browser tab polling against
+the old single-output callback signature; resolves on page refresh, not
+a code bug.
+
+**Not yet verified — needs a human in a browser:** confirming the chart
+actually renders real bars for completed jobs after a refresh, and that
+clicking through to new runs updates it live.
+
+## Next step
+
+Operator: refresh `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`,
+confirm the Results chart shows real bars. This closes out Phase 3a.
+Phase 3b (OCCULT tab) stays unwritten/gated on `docs/mitre-occult/
+plan.md` Phase 1. Phase 4 (cutover) is the only remaining phase with a
+written step block (`panel-dash-11`/`12`) not yet executed.

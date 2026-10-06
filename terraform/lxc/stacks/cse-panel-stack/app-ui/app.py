@@ -5,6 +5,7 @@ Traefik -> panel-ui -> panel-web auth-header path works before any
 real UI is ported. See docs/cse-panel-dash-migration/plan.md.
 """
 import os
+import re
 
 import dash
 import dash_bootstrap_components as dbc
@@ -136,6 +137,11 @@ results_tab = html.Div([
     dbc.Card(className="mt-3", children=dbc.CardBody(id="run-detail", children=[
         html.P("Select a run above to see its results.", className="text-muted"),
     ])),
+
+    dbc.Card(className="mt-3", children=dbc.CardBody([
+        html.H4("Results chart", className="card-title mb-3"),
+        dcc.Graph(id="results-chart", config={"displaylogo": False}),
+    ])),
 ])
 
 app.layout = dbc.Container(
@@ -211,8 +217,74 @@ def submit_run(n_clicks, benchmarks, num_test_cases):
     return f"Job submitted: {data['job_id']} ({data['benchmark']})", "success", True
 
 
+def _first_numeric_metric(stats_summary):
+    """First [key, value] pair in stats_summary whose value string has a
+    parseable percentage (e.g. "1/1 (100%)" -> 100.0) -- the primary
+    headline metric most benchmarks surface first, e.g. mitre's
+    malicious %."""
+    for key, value in stats_summary:
+        match = re.search(r"\((-?\d+(?:\.\d+)?)%\)", str(value))
+        if match:
+            return key, float(match.group(1))
+    return None
+
+
+def _empty_chart_figure(message):
+    return {
+        "data": [],
+        "layout": {
+            "template": "plotly_dark",
+            "paper_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(0,0,0,0)",
+            "xaxis": {"visible": False},
+            "yaxis": {"visible": False},
+            "annotations": [{
+                "text": message, "xref": "paper", "yref": "paper",
+                "x": 0.5, "y": 0.5, "showarrow": False,
+                "font": {"size": 16, "color": "#888"},
+            }],
+        },
+    }
+
+
+def _results_chart_figure(jobs):
+    labels, values, metric_names = [], [], []
+    for job in jobs:
+        if job.get("state") != "SUCCESS":
+            continue
+        metric = _first_numeric_metric(job.get("stats_summary") or [])
+        if metric is None:
+            continue
+        key, value = metric
+        labels.append(f"{job.get('benchmark', '?')} ({job.get('job_id', '?')[:8]})")
+        values.append(value)
+        metric_names.append(key)
+
+    if not values:
+        return _empty_chart_figure("No completed runs yet.")
+
+    return {
+        "data": [{
+            "x": labels,
+            "y": values,
+            "type": "bar",
+            "marker": {"color": "#6f42c1"},
+            "text": metric_names,
+            "hovertemplate": "%{x}<br>%{text}: %{y}%<extra></extra>",
+        }],
+        "layout": {
+            "template": "plotly_dark",
+            "paper_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(0,0,0,0)",
+            "yaxis": {"title": "% (first headline metric)", "range": [0, 100]},
+            "margin": {"t": 20},
+        },
+    }
+
+
 @app.callback(
     Output("jobs-table", "data"),
+    Output("results-chart", "figure"),
     Input("poll-interval", "n_intervals"),
 )
 def poll_jobs(_n):
@@ -221,7 +293,8 @@ def poll_jobs(_n):
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-    return [dict(job) for job in jobs]
+    rows = [dict(job) for job in jobs]
+    return rows, _results_chart_figure(rows)
 
 
 @app.callback(
