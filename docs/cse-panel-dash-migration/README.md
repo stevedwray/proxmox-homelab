@@ -191,13 +191,33 @@ page reload), and that Delete actually removes a row. Nothing above
 proves the click-through/live-update behavior, only that the code is
 sound and the container starts cleanly.
 
+## Hand-back: tabs/row-delete/detail-panel rework (2026-10-07)
+
+Direct operator feedback on the deployed Phase 2 table: everything on
+one scrolling page, no click-to-delete, results squashed into an
+unreadable joined string. Iterated live against real job data (not a
+written step block — direct UX feedback mid-session, same pattern as
+the earlier Dash-vs-NiceGUI spike iteration):
+
+- Split into `dbc.Tabs`: "Run" (identity check + submission form) vs.
+  "Results" (jobs table + detail panel).
+- `jobs-table` now uses `row_deletable=True` + `row_selectable="single"`
+  — deletion diffs `data` vs `data_previous` (standard Dash pattern)
+  instead of a separate job-id input box.
+- New detail panel renders the selected row's full `stats_summary` as
+  a real metric/value table, not a single joined string.
+
+Verified live against real jobs (operator confirmed: multiple orphaned
+test jobs deleted via the UI, a completed mitre run's full C2/Exfil
+breakdown displayed correctly once selected). **This work was deployed
+live but the commit was missed at the time** — caught and committed
+2026-10-07 when returning to this workspace after an unrelated
+tangent (VS Code Copilot model config, parked separately).
+
 ## Next step
 
-Operator: on `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`, confirm
-the Recent runs table shows real job history and updates live, then
-test Delete on one job. Once confirmed, move to Phase 3a
-(`panel-dash-09`, the results chart). `panel-dash-10` (OCCULT tab)
-stays gated as noted above.
+Phase 3a (`panel-dash-09`, the results chart). `panel-dash-10` (OCCULT
+tab) stays gated as noted above.
 
 ## Open item found while writing the step packets — resolved 2026-10-07
 
