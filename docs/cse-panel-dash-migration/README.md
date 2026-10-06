@@ -1,0 +1,132 @@
+# cse-panel-dash-migration (planning workspace)
+
+Status: **step packets written, nothing deployed yet.** Entrypoint per
+`docs/workflow/documentation-workspaces.md`. `plan.md` §5 holds 11
+executable step blocks (`panel-dash-01` through `12`, minus the
+deliberately-not-yet-written `panel-dash-10`) per
+`docs/agent-design/step-packet-schema.md`; this file is the durable
+status record and where step hand-backs get written as each one runs.
+
+## What this is
+
+A plan to replace `cse-panel-stack`'s homegrown, hand-rolled HTML/CSS/JS
+front end (`app.py`'s ~500-line `index()` route) with a **Dash**
+(Plotly) UI, following a quick side-by-side spike against NiceGUI run
+2026-10-06/07 on a throwaway LXC (`90001` on `pve`, not yet torn down —
+see plan.md §7 open items). Dash was chosen for its stronger native
+charting (the real payoff for OCCULT's upcoming capability-vs-refusal
+visualizations) and, once `dash-bootstrap-components` is added, a
+genuinely polished look with minimal custom CSS.
+
+The existing FastAPI JSON API (`/jobs`, `/suites`, `/benchmarks`,
+`/backends`) is **not being replaced** — it's a clean, already-correct
+backend contract the current `index()` page itself calls via fetch().
+Dash becomes a new consumer of that same API, not a rewrite of it.
+
+## Current state (2026-10-07)
+
+- Research + architecture written to `plan.md`. Nothing built in
+  `cse-panel-stack` itself.
+- The UI-framework spike (`docs/mitre-occult/artifacts/{nicegui,dash}_demo.py`)
+  is a separate, disposable proof of concept — not part of this
+  migration's codebase, just the evidence that informed the Dash choice.
+  Throwaway LXC `90001` on `pve` destroyed 2026-10-07 after the plan was
+  written.
+- All 6 open decisions in `plan.md` §6 resolved by the operator
+  2026-10-07. Notably: **E (OCCULT integration) was folded in**, not
+  deferred — Phase 3 now has a 3a/3b split with 3b explicitly gated on
+  `docs/mitre-occult/plan.md`'s own Phase 0–1 existing first (see §6-E
+  for the exact dependency).
+
+## Hand-back: panel-dash-01 through 06 (2026-10-07)
+
+All six Phase 0 steps executed, all gates passed:
+
+| Step | Edit | Gates |
+|---|---|---|
+| `panel-dash-01-compose-service` | Added `panel-ui` service to `docker-compose.yml` (4th service, stock `python:3.10-slim`, gunicorn, port 8050) | yaml-syntax PASS, service-count PASS |
+| `panel-dash-02-app-requirements` | Created `app-ui/requirements.txt`. `dash`/`plotly` pinned from the spike (4.4.1/7.1.0); `dash-bootstrap-components`/`gunicorn`/`requests` resolved live via a throwaway venv install (2.0.4 / 26.2.0 / 2.34.2) | file-exists-and-pinned PASS (5/5) |
+| `panel-dash-03-app-scaffold` | Created `app-ui/app.py` — trivial Dash/CYBORG page showing `X-Authentik-Username` + a live call to `panel-web`'s `/healthz` | python-syntax PASS, has-server-export PASS |
+| `panel-dash-04-playbook-panel-ui` | Extended `deploy-cse-panel-stack.yml`: panel-ui dir/copy tasks, restart task, wait-for-200-on-`:8050` task | yaml-syntax PASS (needed `ANSIBLE_ROLES_PATH`-correct cwd — ran from `terraform/lxc/ansible/`, not repo root), mentions-panel-ui PASS (7 ≥ 4) |
+| `panel-dash-05-edge-dev-route` | Added `cse-panel-ui-dev` route to `edge.yaml` (temporary, removed at cutover) | yaml-syntax PASS, route-count PASS (3) |
+| `panel-dash-06-stack-contract` | Updated `STACK_CONTRACT.md`: Provides row, Persistent State bullet, Implementation Files row | mentions-panel-ui PASS (3 ≥ 3) |
+
+Nothing deployed yet — these are file edits only, per each step's own
+`forbidden_actions`. No gate failures, no deviations from the plan's
+literal content.
+
+## Hand-back: Phase 0 deployed live (2026-10-07)
+
+`scripts/provision.sh --stack cse-panel-stack` ran clean on `pve-tiny`
+(`failed=0`, both `panel-web` and `panel-ui` passed their health waits).
+Edge activation needed two more deploys, run by the operator directly
+per the harness's own production-deploy classifier (blocks even
+approved `provision.sh` calls against `pve`/`pve-tiny` from this
+session's own tool calls):
+
+- `proxy-stack` (`pve`) — publishes the Traefik dynamic route
+- `technitium-stack` (`pve`) — publishes the live DNS record
+
+**Two real bugs found and fixed along the way, not pre-planned:**
+
+1. **`terraform/lxc/reconcile-edge.py`'s target-preflight check only
+   knew about `pve`.** `_resolve_target_preflight_command` special-cased
+   `target == "pve"` → `with-secrets-prod`, and silently fell back to
+   the dev `with-secrets` wrapper for every other node — so running it
+   against `pve-tiny` tripped `with-secrets`'s own production safety
+   rail (`EGR200`). Fixed by adding `_production_wrapper_name()`,
+   deriving the right `with-secrets-prod-<node>` wrapper from
+   `terraform/PRODUCTION_NODES` generically instead of hardcoding one
+   node. Confirmed the fix introduced no new test failures (7
+   pre-existing, unrelated `test_reconcile_edge.py` failures exist on
+   `main` with or without this change — not touched here, out of scope).
+2. **Ran `reconcile-edge.py --apply` against the wrong node the first
+   time.** Targeted `pve-tiny` (where `cse-panel-stack` itself lives)
+   instead of `pve` (where `proxy-stack`/Traefik actually lives) — the
+   generated Traefik configs landed in
+   `terraform/lxc/environments/pve-tiny/.generated/traefik/`, but
+   `proxy-stack`'s deploy playbook reads from its *own* node's
+   `.generated/` tree (`.../pve/...`), which stayed stale. First
+   `proxy-stack` redeploy reported `changed=4` but the live dynamic
+   config file was untouched (confirmed by `pct exec`-ing into the
+   `proxy-stack` LXC directly — not the PVE host, which was itself a
+   first wrong-filesystem check). Re-ran the reconcile targeted at
+   `pve`, redeployed `proxy-stack` again — fixed. **Lesson for any
+   future edge change:** target `reconcile-edge.py --apply` at whichever
+   node runs `proxy-stack`/Traefik, not the node the edited stack lives
+   on — they're not always the same, and this repo has three production
+   nodes now.
+
+**Verified live:** `dig cse-panel-ui-dev.lab.gibbsgreatly.xyz` resolves;
+`curl` returns `302` (forward-auth redirect) matching `grafana`/`netbox`
+sanity checks exactly; live dynamic config on the `proxy-stack` LXC has
+the correct 3-router/3-service block. `panel-ui` uses ~90MB RSS in the
+LXC, 723Mi still available — **no `stack.yaml` resource bump needed**
+(§6-B resolved: measure, don't guess — the real footprint was small).
+
+**Not yet verified — needs a human in a browser:** visiting
+`https://cse-panel-ui-dev.lab.gibbsgreatly.xyz` and confirming it shows
+your *real* Authentik username (not the placeholder string) after
+logging in. This is Phase 0's actual acceptance check per plan.md §8 —
+nothing above proves the `X-Authentik-Username` header actually reaches
+`panel-ui` correctly, only that routing/auth-gating itself works.
+
+## Next step
+
+Operator: open `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz` in a
+browser and confirm the username + `panel-web` healthz line are
+correct. Once confirmed, move to Phase 1 (`panel-dash-07`). `panel-dash-10`
+(the OCCULT tab) stays unwritten until `docs/mitre-occult/plan.md`
+Phase 1 is real — don't pre-author it.
+
+## Open item found while writing the step packets — resolved 2026-10-07
+
+Writing `panel-dash-11`'s acceptance check surfaced a real gap: once
+`cse-panel.${LAB_DOMAIN}` repoints from `panel-web` (8000) to
+`panel-ui` (8050), FastAPI's JSON API loses its public address
+entirely. Checked the repo for an actual consumer first — found none
+(`cse-controller` only talks to this stack's Redis, nothing calls
+`/jobs`/`/suites` externally). Operator chose to add a dedicated
+`cse-panel-api.${LAB_DOMAIN}` → `panel-web:8000` route anyway, per the
+API's own "stays usable for other integrations" design intent even
+with no current consumer. `panel-dash-11` now creates this route.
