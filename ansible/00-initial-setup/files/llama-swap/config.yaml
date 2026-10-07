@@ -91,10 +91,10 @@ routing:
             - qwen3.8-flash-next
             - qwen3.8-flash-next-upstream
 
-# Model to start when llama-swap starts (e.g. after a reboot). Off until the
-# cutover (docs/llama-swap/plan.md, phase 2): while the hand-run GLM still
-# holds :8080 a preload would only fail its memory check.
-# hooks:
-#   on_startup:
-#     preload:
-#       - glm-5.3-flash
+# Model to start when llama-swap starts (e.g. after a reboot). It also runs on
+# every config reload, so saving this file while another model is loaded
+# switches back to this one.
+hooks:
+  on_startup:
+    preload:
+      - glm-5.3-flash

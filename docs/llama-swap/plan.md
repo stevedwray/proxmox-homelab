@@ -1,6 +1,6 @@
 # llama-swap on Framework: model control page
 
-Status: **phase 1 (install, idle) done 2026-10-07; phase 2 not started.** Replaces the
+Status: **live 2026-10-07.** llama-swap manages :8080; GLM is loaded and is the boot default. Replaces the
 2026-10-01 draft on `task/llama-swap-plan`, which put llama-swap in front of
 the clients. This version doesn't.
 
@@ -33,6 +33,8 @@ llama.cpp build:
   WebUI, CVE enrichment, Traefik `llm.<domain>` and the metrics scrape all keep
   talking to `llama-server` on :8080 and get whatever is loaded. They can't
   switch models; only the control page does.
+- **Saving the config reloads llama-swap and loads the boot default (GLM)**,
+  so don't save it while another model is in use or a benchmark is running.
 - **Models and builds** live in `/home/steve/llama-swap/config.yaml` (edit in
   VS Code; it reloads on save). Seed copy:
   `ansible/00-initial-setup/files/llama-swap/config.yaml`. The seed has three
