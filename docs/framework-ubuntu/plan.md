@@ -116,7 +116,21 @@ cold from this section alone.
   both confirmed working. No systemd `Conflicts=` or gateway design
   needed.
 
-### Current state of the host, as of this checkpoint
+### Current state of the host (2026-10-08)
+
+The table after this one is the July 2026 checkpoint and no longer
+matches the host. LLM serving now works like this:
+
+| Service | Port | How it runs | State |
+| --- | --- | --- | --- |
+| llama-swap (model control page) | 8099, reached only through Traefik at `https://llm-control.<domain>` (Authentik) | `llama-swap.service`, `ansible/00-initial-setup/framework-desktop-llama-swap.yml`, `docs/llama-swap/` | active |
+| Chat model (`llama-server`, started by llama-swap) | 8080 (API key) | GLM-5.3-Flash on the upstream build, or Qwen3.8-Flash-Next on the Nathanw fork or upstream, picked on the control page | GLM loaded, and the boot default |
+| `nathanw-llamacpp-embed.service` (nomic-embed) | 8085 | Nathanw fork, `framework-desktop-llamacpp-native.yml` | active |
+| `nathanw-llamacpp.service` (old Qwen chat unit) | 8080 | same playbook, with `framework_llamacpp_chat_enabled: false` | disabled (unit kept for rollback) |
+| Open WebUI | 8081 | Docker | up |
+| llama-router (HIP, `/opt/llamacpp-docker`), Ollama, LM Studio, ComfyUI | — | — | not running |
+
+### Current state of the host, as of the July 2026 checkpoint (historical)
 
 Four services running concurrently, each independently verified,
 switchable via two tested scripts:
