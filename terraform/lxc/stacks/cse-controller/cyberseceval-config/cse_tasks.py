@@ -56,6 +56,10 @@ VENV_PY = Path("/srv/cyberseceval/.venv/bin/python3")
 RUNS_DIR = Path("/srv/cyberseceval/runs")
 RUN_LOG_NAME = "run.log"
 RESULT_JSON_NAME = "result.json"
+# One JSON line per model call (tokens, finish_reason, llama-server timings),
+# written by the cse-lab usage-logger patch in PurpleLlama's OPENAI provider
+# (deploy-cse-controller.yml) when CSE_USAGE_LOG points at it.
+USAGE_LOG_NAME = "usage.jsonl"
 
 # Framework's llama-server -- the default when no backend override is
 # given, matching the exact spec proven in Phase 2
@@ -694,6 +698,120 @@ def _render_stats_section(stats: dict | None, stats_error: str | None) -> list[s
     return lines
 
 
+def _usage_totals(records: list[dict]) -> dict:
+    """Totals for one group of model calls. Speeds come from llama-server's
+    own per-request `timings` where present (the cloud judge has none)."""
+    def total(key: str) -> int:
+        return sum(r.get(key) or 0 for r in records)
+
+    def timing(key: str) -> float:
+        return sum((r.get("timings") or {}).get(key) or 0 for r in records)
+
+    totals = {
+        "calls": len(records),
+        "prompt_tokens": total("prompt_tokens"),
+        "completion_tokens": total("completion_tokens"),
+        "max_completion_tokens": max((r.get("completion_tokens") or 0) for r in records),
+        "hit_token_limit": sum(1 for r in records if r.get("finish_reason") == "length"),
+        "request_seconds": round(sum(r.get("elapsed_s") or 0 for r in records), 1),
+    }
+    if timing("predicted_ms"):
+        totals["generation_tokens_per_second"] = round(timing("predicted_n") / (timing("predicted_ms") / 1000), 1)
+    if timing("prompt_ms"):
+        totals["prompt_tokens_per_second"] = round(timing("prompt_n") / (timing("prompt_ms") / 1000), 1)
+    return totals
+
+
+def _run_metrics(usage_path: Path, mut_model: str, started_at: str, finished_at: str) -> dict:
+    """Wall-clock duration plus token/speed totals, split between the model
+    under test and everything else (the cloud judge/expansion model)."""
+    metrics: dict = {}
+    try:
+        metrics["duration_seconds"] = round(
+            (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds(), 1
+        )
+    except ValueError:
+        pass
+    records = []
+    if usage_path.exists():
+        for line in usage_path.read_text().splitlines():
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    mut = [r for r in records if r.get("model") == mut_model]
+    other = [r for r in records if r.get("model") != mut_model]
+    if mut:
+        metrics["model_under_test"] = _usage_totals(mut)
+    if other:
+        metrics["judge"] = _usage_totals(other)
+    return metrics
+
+
+def _format_duration(seconds) -> str:
+    if seconds is None:
+        return "–"
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _metrics_headline(metrics: dict | None) -> str | None:
+    """One line for a report's header: duration, model tokens, speed."""
+    if not metrics:
+        return None
+    parts = [f"{_format_duration(metrics.get('duration_seconds'))} total"]
+    mut = metrics.get("model_under_test")
+    if mut:
+        parts.append(f"{mut['completion_tokens']:,} tokens generated over {mut['calls']} call(s)")
+        if "generation_tokens_per_second" in mut:
+            parts.append(f"{mut['generation_tokens_per_second']} tokens/s")
+        if mut["hit_token_limit"]:
+            parts.append(f"{mut['hit_token_limit']} answer(s) cut off at the token limit")
+    return ", ".join(parts)
+
+
+def _render_metrics_section(metrics: dict | None) -> list[str]:
+    if not metrics:
+        return ["Not recorded for this run."]
+    lines = [f"**Duration:** {_format_duration(metrics.get('duration_seconds'))}", ""]
+    groups = [(key, label) for key, label in (
+        ("model_under_test", "Model under test"),
+        ("judge", "Judge / expansion (cloud)"),
+    ) if metrics.get(key)]
+    if not groups:
+        return lines + ["No model calls were recorded."]
+    rows = [
+        ("Model calls", "calls", "{:,}"),
+        ("Prompt tokens", "prompt_tokens", "{:,}"),
+        ("Generated tokens (incl. reasoning)", "completion_tokens", "{:,}"),
+        ("Longest single answer (tokens)", "max_completion_tokens", "{:,}"),
+        ("Answers cut off at the token limit", "hit_token_limit", "{:,}"),
+        ("Generation speed (tokens/s)", "generation_tokens_per_second", "{}"),
+        ("Prompt processing (tokens/s)", "prompt_tokens_per_second", "{}"),
+        ("Time in model calls", "request_seconds", None),
+    ]
+    lines.append("| | " + " | ".join(label for _, label in groups) + " |")
+    lines.append("|---|" + "---|" * len(groups))
+    for label, key, fmt in rows:
+        cells = []
+        for group_key, _ in groups:
+            value = metrics[group_key].get(key)
+            if value is None:
+                cells.append("–")
+            elif fmt is None:
+                cells.append(_format_duration(value))
+            else:
+                cells.append(fmt.format(value))
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def _write_report(
     run_dir: Path,
     benchmark: str,
@@ -738,11 +856,18 @@ def _write_report(
         f"**Summary:** {summary}  ",
         f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
         f"**Test cases:** {num_test_cases} (random sample: {random_sample})",
+    ]
+    headline = _metrics_headline(result.get("run_metrics"))
+    if headline:
+        lines[-1] += "  "
+        lines.append(f"**Run:** {headline}")
+    lines += [
         "",
         "## Result",
         "",
     ]
     lines += _render_stats_section(stats, stats_error)
+    lines += ["", "## Run metrics", ""] + _render_metrics_section(result.get("run_metrics"))
 
     lines += [
         "",
@@ -755,6 +880,7 @@ def _write_report(
         "- `run.log` -- full stdout/stderr",
         "- `responses.json` / `judge_responses.json` -- raw per-test-case transcripts (this report's Transcript section above is rendered from these)",
         "- `stat.json` / `stats.json` -- raw benchmark output this report summarizes",
+        f"- `{USAGE_LOG_NAME}` -- one line per model call (tokens, finish reason, server timings) behind Run metrics",
     ]
     (run_dir / "report.md").write_text("\n".join(lines) + "\n")
 
@@ -850,11 +976,13 @@ def _push_report_to_nextcloud(
         f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
         f"**Started:** {started_at}  ",
         f"**Finished:** {finished_at}  ",
-        f"**Test cases:** {len(transcript)}",
+        f"**Test cases:** {len(transcript)}  ",
+        f"**Run:** {_metrics_headline(result.get('run_metrics')) or 'metrics not recorded'}",
         "",
         "## Result",
         "",
-    ] + _render_stats_section(result.get("stats"), result.get("stats_error")))
+    ] + _render_stats_section(result.get("stats"), result.get("stats_error"))
+      + ["", "## Run metrics", ""] + _render_metrics_section(result.get("run_metrics")))
     request = urllib.request.Request(
         f"{base}/{benchmark_dir}/results.md", data=results_doc.encode(), method="PUT"
     )
@@ -917,7 +1045,7 @@ class _ProcResult:
         self.stderr = ""  # merged into stdout already (stderr=STDOUT below)
 
 
-def _run_killable(argv: list[str], cwd: Path) -> _ProcResult:
+def _run_killable(argv: list[str], cwd: Path, env: dict | None = None) -> _ProcResult:
     """subprocess.run() only ever gets killed at the ForkPoolWorker level by
     Celery's revoke(terminate=True) -- the actual child process it spawns
     survives as an orphan and keeps running (or hanging) after a
@@ -929,7 +1057,7 @@ def _run_killable(argv: list[str], cwd: Path) -> _ProcResult:
     subprocess, not just the Python frame that was blocked on it."""
     proc = subprocess.Popen(
         argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, start_new_session=True,
+        text=True, start_new_session=True, env=env,
     )
 
     def _handle_sigterm(signum, frame):
@@ -947,7 +1075,7 @@ def _run_killable(argv: list[str], cwd: Path) -> _ProcResult:
     return _ProcResult(proc.returncode, stdout)
 
 
-def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
+def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str, env: dict | None = None) -> dict:
     gen_cmd = [
         str(VENV_PY), "-m", "CybersecurityBenchmarks.datasets.autonomous_uplift.test_case_generator",
         "--ssh-key-file=/srv/cyberseceval/config/cse-kali-agent-key",
@@ -970,7 +1098,7 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str) -> dict:
         f"--stat-path={run_dir}/stat.json",
         f"--llm-under-test={mut_spec}",
     ]
-    attack = _run_killable(attack_cmd, REPO_DIR)
+    attack = _run_killable(attack_cmd, REPO_DIR, env=env)
     log = attack.stdout + attack.stderr
     (run_dir / RUN_LOG_NAME).write_text(log)
     return {"rc": attack.returncode, "stage": "attack", "log": log}
@@ -1006,12 +1134,14 @@ def run_benchmark(
         "random_sample": random_sample,
         "started_at": started_at,
     }))
+    # Points the cse-lab usage-logger patch at this run's own log.
+    run_env = {**os.environ, "CSE_USAGE_LOG": str(run_dir / USAGE_LOG_NAME)}
 
     if benchmark == "autonomous-uplift":
         # No static dataset to sample from -- each run already generates
         # fresh attack shots live against the cyber range, so random_sample
         # doesn't apply here.
-        result = _run_autonomous_uplift(run_dir, shots=num_test_cases, mut_spec=mut_spec)
+        result = _run_autonomous_uplift(run_dir, shots=num_test_cases, mut_spec=mut_spec, env=run_env)
         log_text = result.get("log", "")
     else:
         if benchmark not in _BENCHMARK_COMMANDS:
@@ -1024,7 +1154,7 @@ def run_benchmark(
             else _DATASET_PATHS[benchmark]
         )
         argv = [str(VENV_PY)] + _BENCHMARK_COMMANDS[benchmark](str(run_dir), num_test_cases, mut_spec, prompt_path)
-        proc = _run_killable(argv, REPO_DIR)
+        proc = _run_killable(argv, REPO_DIR, env=run_env)
         log_text = proc.stdout + proc.stderr
         (run_dir / RUN_LOG_NAME).write_text(log_text)
         result = {"rc": proc.returncode, "log_path": str(run_dir / RUN_LOG_NAME)}
@@ -1083,6 +1213,9 @@ def run_benchmark(
         result["transcript_error"] = "no responses.json/judge_responses.json found"
 
     result["finished_at"] = datetime.now(timezone.utc).isoformat()
+    result["run_metrics"] = _run_metrics(
+        run_dir / USAGE_LOG_NAME, backend_model or DEFAULT_BACKEND_MODEL, started_at, result["finished_at"]
+    )
 
     # The full computed result above only otherwise lives in Celery's Redis
     # result backend -- durable enough for the panel's own polling, but not

@@ -441,6 +441,74 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch8.changed
 
+    # Run metrics (operator request 2026-10-07): results should say how many
+    # tokens a run used, how fast, and how long it took. Every model call
+    # goes through this client, so wrapping its create() once logs each
+    # call's usage, finish_reason and llama-server's own `timings` (tokens/s
+    # measured by the server) to $CSE_USAGE_LOG, which cse_tasks.py sets per
+    # run and summarizes into the report. No-op when the variable is unset,
+    # and a logging failure never breaks a benchmark call.
+    - name: Add the per-call usage logger to PurpleLlama's OPENAI provider (cse-lab run metrics)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '^import openai\n(?!# cse-lab patch: per-call usage log)'
+        replace: |
+          import openai
+          # cse-lab patch: per-call usage log (cse_tasks run metrics, 2026-10-07)
+          import json as _cse_json
+          import os as _cse_os
+          import time as _cse_time
+
+
+          def _cse_log_usage(client, model):
+              path = _cse_os.environ.get("CSE_USAGE_LOG")
+              if not path:
+                  return
+              create = client.chat.completions.create
+
+              def create_and_log(*args, **kwargs):
+                  start = _cse_time.monotonic()
+                  response = create(*args, **kwargs)
+                  try:
+                      usage = getattr(response, "usage", None)
+                      choices = getattr(response, "choices", None) or []
+                      extra = getattr(response, "model_extra", None) or {}
+                      record = {
+                          "model": model,
+                          "elapsed_s": round(_cse_time.monotonic() - start, 3),
+                          "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                          "completion_tokens": getattr(usage, "completion_tokens", None),
+                          "finish_reason": getattr(choices[0], "finish_reason", None) if choices else None,
+                          "timings": extra.get("timings"),
+                      }
+                      with open(path, "a") as usage_log:
+                          usage_log.write(_cse_json.dumps(record) + chr(10))
+                  except Exception:  # never let metrics logging break a benchmark call
+                      pass
+                  return response
+
+              client.chat.completions.create = create_and_log
+
+
+      register: cse_controller_openai_patch9
+
+    - name: Wrap each OPENAI client with the usage logger (cse-lab run metrics)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '^(        self\.client = openai\.OpenAI\([^\n]*\n)(?!        _cse_log_usage)'
+        replace: '\1        _cse_log_usage(self.client, self.model)  # cse-lab patch: per-call usage log\n'
+      register: cse_controller_openai_patch10
+
+    - name: Commit the per-call usage logger on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: log each model call's token usage, finish_reason and
+          llama-server timings to $CSE_USAGE_LOG for cse_tasks run metrics
+          (2026-10-07)."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch9.changed or cse_controller_openai_patch10.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"

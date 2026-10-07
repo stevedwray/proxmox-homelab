@@ -355,6 +355,9 @@ def _job_summary(job_id: str) -> dict:
         result = res.result or {}
         entry["ok"] = result.get("rc") == 0 and "stats_error" not in result
         entry["stats_summary"] = _flatten_stats(result.get("stats"))
+        # Duration, tokens and tokens/s, recorded by cse-controller's
+        # cse_tasks.py (absent for runs from before 2026-10-07).
+        entry["run_metrics"] = result.get("run_metrics")
         if result.get("stats_error"):
             entry["stats_error"] = result["stats_error"]
     elif res.state == "FAILURE":
