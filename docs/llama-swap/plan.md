@@ -1,6 +1,6 @@
 # llama-swap on Framework: model control page
 
-Status: **phase 1 (install, idle) in progress, 2026-10-07.** Replaces the
+Status: **phase 1 (install, idle) done 2026-10-07; phase 2 not started.** Replaces the
 2026-10-01 draft on `task/llama-swap-plan`, which put llama-swap in front of
 the clients. This version doesn't.
 
