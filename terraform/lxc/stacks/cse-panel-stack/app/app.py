@@ -155,6 +155,10 @@ JOB_META_TTL = 86400  # matches Celery's own default result_expires
 
 app = FastAPI(title="CyberSecEval Control Panel")
 
+# eval-runner's benchmark battery page (/eval), docs/eval-runner/panel-plan.md.
+from eval_battery import router as eval_battery_router  # noqa: E402
+app.include_router(eval_battery_router)
+
 
 class TestSpec(BaseModel):
     benchmark: str

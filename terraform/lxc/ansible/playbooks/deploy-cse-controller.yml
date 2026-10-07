@@ -84,8 +84,11 @@
     - name: Write compose variable substitution file
       ansible.builtin.copy:
         dest: "{{ cse_controller_stack_dir }}/.env"
-        mode: "0644"
-        content: "LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}\n"
+        mode: "0600"
+        content: |
+          LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}
+          CSE_PANEL_REDIS_PASSWORD={{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}
+      no_log: true
 
     - name: Write docker-compose.yml to stack directory
       ansible.builtin.copy:

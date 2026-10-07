@@ -185,6 +185,48 @@
       no_log: true
       when: not ansible_check_mode
 
+    # Nextcloud Tables: eval-runner's "Model evaluations" table
+    # (docs/eval-runner/plan.md). app:install takes the newest release
+    # compatible with this Nextcloud (2.3.1 on 35.x as of 2026-10-01); there
+    # is no version pin, later updates come through normal app updates.
+    - name: Install the Nextcloud Tables app
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ app:install tables
+      register: occ_install_tables
+      changed_when: "'installed' in occ_install_tables.stdout and 'already installed' not in occ_install_tables.stdout"
+      failed_when: occ_install_tables.rc != 0 and 'already installed' not in occ_install_tables.stdout
+      when: not ansible_check_mode
+
+    - name: Enable the Nextcloud Tables app
+      ansible.builtin.command:
+        cmd: docker exec --user www-data nextcloud-stack-app php occ app:enable tables
+      register: occ_enable_tables
+      changed_when: "'already enabled' not in occ_enable_tables.stdout"
+      when: not ansible_check_mode
+
+    # Service account eval-runner publishes as. Its login password is random
+    # and never stored: only an app password is used, created by the operator
+    # straight into OpenBao (docs/eval-runner/plan.md). -e forwards OC_PASS
+    # into the container; docker exec doesn't pass the host environment on
+    # its own.
+    - name: Ensure the eval-reports service account exists
+      ansible.builtin.command:
+        cmd: >-
+          docker exec -e OC_PASS --user www-data nextcloud-stack-app php occ user:add
+          --password-from-env --display-name=eval-runner eval-reports
+      environment:
+        OC_PASS: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
+      register: occ_add_eval_reports
+      changed_when: >-
+        'already exists' not in occ_add_eval_reports.stdout and
+        'already exists' not in occ_add_eval_reports.stderr
+      failed_when: >-
+        occ_add_eval_reports.rc != 0 and
+        'already exists' not in occ_add_eval_reports.stdout and
+        'already exists' not in occ_add_eval_reports.stderr
+      no_log: true
+      when: not ansible_check_mode
+
 - name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
   hosts: all
   become: true

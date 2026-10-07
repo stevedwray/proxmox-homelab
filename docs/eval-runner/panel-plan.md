@@ -1,0 +1,193 @@
+# eval-runner control panel (an "Eval battery" page in cse-panel)
+
+Status: **deployed (2026-10-02, `eval-runner-panel-rollout`).** The
+end-to-end check from the page is pending the operator's go-ahead,
+because it uses Framework for about a minute.
+- Code: `eval_tasks.py` (worker), `eval_battery.py` (page), Redis
+  password wiring, and the MikroTik rule playbook. 23 new unit tests.
+- Deploy runbook: see "Rollout" below.
+
+Operator decisions:
+- It is a tab in the existing CyberSecEval panel.
+- v1 covers starting runs, watching and controlling them, publishing and
+  links, and Framework status.
+- Eval jobs wait for idle Framework slots.
+- cse-panel's Redis gets a password first.
+- I run the MikroTik rule, under approval.
+
+## Goal
+
+Start, watch and control eval-runner benchmark runs (GPQA, IFEval, BFCL,
+AgentBench, RepoBench) from a web page, as `cse-panel` already does for
+CyberSecEval, instead of over `ssh root@ai-services-stack eval-run …`.
+Results keep flowing to Nextcloud exactly as now.
+
+## How it fits (mirrors cse-panel's own design)
+
+```
+browser -> Traefik + Authentik forward-auth -> cse-panel-stack (mgmt_seg, pve-tiny)
+             panel-web: existing CSE pages + new /eval page (eval_battery.py)
+             Redis: broker + results; queues "celery" (CSE) and "eval-runner" (new)
+                                   ^ 6379, outbound from ai_seg only (new MikroTik rule)
+ai-services-stack (ai_seg, pve-tiny)
+             eval-runner-worker (systemd, Celery, queue eval-runner, concurrency 1)
+               -> /usr/local/bin/eval-run (unchanged) -> eval containers -> Framework :8080
+               -> writes Framework status + run progress into Redis
+```
+
+- **The panel never reaches ai_seg or Framework.** The worker connects out
+  to the panel's Redis, as cse-controller's worker does from `cse_seg`.
+- **Framework status comes from the worker.** ai-services-stack can already
+  reach `framework:8080`; the panel in `mgmt_seg` can't, and doesn't need
+  to. Every 30 s a background loop in the worker writes `eval:framework`:
+  model id, slots busy, checked-at.
+- **`eval-run` stays the single entry point.** The worker shells out to it,
+  so the CLI and the panel can't drift. Its one-run-at-a-time guard still
+  applies to both.
+- **Separate queue.** Eval tasks are routed to `eval-runner`, so the CSE
+  worker (default queue) never takes them and vice versa.
+
+## Features (v1)
+
+1. **Start runs.**
+   - Pick one or more benchmarks.
+   - Choose full, pilot, or `--limit N`.
+   - Add a note; optionally use the 32k budget (GPQA/IFEval only).
+   - Each benchmark is one queued job, and the worker runs them in
+     submission order.
+2. **Watch and control.**
+   - A list of jobs: queued, waiting for Framework, running, done or
+     failed.
+   - For each job: run name, elapsed time, and the last 20 log lines,
+     refreshed every 10 s.
+   - Cancel works on queued jobs (revoke) and running ones
+     (`docker stop eval-<run>`).
+   - Resume an interrupted run (`eval-run resume`).
+3. **Publish and links.**
+   - Every finished run is published automatically.
+   - A "Publish now" button.
+   - Links to the Nextcloud Tables table and the `Reports/eval-runner`
+     folder.
+4. **Framework status.**
+   - The served model, slot state, and when it was last checked.
+   - Before a job starts, the worker waits until Framework's slots are
+     idle (polling every 60 s, up to 12 h), so an eval run doesn't land on
+     top of a CSE suite. The page shows "waiting for Framework" while it
+     does.
+
+## Steps
+
+1. **`eval_tasks.py`** (in `terraform/lxc/ansible/files/eval-runner/`),
+   the Celery task module:
+   - **Tasks:**
+     - `run` (wait for idle Framework, `eval-run <task> …`, follow the
+       container, `eval-run publish`, return `eval-run results <run>`);
+     - `resume`;
+     - `cancel`;
+     - `publish`.
+   - **Status loop:** a background thread, started on `worker_ready`.
+   - **Celery settings:** `task_acks_late`, prefetch 1,
+     `visibility_timeout` 48 h (longer than the longest run; see
+     reference_celery_redis_visibility_timeout_redelivery).
+   - **Tests:** unit tests with `eval-run`, `docker` and Redis faked.
+2. **Worker deploy:** a new task block in `deploy-ai-services-stack.yml`'s
+   eval-runner play. It installs:
+   - a venv under `/opt/eval-runner-worker` (`celery==5.4.0`,
+     `redis==5.2.1`, the same pins as cse-panel);
+   - the task module;
+   - a systemd unit `eval-runner-worker.service`:
+     `celery -A eval_tasks worker -Q eval-runner --concurrency 1`,
+     restart always, `CELERY_BROKER_URL` pointing at cse-panel's Redis.
+3. **Panel page:** `eval_battery.py` in `cse-panel-stack/app/`.
+   - A FastAPI `APIRouter` under `/eval`:
+     - the HTML page;
+     - JSON endpoints `/eval/framework`, `/eval/jobs` (GET/POST),
+       `/eval/jobs/{id}` (GET/DELETE), `/eval/jobs/{id}/resume` and
+       `/eval/publish`.
+   - `app.py` gets two lines: include the router, and a nav link.
+   - Tests use a fake Celery and a fake Redis.
+4. **Network:** `ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`,
+   a copy of `mikrotik-firewall-cse-panel-cross-zone.yml` with one
+   forward rule: `192.168.50.11 -> LAB_IP_CSE_PANEL:6379`, inserted
+   before the first forward drop. The operator runs it (MikroTik
+   credentials).
+5. **Deploy order:** the MikroTik rule first, then ai-services-stack (the
+   worker), then cse-panel-stack (the page). Each step goes through the
+   normal production approval flow, on pve-tiny with
+   `./with-secrets-prod-tiny`.
+6. **End-to-end check, without the GPU:**
+   - submit a `--limit 1` BFCL job from the page, aimed at the selftest
+     mock;
+   - the worker runs it, the page shows the log tail and the finished
+     state, and the publish is triggered.
+   - A real Framework smoke run only with the operator's go-ahead.
+
+## As built (differences from the steps above)
+
+- **Two worker units from one module.**
+  - `eval-runner-worker-runs` takes the `eval-runner` queue: runs and
+    resumes, concurrency 1.
+  - `eval-runner-worker-ctl` takes the `eval-runner-ctl` queue: cancel,
+    publish and the Framework status loop.
+  - A click therefore never waits behind a run that takes hours.
+- **Cancelling** a queued job revokes it. A waiting or running job is
+  flagged in Redis, and the ctl worker stops its container.
+- **A run task redelivered** after a worker restart re-attaches to its
+  still-running container instead of starting the benchmark again.
+- **The page lives at `/eval`.** The CSE page links to it, and `app.py`
+  changed by 5 lines.
+
+## Rollout (each step through the production approval flow)
+
+1. **Operator: write the secret.** Run `bao login -method=oidc -no-store`,
+   then `scripts/openbao_write.py services/cse-panel` with
+   `CSE_PANEL_REDIS_PASSWORD` set to a value from `openssl rand -hex 32`.
+   Until that's written, every `./with-secrets-prod-tiny` load on this
+   branch fails closed.
+2. **The MikroTik rule:**
+   `./with-secrets-prod-tiny ansible-playbook ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
+3. **Redis password cutover (CSE idle first):** deploy `cse-panel-stack`
+   (Redis requirepass, the new page), then `cse-controller` (the worker's
+   new broker URL). The CSE worker is disconnected between the two, so
+   no CSE suite may be running.
+4. **The eval-runner play on ai-services-stack** (the workers; all
+   selftests as before).
+5. **Check:**
+   - the page shows Framework status;
+   - a `--limit 1` BFCL job queued from the page runs, publishes, and
+     shows its results.
+   That last item uses Framework for about a minute, so it needs the
+   operator's go-ahead.
+
+## Open decisions
+
+- **Sharing Framework with CSE.** v1 makes eval jobs wait for idle
+  slots, and leaves the CSE worker unchanged. A true shared lock means
+  editing `cse_tasks.py`, which another session is changing on
+  `fix/cse-report-transcript-content`. Revisit after that merges.
+- **Redis password: decided, add one.** The CSE files it touches are
+  compose and playbook env wiring only (`cse_tasks.py` and `app.py` read
+  the URL from the environment). None of them is changed on the CSE
+  branch.
+- **Merge order.** This branches from `task/eval-runner`. It touches
+  `cse-panel-stack/app/app.py` (two lines) and adds files. The CSE
+  branch changes 13 lines of the same `app.py`. A small manual merge is
+  likely; whichever lands second resolves it.
+
+## Rollout log (2026-10-02)
+
+0. **Pre-check:** the `celery` and `eval-runner` queues were empty, with
+   no unacked tasks. The four "Queued" CSE entries were stale IDs whose
+   results had expired.
+1. **MikroTik rule:** asserted present, `ok=7 failed=0`.
+2. **cse-panel-stack:** deployed, `failed=0`.
+   - Unauthenticated Redis is refused (`NOAUTH`), and `requirepass` is
+     not in the process arguments.
+   - CSE `/jobs` and `/eval` return HTTP 200.
+3. **cse-controller:** deployed, `failed=0`. The CSE worker logs
+   `Connected to redis://:**@192.168.20.30` and is ready.
+4. **ai-services-stack eval-runner play:** `failed=0`, all selftests OK.
+   - `eval-runner-worker-runs` and `-ctl` are active and connected.
+   - `/eval/api/state` shows `glm-5.3-flash`, 4 slots, 0 busy.
+   - The images were rebuilt, so `publish.py`'s formatting fixes are now
+     baked in.

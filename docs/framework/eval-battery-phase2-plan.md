@@ -560,3 +560,31 @@ are ordered by how directly they unblock an actual pending decision
       copy-pasted per script
 - [ ] Any 0%/near-zero/"0 scored" result is inspected at the raw-output
       level before being reported as a real number
+
+## Running GPQA/IFEval from eval-runner (2026-10)
+
+GPQA and IFEval no longer run on `framework` or garuda. They run from the
+`eval-runner` image on `ai-services-stack` (`ai_seg`), as an HTTP client
+of whatever model Framework's llama-server is serving on `:8080`. Use
+`eval-run gpqa|ifeval [--pilot] [--concurrency N]` on that CT. It pins the
+same lm_eval 0.4.12 and `--gen_kwargs max_gen_toks=8192` as every result
+above, so new numbers stay comparable. Setup and usage:
+`docs/eval-runner/plan.md`.
+
+Other `eval-run` commands:
+- `eval-run selftest` checks the whole harness without Framework or the
+  GPU.
+- `eval-run results` prints scores plus response-quality flags.
+- `eval-run resume <run>` continues an interrupted run from its cache.
+
+Every request is greedy (`temperature: 0` from both task configs, as in
+all the results above).
+
+**Finding from the new flags, applied to existing data (2026-10-01).**
+Qwen3.6-35B's GPQA redo, the 57.07% leader above, has **49 of 198
+questions with an empty response**, and 54 where flexible-extract found
+no answer letter. Its IFEval redo has 16 of 541 empty. That is the
+signature of reasoning using up the 8192-token budget before an answer
+is written. So 57.07% is a floor on its GPQA capability under this
+budget, not a ceiling. Compare reasoning models' GPQA numbers with that
+in mind, and check `eval-run results`' `empty` count on every new run.

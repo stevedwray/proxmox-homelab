@@ -1,0 +1,18 @@
+# local-os/default -- the sandbox each AgentBench os-std episode runs in
+# (one throwaway container per episode, networking disabled, started by
+# eval-runner-agentbench's task worker). Same as AgentBench's own
+# data/os_interaction/res/dockerfiles/default, but:
+#   - pinned to ubuntu:26.04, the release the historical images were built
+#     from (August 2026, `FROM ubuntu` = 26.04 then);
+#   - with every package the os-std task inits apt-get at episode start
+#     pre-installed (netcat-openbsd for "netcat", libssl-dev, wamerican,
+#     and install_nettools.sh's net-tools/iproute2/lsof). With networking
+#     disabled those apt-gets fail -- harmlessly, AgentBench ignores init
+#     exit codes -- and the tools are already there, as they were when the
+#     historical runs fetched them over the network.
+ARG UBUNTU_IMAGE=ubuntu:26.04
+FROM ${UBUNTU_IMAGE}
+RUN apt-get update \
+    && apt-get install -y python3 python3-pip git vim curl wget unzip zip tree \
+       netcat-openbsd net-tools iproute2 lsof libssl-dev wamerican
+CMD ["bash"]

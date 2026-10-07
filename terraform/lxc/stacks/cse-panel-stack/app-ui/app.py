@@ -15,6 +15,10 @@ from dash.exceptions import PreventUpdate
 from flask import request
 
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
+# The Eval battery page still lives on panel-web (eval_battery.py), reached
+# through its own cse-panel-api.<domain> route, until it moves into Dash.
+LAB_DOMAIN = os.environ.get("LAB_DOMAIN", "")
+EVAL_BATTERY_URL = f"https://cse-panel-api.{LAB_DOMAIN}/eval" if LAB_DOMAIN else "#"
 
 # Duplicated verbatim from app/app.py (panel-web's own FastAPI app) --
 # panel-ui has no import path to that module, this is a deliberate
@@ -149,6 +153,9 @@ app.layout = dbc.Container(
     style={"padding": "32px", "maxWidth": "900px"},
     children=[
         html.H1("CyberSecEval Control Panel"),
+        html.P(html.A("Eval battery (GPQA, IFEval, BFCL, AgentBench, RepoBench) →",
+                      href=EVAL_BATTERY_URL, target="_blank", rel="noopener"),
+               className="text-muted"),
         dcc.Store(id="jobs-store"),
         dbc.Tabs(id="tabs", active_tab="run-tab", className="mt-3", children=[
             dbc.Tab(run_tab, tab_id="run-tab", label="Run"),

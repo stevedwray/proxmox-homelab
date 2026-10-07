@@ -9,6 +9,10 @@
     cse_panel_compose_content: "{{ lookup('file', '../../stacks/' + cse_panel_stack_name + '/docker-compose.yml') }}"
     cse_panel_stack_dir: "/opt/stacks/{{ cse_panel_stack_name }}"
     cse_panel_app_dir: /srv/cse-panel/app
+    # Redis auth (2026-10-02): its port is reachable from cse-controller
+    # and ai-services-stack (eval-runner's worker); the firewall alone
+    # gated it before.
+    cse_panel_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
     cse_panel_ui_app_dir: /srv/cse-panel/panel-ui
     docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
@@ -45,6 +49,18 @@
         state: directory
         mode: "0755"
 
+    # uid 999 is the redis user in the official redis:7.4-alpine image.
+    - name: Write Redis config (persistence + requirepass)
+      ansible.builtin.copy:
+        dest: /srv/cse-panel/redis.conf
+        owner: "999"
+        group: "999"
+        mode: "0600"
+        content: |
+          appendonly yes
+          requirepass {{ cse_panel_redis_password }}
+      no_log: true
+
     - name: Create panel-web app directory
       ansible.builtin.file:
         path: "{{ cse_panel_app_dir }}"
@@ -55,6 +71,12 @@
       ansible.builtin.copy:
         src: "../../stacks/{{ cse_panel_stack_name }}/app/app.py"
         dest: "{{ cse_panel_app_dir }}/app.py"
+        mode: "0644"
+
+    - name: Write panel-web's Eval battery page module (docs/eval-runner/panel-plan.md)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app/eval_battery.py"
+        dest: "{{ cse_panel_app_dir }}/eval_battery.py"
         mode: "0644"
 
     - name: Write panel-web's requirements.txt
@@ -98,8 +120,11 @@
     - name: Write compose variable substitution file
       ansible.builtin.copy:
         dest: "{{ cse_panel_stack_dir }}/.env"
-        mode: "0644"
-        content: "LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}\n"
+        mode: "0600"
+        content: |
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}
+          CSE_PANEL_REDIS_PASSWORD={{ cse_panel_redis_password }}
+      no_log: true
 
     - name: Write docker-compose.yml to stack directory
       ansible.builtin.copy:

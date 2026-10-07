@@ -1,0 +1,32 @@
+# eval-runner-bfcl -- BFCL (bfcl-eval 2025.8.6.2) as a thin HTTP client of
+# Framework's llama-server. Built locally on ai-services-stack by
+# deploy-ai-services-stack.yml next to eval-runner:local and started one run
+# at a time by /usr/local/bin/eval-run (`eval-run bfcl`). Its own image
+# because bfcl-eval pins numpy/tree-sitter/openai versions that lm_eval's
+# image doesn't share. See docs/eval-runner/plan.md.
+FROM python:3.12-slim
+
+# Same uid-1000 convention as eval-runner:local (results dir is owned by 1000).
+RUN useradd --create-home --uid 1000 app
+
+WORKDIR /results
+
+# Constrained to the exact package set of the framework venv behind every
+# historical BFCL number, so new scores stay comparable with them (109
+# packages, names and versions identical). soundfile, transformers and
+# safetensors aren't bfcl-eval dependencies but were installed in that venv
+# too -- qwen-agent, which bfcl-eval imports, fails without soundfile.
+COPY bfcl-constraints.txt /tmp/bfcl-constraints.txt
+RUN pip install --no-cache-dir --only-binary=:all: -c /tmp/bfcl-constraints.txt \
+      "bfcl-eval==2025.8.6.2" soundfile transformers safetensors \
+    && rm /tmp/bfcl-constraints.txt
+
+# The wrapper, run setup (runmeta.py exec), the shared results writer and
+# the selftest pieces. summarize/publish/selftest_checks are what the
+# selftest's checks import.
+COPY bfcl_run.py mock_openai.py publish.py runmeta.py selftest_checks.py summarize.py wrapper_common.py wrapper_selftest.sh /opt/eval-runner/
+RUN chmod 0755 /opt/eval-runner/wrapper_selftest.sh
+
+USER app
+ENV HOME=/home/app
+ENTRYPOINT ["python"]
