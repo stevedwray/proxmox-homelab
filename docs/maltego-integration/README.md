@@ -589,3 +589,177 @@ multi-angle report quality, but it is unrelated to MCP/`osint_
 investigate` and was not investigated further here — a real open item
 for whoever next touches subagent tool-call handling in
 `engine/orchestrator.py`.
+
+## Phase 4: Company and person OSINT (planned, not started)
+
+The operator asked directly: can this pipeline find information on
+people or companies, not just domains? Honest answer at the time: the
+general `deep-research-agent` (`web_search`/`fetch_url_to_workspace`)
+already can, generically, the same way it researched `discord.com`'s
+organizational context — no new work needed for that baseline.
+`investigate_domain` specifically cannot — it is scoped to DNS/WHOIS/
+ASN/threat-intel for a domain name, nothing more. This phase is the
+*dedicated* tooling: structured company-registry lookups and
+legitimate, free-tier person/footprint tools, exposed as new `osint-mcp`
+tools the same way `investigate_domain` was.
+
+### Scope decisions (made by the operator, not defaulted)
+
+- **Both companies and people are in scope.**
+- **People-OSINT use case: general person lookup** (not narrowed to
+  employee/attack-surface enumeration specifically) — the broader,
+  more dual-use framing. Given this repo's established context (GVM/
+  Wazuh/Greenbone/cve-mcp/T-Pot — a defensive security research
+  homelab, not a public-facing product), tools in this phase are built
+  from **public, legitimate, ToS-compliant sources only** — the kind a
+  journalist, security researcher, or licensed investigator would use —
+  not data-broker/people-search aggregators (Spokeo, BeenVerified,
+  Pipl-style services), which are mostly paid, often ToS-grey, and a
+  meaningfully different risk/legitimacy class. Each new tool's own
+  description should say what it's for (due diligence, security
+  research, OSINT footprint discovery) so the model doesn't need to
+  guess at appropriate use the way it had to guess at preferring
+  `investigate_domain` over `web_search` — see Phase 3c's finding that
+  silent tool availability isn't enough, the model needs to be told.
+
+### Provider research (done 2026-10-03, via live web search, not assumed)
+
+| Provider | Covers | Cost | Verdict |
+|---|---|---|---|
+| **UK Companies House API** | Any UK-registered company: profile, officers, PSC (beneficial owners), filing history | **Free**, no usage fees, 600 req/5min, 5-minute signup at `developer.company-information.service.gov.uk` | **Use it.** Official UK government registry, genuinely free, generous limit. |
+| **SEC EDGAR (full-text + submissions API)** | US public companies only: filings, CIK lookup, full-text search since 2001 | **Free**, no API key needed at all | **Use it.** Official US government source. Real limitation: public companies only — most small/private businesses won't appear. |
+| **Hunter.io** | Domain Search (finds a company's email-address pattern) + Email Finder/Verifier (person+company → likely email) | **Free**: 50 credits/month, no card required | **Use it.** The real company→person bridge tool — finding a person's professional email given their name and employer's domain is exactly the legitimate use case this phase should lead with. |
+| **Sherlock** (`sherlock-project/sherlock` on GitHub) | Checks a given username across 400+ social/web platforms for an existing account | **Free**, open-source (actively maintained, v0.16.2 as of Sept 2026) | **Use it**, vendored the same way `maltego-mcp` was (pinned commit, source inspected before trusting it — same supply-chain caution as before). |
+| **OpenCorporates** | The largest open global company database (200M+ companies, 140+ jurisdictions) | **No longer free** as of 2026 — every endpoint 401s without a paid `api_token`. Paid tiers start at £2,250/yr. | **SKIPPED (operator decision 2026-10-03)**: Companies House + SEC EDGAR cover UK/US; everything else falls back to generic `web_search`. Not revisited unless a real gap shows up in practice. |
+| **HaveIBeenPwned** | Breach-check for a specific email address (confirms if it appears in a known breach) | **Paid-only** for the person-relevant endpoint, from $4.39/mo. | **SKIPPED (operator decision 2026-10-03)**: stay fully free-tier, same as every other provider in this project so far. |
+
+### Proposed architecture
+
+Same pattern as Phase 2/3 — new lookup functions in `osint-mcp`'s own
+TypeScript source (`investigate.ts` or a new sibling module), each
+wired to a new MCP tool, not new Python logic in `deep-research-agent`
+(which only ever calls MCP tools, never implements OSINT lookups
+itself):
+
+- **`investigate_company(name, domain?)`** — Companies House lookup by
+  name (UK) and/or SEC EDGAR lookup by name/ticker (US public), plus
+  Hunter.io Domain Search if a domain is known or discoverable via
+  `web_search`. Degrades gracefully per-provider exactly like
+  `investigate_domain`'s Tier 1/2 providers do (missing API key →
+  that provider's section just doesn't appear, never an error).
+- **`find_person_email(name, domain)`** — Hunter.io Email Finder: given
+  a person's name and their employer's domain, returns the likely
+  email address and Hunter's own confidence score.
+- **`find_username(username)`** — Sherlock, checking the given username
+  across its 400+ platform list, returning which platforms have a
+  matching account.
+
+OpenCorporates and HaveIBeenPwned skipped per operator decision
+2026-10-03 (table above) — only these three tools, all free-tier.
+
+All three would be added to the Searcher's tool list in `app.py` the
+same conditional way `osint_investigate` was (`None` when unconfigured,
+never a hard error), and `prompts.py`'s `SEARCH_SUBAGENT_INSTRUCTIONS`
+needs a second `{tool_note}`-style section explicitly telling the
+model when to prefer these over `web_search` — Phase 3c proved this
+step is not optional.
+
+### What's needed before implementation can start
+
+1. ~~Operator decisions on OpenCorporates and HaveIBeenPwned~~ — **done
+   2026-10-03**, both skipped, free-tier only.
+2. **New OpenBao secrets**: `COMPANIES_HOUSE_API_KEY`, `HUNTER_API_KEY`
+   (both free signups, same safe-staging procedure as `OTX_API_KEY` —
+   scratch-manifest `--check` dry run before touching the real
+   manifest).
+3. **Sherlock vendoring**: inspect the actual source at a pinned commit
+   before trusting it (same supply-chain step taken for `maltego-mcp`
+   and `lidless-labs/maltego-mcp`) — it's a larger, more actively-
+   contributed project than either of those, so this should be a
+   lighter check, but still a real one, not skipped.
+
+**DONE and confirmed live 2026-10-03.** All three tools built, deployed,
+and verified end-to-end with real data against the actual running
+`osint-mcp` server (not just unit-level checks):
+
+- `find_username("torvalds")` → 90 real per-user profile URLs across
+  GitHub, Bitbucket, Codeforces, etc.
+- `investigate_company("Monzo Bank", domain="monzo.com")` → real
+  Companies House data (company number 09446231, status, officers,
+  registered address, SIC codes) + Hunter.io domain search (real email
+  pattern + 10 real employee emails/positions).
+- `investigate_company("Tesla Inc")` → both UK Companies House (a real,
+  unrelated dissolved shell company literally named "TESLA INC.
+  LIMITED" — a genuine name collision, not a bug) and US SEC EDGAR
+  (correctly resolved to the real Tesla, Inc., CIK 0001318605, with
+  real recent filings).
+- `find_person_email("Rob Whelan", "monzo.com")` → exact match
+  (`robwhelan@monzo.com`, 85/100 confidence, verification: valid).
+
+Two real bugs found and fixed via this live testing, not assumed from
+code review:
+
+1. **Docker builds on this LXC can't reach `deb.debian.org` directly**
+   (confirmed via direct reproduction: TCP connect timeout) — any
+   `apt-get` inside a Docker build needs to route through this LXC's own
+   apt-cacher-ng proxy explicitly; Docker builds don't inherit the
+   host's own apt.conf.d proxy config automatically. PyPI is reachable
+   directly without any proxy.
+2. **Sherlock's CSV column order** is
+   `username,name,url_main,url_user,exists,http_status,response_time_s`
+   — an early version extracted `url_main` (the platform's generic
+   homepage) instead of `url_user` (the real per-user profile URL),
+   confirmed by actually reading Sherlock's real output, not re-derived
+   from its source alone.
+3. **The operator's own Companies House key had a stray leading tab
+   character** (a copy-paste artifact) that silently broke HTTP Basic
+   Auth with a non-obvious "Invalid Authorization header" error —
+   defended against generally with `.trim()` rather than assuming clean
+   secret input going forward.
+4. **SEC EDGAR's name matching was too strict**: "Tesla Inc" didn't
+   match SEC's own registered title "Tesla, Inc." due to the comma.
+   Fixed by normalizing punctuation on both sides before comparing.
+
+`COMPANIES_HOUSE_API_KEY`/`HUNTER_API_KEY` are live in OpenBao
+(`services/mcp-utility`, confirmed via a scratch-manifest `--check` dry
+run across all 5 profiles before promoting to `mandatory()`).
+`OpenCorporates`/`HaveIBeenPwned` remain skipped per the operator's
+earlier decision. Not yet merged to `stable`.
+
+### Hardening against the one real failure found in a live run
+
+A full three-angle test run (Companies House + Hunter.io + Sherlock, all
+in one request) surfaced a genuine failure in the `find_username` angle,
+with the shared `web_search` quota exhausted trying to manually
+compensate. Root-caused, not just retried blindly: **Sherlock routinely
+exits non-zero (observed exit code 1) even after successfully writing a
+complete, valid CSV with real results** — across 400+ sites, something
+failing/timing out individually is normal, not exceptional, and the
+process exit code reflects that rather than "did it produce usable
+output." `execFileAsync` throws on any non-zero exit, so this was
+silently discarding perfectly good results every time it happened —
+looking exactly like "transient flakiness" but actually a consistent,
+reproducible bug.
+
+Fixed: `find_username` now reads the CSV regardless of Sherlock's exit
+code, only failing on a genuinely missing/unreadable file. Verified the
+fix holds across several fresh usernames afterward (a common word and a
+deliberately obscure one, both completed cleanly in 55-66 seconds).
+Also added a single automatic retry (500ms delay, fetch-based lookups
+only — not Sherlock, whose own 58-second-plus runtime makes blind
+retries expensive) for genuine transient network blips on the four
+quick API calls, and explicit prompt guidance telling the Searcher to
+report a tool failure honestly rather than burning the shared quota
+trying to replicate its function manually.
+
+**Separate, unrelated finding from the same round**: a redeploy of
+`ai-services-stack` failed with `[Errno 28] No space left on device` —
+`/var/lib/docker` on that LXC is its own dedicated 24GB volume
+(independent of `/`'s own free space) and had filled to 98% from
+repeated same-day rebuilds. Fixed with `docker image prune -a -f` +
+`docker builder prune -f` (~9GB freed, unused images/build cache only,
+no volumes touched). Also caught that piping a background deploy
+command through `| tail -N` reports `tail`'s own exit code, not the
+real command's — this masked the disk-full failure as "exit code 0"
+once, caught only by a direct container check afterward. See
+[[feedback_pipe_tail_masks_exit_code]].

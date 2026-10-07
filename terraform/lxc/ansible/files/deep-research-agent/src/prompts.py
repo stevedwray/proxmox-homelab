@@ -104,7 +104,7 @@ Find relevant sources via `web_search`, fetch the promising ones with
 `delegate_tasks` to extract the relevant information -- do not read fetched
 pages yourself, you have no file-reading tools for exactly this reason.
 </Task>
-
+{osint_tool_note}
 <Strategy>
 1. Formulate focused search queries for your assigned angle. Avoid vague
    modifiers like "latest" -- be specific about what you're looking for.
@@ -148,6 +148,107 @@ If you exceed a quota, gracefully state that you could not complete the
 deep-dive due to limits and return what you have found so far, with whatever
 real source URLs you already gathered.
 </Hard Limits>
+"""
+
+# Found 2026-10-03 (docs/maltego-integration/README.md Phase 3c): a real
+# interactive run investigating discord.com's threat-intel posture called
+# `investigate_domain` exactly ONCE and `web_search` 74 times, exhausting
+# the shared web_search quota before the other two research angles could
+# even start. osint_investigate/investigate_domain was never mentioned
+# anywhere in this file -- it was just silently present in the Searcher's
+# tool list, with nothing steering the model to prefer it over manually
+# searching for each threat-intel provider's results one at a time. This
+# note is inserted into SEARCH_SUBAGENT_INSTRUCTIONS (via a .replace(), not
+# .format(), in app.py -- the full instructions string is formatted again
+# later in engine/orchestrator.py with other placeholders like {date}/
+# {task_name} that aren't known yet at app.py's import time) only when
+# osint_investigate is actually configured for this deployment.
+OSINT_TOOL_NOTE = """
+<Available Tool: investigate_domain>
+You have a dedicated `investigate_domain` tool for domain/infrastructure/
+threat-intel questions. It returns DNS, WHOIS, certificate transparency,
+ASN/hosting info, AND threat-intel enrichment (VirusTotal, Shodan,
+GreyNoise, AlienVault OTX) for one domain in a single call -- more
+accurate and far cheaper than manually searching for each of those
+separately. If your assigned angle involves a specific domain's
+infrastructure or threat-intel posture, call `investigate_domain` FIRST,
+before any `web_search` calls for that domain. Only use `web_search` for
+what it doesn't cover (general context, news, organizational background,
+non-domain questions).
+</Available Tool: investigate_domain>
+
+<Available Tools: investigate_company, find_person_email, find_username>
+For company research, call `investigate_company` FIRST -- it returns UK
+Companies House registry data (company number, status, officers,
+incorporation date) and/or US SEC EDGAR filings in one call, for UK-
+registered or US-public companies. It only covers those two
+jurisdictions; fall back to `web_search` for other companies or for
+anything it doesn't return (news, funding history, general background).
+
+For a specific person's likely professional email, call
+`find_person_email` with their full name and employer's domain rather
+than guessing or searching for it -- it uses Hunter.io's own verified
+email-pattern data.
+
+To check whether a given username/handle has accounts on other
+platforms, call `find_username` rather than manually searching each
+platform one at a time -- it checks 400+ platforms in one call.
+
+All three are for legitimate due-diligence/security-research use (the
+kind of public-record and professional-contact lookups a journalist or
+security researcher would do) -- not for compiling private/personal
+information about someone beyond what these specific tools return.
+
+If one of these tools returns an error or no data, do NOT try to
+manually replicate its specific function with many `web_search` calls
+(e.g. searching each of 400+ platforms individually to compensate for a
+failed `find_username`) -- that burns through the shared `web_search`
+quota and can cause OTHER angles to fail too. Report that specific gap
+honestly in your findings (the tool was unavailable for X) and move on
+to what you can answer.
+</Available Tools: investigate_company, find_person_email, find_username>
+
+<Available Tools: investigate_youtube_channel, investigate_steam_profile, investigate_twitch_channel, find_creator_contact_email>
+For content-creator research (YouTube, Twitch, or gaming-identity
+questions), prefer these over `web_search`:
+
+- `investigate_youtube_channel` (by @handle): subscriber/view/video counts,
+  channel description, creation date. It does NOT return a business
+  contact email -- that field isn't exposed by YouTube's API even though
+  it may appear on the channel's public About page, so don't expect it.
+- `investigate_steam_profile` (by vanity URL or SteamID64): persona name,
+  real name if public, current game, profile visibility. It needs a vanity
+  URL or SteamID64 as input -- it is NOT a name-search tool. If you don't
+  already know the person's Steam identity, use `web_search` first (e.g.
+  "<name> steamcommunity.com") to find a candidate profile URL, extract the
+  vanity slug or numeric ID from it, THEN call `investigate_steam_profile`
+  with that. Found live 2026-10-04: a Searcher given this tool for a
+  creator with no publicly-known Steam handle used web_search/fetch for the
+  whole angle and never called this tool at all, because it had nothing to
+  pass it -- don't let that happen; the discovery step above is what
+  prevents it.
+- `investigate_twitch_channel` (by username): bio, creation date,
+  broadcaster type. It does NOT return follower count -- Twitch removed
+  cross-user follower lookups in 2023 -- don't report a follower count for
+  Twitch unless you found it some other way (e.g. a page you fetched) and
+  say so.
+- `find_creator_contact_email` (by URL): fetches ONE specific page you
+  give it (a YouTube About tab, a Twitch panel, a Linktree-style bio-link
+  page) and extracts any email published there. This is not a search tool
+  -- you must already have the URL (e.g. from `investigate_youtube_channel`
+  or a `web_search` result) before calling it. There is no API, free or
+  paid, that looks up an individual creator's email directly; this is the
+  closest available substitute (reading a page they chose to publish
+  contact info on), and it will often find nothing for pages that reveal
+  an email only via client-side JavaScript -- report that honestly rather
+  than treating "no email found" as a tool failure.
+
+TikTok has no equivalent tool: confirmed that TikTok's official API
+requires the account owner's own login consent to read their stats, so
+there is no way to look up a third party's TikTok profile at all. For
+TikTok specifically, `web_search` is the only option -- don't expect a
+dedicated tool and don't burn quota trying to find one.
+</Available Tools: investigate_youtube_channel, investigate_steam_profile, investigate_twitch_channel, find_creator_contact_email>
 """
 
 ANALYZER_SUBAGENT_INSTRUCTIONS = """You are a Page-Analyzer sub-agent. Today is {date}.

@@ -146,7 +146,7 @@ async def list_workspace_files() -> str:
 _GREP_TIMEOUT_SECONDS = 15
 
 
-def _grep_worker(lines: list, pattern: str, max_matches: int, context_lines: int, result_queue) -> None:
+def _grep_worker(lines: list, pattern: str, max_matches: int, context_lines: int, result_conn) -> None:
     """Module-level so it's picklable for the spawned subprocess -- see
     this module's top-of-file comment for why grep specifically needs
     this: the regex pattern comes from the LLM itself, and an arbitrary
@@ -165,7 +165,7 @@ def _grep_worker(lines: list, pattern: str, max_matches: int, context_lines: int
                     break
 
         if not matches:
-            result_queue.put(("ok", f"No matches found for '{pattern}'."))
+            result_conn.send(("ok", f"No matches found for '{pattern}'."))
             return
 
         out = []
@@ -177,10 +177,12 @@ def _grep_worker(lines: list, pattern: str, max_matches: int, context_lines: int
                 prefix = "> " if j == match_idx else "  "
                 out.append(f"{j + 1:04d}{prefix}{lines[j]}")
 
-        result_queue.put(("ok", "\n".join(out)))
+        result_conn.send(("ok", "\n".join(out)))
     except Exception as e:
         import traceback
-        result_queue.put(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
+        result_conn.send(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
+    finally:
+        result_conn.close()
 
 
 @tool
