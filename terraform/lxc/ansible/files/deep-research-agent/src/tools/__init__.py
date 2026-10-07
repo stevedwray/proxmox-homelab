@@ -11,6 +11,7 @@ from tools.fs import (
 from tools.web import fetch_url_to_workspace, web_search
 from tools.todos import write_todos, read_todos
 from tools.meta import think_tool
+from tools.osint import osint_investigate
 
 # -------------------------------------------------------------
 # [!CAUTION] RULES FOR LLM CODING ASSISTANTS EDITING THIS:
@@ -56,6 +57,9 @@ __all__ = [
     "write_todos",
     "read_todos",
     "think_tool",
+    # None if OSINT_MCP_URL/OSINT_MCP_TOKEN aren't configured -- app.py
+    # must check before adding it to any sub-agent's tools list.
+    "osint_investigate",
     # TUI helpers (not agent tools)
     "get_workspace_files",
     "get_workspace_file_content",

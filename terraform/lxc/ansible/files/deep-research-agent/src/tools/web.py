@@ -15,11 +15,11 @@ _SEARCH_TIMEOUT_SECONDS = 30
 _TAVILY_API_URL = "https://api.tavily.com/search"
 
 
-def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
+def _fetch_worker(url: str, convert_to_md: bool, result_conn) -> None:
     """Module-level (not a closure) so it can be pickled and re-run in a
     fresh spawned interpreter -- run via tools.core.run_with_hard_kill,
     see its own docstring/comment for why this runs in a subprocess at
-    all. Puts ("ok", data) or ("error", msg) onto result_queue; never
+    all. Sends ("ok", data) or ("error", msg) on result_conn; never
     raises across the process boundary.
     """
     try:
@@ -27,7 +27,7 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
         resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
 
         if not convert_to_md:
-            result_queue.put(("ok", resp.content))  # Raw bytes
+            result_conn.send(("ok", resp.content))  # Raw bytes
             return
 
         content_type = resp.headers.get("content-type", "").lower()
@@ -51,7 +51,7 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
                         capture_output=True, text=True, timeout=60
                     )
                     if result.returncode == 0 and result.stdout.strip():
-                        result_queue.put(("ok", result.stdout))
+                        result_conn.send(("ok", result.stdout))
                         return
 
                 # Fallback to markitdown on local file
@@ -59,12 +59,12 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
                     from utils.parsers import convert_to_markdown
                     md_content = convert_to_markdown(tmp_path)
                     if md_content:
-                        result_queue.put(("ok", md_content))
+                        result_conn.send(("ok", md_content))
                         return
                 except ImportError:
                     pass
 
-                result_queue.put(("ok", f"[ERROR: PDF at {url} could not be parsed. Size: {len(resp.content)} bytes. Try a different source.]"))
+                result_conn.send(("ok", f"[ERROR: PDF at {url} could not be parsed. Size: {len(resp.content)} bytes. Try a different source.]"))
             finally:
                 os.unlink(tmp_path)
         else:
@@ -78,7 +78,7 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
                 try:
                     md_content = convert_to_markdown(tmp_path)
                     if md_content:
-                        result_queue.put(("ok", md_content))
+                        result_conn.send(("ok", md_content))
                         return
                 finally:
                     os.unlink(tmp_path)
@@ -89,10 +89,12 @@ def _fetch_worker(url: str, convert_to_md: bool, result_queue) -> None:
             soup = BeautifulSoup(resp.text, "html.parser")
             for script in soup(["script", "style", "nav", "footer"]): script.extract()
             text = '\n'.join(line for line in (l.strip() for l in soup.get_text(separator='\n').splitlines()) if line)
-            result_queue.put(("ok", text))
+            result_conn.send(("ok", text))
     except Exception as e:
         import traceback
-        result_queue.put(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
+        result_conn.send(("error", f"{e}\n\nTraceback:\n{traceback.format_exc()}"))
+    finally:
+        result_conn.close()
 
 
 @tool

@@ -62,6 +62,7 @@ loading — assumes the target engine already has one loaded.
 |---|---|---|
 | `panel-web-http` | 8000 | tcp |
 | `flower-http` | 5555 | tcp |
+| `panel-ui-http` | 8050 | tcp |
 
 Both exposed to the browser only through Traefik/Authentik forward-auth
 (see `edge.yaml`), never directly.
@@ -85,6 +86,9 @@ Both exposed to the browser only through Traefik/Authentik forward-auth
   (`app.py`/`requirements.txt`), written by the deploy playbook, not
   baked into the image (matches `cse-controller`'s own bind-mount-not-image
   convention).
+- `/srv/cse-panel/panel-ui` — `panel-ui`'s own application code
+  (`app.py`/`requirements.txt`), same bind-mount-not-image convention as
+  `panel-web`.
 
 ## What May Depend on This Stack
 
@@ -115,6 +119,7 @@ other stacks build on.
 | `terraform/lxc/stacks/cse-panel-stack/stack.yaml` | Terraform-side stack definition |
 | `terraform/lxc/stacks/cse-panel-stack/docker-compose.yml` | Redis/Flower/panel-web container definitions |
 | `terraform/lxc/stacks/cse-panel-stack/app/app.py` | panel-web's FastAPI application |
+| `terraform/lxc/stacks/cse-panel-stack/app-ui/app.py` | panel-ui's Dash application |
 | `terraform/lxc/stacks/cse-panel-stack/edge.yaml` | Traefik/Authentik routing (EdgeManifest) |
 | `terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl` | Terragrunt entrypoint |
 | `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml` | Stack playbook |

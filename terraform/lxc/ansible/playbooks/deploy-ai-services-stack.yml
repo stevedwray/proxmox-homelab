@@ -153,6 +153,15 @@
     # llamacpp route above -- not a new egress rule.
     ai_services_deep_research_openai_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, matches ai_services_openwebui_llamacpp_api_base above
     ai_services_tavily_api_key: "{{ lookup('env', 'TAVILY_API_KEY') | mandatory('TAVILY_API_KEY env var is required') }}"
+    # Phase 3 OSINT MCP client (docs/maltego-integration/README.md). URL
+    # built from the same LAB_IP_MCP_UTILITY var docs-rag-mcp/cve-mcp-
+    # server's own allowed-hosts entries use, not a hardcoded IP.
+    # OSINT_MCP_TOKEN already exists in OpenBao (services/mcp-utility,
+    # confirmed live 2026-10-02 for osint-mcp itself) and this stack's own
+    # pve-tiny profile already includes that entry -- safe to use
+    # mandatory() directly, not a staged default-empty rollout.
+    ai_services_osint_mcp_url: "http://{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8010/mcp"
+    ai_services_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
 
     # web-search-mcp + mcpo: headless-browser web search (Playwright/
     # Chromium against Bing/Brave/DuckDuckGo, no API key/quota), replacing
@@ -527,6 +536,15 @@
                 # docs/deep-research/current-state.md for the full
                 # investigation. Free tier: 1000 searches/month.
                 TAVILY_API_KEY: "{{ ai_services_tavily_api_key }}"
+                # Phase 3 OSINT MCP client (docs/maltego-integration/
+                # README.md) -- osint_investigate is a real MCPTool
+                # (agent_framework.MCPStreamableHTTPTool), the first this
+                # codebase has used. Degrades to None (absent from the
+                # Searcher's tool list) if either var is unset -- see
+                # tools/osint.py -- so this is safe even if the other
+                # stack's deploy order ever changes.
+                OSINT_MCP_URL: "{{ ai_services_osint_mcp_url }}"
+                OSINT_MCP_TOKEN: "{{ ai_services_osint_mcp_token }}"
                 # Best-effort WebDAV push of final_report.md to Nextcloud
                 # (docs/nextcloud-stack/plan.md nextcloud-P2-10/11/12).
                 # Deliberately default('', true), not mandatory -- a

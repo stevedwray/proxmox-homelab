@@ -688,3 +688,8 @@
         nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
         nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/cyberseceval"
+        # Read+update+create+delete (1+2+4+8=15), not the role's
+        # read-only default (1) -- this is the operator's own reports
+        # folder, they need to be able to delete old/test runs from
+        # Nextcloud's own UI, not just view them. No re-share bit (16).
+        nextcloud_folder_share_permissions: 15
