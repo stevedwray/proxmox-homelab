@@ -68,6 +68,42 @@
         | list | length > 0
       }}
 
+- name: Extract the existing share's id and current permissions, if any
+  ansible.builtin.set_fact:
+    nextcloud_folder_share_existing_entry: >-
+      {{
+        (nextcloud_folder_share_existing.json.ocs.data
+         | selectattr('share_with', 'equalto', nextcloud_folder_share_with_user)
+         | list | first) if nextcloud_folder_share_already_shared else {}
+      }}
+
+# The create task below is genuinely create-once (its own `when` skips
+# forever after the share exists), so a permissions change in
+# nextcloud_folder_share_permissions was silently never applied to an
+# existing share -- found live 2026-10-07: cyberseceval's share had
+# stayed at the role's read-only default (1) with no way to delete
+# files from Nextcloud's own UI, even after the owning playbook's vars
+# asked for something wider. This task is the actual reconciliation.
+- name: Update the share's permissions if they don't match the desired value
+  ansible.builtin.uri:
+    url: >-
+      {{ nextcloud_folder_share_base_url }}/ocs/v2.php/apps/files_sharing/api/v1/shares/{{ nextcloud_folder_share_existing_entry.id }}?format=json
+    method: PUT
+    url_username: "{{ nextcloud_folder_share_owner_user }}"
+    url_password: "{{ nextcloud_folder_share_owner_password }}"
+    force_basic_auth: true
+    headers:
+      OCS-APIRequest: "true"
+    body_format: form-urlencoded
+    body:
+      permissions: "{{ nextcloud_folder_share_permissions }}"
+    status_code: 200
+  when: >-
+    nextcloud_folder_share_already_shared and
+    (nextcloud_folder_share_existing_entry.permissions | int) != (nextcloud_folder_share_permissions | int)
+  delegate_to: localhost
+  no_log: true
+
 - name: Create the share (folder not yet shared with the target user)
   ansible.builtin.uri:
     url: >-
