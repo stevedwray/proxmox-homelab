@@ -27,3 +27,19 @@ spec:
         # instead of Authentik. Traefik terminates TLS and routes only; the
         # real auth boundary is the application layer.
         mode: none
+    - name: llm-control
+      host: llm-control.${LAB_DOMAIN}
+      backend:
+        type: url
+        # llama-swap's model control page (docs/llama-swap/plan.md). It has
+        # no login of its own; framework's llama-swap.nft lets only Traefik
+        # reach :8099, so Authentik here is the only way in.
+        url: http://${LAB_FQDN_FRAMEWORK}:8099
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth

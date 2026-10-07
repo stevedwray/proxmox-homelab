@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/v260/config-schema.json
+#
+# llama-swap config for framework.gibbsgreatly.xyz -- SEED COPY.
+#
+# llama-swap is only the control page here (https://llm-control.<lab domain>,
+# Authentik login; :8099 itself only accepts Traefik and localhost): pick
+# a model, click load, and it starts that model's llama-server build on the
+# normal port, 0.0.0.0:8080. Clients keep talking to llama-server on :8080
+# directly and get whatever is loaded; they never go through llama-swap, so
+# they can't switch models. See docs/llama-swap/plan.md.
+#
+# ansible/00-initial-setup/framework-desktop-llama-swap.yml copies this to
+# /home/steve/llama-swap/config.yaml only when that file does not exist yet.
+# After that, edit the live file (VS Code Remote-SSH); llama-swap reloads it
+# on save. Copy settled changes back here by hand.
+#
+# No secrets in this file. The backends read /etc/llamacpp/api-key.
+
+# Qwen3.8-Flash-Next (~104 GiB of weights) takes minutes to load from NVMe.
+healthCheckTimeout: 900
+logLevel: info
+# Both streams go to journald, so a crash still leaves a trace.
+logToStdout: "proxy,upstream"
+# Never inject "loading..." text into reasoning_content.
+sendLoadingState: false
+# Never unload on idle. A model stays loaded until another is loaded.
+globalTTL: 0
+# SIGTERM grace before a force-kill. Freeing ~100 GiB is not instant.
+unloadTimeout: 60
+
+macros:
+  # llama.cpp builds. Each model entry picks one.
+  fork: "/home/steve/llama.cpp/build-vk/bin/llama-server"               # Nathanw strix-halo-vulkan @ b02cb35
+  upstream: "/home/steve/llama.cpp-upstream/build-vk/bin/llama-server"  # ggml-org master @ a4d880fd5
+  # llm-memgate <weights MB>: waits for MemAvailable >= weights + 4096 MB,
+  # then execs the server (see /usr/local/bin/llm-memgate).
+  memgate: "/usr/local/bin/llm-memgate"
+  # Every model is served where clients already look: :8080, same API key.
+  common: "--host 0.0.0.0 --port 8080 --api-key-file /etc/llamacpp/api-key --alias ${MODEL_ID} --n-gpu-layers 999 --metrics"
+  qwen_gguf: "/mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"
+  qwen_mb: 106178   # du -sm of the UD-Q4_K_XL directory, 2026-10-01
+  glm_gguf: "/mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf"
+  glm_mb: 97127     # du -sm of the UD-IQ2_XXS-glm5-next directory, 2026-10-01
+
+models:
+  glm-5.3-flash:
+    name: "GLM-5.3-Flash (upstream build)"
+    description: "UD-IQ2_XXS (glm5-next metadata rewrite), 131072 ctx. Upstream only: the fork has no glm5next arch."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${glm_mb}
+      ${upstream} ${common}
+      -m ${glm_gguf}
+      --ctx-size 131072
+      --jinja
+      --chat-template-kwargs '{"reasoning_effort":"high"}'
+      --temp 1.0 --top-p 0.95 --min-p 0.01
+
+  qwen3.8-flash-next:
+    name: "Qwen3.8-Flash-Next (Nathanw fork)"
+    description: "UD-Q4_K_XL, 131072 ctx, Nathanw strix-halo-vulkan build. Same as nathanw-llamacpp.service."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${qwen_mb}
+      ${fork} ${common}
+      -m ${qwen_gguf}
+      --ctx-size 131072
+
+  qwen3.8-flash-next-upstream:
+    name: "Qwen3.8-Flash-Next (upstream build)"
+    description: "Same model and flags on upstream llama.cpp, for fork-vs-upstream comparison. May not load."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${qwen_mb}
+      ${upstream} ${common}
+      -m ${qwen_gguf}
+      --ctx-size 131072
+
+routing:
+  router:
+    use: group
+    settings:
+      groups:
+        # One model at a time: they all use :8080 and ~100 GiB each.
+        # Loading one stops the others first.
+        chat:
+          swap: true
+          exclusive: true
+          members:
+            - glm-5.3-flash
+            - qwen3.8-flash-next
+            - qwen3.8-flash-next-upstream
+
+# Model to start when llama-swap starts (e.g. after a reboot). It also runs on
+# every config reload, so saving this file while another model is loaded
+# switches back to this one.
+hooks:
+  on_startup:
+    preload:
+      - glm-5.3-flash
