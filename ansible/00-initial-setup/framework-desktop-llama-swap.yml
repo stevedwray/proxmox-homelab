@@ -1,0 +1,295 @@
+---
+# Framework Desktop: llama-swap as the model control page, per
+# docs/llama-swap/plan.md.
+#
+#   llama-swap.service  :8099  web UI + API, key LLAMA_SWAP_API_KEY (= LLM_GPU_STACK_API_KEY)
+#     -> starts one llama-server at a time on the normal 0.0.0.0:8080, using
+#        the build, model and flags in /home/steve/llama-swap/config.yaml
+#
+# Clients keep using llama-server on :8080 directly; they never go through
+# llama-swap, so only the control page switches models.
+#
+# The config is SEEDED from files/llama-swap/config.yaml only when the live
+# file is missing. After that it is edited in place on framework and
+# llama-swap reloads it on save; re-running this playbook never overwrites it.
+#
+# Phase 1 (default): installs and starts llama-swap idle. Touches nothing
+# else -- the hand-run GLM on :8080 and nathanw-llamacpp.service are left
+# alone, and no model is loaded.
+#
+# Phase 2 (-e framework_llama_swap_cutover=true): also stops the hand-run
+# GLM llama-server and stops + disables nathanw-llamacpp.service (unit file
+# kept). :8080 is then free for a model loaded from the control page.
+# nathanw-llamacpp-embed.service (:8085) is never touched.
+#
+# A changed binary, env file or unit restarts llama-swap, which stops the
+# model it started. Don't re-run it during a benchmark.
+#
+# Rollback (docs/llama-swap/plan.md, "Rollback"): run this playbook with
+# -e framework_llama_swap_enabled=false, then
+# framework-desktop-llamacpp-native.yml with
+# -e framework_llamacpp_chat_enabled=true.
+#
+# Run (same OpenBao profile as framework-desktop-llamacpp-native.yml):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
+#     -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/framework-desktop-llama-swap.yml
+
+- name: Manage llama-swap on the Framework Desktop
+  hosts: framework
+  become: true
+  gather_facts: false
+
+  vars:
+    framework_llama_swap_enabled: true
+    framework_llama_swap_cutover: false
+    framework_llama_swap_version: "260"
+    framework_llama_swap_sha256: d856a908507560cbdc253300bcf49092c7ead3c85098687428b0c9d4832ff46d
+    framework_llama_swap_tarball: "llama-swap_{{ framework_llama_swap_version }}_linux_amd64.tar.gz"
+    framework_llama_swap_url: "https://github.com/mostlygeek/llama-swap/releases/download/v{{ framework_llama_swap_version }}/{{ framework_llama_swap_tarball }}"
+    framework_llama_swap_install_dir: "/opt/llama-swap/{{ framework_llama_swap_version }}"
+    framework_llama_swap_bin: /usr/local/bin/llama-swap
+    framework_llama_swap_user: steve
+    framework_llama_swap_config_dir: /home/steve/llama-swap
+    framework_llama_swap_config: /home/steve/llama-swap/config.yaml
+    framework_llama_swap_env_dir: /etc/llama-swap
+    framework_llama_swap_env_file: /etc/llama-swap/llama-swap.env
+    framework_llama_swap_port: 8099
+    framework_llama_swap_model_port: 8080
+    framework_llama_swap_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+    framework_llama_swap_required_paths:
+      - /home/steve/llama.cpp/build-vk/bin/llama-server
+      - /home/steve/llama.cpp-upstream/build-vk/bin/llama-server
+      - /mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
+      - /mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+
+  tasks:
+    - name: Rollback -- stop llama-swap and hand :8080 back
+      when: not framework_llama_swap_enabled | bool
+      block:
+        - name: Stop and disable llama-swap (its llama-server children stop with it)
+          ansible.builtin.systemd_service:
+            name: llama-swap.service
+            state: stopped
+            enabled: false
+
+        - name: Wait for port 8080 to be free
+          ansible.builtin.wait_for:
+            port: "{{ framework_llama_swap_model_port }}"
+            state: stopped
+            timeout: 120
+
+        - name: Stop here -- next run framework-desktop-llamacpp-native.yml with -e framework_llamacpp_chat_enabled=true
+          ansible.builtin.meta: end_host
+
+    - name: Check both llama-server builds and both model files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ framework_llama_swap_required_paths }}"
+      register: framework_llama_swap_paths
+
+    - name: Fail if any required file is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "{{ item.item }} is missing."
+      loop: "{{ framework_llama_swap_paths.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Create the versioned install directory
+      ansible.builtin.file:
+        path: "{{ framework_llama_swap_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download the llama-swap release (checksum pinned)
+      ansible.builtin.get_url:
+        url: "{{ framework_llama_swap_url }}"
+        dest: "{{ framework_llama_swap_install_dir }}/llama-swap.tar.gz"
+        checksum: "sha256:{{ framework_llama_swap_sha256 }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Unpack the llama-swap binary
+      ansible.builtin.unarchive:
+        src: "{{ framework_llama_swap_install_dir }}/llama-swap.tar.gz"
+        dest: "{{ framework_llama_swap_install_dir }}"
+        remote_src: true
+        include:
+          - llama-swap
+        creates: "{{ framework_llama_swap_install_dir }}/llama-swap"
+
+    - name: Point /usr/local/bin/llama-swap at this version
+      ansible.builtin.file:
+        src: "{{ framework_llama_swap_install_dir }}/llama-swap"
+        dest: "{{ framework_llama_swap_bin }}"
+        state: link
+        force: true
+      notify: Restart llama-swap
+
+    - name: Install llm-memgate (memory pre-flight for each model start)
+      ansible.builtin.copy:
+        src: files/llama-swap/llm-memgate
+        dest: /usr/local/bin/llm-memgate
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the config directory
+      ansible.builtin.file:
+        path: "{{ framework_llama_swap_config_dir }}"
+        state: directory
+        owner: "{{ framework_llama_swap_user }}"
+        group: "{{ framework_llama_swap_user }}"
+        mode: "0755"
+
+    - name: Seed the config (only if missing -- the live file is edited in place)
+      ansible.builtin.copy:
+        src: files/llama-swap/config.yaml
+        dest: "{{ framework_llama_swap_config }}"
+        owner: "{{ framework_llama_swap_user }}"
+        group: "{{ framework_llama_swap_user }}"
+        mode: "0644"
+        force: false
+
+    - name: Create the env file directory
+      ansible.builtin.file:
+        path: "{{ framework_llama_swap_env_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the API key env file
+      ansible.builtin.copy:
+        dest: "{{ framework_llama_swap_env_file }}"
+        content: "LLAMA_SWAP_API_KEY={{ framework_llama_swap_api_key }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart llama-swap
+
+    # A dummy key keeps the real one out of any error output; -validate only
+    # needs the env macro to resolve.
+    - name: Validate the live config
+      ansible.builtin.command:
+        argv:
+          - "{{ framework_llama_swap_bin }}"
+          - -config
+          - "{{ framework_llama_swap_config }}"
+          - -validate
+      environment:
+        LLAMA_SWAP_API_KEY: validate-only
+      changed_when: false
+
+    - name: Write the llama-swap unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/llama-swap.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llama-swap.yml -- do not edit by hand
+          [Unit]
+          Description=llama-swap -- llama.cpp model control page, port {{ framework_llama_swap_port }} (models on {{ framework_llama_swap_model_port }})
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User={{ framework_llama_swap_user }}
+          EnvironmentFile={{ framework_llama_swap_env_file }}
+          ExecStart={{ framework_llama_swap_bin }} -config {{ framework_llama_swap_config }} -listen 0.0.0.0:{{ framework_llama_swap_port }} -watch-config
+          # on-failure, as nathanw-llamacpp.service: a deliberate stop stays stopped.
+          Restart=on-failure
+          RestartSec=5
+          # Stopping llama-swap also stops every llama-server it started.
+          KillMode=control-group
+          TimeoutStopSec=90
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart llama-swap
+
+    # Phase 2 only. The pkill pattern matches the hand-run GLM (started with
+    # -m first), never a llama-server that llama-swap started (--host first).
+    - name: Cutover -- free :8080 for models loaded from llama-swap
+      when: framework_llama_swap_cutover | bool
+      block:
+        - name: Stop and disable nathanw-llamacpp.service (unit file kept for rollback)
+          ansible.builtin.systemd_service:
+            name: nathanw-llamacpp.service
+            state: stopped
+            enabled: false
+
+        - name: Stop the hand-run upstream llama-server (GLM-5.3-Flash evaluation)
+          ansible.builtin.command:
+            argv:
+              - pkill
+              - -TERM
+              - -f
+              - "^/home/steve/llama.cpp-upstream/build-vk/bin/llama-server -m /mnt/nvme2/models-gguf/glm-5.3-flash/"
+          register: framework_llama_swap_pkill
+          changed_when: framework_llama_swap_pkill.rc == 0
+          failed_when: framework_llama_swap_pkill.rc not in [0, 1]
+
+        - name: Wait for port 8080 to be free
+          ansible.builtin.wait_for:
+            port: "{{ framework_llama_swap_model_port }}"
+            state: stopped
+            timeout: 120
+          when: framework_llama_swap_pkill.rc == 0
+
+    - name: Enable and start llama-swap
+      ansible.builtin.systemd_service:
+        name: llama-swap.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Flush handlers so a changed binary, key or unit takes effect
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for llama-swap's /health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llama_swap_port }}/health"
+        headers:
+          Authorization: "Bearer {{ framework_llama_swap_api_key }}"
+        status_code: 200
+      register: framework_llama_swap_health
+      until: framework_llama_swap_health.status == 200
+      retries: 30
+      delay: 2
+      no_log: true
+
+    - name: Check llama-swap rejects a request without the API key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llama_swap_port }}/v1/models"
+        status_code: 401
+
+    # Listing models does not load one. No model is loaded by this playbook.
+    - name: Check llama-swap lists models with the API key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_llama_swap_port }}/v1/models"
+        headers:
+          Authorization: "Bearer {{ framework_llama_swap_api_key }}"
+        return_content: true
+        status_code: 200
+      register: framework_llama_swap_models
+      failed_when: framework_llama_swap_models.json.data | length == 0
+      no_log: true
+
+    - name: Show the model IDs llama-swap serves
+      ansible.builtin.debug:
+        msg: "{{ framework_llama_swap_models.json.data | map(attribute='id') | list }}"
+
+  handlers:
+    - name: Restart llama-swap
+      ansible.builtin.systemd_service:
+        name: llama-swap.service
+        state: restarted
+        daemon_reload: true
