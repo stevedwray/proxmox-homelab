@@ -20,3 +20,19 @@ the hand-run GLM still serves :8080. Phase 2 (cutover) waits for the operator.
   - GLM (pid 1621293) still serves :8080, `/health` ok.
   - Embeddings on :8085 are unchanged.
   - `nathanw-llamacpp` is still inactive but enabled (disabled at cutover).
+- 2026-10-07: replaced llama-swap's API key (a browser basic-auth popup,
+  which Bitwarden can't fill) with an Authentik login, in this order:
+  1. Framework playbook (`TASK_APPROVAL=llm-control-login`, ok=21
+     changed=7): loaded `llama-swap.nft` first, then removed `apiKeys` from
+     the live config and the env file. Verified: :8099 times out from the
+     LAN and answers locally.
+  2. `reconcile-edge.py --apply` (full stacks dir, `llm-control-edge`):
+     write_count 3, i.e. the `llm-control` app and provider created and
+     linked to the embedded outpost. The only issue was the known
+     Nextcloud EGR211 drift; its delete-report entries are never applied.
+  3. `provision.sh --stack proxy-stack`: ok=107 failed=0.
+  4. `configure-llm-control-dns-records.yml`: A record
+     llm-control → 192.168.30.10, replicated to both Technitium nodes.
+
+  Verified: `https://llm-control.lab.gibbsgreatly.xyz/ui/` returns 302 to
+  Authentik, and Traefik's host reaches framework:8099 (200).

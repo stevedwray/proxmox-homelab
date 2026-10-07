@@ -10,14 +10,21 @@ A web page for picking which model Framework serves, like Ollama but for any
 llama.cpp build:
 
 ```
-  you ──► http://framework.gibbsgreatly.xyz:8099/ui   (llama-swap: list, load, logs)
+  you ──► https://llm-control.lab.gibbsgreatly.xyz/ui/   (Authentik login → llama-swap: list, load, logs)
                      │ starts one at a time, using the right build + flags
                      ▼
   clients ──► :8080  llama-server  (GLM on upstream, or Qwen on the fork, …)
 ```
 
-- **llama-swap (v260)** runs as `llama-swap.service` on `:8099`. You need the
-  API key to reach it (`LLM_GPU_STACK_API_KEY`, the same key as :8080).
+- **llama-swap (v260)** runs as `llama-swap.service` on `:8099`. You reach it
+  at `https://llm-control.lab.gibbsgreatly.xyz` and log in with the normal
+  Authentik login, which a password manager can fill. llama-swap has no
+  login of its own. A small nftables table on framework
+  (`files/llama-swap/llama-swap.nft`, loaded by the unit) lets only Traefik
+  (192.168.30.10) and framework itself reach :8099, so it can't be opened
+  directly. The route is `llm-control` in
+  `terraform/lxc/stacks/llm-gpu-stack/edge.yaml`; the DNS record comes from
+  `configure-llm-control-dns-records.yml`.
 - **Loading a model in the UI** stops whatever llama-swap is running, waits
   for the memory check (`llm-memgate`: MemAvailable ≥ model size + 4 GB), then
   starts that model's `llama-server` on the normal `0.0.0.0:8080` with the
@@ -55,7 +62,7 @@ embeddings service on :8085, or Docker.
 The memory check would refuse the load anyway (about 16 GB free), but only
 after a 2-minute wait.
 
-Check: the UI opens at `:8099/ui` and lists the three models. Nothing is
+Check: the UI opens at `https://llm-control.lab.gibbsgreatly.xyz/ui/` and lists the three models. Nothing is
 loaded.
 
 ## Phase 2: hand GLM over (a few minutes with no model on :8080)
