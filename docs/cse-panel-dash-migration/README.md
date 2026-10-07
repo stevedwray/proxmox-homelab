@@ -255,10 +255,49 @@ a code bug.
 actually renders real bars for completed jobs after a refresh, and that
 clicking through to new runs updates it live.
 
-## Next step
+## Hand-back: Phase 4 cutover, live (2026-10-07)
 
-Operator: refresh `https://cse-panel-ui-dev.lab.gibbsgreatly.xyz`,
-confirm the Results chart shows real bars. This closes out Phase 3a.
-Phase 3b (OCCULT tab) stays unwritten/gated on `docs/mitre-occult/
-plan.md` Phase 1. Phase 4 (cutover) is the only remaining phase with a
-written step block (`panel-dash-11`/`12`) not yet executed.
+`panel-dash-11` (edge.yaml: repoint `cse-panel`→`:8050`, add
+`cse-panel-api`→`:8000`, remove the dev route) and `panel-dash-12`
+(deleted `app.py`'s `index()` route, ~500 lines, plus 2 now-unused
+imports) both executed, all 9 combined gates passed.
+
+**Real, unplanned blocker found and resolved during deploy:**
+`reconcile-edge.py --apply` refused to write *anything* (not just the
+cutover's own changes) because it detected the `cse-panel-ui-dev`
+Authentik application/provider (created in Phase 0) as "unmanaged
+owned" objects once `edge.yaml` stopped declaring that route — a
+deliberate safety gate that blocks all writes rather than
+auto-deleting Authentik objects. Resolved by deleting both via
+Authentik's API directly (`DELETE
+/api/v3/core/applications/<slug>/` — note: **applications key on
+`slug` in the URL, not `pk`**, despite `pk` being the field name in
+list responses; providers key on `pk` as expected — first delete
+attempt on the app 404'd using `pk`, succeeded once switched to
+`slug`), then re-ran the reconcile clean (only the known `EGR211`
+remained).
+
+**Verified live, end-to-end:**
+- `cse-panel.lab.gibbsgreatly.xyz` → `302` (forward-auth), dynamic
+  config on the `proxy-stack` LXC confirms `cse-panel-backend` →
+  `192.168.20.30:8050` (panel-ui) — **the new Dash UI is now the real
+  production control panel**.
+- `cse-panel-api.lab.gibbsgreatly.xyz` → `302`, confirmed routing to
+  `:8000` (panel-web) — the JSON API has its own standalone address
+  now, per the operator's §6-E decision.
+- `cse-panel-flower.lab.gibbsgreatly.xyz` unchanged.
+- `cse-panel-ui-dev.lab.gibbsgreatly.xyz` → `404` — correctly gone.
+- Sanity check: `grafana`/`netbox` still resolve/route correctly
+  (unaffected by the shared `proxy-stack`/`technitium-stack` redeploys).
+- `panel-web`'s `/healthz` and `/benchmarks` still work unchanged after
+  the `index()` deletion, confirming the API really was independent of
+  the removed route.
+
+## Status: all plan.md phases complete except 3b (gated)
+
+Phases 0, 1, 2, 3a, 4 are live in production. Phase 3b (OCCULT
+results tab) remains deliberately unwritten, gated on
+`docs/mitre-occult/plan.md`'s own Phase 0–1 existing first — see §6-E.
+This workspace's active work is otherwise done; next action is the
+operator's own call on when to PR `task/cse-panel-dash-migration` into
+`stable`.
