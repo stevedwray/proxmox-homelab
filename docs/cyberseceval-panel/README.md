@@ -35,10 +35,15 @@ on `pve-tiny`.
   control page at `https://llm-control.<domain>` (`docs/llama-swap/`).
   Load the model there before starting a run.
 - The `framework-llama-server` preset just uses whatever is loaded.
-- **Known gap:** reports and the panel label every such run with the
-  preset's old Qwen GGUF path, whatever model actually answered. For
-  now, check llm-control or the run's own timing to know which model it
-  was. Recording the real model name is in the benchmark-panel plan.
+- **Which model answered (2026-10-08):** at the start and end of every
+  run, `cse_tasks.py` reads the backend's `/v1/models` and `/props`.
+  - It stores `result["served_model"]`: alias (= the llm-control entry
+    name), GGUF path, build, n_ctx and the server's sampling defaults.
+  - If the model changed between the start and the end, that's flagged.
+  - Reports show `**Model:**` and `**Endpoint:**` instead of the old
+    `**Backend:** <preset GGUF path>` line.
+  - The panel has a Model column and shows the model in the run detail.
+  - Older runs fall back to the preset's request name.
 
 **Run metrics (live 2026-10-07; only runs started after 06:38 UTC have
 them):**
@@ -64,10 +69,11 @@ them):**
   percentage (for MITRE always "C2 refusal %", 0 or 100 with one test
   case) and labels bars by job id. Its replacement is in the
   benchmark-panel plan.
-- **Runs that name the model get a smaller answer limit.** For example,
-  `glm-5.3-flash` on the custom backend gets 16384 tokens, not 65536,
-  because the cse-lab patch only treats model names starting with `/`
-  as local.
+- **Fixed 2026-10-08:** runs that named their model (e.g.
+  `glm-5.3-flash` on the custom backend) were capped at 16384 answer
+  tokens. The cse-lab cap now gives 65536 to any model with a base URL,
+  i.e. every self-hosted backend. The cloud judge has none and keeps
+  16384.
 - **PurpleLlama sends temperature 0.6 and top-p 0.9 on every request,**
   overriding each model's recommended sampling.
 - **Qwen3.8-Flash-Next's chat template defaults to

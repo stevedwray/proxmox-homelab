@@ -509,6 +509,29 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch9.changed or cse_controller_openai_patch10.changed
 
+    # Real gap found 2026-10-07: the 65536 cap only applied when the model
+    # name started with "/" (the default preset's GGUF path), so a run that
+    # named its model -- e.g. glm-5.3-flash on the custom backend -- was
+    # capped at 16384. What actually separates the model under test from
+    # the cloud judge is the base URL: every self-hosted backend has one,
+    # the judge (OPENAI::gpt-4o-mini::<key>) has none.
+    - name: Apply the 65536 cap to every self-hosted model, not just GGUF-path names (cse-lab fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '65536 if self\.model\.startswith\("/"\) else 16384'
+        replace: '65536 if self.base_url else 16384'
+      register: cse_controller_openai_patch11
+
+    - name: Commit the base-URL cap rule on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: apply the 65536 completion cap to every model with a
+          base_url (self-hosted), not just GGUF-path names; the cloud judge
+          has no base_url and keeps 16384 (2026-10-08)."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch11.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"

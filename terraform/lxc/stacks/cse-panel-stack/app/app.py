@@ -358,6 +358,12 @@ def _job_summary(job_id: str) -> dict:
         # Duration, tokens and tokens/s, recorded by cse-controller's
         # cse_tasks.py (absent for runs from before 2026-10-07).
         entry["run_metrics"] = result.get("run_metrics")
+        # The model that actually answered (cse_tasks.py reads it from the
+        # backend at run time; absent for runs from before 2026-10-08).
+        served = result.get("served_model") or {}
+        entry["model"] = served.get("alias") or served.get("id") or ""
+        if served.get("changed_during_run"):
+            entry["model"] += f" -> {served['changed_during_run']}"
         if result.get("stats_error"):
             entry["stats_error"] = result["stats_error"]
     elif res.state == "FAILURE":

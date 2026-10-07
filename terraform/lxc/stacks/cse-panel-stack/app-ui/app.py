@@ -120,6 +120,7 @@ results_tab = html.Div([
             columns=[
                 {"name": "Job ID", "id": "job_id"},
                 {"name": "Benchmark", "id": "benchmark"},
+                {"name": "Model", "id": "model"},
                 {"name": "Backend", "id": "backend"},
                 {"name": "Submitted by", "id": "submitted_by"},
                 {"name": "Submitted at", "id": "submitted_at"},
@@ -423,6 +424,7 @@ def show_run_detail(selected_rows, data):
         html.H4(f"{job.get('benchmark', '?')} — {job.get('job_id', '?')}", className="card-title"),
         html.P([
             html.Strong("State: "), job.get("state_label", "?"), "  ·  ",
+            html.Strong("Model: "), job.get("model") or "not recorded", "  ·  ",
             html.Strong("Backend: "), job.get("backend", "?"), "  ·  ",
             html.Strong("Submitted by: "), job.get("submitted_by", "?"),
             " at ", job.get("submitted_at", "?"),

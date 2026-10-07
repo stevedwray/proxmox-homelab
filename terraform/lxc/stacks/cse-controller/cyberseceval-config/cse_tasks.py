@@ -22,6 +22,8 @@ import re
 import shutil
 import signal
 import subprocess
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -698,6 +700,68 @@ def _render_stats_section(stats: dict | None, stats_error: str | None) -> list[s
     return lines
 
 
+def _server_snapshot(base_url: str, api_key: str, get_json=None) -> dict:
+    """Which model the backend is actually serving, read at run time: the
+    first /v1/models id and, for llama-server, /props (alias, GGUF path,
+    build, context, server-side sampling defaults). The same fields
+    eval-runner's runmeta.py records. The preset's backend_model is just
+    the name the request sends -- llama-server ignores it and answers
+    with whatever is loaded, so it can't say which model ran."""
+    def fetch(url: str) -> dict:
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.load(response)
+
+    get_json = get_json or fetch
+    v1 = base_url.rstrip("/")
+    root = v1[: -len("/v1")] if v1.endswith("/v1") else v1
+    snapshot: dict = {}
+    try:
+        data = get_json(f"{v1}/models").get("data") or []
+        snapshot["id"] = data[0].get("id") if data else None
+    except Exception as e:  # unreachable, auth, not OpenAI-compatible
+        snapshot["error"] = f"{type(e).__name__}: {e}"[:200]
+        return snapshot
+    try:
+        props = get_json(f"{root}/props")
+    except Exception:  # not llama-server, or /props disabled
+        return snapshot
+    settings = props.get("default_generation_settings") or {}
+    params = settings.get("params") or {}
+    snapshot.update({
+        "alias": props.get("model_alias"),
+        "path": props.get("model_path"),
+        "build": props.get("build_info"),
+        "n_ctx": settings.get("n_ctx"),
+        "server_sampling": {k: params.get(k) for k in (
+            "temperature", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty")},
+    })
+    return snapshot
+
+
+def _model_label(result: dict) -> str:
+    """The model that actually answered, falling back to the preset's
+    request name for runs recorded before served_model existed."""
+    served = result.get("served_model") or {}
+    return served.get("alias") or served.get("id") or str(result.get("backend_model"))
+
+
+def _model_header_lines(result: dict) -> list[str]:
+    served = result.get("served_model") or {}
+    detail = [x for x in (
+        Path(served["path"]).name if served.get("path") else None,
+        f"{served['n_ctx']:,} ctx" if served.get("n_ctx") else None,
+        f"build {served['build']}" if served.get("build") else None,
+    ) if x]
+    model = _model_label(result) + (f" ({', '.join(detail)})" if detail else "")
+    if served.get("changed_during_run"):
+        model += f" -- **changed during the run to {served['changed_during_run']}**"
+    return [
+        f"**Model:** {model}  ",
+        f"**Endpoint:** {result.get('backend_base_url')}  ",
+    ]
+
+
 def _usage_totals(records: list[dict]) -> dict:
     """Totals for one group of model calls. Speeds come from llama-server's
     own per-request `timings` where present (the cloud judge has none)."""
@@ -854,7 +918,7 @@ def _write_report(
         f"**Started:** {started_at}  ",
         f"**Finished:** {finished_at}  ",
         f"**Summary:** {summary}  ",
-        f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+        *_model_header_lines(result),
         f"**Test cases:** {num_test_cases} (random sample: {random_sample})",
     ]
     headline = _metrics_headline(result.get("run_metrics"))
@@ -973,7 +1037,7 @@ def _push_report_to_nextcloud(
         f"# CyberSecEval: {benchmark} -- Results",
         "",
         f"**Submitted by:** {submitted_by}  ",
-        f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+        *_model_header_lines(result),
         f"**Started:** {started_at}  ",
         f"**Finished:** {finished_at}  ",
         f"**Test cases:** {len(transcript)}  ",
@@ -1004,7 +1068,7 @@ def _push_report_to_nextcloud(
             f"# CyberSecEval: {benchmark} -- {label.replace('-', ' ')} {i + 1}",
             "",
             f"**Submitted by:** {submitted_by}  ",
-            f"**Backend:** {result.get('backend_model')} @ {result.get('backend_base_url')}  ",
+            *_model_header_lines(result),
             f"**Started:** {started_at}  ",
             f"**Finished:** {finished_at}  ",
         ]
@@ -1134,6 +1198,12 @@ def run_benchmark(
         "random_sample": random_sample,
         "started_at": started_at,
     }))
+    # Which model is actually loaded -- read now, and again at the end.
+    snapshot_args = (
+        backend_base_url or DEFAULT_BACKEND_BASE_URL,
+        backend_api_key or os.environ.get("FRAMEWORK_LLM_API_KEY") or "not-needed",
+    )
+    served_model = _server_snapshot(*snapshot_args)
     # Points the cse-lab usage-logger patch at this run's own log.
     run_env = {**os.environ, "CSE_USAGE_LOG": str(run_dir / USAGE_LOG_NAME)}
 
@@ -1160,6 +1230,12 @@ def run_benchmark(
         result = {"rc": proc.returncode, "log_path": str(run_dir / RUN_LOG_NAME)}
 
     result["run_dir"] = str(run_dir)
+    served_at_end = _server_snapshot(*snapshot_args)
+    start_name = served_model.get("alias") or served_model.get("id")
+    end_name = served_at_end.get("alias") or served_at_end.get("id")
+    if start_name and end_name and start_name != end_name:
+        served_model["changed_during_run"] = end_name
+    result["served_model"] = served_model
     result["backend_base_url"] = backend_base_url or DEFAULT_BACKEND_BASE_URL
     result["backend_model"] = backend_model or DEFAULT_BACKEND_MODEL
 

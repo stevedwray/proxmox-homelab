@@ -1,7 +1,7 @@
 # Benchmark panel: one control panel for every benchmark
 
-Status: **planning; operator decisions pending (2026-10-08).** Nothing has
-been built. Step packets get written once the decisions below are made.
+Status: **decisions made (2026-10-08): the operator accepted every
+recommendation below. Phase 1 is in progress.**
 
 ## Goal
 
@@ -122,7 +122,19 @@ Facts checked for this plan:
 - **Compare tab:** rows are models, columns are each benchmark's headline
   score plus tokens/s. The data source is decision 1.
 
-## Decisions needed (operator)
+## Decisions (accepted 2026-10-08)
+
+The operator accepted the recommendations below:
+1. **Results store:** CyberSecEval headline rows go into the Nextcloud
+   Tables "Model evaluations" table, and Compare reads that.
+2. **Lock scope:** benchmark runs only.
+3. **Sampling and effort:** record both on every run now; the policy
+   comes later.
+4. **Eval battery UI:** rebuild it as a Dash tab.
+5. **Loading models:** stays manual for now.
+
+The options as they were presented:
+
 
 1. **Where the Compare tab reads results from.**
    - *(a) Recommended:* add CyberSecEval headline rows to the existing
@@ -166,6 +178,7 @@ directly to pve-tiny.
 
 1. **CyberSecEval records which model answered,** plus the 16384-cap
    fix. Standalone, small: cse-controller and the panel's display.
+   **In progress on `task/cse-model-identity`** (see README).
 2. **The Framework lock in both workers, plus eval-runner run metrics.**
    cse-controller, ai-services-stack (eval-runner play), and the panel's
    status line.
