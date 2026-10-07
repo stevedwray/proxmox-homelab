@@ -2,7 +2,8 @@
 #
 # llama-swap config for framework.gibbsgreatly.xyz -- SEED COPY.
 #
-# llama-swap is only the control page here (http://framework:8099/ui): pick
+# llama-swap is only the control page here (https://llm-control.<lab domain>,
+# Authentik login; :8099 itself only accepts Traefik and localhost): pick
 # a model, click load, and it starts that model's llama-server build on the
 # normal port, 0.0.0.0:8080. Clients keep talking to llama-server on :8080
 # directly and get whatever is loaded; they never go through llama-swap, so
@@ -13,8 +14,7 @@
 # After that, edit the live file (VS Code Remote-SSH); llama-swap reloads it
 # on save. Copy settled changes back here by hand.
 #
-# No secrets in this file. The control page's key is ${env.LLAMA_SWAP_API_KEY}
-# (systemd EnvironmentFile); the backends read /etc/llamacpp/api-key.
+# No secrets in this file. The backends read /etc/llamacpp/api-key.
 
 # Qwen3.8-Flash-Next (~104 GiB of weights) takes minutes to load from NVMe.
 healthCheckTimeout: 900
@@ -27,9 +27,6 @@ sendLoadingState: false
 globalTTL: 0
 # SIGTERM grace before a force-kill. Freeing ~100 GiB is not instant.
 unloadTimeout: 60
-
-apiKeys:
-  - "${env.LLAMA_SWAP_API_KEY}"
 
 macros:
   # llama.cpp builds. Each model entry picks one.
