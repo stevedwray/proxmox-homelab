@@ -124,6 +124,9 @@ results_tab = html.Div([
                 {"name": "Submitted by", "id": "submitted_by"},
                 {"name": "Submitted at", "id": "submitted_at"},
                 {"name": "State", "id": "state_label"},
+                {"name": "Duration", "id": "duration"},
+                {"name": "Tokens", "id": "tokens"},
+                {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
             data=[],
             row_deletable=True,
@@ -224,6 +227,77 @@ def submit_run(n_clicks, benchmarks, num_test_cases):
     return f"Job submitted: {data['job_id']} ({data['benchmark']})", "success", True
 
 
+def _format_duration(seconds):
+    if seconds is None:
+        return ""
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _metric_columns(job):
+    """Duration / Tokens / Tokens/s for the runs table, from the run_metrics
+    cse_tasks.py records (model under test only; blank for older runs)."""
+    metrics = job.get("run_metrics") or {}
+    mut = metrics.get("model_under_test") or {}
+    return {
+        "duration": _format_duration(metrics.get("duration_seconds")),
+        "tokens": f"{mut['completion_tokens']:,}" if "completion_tokens" in mut else "",
+        "tokens_per_second": mut.get("generation_tokens_per_second", ""),
+    }
+
+
+# Same rows as cse_tasks.py's report.md "Run metrics" table.
+_METRIC_ROWS = [
+    ("Model calls", "calls", "{:,}"),
+    ("Prompt tokens", "prompt_tokens", "{:,}"),
+    ("Generated tokens (incl. reasoning)", "completion_tokens", "{:,}"),
+    ("Longest single answer (tokens)", "max_completion_tokens", "{:,}"),
+    ("Answers cut off at the token limit", "hit_token_limit", "{:,}"),
+    ("Generation speed (tokens/s)", "generation_tokens_per_second", "{}"),
+    ("Prompt processing (tokens/s)", "prompt_tokens_per_second", "{}"),
+    ("Time in model calls", "request_seconds", None),
+]
+
+
+def _run_metrics_block(metrics):
+    if not metrics:
+        return [html.H5("Run metrics", className="mt-4"),
+                html.P("Not recorded for this run.", className="text-muted")]
+    block = [
+        html.H5("Run metrics", className="mt-4"),
+        html.P([html.Strong("Duration: "), _format_duration(metrics.get("duration_seconds")) or "–"]),
+    ]
+    groups = [(key, label) for key, label in (
+        ("model_under_test", "Model under test"),
+        ("judge", "Judge / expansion (cloud)"),
+    ) if metrics.get(key)]
+    if not groups:
+        return block + [html.P("No model calls were recorded.", className="text-muted")]
+    body = []
+    for label, key, fmt in _METRIC_ROWS:
+        cells = []
+        for group_key, _ in groups:
+            value = metrics[group_key].get(key)
+            if value is None:
+                cells.append("–")
+            elif fmt is None:
+                cells.append(_format_duration(value))
+            else:
+                cells.append(fmt.format(value))
+        body.append(html.Tr([html.Td(label)] + [html.Td(c) for c in cells]))
+    table = dbc.Table(
+        [html.Thead(html.Tr([html.Th("")] + [html.Th(label) for _, label in groups])), html.Tbody(body)],
+        bordered=True, hover=True, size="sm",
+    )
+    return block + [table]
+
+
 def _first_numeric_metric(stats_summary):
     """First [key, value] pair in stats_summary whose value string has a
     parseable percentage (e.g. "1/1 (100%)" -> 100.0) -- the primary
@@ -300,7 +374,7 @@ def poll_jobs(_n):
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-    rows = [dict(job) for job in jobs]
+    rows = [{**job, **_metric_columns(job)} for job in jobs]
     return rows, _results_chart_figure(rows)
 
 
@@ -360,6 +434,8 @@ def show_run_detail(selected_rows, data):
 
     stats_summary = job.get("stats_summary") or []
     if not stats_summary:
+        if job.get("state") == "SUCCESS":
+            return header + [html.P("No benchmark scores.", className="text-muted")] + _run_metrics_block(job.get("run_metrics"))
         return header + [html.P("No results yet.", className="text-muted")]
 
     rows = [html.Tr([html.Td(k), html.Td(str(v))]) for k, v in stats_summary]
@@ -367,7 +443,7 @@ def show_run_detail(selected_rows, data):
         [html.Thead(html.Tr([html.Th("Metric"), html.Th("Value")])), html.Tbody(rows)],
         bordered=True, hover=True, size="sm", className="mt-3",
     )
-    return header + [table]
+    return header + [table] + _run_metrics_block(job.get("run_metrics"))
 
 
 if __name__ == "__main__":
