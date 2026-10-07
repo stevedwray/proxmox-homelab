@@ -1,7 +1,7 @@
 # eval-runner
 
-Status: **the whole battery and its control panel are live (2026-10-02).**
-See "Where things stand" below. Branch `task/eval-runner` is not merged.
+Status: **the whole battery and its control panel are live, and merged to
+`stable` (#455, 2026-10-07).** See "Current state" below.
 
 Runs the eval battery (CyberSecEval aside: it has its own panel) from
 `ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
@@ -11,7 +11,38 @@ VMID 116) was removed in the pve teardown.
 
 See [`plan.md`](./plan.md) for decisions, steps and usage.
 
-## Where things stand and what's next (checkpoint 2026-10-02)
+## Current state (2026-10-08)
+
+**Changed since the 2026-10-02 checkpoint below:**
+- **Merged to `stable`** in #455 on 2026-10-07. A stable merge resolved
+  conflicts with the CyberSecEval Dash migration. The worktree
+  `~/git/proxmox-homelab-eval-runner` is no longer needed: deploy from
+  the main checkout on `stable` with the normal wrapper.
+- **Where the control page lives.** CyberSecEval's panel is now a Dash
+  app, and its old HTML index is gone. The Eval battery page still runs
+  on `panel-web` and is reached at `https://cse-panel-api.<domain>/eval`,
+  linked from the Dash header. Its back link points to the Dash UI.
+- **An outage, now fixed.** The Dash cutover (2026-10-07) was first
+  deployed from a branch without this work. For a few hours that
+  dropped `/eval` (404) and the Redis password, so the eval workers
+  couldn't connect. Redeploying cse-panel-stack and cse-controller the
+  same day fixed both. Afterwards, `/eval/api/state` showed fresh
+  Framework status.
+- **Framework.** :8080 is now started and switched from the llama-swap
+  control page (`https://llm-control.<domain>`, `docs/llama-swap/`). GLM
+  is the boot default. `framework_status()` and `runmeta.py` still talk
+  to `llama-server` directly, which keeps working because clients don't
+  go through llama-swap.
+- **Results.** The full AgentBench run finished: GLM-5.3-Flash scored
+  55% on os-std (n=100, seed 42). It's recorded in `findings.md` §5.
+- **Next: one control panel for every benchmark.**
+  `docs/benchmark-panel/plan.md` covers bringing this page and
+  CyberSecEval under one Dash panel. It includes the same run metrics
+  (tokens, tokens/s) that CyberSecEval runs now record (eval-runner
+  records only start and finish times), and a shared Framework lock.
+  That supersedes open item 4 below.
+
+## Earlier checkpoint (2026-10-02)
 
 **Live (all on pve-tiny):**
 - **eval-runner on `ai-services-stack`** (192.168.50.11): the whole

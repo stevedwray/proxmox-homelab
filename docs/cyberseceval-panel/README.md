@@ -5,7 +5,77 @@ step-by-step plan (`docs/agent-design/step-packet-schema.md` shape); this
 file is the durable status record and where each step's hand-back gets
 written (see `docs/agent-design/README.md`'s process).
 
-## Read this first: current state (2026-10-03)
+## Read this first: current state (2026-10-08)
+
+**Everything is merged to `stable`.** That includes
+`fix/cse-report-transcript-content` (the Nextcloud reporting pipeline),
+the Dash UI migration, and `task/eval-runner` (#455). It also includes
+the run metrics below, from `task/cse-run-metrics`. Everything is live
+on `pve-tiny`.
+
+**Panel layout:**
+- **`https://cse-panel.<domain>`** (Authentik) is the Dash UI (`panel-ui`,
+  :8050, `cse-panel-stack/app-ui/app.py`). It has the Run and Results
+  tabs, the runs table, run detail and the results chart. It replaced
+  the old HTML page.
+- **`https://cse-panel-api.<domain>`** is `panel-web` (:8000,
+  `app/app.py`). It's the JSON API the Dash UI calls. Its `/` returns 404
+  now.
+- **The Eval battery page** (GPQA, IFEval, BFCL, AgentBench, RepoBench;
+  `docs/eval-runner/`) still lives on `panel-web` at
+  `cse-panel-api.<domain>/eval`, linked from the Dash header. Bringing
+  it and CyberSecEval under one Dash panel is planned in
+  `docs/benchmark-panel/plan.md`.
+- **Redis requires `CSE_PANEL_REDIS_PASSWORD`.** The Dash cutover had
+  briefly deployed it without the password. That was restored on
+  2026-10-07 by redeploying both cse-panel-stack and cse-controller.
+
+**Model under test:**
+- Framework :8080 is now started and switched from the llama-swap
+  control page at `https://llm-control.<domain>` (`docs/llama-swap/`).
+  Load the model there before starting a run.
+- The `framework-llama-server` preset just uses whatever is loaded.
+- **Known gap:** reports and the panel label every such run with the
+  preset's old Qwen GGUF path, whatever model actually answered. For
+  now, check llm-control or the run's own timing to know which model it
+  was. Recording the real model name is in the benchmark-panel plan.
+
+**Run metrics (live 2026-10-07; only runs started after 06:38 UTC have
+them):**
+- **Recording.** A cse-lab patch (`deploy-cse-controller.yml`, "usage
+  logger") wraps PurpleLlama's OpenAI client. Every model call appends
+  its token usage, `finish_reason` and llama-server's own `timings` to
+  the run's `usage.jsonl`.
+- **Summary.** `cse_tasks.py` turns that into `result["run_metrics"]`:
+  - duration;
+  - for the model under test and the cloud judge separately: calls,
+    prompt tokens, generated tokens (including reasoning), the longest
+    single answer, answers cut off at the token limit, generation and
+    prompt tokens/s (from the server's timings), and time in model calls.
+- **Where it shows:**
+  - a **Run** headline and a **Run metrics** table in `report.md` and
+    the Nextcloud `results.md`;
+  - **Duration / Tokens / Tokens/s** columns in the Dash runs table;
+  - a **Run metrics** table in the Dash run detail.
+- **Tests:** `cse-controller/cyberseceval-config/test_cse_run_metrics.py`.
+
+**Known issues (2026-10-08):**
+- **The results chart is misleading.** It plots each run's *first*
+  percentage (for MITRE always "C2 refusal %", 0 or 100 with one test
+  case) and labels bars by job id. Its replacement is in the
+  benchmark-panel plan.
+- **Runs that name the model get a smaller answer limit.** For example,
+  `glm-5.3-flash` on the custom backend gets 16384 tokens, not 65536,
+  because the cse-lab patch only treats model names starting with `/`
+  as local.
+- **PurpleLlama sends temperature 0.6 and top-p 0.9 on every request,**
+  overriding each model's recommended sampling.
+- **Qwen3.8-Flash-Next's chat template defaults to
+  `reasoning_effort=xhigh`.** GLM runs at `high`, so Qwen's MITRE answers
+  run 12k-24k+ tokens and the two models aren't compared like for like.
+  This is a decision for the benchmark-panel plan.
+
+## Earlier state (2026-10-03)
 
 **Merged to `stable`/`main`.** The full implementation (`task/pve-tiny-
 host-bootstrap`, 54 commits: host onboarding through the panel UI) and
