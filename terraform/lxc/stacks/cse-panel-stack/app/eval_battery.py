@@ -166,7 +166,12 @@ def page():
         f'<span class="name">{t}</span><span class="desc">{html.escape(d)}</span></label>'
         for t, d in TASKS.items())
     links = " · ".join(f'<a href="{u}" target="_blank" rel="noopener">{html.escape(n)}</a>' for n, u in LINKS.items())
-    return PAGE.replace("{{BOXES}}", boxes).replace("{{LINKS}}", links)
+    # The panel's own UI is the Dash app on cse-panel.<domain>; panel-web's
+    # "/" no longer serves a page.
+    domain = os.environ.get("LAB_DOMAIN", "")
+    home = f"https://cse-panel.{domain}/" if domain else "/"
+    return (PAGE.replace("{{BOXES}}", boxes).replace("{{LINKS}}", links)
+            .replace("{{HOME}}", html.escape(home)))
 
 
 PAGE = """<!doctype html>
@@ -188,7 +193,7 @@ PAGE = """<!doctype html>
   #toast { margin: .5rem 0; padding: .5rem .8rem; border-radius: 4px; background: #eef; display: none; }
 </style></head>
 <body>
-<p class="muted"><a href="/">&larr; CyberSecEval</a></p>
+<p class="muted"><a href="{{HOME}}">&larr; CyberSecEval</a></p>
 <h1>Eval battery</h1>
 <p class="muted">Runs on ai-services-stack against whatever Framework's llama-server is serving.
 Results go to Nextcloud automatically: {{LINKS}}</p>
