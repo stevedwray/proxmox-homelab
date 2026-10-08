@@ -115,7 +115,7 @@ original build notes:
   nothing running. The panel is display only.
 
 **Phase 3 (built 2026-10-08, branch `task/benchmark-panel-dash`, cut
-from `task/framework-run-lock`):**
+from `task/framework-run-lock`; deployed 2026-10-08):**
 - The Dash app is now "Benchmark Control Panel". There's one header with
   the login, a Framework status bar (grey when free, amber while a
   benchmark holds the lock, red when unreachable) and a link to
@@ -148,6 +148,14 @@ from `task/framework-run-lock`):**
   table.
 
 ## Log
+
+- 2026-10-08, phase 3 deployed (`task/benchmark-panel-dash`, 3906f03d),
+  approval `benchmark-panel-dash`: `provision.sh --stack cse-panel-stack`
+  ran with failed=0. Calling the new callbacks server-side worked: the
+  Framework bar returned "glm-5.3-flash · free", and the eval runs table
+  returned its one job. A browser tab still open from before the deploy
+  logged `KeyError: framework-status.children` every 10 s. That's the
+  old page code polling the new server; reloading the tab fixes it.
 
 - 2026-10-08, phase 2 deployed (`task/framework-run-lock`, 8f7f01e9),
   approval `framework-run-lock`, in order:
