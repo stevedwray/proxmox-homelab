@@ -48,6 +48,16 @@ how far behind it is.
 
     There were no amdgpu errors, and it ended back on GLM current. Qwen
     on the current fork wasn't measured in the same run.
+  - **Promoted upstream** (operator: yes): current is now 20261008-de7fa0a3c,
+    with the old a4d880fd5 build kept as `previous`. GLM reloaded as
+    b11514-de7fa0a3c: 18.5 tok/s, same answer, no amdgpu errors.
+  - **Fork comparison** (operator asked for it): same request, builds
+    alternated twice.
+    - current b02cb35f2: 25.6 and 25.5 tok/s, 280 tokens;
+    - candidate 9e21f2e53: 26.0 and 25.8 tok/s, 265 tokens.
+    - Each build is deterministic. The two builds differ slightly in
+      wording (the FA fixes), and both answers are coherent.
+    - Recommended: promote. Awaiting the operator.
 
 - 2026-10-09, phase 3 rollout (approval `llama-builds-rollout`):
   - **Installed:** `framework-desktop-llama-builds.yml` (with-secrets-prod-tiny)
