@@ -3,3 +3,5 @@ plotly==7.1.0
 dash-bootstrap-components==2.0.4
 gunicorn==26.2.0
 requests==2.34.2
+# Time zone data for zoneinfo (the slim image may have none).
+tzdata==2025.2

@@ -132,7 +132,7 @@ results_tab = html.Div([
                 {"name": "Model", "id": "model"},
                 {"name": "Backend", "id": "backend"},
                 {"name": "Submitted by", "id": "submitted_by"},
-                {"name": "Submitted at", "id": "submitted_at"},
+                {"name": "Submitted at", "id": "submitted_local"},
                 {"name": "State", "id": "state_label"},
                 {"name": "Duration", "id": "duration"},
                 {"name": "Tokens", "id": "tokens"},
@@ -202,7 +202,8 @@ app.layout = dbc.Container(
     children=[
         html.Div([
             html.H1("Benchmark Control Panel", className="mb-0 me-auto"),
-            html.Div([html.Div(id="whoami"), html.Div(id="api-health", className="text-muted")],
+            html.Div([html.Div(id="whoami"), html.Div(id="tz-note", className="text-muted"),
+                      html.Div(id="api-health", className="text-muted")],
                      className="small text-end"),
         ], className="d-flex align-items-end mb-3"),
         # Who holds Framework (the benchmark lock shared by both families)
@@ -212,6 +213,9 @@ app.layout = dbc.Container(
                                             rel="noopener"), "."], className="text-muted small"),
         dcc.Interval(id="framework-interval", interval=10000, n_intervals=0),
         dcc.Store(id="jobs-store"),
+        # The browser's time zone (IANA name), set by the clientside
+        # callback below; every timestamp on the page is shown in it.
+        dcc.Store(id="browser-tz"),
         dbc.Tabs(id="family", active_tab="cse", className="mt-3", children=[
             dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
                     label_style={"fontSize": "1.15rem"}),
@@ -222,6 +226,19 @@ app.layout = dbc.Container(
         ]),
     ],
 )
+
+
+app.clientside_callback(
+    "function(_) { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; }"
+    " catch (e) { return null; } }",
+    Output("browser-tz", "data"),
+    Input("browser-tz", "id"),
+)
+
+
+@app.callback(Output("tz-note", "children"), Input("browser-tz", "data"))
+def tz_note(tz):
+    return f"Times in {tz}" if tz else "Times in UTC"
 
 
 def _shown(visible):
@@ -246,19 +263,19 @@ def switch_eval(section):
     return _shown(section == "run"), _shown(section == "results")
 
 
-def framework_status_text(info: dict) -> str:
+def framework_status_text(info: dict, tz=None) -> str:
     model = info.get("model") or "no model loaded"
     lock = info.get("lock")
     if lock:
         who = f"{lock.get('suite') or '?'} {lock.get('benchmark') or ''}".strip()
-        since = f" since {lock['started']}" if lock.get("started") else ""
+        since = f" since {eval_tab.local_time(lock['started'], tz)}" if lock.get("started") else ""
         return f"Framework: {model} · busy with {who} (job {lock.get('job_id')}{since}); new benchmark runs wait"
     if info.get("error") and not info.get("model"):
         return f"Framework: unreachable ({info['error']})"
     return f"Framework: {model} · free"
 
 
-def builds_text(builds: dict | None) -> str:
+def builds_text(builds: dict | None, tz=None) -> str:
     """One line on Framework's llama.cpp builds (llama-builds status)."""
     if not builds or not builds.get("backends"):
         return "llama.cpp builds: no status yet (llama-builds publishes it daily)"
@@ -273,7 +290,7 @@ def builds_text(builds: dict | None) -> str:
         cand = (b.get("candidate") or {}).get("name")
         extra = f", candidate {cand}" if cand and cand != cur.get("name") else ""
         parts.append(f"{name} {cur['name']} ({lag}{extra})")
-    return f"llama.cpp builds: {' · '.join(parts)} · checked {(builds.get('checked') or '?')[:16].replace('T', ' ')}"
+    return f"llama.cpp builds: {' · '.join(parts)} · checked {eval_tab.local_time(builds.get('checked'), tz) or '?'}"
 
 
 def framework_status_color(info: dict) -> str:
@@ -288,14 +305,15 @@ def framework_status_color(info: dict) -> str:
     Output("framework-status", "children"),
     Output("framework-status", "color"),
     Input("framework-interval", "n_intervals"),
+    State("browser-tz", "data"),
 )
-def poll_framework(_n):
+def poll_framework(_n, tz=None):
     try:
         info = requests.get(f"{PANEL_API_BASE_URL}/framework", timeout=5).json()
     except (requests.RequestException, ValueError):
         return "Framework: status unavailable (panel-web unreachable)", "danger"
-    return [framework_status_text(info), html.Br(),
-            html.Small(builds_text(info.get("builds")), className="text-muted")], framework_status_color(info)
+    return [framework_status_text(info, tz), html.Br(),
+            html.Small(builds_text(info.get("builds"), tz), className="text-muted")], framework_status_color(info)
 
 
 @app.callback(
@@ -449,8 +467,9 @@ def _empty_chart_figure(message):
 
 
 def _run_label(job):
-    """model · MM-DD HH:MM, so runs read as who and when, not job ids."""
-    when = (job.get("finished_at") or job.get("submitted_at") or "")[5:16].replace("T", " ")
+    """model · MM-DD HH:MM (browser time), so runs read as who and when, not job ids."""
+    when = (job.get("finished_local") or job.get("submitted_local")
+            or eval_tab.local_time(job.get("finished_at") or job.get("submitted_at")))[5:]
     return f"{job.get('model') or '?'} · {when}"
 
 
@@ -513,14 +532,17 @@ def _speed_chart_figure(jobs):
     Output("jobs-table", "selected_rows"),
     Input("poll-interval", "n_intervals"),
     State("cse-checked", "data"),
+    State("browser-tz", "data"),
 )
-def poll_jobs(_n, checked=None):
+def poll_jobs(_n, checked=None, tz=None):
     try:
         resp = requests.get(f"{PANEL_API_BASE_URL}/jobs", timeout=10)
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-    rows = [{**job, **_metric_columns(job), "id": job["job_id"]} for job in jobs]
+    rows = [{**job, **_metric_columns(job), "id": job["job_id"],
+             "submitted_local": eval_tab.local_time(job.get("submitted_at"), tz),
+             "finished_local": eval_tab.local_time(job.get("finished_at"), tz)} for job in jobs]
     # New runs are added at the top, so keep the ticks on the same runs,
     # not the same row numbers.
     keep = eval_tab.selected_index(rows, checked)
@@ -650,7 +672,7 @@ def run_detail(job):
             html.Strong("Model: "), job.get("model") or "not recorded", "  ·  ",
             html.Strong("Backend: "), job.get("backend", "?"), "  ·  ",
             html.Strong("Submitted by: "), job.get("submitted_by", "?"),
-            " at ", job.get("submitted_at", "?"),
+            " at ", job.get("submitted_local") or job.get("submitted_at", "?"),
         ], className="text-muted"),
     ]
 

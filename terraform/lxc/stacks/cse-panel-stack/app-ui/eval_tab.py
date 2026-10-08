@@ -13,6 +13,8 @@ The work happens in eval-runner's worker on ai-services-stack
 (eval_tasks.py); this tab only talks to panel-web.
 """
 import os
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import dash_bootstrap_components as dbc
 import requests
@@ -61,6 +63,25 @@ TABLE_STYLE = dict(
 )
 
 
+def local_time(stamp, tz=None):
+    """A UTC timestamp from the API (…Z or …+00:00) in the browser's time
+    zone (tz: an IANA name such as "Pacific/Auckland", read in the browser
+    by app.py), e.g. "2026-10-09 10:30". UTC when tz is unknown."""
+    if not stamp:
+        return ""
+    try:
+        when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return str(stamp)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    try:
+        zone = ZoneInfo(tz) if tz else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = timezone.utc
+    return when.astimezone(zone).strftime("%Y-%m-%d %H:%M")
+
+
 def _format_duration(seconds):
     if seconds is None:
         return ""
@@ -75,7 +96,7 @@ def job_metrics(job):
     return job.get("run_metrics_total") or job.get("run_metrics") or {}
 
 
-def job_row(job):
+def job_row(job, tz=None):
     """One row of the runs table."""
     metrics = job_metrics(job)
     mut = metrics.get("model_under_test") or {}
@@ -92,7 +113,7 @@ def job_row(job):
         state = f"waiting for {job['waiting_for']}"
     return {
         "id": job.get("id"),
-        "submitted": (job.get("submitted") or "").replace("T", " ").replace("Z", ""),
+        "submitted": local_time(job.get("submitted"), tz),
         "task": job.get("task") or "",
         "mode": what,
         "state": state,
@@ -131,16 +152,17 @@ def metrics_block(metrics):
                                   className="text-muted small")]
 
 
-def job_detail(job):
+def job_detail(job, tz=None):
     if not job:
-        return [html.P("Select a run above to see its log, results and metrics.", className="text-muted")]
-    row = job_row(job)
+        return [html.P("Click a run above to see its log, results and metrics.", className="text-muted")]
+    row = job_row(job, tz)
     title = f"{row['task']} · {row['mode']}" if row["task"] != "resume" else f"resume {row['run']}"
     meta = [html.Strong("State: "), row["state"]]
     for label, key in (("Run", "run"), ("Note", "note"), ("By", "submitted_by"),
                        ("Submitted", "submitted"), ("Finished", "finished")):
         if job.get(key):
-            meta += ["  ·  ", html.Strong(f"{label}: "), str(job[key])]
+            value = local_time(job[key], tz) if key in ("submitted", "finished") else str(job[key])
+            meta += ["  ·  ", html.Strong(f"{label}: "), value]
     children = [html.H4(title, className="card-title"), html.P(meta, className="text-muted")]
     if job.get("run") and job.get("state") in ("done", "failed", "cancelled"):
         children.append(html.P(html.A(
@@ -333,7 +355,7 @@ runs_section = html.Div([
         dash_table.DataTable(
             id="eval-jobs-table",
             columns=[
-                {"name": "Submitted (UTC)", "id": "submitted"},
+                {"name": "Submitted", "id": "submitted"},
                 {"name": "Benchmark", "id": "task"},
                 {"name": "Size", "id": "mode"},
                 {"name": "State", "id": "state"},
@@ -464,8 +486,9 @@ def submit(_n, on, on_ids, sizes, counts, budget, note):
     Output("eval-jobs-table", "selected_rows"),
     Input("eval-poll", "n_intervals"),
     State("eval-checked", "data"),
+    State("browser-tz", "data"),
 )
-def poll(_n, checked=None):
+def poll(_n, checked=None, tz=None):
     try:
         state = requests.get(f"{PANEL_API_BASE_URL}/eval/api/state", timeout=10).json()
     except (requests.RequestException, ValueError):
@@ -476,7 +499,7 @@ def poll(_n, checked=None):
         if links:
             links.append("  ·  ")
         links.append(html.A(label, href=url, target="_blank", rel="noopener"))
-    rows = [job_row(j) for j in jobs]
+    rows = [job_row(j, tz) for j in jobs]
     return jobs, rows, links, selected_index(rows, checked)
 
 
@@ -525,11 +548,12 @@ def tick_many(_all, _none, jobs):
     Output("eval-jobs-table", "style_data_conditional"),
     Input("eval-selected", "data"),
     Input("eval-jobs", "data"),
+    State("browser-tz", "data"),
 )
-def detail(job_id, jobs):
+def detail(job_id, jobs, tz=None):
     job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
     hidden = {"display": "none"}
-    return (job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden),
+    return (job_detail(job, tz), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden),
             ({} if job and job.get("run") else hidden), viewed_style(job and job_id))
 
 

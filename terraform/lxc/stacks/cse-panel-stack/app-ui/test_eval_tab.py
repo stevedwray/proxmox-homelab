@@ -67,14 +67,18 @@ class LayoutTest(unittest.TestCase):
 
 @unittest.skipUnless(panel_ui, "dash not installed")
 class CseResultsTest(unittest.TestCase):
-    JOBS = [{"job_id": "c2", "benchmark": "mitre", "state": "SUCCESS", "state_label": "Done"},
+    JOBS = [{"job_id": "c2", "benchmark": "mitre", "state": "SUCCESS", "state_label": "Done",
+             "submitted_at": "2026-10-08T18:00:00.123456+00:00"},
             {"job_id": "c1", "benchmark": "instruct", "state": "STARTED", "state_label": "Running"}]
 
     def test_poll_keeps_the_ticks_on_the_same_runs(self):
         resp = mock.Mock(json=lambda: {"jobs": self.JOBS})
         with mock.patch.object(panel_ui.requests, "get", return_value=resp):
             rows, _, _, kept = panel_ui.poll_jobs(1, ["c1", "gone"])
+            local, *_ = panel_ui.poll_jobs(2, [], "Pacific/Auckland")
         self.assertEqual(([r["id"] for r in rows], kept), (["c2", "c1"], [1]))
+        self.assertEqual(local[0]["submitted_local"], "2026-10-09 07:00")
+        self.assertEqual(panel_ui._run_label(local[0]), "? · 10-09 07:00")
 
     def test_clicking_shows_and_ticking_counts(self):
         self.assertEqual(panel_ui.select_job({"row": 0, "column": 1, "row_id": "c2"}), "c2")
@@ -208,6 +212,17 @@ class EvalTabTest(unittest.TestCase):
             with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-selected")):
                 _, offset = eval_tab.show_samples(1, 1, 1, "j2", 30)
             self.assertEqual(offset, 0)
+
+    def test_local_time(self):
+        lt = eval_tab.local_time
+        self.assertEqual(lt("2026-10-08T21:30:00Z", "Pacific/Auckland"), "2026-10-09 10:30")  # NZDT, +13
+        self.assertEqual(lt("2026-07-08T21:30:00+00:00", "Pacific/Auckland"), "2026-07-09 09:30")  # NZST, +12
+        self.assertEqual(lt("2026-10-08T21:30:05.123456+00:00", None), "2026-10-08 21:30")  # unknown: UTC
+        self.assertEqual(lt("2026-10-08T21:30:00Z", "Not/AZone"), "2026-10-08 21:30")
+        self.assertEqual((lt("", "UTC"), lt(None), lt("garbage")), ("", "", "garbage"))
+        row = eval_tab.job_row(DONE, "Pacific/Auckland")
+        self.assertEqual(row["submitted"], "2026-10-09 03:00")
+        self.assertIn("2026-10-09 03:00", text(eval_tab.job_detail(DONE, "Pacific/Auckland")))
 
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})

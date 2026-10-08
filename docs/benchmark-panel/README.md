@@ -255,6 +255,15 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
       cse-panel-stack ran with failed=0 and has 25 callbacks. A browser tab
       still open from before logged KeyErrors for the removed callbacks;
       reloading it fixes that.
+  - **Times in the browser's time zone** (operator request, same day):
+    - A clientside callback reads the zone (`Intl…timeZone`, e.g.
+      `Pacific/Auckland`) into a store.
+    - Submitted/finished times, chart labels, the lock's "since" and the
+      builds' "checked" are converted with `zoneinfo`, so daylight saving
+      is right for older dates.
+    - The header says which zone; it's UTC if the browser doesn't say.
+    - panel-ui now pins `tzdata`, because the slim image may have no zone
+      files.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;
