@@ -15,7 +15,7 @@ import os
 
 import dash_bootstrap_components as dbc
 import requests
-from dash import Input, Output, State, callback, ctx, dash_table, dcc, html, no_update
+from dash import ALL, MATCH, Input, Output, State, callback, ctx, dash_table, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from flask import request
 
@@ -30,6 +30,20 @@ TASKS = {
     "repobench": "RepoBench (rebuilt): next-line code completion, 1500 samples",
 }
 BUDGET_TASKS = ("gpqa", "ifeval")
+# What "how many" means for each benchmark, from eval-runner's runmeta.py
+# and wrappers (bfcl_run.py, agentbench_run.py, repobench_run.py): the
+# maximum, the pilot size, the unit and which items a smaller run takes.
+# RepoBench's count is per context length (5) and setting (3), so a run
+# of N asks 15 x N of its 1500 samples.
+SIZES = {
+    "gpqa": {"name": "GPQA diamond", "max": 198, "pilot": 40, "unit": "questions", "which": "the first {n}"},
+    "ifeval": {"name": "IFEval", "max": 541, "pilot": 40, "unit": "prompts", "which": "the first {n}"},
+    "bfcl": {"name": "BFCL simple", "max": 400, "pilot": 40, "unit": "cases", "which": "spread evenly over all 400"},
+    "agentbench": {"name": "AgentBench os-std", "max": 100, "pilot": 10, "unit": "episodes",
+                   "which": "the first {n} of the seed-42 set"},
+    "repobench": {"name": "RepoBench (rebuilt)", "max": 100, "pilot": 5, "unit": "samples",
+                  "which": "the first {n} at each of 5 context lengths x 3 settings", "per_level": 15},
+}
 LIVE_STATES = ("queued", "waiting", "starting", "running", "publishing")
 TABLE_STYLE = dict(
     style_table={"width": "100%", "overflowX": "auto"},
@@ -137,28 +151,67 @@ def can_resume(job):
     return bool(job) and job.get("state") in ("failed", "cancelled") and bool(job.get("run"))
 
 
+def size_hint(task, size, count):
+    """What the chosen size runs, e.g. "50 of 198 questions (the first 50)"."""
+    spec = SIZES[task]
+    n = {"pilot": spec["pilot"], "full": spec["max"]}.get(size, count)
+    if not isinstance(n, int) or not 1 <= n <= spec["max"]:
+        return f"Enter a number from 1 to {spec['max']}."
+    per_level = spec.get("per_level", 1)
+    total, asked = spec["max"] * per_level, n * per_level
+    if asked >= total:
+        return f"All {total:,} {spec['unit']}. Full runs are the ones ranked against other models."
+    which = spec["which"].format(n=n)
+    return f"{asked:,} of {total:,} {spec['unit']} ({which}). A smoke test: not ranked against full runs."
+
+
+def request_for(task, size, count, note, budget):
+    """The /eval/api/jobs body for one benchmark, or an error string."""
+    spec = SIZES[task]
+    if size == "count":
+        if not isinstance(count, int) or not 1 <= count <= spec["max"]:
+            return f"{spec['name']}: enter a number from 1 to {spec['max']}"
+        size = "full" if count == spec["max"] else "limit"
+    return {"tasks": [task], "mode": size, "limit": count if size == "limit" else None,
+            "note": (note or "").strip(), "budget_32k": bool(budget) and task in BUDGET_TASKS}
+
+
+def benchmark_row(task):
+    spec = SIZES[task]
+    return dbc.Row(className="py-2 border-bottom border-secondary", children=[
+        dbc.Col(dbc.Switch(id={"type": "eval-on", "task": task}, value=False,
+                           label=html.Span([html.Strong(spec["name"]), html.Br(),
+                                            html.Span(TASKS[task].split(": ", 1)[1], className="text-muted small")])),
+                md=5),
+        dbc.Col([
+            html.Div([
+                dbc.RadioItems(
+                    id={"type": "eval-size", "task": task}, value="pilot", inline=True,
+                    options=[{"label": f"Pilot ({spec['pilot']})", "value": "pilot"},
+                             {"label": "Choose", "value": "count"},
+                             {"label": f"Full ({spec['max']})", "value": "full"}],
+                    className="me-2",
+                ),
+                dbc.Input(id={"type": "eval-count", "task": task}, type="number", min=1, max=spec["max"], step=1,
+                          value=min(50, spec["max"]), size="sm", style={"maxWidth": "90px"}),
+            ], className="d-flex align-items-center flex-wrap"),
+            html.Div(id={"type": "eval-hint", "task": task}, className="text-muted small mt-1"),
+        ], md=7),
+    ])
+
+
 run_section = dbc.Card(dbc.CardBody([
-    html.H4("Start a run", className="card-title mb-3"),
-    dbc.Checklist(
-        id="eval-tasks", switch=True, value=[], className="mb-3",
-        options=[{"label": f"{task} — {text}", "value": task} for task, text in TASKS.items()],
-    ),
-    dbc.Label("How much"),
-    dbc.RadioItems(
-        id="eval-mode", value="pilot", inline=True, className="mb-2",
-        options=[{"label": "Pilot (a quick sample)", "value": "pilot"},
-                 {"label": "Limit", "value": "limit"},
-                 {"label": "Full run", "value": "full"}],
-    ),
-    dbc.Input(id="eval-limit", type="number", min=1, max=10000, step=1, value=20,
-              placeholder="samples", className="mb-3", style={"maxWidth": "160px"}),
-    dbc.Switch(id="eval-budget", label="32k token budget (GPQA and IFEval only)", value=False, className="mb-2"),
+    html.H4("Start a run", className="card-title mb-1"),
+    html.P("Switch on each benchmark to run, and choose how much of it.", className="text-muted small"),
+    html.Div([benchmark_row(task) for task in TASKS], className="mb-3"),
+    dbc.Switch(id="eval-budget", label="32k token budget (applies to GPQA and IFEval)", value=False,
+               className="mb-2"),
     dbc.Input(id="eval-note", placeholder="Note (one line, e.g. reasoning_effort=high)", maxLength=200,
               className="mb-3"),
     dbc.Button("Start run(s)", id="eval-submit-btn", color="primary"),
     dbc.Alert(id="eval-submit-result", is_open=False, className="mt-3"),
-    html.P("Runs go one at a time, and wait while a CyberSecEval run is using Framework.",
-           className="text-muted small mt-3 mb-0"),
+    html.P("Each benchmark is its own run. They go one at a time, in this order, and wait while a "
+           "CyberSecEval run is using Framework.", className="text-muted small mt-3 mb-0"),
 ]))
 
 runs_section = html.Div([
@@ -220,11 +273,14 @@ def _post(path, json=None):
 
 
 @callback(
-    Output("eval-limit", "disabled"),
-    Input("eval-mode", "value"),
+    Output({"type": "eval-count", "task": MATCH}, "disabled"),
+    Output({"type": "eval-hint", "task": MATCH}, "children"),
+    Input({"type": "eval-size", "task": MATCH}, "value"),
+    Input({"type": "eval-count", "task": MATCH}, "value"),
+    State({"type": "eval-size", "task": MATCH}, "id"),
 )
-def toggle_limit(mode):
-    return mode != "limit"
+def update_size(size, count, size_id):
+    return size != "count", size_hint(size_id["task"], size, count)
 
 
 @callback(
@@ -232,25 +288,38 @@ def toggle_limit(mode):
     Output("eval-submit-result", "color"),
     Output("eval-submit-result", "is_open"),
     Input("eval-submit-btn", "n_clicks"),
-    State("eval-tasks", "value"),
-    State("eval-mode", "value"),
-    State("eval-limit", "value"),
+    State({"type": "eval-on", "task": ALL}, "value"),
+    State({"type": "eval-on", "task": ALL}, "id"),
+    State({"type": "eval-size", "task": ALL}, "value"),
+    State({"type": "eval-count", "task": ALL}, "value"),
     State("eval-budget", "value"),
     State("eval-note", "value"),
     prevent_initial_call=True,
 )
-def submit(_n, tasks, mode, limit, budget, note):
-    if not tasks:
-        return "Pick at least one benchmark.", "warning", True
-    body = {"tasks": tasks, "mode": mode, "limit": int(limit) if mode == "limit" and limit else None,
-            "note": (note or "").strip(), "budget_32k": bool(budget)}
-    try:
-        status, data = _post("/eval/api/jobs", body)
-    except requests.RequestException as exc:
-        return f"Submit failed: {exc}", "danger", True
-    if status != 200:
-        return f"Not started: {data.get('detail')}", "danger", True
-    return f"Queued {len(data['submitted'])} run(s). Watch them under Runs.", "success", True
+def submit(_n, on, on_ids, sizes, counts, budget, note):
+    chosen = [(i["task"], size, count) for i, enabled, size, count in zip(on_ids, on, sizes, counts) if enabled]
+    if not chosen:
+        return "Switch on at least one benchmark.", "warning", True
+    bodies = [request_for(task, size, count, note, budget) for task, size, count in chosen]
+    errors = [b for b in bodies if isinstance(b, str)]
+    if errors:
+        return "Nothing started. " + "; ".join(errors), "warning", True
+    started, failed = [], []
+    for body in bodies:  # in table order, so the worker runs them in that order
+        name = SIZES[body["tasks"][0]]["name"]
+        size = f"{body['limit']}" if body["mode"] == "limit" else body["mode"]
+        try:
+            status, data = _post("/eval/api/jobs", body)
+        except requests.RequestException as exc:
+            failed.append(f"{name}: {exc}")
+            continue
+        if status != 200:
+            failed.append(f"{name}: {data.get('detail')}")
+        else:
+            started.append(f"{name} ({size})")
+    if failed:
+        return (f"Queued: {', '.join(started) or 'none'}. Not started: {'; '.join(failed)}"), "danger", True
+    return f"Queued {', '.join(started)}. Watch them under Results.", "success", True
 
 
 @callback(

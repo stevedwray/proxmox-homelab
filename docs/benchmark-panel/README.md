@@ -126,8 +126,15 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   whichever one is open.
 - **Eval battery** is `app-ui/eval_tab.py`, on panel-web's
   `/eval/api/*`, which is unchanged.
-  - **Run:** benchmark switches, pilot / limit / full, the 32k budget and
-    a note.
+  - **Run:** one row per benchmark, each with its own on/off switch and
+    size: Pilot, Choose N (capped at that benchmark's total), or Full.
+    A live line explains what N means, e.g. "50 of 198 questions (the
+    first 50)". RepoBench's N is per context length and setting, so it
+    asks 15 x N of 1500. BFCL spreads N evenly over its 400 cases.
+    Choosing the whole set sends a full run. The tab sends one
+    `/eval/api/jobs` request per benchmark with its own size, so panel-web
+    didn't change. The 32k budget and the note are shared, and the budget
+    only goes to GPQA and IFEval.
   - **Results:** a runs table (submitted, benchmark, size, state
     including what it waits for, duration, tokens, tokens/s), a detail
     card (log tail or results, errors, publish status, the run-metrics
