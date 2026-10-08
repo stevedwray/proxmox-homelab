@@ -287,7 +287,8 @@ class MetricsTest(unittest.TestCase):
 
 def gpqa_sample(doc_id, filt, extracted, match):
     return {"doc_id": doc_id, "doc": {"Question": "q"}, "target": "(B)", "filter": filt,
-            "arguments": {"gen_args_0": {"arg_0": json.dumps([{"role": "user", "content": f"Question {doc_id}?"}]),
+            # as lm_eval 0.4.12 writes it: a one-item list holding the JSON messages
+            "arguments": {"gen_args_0": {"arg_0": [json.dumps([{"role": "user", "content": f"Question {doc_id}?"}])],
                                          "arg_1": {"max_gen_toks": 8192}}},
             "resps": [["Thinking... The answer is (B)"]], "filtered_resps": [extracted],
             "metrics": ["exact_match"], "exact_match": match}

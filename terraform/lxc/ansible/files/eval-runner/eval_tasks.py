@@ -477,6 +477,9 @@ def _prompt_text(row):
     raw = args.get("arg_0") if isinstance(args, dict) else None
     if raw is None and isinstance(row.get("arguments"), list) and row["arguments"]:
         raw = row["arguments"][0][0] if isinstance(row["arguments"][0], list) else row["arguments"][0]
+    # lm_eval 0.4.12 wraps the JSON messages string in a one-item list.
+    if isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], str):
+        raw = raw[0]
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
