@@ -13,8 +13,9 @@
 # This playbook builds nothing. Builds are started on request:
 #   llama-builds build <backend> [ref]; llama-builds promote <backend>
 #
-# The publish step needs the MikroTik rule in
-# mikrotik-firewall-framework-llama-builds.yml (framework -> cse-panel :6379).
+# The publish step connects from framework (LAN) to cse-panel's Redis
+# (mgmt_seg :6379). The existing firewall policy already allows LAN to
+# mgmt_seg; verified 2026-10-09, so no extra MikroTik rule was added.
 #
 # Run (CSE_PANEL_REDIS_PASSWORD is in the pve-tiny OpenBao profile, which is
 # why this Framework playbook goes through the pve-tiny wrapper):
@@ -153,7 +154,7 @@
         state: started
         daemon_reload: true
 
-    - name: Run the status check once now (fetches both remotes; needs the MikroTik rule to publish)
+    - name: Run the status check once now (fetches both remotes, publishes to the panel)
       ansible.builtin.command: /usr/local/bin/llama-builds status --publish
       become_user: "{{ llama_builds_user }}"
       register: llama_builds_status

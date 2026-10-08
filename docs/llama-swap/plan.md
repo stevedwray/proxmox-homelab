@@ -144,9 +144,10 @@ writes the status JSON to cse-panel's Redis (DB 1, key
 panel-web's `/framework` returns it, and the Benchmark Control Panel's
 Framework bar shows a second line, e.g. "llama.cpp builds: fork
 20261009-b02cb35f2 (12 behind) · upstream … · checked …".
-- The push needs one MikroTik rule, framework → cse-panel :6379
-  (`mikrotik-firewall-framework-llama-builds.yml`). It's the same pattern
-  as the eval-runner and cse-controller worker rules.
+- The push goes framework (LAN) → cse-panel :6379 (mgmt_seg). The
+  existing firewall policy already allows LAN to mgmt_seg; it was
+  verified on 2026-10-09, when the first publish landed in Redis. A
+  dedicated MikroTik rule was drafted, then dropped as redundant.
 - The Redis password is in `/etc/llama-builds/redis-password`, readable
   only by steve, from OpenBao `services/cse-panel`. That's why
   `framework-desktop-llama-builds.yml` runs through `with-secrets-prod-tiny`.
