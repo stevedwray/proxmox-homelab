@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "Display names for the panel's Compare tab (publish.compare_rows). Keys are model names as runs record them; values are what Compare shows.",
+    "Compare sorts by the shown name, so a model's variants sit together. Give two names the same value to merge them into one row,",
+    "but only when they really are the same weights, quantisation, runtime and settings: runtime and quantisation move scores a lot",
+    "(docs/eval-runner/findings.md). The Tables table keeps the recorded names. Names not listed here are shown as recorded."
+  ],
+  "labels": {
+    "glm-5.3-flash": "GLM-5.3-Flash · UD-IQ2_XXS · llama.cpp",
+    "glm-5.3-flash (unverified)": "GLM-5.3-Flash (model unverified)",
+    "qwen3.8-flash-next": "Qwen3.8-Flash-Next · UD-Q4_K_XL · llama.cpp (Nathanw fork)",
+    "qwen3.8-flash-next-upstream": "Qwen3.8-Flash-Next · UD-Q4_K_XL · llama.cpp (upstream)",
+    "Qwen3.8-Flash-Next-UD-Q4_K_XL (unverified)": "Qwen3.8-Flash-Next · UD-Q4_K_XL (model unverified)",
+    "eval-gemma4-26b-a4b-qat:q4_0-ctx32k": "Gemma4 26B-A4B QAT · Q4_0 · Ollama · 32k ctx",
+    "eval-gemma4-26b:q4-ctx32k": "Gemma4 26B · Q4 · Ollama · 32k ctx",
+    "gemma4:26b": "Gemma4 26B · Ollama (default tag)",
+    "Gpt-Oss-120b-Router": "GPT-OSS 120B · llama.cpp router",
+    "eval-laguna-heretic:i1-q4_k_m-ctx131k": "Laguna Heretic · i1-Q4_K_M · Ollama · 131k ctx",
+    "Laguna-S-2-1-UD-Q4-K-M": "Laguna S 2.1 · UD-Q4_K_M · llama.cpp router",
+    "laguna-s-2.1:q4_k_m": "Laguna S 2.1 · Q4_K_M · Ollama",
+    "laguna-s-2.1:q4_k_m-ctx131k": "Laguna S 2.1 · Q4_K_M · Ollama · 131k ctx",
+    "eval-laguna-s2-1:q4_k_m-ctx131k": "Laguna S 2.1 · Q4_K_M · Ollama · 131k ctx (eval tag)",
+    "laguna-xs-2.1:latest": "Laguna XS 2.1 · Ollama",
+    "llama4:scout": "Llama 4 Scout · Ollama",
+    "Qwen3-Coder-30B-A3B-Instruct-Q4-K-M": "Qwen3-Coder 30B-A3B · Q4_K_M · llama.cpp router",
+    "eval-qwen3-coder-30b-a3b:q4_k_m-ctx32k": "Qwen3-Coder 30B-A3B · Q4_K_M · Ollama · 32k ctx",
+    "eval-qwen3-coder-30b-a3b:q4_k_m-ctx163k": "Qwen3-Coder 30B-A3B · Q4_K_M · Ollama · 163k ctx",
+    "qwen3-coder-30b": "Qwen3-Coder 30B-A3B · Ollama (garuda)",
+    "eval-qwen3-coder-next:q4_k_m-ctx256k": "Qwen3-Coder-Next · Q4_K_M · Ollama · 256k ctx",
+    "eval-qwen3.8-27b:q4_k_m-ctx32k": "Qwen3.8 27B · Q4_K_M · Ollama · 32k ctx (eval tag)",
+    "qwen3.8-27b-q4km-ctx32k": "Qwen3.8 27B · Q4_K_M · Ollama · 32k ctx",
+    "qwen3.8-27b-q4kxl-ctx32k": "Qwen3.8 27B · Q4_K_XL · Ollama · 32k ctx",
+    "Qwen3.6-35B-A3B-UD-Q4-K-M": "Qwen3.6 35B-A3B · UD-Q4_K_M · llama.cpp router",
+    "eval-qwen36-35b-a3b:q4_k_m-ctx32k": "Qwen3.6 35B-A3B · Q4_K_M · Ollama · 32k ctx",
+    "qwen36-35b": "Qwen3.6 35B-A3B · Ollama (garuda)"
+  }
+}

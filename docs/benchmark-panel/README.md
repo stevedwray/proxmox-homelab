@@ -162,7 +162,8 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   so only the new run's folder (plus the leaderboard files) gets a fresh
   timestamp. `publish.py --all` re-uploads everything. Before this fix,
   every publish re-uploaded every run's folder.
-- The old `/eval` HTML page is still linked under the tab. Retire it
+- The old `/eval` HTML page was retired on 2026-10-08. `/eval` now
+  redirects (307) to the Dash panel; the `/eval/api/*` JSON API stays. Retire it
   after the operator has used the tab.
 - Tests: `app-ui/test_eval_tab.py` (8). An in-process check of Dash's
   `/_dash-dependencies` found all 14 callbacks wired to existing IDs,
@@ -228,6 +229,19 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   table.
 
 ## Log
+
+- 2026-10-08, built (not yet deployed):
+  - **Model labels for Compare:** `model_aliases.json`, installed next to
+    the eval worker, gives each recorded name a readable label (model ·
+    quant · runtime · ctx). Compare sorts by it, so variants sit together,
+    and hovering shows "recorded as <name>".
+    - No merges are shipped: almost every name is a different runtime,
+      quant, ctx tag or host, and those move scores (Laguna: 75.5%
+      llama.cpp vs 92.75% Ollama).
+    - Giving two names the same label merges them deliberately.
+    - The Tables table keeps the recorded names.
+  - **The old Eval page is retired:** `/eval` redirects to the Dash panel,
+    and the link under the Eval battery tab is gone.
 
 - 2026-10-08, phase 4 deployed, approval `benchmark-phase4`:
   - **First, the lock test was stopped:**

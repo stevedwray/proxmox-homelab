@@ -66,6 +66,7 @@ RESULTS_ROOT = "/results"
 FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
 FOLDER = "Reports/eval-runner"
 CSE_DIR = "_cse"
+ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_aliases.json")
 STATE_FILE = "_publish-state.json"
 TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
@@ -317,13 +318,30 @@ def collect_cse(results_root):
     return rows
 
 
-def compare_rows(results_root):
+def load_aliases(path=ALIASES_FILE):
+    """{recorded model name: name Compare shows} from model_aliases.json."""
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("labels", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def compare_rows(results_root, aliases=None):
     """Every result row (eval-runner, historical and CyberSecEval), trimmed
-    to what the panel's Compare tab needs."""
+    to what the panel's Compare tab needs, with each model shown by its
+    model_aliases.json label ("Model name" keeps the recorded name)."""
+    aliases = load_aliases() if aliases is None else aliases
     rows = [r for _, _, _, rs in collect(results_root) for r in rs] + collect_cse(results_root)
     keep = ("Model", "Task", "Score %", "Alt score %", "Metrics", "Questions", "Comparable", "Series",
             "Tokens/s", "Duration (min)", "Source", "Run", "Date", "Note")
-    return [{k: r.get(k) for k in keep} for r in rows]
+    out = []
+    for r in rows:
+        trimmed = {k: r.get(k) for k in keep}
+        trimmed["Model name"] = r.get("Model")
+        trimmed["Model"] = aliases.get(r.get("Model"), r.get("Model"))
+        out.append(trimmed)
+    return out
 
 
 def collect(results_root):

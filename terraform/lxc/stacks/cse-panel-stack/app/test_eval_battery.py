@@ -69,11 +69,10 @@ class EvalBatteryTest(unittest.TestCase):
         return self.client.post("/eval/api/jobs", json={"tasks": ["bfcl"], **body},
                                 headers={"X-Authentik-Username": "steve"})
 
-    def test_page_renders_every_benchmark(self):
-        page = self.client.get("/eval").text
-        for task in eval_battery.TASKS:
-            self.assertIn(f'value="{task}"', page)
-        self.assertIn("Results table (Nextcloud Tables)", page)
+    def test_old_page_redirects_to_the_dash_panel(self):
+        with mock.patch.dict(os.environ, {"LAB_DOMAIN": "lab.example"}):
+            resp = self.client.get("/eval", follow_redirects=False)
+        self.assertEqual((resp.status_code, resp.headers["location"]), (307, "https://cse-panel.lab.example/"))
 
     def test_submit_queues_one_job_per_benchmark_in_order(self):
         res = self.client.post("/eval/api/jobs", json={"tasks": ["gpqa", "ifeval"], "mode": "limit", "limit": 5,

@@ -447,6 +447,17 @@ class CseRowsTest(unittest.TestCase):
         self.assertEqual({r["Source"].split(" ")[0] for r in rows}, {"eval-runner", "historical", "cyberseceval"})
         self.assertIn("Tokens/s", rows[0])
 
+    def test_compare_rows_use_labels_and_keep_the_recorded_name(self):
+        rows = publish.compare_rows(self.tmp.name, aliases={"glm-5.3-flash": "GLM · llama.cpp"})
+        glm = [r for r in rows if r["Model name"] == "glm-5.3-flash"]
+        self.assertTrue(glm and all(r["Model"] == "GLM · llama.cpp" for r in glm))
+
+    def test_shipped_alias_file_loads_and_has_no_accidental_merges(self):
+        labels = publish.load_aliases()
+        self.assertIn("glm-5.3-flash", labels)
+        # merging is allowed, but should be a deliberate edit, not a typo
+        self.assertEqual(len(set(labels.values())), len(labels))
+
     def test_cyberseceval_view(self):
         self.assertIn(("CyberSecEval", "\U0001F6E1", None, {"Source": "cyberseceval"}), publish.VIEWS)
 

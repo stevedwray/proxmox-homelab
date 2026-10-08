@@ -1,6 +1,8 @@
-"""cse-panel's "Eval battery" page: start, watch and control eval-runner
-benchmark runs (GPQA, IFEval, BFCL, AgentBench, RepoBench) on
-ai-services-stack. docs/eval-runner/panel-plan.md.
+"""cse-panel's "Eval battery" JSON API: start, watch and control
+eval-runner benchmark runs (GPQA, IFEval, BFCL, AgentBench, RepoBench) on
+ai-services-stack, for the Dash panel's Eval battery tab
+(app-ui/eval_tab.py). docs/eval-runner/panel-plan.md. Its old HTML page
+was retired on 2026-10-08; /eval now redirects to the Dash panel.
 
 Like the CyberSecEval pages, this only enqueues Celery tasks and reads
 state from Redis. The work happens in eval-runner's worker on
@@ -16,14 +18,13 @@ The page can't reach Framework or ai-services-stack itself, and doesn't
 need to.
 """
 
-import html
 import json
 import os
 from datetime import datetime, timezone
 
 from celery import Celery
 from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 celery_app = Celery("eval_panel", broker=os.environ.get("CELERY_BROKER_URL", "memory://"),
@@ -178,149 +179,11 @@ def publish():
     return {"submitted": result.id}
 
 
-@router.get("", response_class=HTMLResponse)
-@router.get("/", response_class=HTMLResponse)
+@router.get("")
+@router.get("/")
 def page():
-    boxes = "".join(
-        f'<label class="row"><input type="checkbox" name="task" value="{t}">'
-        f'<span class="name">{t}</span><span class="desc">{html.escape(d)}</span></label>'
-        for t, d in TASKS.items())
-    links = " · ".join(f'<a href="{u}" target="_blank" rel="noopener">{html.escape(n)}</a>' for n, u in LINKS.items())
-    # The panel's own UI is the Dash app on cse-panel.<domain>; panel-web's
-    # "/" no longer serves a page.
+    """The old HTML page, retired 2026-10-08: the Eval battery is a tab in
+    the Dash panel now (app-ui/eval_tab.py). Old bookmarks land there; the
+    JSON API above stays, because that tab uses it."""
     domain = os.environ.get("LAB_DOMAIN", "")
-    home = f"https://cse-panel.{domain}/" if domain else "/"
-    return (PAGE.replace("{{BOXES}}", boxes).replace("{{LINKS}}", links)
-            .replace("{{HOME}}", html.escape(home)))
-
-
-PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Eval battery</title>
-<style>
-  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #1a1a1a; }
-  h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }
-  .list { border: 1px solid #eee; border-radius: 6px; }
-  .row { display: flex; align-items: baseline; gap: .6rem; padding: .45rem .7rem; border-bottom: 1px solid #f2f2f2; cursor: pointer; }
-  .row:last-child { border-bottom: none; } .row:hover { background: #f7f9fc; }
-  .name { font-weight: 600; min-width: 7rem; } .desc, .muted { color: #666; font-size: .85rem; }
-  .field { display: block; margin: .6rem 0; } button { padding: .4rem 1rem; cursor: pointer; }
-  .status { padding: .6rem .9rem; border: 1px solid #eee; border-radius: 6px; background: #fafafa; }
-  .job { border: 1px solid #ddd; border-radius: 6px; margin-bottom: .7rem; padding: .6rem .9rem; }
-  .job pre { background: #f6f6f6; padding: .5rem; font-size: .78rem; overflow-x: auto; max-height: 14rem; margin: .5rem 0 0; }
-  .s-queued, .s-waiting { color: #888; } .s-starting, .s-running, .s-publishing { color: #b8860b; font-weight: 600; }
-  .s-done { color: #1a7f37; font-weight: 600; } .s-failed, .s-cancelled { color: #c62828; font-weight: 600; }
-  .small { font-size: .8rem; padding: .15rem .6rem; margin-left: .4rem; }
-  #toast { margin: .5rem 0; padding: .5rem .8rem; border-radius: 4px; background: #eef; display: none; }
-</style></head>
-<body>
-<p class="muted"><a href="{{HOME}}">&larr; CyberSecEval</a></p>
-<h1>Eval battery</h1>
-<p class="muted">Runs on ai-services-stack against whatever Framework's llama-server is serving.
-Results go to Nextcloud automatically: {{LINKS}}</p>
-<div class="status" id="framework">Framework: checking…</div>
-<div id="toast"></div>
-
-<h2>Start runs</h2>
-<form id="form">
-  <div class="list">{{BOXES}}</div>
-  <label class="field">Size:
-    <select name="mode" id="mode">
-      <option value="full">Full run (ranked)</option>
-      <option value="pilot">Pilot (40 items; 10 episodes / 5 per level)</option>
-      <option value="limit">Smoke test: first N items</option>
-    </select>
-    <input name="limit" id="limit" type="number" min="1" max="10000" value="5" style="width:5rem;display:none">
-  </label>
-  <label class="field">Note (e.g. reasoning_effort=high): <input name="note" maxlength="200" style="width:24rem"></label>
-  <label class="field"><input type="checkbox" name="budget_32k"> 32k token budget (GPQA/IFEval only; a separate series)</label>
-  <button type="submit">Queue selected</button>
-  <span class="muted">Runs go one at a time, in order; each waits until Framework is idle.</span>
-</form>
-
-<h2>Runs <button class="small" onclick="publishNow()">Publish to Nextcloud now</button></h2>
-<div id="jobs" class="muted">Loading…</div>
-
-<script>
-const $ = (s) => document.querySelector(s);
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 6000); }
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-$('#mode').onchange = () => { $('#limit').style.display = $('#mode').value === 'limit' ? 'inline' : 'none'; };
-
-$('#form').onsubmit = async (e) => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  const body = { tasks: f.getAll('task'), mode: f.get('mode'), limit: parseInt(f.get('limit')) || null,
-                 note: f.get('note') || '', budget_32k: f.get('budget_32k') === 'on' };
-  if (!body.tasks.length) { toast('Pick at least one benchmark.'); return; }
-  const res = await fetch('/eval/api/jobs', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-  const data = await res.json();
-  toast(res.ok ? `Queued ${data.submitted.length} run(s).` : `Not queued: ${data.detail}`);
-  refresh();
-};
-
-async function act(path, msg) {
-  const res = await fetch(path, { method: 'POST' });
-  const data = await res.json();
-  toast(res.ok ? msg : `Failed: ${data.detail}`);
-  refresh();
-}
-function cancelJob(id) { if (confirm('Cancel this run?')) act(`/eval/api/jobs/${id}/cancel`, 'Cancel requested.'); }
-function resumeJob(id) { act(`/eval/api/jobs/${id}/resume`, 'Resume queued.'); }
-function publishNow() { act('/eval/api/publish', 'Publish requested; the reports update in a minute or so.'); }
-
-function frameworkLine(fw) {
-  if (!fw) return 'Framework: no status yet (is the eval-runner worker running?)';
-  if (fw.error) return `Framework: <b>unreachable</b> (${esc(fw.error)}) · checked ${esc(fw.checked)}`;
-  const busy = fw.busy ? `<b>${fw.busy} of ${fw.slots} slots busy</b>` : `idle (${fw.slots} slots)`;
-  const ev = fw.eval_running ? ` · eval container: ${esc(fw.eval_running)}` : '';
-  const lock = fw.lock ? ` · <b>busy with ${esc(fw.lock.suite)} ${esc(fw.lock.benchmark)}</b> (job ${esc(fw.lock.job_id)}); new benchmark runs wait` : '';
-  return `Framework: serving <b>${esc(fw.model)}</b> · ${busy}${lock}${ev} · checked ${esc(fw.checked)}`;
-}
-
-function duration(sec) {
-  sec = Math.round(sec);
-  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-  return h ? `${h}h ${m}m ${s}s` : (m ? `${m}m ${s}s` : `${s}s`);
-}
-
-// Duration, tokens and tokens/s (eval_tasks.py, from llama-server's /metrics).
-function metricsLine(m) {
-  if (!m) return '';
-  const parts = [];
-  if (m.duration_seconds != null) parts.push(`${duration(m.duration_seconds)}${m.segments > 1 ? ` over ${m.segments} segments` : ''}`);
-  const mut = m.model_under_test;
-  if (mut) {
-    parts.push(`${mut.completion_tokens.toLocaleString()} tokens generated`);
-    if (mut.generation_tokens_per_second != null) parts.push(`${mut.generation_tokens_per_second} tokens/s`);
-    parts.push(`${mut.prompt_tokens.toLocaleString()} prompt tokens processed (cached text excluded)`);
-  } else if (m.unavailable) {
-    parts.push(`tokens unavailable: ${esc(m.unavailable)}`);
-  }
-  return parts.length ? `<div>Run: ${parts.join(' · ')}</div>` : '';
-}
-
-function jobCard(j) {
-  const what = j.task === 'resume' ? `resume ${esc(j.run)}` :
-    `${esc(j.task)} · ${esc(j.mode)}${j.mode === 'limit' ? ' ' + esc(j.limit) : ''}${j.budget_32k ? ' · 32k' : ''}`;
-  const live = ['queued', 'waiting', 'starting', 'running'].includes(j.state);
-  const buttons = (live ? `<button class="small" onclick="cancelJob('${j.id}')">Cancel</button>` : '') +
-    (['failed', 'cancelled'].includes(j.state) && j.run ? `<button class="small" onclick="resumeJob('${j.id}')">Resume</button>` : '');
-  const waiting = j.state === 'waiting' ? ` (for ${esc(j.waiting_for)})` : '';
-  const body = j.results ? `<pre>${esc(j.results)}</pre>` : (j.log_tail ? `<pre>${esc(j.log_tail)}</pre>` : '');
-  const err = j.error ? `<pre>${esc(j.error)}</pre>` : '';
-  return `<div class="job"><b>${what}</b> <span class="s-${esc(j.state)}">${esc(j.state)}${waiting}</span>${buttons}
-    <div class="muted">${j.run ? 'run ' + esc(j.run) + ' · ' : ''}${j.note ? 'note: ' + esc(j.note) + ' · ' : ''}by ${esc(j.submitted_by)} · submitted ${esc(j.submitted)}${j.finished ? ' · finished ' + esc(j.finished) : ''}</div>
-    ${metricsLine(j.run_metrics_total || j.run_metrics)}${body}${err}</div>`;
-}
-
-async function refresh() {
-  try {
-    const s = await (await fetch('/eval/api/state')).json();
-    $('#framework').innerHTML = frameworkLine(s.framework);
-    $('#jobs').innerHTML = s.jobs.length ? s.jobs.map(jobCard).join('') : 'No runs yet.';
-  } catch (e) { $('#framework').textContent = 'Could not load state: ' + e; }
-}
-refresh(); setInterval(refresh, 10000);
-</script>
-</body></html>
-"""
+    return RedirectResponse(f"https://cse-panel.{domain}/" if domain else "/", status_code=307)

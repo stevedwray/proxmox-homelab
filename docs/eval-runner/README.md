@@ -50,7 +50,11 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   - `eval-run gpqa|ifeval|bfcl|agentbench|repobench [--pilot|--limit N]
     [--note] [--max-gen-toks]`, plus `resume|selftest|results|publish`.
   - The GPU-free selftests for every image are the deploy gate.
-- **Control panel:** cse-panel `/eval` ("Eval battery").
+- **Control panel:** the Eval battery tab of the Dash panel at
+  `https://cse-panel.<domain>/` (`app-ui/eval_tab.py`), with a Compare tab
+  across every benchmark (`docs/benchmark-panel/`). The old HTML page at
+  `cse-panel-api.<domain>/eval` was retired on 2026-10-08 and now
+  redirects there; its JSON API (`/eval/api/*`) stays.
   - `eval_battery.py` enqueues on the Redis queues `eval-runner` (runs)
     and `eval-runner-ctl` (cancel, publish, status).
   - On ai-services-stack, the `eval-runner-worker-runs` and

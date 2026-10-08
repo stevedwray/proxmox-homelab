@@ -1114,7 +1114,8 @@
       register: eval_runner_worker_lock_module
 
     # The Compare tab's data (eval_tasks.compare) comes from publish.py's
-    # own row builder, so the ctl worker imports it (and summarize.py).
+    # own row builder, so the ctl worker imports it (and summarize.py), and
+    # shows models by their model_aliases.json labels.
     - name: Install publish.py and summarize.py next to the panel worker
       ansible.builtin.copy:
         src: "{{ eval_runner_source_dir }}/{{ item }}"
@@ -1123,6 +1124,7 @@
       loop:
         - publish.py
         - summarize.py
+        - model_aliases.json
       register: eval_runner_worker_publish_modules
 
     - name: Install the panel worker's broker settings

@@ -71,6 +71,8 @@ def cell_text(row):
 
 def cell_tooltip(row):
     parts = [row.get("Metrics") or "", f"{row.get('Date') or '?'} · run {row.get('Run') or '?'}"]
+    if row.get("Model name") and row["Model name"] != row.get("Model"):
+        parts.append(f"recorded as {row['Model name']}")
     if row.get("Tokens/s"):
         parts.append(f"{row['Tokens/s']} tokens/s")
     if row.get("Note"):
@@ -82,7 +84,7 @@ def compare_table(rows, full_only=True):
     """(columns, data, tooltips) for the DataTable."""
     cells = best_cells(rows, full_only)
     tasks = task_order(cells)
-    models = sorted({m for m, _ in cells})
+    models = sorted({m for m, _ in cells}, key=str.lower)  # a model's variants sit together
     speeds = {}
     for row in rows:
         if row.get("Tokens/s") and row.get("Model"):

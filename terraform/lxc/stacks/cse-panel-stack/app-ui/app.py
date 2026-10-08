@@ -21,10 +21,7 @@ import compare_tab
 import eval_tab
 
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
-# The old Eval battery page on panel-web (eval_battery.py), kept until the
-# Dash tab has been used for a while (phase 3), then retired.
 LAB_DOMAIN = os.environ.get("LAB_DOMAIN", "")
-EVAL_BATTERY_URL = f"https://cse-panel-api.{LAB_DOMAIN}/eval" if LAB_DOMAIN else "#"
 LLM_CONTROL_URL = f"https://llm-control.{LAB_DOMAIN}" if LAB_DOMAIN else "#"
 
 # Duplicated verbatim from app/app.py (panel-web's own FastAPI app) --
@@ -185,8 +182,6 @@ cse_family = html.Div([
 eval_family = html.Div([
     section_switch("eval-section"),
     eval_tab.layout(),
-    html.P(["The old ", html.A("Eval battery page", href=EVAL_BATTERY_URL, target="_blank", rel="noopener"),
-            " still works until this tab replaces it."], className="text-muted small mt-4"),
 ])
 
 app.layout = dbc.Container(
