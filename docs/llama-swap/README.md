@@ -3,11 +3,40 @@
 A web control page for choosing which model and llama.cpp build Framework
 serves on :8080. See [plan.md](plan.md).
 
-Status: **live, 2026-10-07.** llama-swap manages :8080 (GLM loaded, boot
-default GLM). The old hand-run GLM is gone, and `nathanw-llamacpp.service`
-is disabled (unit kept).
+Status: **adopted, 2026-10-09** (live since 2026-10-07). llama-swap
+manages :8080: GLM is loaded and is the boot default. The old hand-run GLM
+is gone, and `nathanw-llamacpp.service` is disabled; its removal is part of
+phase 3.
+
+**Open: phase 3, managed llama.cpp builds** (see [plan.md](plan.md)). Keep
+several backends side by side, Nathanw's fork first, then check for
+updates, build, try a candidate, promote and roll back.
+
+**Done in the close-out (2026-10-09):**
+- Reboot test: llama-swap, its nft table, the GLM preload and :8080 all
+  came back by themselves. This happened after the GTT ceiling fix, #459.
+- The live config's stale comments were refreshed. The only difference
+  from the seed was comments; it was validated first, and the reload
+  brought GLM back in about a minute. The backup is
+  `config.yaml.bak-2026-10-09`.
 
 ## Log
+
+- 2026-10-09: the operator adopted llama-swap. They want several llama.cpp
+  backends kept side by side ("under heavy development; nathanw is good on
+  this hardware") and a way to check for updates and update them, which
+  is phase 3. Live config comments refreshed (approval
+  `llama-swap-config-comments`). Framework's builds today, read-only:
+  - `~/llama.cpp`: the Nathanw fork, branch `strix-halo-vulkan` @
+    b02cb35 (2026-09-16);
+  - `~/llama.cpp-upstream`: a worktree of the same clone, detached at
+    upstream a4d880fd5. Its only remote is the fork; there's no
+    ggml-org remote.
+  - Both are Vulkan Release builds with `GGML_NATIVE`, built by hand on
+    2026-09-30. Each build dir is about 0.5 GB; `bin/` is 81 MB.
+  - `nathanw-llamacpp-embed.service` (nomic-embed, :8085) runs straight
+    from `~/llama.cpp/build-vk/bin`.
+  - Disk: `/` 22 GB free; `/storage` 1 TB free.
 
 - 2026-10-07: design changed to "control page only". Clients keep using
   `llama-server` on :8080 directly; llama-swap listens on :8099. Files:

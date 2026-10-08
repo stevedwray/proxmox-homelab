@@ -101,6 +101,68 @@ Before relying on it, check these:
 `nathanw-llamacpp.service` on :8080, and with `true` it refuses while
 llama-swap is active. Embeddings are managed as before.
 
+## Phase 3: managed llama.cpp builds (proposed, 2026-10-09)
+
+**Goal:** keep several llama.cpp backends, check them for updates, and
+build, try, promote or roll back a new build without hand-editing paths
+or systemd units.
+
+**Layout:**
+- **Sources:** one clone, `/storage/llama-builds/src`, with remotes `fork`
+  (Nathanw1014/llama.cpp) and `upstream` (ggml-org/llama.cpp).
+- **Backends:**
+  - `fork` tracks `fork/strix-halo-vulkan`;
+  - `upstream` tracks `upstream/master`.
+- **Builds:** `/storage/llama-builds/<backend>/<date>-<sha>/` holds only
+  `bin/` and the shared libs, about 81 MB each. They're built from a
+  temporary worktree with the same CMake flags as today (Vulkan, Release,
+  `GGML_NATIVE`). The last N builds per backend are kept.
+- **Symlinks:** `/storage/llama-builds/<backend>/current` and
+  `.../candidate`.
+  - The llama-swap macros point at `.../<backend>/current/bin/llama-server`.
+    Switching the link takes effect at the next model load (unload or
+    load in llm-control), with no config save and no reload.
+  - Extra llm-control entries run a model on `candidate` (e.g.
+    "GLM-5.3-Flash · upstream candidate"). Benchmarks already record
+    `build_info` from `/props`, so a candidate's runs are distinguishable
+    from current's.
+
+**The `llama-builds` tool on Framework:**
+
+| Command | What it does |
+|---|---|
+| `llama-builds status` | per backend: current, candidate, the remote head, and how many commits behind |
+| `llama-builds build <backend> [ref]` | fetch, build into a new dir, smoke-test (`--version`, load a tiny GGUF), set `candidate` |
+| `llama-builds promote <backend>` | `current` := `candidate` (the old current stays for rollback) |
+| `llama-builds rollback <backend>` | `current` := the previous build |
+| `llama-builds prune <backend>` | keep the last N |
+
+**Checking for updates:** a daily systemd timer runs `status` and writes
+`llama_build_commits_behind{backend}` and the build dates to the
+node_exporter textfile collector, which `amdgpu_stats.prom` already uses.
+Grafana then shows when a backend is behind.
+
+**Retirement:**
+- remove the `nathanw-llamacpp.service` unit (chat), which llama-swap
+  replaced;
+- point `nathanw-llamacpp-embed.service` at `fork/current`;
+- delete the Docker-era playbooks that no longer describe anything that
+  runs: `framework-desktop-llamacpp.yml` (HIP router container),
+  `framework-desktop-llamacpp-nathanw.yml` ("NOT WIRED UP") and
+  `framework-desktop-llamacpp-nathanw-vulkan.yml` (the old prebuilt
+  container).
+
+**Migration (no model downtime beyond one reload):**
+1. Install the tool and the clone.
+2. Import today's two builds as `fork/current` (b02cb35) and
+   `upstream/current` (a4d880fd5) by copying their `bin/`.
+3. Switch the llama-swap macros and the embed unit to the new paths
+   (one reload).
+4. Keep `~/llama.cpp*` until the new paths have run a while, then remove
+   them.
+
+**Decisions for the operator:** see the README log (asked 2026-10-09).
+
 ## Rollback
 
 ```bash
