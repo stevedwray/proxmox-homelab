@@ -14,8 +14,8 @@ Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
 - **`task/cse-model-identity`:** phase 1 code plus this plan. Deployed to
   pve-tiny. Not pushed or merged; the operator decides.
 - **`task/framework-run-lock`:** phase 2, cut from
-  `task/cse-model-identity` (so it carries phase 1 too). Built and unit
-  tested; not deployed yet.
+  `task/cse-model-identity` (so it carries phase 1 too). Deployed to
+  pve-tiny 2026-10-08; not pushed or merged.
 - **`task/benchmark-panel-plan`:** superseded; its one commit was
   cherry-picked onto `task/cse-model-identity`.
 - `stable` already has llama-swap (#456) and CSE run metrics (#457).
@@ -24,8 +24,8 @@ Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
 - CSE runs record `served_model` and the reports show it.
 - The panel has a Model column.
 - The 65536 cap applies to every model with a base URL.
-- Not yet seen on a real run (it needs a GPU run, which the operator
-  starts).
+- Seen on a real run: MITRE job `ebe57cd0` (2026-10-07) recorded
+  glm-5.3-flash, its GGUF path, build b11309-a4d880fd5 and 131072 ctx.
 
 **Eval battery today:**
 - **Already has:** which model answered (`runmeta.py`, `run.json`) and
@@ -123,6 +123,27 @@ original build notes:
   table.
 
 ## Log
+
+- 2026-10-08, phase 2 deployed (`task/framework-run-lock`, 8f7f01e9),
+  approval `framework-run-lock`, in order:
+  - ai-services-stack eval-runner play: image rebuilt, `eval_tasks.py`
+    and `framework_lock.py` installed, both workers restarted and
+    active.
+  - `provision.sh --stack cse-controller`: `cse_tasks.py` and
+    `framework_lock.py` written, worker restarted and ready. The one
+    ignored error is node_exporter's optional step-ca reachability probe,
+    unrelated.
+  - `provision.sh --stack cse-panel-stack`: panel-web and the Dash UI
+    restarted, with no errors in the UI log.
+  - Live check: `GET /framework` returned `lock: null`,
+    `model: glm-5.3-flash`, 0 of 4 slots busy.
+  - Not yet seen: a real run taking the lock, or eval run metrics.
+    Both need a GPU run, which the operator starts.
+  - Noticed, not changed: the Celery workers log "clock drift 46800 s"
+    (exactly 13 h) between ai-services-stack and cse-controller. That
+    looks like a timezone difference in Celery's event timestamps, not
+    real clock skew. The lock doesn't depend on it: its TTL is
+    Redis-side, and its timestamps are UTC.
 
 - 2026-10-08, phase 1 (`task/cse-model-identity`):
   - `cse_tasks.py` records `served_model` from the backend's
