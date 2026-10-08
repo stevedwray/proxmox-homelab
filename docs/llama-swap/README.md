@@ -25,6 +25,30 @@ how far behind it is.
 
 ## Log
 
+- 2026-10-09, first update cycle (approvals `llama-builds-candidates`,
+  `llama-builds-smoke`):
+  - **Check:** the fork is 104 commits behind (`9e21f2e53`, mostly Vulkan
+    FA NaN fixes and `qwen4exp` tuning); upstream is 205 behind
+    (`de7fa0a3c`).
+  - **Built:**
+    - fork candidate 20261008-9e21f2e53 (5 min);
+    - upstream candidate 20261008-de7fa0a3c (1 min);
+    - the first upstream-hip build, 20261008-de7fa0a3c (about 1 min on
+      32 cores: Clang 21 HIP for gfx1151, libggml-hip, rocblas/hipblas;
+      105 MB).
+  - **Smoke test:** the same request at temperature 0, low effort, 300
+    max tokens, loaded through llama-swap:
+
+    | Build | Gen tok/s | Notes |
+    |---|---|---|
+    | GLM, current upstream a4d880fd5 | 18.9 | |
+    | GLM, upstream candidate de7fa0a3c | 18.6 | identical text |
+    | GLM, upstream HIP de7fa0a3c | 16.1 | about 15% slower |
+    | Qwen, fork candidate 9e21f2e53 | 25.8 | |
+
+    There were no amdgpu errors, and it ended back on GLM current. Qwen
+    on the current fork wasn't measured in the same run.
+
 - 2026-10-09, phase 3 rollout (approval `llama-builds-rollout`):
   - **Installed:** `framework-desktop-llama-builds.yml` (with-secrets-prod-tiny)
     installed the tool, config, clone and daily timer; the first status
