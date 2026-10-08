@@ -65,6 +65,35 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(panel_ui.framework_status_color({"error": "refused"}), "danger")
 
 
+@unittest.skipUnless(panel_ui, "dash not installed")
+class CseResultsTest(unittest.TestCase):
+    JOBS = [{"job_id": "c2", "benchmark": "mitre", "state": "SUCCESS", "state_label": "Done"},
+            {"job_id": "c1", "benchmark": "instruct", "state": "STARTED", "state_label": "Running"}]
+
+    def test_poll_keeps_the_selection_on_the_same_run(self):
+        resp = mock.Mock(json=lambda: {"jobs": self.JOBS})
+        with mock.patch.object(panel_ui.requests, "get", return_value=resp):
+            rows, _, _, kept = panel_ui.poll_jobs(1, "c1")
+            *_, none = panel_ui.poll_jobs(2, "gone")
+        self.assertEqual(([r["id"] for r in rows], kept, none), (["c2", "c1"], [1], []))
+
+    def test_delete_button_only_with_a_run_selected(self):
+        self.assertEqual(panel_ui.show_run_detail(None, self.JOBS)[1], {"display": "none"})
+        detail, style = panel_ui.show_run_detail("c2", self.JOBS)
+        self.assertEqual(style, {})
+        self.assertIn("mitre", text(detail))
+        self.assertIn("cancels it first", panel_ui.cse_delete_message(self.JOBS[1]))
+        self.assertNotIn("cancels", panel_ui.cse_delete_message(self.JOBS[0]))
+
+    def test_confirmed_delete_forces_only_after_the_api_says_in_progress(self):
+        answers = iter([{"error": "job is started", "in_progress": True}, {"deleted": "c1"}])
+        resp = mock.Mock(json=lambda: next(answers))
+        with mock.patch.object(panel_ui.requests, "delete", return_value=resp) as delete:
+            message, colour, _ = panel_ui.delete_cse_job(1, "c1")
+        self.assertEqual(colour, "success")
+        self.assertEqual(delete.call_args.kwargs.get("params"), {"force": "true"})
+
+
 @unittest.skipUnless(eval_tab, "dash not installed")
 class EvalTabTest(unittest.TestCase):
     def test_row_has_metrics(self):
@@ -99,7 +128,7 @@ class EvalTabTest(unittest.TestCase):
         ids_ = [{"type": "eval-on", "task": t} for t in tasks]
         resp = mock.Mock(status_code=200, json=lambda: {"submitted": ["a"]})
         with panel_ui.server.test_request_context(headers={"X-Authentik-Username": "steve"}), \
-                mock.patch.object(eval_tab.requests, "post", return_value=resp) as post:
+                mock.patch.object(eval_tab.requests, "request", return_value=resp) as post:
             result = eval_tab.submit(1, on, ids_, sizes, counts, budget, note)
         return result, [c.kwargs["json"] for c in post.call_args_list], post
 
@@ -174,9 +203,36 @@ class EvalTabTest(unittest.TestCase):
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})
         with mock.patch.object(eval_tab.requests, "get", return_value=resp):
-            jobs, rows, links = eval_tab.poll(1)
+            jobs, rows, links, selected = eval_tab.poll(1)
+            *_, kept = eval_tab.poll(2, "j1")
         self.assertEqual(rows[0]["task"], "ifeval")
         self.assertEqual(len([l for l in links if hasattr(l, "href")]), 2)
+        self.assertEqual((selected, kept), ([], [0]))
+
+    def test_selection_follows_the_run_when_new_runs_arrive(self):
+        rows = [{"id": "new"}, {"id": "j1"}]
+        self.assertEqual(eval_tab.selected_index(rows, "j1"), [1])
+        self.assertEqual(eval_tab.selected_index(rows, "deleted"), [])
+
+    def test_delete_button_and_message(self):
+        self.assertTrue(eval_tab.can_delete(DONE))
+        self.assertFalse(eval_tab.can_delete(dict(DONE, state="running")))
+        self.assertFalse(eval_tab.can_delete(None))
+        self.assertIn("glm-ifeval-limit5-S", eval_tab.delete_message(DONE))
+        self.assertIn("never started", eval_tab.delete_message({"state": "cancelled"}))
+        styles = eval_tab.detail("j1", [DONE])
+        self.assertEqual(styles[3], {})  # delete shown
+        self.assertEqual(eval_tab.detail("j1", [dict(DONE, state="running")])[3], {"display": "none"})
+
+    def test_confirmed_delete_calls_the_api(self):
+        resp = mock.Mock(status_code=200, json=lambda: {"deleted": ["j1"], "run": "glm-ifeval-limit5-S"})
+        with panel_ui.server.test_request_context(), \
+                mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-delete-confirm")), \
+                mock.patch.object(eval_tab.requests, "request", return_value=resp) as req:
+            message, colour, _ = eval_tab.act(None, None, None, 1, "j1")
+        self.assertEqual(req.call_args.args[:2], ("DELETE", f"{eval_tab.PANEL_API_BASE_URL}/eval/api/jobs/j1"))
+        self.assertEqual(colour, "success")
+        self.assertIn("glm-ifeval-limit5-S deleted", message)
 
 
 if __name__ == "__main__":

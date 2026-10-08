@@ -114,8 +114,7 @@ run_tab = dbc.Card(dbc.CardBody([
 results_tab = html.Div([
     dbc.Card(className="mt-3", children=dbc.CardBody([
         html.H4("Recent runs", className="card-title mb-3"),
-        html.P("Click a row to see its full results below. Click the × to delete a run.",
-               className="text-muted small"),
+        html.P("Select a run to see its results below.", className="text-muted small"),
         dash_table.DataTable(
             id="jobs-table",
             columns=[
@@ -131,9 +130,10 @@ results_tab = html.Div([
                 {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
             data=[],
-            row_deletable=True,
             row_selectable="single",
             selected_rows=[],
+            # Ten to a page, so the selected run's results below stay in view.
+            page_size=10,
             style_table={"width": "100%", "overflowX": "auto"},
             style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
             style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
@@ -141,10 +141,17 @@ results_tab = html.Div([
             style_as_list_view=True,
         ),
         dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
-        dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
+        dcc.Store(id="cse-selected"),
     ])),
-    dbc.Card(className="mt-3", children=dbc.CardBody(id="run-detail", children=[
-        html.P("Select a run above to see its results.", className="text-muted"),
+    dbc.Card(className="mt-3", children=dbc.CardBody([
+        html.Div(id="run-detail", children=[
+            html.P("Select a run above to see its results.", className="text-muted"),
+        ]),
+        # Always in the layout; shown once a run is selected.
+        dbc.Button("Delete run", id="cse-delete-btn", color="danger", size="sm", outline=True,
+                   className="mt-2", style={"display": "none"}),
+        dcc.ConfirmDialog(id="cse-delete-confirm"),
+        dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
     ])),
 
     dbc.Card(className="mt-3", children=dbc.CardBody([
@@ -498,59 +505,93 @@ def _speed_chart_figure(jobs):
     Output("jobs-table", "data"),
     Output("results-chart", "figure"),
     Output("speed-chart", "figure"),
+    Output("jobs-table", "selected_rows"),
     Input("poll-interval", "n_intervals"),
+    State("cse-selected", "data"),
 )
-def poll_jobs(_n):
+def poll_jobs(_n, selected=None):
     try:
         resp = requests.get(f"{PANEL_API_BASE_URL}/jobs", timeout=10)
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-    rows = [{**job, **_metric_columns(job)} for job in jobs]
-    return rows, _results_chart_figure(rows), _speed_chart_figure(rows)
+    rows = [{**job, **_metric_columns(job), "id": job["job_id"]} for job in jobs]
+    # New runs are added at the top, so keep the selection on the same run,
+    # not the same row number.
+    keep = [i for i, row in enumerate(rows) if row["id"] == selected][:1] if selected else []
+    return rows, _results_chart_figure(rows), _speed_chart_figure(rows), keep
+
+
+@app.callback(
+    Output("cse-selected", "data"),
+    Input("jobs-table", "selected_rows"),
+    State("jobs-table", "data"),
+)
+def select_job(selected_rows, rows):
+    if not selected_rows or not rows or selected_rows[0] >= len(rows):
+        return None
+    return rows[selected_rows[0]]["job_id"]
+
+
+def cse_delete_message(job):
+    running = job.get("state") in ("PENDING", "WAITING", "STARTED", "RETRY")
+    return (f"Delete the {job.get('benchmark', '?')} run {job['job_id'][:8]} for good?\n\n"
+            + ("It hasn't finished: deleting it cancels it first.\n\n" if running else "")
+            + "This removes its results on cse-controller, its report folder in Nextcloud and its row in "
+              "Compare and the results table. This can't be undone.")
+
+
+@app.callback(
+    Output("cse-delete-confirm", "displayed"),
+    Output("cse-delete-confirm", "message"),
+    Input("cse-delete-btn", "n_clicks"),
+    State("cse-selected", "data"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def confirm_cse_delete(clicks, job_id, rows):
+    job = next((r for r in rows or [] if r.get("job_id") == job_id), None)
+    if not clicks or not job:
+        raise PreventUpdate
+    return True, cse_delete_message(job)
 
 
 @app.callback(
     Output("delete-result", "children"),
     Output("delete-result", "color"),
     Output("delete-result", "is_open"),
-    Input("jobs-table", "data"),
-    State("jobs-table", "data_previous"),
+    Input("cse-delete-confirm", "submit_n_clicks"),
+    State("cse-selected", "data"),
     prevent_initial_call=True,
 )
-def handle_row_delete(data, data_previous):
-    if not data_previous:
+def delete_cse_job(clicks, job_id):
+    if not clicks or not job_id:
         raise PreventUpdate
-    current_ids = {row["job_id"] for row in data}
-    previous_ids = {row["job_id"] for row in data_previous}
-    removed = previous_ids - current_ids
-    if not removed:
-        raise PreventUpdate
-
-    results = []
-    for job_id in removed:
-        try:
-            resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10)
-            d = resp.json()
-            if d.get("in_progress"):
-                resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10)
-                d = resp.json()
-            results.append(f"{job_id[:8]}: {'deleted' if 'deleted' in d else d.get('error', '?')}")
-        except requests.RequestException as exc:
-            results.append(f"{job_id[:8]}: ERROR {exc}")
-    return "; ".join(results), "info", True
+    try:
+        d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10).json()
+        if d.get("in_progress"):  # the dialog said it would cancel it
+            d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10).json()
+    except (requests.RequestException, ValueError) as exc:
+        return f"Delete failed: {exc}", "danger", True
+    if "deleted" not in d:
+        return f"Delete failed: {d.get('error', '?')}", "danger", True
+    return (f"Run {job_id[:8]} deleted. Nextcloud and Compare catch up in a minute or so.", "success", True)
 
 
 @app.callback(
     Output("run-detail", "children"),
-    Input("jobs-table", "selected_rows"),
-    State("jobs-table", "data"),
+    Output("cse-delete-btn", "style"),
+    Input("cse-selected", "data"),
+    Input("jobs-table", "data"),
 )
-def show_run_detail(selected_rows, data):
-    if not selected_rows or not data:
-        return [html.P("Select a run above to see its results.", className="text-muted")]
+def show_run_detail(job_id, data):
+    job = next((r for r in data or [] if r.get("job_id") == job_id), None) if job_id else None
+    if not job:
+        return [html.P("Select a run above to see its results.", className="text-muted")], {"display": "none"}
+    return run_detail(job), {}
 
-    job = data[selected_rows[0]]
+
+def run_detail(job):
     header = [
         html.H4(f"{job.get('benchmark', '?')} — {job.get('job_id', '?')}", className="card-title"),
         html.P([

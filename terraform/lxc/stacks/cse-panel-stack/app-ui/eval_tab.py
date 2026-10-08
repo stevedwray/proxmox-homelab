@@ -6,6 +6,7 @@ phase 3 of docs/benchmark-panel/plan.md. Replaces panel-web's HTML page
   POST /eval/api/jobs              start runs (one job per benchmark)
   POST /eval/api/jobs/<id>/cancel  cancel a queued, waiting or running job
   POST /eval/api/jobs/<id>/resume  resume a failed or cancelled run
+  DELETE /eval/api/jobs/<id>       delete a finished run everywhere
   POST /eval/api/publish           republish reports to Nextcloud
 
 The work happens in eval-runner's worker on ai-services-stack
@@ -208,6 +209,26 @@ def can_resume(job):
     return bool(job) and job.get("state") in ("failed", "cancelled") and bool(job.get("run"))
 
 
+def can_delete(job):
+    return bool(job) and job.get("state") not in LIVE_STATES
+
+
+def delete_message(job):
+    """The confirm dialog's text for deleting this job's run."""
+    if not job.get("run"):
+        return "Remove this job from the list? It never started a run, so there is nothing else to delete."
+    return (f"Delete run {job['run']} for good?\n\n"
+            "This removes its results on ai-services-stack, its report folder in Nextcloud, its rows in "
+            "the results table and Compare, and every entry for it here (resumes included). "
+            "The leaderboard is republished without it. This can't be undone.")
+
+
+def selected_index(rows, job_id):
+    """The table row to keep selected after a refresh: new runs are added at
+    the top, so the same index would point at a different run."""
+    return [i for i, row in enumerate(rows) if row.get("id") == job_id][:1] if job_id else []
+
+
 def size_hint(task, size, count):
     """What the chosen size runs, e.g. "50 of 198 questions (the first 50)"."""
     spec = SIZES[task]
@@ -293,7 +314,8 @@ runs_section = html.Div([
                 {"name": "Tokens", "id": "tokens"},
                 {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
-            data=[], row_selectable="single", selected_rows=[], page_size=15,
+            # Ten to a page, so the selected run's results below stay in view.
+            data=[], row_selectable="single", selected_rows=[], page_size=10,
             **TABLE_STYLE,
         ),
         dbc.Alert(id="eval-action-result", is_open=False, className="mt-3"),
@@ -305,9 +327,12 @@ runs_section = html.Div([
         html.Div([
             dbc.Button("Cancel run", id="eval-cancel-btn", color="danger", size="sm", className="me-2",
                        style={"display": "none"}),
-            dbc.Button("Resume run", id="eval-resume-btn", color="secondary", size="sm",
+            dbc.Button("Resume run", id="eval-resume-btn", color="secondary", size="sm", className="me-2",
+                       style={"display": "none"}),
+            dbc.Button("Delete run", id="eval-delete-btn", color="danger", size="sm", outline=True,
                        style={"display": "none"}),
         ], className="mt-2"),
+        dcc.ConfirmDialog(id="eval-delete-confirm"),
     ])),
     dbc.Card(id="eval-samples-card", className="mt-3", style={"display": "none"}, children=dbc.CardBody([
         html.Div([
@@ -334,8 +359,12 @@ def layout():
 
 
 def _post(path, json=None):
+    return _request("POST", path, json)
+
+
+def _request(method, path, json=None):
     headers = {"X-Authentik-Username": request.headers.get("X-Authentik-Username", "unknown")}
-    resp = requests.post(f"{PANEL_API_BASE_URL}{path}", json=json, headers=headers, timeout=10)
+    resp = requests.request(method, f"{PANEL_API_BASE_URL}{path}", json=json, headers=headers, timeout=10)
     try:
         body = resp.json()
     except ValueError:
@@ -406,9 +435,11 @@ def submit(_n, on, on_ids, sizes, counts, budget, note):
     Output("eval-jobs", "data"),
     Output("eval-jobs-table", "data"),
     Output("eval-links", "children"),
+    Output("eval-jobs-table", "selected_rows"),
     Input("eval-poll", "n_intervals"),
+    State("eval-selected", "data"),
 )
-def poll(_n):
+def poll(_n, selected=None):
     try:
         state = requests.get(f"{PANEL_API_BASE_URL}/eval/api/state", timeout=10).json()
     except (requests.RequestException, ValueError):
@@ -419,7 +450,8 @@ def poll(_n):
         if links:
             links.append("  ·  ")
         links.append(html.A(label, href=url, target="_blank", rel="noopener"))
-    return jobs, [job_row(j) for j in jobs], links
+    rows = [job_row(j) for j in jobs]
+    return jobs, rows, links, selected_index(rows, selected)
 
 
 @callback(
@@ -437,6 +469,7 @@ def select(selected_rows, rows):
     Output("eval-detail", "children"),
     Output("eval-cancel-btn", "style"),
     Output("eval-resume-btn", "style"),
+    Output("eval-delete-btn", "style"),
     Output("eval-samples-card", "style"),
     Input("eval-selected", "data"),
     Input("eval-jobs", "data"),
@@ -445,7 +478,22 @@ def detail(job_id, jobs):
     job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
     hidden = {"display": "none"}
     return (job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden),
-            ({} if job and job.get("run") else hidden))
+            ({} if can_delete(job) else hidden), ({} if job and job.get("run") else hidden))
+
+
+@callback(
+    Output("eval-delete-confirm", "displayed"),
+    Output("eval-delete-confirm", "message"),
+    Input("eval-delete-btn", "n_clicks"),
+    State("eval-selected", "data"),
+    State("eval-jobs", "data"),
+    prevent_initial_call=True,
+)
+def confirm_delete(clicks, job_id, jobs):
+    job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
+    if not clicks or not job:
+        raise PreventUpdate
+    return True, delete_message(job)
 
 
 def fetch_samples(job_id, offset):
@@ -486,15 +534,27 @@ def show_samples(_show, _prev, _next, job_id, offset):
     Input("eval-cancel-btn", "n_clicks"),
     Input("eval-resume-btn", "n_clicks"),
     Input("eval-publish-btn", "n_clicks"),
+    Input("eval-delete-confirm", "submit_n_clicks"),
     State("eval-selected", "data"),
     prevent_initial_call=True,
 )
-def act(cancel_clicks, resume_clicks, publish_clicks, job_id):
+def act(cancel_clicks, resume_clicks, publish_clicks, delete_clicks, job_id):
     trigger = ctx.triggered_id
     clicks = {"eval-cancel-btn": cancel_clicks, "eval-resume-btn": resume_clicks,
-              "eval-publish-btn": publish_clicks}.get(trigger)
+              "eval-publish-btn": publish_clicks, "eval-delete-confirm": delete_clicks}.get(trigger)
     if not clicks:
         return no_update, no_update, no_update
+    if trigger == "eval-delete-confirm":
+        if not job_id:
+            return "Select a run first.", "warning", True
+        try:
+            status, data = _request("DELETE", f"/eval/api/jobs/{job_id}")
+        except requests.RequestException as exc:
+            return f"Delete failed: {exc}", "danger", True
+        if status != 200:
+            return f"Delete failed: {data.get('detail')}", "danger", True
+        what = f"Run {data['run']} deleted" if data.get("run") else "Removed from the list"
+        return f"{what}. Nextcloud and the results table catch up in a minute or so.", "success", True
     if trigger == "eval-publish-btn":
         path, done = "/eval/api/publish", "Publish requested; the reports update in a minute or so."
     elif not job_id:

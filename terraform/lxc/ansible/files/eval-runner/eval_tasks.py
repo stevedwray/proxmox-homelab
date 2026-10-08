@@ -6,7 +6,7 @@ connecting OUT to cse-panel's Redis (the panel never reaches ai_seg):
 
   eval-runner-worker-runs  queue eval-runner, concurrency 1: run, resume.
                            One benchmark run at a time, in submission order.
-  eval-runner-worker-ctl   queue eval-runner-ctl: cancel, publish, and a
+  eval-runner-worker-ctl   queue eval-runner-ctl: cancel, publish, delete, and a
                            background loop that writes Framework's status.
                            Separate so a click isn't stuck behind a run
                            that takes hours.
@@ -566,6 +566,36 @@ def record_cse(row):
         json.dump(record, fh, indent=1)
     out = run_cmd([EVAL_RUN, "publish"], 900)
     return {"ok": out.returncode == 0, "published": (out.stdout.strip().splitlines() or [""])[-1]}
+
+
+@app.task(name="eval_tasks.forget_cse")
+def forget_cse(job_ids):
+    """A CyberSecEval run was deleted in the panel (cse_tasks.delete_run_dirs
+    sends this): drop its headline row here and from the Tables table."""
+    ids = [j for j in job_ids or [] if re.fullmatch(r"[0-9a-f-]{8,64}", str(j))]
+    for job_id in ids:
+        try:
+            os.remove(os.path.join(RESULTS_DIR, CSE_DIR, f"{job_id}.json"))
+        except FileNotFoundError:
+            pass
+    if not ids:
+        return {"ok": False, "error": "no valid job ids"}
+    argv = [EVAL_RUN, "publish"]
+    for job_id in ids:
+        argv += ["--remove", f"cyberseceval/{job_id}"]
+    out = run_cmd(argv, 900)
+    return {"ok": out.returncode == 0, "output": (out.stdout + out.stderr).strip()[-2000:]}
+
+
+@app.task(name="eval_tasks.delete_run")
+def delete_run(run_name):
+    """Delete a finished run for good (the panel's Delete button): eval-run
+    delete removes its results, its Nextcloud folder and table rows, and
+    republishes the leaderboard. eval-run refuses while it is running."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_name or "") or run_name.startswith("_"):
+        return {"ok": False, "error": "bad run name"}
+    out = run_cmd([EVAL_RUN, "delete", run_name], 900)
+    return {"ok": out.returncode == 0, "output": (out.stdout + out.stderr).strip()[-2000:], "at": _now()}
 
 
 @app.task(name="eval_tasks.compare")

@@ -129,6 +129,12 @@ def route(method, path, body):
     if m and method == "GET":
         return 200, [x for x in STATE["shares"] if x.get("nodeType") == "view" and x["nodeId"] == int(m.group(1))]
     m = re.fullmatch(r"/rows/(\d+)", path)
+    if m and method == "DELETE":
+        row = next((r for r in STATE["rows"] if r["id"] == int(m.group(1))), None)
+        if row is None:
+            return 404, {"message": "no such row"}
+        STATE["rows"].remove(row)
+        return 200, row
     if m and method == "PUT":
         row = next((r for r in STATE["rows"] if r["id"] == int(m.group(1))), None)
         if row is None:

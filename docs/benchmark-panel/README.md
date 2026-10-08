@@ -5,8 +5,10 @@ battery (GPQA, IFEval, BFCL, AgentBench, RepoBench). Every run records
 which model answered, its scores, duration, tokens and tokens/s, and
 both kinds of run share one queue for Framework.
 
-Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
-[plan.md](plan.md).
+Status: **phases 1–4 deployed and merged to stable (#458, 2026-10-08).**
+Follow-up on `fix/panel-results-delete` (2026-10-09): paged Results lists
+and a Delete run button on both tabs; see the Log. The history below
+is kept as written at the time. See [plan.md](plan.md).
 
 ## Where things stand (2026-10-08)
 
@@ -229,6 +231,35 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   table.
 
 ## Log
+
+- 2026-10-09, Results lists and deleting runs (`fix/panel-results-delete`),
+  operator report: the run list kept growing, the selected run's results
+  were at the bottom under it, and there was no way to delete a run.
+  Not deployed yet.
+  - **Both tabs:** the run list shows ten runs a page, so the selected
+    run's results sit right under it. The selection stays on the same run
+    when new runs are added at the top. A **Delete run** button under the
+    results asks for confirmation first.
+  - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
+    the run or a resume of it is still going) removes:
+    - every panel entry for the run, resumes included;
+    - its results on ai-services-stack, through the ctl worker's
+      `eval_tasks.delete_run` and `eval-run delete <run>`;
+    - its Nextcloud folder and Tables rows (`publish.py --remove
+      runs/<run>`), then republishes the leaderboard without it.
+  - **CyberSecEval delete:** the × in each row is gone. Its old wiring
+    also sent a delete for any job that dropped out of the list, such as
+    one whose Redis entry expired. `cse_tasks.delete_run_dirs` now also
+    removes:
+    - the run's Nextcloud folder (`Reports/cyberseceval/<stamp>/<benchmark>`),
+      plus the submission folder once it is empty;
+    - its Compare/Tables row (`eval_tasks.forget_cse`).
+
+    New runs record their folder stamp in `meta.json`. For older runs, the
+    folder is found from the run's exact start time in `results.md`.
+  - **Noticed, not changed:** CyberSecEval runs submitted as a suite (more
+    than one benchmark at once) never reach `/jobs`, so the Results list
+    doesn't show them.
 
 - 2026-10-08, deployed (cd09cde2), approval `benchmark-labels-retire-page`.
   The ai-services-stack eval play and cse-panel-stack both ran with

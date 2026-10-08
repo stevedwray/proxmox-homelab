@@ -35,6 +35,9 @@ Nextcloud only the folders of new or changed runs get a new timestamp.
 Usage:
   publish.py                    publish what changed
   publish.py --all              upload every file again
+  publish.py --remove runs/<run>
+                                a deleted run: delete its folder and Tables
+                                rows, then publish (the leaderboard drops it)
   publish.py --dry-run DIR      render everything into DIR, no network
 """
 
@@ -942,6 +945,25 @@ def changed_files(files, previous):
     return {rel for rel in files if previous.get(rel) != hashes[rel]}
 
 
+def remove(nc, prefixes):
+    """Delete what earlier publishes made for deleted runs: each prefix's
+    folder under FOLDER (runs/<run>; a CyberSecEval prefix has none, so
+    that is a 404, which is fine) and every Tables row whose Key starts
+    with it. Returns the number of rows deleted."""
+    prefixes = [p.strip("/") for p in prefixes]
+    for prefix in prefixes:
+        nc.delete_file(f"{FOLDER}/{prefix}")
+    table_id = ensure_table(nc)
+    key_col = ensure_columns(nc, table_id)["Key"]
+    deleted = 0
+    for remote in _all_rows(nc, table_id):
+        key = next((c["value"] for c in remote.get("data", []) if c["columnId"] == key_col), None)
+        if isinstance(key, str) and any(key.startswith(p + "/") for p in prefixes):
+            nc.tables("DELETE", f"/rows/{remote['id']}")
+            deleted += 1
+    return deleted
+
+
 def publish(nc, files, rows, share_with=None, only=None, locked=None):
     """Upload files (all, or just those in `only`), then sync the table.
     A file that is locked (open in Nextcloud) is skipped and added to
@@ -980,6 +1002,9 @@ def main(argv=None):
     parser.add_argument("--results-root", default=RESULTS_ROOT)
     parser.add_argument("--findings", default=FINDINGS_FILE)
     parser.add_argument("--all", action="store_true", help="upload every file, changed or not")
+    parser.add_argument("--remove", action="append", default=[], metavar="PREFIX",
+                        help="first delete a deleted run's folder and Tables rows: runs/<run> or "
+                             "cyberseceval/<job id> (repeatable)")
     args = parser.parse_args(argv)
 
     findings = None
@@ -1010,7 +1035,10 @@ def main(argv=None):
     state_path = os.path.join(args.results_root, STATE_FILE)
     only = None if args.all else changed_files(files, load_state(state_path))
     locked = []
+    removed = 0
     try:
+        if args.remove:
+            removed = remove(nc, args.remove)
         table_id, (created, updated, unchanged) = publish(
             nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None, only=only, locked=locked)
     except NextcloudError as err:
@@ -1025,7 +1053,8 @@ def main(argv=None):
     sent = (len(files) if only is None else len(only)) - len(locked)
     skipped = (f"; {len(locked)} locked (open in Nextcloud?), retried next publish: {', '.join(locked)}"
                if locked else "")
-    print(f"published {sent} changed of {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
+    gone = f"removed {', '.join(args.remove)} ({removed} table rows); " if args.remove else ""
+    print(f"{gone}published {sent} changed of {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
           f"{created} rows created, {updated} updated, {unchanged} unchanged{skipped}")
     return 0
 
