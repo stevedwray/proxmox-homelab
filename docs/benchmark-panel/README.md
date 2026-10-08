@@ -128,7 +128,10 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   `/eval/api/*`, which is unchanged.
   - **Run:** one row per benchmark, each with its own on/off switch and
     size: Pilot, Choose N (capped at that benchmark's total), or Full.
-    A live line explains what N means, e.g. "50 of 198 questions (the
+    The options read Pilot, Full, Choose, with the number box right after
+    Choose and always visible; typing in the box selects Choose.
+    RepoBench's labels show real sample counts (75 / 1,500), and its
+    Choose is "per level". A live line explains what N means, e.g. "50 of 198 questions (the
     first 50)". RepoBench's N is per context length and setting, so it
     asks 15 x N of 1500. BFCL spreads N evenly over its 400 cases.
     Choosing the whole set sends a full run. The tab sends one
@@ -155,6 +158,10 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   table.
 
 ## Log
+
+- 2026-10-08, size options reordered (4bcff2ce, 1461e402), approval
+  `benchmark-panel-dash-order`: cse-panel-stack ran with failed=0, 15
+  callbacks. Typing 30 in GPQA's box selected Choose on the live server.
 
 - 2026-10-08, per-benchmark run sizes deployed (`task/benchmark-panel-dash`,
   4a39c9c1), approval `benchmark-panel-dash-sizes`: cse-panel-stack ran
