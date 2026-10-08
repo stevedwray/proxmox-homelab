@@ -156,6 +156,11 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
+- 2026-10-08, per-benchmark run sizes deployed (`task/benchmark-panel-dash`,
+  4a39c9c1), approval `benchmark-panel-dash-sizes`: cse-panel-stack ran
+  with failed=0. The live size callback returned "50 of 198 questions
+  (the first 50)…" for GPQA with Choose 50.
+
 - 2026-10-08, phase 3 deployed (`task/benchmark-panel-dash`, 3906f03d),
   approval `benchmark-panel-dash`: `provision.sh --stack cse-panel-stack`
   ran with failed=0. Calling the new callbacks server-side worked: the
