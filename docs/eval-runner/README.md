@@ -19,9 +19,9 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   `~/git/proxmox-homelab-eval-runner` is no longer needed: deploy from
   the main checkout on `stable` with the normal wrapper.
 - **Where the control page lives.** CyberSecEval's panel is now a Dash
-  app, and its old HTML index is gone. The Eval battery page still runs
-  on `panel-web` and is reached at `https://cse-panel-api.<domain>/eval`,
-  linked from the Dash header. Its back link points to the Dash UI.
+  app, and its old HTML index is gone. Since 2026-10-08 the Eval battery
+  is a tab in that Dash app too; the old page at
+  `https://cse-panel-api.<domain>/eval` redirects there.
 - **An outage, now fixed.** The Dash cutover (2026-10-07) was first
   deployed from a branch without this work. For a few hours that
   dropped `/eval` (404) and the Redis password, so the eval workers
