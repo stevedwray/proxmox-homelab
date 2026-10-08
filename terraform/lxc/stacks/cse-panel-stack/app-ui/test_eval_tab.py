@@ -213,6 +213,35 @@ class EvalTabTest(unittest.TestCase):
                 _, offset = eval_tab.show_samples(1, 1, 1, "j2", 30)
             self.assertEqual(offset, 0)
 
+    def test_running_job_shows_elapsed_time(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 8, 23, 11, 1, tzinfo=timezone.utc)
+        job = {"id": "j9", "task": "ifeval", "mode": "limit", "limit": 1, "state": "running",
+               "run": "glm-ifeval-limit1-S", "run_started": "2026-10-08T22:50:47Z"}
+        self.assertEqual(eval_tab.job_row(job, now=now)["duration"], "20m 14s so far")
+        self.assertEqual(eval_tab.job_row(DONE, now=now)["duration"], "3m 12s")
+        self.assertEqual(eval_tab.running_for(dict(job, state="queued"), now), "")
+        self.assertIn("Running for", text(eval_tab.job_detail(job, "Pacific/Auckland")))
+        self.assertNotIn("Running for", text(eval_tab.job_detail(DONE)))
+
+    def test_settings_are_kept_in_the_browser(self):
+        found = {}
+
+        def walk(c):
+            if getattr(c, "id", None) is not None:
+                found[json.dumps(c.id, sort_keys=True) if isinstance(c.id, dict) else c.id] = (
+                    getattr(c, "persistence", None), getattr(c, "persistence_type", None))
+            kids = getattr(c, "children", None)
+            for k in kids if isinstance(kids, (list, tuple)) else [kids]:
+                if hasattr(k, "to_plotly_json"):
+                    walk(k)
+        walk(panel_ui.app.layout)
+        for cid in ("family", "cse-section", "eval-section", "benchmarks", "num-test-cases", "eval-budget",
+                    "eval-note", "compare-full-only", '{"task": "gpqa", "type": "eval-size"}',
+                    '{"task": "gpqa", "type": "eval-on"}', '{"task": "gpqa", "type": "eval-count"}'):
+            self.assertEqual(found[cid], (True, "local"), cid)
+        self.assertEqual(panel_ui.CHART_LAYOUT["uirevision"], "keep")
+
     def test_local_time(self):
         lt = eval_tab.local_time
         self.assertEqual(lt("2026-10-08T21:30:00Z", "Pacific/Auckland"), "2026-10-09 10:30")  # NZDT, +13

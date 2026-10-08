@@ -92,6 +92,7 @@ run_tab = dbc.Card(dbc.CardBody([
     html.H4("Submit a run", className="card-title mb-3"),
     dbc.Checklist(
         id="benchmarks",
+        **eval_tab.PERSIST,
         switch=True,
         inline=False,
         options=[
@@ -104,6 +105,7 @@ run_tab = dbc.Card(dbc.CardBody([
     dbc.Label("Test cases"),
     dcc.Slider(
         id="num-test-cases",
+        **eval_tab.PERSIST,
         min=1, max=50, step=1, value=2,
         tooltip={"placement": "bottom", "always_visible": True},
     ),
@@ -177,7 +179,7 @@ def section_switch(switch_id):
     """The Run / Results switch inside a benchmark family's tab: a
     Bootstrap button group (dbc's RadioItems-as-buttons pattern)."""
     return html.Div(dbc.RadioItems(
-        id=switch_id, value="run",
+        id=switch_id, value="run", **eval_tab.PERSIST,
         options=[{"label": "Run", "value": "run"}, {"label": "Results", "value": "results"}],
         className="btn-group", inputClassName="btn-check",
         labelClassName="btn btn-outline-primary", labelCheckedClassName="active",
@@ -216,7 +218,7 @@ app.layout = dbc.Container(
         # The browser's time zone (IANA name), set by the clientside
         # callback below; every timestamp on the page is shown in it.
         dcc.Store(id="browser-tz"),
-        dbc.Tabs(id="family", active_tab="cse", className="mt-3", children=[
+        dbc.Tabs(id="family", active_tab="cse", className="mt-3", **eval_tab.PERSIST, children=[
             dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
                     label_style={"fontSize": "1.15rem"}),
             dbc.Tab(eval_family, tab_id="eval", label="Eval battery",
@@ -447,7 +449,10 @@ def _run_metrics_block(metrics):
 
 
 MODEL_COLOURS = ["#6f42c1", "#20c997", "#fd7e14", "#0dcaf0", "#d63384", "#ffc107", "#198754", "#adb5bd"]
-CHART_LAYOUT = {"template": "plotly_dark", "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)"}
+# uirevision: a refresh every few seconds keeps the person's zoom and
+# hidden traces instead of resetting the chart.
+CHART_LAYOUT = {"template": "plotly_dark", "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)",
+                "uirevision": "keep"}
 
 
 def _empty_chart_figure(message):

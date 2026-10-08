@@ -269,6 +269,19 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
       2026-10-08 came out as 2026-10-09 10:30 in Pacific/Auckland. A tab
       still open from before raised IndexError: it sends one input fewer
       than the server now expects. Reloading fixes it.
+  - **Kept settings and live progress** (operator request, same day):
+    - The run forms, the open tab and Run/Results view, and Compare's
+      full-runs switch are kept in the browser (Dash persistence,
+      localStorage). A value a callback sets isn't kept: typing a number
+      selects Choose, but after a reload the size is back to the default.
+    - A running eval job shows "12m 5s so far" in Duration and "Running
+      for …" in its detail, with a note that lm_eval's log only moves when
+      an answer comes back. A 32k IFEval answer sat at "Requesting API
+      0/1" for 20+ minutes.
+    - Charts keep their zoom across refreshes (`uirevision`).
+    - Not done: live token counts during a run. That needs a worker change,
+      and its deploy restarts the run worker, so it waits for a gap
+      between runs.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;

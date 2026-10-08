@@ -54,6 +54,11 @@ SIZES = {
                   "which": "the first {n} at each of 5 context lengths x 3 settings", "per_level": 15},
 }
 LIVE_STATES = ("queued", "waiting", "starting", "running", "publishing")
+# Settings a person picks (run form, tabs, switches) are kept in this
+# browser's localStorage, so a reload or a later visit starts from them.
+# Dash keeps only what the person changed: a value a callback sets (typing
+# a number selects Choose) isn't kept.
+PERSIST = {"persistence": True, "persistence_type": "local"}
 TABLE_STYLE = dict(
     style_table={"width": "100%", "overflowX": "auto"},
     style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
@@ -82,6 +87,14 @@ def local_time(stamp, tz=None):
     return when.astimezone(zone).strftime("%Y-%m-%d %H:%M")
 
 
+def _seconds_since(stamp, now=None):
+    try:
+        start = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0, ((now or datetime.now(timezone.utc)) - start).total_seconds())
+
+
 def _format_duration(seconds):
     if seconds is None:
         return ""
@@ -96,7 +109,14 @@ def job_metrics(job):
     return job.get("run_metrics_total") or job.get("run_metrics") or {}
 
 
-def job_row(job, tz=None):
+def running_for(job, now=None):
+    """How long a running job's run has been going ("12m 5s"), or ""."""
+    if job.get("state") not in ("running", "publishing") or not (job.get("run_started") or job.get("started")):
+        return ""
+    return _format_duration(_seconds_since(job.get("run_started") or job.get("started"), now))
+
+
+def job_row(job, tz=None, now=None):
     """One row of the runs table."""
     metrics = job_metrics(job)
     mut = metrics.get("model_under_test") or {}
@@ -118,7 +138,8 @@ def job_row(job, tz=None):
         "mode": what,
         "state": state,
         "run": job.get("run") or "",
-        "duration": _format_duration(metrics.get("duration_seconds")),
+        "duration": (f"{running_for(job, now)} so far" if running_for(job, now)
+                     else _format_duration(metrics.get("duration_seconds"))),
         "tokens": f"{mut['completion_tokens']:,}" if "completion_tokens" in mut else "",
         "tokens_per_second": mut.get("generation_tokens_per_second", ""),
     }
@@ -164,6 +185,13 @@ def job_detail(job, tz=None):
             value = local_time(job[key], tz) if key in ("submitted", "finished") else str(job[key])
             meta += ["  ·  ", html.Strong(f"{label}: "), value]
     children = [html.H4(title, className="card-title"), html.P(meta, className="text-muted")]
+    if running_for(job):
+        children.append(html.P([
+            html.Strong(f"Running for {running_for(job)}"),
+            f" (since {local_time(job.get('run_started') or job.get('started'), tz)}). ",
+            html.Span("The log gets a line when an answer comes back, so with long answers it can sit still "
+                      "for many minutes while the model is still working.", className="text-muted"),
+        ], className="small"))
     if job.get("run") and job.get("state") in ("done", "failed", "cancelled"):
         children.append(html.P(html.A(
             "This run's report in Nextcloud →",
@@ -297,7 +325,7 @@ def benchmark_row(task):
     spec = SIZES[task]
     per_level = spec.get("per_level", 1)
     return dbc.Row(className="py-2 border-bottom border-secondary", children=[
-        dbc.Col(dbc.Switch(id={"type": "eval-on", "task": task}, value=False,
+        dbc.Col(dbc.Switch(id={"type": "eval-on", "task": task}, value=False, **PERSIST,
                            label=html.Span([html.Strong(spec["name"]), html.Br(),
                                             html.Span(TASKS[task].split(": ", 1)[1], className="text-muted small")])),
                 md=5),
@@ -306,13 +334,14 @@ def benchmark_row(task):
                 # Choose last, so its number box sits right after it.
                 # Labels show what actually runs (RepoBench: all levels).
                 dbc.RadioItems(
-                    id={"type": "eval-size", "task": task}, value="pilot", inline=True,
+                    id={"type": "eval-size", "task": task}, value="pilot", inline=True, **PERSIST,
                     options=[{"label": f"Pilot ({spec['pilot'] * per_level:,})", "value": "pilot"},
                              {"label": f"Full ({spec['max'] * per_level:,})", "value": "full"},
                              {"label": "Choose" + (" per level" if per_level > 1 else ""), "value": "count"}],
                     className="me-1",
                 ),
                 dbc.Input(id={"type": "eval-count", "task": task}, type="number", min=1, max=spec["max"], step=1,
+                          **PERSIST,
                           value=min(50, spec["max"]), size="sm", style={"maxWidth": "90px"}),
             ], className="d-flex align-items-center flex-wrap"),
             html.Div(id={"type": "eval-hint", "task": task}, className="text-muted small mt-1"),
@@ -324,9 +353,9 @@ run_section = dbc.Card(dbc.CardBody([
     html.H4("Start a run", className="card-title mb-1"),
     html.P("Switch on each benchmark to run, and choose how much of it.", className="text-muted small"),
     html.Div([benchmark_row(task) for task in TASKS], className="mb-3"),
-    dbc.Switch(id="eval-budget", label="32k token budget (applies to GPQA and IFEval)", value=False,
+    dbc.Switch(id="eval-budget", label="32k token budget (applies to GPQA and IFEval)", value=False, **PERSIST,
                className="mb-2"),
-    dbc.Input(id="eval-note", placeholder="Note (one line, e.g. reasoning_effort=high)", maxLength=200,
+    dbc.Input(id="eval-note", placeholder="Note (one line, e.g. reasoning_effort=high)", maxLength=200, **PERSIST,
               className="mb-3"),
     dbc.Button("Start run(s)", id="eval-submit-btn", color="primary"),
     dbc.Alert(id="eval-submit-result", is_open=False, className="mt-3"),
