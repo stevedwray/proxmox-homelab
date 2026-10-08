@@ -13,6 +13,9 @@ Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
 **Branches:**
 - **`task/cse-model-identity`:** phase 1 code plus this plan. Deployed to
   pve-tiny. Not pushed or merged; the operator decides.
+- **`task/framework-run-lock`:** phase 2, cut from
+  `task/cse-model-identity` (so it carries phase 1 too). Built and unit
+  tested; not deployed yet.
 - **`task/benchmark-panel-plan`:** superseded; its one commit was
   cherry-picked onto `task/cse-model-identity`.
 - `stable` already has llama-swap (#456) and CSE run metrics (#457).
@@ -35,7 +38,8 @@ Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
   The alias is the entry name, so both systems would record it
   automatically.
 
-**Phase 2 (next): how to build it.**
+**Phase 2 (built 2026-10-08, see "Phase 2 as built" below).** The
+original build notes:
 - **The lock.**
   - A Redis key on cse-panel's Redis, e.g. `framework:run-lock`, set
     with NX and a TTL, holding `{job_id, suite, benchmark, started}`.
@@ -63,6 +67,52 @@ Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
   `./with-secrets-prod-tiny scripts/provision.sh --stack <name>`, and the
   ai-services-stack eval-runner play per `docs/eval-runner/README.md`.
   All on pve-tiny; check that no job is running first.
+
+**Phase 2 as built (`task/framework-run-lock`):**
+- **The lock:** `terraform/lxc/ansible/files/framework-lock/framework_lock.py`,
+  one file copied next to each worker by its playbook. Key
+  `framework:run-lock` in cse-panel's Redis DB 1 (both workers' result
+  backend), value `{job_id, suite, benchmark, started}`, NX with a 180 s
+  TTL, renewed every 60 s by a thread while the run is active, released
+  in `finally`. A dead worker frees Framework within 3 minutes. A job
+  redelivered after a worker restart has the same id, so it takes its
+  own lock back at once.
+- **CyberSecEval:** `run_benchmark` takes the lock only when the backend
+  is Framework's host. While waiting, its Celery state is `WAITING` with
+  the holder in its meta; once it holds the lock it reports `STARTED`.
+  Before this, running CSE jobs showed "Queued", because the worker never
+  reported STARTED. It gives up after 12 h. Cancelling a waiting job from
+  the panel works as before (revoke with SIGTERM).
+- **Eval battery:** the lock replaces the idle-slots wait. The "another
+  eval run" wait stays, for runs started over ssh. The lock is held from
+  launch until the container exits. Publishing happens after release.
+- **Eval run metrics:** `/metrics` counters are read just before
+  `eval-run` starts the run and again after the container exits. They
+  give `run_metrics` in CSE's shape: `duration_seconds` plus
+  `model_under_test {prompt_tokens, completion_tokens, prompt_seconds,
+  generation_seconds, generation_tokens_per_second,
+  prompt_tokens_per_second}`. If a counter went down, `unavailable`
+  replaces the token figures. They go in the job record and the run's
+  `run.json`, where a resumed run's segments are summed. `publish.py`
+  adds a "Run metrics" section to each run's `report.md` and columns
+  `Duration (min)`, `Tokens generated` and `Tokens/s` to the Tables rows,
+  views and xlsx. Runs from before phase 2 have none.
+- **Panel:**
+  - panel-web `GET /framework` returns the lock holder plus the eval
+    worker's Framework status (loaded model, busy slots).
+  - The Dash header shows "Framework: <model> · free" or "· busy with
+    <suite> <benchmark> (job …); new benchmark runs wait".
+  - The CSE jobs table shows "Waiting for Framework (eval bfcl)".
+  - The Eval page shows the holder and each run's duration, tokens and
+    tokens/s.
+- **Tests:** `framework-lock/test_framework_lock.py` (8),
+  `test_cse_framework_lock.py` (5), plus new cases in `test_eval_tasks.py`
+  and `test_publish.py`, and panel tests for `/framework` and the
+  WAITING label.
+- **Deploy order:** ai-services-stack eval worker, then cse-controller,
+  then cse-panel-stack. Either worker without the other would run
+  unlocked against the other side, so deploy both back to back with
+  nothing running. The panel is display only.
 
 **Phases 3–4 (after phase 2):**
 - **Phase 3:** the Dash Eval battery tab on `/eval/api/*`, then retire

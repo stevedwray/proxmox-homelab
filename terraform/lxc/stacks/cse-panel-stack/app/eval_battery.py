@@ -253,7 +253,30 @@ function frameworkLine(fw) {
   if (fw.error) return `Framework: <b>unreachable</b> (${esc(fw.error)}) · checked ${esc(fw.checked)}`;
   const busy = fw.busy ? `<b>${fw.busy} of ${fw.slots} slots busy</b>` : `idle (${fw.slots} slots)`;
   const ev = fw.eval_running ? ` · eval container: ${esc(fw.eval_running)}` : '';
-  return `Framework: serving <b>${esc(fw.model)}</b> · ${busy}${ev} · checked ${esc(fw.checked)}`;
+  const lock = fw.lock ? ` · <b>busy with ${esc(fw.lock.suite)} ${esc(fw.lock.benchmark)}</b> (job ${esc(fw.lock.job_id)}); new benchmark runs wait` : '';
+  return `Framework: serving <b>${esc(fw.model)}</b> · ${busy}${lock}${ev} · checked ${esc(fw.checked)}`;
+}
+
+function duration(sec) {
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return h ? `${h}h ${m}m ${s}s` : (m ? `${m}m ${s}s` : `${s}s`);
+}
+
+// Duration, tokens and tokens/s (eval_tasks.py, from llama-server's /metrics).
+function metricsLine(m) {
+  if (!m) return '';
+  const parts = [];
+  if (m.duration_seconds != null) parts.push(`${duration(m.duration_seconds)}${m.segments > 1 ? ` over ${m.segments} segments` : ''}`);
+  const mut = m.model_under_test;
+  if (mut) {
+    parts.push(`${mut.completion_tokens.toLocaleString()} tokens generated`);
+    if (mut.generation_tokens_per_second != null) parts.push(`${mut.generation_tokens_per_second} tokens/s`);
+    parts.push(`${mut.prompt_tokens.toLocaleString()} prompt tokens`);
+  } else if (m.unavailable) {
+    parts.push(`tokens unavailable: ${esc(m.unavailable)}`);
+  }
+  return parts.length ? `<div>Run: ${parts.join(' · ')}</div>` : '';
 }
 
 function jobCard(j) {
@@ -267,7 +290,7 @@ function jobCard(j) {
   const err = j.error ? `<pre>${esc(j.error)}</pre>` : '';
   return `<div class="job"><b>${what}</b> <span class="s-${esc(j.state)}">${esc(j.state)}${waiting}</span>${buttons}
     <div class="muted">${j.run ? 'run ' + esc(j.run) + ' · ' : ''}${j.note ? 'note: ' + esc(j.note) + ' · ' : ''}by ${esc(j.submitted_by)} · submitted ${esc(j.submitted)}${j.finished ? ' · finished ' + esc(j.finished) : ''}</div>
-    ${body}${err}</div>`;
+    ${metricsLine(j.run_metrics_total || j.run_metrics)}${body}${err}</div>`;
 }
 
 async function refresh() {

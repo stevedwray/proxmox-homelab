@@ -55,7 +55,11 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
     and `eval-runner-ctl` (cancel, publish, status).
   - On ai-services-stack, the `eval-runner-worker-runs` and
     `eval-runner-worker-ctl` systemd units run `eval_tasks.py`, driving
-    `eval-run`. Each run waits for idle Framework slots.
+    `eval-run`. Each run first takes the Framework lock it shares with
+    CyberSecEval (`framework:run-lock`, see
+    `docs/benchmark-panel/README.md`), and records duration, tokens and
+    tokens/s from llama-server's `/metrics` in the job and `run.json`.
+    Until 2026-10-08 it waited for idle Framework slots instead.
   - cse-panel's Redis requires `CSE_PANEL_REDIS_PASSWORD` (OpenBao
     `services/cse-panel`).
   - MikroTik rule `ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
@@ -106,8 +110,8 @@ loads only the fields in the current checkout's `secrets/manifest.json`.
    Collabora, or leave it. The operator hasn't decided.
 3. Cosmetic: the empty "Alt score %" cells show a lone "%" for BFCL and
    AgentBench. Offered, not done.
-4. Not done: a shared Framework lock with CSE (v1 waits for idle slots
-   instead). Revisit after the CSE branch merges.
+4. The shared Framework lock with CSE and the run metrics are phase 2
+   of `docs/benchmark-panel/` (branch `task/framework-run-lock`).
 5. Real scored runs of the other benchmarks need the operator's
    go-ahead, or the operator starts them from the panel.
 6. Known side issues:

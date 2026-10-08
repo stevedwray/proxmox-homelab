@@ -51,7 +51,7 @@ DELETE_TASK_NAME = "cse_tasks.delete_run_dirs"
 # run_dir about to be deleted out from under it, or (worse, given
 # task_acks_late) let a killed-but-redelivered task resurrect a "deleted"
 # run. Simpler and safer to just require every job be finished first.
-NON_TERMINAL_STATES = {"PENDING", "STARTED", "RETRY"}
+NON_TERMINAL_STATES = {"PENDING", "WAITING", "STARTED", "RETRY"}
 
 # The set of benchmarks proven to work in the 2026-09-19 small-batch run
 # (docs/cyberseceval-implementation/current-state.md) -- deliberately not
@@ -141,12 +141,20 @@ KNOWN_BACKENDS = {
 
 STATE_LABELS = {
     "PENDING": "Queued",
+    # Set by cse_tasks.py while it waits for the shared Framework lock.
+    "WAITING": "Waiting for Framework",
     "STARTED": "Running",
     "SUCCESS": "Done",
     "FAILURE": "Failed",
     "RETRY": "Retrying",
     "REVOKED": "Cancelled",
 }
+
+# The Framework lock both benchmark workers take before a run
+# (terraform/lxc/ansible/files/framework-lock/framework_lock.py), and the
+# eval battery worker's status of Framework; both in this Redis, DB 1.
+FRAMEWORK_LOCK_KEY = "framework:run-lock"
+EVAL_FRAMEWORK_KEY = "eval:framework"
 
 RECENT_JOBS_KEY = "cse_panel:recent_job_ids"
 RECENT_SUITES_KEY = "cse_panel:recent_suite_ids"
@@ -368,7 +376,34 @@ def _job_summary(job_id: str) -> dict:
             entry["stats_error"] = result["stats_error"]
     elif res.state == "FAILURE":
         entry["error"] = str(res.result)
+    elif res.state == "WAITING":
+        held_by = (res.info or {}).get("held_by") or {}
+        if held_by:
+            entry["state_label"] = f"Waiting for Framework ({held_by.get('suite')} {held_by.get('benchmark')})"
     return entry
+
+
+def _redis_json(key: str):
+    raw = celery_app.backend.client.get(key)
+    try:
+        return json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return {"raw": str(raw)}
+
+
+@app.get("/framework")
+def framework():
+    """Who holds Framework (the shared benchmark lock) and what it serves
+    (the eval worker's 30 s status: loaded model, busy slots)."""
+    status = _redis_json(EVAL_FRAMEWORK_KEY) or {}
+    return {
+        "lock": _redis_json(FRAMEWORK_LOCK_KEY),
+        "model": status.get("model"),
+        "busy": status.get("busy"),
+        "slots": status.get("slots"),
+        "checked": status.get("checked"),
+        "error": status.get("error"),
+    }
 
 
 @app.get("/healthz")

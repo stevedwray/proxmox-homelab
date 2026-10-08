@@ -69,7 +69,12 @@ def make_tree(root):
                    "server": {"model_id": "glm-5.3-flash", "props": {
                        "model_path": "/m/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf",
                        "build_info": "b11309-a4d880fd5", "n_ctx": 131072,
-                       "params": {"temperature": 1.0, "top_p": 0.95}}}}, fh)
+                       "params": {"temperature": 1.0, "top_p": 0.95}}},
+                   "run_metrics": {"source": "llama-server /metrics", "segments": 1, "duration_seconds": 5430.0,
+                                   "model_under_test": {"prompt_tokens": 51234, "completion_tokens": 123456,
+                                                        "prompt_seconds": 40.0, "generation_seconds": 6100.0,
+                                                        "generation_tokens_per_second": 20.2,
+                                                        "prompt_tokens_per_second": 1280.9}}}, fh)
     hist = os.path.join(root, summarize.HISTORICAL_DIR)
     os.makedirs(hist)
     write_run(hist, "qwen36-35b-redo", ["gpqa", "ifeval"], gpqa_rows=gpqa_rows(["(A)", ""]),
@@ -102,10 +107,12 @@ class CollectTest(unittest.TestCase):
         self.assertEqual((glm["Score %"], glm["Empty answers"], glm["Unparsed"]), (50.0, 1, 1))
         self.assertEqual(glm["Empty %"], 33.3)
         self.assertEqual(glm["Comparable"], "yes")
+        self.assertEqual((glm["Duration (min)"], glm["Tokens generated"], glm["Tokens/s"]), (90.5, 123456, 20.2))
         bug6 = [r for r in rows if r["Run"] == "qwen36-35b"][0]
         self.assertEqual(bug6["Comparable"], "no")
         self.assertIn("Bug 6", bug6["Why not comparable"])
         self.assertEqual(bug6["Runtime"], "Ollama")
+        self.assertEqual((bug6["Duration (min)"], bug6["Tokens/s"]), (None, None))
         self.assertTrue(bug6["Key"].startswith("historical/qwen36-35b/ifeval/"))
 
 
@@ -167,6 +174,18 @@ class RenderTest(unittest.TestCase):
         self.assertIn("| Score (flexible-extract) | 50.00% |", report)
         self.assertIn("| Strict-match | 25.00% |", report)
         self.assertIn("| Empty answers | 1 (33.3%) |", report)
+
+    def test_report_has_run_metrics(self):
+        report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+        self.assertIn("## Run metrics\n\n- **Duration:** 1h 30m 30s\n", report)
+        self.assertIn("| Generated tokens (incl. reasoning) | 123,456 |", report)
+        self.assertIn("| Generation speed (tokens/s) | 20.2 |", report)
+        self.assertNotIn("## Run metrics", self.files["historical/qwen36-35b/report.md"].decode())
+
+    def test_run_metrics_unavailable_or_missing(self):
+        self.assertIn("unavailable: reloaded", "\n".join(publish.render_metrics(
+            {"run_metrics": {"duration_seconds": 60, "unavailable": "reloaded"}})))
+        self.assertIn("Not recorded", publish.render_metrics({})[0])
 
     def test_report_header_is_tidy(self):
         report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()

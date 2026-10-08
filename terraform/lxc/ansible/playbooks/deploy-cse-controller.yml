@@ -699,6 +699,15 @@
         dest: /srv/cyberseceval/config/cse_tasks.py
         mode: "0644"
 
+    # The Framework lock shared with the eval battery's worker on
+    # ai-services-stack (docs/benchmark-panel/plan.md, C). On the worker's
+    # PYTHONPATH next to cse_tasks.py.
+    - name: Write the shared Framework lock module
+      ansible.builtin.copy:
+        src: "../files/framework-lock/framework_lock.py"
+        dest: /srv/cyberseceval/config/framework_lock.py
+        mode: "0644"
+
     # Now that celery is installed into the venv and cse_tasks.py exists,
     # start the worker service. Idempotent whole-file "up -d": leaves the
     # already-running controller service untouched, only creates/starts

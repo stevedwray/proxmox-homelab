@@ -89,6 +89,11 @@ COLUMNS = [
     ("Empty %", {"type": "number", "numberDecimals": 1, "numberSuffix": "%"}),
     ("Unparsed", {"type": "number", "numberDecimals": 0}),
     ("Token budget", {"type": "number", "numberDecimals": 0}),
+    # Per run, not per task (a run's tasks share them): from run.json's
+    # run_metrics, which the panel worker writes (eval_tasks.py).
+    ("Duration (min)", {"type": "number", "numberDecimals": 1}),
+    ("Tokens generated", {"type": "number", "numberDecimals": 0}),
+    ("Tokens/s", {"type": "number", "numberDecimals": 1}),
     ("Series", {"type": "text", "subtype": "line"}),
     ("Comparable", {"type": "text", "subtype": "line"}),
     ("Why not comparable", {"type": "text", "subtype": "line"}),
@@ -165,6 +170,15 @@ def _stamp_date(stamp):
     return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if len(stamp) >= 8 and stamp[:8].isdigit() else ""
 
 
+def _run_metric_cells(record):
+    """(duration in minutes, tokens generated, tokens/s) from run.json."""
+    metrics = (record or {}).get("run_metrics") or {}
+    mut = metrics.get("model_under_test") or {}
+    duration = metrics.get("duration_seconds")
+    return (round(duration / 60, 1) if isinstance(duration, (int, float)) else None,
+            mut.get("completion_tokens"), mut.get("generation_tokens_per_second"))
+
+
 def _row(source, run, task, data, metrics, samples, record, stamp):
     label, primary_name, alt_name = TASK_LABELS[task]
     keys = [key for _, key in summarize.HEADLINE[task]]
@@ -179,6 +193,7 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         return round(value * 100, 2) if isinstance(value, (int, float)) else None
 
     empty = flags["empty"]
+    duration_min, tokens, tokens_per_s = _run_metric_cells(record)
     return {
         "Key": f"{source}/{run}/{task}" + (f"/{stamp}" if source == "historical" else ""),
         "Model": model,
@@ -191,6 +206,9 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
         "Unparsed": flags["unparsed"],
         "Token budget": summarize._max_gen_toks(data.get("config", {}).get("gen_kwargs")),
+        "Duration (min)": duration_min,
+        "Tokens generated": tokens,
+        "Tokens/s": tokens_per_s,
         "Series": summarize.series(data) or "",
         "Comparable": "no" if reason else "yes",
         "Why not comparable": reason or "",
@@ -331,6 +349,45 @@ def _started(stamp):
     return stamp or "–"
 
 
+def _duration_text(seconds):
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}h {minutes}m {secs}s" if hours else (f"{minutes}m {secs}s" if minutes else f"{secs}s")
+
+
+def _count(value):
+    return f"{value:,}" if isinstance(value, int) else "–"
+
+
+def render_metrics(record):
+    """The report's Run metrics section (same figures as CyberSecEval's)."""
+    metrics = (record or {}).get("run_metrics")
+    if not metrics:
+        return ["Not recorded for this run (runs started before 2026-10-08, or from the command line)."]
+    lines = []
+    if "duration_seconds" in metrics:
+        segments = metrics.get("segments") or 1
+        lines.append(f"- **Duration:** {_duration_text(metrics['duration_seconds'])}"
+                     + (f" over {segments} segments (resumed)" if segments > 1 else ""))
+    if metrics.get("unavailable"):
+        return lines + [f"- **Tokens:** unavailable: {metrics['unavailable']}"]
+    mut = metrics.get("model_under_test") or {}
+    lines += [
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Generated tokens (incl. reasoning) | {_count(mut.get('completion_tokens'))} |",
+        f"| Prompt tokens | {_count(mut.get('prompt_tokens'))} |",
+        f"| Generation speed (tokens/s) | {_num(mut.get('generation_tokens_per_second'))} |",
+        f"| Prompt processing (tokens/s) | {_num(mut.get('prompt_tokens_per_second'))} |",
+        "",
+        "From llama-server's /metrics counters, read before and after the run. Exact only if nothing "
+        "else used Framework meanwhile: other benchmarks wait for the run, interactive chat does not.",
+    ]
+    return lines
+
+
 def render_report(source, run_dir, record, rows):
     run = os.path.basename(os.path.normpath(run_dir))
     lines = [f"# {run}", ""]
@@ -356,6 +413,8 @@ def render_report(source, run_dir, record, rows):
             f"- **Harness:** {harness_text}; sample limit {record.get('limit') or 'none (full run)'}",
             f"- **Fingerprint:** `{record.get('fingerprint', '')[:16]}`",
         ]
+    if source == "runs":
+        lines += ["", "## Run metrics", ""] + render_metrics(record)
     # One narrow Metric | Value table per task: Nextcloud's markdown viewer
     # scrolls wide tables sideways (operator, 2026-10-02).
     lines += ["", "## Results", ""]
@@ -652,13 +711,15 @@ def upsert_rows(nc, table_id, col_ids, rows):
 # What a ranked view shows (operator, 2026-10-01: the full 20-column table
 # with the internal Key first was unreadable). The rest stays in the base
 # table.
-VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Runtime", "Note",
-                "Date"]
+VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Tokens/s",
+                "Duration (min)", "Runtime", "Note", "Date"]
 RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
-                     "Comparable", "Why not comparable", "Note", "Run"]
+                     "Duration (min)", "Tokens generated", "Tokens/s", "Comparable", "Why not comparable", "Note",
+                     "Run"]
 # The base table's column order: what a person reads first, the internal
 # upsert Key last.
-TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
+TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Duration (min)",
+               "Tokens generated", "Tokens/s", "Series", "Comparable",
                "Why not comparable", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run", "Metrics",
                "Empty %", "Unparsed", "Token budget", "Report", "Key"]
 

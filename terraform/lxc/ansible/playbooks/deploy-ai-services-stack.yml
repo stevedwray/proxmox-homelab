@@ -1104,6 +1104,15 @@
         mode: "0644"
       register: eval_runner_worker_module
 
+    # The Framework lock shared with cse-controller's CyberSecEval worker
+    # (docs/benchmark-panel/plan.md, C).
+    - name: Install the shared Framework lock module
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/terraform/lxc/ansible/files/framework-lock/framework_lock.py"
+        dest: "{{ eval_runner_worker_dir }}/framework_lock.py"
+        mode: "0644"
+      register: eval_runner_worker_lock_module
+
     - name: Install the panel worker's broker settings
       ansible.builtin.copy:
         dest: /etc/eval-runner/worker.env
@@ -1150,7 +1159,7 @@
       ansible.builtin.systemd:
         name: "eval-runner-worker-{{ item.name }}"
         enabled: true
-        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_lock_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
         daemon_reload: true
       loop: "{{ eval_runner_workers }}"
       loop_control:

@@ -14,6 +14,12 @@ anything else) by passing backend_base_url/backend_model. Assumes the
 engine already has a model loaded; this does not manage model loading.
 Framework's llama-server remains the default when nothing is specified,
 matching every benchmark run proven so far.
+
+Framework lock (2026-10-08, docs/benchmark-panel/plan.md, C): a run whose
+backend is Framework first takes framework_lock.py's Redis lock, shared
+with the eval battery's worker, so the two never run on Framework at the
+same time. While it waits the job's Celery state is WAITING (meta: who
+holds the lock); once it holds the lock the state is STARTED.
 """
 import json
 import os
@@ -24,10 +30,13 @@ import signal
 import subprocess
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import Celery
+
+import framework_lock
 
 BROKER_URL = os.environ["CELERY_BROKER_URL"]
 RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
@@ -71,6 +80,10 @@ DEFAULT_BACKEND_MODEL = (
     "/models/qwen3.8-flash-next-q4/UD-Q4_K_XL/"
     "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"
 )
+# How long a job waits for the Framework lock before failing (the eval
+# battery's worker uses the same limit).
+FRAMEWORK_MAX_WAIT = 12 * 3600
+FRAMEWORK_POLL = 30
 
 
 def _build_mut_spec(
@@ -1168,8 +1181,29 @@ def _run_autonomous_uplift(run_dir: Path, shots: int, mut_spec: str, env: dict |
     return {"rc": attack.returncode, "stage": "attack", "log": log}
 
 
-@app.task(name="cse_tasks.run_benchmark")
+def _uses_framework(base_url: str | None) -> bool:
+    """Whether a run's backend is Framework's llama-server (the default)."""
+    host = urlparse(base_url or DEFAULT_BACKEND_BASE_URL).hostname
+    return host == urlparse(DEFAULT_BACKEND_BASE_URL).hostname
+
+
+def _lock_client():
+    """cse-panel's Redis (the result backend), where the lock lives."""
+    return app.backend.client
+
+
+def _waiting_meta(holder: dict | None) -> dict:
+    if not holder:
+        return {"waiting_for": "Framework"}
+    return {
+        "waiting_for": "Framework",
+        "held_by": {k: holder.get(k) for k in ("job_id", "suite", "benchmark", "started")},
+    }
+
+
+@app.task(bind=True, name="cse_tasks.run_benchmark")
 def run_benchmark(
+    self,
     benchmark: str,
     num_test_cases: int = 2,
     submitted_by: str = "unknown",
@@ -1179,7 +1213,39 @@ def run_benchmark(
     random_sample: bool = False,
     run_group_stamp: str | None = None,
 ) -> dict:
-    job_id = run_benchmark.request.id
+    job_id = self.request.id
+    args = (job_id, benchmark, num_test_cases, submitted_by, backend_base_url,
+            backend_model, backend_api_key, random_sample, run_group_stamp)
+    if not _uses_framework(backend_base_url):
+        self.update_state(state="STARTED", meta={"started_at": datetime.now(timezone.utc).isoformat()})
+        return _run_benchmark(*args)
+    client = _lock_client()
+
+    def on_wait(holder):
+        self.update_state(state="WAITING", meta=_waiting_meta(holder))
+    # Cancelling a waiting job from the panel revokes it with SIGTERM, which
+    # ends this process; there's no cancel flag to poll here.
+    if not framework_lock.acquire(client, job_id, "cyberseceval", benchmark, on_wait=on_wait,
+                                  poll=FRAMEWORK_POLL, max_wait=FRAMEWORK_MAX_WAIT):
+        holder = framework_lock.holder(client) or {}
+        reason = f"gave up waiting for Framework (held by {holder.get('suite')} job {holder.get('job_id')})"
+        return {"rc": 1, "error": reason, "stats_error": reason, "framework_wait": _waiting_meta(holder)}
+    self.update_state(state="STARTED", meta={"started_at": datetime.now(timezone.utc).isoformat()})
+    with framework_lock.held(client, job_id):
+        return _run_benchmark(*args)
+
+
+def _run_benchmark(
+    job_id: str,
+    benchmark: str,
+    num_test_cases: int,
+    submitted_by: str,
+    backend_base_url: str | None,
+    backend_model: str | None,
+    backend_api_key: str | None,
+    random_sample: bool,
+    run_group_stamp: str | None,
+) -> dict:
     run_dir = RUNS_DIR / f"panel-{job_id}"
     run_dir.mkdir(parents=True, exist_ok=True)
     mut_spec = _build_mut_spec(backend_base_url, backend_model, backend_api_key)

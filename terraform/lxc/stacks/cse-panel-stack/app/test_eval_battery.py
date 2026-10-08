@@ -129,6 +129,24 @@ class EvalBatteryTest(unittest.TestCase):
         paths = {r.path for r in panel_app.app.routes}
         self.assertIn("/eval/api/jobs", paths)
 
+    def test_framework_endpoint_shows_lock_holder_and_model(self):
+        import app as panel_app
+        self.redis.set("framework:run-lock", json.dumps({"job_id": "e1", "suite": "eval", "benchmark": "bfcl"}))
+        self.redis.set("eval:framework", json.dumps({"model": "glm-5.3-flash", "busy": 1, "slots": 4}))
+        with mock.patch.object(panel_app, "_redis_json", lambda key: json.loads(self.redis.get(key))):
+            body = TestClient(panel_app.app).get("/framework").json()
+        self.assertEqual((body["lock"]["suite"], body["model"], body["busy"]), ("eval", "glm-5.3-flash", 1))
+
+    def test_waiting_cse_job_is_labelled_with_the_holder(self):
+        import app as panel_app
+        res = mock.Mock(state="WAITING", info={"waiting_for": "Framework",
+                                               "held_by": {"job_id": "e1", "suite": "eval", "benchmark": "bfcl"}})
+        with mock.patch.object(panel_app, "AsyncResult", return_value=res), \
+                mock.patch.object(panel_app, "_get_job_meta", return_value={"benchmark": "mitre"}):
+            entry = panel_app._job_summary("cse-1")
+        self.assertEqual(entry["state_label"], "Waiting for Framework (eval bfcl)")
+        self.assertIn("WAITING", panel_app.NON_TERMINAL_STATES)
+
 
 if __name__ == "__main__":
     unittest.main()

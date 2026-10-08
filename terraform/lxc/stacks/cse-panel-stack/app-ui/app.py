@@ -160,6 +160,11 @@ app.layout = dbc.Container(
         html.P(html.A("Eval battery (GPQA, IFEval, BFCL, AgentBench, RepoBench) →",
                       href=EVAL_BATTERY_URL, target="_blank", rel="noopener"),
                className="text-muted"),
+        # Who holds Framework (the benchmark lock shared with the eval
+        # battery) and which model it serves; outside the tabs so it
+        # updates whichever tab is open.
+        html.P(id="framework-status", className="small"),
+        dcc.Interval(id="framework-interval", interval=10000, n_intervals=0),
         dcc.Store(id="jobs-store"),
         dbc.Tabs(id="tabs", active_tab="run-tab", className="mt-3", children=[
             dbc.Tab(run_tab, tab_id="run-tab", label="Run"),
@@ -167,6 +172,30 @@ app.layout = dbc.Container(
         ]),
     ],
 )
+
+
+def framework_status_text(info: dict) -> str:
+    model = info.get("model") or "no model loaded"
+    lock = info.get("lock")
+    if lock:
+        who = f"{lock.get('suite') or '?'} {lock.get('benchmark') or ''}".strip()
+        since = f" since {lock['started']}" if lock.get("started") else ""
+        return f"Framework: {model} · busy with {who} (job {lock.get('job_id')}{since}); new benchmark runs wait"
+    if info.get("error") and not info.get("model"):
+        return f"Framework: unreachable ({info['error']})"
+    return f"Framework: {model} · free"
+
+
+@app.callback(
+    Output("framework-status", "children"),
+    Input("framework-interval", "n_intervals"),
+)
+def poll_framework(_n):
+    try:
+        info = requests.get(f"{PANEL_API_BASE_URL}/framework", timeout=5).json()
+    except (requests.RequestException, ValueError):
+        return "Framework: status unavailable (panel-web unreachable)"
+    return framework_status_text(info)
 
 
 @app.callback(
