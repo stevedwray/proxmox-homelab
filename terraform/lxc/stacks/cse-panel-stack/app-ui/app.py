@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """panel-ui: Dash front end for cse-panel-stack, calling panel-web's
-existing FastAPI JSON API. Phase 0 scaffold -- proves the full
-Traefik -> panel-ui -> panel-web auth-header path works before any
-real UI is ported. See docs/cse-panel-dash-migration/plan.md.
+existing FastAPI JSON API. See docs/cse-panel-dash-migration/plan.md.
+
+Since 2026-10-08 (docs/benchmark-panel/plan.md, phase 3) it is the one
+benchmark panel: a shared header (who is logged in, what Framework is
+doing) above one tab per benchmark family, each with its own Run /
+Results switch. CyberSecEval lives here; the Eval battery is eval_tab.py.
 """
 import os
 import re
@@ -14,11 +17,14 @@ from dash import Input, Output, State, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import request
 
+import eval_tab
+
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
-# The Eval battery page still lives on panel-web (eval_battery.py), reached
-# through its own cse-panel-api.<domain> route, until it moves into Dash.
+# The old Eval battery page on panel-web (eval_battery.py), kept until the
+# Dash tab has been used for a while (phase 3), then retired.
 LAB_DOMAIN = os.environ.get("LAB_DOMAIN", "")
 EVAL_BATTERY_URL = f"https://cse-panel-api.{LAB_DOMAIN}/eval" if LAB_DOMAIN else "#"
+LLM_CONTROL_URL = f"https://llm-control.{LAB_DOMAIN}" if LAB_DOMAIN else "#"
 
 # Duplicated verbatim from app/app.py (panel-web's own FastAPI app) --
 # panel-ui has no import path to that module, this is a deliberate
@@ -82,12 +88,9 @@ BENCHMARK_INFO = {
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
 server = app.server
-app.title = "CyberSecEval Control Panel"
+app.title = "Benchmark Control Panel"
 
 run_tab = dbc.Card(dbc.CardBody([
-    html.P(id="whoami"),
-    html.P(id="api-health"),
-    html.Hr(),
     html.H4("Submit a run", className="card-title mb-3"),
     dbc.Checklist(
         id="benchmarks",
@@ -152,26 +155,79 @@ results_tab = html.Div([
     ])),
 ])
 
+
+
+def section_switch(switch_id):
+    """The Run / Results switch inside a benchmark family's tab: a
+    Bootstrap button group (dbc's RadioItems-as-buttons pattern)."""
+    return html.Div(dbc.RadioItems(
+        id=switch_id, value="run",
+        options=[{"label": "Run", "value": "run"}, {"label": "Results", "value": "results"}],
+        className="btn-group", inputClassName="btn-check",
+        labelClassName="btn btn-outline-primary", labelCheckedClassName="active",
+    ), className="radio-group my-3")
+
+
+# Every section stays in the layout and is shown or hidden, so each one's
+# polling keeps running and nothing re-mounts when you switch.
+cse_family = html.Div([
+    section_switch("cse-section"),
+    html.Div(run_tab, id="cse-run-section"),
+    html.Div(results_tab, id="cse-results-section"),
+])
+eval_family = html.Div([
+    section_switch("eval-section"),
+    eval_tab.layout(),
+    html.P(["The old ", html.A("Eval battery page", href=EVAL_BATTERY_URL, target="_blank", rel="noopener"),
+            " still works until this tab replaces it."], className="text-muted small mt-4"),
+])
+
 app.layout = dbc.Container(
     fluid=True,
-    style={"padding": "32px", "maxWidth": "900px"},
+    style={"padding": "32px", "maxWidth": "1000px"},
     children=[
-        html.H1("CyberSecEval Control Panel"),
-        html.P(html.A("Eval battery (GPQA, IFEval, BFCL, AgentBench, RepoBench) →",
-                      href=EVAL_BATTERY_URL, target="_blank", rel="noopener"),
-               className="text-muted"),
-        # Who holds Framework (the benchmark lock shared with the eval
-        # battery) and which model it serves; outside the tabs so it
-        # updates whichever tab is open.
-        html.P(id="framework-status", className="small"),
+        html.Div([
+            html.H1("Benchmark Control Panel", className="mb-0 me-auto"),
+            html.Div([html.Div(id="whoami"), html.Div(id="api-health", className="text-muted")],
+                     className="small text-end"),
+        ], className="d-flex align-items-end mb-3"),
+        # Who holds Framework (the benchmark lock shared by both families)
+        # and which model it serves; above the tabs so it shows on all.
+        dbc.Alert(id="framework-status", color="secondary", className="py-2 mb-2"),
+        html.P(["Models load from ", html.A("llm-control", href=LLM_CONTROL_URL, target="_blank",
+                                            rel="noopener"), "."], className="text-muted small"),
         dcc.Interval(id="framework-interval", interval=10000, n_intervals=0),
         dcc.Store(id="jobs-store"),
-        dbc.Tabs(id="tabs", active_tab="run-tab", className="mt-3", children=[
-            dbc.Tab(run_tab, tab_id="run-tab", label="Run"),
-            dbc.Tab(results_tab, tab_id="results-tab", label="Results"),
+        dbc.Tabs(id="family", active_tab="cse", className="mt-3", children=[
+            dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
+                    label_style={"fontSize": "1.15rem"}),
+            dbc.Tab(eval_family, tab_id="eval", label="Eval battery",
+                    label_style={"fontSize": "1.15rem"}),
         ]),
     ],
 )
+
+
+def _shown(visible):
+    return {} if visible else {"display": "none"}
+
+
+@app.callback(
+    Output("cse-run-section", "style"),
+    Output("cse-results-section", "style"),
+    Input("cse-section", "value"),
+)
+def switch_cse(section):
+    return _shown(section == "run"), _shown(section == "results")
+
+
+@app.callback(
+    Output("eval-run-section", "style"),
+    Output("eval-runs-section", "style"),
+    Input("eval-section", "value"),
+)
+def switch_eval(section):
+    return _shown(section == "run"), _shown(section == "results")
 
 
 def framework_status_text(info: dict) -> str:
@@ -186,16 +242,25 @@ def framework_status_text(info: dict) -> str:
     return f"Framework: {model} · free"
 
 
+def framework_status_color(info: dict) -> str:
+    if info.get("lock"):
+        return "warning"
+    if info.get("error") and not info.get("model"):
+        return "danger"
+    return "secondary"
+
+
 @app.callback(
     Output("framework-status", "children"),
+    Output("framework-status", "color"),
     Input("framework-interval", "n_intervals"),
 )
 def poll_framework(_n):
     try:
         info = requests.get(f"{PANEL_API_BASE_URL}/framework", timeout=5).json()
     except (requests.RequestException, ValueError):
-        return "Framework: status unavailable (panel-web unreachable)"
-    return framework_status_text(info)
+        return "Framework: status unavailable (panel-web unreachable)", "danger"
+    return framework_status_text(info), framework_status_color(info)
 
 
 @app.callback(

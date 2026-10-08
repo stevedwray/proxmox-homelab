@@ -114,6 +114,31 @@ original build notes:
   unlocked against the other side, so deploy both back to back with
   nothing running. The panel is display only.
 
+**Phase 3 (built 2026-10-08, branch `task/benchmark-panel-dash`, cut
+from `task/framework-run-lock`):**
+- The Dash app is now "Benchmark Control Panel". There's one header with
+  the login, a Framework status bar (grey when free, amber while a
+  benchmark holds the lock, red when unreachable) and a link to
+  llm-control.
+- Below it are top-level tabs **CyberSecEval** and **Eval battery**, each
+  with its own **Run / Results** button-group switch. Every section stays
+  in the layout and is only shown or hidden, so polling keeps running
+  whichever one is open.
+- **Eval battery** is `app-ui/eval_tab.py`, on panel-web's
+  `/eval/api/*`, which is unchanged.
+  - **Run:** benchmark switches, pilot / limit / full, the 32k budget and
+    a note.
+  - **Results:** a runs table (submitted, benchmark, size, state
+    including what it waits for, duration, tokens, tokens/s), a detail
+    card (log tail or results, errors, publish status, the run-metrics
+    table), Cancel and Resume buttons for the selected run, "Publish to
+    Nextcloud now", and the Nextcloud links.
+- The old `/eval` HTML page is still linked under the tab. Retire it
+  after the operator has used the tab.
+- Tests: `app-ui/test_eval_tab.py` (8). An in-process check of Dash's
+  `/_dash-dependencies` found all 14 callbacks wired to existing IDs,
+  with no duplicate outputs.
+
 **Phases 3–4 (after phase 2):**
 - **Phase 3:** the Dash Eval battery tab on `/eval/api/*`, then retire
   the old HTML page.

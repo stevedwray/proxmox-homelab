@@ -1,0 +1,330 @@
+"""The Eval battery tab (GPQA, IFEval, BFCL, AgentBench, RepoBench):
+phase 3 of docs/benchmark-panel/plan.md. Replaces panel-web's HTML page
+(app/eval_battery.py) and uses that page's JSON API unchanged:
+
+  GET  /eval/api/state             Framework status, recent jobs, links
+  POST /eval/api/jobs              start runs (one job per benchmark)
+  POST /eval/api/jobs/<id>/cancel  cancel a queued, waiting or running job
+  POST /eval/api/jobs/<id>/resume  resume a failed or cancelled run
+  POST /eval/api/publish           republish reports to Nextcloud
+
+The work happens in eval-runner's worker on ai-services-stack
+(eval_tasks.py); this tab only talks to panel-web.
+"""
+import os
+
+import dash_bootstrap_components as dbc
+import requests
+from dash import Input, Output, State, callback, ctx, dash_table, dcc, html, no_update
+from dash.exceptions import PreventUpdate
+from flask import request
+
+PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
+
+# Duplicated from app/eval_battery.py (panel-web), which validates again.
+TASKS = {
+    "gpqa": "GPQA diamond: 198 graduate-level science questions, chain of thought",
+    "ifeval": "IFEval: 541 prompts with verifiable formatting instructions",
+    "bfcl": "BFCL simple: 400 single function-call cases",
+    "agentbench": "AgentBench os-std: 100 sandboxed shell episodes (seed 42)",
+    "repobench": "RepoBench (rebuilt): next-line code completion, 1500 samples",
+}
+BUDGET_TASKS = ("gpqa", "ifeval")
+LIVE_STATES = ("queued", "waiting", "starting", "running", "publishing")
+TABLE_STYLE = dict(
+    style_table={"width": "100%", "overflowX": "auto"},
+    style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
+    style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
+                "padding": "8px", "textAlign": "left", "whiteSpace": "normal"},
+    style_as_list_view=True,
+)
+
+
+def _format_duration(seconds):
+    if seconds is None:
+        return ""
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}h {minutes}m {secs}s" if hours else (f"{minutes}m {secs}s" if minutes else f"{secs}s")
+
+
+def job_metrics(job):
+    """The run's totals (all segments of a resumed run) or this job's own."""
+    return job.get("run_metrics_total") or job.get("run_metrics") or {}
+
+
+def job_row(job):
+    """One row of the runs table."""
+    metrics = job_metrics(job)
+    mut = metrics.get("model_under_test") or {}
+    if job.get("task") == "resume":
+        what = "resume"
+    else:
+        what = job.get("mode") or ""
+        if what == "limit":
+            what = f"limit {job.get('limit')}"
+        if job.get("budget_32k"):
+            what += " · 32k"
+    state = job.get("state") or "?"
+    if state == "waiting" and job.get("waiting_for"):
+        state = f"waiting for {job['waiting_for']}"
+    return {
+        "id": job.get("id"),
+        "submitted": (job.get("submitted") or "").replace("T", " ").replace("Z", ""),
+        "task": job.get("task") or "",
+        "mode": what,
+        "state": state,
+        "run": job.get("run") or "",
+        "duration": _format_duration(metrics.get("duration_seconds")),
+        "tokens": f"{mut['completion_tokens']:,}" if "completion_tokens" in mut else "",
+        "tokens_per_second": mut.get("generation_tokens_per_second", ""),
+    }
+
+
+def metrics_block(metrics):
+    if not metrics:
+        return [html.P("Run metrics: not recorded (runs before 2026-10-08, or not finished yet).",
+                       className="text-muted small")]
+    lines = [html.Strong("Duration: "), _format_duration(metrics.get("duration_seconds")) or "–"]
+    if (metrics.get("segments") or 1) > 1:
+        lines.append(f" over {metrics['segments']} segments (resumed)")
+    block = [html.H5("Run metrics", className="mt-3"), html.P(lines)]
+    if metrics.get("unavailable"):
+        return block + [html.P(f"Tokens unavailable: {metrics['unavailable']}", className="text-warning")]
+    mut = metrics.get("model_under_test") or {}
+    rows = [
+        ("Generated tokens (incl. reasoning)", f"{mut['completion_tokens']:,}" if "completion_tokens" in mut else "–"),
+        ("Prompt tokens", f"{mut['prompt_tokens']:,}" if "prompt_tokens" in mut else "–"),
+        ("Generation speed (tokens/s)", mut.get("generation_tokens_per_second", "–")),
+        ("Prompt processing (tokens/s)", mut.get("prompt_tokens_per_second", "–")),
+    ]
+    table = dbc.Table([html.Tbody([html.Tr([html.Td(k), html.Td(str(v))]) for k, v in rows])],
+                      bordered=True, hover=True, size="sm")
+    return block + [table, html.P("From llama-server's /metrics counters, read before and after the run.",
+                                  className="text-muted small")]
+
+
+def job_detail(job):
+    if not job:
+        return [html.P("Select a run above to see its log, results and metrics.", className="text-muted")]
+    row = job_row(job)
+    title = f"{row['task']} · {row['mode']}" if row["task"] != "resume" else f"resume {row['run']}"
+    meta = [html.Strong("State: "), row["state"]]
+    for label, key in (("Run", "run"), ("Note", "note"), ("By", "submitted_by"),
+                       ("Submitted", "submitted"), ("Finished", "finished")):
+        if job.get(key):
+            meta += ["  ·  ", html.Strong(f"{label}: "), str(job[key])]
+    children = [html.H4(title, className="card-title"), html.P(meta, className="text-muted")]
+    if job.get("error"):
+        children.append(dbc.Alert(html.Pre(job["error"], className="mb-0"), color="danger"))
+    if job.get("results"):
+        children += [html.H5("Results"), html.Pre(job["results"])]
+    elif job.get("log_tail"):
+        children += [html.H5("Log (last lines)"), html.Pre(job["log_tail"])]
+    if job.get("publish_error"):
+        children.append(dbc.Alert(f"Publish failed: {job['publish_error']}", color="warning"))
+    elif job.get("published"):
+        children.append(html.P(f"Published: {job['published']}", className="text-muted small"))
+    return children + metrics_block(job_metrics(job))
+
+
+def can_cancel(job):
+    return bool(job) and job.get("state") in LIVE_STATES and job.get("state") != "publishing"
+
+
+def can_resume(job):
+    return bool(job) and job.get("state") in ("failed", "cancelled") and bool(job.get("run"))
+
+
+run_section = dbc.Card(dbc.CardBody([
+    html.H4("Start a run", className="card-title mb-3"),
+    dbc.Checklist(
+        id="eval-tasks", switch=True, value=[], className="mb-3",
+        options=[{"label": f"{task} — {text}", "value": task} for task, text in TASKS.items()],
+    ),
+    dbc.Label("How much"),
+    dbc.RadioItems(
+        id="eval-mode", value="pilot", inline=True, className="mb-2",
+        options=[{"label": "Pilot (a quick sample)", "value": "pilot"},
+                 {"label": "Limit", "value": "limit"},
+                 {"label": "Full run", "value": "full"}],
+    ),
+    dbc.Input(id="eval-limit", type="number", min=1, max=10000, step=1, value=20,
+              placeholder="samples", className="mb-3", style={"maxWidth": "160px"}),
+    dbc.Switch(id="eval-budget", label="32k token budget (GPQA and IFEval only)", value=False, className="mb-2"),
+    dbc.Input(id="eval-note", placeholder="Note (one line, e.g. reasoning_effort=high)", maxLength=200,
+              className="mb-3"),
+    dbc.Button("Start run(s)", id="eval-submit-btn", color="primary"),
+    dbc.Alert(id="eval-submit-result", is_open=False, className="mt-3"),
+    html.P("Runs go one at a time, and wait while a CyberSecEval run is using Framework.",
+           className="text-muted small mt-3 mb-0"),
+]))
+
+runs_section = html.Div([
+    dbc.Card(dbc.CardBody([
+        html.Div([
+            html.H4("Runs", className="card-title mb-0 me-auto"),
+            dbc.Button("Publish to Nextcloud now", id="eval-publish-btn", color="secondary",
+                       size="sm", outline=True),
+        ], className="d-flex align-items-center mb-2"),
+        html.Div(id="eval-links", className="small mb-3"),
+        dash_table.DataTable(
+            id="eval-jobs-table",
+            columns=[
+                {"name": "Submitted (UTC)", "id": "submitted"},
+                {"name": "Benchmark", "id": "task"},
+                {"name": "Size", "id": "mode"},
+                {"name": "State", "id": "state"},
+                {"name": "Duration", "id": "duration"},
+                {"name": "Tokens", "id": "tokens"},
+                {"name": "Tokens/s", "id": "tokens_per_second"},
+            ],
+            data=[], row_selectable="single", selected_rows=[], page_size=15,
+            **TABLE_STYLE,
+        ),
+        dbc.Alert(id="eval-action-result", is_open=False, className="mt-3"),
+    ])),
+    dbc.Card(className="mt-3", children=dbc.CardBody([
+        html.Div(id="eval-detail", children=job_detail(None)),
+        # Always in the layout; the detail callback shows the ones that
+        # apply to the selected run.
+        html.Div([
+            dbc.Button("Cancel run", id="eval-cancel-btn", color="danger", size="sm", className="me-2",
+                       style={"display": "none"}),
+            dbc.Button("Resume run", id="eval-resume-btn", color="secondary", size="sm",
+                       style={"display": "none"}),
+        ], className="mt-2"),
+    ])),
+])
+
+
+def layout():
+    return html.Div([
+        dcc.Interval(id="eval-poll", interval=5000, n_intervals=0),
+        dcc.Store(id="eval-jobs"),
+        dcc.Store(id="eval-selected"),
+        html.Div(run_section, id="eval-run-section"),
+        html.Div(runs_section, id="eval-runs-section"),
+    ])
+
+
+def _post(path, json=None):
+    headers = {"X-Authentik-Username": request.headers.get("X-Authentik-Username", "unknown")}
+    resp = requests.post(f"{PANEL_API_BASE_URL}{path}", json=json, headers=headers, timeout=10)
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {"detail": resp.text}
+    return resp.status_code, body
+
+
+@callback(
+    Output("eval-limit", "disabled"),
+    Input("eval-mode", "value"),
+)
+def toggle_limit(mode):
+    return mode != "limit"
+
+
+@callback(
+    Output("eval-submit-result", "children"),
+    Output("eval-submit-result", "color"),
+    Output("eval-submit-result", "is_open"),
+    Input("eval-submit-btn", "n_clicks"),
+    State("eval-tasks", "value"),
+    State("eval-mode", "value"),
+    State("eval-limit", "value"),
+    State("eval-budget", "value"),
+    State("eval-note", "value"),
+    prevent_initial_call=True,
+)
+def submit(_n, tasks, mode, limit, budget, note):
+    if not tasks:
+        return "Pick at least one benchmark.", "warning", True
+    body = {"tasks": tasks, "mode": mode, "limit": int(limit) if mode == "limit" and limit else None,
+            "note": (note or "").strip(), "budget_32k": bool(budget)}
+    try:
+        status, data = _post("/eval/api/jobs", body)
+    except requests.RequestException as exc:
+        return f"Submit failed: {exc}", "danger", True
+    if status != 200:
+        return f"Not started: {data.get('detail')}", "danger", True
+    return f"Queued {len(data['submitted'])} run(s). Watch them under Runs.", "success", True
+
+
+@callback(
+    Output("eval-jobs", "data"),
+    Output("eval-jobs-table", "data"),
+    Output("eval-links", "children"),
+    Input("eval-poll", "n_intervals"),
+)
+def poll(_n):
+    try:
+        state = requests.get(f"{PANEL_API_BASE_URL}/eval/api/state", timeout=10).json()
+    except (requests.RequestException, ValueError):
+        raise PreventUpdate
+    jobs = state.get("jobs") or []
+    links = []
+    for label, url in (state.get("links") or {}).items():
+        if links:
+            links.append("  ·  ")
+        links.append(html.A(label, href=url, target="_blank", rel="noopener"))
+    return jobs, [job_row(j) for j in jobs], links
+
+
+@callback(
+    Output("eval-selected", "data"),
+    Input("eval-jobs-table", "selected_rows"),
+    State("eval-jobs-table", "data"),
+)
+def select(selected_rows, rows):
+    if not selected_rows or not rows or selected_rows[0] >= len(rows):
+        return None
+    return rows[selected_rows[0]]["id"]
+
+
+@callback(
+    Output("eval-detail", "children"),
+    Output("eval-cancel-btn", "style"),
+    Output("eval-resume-btn", "style"),
+    Input("eval-selected", "data"),
+    Input("eval-jobs", "data"),
+)
+def detail(job_id, jobs):
+    job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
+    hidden = {"display": "none"}
+    return job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden)
+
+
+@callback(
+    Output("eval-action-result", "children"),
+    Output("eval-action-result", "color"),
+    Output("eval-action-result", "is_open"),
+    Input("eval-cancel-btn", "n_clicks"),
+    Input("eval-resume-btn", "n_clicks"),
+    Input("eval-publish-btn", "n_clicks"),
+    State("eval-selected", "data"),
+    prevent_initial_call=True,
+)
+def act(cancel_clicks, resume_clicks, publish_clicks, job_id):
+    trigger = ctx.triggered_id
+    clicks = {"eval-cancel-btn": cancel_clicks, "eval-resume-btn": resume_clicks,
+              "eval-publish-btn": publish_clicks}.get(trigger)
+    if not clicks:
+        return no_update, no_update, no_update
+    if trigger == "eval-publish-btn":
+        path, done = "/eval/api/publish", "Publish requested; the reports update in a minute or so."
+    elif not job_id:
+        return "Select a run first.", "warning", True
+    elif trigger == "eval-cancel-btn":
+        path, done = f"/eval/api/jobs/{job_id}/cancel", "Cancel requested."
+    else:
+        path, done = f"/eval/api/jobs/{job_id}/resume", "Resume queued."
+    try:
+        status, data = _post(path)
+    except requests.RequestException as exc:
+        return f"Failed: {exc}", "danger", True
+    if status != 200:
+        return f"Failed: {data.get('detail')}", "danger", True
+    return done, "success", True
