@@ -28,10 +28,11 @@
 # A changed binary, env file or unit restarts llama-swap, which stops the
 # model it started. Don't re-run it during a benchmark.
 #
-# Rollback (docs/llama-swap/plan.md, "Rollback"): run this playbook with
-# -e framework_llama_swap_enabled=false, then
-# framework-desktop-llamacpp-native.yml with
-# -e framework_llamacpp_chat_enabled=true.
+# Stop (docs/llama-swap/plan.md, "Rollback"): run this playbook with
+# -e framework_llama_swap_enabled=false. llama-swap was adopted on 2026-10-09
+# and the old nathanw-llamacpp.service chat unit is gone, so stopping it
+# leaves :8080 empty. Rolling back a llama.cpp build is `llama-builds
+# rollback <backend>` instead (framework-desktop-llama-builds.yml).
 #
 # Run (same OpenBao profile as framework-desktop-llamacpp-native.yml):
 #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
@@ -60,8 +61,10 @@
     framework_llama_swap_port: 8099
     framework_llama_swap_model_port: 8080
     framework_llama_swap_required_paths:
-      - /home/steve/llama.cpp/build-vk/bin/llama-server
-      - /home/steve/llama.cpp-upstream/build-vk/bin/llama-server
+      # Builds managed by framework-desktop-llama-builds.yml (run it, and
+      # build fork + upstream, first). Candidate and HIP builds are optional.
+      - /storage/llama-builds/fork/current/bin/llama-server
+      - /storage/llama-builds/upstream/current/bin/llama-server
       - /mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
       - /mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
 
@@ -81,7 +84,7 @@
             state: stopped
             timeout: 120
 
-        - name: Stop here -- next run framework-desktop-llamacpp-native.yml with -e framework_llamacpp_chat_enabled=true
+        - name: Stop here -- :8080 is now empty (the old chat unit was retired 2026-10-09)
           ansible.builtin.meta: end_host
 
     - name: Check both llama-server builds and both model files exist

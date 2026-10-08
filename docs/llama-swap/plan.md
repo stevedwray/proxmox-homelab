@@ -101,7 +101,7 @@ Before relying on it, check these:
 `nathanw-llamacpp.service` on :8080, and with `true` it refuses while
 llama-swap is active. Embeddings are managed as before.
 
-## Phase 3: managed llama.cpp builds (proposed, 2026-10-09)
+## Phase 3: managed llama.cpp builds (built 2026-10-09, branch `task/llama-builds`)
 
 **Goal:** keep several llama.cpp backends, check them for updates, and
 build, try, promote or roll back a new build without hand-editing paths
@@ -137,10 +137,19 @@ or systemd units.
 | `llama-builds rollback <backend>` | `current` := the previous build |
 | `llama-builds prune <backend>` | keep the last N |
 
-**Checking for updates:** a daily systemd timer runs `status` and writes
-`llama_build_commits_behind{backend}` and the build dates to the
-node_exporter textfile collector, which `amdgpu_stats.prom` already uses.
-Grafana then shows when a backend is behind.
+**Checking for updates:** a daily systemd timer
+(`llama-builds-status.timer`) runs `llama-builds status --publish`. That
+writes the status JSON to cse-panel's Redis (DB 1, key
+`framework:llama-builds`, 3-day TTL); every build command publishes too.
+panel-web's `/framework` returns it, and the Benchmark Control Panel's
+Framework bar shows a second line, e.g. "llama.cpp builds: fork
+20261009-b02cb35f2 (12 behind) · upstream … · checked …".
+- The push needs one MikroTik rule, framework → cse-panel :6379
+  (`mikrotik-firewall-framework-llama-builds.yml`). It's the same pattern
+  as the eval-runner and cse-controller worker rules.
+- The Redis password is in `/etc/llama-builds/redis-password`, readable
+  only by steve, from OpenBao `services/cse-panel`. That's why
+  `framework-desktop-llama-builds.yml` runs through `with-secrets-prod-tiny`.
 
 **Retirement:**
 - remove the `nathanw-llamacpp.service` unit (chat), which llama-swap
@@ -161,27 +170,42 @@ Grafana then shows when a backend is behind.
 4. Keep `~/llama.cpp*` until the new paths have run a while, then remove
    them.
 
-**Decisions for the operator:** see the README log (asked 2026-10-09).
+**Decisions (operator, 2026-10-09):**
+1. **Builds are started on request:** the operator asks, Claude runs
+   `llama-builds` under the approval flow. There's no UI button or shell
+   use.
+2. **Update status appears in the benchmark panel header,** not Grafana.
+3. **Backends:** the Nathanw fork (Vulkan), upstream (Vulkan) and upstream
+   HIP/ROCm (gfx1151; the same flags as the old HIP container).
+4. **The three Docker-era playbooks are deleted.**
+
+**Build details:**
+- Builds are self-contained: `CMAKE_BUILD_WITH_INSTALL_RPATH=ON` and
+  `CMAKE_INSTALL_RPATH=$ORIGIN`. Today's hand builds have an absolute
+  RUNPATH into `~/llama.cpp/build-vk/bin`, so they can't be copied; the
+  migration rebuilds the same commits instead.
+- Only the targets `llama-server` and `llama-bench` are built.
+- Builds use Ninja, run at nice 10 with 24 jobs, and only one runs at a
+  time (flock).
+- A build only becomes `candidate`, or `current` if it's the backend's
+  first build. llm-control has `*-candidate` and `*-hip` entries for GLM
+  and Qwen.
 
 ## Rollback
 
-```bash
-TASK_APPROVAL=llama-swap-rollback ./with-secrets-prod ansible-playbook \
-  -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/framework-desktop-llama-swap.yml \
-  -e framework_llama_swap_enabled=false
-TASK_APPROVAL=llama-swap-rollback ./with-secrets-prod ansible-playbook \
-  -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/framework-desktop-llamacpp-native.yml \
-  -e framework_llamacpp_chat_enabled=true
-```
-
-The first run stops llama-swap and whatever model it started. The second
-brings back `nathanw-llamacpp.service` (Qwen, fork) on :8080.
+- **A llama.cpp build:** `llama-builds rollback <backend>` points
+  `current` back at the previous build. Reload the model in llm-control.
+- **llama-swap itself:** run
+  `framework-desktop-llama-swap.yml -e framework_llama_swap_enabled=false`.
+  Since adoption (2026-10-09) the old `nathanw-llamacpp.service` chat unit
+  is gone, so this leaves :8080 empty until a model is started by hand.
+  The rollback to that unit, used during the evaluation, no longer
+  exists.
 
 ## Not in scope
 
 - Ollama/Laguna, LM Studio, ComfyUI.
 - Building or updating llama.cpp.
-- Removing `nathanw-llamacpp.service` or the dead llama.cpp playbooks. That
-  happens after the evaluation, if it's adopted.
+- Removing `nathanw-llamacpp.service` and the dead llama.cpp playbooks
+  was out of scope during the evaluation. It's done in phase 3 after
+  adoption.

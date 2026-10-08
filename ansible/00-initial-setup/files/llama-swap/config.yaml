@@ -29,9 +29,15 @@ globalTTL: 0
 unloadTimeout: 60
 
 macros:
-  # llama.cpp builds. Each model entry picks one.
-  fork: "/home/steve/llama.cpp/build-vk/bin/llama-server"               # Nathanw strix-halo-vulkan @ b02cb35
-  upstream: "/home/steve/llama.cpp-upstream/build-vk/bin/llama-server"  # ggml-org master @ a4d880fd5
+  # llama.cpp builds, managed by llama-builds (framework-desktop-llama-builds.yml,
+  # docs/llama-swap/plan.md phase 3). Each backend has a "current" and a
+  # "candidate" link; `llama-builds status` shows which build each is. A link
+  # change takes effect at the next model load: no edit here, no reload.
+  fork: "/storage/llama-builds/fork/current/bin/llama-server"                     # Nathanw strix-halo-vulkan
+  fork_candidate: "/storage/llama-builds/fork/candidate/bin/llama-server"
+  upstream: "/storage/llama-builds/upstream/current/bin/llama-server"             # ggml-org master
+  upstream_candidate: "/storage/llama-builds/upstream/candidate/bin/llama-server"
+  hip: "/storage/llama-builds/upstream-hip/current/bin/llama-server"              # ggml-org master, HIP/ROCm
   # llm-memgate <weights MB>: waits for MemAvailable >= weights + 4096 MB,
   # then execs the server (see /usr/local/bin/llm-memgate).
   memgate: "/usr/local/bin/llm-memgate"
@@ -76,6 +82,56 @@ models:
       -m ${qwen_gguf}
       --ctx-size 131072
 
+  # Candidate builds: try a new build here (benchmarks record its build_info)
+  # before `llama-builds promote`. Same models and flags as above.
+  glm-5.3-flash-candidate:
+    name: "GLM-5.3-Flash (upstream CANDIDATE build)"
+    description: "The newest upstream build, before it's promoted. Fails cleanly if there is no candidate."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${glm_mb}
+      ${upstream_candidate} ${common}
+      -m ${glm_gguf}
+      --ctx-size 131072
+      --jinja
+      --chat-template-kwargs '{"reasoning_effort":"high"}'
+      --temp 1.0 --top-p 0.95 --min-p 0.01
+
+  qwen3.8-flash-next-candidate:
+    name: "Qwen3.8-Flash-Next (Nathanw fork CANDIDATE build)"
+    description: "The newest fork build, before it's promoted. Fails cleanly if there is no candidate."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${qwen_mb}
+      ${fork_candidate} ${common}
+      -m ${qwen_gguf}
+      --ctx-size 131072
+
+  # HIP/ROCm backend, for comparison with Vulkan. Fails cleanly until
+  # `llama-builds build upstream-hip` has made a build.
+  glm-5.3-flash-hip:
+    name: "GLM-5.3-Flash (upstream HIP/ROCm build)"
+    description: "Same model and flags on the HIP backend."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${glm_mb}
+      ${hip} ${common}
+      -m ${glm_gguf}
+      --ctx-size 131072
+      --jinja
+      --chat-template-kwargs '{"reasoning_effort":"high"}'
+      --temp 1.0 --top-p 0.95 --min-p 0.01
+
+  qwen3.8-flash-next-hip:
+    name: "Qwen3.8-Flash-Next (upstream HIP/ROCm build)"
+    description: "Same model and flags on the HIP backend."
+    proxy: "http://127.0.0.1:8080"
+    cmd: |
+      ${memgate} ${qwen_mb}
+      ${hip} ${common}
+      -m ${qwen_gguf}
+      --ctx-size 131072
+
 routing:
   router:
     use: group
@@ -90,6 +146,10 @@ routing:
             - glm-5.3-flash
             - qwen3.8-flash-next
             - qwen3.8-flash-next-upstream
+            - glm-5.3-flash-candidate
+            - qwen3.8-flash-next-candidate
+            - glm-5.3-flash-hip
+            - qwen3.8-flash-next-hip
 
 # Model to start when llama-swap starts (e.g. after a reboot). It also runs on
 # every config reload, so saving this file while another model is loaded

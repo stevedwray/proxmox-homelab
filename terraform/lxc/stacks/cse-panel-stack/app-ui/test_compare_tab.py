@@ -69,6 +69,21 @@ JOBS = [
 
 
 @unittest.skipUnless(panel_ui, "dash not installed")
+class BuildsLineTest(unittest.TestCase):
+    def test_builds_line(self):
+        builds = {"checked": "2026-10-09T09:00:00Z", "backends": {
+            "fork": {"current": {"name": "20261009-b02cb35f2", "behind": 12}, "candidate": {"name": "20261009-b02cb35f2"}},
+            "upstream": {"current": {"name": "20261009-a4d880fd5", "behind": 0},
+                         "candidate": {"name": "20261010-0123456789"}},
+            "upstream-hip": {"current": None, "candidate": None}}}
+        self.assertEqual(panel_ui.builds_text(builds),
+                         "llama.cpp builds: fork 20261009-b02cb35f2 (12 behind) · "
+                         "upstream 20261009-a4d880fd5 (up to date, candidate 20261010-0123456789) · "
+                         "upstream-hip not built · checked 2026-10-09 09:00")
+        self.assertIn("no status yet", panel_ui.builds_text(None))
+
+
+@unittest.skipUnless(panel_ui, "dash not installed")
 class ChartTest(unittest.TestCase):
     def test_one_panel_per_benchmark_with_real_headlines(self):
         fig = panel_ui._results_chart_figure(JOBS)

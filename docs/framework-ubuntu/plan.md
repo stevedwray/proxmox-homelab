@@ -124,9 +124,10 @@ matches the host. LLM serving now works like this:
 | Service | Port | How it runs | State |
 | --- | --- | --- | --- |
 | llama-swap (model control page) | 8099, reached only through Traefik at `https://llm-control.<domain>` (Authentik) | `llama-swap.service`, `ansible/00-initial-setup/framework-desktop-llama-swap.yml`, `docs/llama-swap/` | active |
-| Chat model (`llama-server`, started by llama-swap) | 8080 (API key) | GLM-5.3-Flash on the upstream build, or Qwen3.8-Flash-Next on the Nathanw fork or upstream, picked on the control page | GLM loaded, and the boot default |
-| `nathanw-llamacpp-embed.service` (nomic-embed) | 8085 | Nathanw fork, `framework-desktop-llamacpp-native.yml` | active |
-| `nathanw-llamacpp.service` (old Qwen chat unit) | 8080 | same playbook, with `framework_llamacpp_chat_enabled: false` | disabled (unit kept for rollback) |
+| Chat model (`llama-server`, started by llama-swap) | 8080 (API key) | GLM-5.3-Flash on the upstream build, or Qwen3.8-Flash-Next on the Nathanw fork or upstream (plus candidate and HIP entries), picked on the control page | GLM loaded, and the boot default |
+| llama.cpp builds | — | `llama-builds` (`framework-desktop-llama-builds.yml`): backends `fork`, `upstream`, `upstream-hip` under `/storage/llama-builds/<backend>/{current,candidate,previous}`; a daily status check publishes to the benchmark panel | adopted 2026-10-09 |
+| `nathanw-llamacpp-embed.service` (nomic-embed) | 8085 | Nathanw fork `current` build, `framework-desktop-llamacpp-native.yml` | active |
+| `nathanw-llamacpp.service` (old Qwen chat unit) | — | retired 2026-10-09; `framework-desktop-llamacpp-native.yml` deletes it | removed |
 | Open WebUI | 8081 | Docker | up |
 | llama-router (HIP, `/opt/llamacpp-docker`), Ollama, LM Studio, ComfyUI | — | — | not running |
 

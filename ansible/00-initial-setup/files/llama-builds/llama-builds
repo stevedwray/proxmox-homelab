@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+# Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llama-builds.yml -- do not edit by hand
+"""llama-builds: llama.cpp builds side by side on Framework (docs/llama-swap/plan.md, phase 3).
+
+Each backend (e.g. the Nathanw fork, upstream Vulkan, upstream HIP) tracks
+one branch of one git remote. Builds go to <root>/<backend>/<date>-<sha>/bin
+and are self-contained (RPATH $ORIGIN), so a build dir can be kept for
+rollback after its source is gone. Three symlinks per backend:
+
+  current    what llama-swap starts (its macros point at current/bin/llama-server)
+  candidate  the newest build, for llm-control's "candidate" entries
+  previous   the build current replaced, for rollback
+
+A link change takes effect the next time a model is loaded; nothing reloads.
+
+  llama-builds status [--json] [--publish] [--no-fetch]
+  llama-builds build <backend> [ref]     build ref (default: the tracked branch) -> candidate
+  llama-builds promote <backend>         current := candidate
+  llama-builds rollback <backend>        current := previous
+  llama-builds prune <backend>           keep the newest <keep> builds plus the linked ones
+
+--publish writes the status JSON to cse-panel's Redis (key framework:llama-builds),
+where the Benchmark Control Panel shows it in its header.
+"""
+import argparse
+import datetime
+import fcntl
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+
+CONFIG = os.environ.get("LLAMA_BUILDS_CONFIG", "/etc/llama-builds/backends.json")
+BUILD_RE = re.compile(r"^\d{8}-[0-9a-f]{9}$")
+LINKS = ("current", "candidate", "previous")
+STATUS_TTL = 3 * 24 * 3600
+
+
+class Fail(Exception):
+    pass
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_config(path=CONFIG):
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def src_dir(cfg):
+    return os.path.join(cfg["root"], "src")
+
+
+def backend_dir(cfg, backend):
+    if backend not in cfg["backends"]:
+        raise Fail(f"unknown backend {backend!r}; known: {', '.join(cfg['backends'])}")
+    return os.path.join(cfg["root"], backend)
+
+
+def git(cfg, *args):
+    out = subprocess.run(["git", "-C", src_dir(cfg), *args], capture_output=True, text=True)
+    if out.returncode:
+        raise Fail(f"git {' '.join(args)}: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+# ------------------------------------------------------------------ builds
+
+def build_name(sha, day=None):
+    return f"{day or datetime.date.today().strftime('%Y%m%d')}-{sha[:9]}"
+
+
+def list_builds(bdir):
+    """Build dir names, oldest first."""
+    if not os.path.isdir(bdir):
+        return []
+    return sorted(n for n in os.listdir(bdir) if BUILD_RE.match(n) and os.path.isdir(os.path.join(bdir, n)))
+
+
+def link_target(bdir, link):
+    path = os.path.join(bdir, link)
+    return os.path.basename(os.readlink(path)) if os.path.islink(path) else None
+
+
+def set_link(bdir, link, name):
+    """Point bdir/link at bdir/name atomically (a relative link)."""
+    tmp = os.path.join(bdir, f".{link}.tmp")
+    if os.path.lexists(tmp):
+        os.unlink(tmp)
+    os.symlink(name, tmp)
+    os.replace(tmp, os.path.join(bdir, link))
+
+
+def build_info(bdir, name):
+    if not name:
+        return None
+    try:
+        with open(os.path.join(bdir, name, "build.json")) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"name": name}
+
+
+def promote(cfg, backend):
+    bdir = backend_dir(cfg, backend)
+    cand, cur = link_target(bdir, "candidate"), link_target(bdir, "current")
+    if not cand:
+        raise Fail(f"{backend} has no candidate build; run: llama-builds build {backend}")
+    if cand == cur:
+        return f"{backend}: candidate {cand} is already current"
+    if cur:
+        set_link(bdir, "previous", cur)
+    set_link(bdir, "current", cand)
+    return f"{backend}: current {cur or '(none)'} -> {cand}; reload the model in llm-control to use it"
+
+
+def rollback(cfg, backend):
+    bdir = backend_dir(cfg, backend)
+    prev, cur = link_target(bdir, "previous"), link_target(bdir, "current")
+    if not prev:
+        raise Fail(f"{backend} has no previous build to roll back to")
+    set_link(bdir, "current", prev)
+    if cur:
+        set_link(bdir, "previous", cur)
+    return f"{backend}: current {cur} -> {prev}; reload the model in llm-control to use it"
+
+
+def prune_plan(builds, linked, keep):
+    """Names to delete: all but the newest `keep`, never a linked one."""
+    keepers = set(builds[-keep:]) | {n for n in linked if n}
+    return [n for n in builds if n not in keepers]
+
+
+def prune(cfg, backend):
+    bdir = backend_dir(cfg, backend)
+    linked = [link_target(bdir, link) for link in LINKS]
+    doomed = prune_plan(list_builds(bdir), linked, int(cfg.get("keep", 3)))
+    for name in doomed:
+        shutil.rmtree(os.path.join(bdir, name))
+    return f"{backend}: removed {', '.join(doomed) or 'nothing'}"
+
+
+# ------------------------------------------------------------------ git
+
+def ensure_remotes(cfg):
+    have = set(git(cfg, "remote").split())
+    for spec in cfg["backends"].values():
+        if spec["remote"] not in have:
+            git(cfg, "remote", "add", spec["remote"], spec["url"])
+            have.add(spec["remote"])
+
+
+def fetch(cfg, backend):
+    spec = cfg["backends"][backend]
+    git(cfg, "fetch", "--quiet", spec["remote"], f"+refs/heads/{spec['branch']}:refs/remotes/{spec['remote']}/{spec['branch']}")
+
+
+def tracked_ref(cfg, backend):
+    spec = cfg["backends"][backend]
+    return f"refs/remotes/{spec['remote']}/{spec['branch']}"
+
+
+def commits_behind(cfg, sha, head):
+    try:
+        return int(git(cfg, "rev-list", "--count", f"{sha}..{head}"))
+    except (Fail, ValueError):
+        return None
+
+
+def status(cfg, do_fetch=True):
+    out = {"checked": now(), "host": socket.gethostname(), "backends": {}}
+    ensure_remotes(cfg)
+    for backend, spec in cfg["backends"].items():
+        bdir = backend_dir(cfg, backend)
+        entry = {"tracks": f"{spec['remote']}/{spec['branch']}", "error": None}
+        try:
+            if do_fetch:
+                fetch(cfg, backend)
+            head = git(cfg, "rev-parse", tracked_ref(cfg, backend))
+            entry["head"] = head[:9]
+            entry["head_date"] = git(cfg, "show", "-s", "--format=%cs", head)
+        except Fail as err:
+            head = None
+            entry["error"] = str(err)
+        for link in LINKS:
+            info = build_info(bdir, link_target(bdir, link))
+            if info and head and info.get("sha"):
+                info["behind"] = commits_behind(cfg, info["sha"], head)
+            entry[link] = info and {k: info.get(k) for k in ("name", "sha", "built", "commit_date", "behind")}
+        entry["builds"] = list_builds(bdir)
+        out["backends"][backend] = entry
+    return out
+
+
+def status_lines(st):
+    lines = [f"checked {st['checked']}", f"{'backend':<14}{'current':<22}{'behind':>7}  {'candidate':<22}{'tracks'}"]
+    for backend, e in st["backends"].items():
+        cur, cand = e.get("current") or {}, e.get("candidate") or {}
+        behind = cur.get("behind")
+        lines.append(f"{backend:<14}{cur.get('name') or '-':<22}{'?' if behind is None else behind:>7}  "
+                     f"{cand.get('name') or '-':<22}{e['tracks']} @ {e.get('head') or '?'}"
+                     + (f"  ERROR {e['error']}" if e.get("error") else ""))
+    return lines
+
+
+# ------------------------------------------------------------------ build
+
+def run_logged(argv, log, cwd=None, env=None):
+    log.write(f"\n$ {' '.join(argv)}\n")
+    log.flush()
+    rc = subprocess.run(argv, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+    if rc:
+        raise Fail(f"{argv[0]} failed (exit {rc}); see {log.name}")
+
+
+def hip_env(env):
+    """HIPCXX/HIP_PATH as the earlier HIP build used them."""
+    env = dict(env)
+    for var, flag in (("HIPCXX", "-l"), ("HIP_PATH", "-R")):
+        out = subprocess.run(["hipconfig", flag], capture_output=True, text=True)
+        if out.returncode:
+            raise Fail("hipconfig not found; is ROCm installed?")
+        env[var] = out.stdout.strip() + ("/clang" if var == "HIPCXX" else "")
+    return env
+
+
+def build(cfg, backend, ref=None):
+    bdir = backend_dir(cfg, backend)  # also rejects an unknown backend
+    spec = cfg["backends"][backend]
+    os.makedirs(bdir, exist_ok=True)
+    ensure_remotes(cfg)
+    fetch(cfg, backend)
+    if ref:
+        candidates = [ref, f"{spec['remote']}/{ref}"]
+    else:
+        candidates = [tracked_ref(cfg, backend)]
+    sha = None
+    for r in candidates:
+        try:
+            sha = git(cfg, "rev-parse", "--verify", f"{r}^{{commit}}")
+            break
+        except Fail:
+            continue
+    if not sha:
+        raise Fail(f"can't resolve {ref!r} for {backend}")
+    for name in list_builds(bdir):
+        if name.endswith(sha[:9]):
+            set_link(bdir, "candidate", name)
+            return f"{backend}: {sha[:9]} is already built ({name}); candidate -> {name}"
+    name = build_name(sha)
+    work = os.path.join(cfg["root"], ".work", f"{backend}-{sha[:9]}")
+    logs = os.path.join(cfg["root"], "logs")
+    os.makedirs(logs, exist_ok=True)
+    log_path = os.path.join(logs, f"{backend}-{name}.log")
+    if os.path.exists(work):
+        subprocess.run(["git", "-C", src_dir(cfg), "worktree", "remove", "--force", work], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+    env = dict(os.environ)
+    if spec.get("hip"):
+        env = hip_env(env)
+    jobs = str(cfg.get("jobs") or os.cpu_count() or 4)
+    with open(log_path, "w") as log:
+        git(cfg, "worktree", "add", "--detach", work, sha)
+        try:
+            run_logged(["cmake", "-S", work, "-B", os.path.join(work, "build"), "-G", "Ninja",
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        # self-contained: libs are found next to the binary
+                        "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON", "-DCMAKE_INSTALL_RPATH=$ORIGIN",
+                        *spec["cmake"]], log, env=env)
+            run_logged(["nice", "-n", "10", "cmake", "--build", os.path.join(work, "build"), "-j", jobs,
+                        "--target", "llama-server", "llama-bench"], log, env=env)
+            dest = os.path.join(bdir, name)
+            shutil.copytree(os.path.join(work, "build", "bin"), os.path.join(dest, "bin"), symlinks=True)
+        finally:
+            subprocess.run(["git", "-C", src_dir(cfg), "worktree", "remove", "--force", work], capture_output=True)
+            shutil.rmtree(work, ignore_errors=True)
+    server = os.path.join(dest, "bin", "llama-server")
+    ver = subprocess.run([server, "--version"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    version = (ver.stdout + ver.stderr).strip()
+    if ver.returncode:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise Fail(f"the new llama-server doesn't run: {version[-500:]}")
+    info = {"name": name, "backend": backend, "sha": sha, "ref": ref or spec["branch"], "built": now(),
+            "commit_date": git(cfg, "show", "-s", "--format=%cs", sha), "cmake": spec["cmake"],
+            "version": version.splitlines()[-1] if version else "", "log": log_path}
+    with open(os.path.join(dest, "build.json"), "w") as fh:
+        json.dump(info, fh, indent=1)
+    set_link(bdir, "candidate", name)
+    if not link_target(bdir, "current"):
+        set_link(bdir, "current", name)
+        return f"{backend}: built {name} ({info['version']}); it is current and candidate (first build)"
+    return f"{backend}: built {name} ({info['version']}); candidate -> {name}. Try it in llm-control, then: llama-builds promote {backend}"
+
+
+# ------------------------------------------------------------------ publish
+
+def resp(*args):
+    """A Redis command in RESP."""
+    out = [f"*{len(args)}\r\n".encode()]
+    for arg in args:
+        data = arg if isinstance(arg, bytes) else str(arg).encode()
+        out.append(f"${len(data)}\r\n".encode() + data + b"\r\n")
+    return b"".join(out)
+
+
+def publish(cfg, st):
+    target = cfg.get("publish")
+    if not target:
+        raise Fail("no publish target in the config")
+    with open(target["password_file"]) as fh:
+        password = fh.read().strip()
+    with socket.create_connection((target["host"], int(target.get("port", 6379))), timeout=10) as sock:
+        reader = sock.makefile("rb")
+        for cmd in (("AUTH", password), ("SELECT", target.get("db", 1)),
+                    ("SET", target.get("key", "framework:llama-builds"), json.dumps(st), "EX", STATUS_TTL)):
+            sock.sendall(resp(*cmd))
+            reply = reader.readline().decode().strip()
+            if not reply.startswith("+"):
+                raise Fail(f"redis {cmd[0]}: {reply}")
+
+
+# ------------------------------------------------------------------ main
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("status")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--publish", action="store_true")
+    p.add_argument("--no-fetch", action="store_true")
+    p = sub.add_parser("build")
+    p.add_argument("backend")
+    p.add_argument("ref", nargs="?")
+    for name in ("promote", "rollback", "prune"):
+        sub.add_parser(name).add_argument("backend")
+    args = parser.parse_args(argv)
+    try:
+        cfg = load_config()
+        if args.cmd == "status":
+            st = status(cfg, do_fetch=not args.no_fetch)
+            print(json.dumps(st, indent=1) if args.json else "\n".join(status_lines(st)))
+            if args.publish:
+                publish(cfg, st)
+            return 0
+        os.makedirs(cfg["root"], exist_ok=True)
+        with open(os.path.join(cfg["root"], ".lock"), "w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Fail("another llama-builds command is running")
+            action = {"build": lambda: build(cfg, args.backend, args.ref), "promote": lambda: promote(cfg, args.backend),
+                      "rollback": lambda: rollback(cfg, args.backend), "prune": lambda: prune(cfg, args.backend)}
+            print(action[args.cmd]())
+            if cfg.get("publish"):
+                try:  # keep the panel current; a Redis blip isn't the command's failure
+                    publish(cfg, status(cfg, do_fetch=False))
+                except (Fail, OSError) as err:
+                    print(f"(status not published: {err})", file=sys.stderr)
+        return 0
+    except Fail as err:
+        print(f"llama-builds: {err}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
