@@ -804,6 +804,13 @@ being re-derived:
   - **Now:** the bootstrap sets `pmx_gpu_gtt_ceiling_mb_fixed: 114688`.
     `llm-memgate` refuses a model bigger than the ceiling, and still
     requires 4 GB of free RAM before any model loads.
+  - **Verified 2026-10-09** after the reboot:
+    - the kernel reported "114688M of GTT memory ready", with no amdgpu
+      errors;
+    - llama-swap preloaded GLM within a minute (`llm-memgate` let it
+      through at 123.7 GB free), using about 98 GiB of GTT;
+    - `:8080/health` returned 200, and a test question got "ok" at
+      16 tok/s.
 - **The Vulkan long-context reliability bug is real and separate from
   the OOM issue.** `proxmox-strix-halo-setup-notes.md` §8 documents a
   genuine kernel-level GPU ring timeout/reset (`ring comp_1.1.0 timeout
