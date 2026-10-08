@@ -791,6 +791,19 @@ being re-derived:
   re-deriving it, unless the operator wants to revisit the split (the
   16/112 split mentioned earlier in this workspace's history remains an
   option, not a default).
+
+  **Superseded (2026-10-09): the ceiling is 112 GiB**
+  (`ttm.pages_limit=29360128`, the 16/112 split).
+  - **History:** live by hand since 2026-07-28, because the chat models
+    need it (Qwen3.8-Flash-Next ~106 GB, GLM-5.3-Flash ~97 GB). A re-run
+    of `framework-desktop-bootstrap.yml` on 2026-09-27 recomputed "RAM
+    minus 32 GB" (93 GB) into `/etc/default/grub`. The 2026-10-08 reboot
+    after an apt upgrade applied it, GLM's preload lost the GPU ("Not
+    enough memory for command submission"), and amdgpu errors flooded the
+    console.
+  - **Now:** the bootstrap sets `pmx_gpu_gtt_ceiling_mb_fixed: 114688`.
+    `llm-memgate` refuses a model bigger than the ceiling, and still
+    requires 4 GB of free RAM before any model loads.
 - **The Vulkan long-context reliability bug is real and separate from
   the OOM issue.** `proxmox-strix-halo-setup-notes.md` §8 documents a
   genuine kernel-level GPU ring timeout/reset (`ring comp_1.1.0 timeout
