@@ -178,6 +178,20 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
+- 2026-10-08, prompt-token label deployed (0a0770eb), approval
+  `eval-prompt-token-label`. Publishing then hit HTTP 423: with share
+  perms 15, Nextcloud's Text editor opens a report for editing and locks
+  it, and one lock (file 5390, from 01:55 UTC) never cleared. Fixed under
+  approval `eval-publish-locks` (f3293663):
+  - publish skips locked files, names them and retries them next time;
+  - the share is now read+delete (9), so Text opens reports read-only;
+  - `occ text:reset 5390`, without --force, released the stale lock.
+
+  The publish afterwards uploaded 9 changed files with no locks. The
+  GPQA report reads "Prompt tokens processed (cached text excluded) | 4"
+  and "– (too little prompt work to measure)". The CyberSecEval share is
+  still 15; it never overwrites reports, so locks don't affect it.
+
 - 2026-10-08, smoke test review (6 runs on glm-5.3-flash, 01:24–03:35 UTC):
   all completed and published with 0 harness errors, the queue chained
   in table order, and metrics were recorded on every run (17–19 tok/s
@@ -192,7 +206,7 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   update, create, delete), as for Reports/cyberseceval (5a7cb828),
   approval `eval-share-delete`. The ai-services-stack eval play ran with
   failed=0. Nextcloud now reports `/Reports/eval-runner` -> steve's
-  `/eval-runner`, perms 15. The play showed changed=0 because the role's
+  `/eval-runner`, perms 15. (Lowered to 9 the same day, see below.) The play showed changed=0 because the role's
   uri PUT doesn't report changes. Deleted files go to the eval-reports
   account's trash; the run stays in Tables and the leaderboard.
 
