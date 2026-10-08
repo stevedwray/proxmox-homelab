@@ -246,6 +246,24 @@ def framework_status_text(info: dict) -> str:
     return f"Framework: {model} · free"
 
 
+def builds_text(builds: dict | None) -> str:
+    """One line on Framework's llama.cpp builds (llama-builds status)."""
+    if not builds or not builds.get("backends"):
+        return "llama.cpp builds: no status yet (llama-builds publishes it daily)"
+    parts = []
+    for name, b in builds["backends"].items():
+        cur = b.get("current") or {}
+        if not cur.get("name"):
+            parts.append(f"{name} not built")
+            continue
+        behind = cur.get("behind")
+        lag = "up to date" if behind == 0 else (f"{behind} behind" if behind is not None else "? behind")
+        cand = (b.get("candidate") or {}).get("name")
+        extra = f", candidate {cand}" if cand and cand != cur.get("name") else ""
+        parts.append(f"{name} {cur['name']} ({lag}{extra})")
+    return f"llama.cpp builds: {' · '.join(parts)} · checked {(builds.get('checked') or '?')[:16].replace('T', ' ')}"
+
+
 def framework_status_color(info: dict) -> str:
     if info.get("lock"):
         return "warning"
@@ -264,7 +282,8 @@ def poll_framework(_n):
         info = requests.get(f"{PANEL_API_BASE_URL}/framework", timeout=5).json()
     except (requests.RequestException, ValueError):
         return "Framework: status unavailable (panel-web unreachable)", "danger"
-    return framework_status_text(info), framework_status_color(info)
+    return [framework_status_text(info), html.Br(),
+            html.Small(builds_text(info.get("builds")), className="text-muted")], framework_status_color(info)
 
 
 @app.callback(

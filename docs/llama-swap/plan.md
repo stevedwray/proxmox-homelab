@@ -101,25 +101,112 @@ Before relying on it, check these:
 `nathanw-llamacpp.service` on :8080, and with `true` it refuses while
 llama-swap is active. Embeddings are managed as before.
 
+## Phase 3: managed llama.cpp builds (built 2026-10-09, branch `task/llama-builds`)
+
+**Goal:** keep several llama.cpp backends, check them for updates, and
+build, try, promote or roll back a new build without hand-editing paths
+or systemd units.
+
+**Layout:**
+- **Sources:** one clone, `/storage/llama-builds/src`, with remotes `fork`
+  (Nathanw1014/llama.cpp) and `upstream` (ggml-org/llama.cpp).
+- **Backends:**
+  - `fork` tracks `fork/strix-halo-vulkan`;
+  - `upstream` tracks `upstream/master`.
+- **Builds:** `/storage/llama-builds/<backend>/<date>-<sha>/` holds only
+  `bin/` and the shared libs, about 81 MB each. They're built from a
+  temporary worktree with the same CMake flags as today (Vulkan, Release,
+  `GGML_NATIVE`). The last N builds per backend are kept.
+- **Symlinks:** `/storage/llama-builds/<backend>/current` and
+  `.../candidate`.
+  - The llama-swap macros point at `.../<backend>/current/bin/llama-server`.
+    Switching the link takes effect at the next model load (unload or
+    load in llm-control), with no config save and no reload.
+  - Extra llm-control entries run a model on `candidate` (e.g.
+    "GLM-5.3-Flash · upstream candidate"). Benchmarks already record
+    `build_info` from `/props`, so a candidate's runs are distinguishable
+    from current's.
+
+**The `llama-builds` tool on Framework:**
+
+| Command | What it does |
+|---|---|
+| `llama-builds status` | per backend: current, candidate, the remote head, and how many commits behind |
+| `llama-builds build <backend> [ref]` | fetch, build into a new dir, smoke-test (`--version`, load a tiny GGUF), set `candidate` |
+| `llama-builds promote <backend>` | `current` := `candidate` (the old current stays for rollback) |
+| `llama-builds rollback <backend>` | `current` := the previous build |
+| `llama-builds prune <backend>` | keep the last N |
+
+**Checking for updates:** a daily systemd timer
+(`llama-builds-status.timer`) runs `llama-builds status --publish`. That
+writes the status JSON to cse-panel's Redis (DB 1, key
+`framework:llama-builds`, 3-day TTL); every build command publishes too.
+panel-web's `/framework` returns it, and the Benchmark Control Panel's
+Framework bar shows a second line, e.g. "llama.cpp builds: fork
+20261009-b02cb35f2 (12 behind) · upstream … · checked …".
+- The push goes framework (LAN) → cse-panel :6379 (mgmt_seg). The
+  existing firewall policy already allows LAN to mgmt_seg; it was
+  verified on 2026-10-09, when the first publish landed in Redis. A
+  dedicated MikroTik rule was drafted, then dropped as redundant.
+- The Redis password is in `/etc/llama-builds/redis-password`, readable
+  only by steve, from OpenBao `services/cse-panel`. That's why
+  `framework-desktop-llama-builds.yml` runs through `with-secrets-prod-tiny`.
+
+**Retirement:**
+- remove the `nathanw-llamacpp.service` unit (chat), which llama-swap
+  replaced;
+- point `nathanw-llamacpp-embed.service` at `fork/current`;
+- delete the Docker-era playbooks that no longer describe anything that
+  runs: `framework-desktop-llamacpp.yml` (HIP router container),
+  `framework-desktop-llamacpp-nathanw.yml` ("NOT WIRED UP") and
+  `framework-desktop-llamacpp-nathanw-vulkan.yml` (the old prebuilt
+  container).
+
+**Migration (no model downtime beyond one reload):**
+1. Install the tool and the clone.
+2. Import today's two builds as `fork/current` (b02cb35) and
+   `upstream/current` (a4d880fd5) by copying their `bin/`.
+3. Switch the llama-swap macros and the embed unit to the new paths
+   (one reload).
+4. Keep `~/llama.cpp*` until the new paths have run a while, then remove
+   them.
+
+**Decisions (operator, 2026-10-09):**
+1. **Builds are started on request:** the operator asks, Claude runs
+   `llama-builds` under the approval flow. There's no UI button or shell
+   use.
+2. **Update status appears in the benchmark panel header,** not Grafana.
+3. **Backends:** the Nathanw fork (Vulkan), upstream (Vulkan) and upstream
+   HIP/ROCm (gfx1151; the same flags as the old HIP container).
+4. **The three Docker-era playbooks are deleted.**
+
+**Build details:**
+- Builds are self-contained: `CMAKE_BUILD_WITH_INSTALL_RPATH=ON` and
+  `CMAKE_INSTALL_RPATH=$ORIGIN`. Today's hand builds have an absolute
+  RUNPATH into `~/llama.cpp/build-vk/bin`, so they can't be copied; the
+  migration rebuilds the same commits instead.
+- Only the targets `llama-server` and `llama-bench` are built.
+- Builds use Ninja, run at nice 10 with 24 jobs, and only one runs at a
+  time (flock).
+- A build only becomes `candidate`, or `current` if it's the backend's
+  first build. llm-control has `*-candidate` and `*-hip` entries for GLM
+  and Qwen.
+
 ## Rollback
 
-```bash
-TASK_APPROVAL=llama-swap-rollback ./with-secrets-prod ansible-playbook \
-  -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/framework-desktop-llama-swap.yml \
-  -e framework_llama_swap_enabled=false
-TASK_APPROVAL=llama-swap-rollback ./with-secrets-prod ansible-playbook \
-  -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/framework-desktop-llamacpp-native.yml \
-  -e framework_llamacpp_chat_enabled=true
-```
-
-The first run stops llama-swap and whatever model it started. The second
-brings back `nathanw-llamacpp.service` (Qwen, fork) on :8080.
+- **A llama.cpp build:** `llama-builds rollback <backend>` points
+  `current` back at the previous build. Reload the model in llm-control.
+- **llama-swap itself:** run
+  `framework-desktop-llama-swap.yml -e framework_llama_swap_enabled=false`.
+  Since adoption (2026-10-09) the old `nathanw-llamacpp.service` chat unit
+  is gone, so this leaves :8080 empty until a model is started by hand.
+  The rollback to that unit, used during the evaluation, no longer
+  exists.
 
 ## Not in scope
 
 - Ollama/Laguna, LM Studio, ComfyUI.
 - Building or updating llama.cpp.
-- Removing `nathanw-llamacpp.service` or the dead llama.cpp playbooks. That
-  happens after the evaluation, if it's adopted.
+- Removing `nathanw-llamacpp.service` and the dead llama.cpp playbooks
+  was out of scope during the evaluation. It's done in phase 3 after
+  adoption.

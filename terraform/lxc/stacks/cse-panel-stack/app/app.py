@@ -155,6 +155,9 @@ STATE_LABELS = {
 # eval battery worker's status of Framework; both in this Redis, DB 1.
 FRAMEWORK_LOCK_KEY = "framework:run-lock"
 EVAL_FRAMEWORK_KEY = "eval:framework"
+# Framework's llama.cpp builds and how far behind they are, published daily
+# by `llama-builds status --publish` on Framework (docs/llama-swap/plan.md).
+LLAMA_BUILDS_KEY = "framework:llama-builds"
 
 RECENT_JOBS_KEY = "cse_panel:recent_job_ids"
 RECENT_SUITES_KEY = "cse_panel:recent_suite_ids"
@@ -407,6 +410,7 @@ def framework():
         "slots": status.get("slots"),
         "checked": status.get("checked"),
         "error": status.get("error"),
+        "builds": _redis_json(LLAMA_BUILDS_KEY),
     }
 
 

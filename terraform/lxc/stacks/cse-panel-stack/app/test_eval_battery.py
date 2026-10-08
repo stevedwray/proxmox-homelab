@@ -163,9 +163,13 @@ class EvalBatteryTest(unittest.TestCase):
         import app as panel_app
         self.redis.set("framework:run-lock", json.dumps({"job_id": "e1", "suite": "eval", "benchmark": "bfcl"}))
         self.redis.set("eval:framework", json.dumps({"model": "glm-5.3-flash", "busy": 1, "slots": 4}))
-        with mock.patch.object(panel_app, "_redis_json", lambda key: json.loads(self.redis.get(key))):
+        def redis_json(key):
+            raw = self.redis.get(key)
+            return json.loads(raw) if raw else None
+        with mock.patch.object(panel_app, "_redis_json", redis_json):
             body = TestClient(panel_app.app).get("/framework").json()
         self.assertEqual((body["lock"]["suite"], body["model"], body["busy"]), ("eval", "glm-5.3-flash", 1))
+        self.assertIsNone(body["builds"])  # not published in this fixture
 
     def test_waiting_cse_job_is_labelled_with_the_holder(self):
         import app as panel_app

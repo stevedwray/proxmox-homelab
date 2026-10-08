@@ -1,71 +1,42 @@
 ---
-# Framework Desktop native llama.cpp servers -- the Nathanw Strix-Halo fork,
-# native Vulkan build at /home/steve/llama.cpp/build-vk. This is the
-# platform's LLM serving layer now that Ollama is gone from framework
-# (docs/framework-ip-and-port/plan.md, Phase C).
+# Framework Desktop native llama.cpp: the embeddings server and the API key.
 #
-#   nathanw-llamacpp.service        chat/completions  :8080  API key required
-#   nathanw-llamacpp-embed.service  embeddings        :8085  no key (reached only
-#                                                     from ai_seg via MikroTik)
+#   nathanw-llamacpp-embed.service  embeddings (nomic-embed-text)  :8085  no key
+#                                   (reached only from ai_seg via MikroTik)
+#   /etc/llamacpp/api-key           the key every chat model on :8080 uses
+#                                   (LLM_GPU_STACK_API_KEY; llama-swap's model
+#                                   entries pass --api-key-file)
 #
-# While llama-swap owns :8080 (framework-desktop-llama-swap.yml,
-# docs/llama-swap/plan.md), framework_llamacpp_chat_enabled is false: the chat
-# unit file is still written, but the service is kept stopped and disabled and
-# its checks are skipped. The embeddings server is managed as before.
+# Chat models on :8080 are started by llama-swap (framework-desktop-llama-swap.yml,
+# docs/llama-swap/plan.md), adopted 2026-10-09. The old chat unit,
+# nathanw-llamacpp.service, is retired: this playbook stops, disables and
+# deletes it if it is still there.
 #
-# Takes over the hand-written /etc/systemd/system/nathanw-llamacpp.service
-# in place (same unit name). Flags carried over from it unchanged:
-# -m, --host 0.0.0.0, --port 8080, --ctx-size, --n-gpu-layers 999, and no
-# --parallel (auto: 4 slots sharing one unified KV cache -- setting
-# --parallel explicitly can split the context per slot, so it is left out).
-# Added: --alias (stable model name for clients instead of the GGUF path),
-# --metrics (Prometheus endpoint, replaces the Ollama textfile collector)
-# and --api-key-file (LLM_GPU_STACK_API_KEY, the key the Traefik
-# llm.${LAB_DOMAIN} route and OpenWebUI already use).
-#
-# Memory: framework is a 122GB unified-memory APU and the chat model is
-# ~111GB resident. The embeddings model is ~0.3GB. The pre-flight refuses to
-# change anything unless MemAvailable is above
-# framework_llamacpp_min_available_mb. Restarting the chat unit is a stop
-# then a start of the same model (never two copies at once).
+# The embeddings server runs the Nathanw fork's current build from
+# llama-builds (framework-desktop-llama-builds.yml):
+# /storage/llama-builds/fork/current. `llama-builds promote fork` therefore
+# changes its build too, at its next restart.
 #
 # Run (framework is not a Proxmox node, but it needs pve's OpenBao profile --
 # LLM_GPU_STACK_API_KEY -- so it goes through the prod wrapper with an inline
-# approval; the older `PVE_ENV= ./with-secrets` form fails with an empty
-# profile since the OpenBao switch):
+# approval):
 #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
 #     -i ansible/inventory/inventory.yml \
 #     ansible/00-initial-setup/framework-desktop-llamacpp-native.yml
-
-- name: Manage native llama.cpp servers on the Framework Desktop
+- name: Manage the native llama.cpp embeddings server on the Framework Desktop
   hosts: framework
   become: true
   gather_facts: false
 
   vars:
     framework_llamacpp_user: steve
-    framework_llamacpp_bin: /home/steve/llama.cpp/build-vk/bin/llama-server
-    framework_llamacpp_workdir: /home/steve/llama.cpp/build-vk/bin
+    framework_llamacpp_build: /storage/llama-builds/fork/current
+    framework_llamacpp_bin: /storage/llama-builds/fork/current/bin/llama-server
     framework_llamacpp_log_dir: /home/steve/llamacpp-native-test
     framework_llamacpp_key_dir: /etc/llamacpp
     framework_llamacpp_key_file: /etc/llamacpp/api-key
     framework_llamacpp_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     framework_llamacpp_min_available_mb: 4096
-    # false while llama-swap owns :8080 (see header). Set true only after
-    # framework-desktop-llama-swap.yml -e framework_llama_swap_enabled=false
-    # has stopped llama-swap -- the pre-flight below refuses otherwise.
-    framework_llamacpp_chat_enabled: false
-
-    framework_llamacpp_chat_model: /mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
-    framework_llamacpp_chat_alias: qwen3.8-flash-next
-    framework_llamacpp_chat_port: 8080
-    # Total KV context shared by all slots (unified KV, so one request can
-    # use all of it). Measured per plan.md "Operator: measure chat context"
-    # on 2026-09-27: MemAvailable 14966 MB at 8192, 14000 at 16384, 13500 at
-    # 32768, 12235 at 65536, 9788 at 131072 -- every step above the 8192 MB
-    # floor, so the largest candidate is kept. Don't raise it past that
-    # without re-measuring.
-    framework_llamacpp_chat_ctx_size: 131072
 
     framework_llamacpp_embed_model: /mnt/nvme2/models-gguf/nomic-embed-text-v1.5/nomic-embed-text-v1.5.f16.gguf
     framework_llamacpp_embed_alias: nomic-embed-text
@@ -76,12 +47,11 @@
     framework_llamacpp_embed_ctx_size: 2048
 
   tasks:
-    - name: Check the llama-server binary and both model files exist
+    - name: Check the llama-server build and the embeddings model exist
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
         - "{{ framework_llamacpp_bin }}"
-        - "{{ framework_llamacpp_chat_model }}"
         - "{{ framework_llamacpp_embed_model }}"
       register: framework_llamacpp_paths
 
@@ -89,8 +59,9 @@
       ansible.builtin.assert:
         that: item.stat.exists
         fail_msg: >-
-          {{ item.item }} is missing. The embeddings GGUF is downloaded by the
-          operator first -- see plan.md "Operator: download the embeddings model".
+          {{ item.item }} is missing. The fork build comes from
+          framework-desktop-llama-builds.yml and `llama-builds build fork`; the
+          embeddings GGUF is downloaded by the operator.
       loop: "{{ framework_llamacpp_paths.results }}"
       loop_control:
         label: "{{ item.item }}"
@@ -101,29 +72,13 @@
       register: framework_llamacpp_mem_available_mb
       changed_when: false
 
-    - name: Refuse to continue on low memory (unified-memory APU, see header)
+    - name: Refuse to continue on low memory (unified-memory APU)
       ansible.builtin.assert:
         that: framework_llamacpp_mem_available_mb.stdout | int >= framework_llamacpp_min_available_mb
         fail_msg: >-
           MemAvailable is {{ framework_llamacpp_mem_available_mb.stdout }}MB,
           below {{ framework_llamacpp_min_available_mb }}MB. Find what else is
           holding memory before (re)starting llama-server.
-
-    - name: Read llama-swap's state
-      ansible.builtin.command:
-        argv: [systemctl, is-active, llama-swap.service]
-      register: framework_llamacpp_llama_swap_state
-      changed_when: false
-      failed_when: false
-
-    - name: Refuse to start the chat server while llama-swap holds :8080
-      ansible.builtin.assert:
-        that: framework_llamacpp_llama_swap_state.stdout != 'active'
-        fail_msg: >-
-          llama-swap.service is active and owns port 8080. Stop it first with
-          framework-desktop-llama-swap.yml -e framework_llama_swap_enabled=false,
-          or leave framework_llamacpp_chat_enabled false.
-      when: framework_llamacpp_chat_enabled | bool
 
     - name: Create the API key directory
       ansible.builtin.file:
@@ -141,37 +96,26 @@
         group: "{{ framework_llamacpp_user }}"
         mode: "0640"
       no_log: true
-      notify: Restart chat server
 
-    - name: Write the chat server unit (takes over the hand-written one)
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/nathanw-llamacpp.service
-        owner: root
-        group: root
-        mode: "0644"
-        content: |
-          # Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llamacpp-native.yml -- do not edit by hand
-          [Unit]
-          Description=Nathanw llama.cpp fork (native Vulkan) -- chat/completions, port {{ framework_llamacpp_chat_port }}
-          After=network-online.target
-          Wants=network-online.target
+    # Retired 2026-10-09: llama-swap starts the chat models now.
+    - name: Check for the retired chat unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/nathanw-llamacpp.service
+      register: framework_llamacpp_old_chat_unit
 
-          [Service]
-          Type=simple
-          User={{ framework_llamacpp_user }}
-          WorkingDirectory={{ framework_llamacpp_workdir }}
-          ExecStart={{ framework_llamacpp_bin }} -m {{ framework_llamacpp_chat_model }} --alias {{ framework_llamacpp_chat_alias }} --host 0.0.0.0 --port {{ framework_llamacpp_chat_port }} --ctx-size {{ framework_llamacpp_chat_ctx_size }} --n-gpu-layers 999 --metrics --api-key-file {{ framework_llamacpp_key_file }}
-          # on-failure (not always) so `systemctl stop` is respected and stays stopped --
-          # only an actual crash triggers a restart. This is what lets the operator take
-          # manual command-line control after stopping the service.
-          Restart=on-failure
-          RestartSec=5
-          StandardOutput=append:{{ framework_llamacpp_log_dir }}/server.log
-          StandardError=append:{{ framework_llamacpp_log_dir }}/server.log
+    - name: Stop and disable the retired chat unit
+      ansible.builtin.systemd_service:
+        name: nathanw-llamacpp.service
+        enabled: false
+        state: stopped
+      when: framework_llamacpp_old_chat_unit.stat.exists
 
-          [Install]
-          WantedBy=multi-user.target
-      notify: Restart chat server
+    - name: Delete the retired chat unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/nathanw-llamacpp.service
+        state: absent
+      when: framework_llamacpp_old_chat_unit.stat.exists
+      notify: Reload systemd
 
     - name: Write the embeddings server unit
       ansible.builtin.copy:
@@ -182,14 +126,14 @@
         content: |
           # Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llamacpp-native.yml -- do not edit by hand
           [Unit]
-          Description=Nathanw llama.cpp fork (native Vulkan) -- embeddings ({{ framework_llamacpp_embed_alias }}), port {{ framework_llamacpp_embed_port }}
+          Description=Nathanw llama.cpp fork (native Vulkan, llama-builds fork/current) -- embeddings ({{ framework_llamacpp_embed_alias }}), port {{ framework_llamacpp_embed_port }}
           After=network-online.target
           Wants=network-online.target
 
           [Service]
           Type=simple
           User={{ framework_llamacpp_user }}
-          WorkingDirectory={{ framework_llamacpp_workdir }}
+          WorkingDirectory={{ framework_llamacpp_build }}/bin
           ExecStart={{ framework_llamacpp_bin }} -m {{ framework_llamacpp_embed_model }} --alias {{ framework_llamacpp_embed_alias }} --host 0.0.0.0 --port {{ framework_llamacpp_embed_port }} --embeddings --pooling mean --ctx-size {{ framework_llamacpp_embed_ctx_size }} --parallel 1 --batch-size {{ framework_llamacpp_embed_ctx_size }} --ubatch-size {{ framework_llamacpp_embed_ctx_size }} --n-gpu-layers 999 --metrics
           Restart=on-failure
           RestartSec=5
@@ -200,7 +144,7 @@
           WantedBy=multi-user.target
       notify: Restart embeddings server
 
-    - name: Flush handlers so changed units restart before the checks below
+    - name: Flush handlers so a changed unit restarts before the checks below
       ansible.builtin.meta: flush_handlers
 
     - name: Enable and start the embeddings server
@@ -210,49 +154,14 @@
         state: started
         daemon_reload: true
 
-    - name: Enable and start the chat server
-      ansible.builtin.systemd_service:
-        name: nathanw-llamacpp.service
-        enabled: true
-        state: started
-        daemon_reload: true
-      when: framework_llamacpp_chat_enabled | bool
-
-    - name: Keep the chat server stopped and disabled while llama-swap owns :8080
-      ansible.builtin.systemd_service:
-        name: nathanw-llamacpp.service
-        enabled: false
-        state: stopped
-        daemon_reload: true
-      when: not framework_llamacpp_chat_enabled | bool
-
-    - name: Wait for each server's /health (the chat model takes minutes to load)
+    - name: Wait for the embeddings server's /health
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ item }}/health"
+        url: "http://127.0.0.1:{{ framework_llamacpp_embed_port }}/health"
         status_code: 200
       register: framework_llamacpp_health
       until: framework_llamacpp_health.status == 200
-      retries: 60
-      delay: 10
-      loop: "{{ ([framework_llamacpp_chat_port] if framework_llamacpp_chat_enabled | bool else []) + [framework_llamacpp_embed_port] }}"
-
-    - name: Chat server rejects a request without the API key
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ framework_llamacpp_chat_port }}/v1/chat/completions"
-        method: POST
-        body_format: json
-        body: {model: "{{ framework_llamacpp_chat_alias }}", messages: [{role: user, content: "hi"}], max_tokens: 1}
-        status_code: 401
-      when: framework_llamacpp_chat_enabled | bool
-
-    - name: Chat server serves /metrics with the API key
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ framework_llamacpp_chat_port }}/metrics"
-        headers:
-          Authorization: "Bearer {{ framework_llamacpp_api_key }}"
-        status_code: 200
-      no_log: true
-      when: framework_llamacpp_chat_enabled | bool
+      retries: 30
+      delay: 5
 
     - name: Embeddings server returns a 768-dim vector
       ansible.builtin.uri:
@@ -266,12 +175,9 @@
       failed_when: framework_llamacpp_embed_probe.json.data[0].embedding | length != 768
 
   handlers:
-    - name: Restart chat server
+    - name: Reload systemd
       ansible.builtin.systemd_service:
-        name: nathanw-llamacpp.service
-        state: restarted
         daemon_reload: true
-      when: framework_llamacpp_chat_enabled | bool
 
     - name: Restart embeddings server
       ansible.builtin.systemd_service:

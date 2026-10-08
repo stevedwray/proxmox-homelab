@@ -1,0 +1,165 @@
+---
+# llama.cpp builds side by side on the Framework Desktop (docs/llama-swap/plan.md,
+# phase 3): installs the llama-builds tool, its config, one source clone with
+# a remote per source, and a daily status check that publishes to the
+# Benchmark Control Panel (cse-panel's Redis, key framework:llama-builds).
+#
+#   /storage/llama-builds/src                     git clone (remotes: fork, upstream)
+#   /storage/llama-builds/<backend>/<date>-<sha>/ one build: bin/ + build.json
+#   /storage/llama-builds/<backend>/current       what llama-swap starts
+#   /storage/llama-builds/<backend>/candidate     the newest build, to try first
+#   /storage/llama-builds/<backend>/previous      for rollback
+#
+# This playbook builds nothing. Builds are started on request:
+#   llama-builds build <backend> [ref]; llama-builds promote <backend>
+#
+# The publish step connects from framework (LAN) to cse-panel's Redis
+# (mgmt_seg :6379). The existing firewall policy already allows LAN to
+# mgmt_seg; verified 2026-10-09, so no extra MikroTik rule was added.
+#
+# Run (CSE_PANEL_REDIS_PASSWORD is in the pve-tiny OpenBao profile, which is
+# why this Framework playbook goes through the pve-tiny wrapper):
+#   TASK_APPROVAL=<task> ./with-secrets-prod-tiny ansible-playbook \
+#     -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/framework-desktop-llama-builds.yml
+- name: llama.cpp builds on the Framework Desktop
+  hosts: framework
+  become: true
+  gather_facts: false
+
+  vars:
+    llama_builds_user: steve
+    llama_builds_root: /storage/llama-builds
+    llama_builds_etc: /etc/llama-builds
+    # Builds run at nice 10; 24 of the 32 cores leaves the desktop usable.
+    llama_builds_jobs: 24
+    llama_builds_keep: 3
+    llama_builds_backends:
+      fork:
+        remote: fork
+        url: https://github.com/Nathanw1014/llama.cpp.git
+        branch: strix-halo-vulkan
+        cmake: ["-DGGML_VULKAN=ON", "-DGGML_NATIVE=ON"]
+      upstream:
+        remote: upstream
+        url: https://github.com/ggml-org/llama.cpp.git
+        branch: master
+        cmake: ["-DGGML_VULKAN=ON", "-DGGML_NATIVE=ON"]
+      # Same flags as the earlier HIP container (framework-desktop-llamacpp.yml,
+      # removed 2026-10-09); llama-builds sets HIPCXX/HIP_PATH from hipconfig.
+      upstream-hip:
+        remote: upstream
+        url: https://github.com/ggml-org/llama.cpp.git
+        branch: master
+        hip: true
+        cmake: ["-DGGML_HIP=ON", "-DAMDGPU_TARGETS=gfx1151", "-DGGML_NATIVE=ON"]
+    llama_builds_redis_host: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
+    llama_builds_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
+
+  tasks:
+    - name: Install build prerequisites
+      ansible.builtin.apt:
+        name:
+          - git
+          - cmake
+          - ninja-build
+          - glslc
+          - libvulkan-dev
+          - libcurl4-openssl-dev
+          - libssl-dev
+        state: present
+
+    - name: Create the config directory
+      ansible.builtin.file:
+        path: "{{ llama_builds_etc }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the builds root
+      ansible.builtin.file:
+        path: "{{ llama_builds_root }}"
+        state: directory
+        owner: "{{ llama_builds_user }}"
+        group: "{{ llama_builds_user }}"
+        mode: "0755"
+
+    - name: Write the backends config
+      ansible.builtin.copy:
+        dest: "{{ llama_builds_etc }}/backends.json"
+        mode: "0644"
+        content: "{{ {'root': llama_builds_root, 'jobs': llama_builds_jobs, 'keep': llama_builds_keep,
+                      'backends': llama_builds_backends,
+                      'publish': {'host': llama_builds_redis_host, 'port': 6379, 'db': 1,
+                                  'key': 'framework:llama-builds',
+                                  'password_file': llama_builds_etc ~ '/redis-password'}} | to_nice_json }}\n"
+
+    - name: Write the panel Redis password (read by the status check only)
+      ansible.builtin.copy:
+        dest: "{{ llama_builds_etc }}/redis-password"
+        content: "{{ llama_builds_redis_password }}\n"
+        owner: "{{ llama_builds_user }}"
+        group: "{{ llama_builds_user }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Install llama-builds
+      ansible.builtin.copy:
+        src: files/llama-builds/llama-builds
+        dest: /usr/local/bin/llama-builds
+        mode: "0755"
+
+    - name: Clone the source repository (remote "fork"; llama-builds adds the others)
+      ansible.builtin.command:
+        cmd: git clone --origin fork {{ llama_builds_backends.fork.url }} {{ llama_builds_root }}/src
+        creates: "{{ llama_builds_root }}/src/.git"
+      become_user: "{{ llama_builds_user }}"
+
+    - name: Write the daily status check (service + timer)
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        mode: "0644"
+        content: "{{ item.content }}"
+      loop:
+        - name: llama-builds-status.service
+          content: |
+            [Unit]
+            Description=llama-builds status: check for llama.cpp updates and publish to the benchmark panel
+            Wants=network-online.target
+            After=network-online.target
+
+            [Service]
+            Type=oneshot
+            User={{ llama_builds_user }}
+            ExecStart=/usr/local/bin/llama-builds status --publish
+        - name: llama-builds-status.timer
+          content: |
+            [Unit]
+            Description=Daily llama-builds status check
+
+            [Timer]
+            OnBootSec=15min
+            OnCalendar=daily
+            RandomizedDelaySec=1h
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Enable the daily status check
+      ansible.builtin.systemd:
+        name: llama-builds-status.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Run the status check once now (fetches both remotes, publishes to the panel)
+      ansible.builtin.command: /usr/local/bin/llama-builds status --publish
+      become_user: "{{ llama_builds_user }}"
+      register: llama_builds_status
+      changed_when: false
+
+    - name: Report build status
+      ansible.builtin.debug:
+        msg: "{{ llama_builds_status.stdout_lines }}"
