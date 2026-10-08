@@ -57,7 +57,11 @@ how far behind it is.
     - candidate 9e21f2e53: 26.0 and 25.8 tok/s, 265 tokens.
     - Each build is deterministic. The two builds differ slightly in
       wording (the FA fixes), and both answers are coherent.
-    - Recommended: promote. Awaiting the operator.
+    - Recommended: promote. The operator agreed.
+  - **Promoted the fork:** current is now 20261008-9e21f2e53, with
+    b02cb35f2 kept as `previous`. The embeddings server restarted on it
+    (b10814-9e21f2e53, 768-dim).
+  - **All three backends are up to date** as of 2026-10-08 20:39 UTC.
 
 - 2026-10-09, phase 3 rollout (approval `llama-builds-rollout`):
   - **Installed:** `framework-desktop-llama-builds.yml` (with-secrets-prod-tiny)
