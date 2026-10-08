@@ -128,13 +128,14 @@ class EvalTabTest(unittest.TestCase):
         self.assertIn("All 541 prompts", eval_tab.size_hint("ifeval", "full", None))
         self.assertIn("from 1 to 100", eval_tab.size_hint("agentbench", "count", None))
 
-    def test_choose_is_last_with_its_box_shown_only_when_picked(self):
+    def test_choose_is_last_with_its_box_beside_it(self):
         row = eval_tab.benchmark_row("repobench")
         radio = row.children[1].children[0].children[0]
         self.assertEqual([o["label"] for o in radio.options], ["Pilot (75)", "Full (1,500)", "Choose per level"])
-        hidden, _ = eval_tab.update_size("pilot", 50, {"task": "gpqa"})
-        shown, _ = eval_tab.update_size("count", 50, {"task": "gpqa"})
-        self.assertEqual((hidden["display"], shown["display"]), ("none", "block"))
+        box = row.children[1].children[0].children[1]
+        self.assertNotIn("display", box.style)
+        self.assertEqual(eval_tab.typing_a_number_picks_choose(30), "count")
+        self.assertIn("30 of 198", eval_tab.update_size("count", 30, {"task": "gpqa"}))
 
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})

@@ -196,8 +196,7 @@ def benchmark_row(task):
                     className="me-1",
                 ),
                 dbc.Input(id={"type": "eval-count", "task": task}, type="number", min=1, max=spec["max"], step=1,
-                          value=min(50, spec["max"]), size="sm",
-                          style={"maxWidth": "90px", "display": "none"}),
+                          value=min(50, spec["max"]), size="sm", style={"maxWidth": "90px"}),
             ], className="d-flex align-items-center flex-wrap"),
             html.Div(id={"type": "eval-hint", "task": task}, className="text-muted small mt-1"),
         ], md=7),
@@ -277,16 +276,23 @@ def _post(path, json=None):
 
 
 @callback(
-    Output({"type": "eval-count", "task": MATCH}, "style"),
     Output({"type": "eval-hint", "task": MATCH}, "children"),
     Input({"type": "eval-size", "task": MATCH}, "value"),
     Input({"type": "eval-count", "task": MATCH}, "value"),
     State({"type": "eval-size", "task": MATCH}, "id"),
 )
 def update_size(size, count, size_id):
-    """The number box only shows with Choose."""
-    style = {"maxWidth": "90px", "display": "block" if size == "count" else "none"}
-    return style, size_hint(size_id["task"], size, count)
+    return size_hint(size_id["task"], size, count)
+
+
+@callback(
+    Output({"type": "eval-size", "task": MATCH}, "value"),
+    Input({"type": "eval-count", "task": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def typing_a_number_picks_choose(_count):
+    """The box sits right after Choose; typing in it selects Choose."""
+    return "count"
 
 
 @callback(
