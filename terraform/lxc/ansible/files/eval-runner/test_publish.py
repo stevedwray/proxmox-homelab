@@ -370,6 +370,33 @@ class ChangedOnlyTest(unittest.TestCase):
         publish.publish(nc, changed, self.rows, only={run})
         self.assertEqual(set(nc.state["files"]), {f"{publish.FOLDER}/{run}"})
 
+    def test_locked_file_is_skipped_and_the_rest_still_publishes(self):
+        nc = FakeNextcloud()
+        run = "runs/glm-5.3-flash-both-20261002T000000Z/report.md"
+        original = nc.put_file
+
+        def put_file(rel, content):
+            if rel.endswith(run):
+                raise publish.FileLocked("PUT ... -> HTTP 423")
+            original(rel, content)
+        nc.put_file = put_file
+        locked = []
+        table_id, _ = publish.publish(nc, self.files, self.rows, locked=locked)
+        self.assertEqual(locked, [run])
+        self.assertIn(f"{publish.FOLDER}/leaderboard.md", nc.state["files"])
+        self.assertNotIn(f"{publish.FOLDER}/{run}", nc.state["files"])
+        with self.assertRaises(publish.FileLocked):  # callers that don't ask still see it
+            publish.publish(nc, self.files, self.rows)
+
+    def test_423_becomes_file_locked(self):
+        import urllib.error
+
+        def locked(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 423, "Locked", {}, io.BytesIO(b"<locked/>"))
+        nc = publish.Nextcloud("http://x", "u", "p", opener=locked)
+        with self.assertRaises(publish.FileLocked):
+            nc.put_file("Reports/eval-runner/a.md", b"x")
+
     def test_state_round_trip_and_missing_state_means_everything(self):
         path = os.path.join(self.tmp.name, publish.STATE_FILE)
         self.assertEqual(publish.changed_files(self.files, publish.load_state(path)), set(self.files))

@@ -1212,10 +1212,11 @@
         nextcloud_folder_share_owner_user: eval-reports
         nextcloud_folder_share_owner_password: "{{ eval_runner_nextcloud_app_password }}"
         nextcloud_folder_share_folder: "Reports/eval-runner"
-        # Read+update+create+delete (15), as for Reports/cyberseceval: the
-        # operator deletes old/test runs from Nextcloud's own UI (asked
-        # 2026-10-08). No re-share bit (16). Deleted files go to the
-        # eval-reports account's trash, and the run stays in the Tables
-        # table and the leaderboard; publish uploads it again only if its
-        # files change (or `publish.py --all`).
-        nextcloud_folder_share_permissions: 15
+        # Read+delete (1+8=9): the operator deletes old/test runs from
+        # Nextcloud's own UI (asked 2026-10-08). Not update (2): with it,
+        # Nextcloud's Text editor opens a report for editing and locks it
+        # (HTTP 423), and publish can't overwrite it -- found the same day
+        # at 15. Deleted files go to the eval-reports account's trash, and
+        # the run stays in the Tables table and the leaderboard; publish
+        # uploads it again only if its files change (or `publish.py --all`).
+        nextcloud_folder_share_permissions: 9

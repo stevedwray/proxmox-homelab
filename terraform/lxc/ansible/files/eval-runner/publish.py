@@ -608,6 +608,11 @@ class NextcloudError(RuntimeError):
     pass
 
 
+class FileLocked(NextcloudError):
+    """HTTP 423: someone has the file open in Nextcloud (the Text editor
+    locks a file while it's open for editing)."""
+
+
 class Nextcloud:
     def __init__(self, base_url, user, password, opener=None):
         self.base = base_url.rstrip("/")
@@ -632,7 +637,8 @@ class Nextcloud:
         except (urllib.error.URLError, OSError) as err:
             raise NextcloudError(f"{method} {path} -> {type(err).__name__}: {err}") from err
         if status not in ok:
-            raise NextcloudError(f"{method} {path} -> HTTP {status}: {payload[:300]!r}")
+            error = FileLocked if status == 423 else NextcloudError
+            raise error(f"{method} {path} -> HTTP {status}: {payload[:300]!r}")
         if payload and payload.lstrip()[:1] in (b"{", b"["):
             return json.loads(payload)
         return None
@@ -850,8 +856,10 @@ def changed_files(files, previous):
     return {rel for rel in files if previous.get(rel) != hashes[rel]}
 
 
-def publish(nc, files, rows, share_with=None, only=None):
-    """Upload files (all, or just those in `only`), then sync the table."""
+def publish(nc, files, rows, share_with=None, only=None, locked=None):
+    """Upload files (all, or just those in `only`), then sync the table.
+    A file that is locked (open in Nextcloud) is skipped and added to
+    `locked`, so one open report doesn't stop the whole publish."""
     nc.ensure_folder(FOLDER)
     made = set()
     for rel in sorted(files):
@@ -861,7 +869,12 @@ def publish(nc, files, rows, share_with=None, only=None):
         if parent and parent not in made:
             nc.ensure_folder(f"{FOLDER}/{parent}")
             made.add(parent)
-        nc.put_file(f"{FOLDER}/{rel}", files[rel])
+        try:
+            nc.put_file(f"{FOLDER}/{rel}", files[rel])
+        except FileLocked:
+            if locked is None:
+                raise
+            locked.append(rel)
     for rel in STALE_FILES:
         if rel not in files:
             nc.delete_file(f"{FOLDER}/{rel}")
@@ -909,19 +922,24 @@ def main(argv=None):
                    env["NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD"])
     state_path = os.path.join(args.results_root, STATE_FILE)
     only = None if args.all else changed_files(files, load_state(state_path))
+    locked = []
     try:
         table_id, (created, updated, unchanged) = publish(
-            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None, only=only)
+            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None, only=only, locked=locked)
     except NextcloudError as err:
         print(f"publish FAILED: {err}", file=sys.stderr)
         return 1
+    # Locked files stay out of the record, so the next publish retries them.
+    hashes = {rel: h for rel, h in file_hashes(files).items() if rel not in locked}
     try:
-        save_state(state_path, file_hashes(files))
+        save_state(state_path, hashes)
     except OSError as err:  # next publish just uploads everything again
         print(f"publish: could not save {state_path}: {err}", file=sys.stderr)
-    sent = len(files) if only is None else len(only)
+    sent = (len(files) if only is None else len(only)) - len(locked)
+    skipped = (f"; {len(locked)} locked (open in Nextcloud?), retried next publish: {', '.join(locked)}"
+               if locked else "")
     print(f"published {sent} changed of {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
-          f"{created} rows created, {updated} updated, {unchanged} unchanged")
+          f"{created} rows created, {updated} updated, {unchanged} unchanged{skipped}")
     return 0
 
 
