@@ -69,11 +69,10 @@ class EvalBatteryTest(unittest.TestCase):
         return self.client.post("/eval/api/jobs", json={"tasks": ["bfcl"], **body},
                                 headers={"X-Authentik-Username": "steve"})
 
-    def test_page_renders_every_benchmark(self):
-        page = self.client.get("/eval").text
-        for task in eval_battery.TASKS:
-            self.assertIn(f'value="{task}"', page)
-        self.assertIn("Results table (Nextcloud Tables)", page)
+    def test_old_page_redirects_to_the_dash_panel(self):
+        with mock.patch.dict(os.environ, {"LAB_DOMAIN": "lab.example"}):
+            resp = self.client.get("/eval", follow_redirects=False)
+        self.assertEqual((resp.status_code, resp.headers["location"]), (307, "https://cse-panel.lab.example/"))
 
     def test_submit_queues_one_job_per_benchmark_in_order(self):
         res = self.client.post("/eval/api/jobs", json={"tasks": ["gpqa", "ifeval"], "mode": "limit", "limit": 5,
@@ -124,10 +123,59 @@ class EvalBatteryTest(unittest.TestCase):
         self.redis.set("eval:framework", json.dumps({"model": "glm-5.3-flash", "busy": 0, "slots": 4}))
         self.assertEqual(self.client.get("/eval/api/state").json()["framework"]["model"], "glm-5.3-flash")
 
+    def test_samples_ask_the_ctl_worker_for_the_jobs_run(self):
+        self.redis.set("eval:job:j1", json.dumps({"run": "glm-gpqa-limit1-S", "state": "done"}))
+        page = {"available": True, "tasks": []}
+        with mock.patch.object(eval_battery.celery_app, "send_task",
+                               return_value=mock.Mock(get=lambda timeout: page)) as send:
+            body = self.client.get("/eval/api/jobs/j1/samples?offset=10&limit=500").json()
+        self.assertEqual(body, page)
+        self.assertEqual(send.call_args.args, ("eval_tasks.samples",))
+        self.assertEqual(send.call_args.kwargs, {"args": ["glm-gpqa-limit1-S", 10, 25], "queue": "eval-runner-ctl"})
+        self.assertEqual(self.client.get("/eval/api/jobs/nope/samples").status_code, 409)
+
+    def test_reports_link_is_the_shared_folder(self):
+        self.assertTrue(eval_battery.LINKS["Reports folder"].endswith("?dir=/eval-runner"))
+
+    def test_compare_asks_the_ctl_worker(self):
+        import app as panel_app
+        with mock.patch.object(panel_app.celery_app, "send_task",
+                               return_value=mock.Mock(get=lambda timeout: {"rows": [{"Model": "m"}]})) as send:
+            body = TestClient(panel_app.app).get("/compare").json()
+        self.assertEqual(body["rows"], [{"Model": "m"}])
+        self.assertEqual(send.call_args.kwargs, {"queue": "eval-runner-ctl"})
+
+    def test_cse_summary_carries_the_headline(self):
+        import app as panel_app
+        head = {"metric": "malicious %", "value": 50.0, "better": "lower", "n": 4}
+        res = mock.Mock(state="SUCCESS", result={"rc": 0, "headline": head, "finished_at": "2026-10-08T05:00:00"})
+        with mock.patch.object(panel_app, "AsyncResult", return_value=res), \
+                mock.patch.object(panel_app, "_get_job_meta", return_value={"benchmark": "mitre"}):
+            entry = panel_app._job_summary("cse-1")
+        self.assertEqual((entry["headline"], entry["finished_at"]), (head, "2026-10-08T05:00:00"))
+
     def test_main_app_mounts_the_page(self):
         import app as panel_app
         paths = {r.path for r in panel_app.app.routes}
         self.assertIn("/eval/api/jobs", paths)
+
+    def test_framework_endpoint_shows_lock_holder_and_model(self):
+        import app as panel_app
+        self.redis.set("framework:run-lock", json.dumps({"job_id": "e1", "suite": "eval", "benchmark": "bfcl"}))
+        self.redis.set("eval:framework", json.dumps({"model": "glm-5.3-flash", "busy": 1, "slots": 4}))
+        with mock.patch.object(panel_app, "_redis_json", lambda key: json.loads(self.redis.get(key))):
+            body = TestClient(panel_app.app).get("/framework").json()
+        self.assertEqual((body["lock"]["suite"], body["model"], body["busy"]), ("eval", "glm-5.3-flash", 1))
+
+    def test_waiting_cse_job_is_labelled_with_the_holder(self):
+        import app as panel_app
+        res = mock.Mock(state="WAITING", info={"waiting_for": "Framework",
+                                               "held_by": {"job_id": "e1", "suite": "eval", "benchmark": "bfcl"}})
+        with mock.patch.object(panel_app, "AsyncResult", return_value=res), \
+                mock.patch.object(panel_app, "_get_job_meta", return_value={"benchmark": "mitre"}):
+            entry = panel_app._job_summary("cse-1")
+        self.assertEqual(entry["state_label"], "Waiting for Framework (eval bfcl)")
+        self.assertIn("WAITING", panel_app.NON_TERMINAL_STATES)
 
 
 if __name__ == "__main__":

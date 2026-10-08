@@ -10,6 +10,8 @@ from pathlib import Path
 os.environ.setdefault("CELERY_BROKER_URL", "memory://")
 os.environ.setdefault("CELERY_RESULT_BACKEND", "cache+memory://")
 sys.path.insert(0, str(Path(__file__).parent))
+# Deployed next to cse_tasks.py; in the repo it lives with the playbooks' files.
+sys.path.insert(0, str(Path(__file__).parents[3] / "ansible" / "files" / "framework-lock"))
 
 import cse_tasks  # noqa: E402
 

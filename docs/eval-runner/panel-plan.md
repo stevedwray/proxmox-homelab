@@ -11,7 +11,8 @@ Operator decisions:
 - It is a tab in the existing CyberSecEval panel.
 - v1 covers starting runs, watching and controlling them, publishing and
   links, and Framework status.
-- Eval jobs wait for idle Framework slots.
+- Eval jobs wait for idle Framework slots. (Replaced on 2026-10-08 by
+  the shared Framework lock: `docs/benchmark-panel/`, phase 2.)
 - cse-panel's Redis gets a password first.
 - I run the MikroTik rule, under approval.
 

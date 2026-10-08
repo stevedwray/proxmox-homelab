@@ -97,6 +97,18 @@
         dest: "{{ cse_panel_ui_app_dir }}/app.py"
         mode: "0644"
 
+    - name: Write panel-ui's Eval battery tab (eval_tab.py)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app-ui/eval_tab.py"
+        dest: "{{ cse_panel_ui_app_dir }}/eval_tab.py"
+        mode: "0644"
+
+    - name: Write panel-ui's Compare tab (compare_tab.py)
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app-ui/compare_tab.py"
+        dest: "{{ cse_panel_ui_app_dir }}/compare_tab.py"
+        mode: "0644"
+
     - name: Write panel-ui's requirements.txt
       ansible.builtin.copy:
         src: "../../stacks/{{ cse_panel_stack_name }}/app-ui/requirements.txt"

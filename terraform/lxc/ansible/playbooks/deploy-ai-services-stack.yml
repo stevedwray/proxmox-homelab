@@ -1104,6 +1104,29 @@
         mode: "0644"
       register: eval_runner_worker_module
 
+    # The Framework lock shared with cse-controller's CyberSecEval worker
+    # (docs/benchmark-panel/plan.md, C).
+    - name: Install the shared Framework lock module
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/terraform/lxc/ansible/files/framework-lock/framework_lock.py"
+        dest: "{{ eval_runner_worker_dir }}/framework_lock.py"
+        mode: "0644"
+      register: eval_runner_worker_lock_module
+
+    # The Compare tab's data (eval_tasks.compare) comes from publish.py's
+    # own row builder, so the ctl worker imports it (and summarize.py), and
+    # shows models by their model_aliases.json labels.
+    - name: Install publish.py and summarize.py next to the panel worker
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/{{ item }}"
+        dest: "{{ eval_runner_worker_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - publish.py
+        - summarize.py
+        - model_aliases.json
+      register: eval_runner_worker_publish_modules
+
     - name: Install the panel worker's broker settings
       ansible.builtin.copy:
         dest: /etc/eval-runner/worker.env
@@ -1150,7 +1173,7 @@
       ansible.builtin.systemd:
         name: "eval-runner-worker-{{ item.name }}"
         enabled: true
-        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_lock_module.changed or eval_runner_worker_publish_modules.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
         daemon_reload: true
       loop: "{{ eval_runner_workers }}"
       loop_control:
@@ -1203,3 +1226,11 @@
         nextcloud_folder_share_owner_user: eval-reports
         nextcloud_folder_share_owner_password: "{{ eval_runner_nextcloud_app_password }}"
         nextcloud_folder_share_folder: "Reports/eval-runner"
+        # Read+delete (1+8=9): the operator deletes old/test runs from
+        # Nextcloud's own UI (asked 2026-10-08). Not update (2): with it,
+        # Nextcloud's Text editor opens a report for editing and locks it
+        # (HTTP 423), and publish can't overwrite it -- found the same day
+        # at 15. Deleted files go to the eval-reports account's trash, and
+        # the run stays in the Tables table and the leaderboard; publish
+        # uploads it again only if its files change (or `publish.py --all`).
+        nextcloud_folder_share_permissions: 9

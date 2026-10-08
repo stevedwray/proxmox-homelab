@@ -14,7 +14,9 @@ operator by the deploy):
 
 and the Nextcloud Tables table "Model evaluations": one row per
 (run, task, results file), upserted by its Key column, with saved views
-for comparable GPQA / IFEval results.
+for comparable GPQA / IFEval results. CyberSecEval runs add one headline
+row each (Source "cyberseceval"): cse-controller sends it to the panel
+worker (eval_tasks.record_cse), which keeps it in <results>/_cse/.
 
 The report/manifest layout follows docs/reporting-platform/CONVENTION.md.
 samples_*.jsonl files are never uploaded: they contain GPQA questions,
@@ -26,8 +28,13 @@ Environment (from /etc/eval-runner/eval-runner.env):
   NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD  its app password
   NEXTCLOUD_EVAL_TABLE_SHARE_WITH      user to share the table with (optional)
 
+Only files whose content changed since the last publish are uploaded
+(their hashes are kept in <results-root>/_publish-state.json), so in
+Nextcloud only the folders of new or changed runs get a new timestamp.
+
 Usage:
-  publish.py                    publish everything
+  publish.py                    publish what changed
+  publish.py --all              upload every file again
   publish.py --dry-run DIR      render everything into DIR, no network
 """
 
@@ -35,6 +42,7 @@ import argparse
 import base64
 import datetime
 import glob
+import hashlib
 import io
 import json
 import os
@@ -57,6 +65,9 @@ except ImportError:  # pragma: no cover - unit tests skip the xlsx checks
 RESULTS_ROOT = "/results"
 FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
 FOLDER = "Reports/eval-runner"
+CSE_DIR = "_cse"
+ALIASES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_aliases.json")
+STATE_FILE = "_publish-state.json"
 TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
 TABLES_API = "/index.php/apps/tables/api/1"
@@ -89,6 +100,11 @@ COLUMNS = [
     ("Empty %", {"type": "number", "numberDecimals": 1, "numberSuffix": "%"}),
     ("Unparsed", {"type": "number", "numberDecimals": 0}),
     ("Token budget", {"type": "number", "numberDecimals": 0}),
+    # Per run, not per task (a run's tasks share them): from run.json's
+    # run_metrics, which the panel worker writes (eval_tasks.py).
+    ("Duration (min)", {"type": "number", "numberDecimals": 1}),
+    ("Tokens generated", {"type": "number", "numberDecimals": 0}),
+    ("Tokens/s", {"type": "number", "numberDecimals": 1}),
     ("Series", {"type": "text", "subtype": "line"}),
     ("Comparable", {"type": "text", "subtype": "line"}),
     ("Why not comparable", {"type": "text", "subtype": "line"}),
@@ -115,6 +131,8 @@ VIEWS = [
     ("32k budget: IFEval", "\u23F3", "IFEval", {"Series": "32k"}),
     # Every eval-runner run, newest first.
     ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
+    # Every CyberSecEval run's headline (cse-controller, via eval_tasks.record_cse).
+    ("CyberSecEval", "\U0001F6E1", None, {"Source": "cyberseceval"}),
 ]
 # Earlier view titles, renamed in place on publish (same view id, so
 # shares and any manual tweaks survive).
@@ -165,6 +183,15 @@ def _stamp_date(stamp):
     return f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if len(stamp) >= 8 and stamp[:8].isdigit() else ""
 
 
+def _run_metric_cells(record):
+    """(duration in minutes, tokens generated, tokens/s) from run.json."""
+    metrics = (record or {}).get("run_metrics") or {}
+    mut = metrics.get("model_under_test") or {}
+    duration = metrics.get("duration_seconds")
+    return (round(duration / 60, 1) if isinstance(duration, (int, float)) else None,
+            mut.get("completion_tokens"), mut.get("generation_tokens_per_second"))
+
+
 def _row(source, run, task, data, metrics, samples, record, stamp):
     label, primary_name, alt_name = TASK_LABELS[task]
     keys = [key for _, key in summarize.HEADLINE[task]]
@@ -179,6 +206,7 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         return round(value * 100, 2) if isinstance(value, (int, float)) else None
 
     empty = flags["empty"]
+    duration_min, tokens, tokens_per_s = _run_metric_cells(record)
     return {
         "Key": f"{source}/{run}/{task}" + (f"/{stamp}" if source == "historical" else ""),
         "Model": model,
@@ -191,6 +219,9 @@ def _row(source, run, task, data, metrics, samples, record, stamp):
         "Empty %": round(100 * empty / n, 1) if empty is not None and n else None,
         "Unparsed": flags["unparsed"],
         "Token budget": summarize._max_gen_toks(data.get("config", {}).get("gen_kwargs")),
+        "Duration (min)": duration_min,
+        "Tokens generated": tokens,
+        "Tokens/s": tokens_per_s,
         "Series": summarize.series(data) or "",
         "Comparable": "no" if reason else "yes",
         "Why not comparable": reason or "",
@@ -231,6 +262,86 @@ def collect_run(run_dir, source):
                        samples if os.path.exists(samples) else None, record, stamp)
             rows[row["Key"]] = row
     return record, list(rows.values())
+
+
+def cse_row(record):
+    """A Tables row from a CyberSecEval headline record (cse_tasks._compare_row)."""
+    head = record.get("headline") or {}
+    better = head.get("better")
+    metrics = f"{head.get('metric', '')} ({better} is better)" if better else head.get("metric", "")
+    if head.get("alt_metric"):
+        metrics += f" / {head['alt_metric']}"
+    duration = record.get("duration_seconds")
+    return {
+        "Key": f"cyberseceval/{record['job_id']}/{record['benchmark']}",
+        "Model": record.get("model") or "",
+        "Task": f"CyberSecEval {record['benchmark']}",
+        "Score %": head.get("value"),
+        "Alt score %": head.get("alt_value"),
+        "Metrics": metrics,
+        "Questions": head.get("n"),
+        "Empty answers": None,
+        "Empty %": None,
+        "Unparsed": None,
+        "Token budget": None,
+        "Duration (min)": round(duration / 60, 1) if isinstance(duration, (int, float)) else None,
+        "Tokens generated": record.get("completion_tokens"),
+        "Tokens/s": record.get("tokens_per_second"),
+        "Series": "",
+        # CyberSecEval runs are samples of each benchmark's dataset; Compare
+        # shows their size (Questions) instead of a comparable flag.
+        "Comparable": "sample",
+        "Why not comparable": "",
+        "Model file / tag": record.get("model_file") or "",
+        "Runtime": f"llama.cpp {record['build']}" if record.get("build") else "",
+        "Note": "; ".join(n for n in (
+            "" if record.get("model_verified", True) else
+            "model not verified: recorded before 2026-10-08, from the request, not the server",
+            "" if record.get("ok", True) else "run reported an error") if n),
+        "Source": "cyberseceval",
+        "Run": record["job_id"],
+        "Date": (record.get("finished_at") or "")[:10],
+        "Report": record.get("report") or "",
+    }
+
+
+def collect_cse(results_root):
+    rows = []
+    for path in sorted(glob.glob(os.path.join(results_root, CSE_DIR, "*.json"))):
+        try:
+            with open(path) as fh:
+                record = json.load(fh)
+            if record.get("headline"):
+                rows.append(cse_row(record))
+        except (OSError, ValueError, KeyError):
+            continue
+    return rows
+
+
+def load_aliases(path=ALIASES_FILE):
+    """{recorded model name: name Compare shows} from model_aliases.json."""
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("labels", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def compare_rows(results_root, aliases=None):
+    """Every result row (eval-runner, historical and CyberSecEval), trimmed
+    to what the panel's Compare tab needs, with each model shown by its
+    model_aliases.json label ("Model name" keeps the recorded name)."""
+    aliases = load_aliases() if aliases is None else aliases
+    rows = [r for _, _, _, rs in collect(results_root) for r in rs] + collect_cse(results_root)
+    keep = ("Model", "Task", "Score %", "Alt score %", "Metrics", "Questions", "Comparable", "Series",
+            "Tokens/s", "Duration (min)", "Source", "Run", "Date", "Note")
+    out = []
+    for r in rows:
+        trimmed = {k: r.get(k) for k in keep}
+        trimmed["Model name"] = r.get("Model")
+        trimmed["Model"] = aliases.get(r.get("Model"), r.get("Model"))
+        out.append(trimmed)
+    return out
 
 
 def collect(results_root):
@@ -331,6 +442,58 @@ def _started(stamp):
     return stamp or "–"
 
 
+def _duration_text(seconds):
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}h {minutes}m {secs}s" if hours else (f"{minutes}m {secs}s" if minutes else f"{secs}s")
+
+
+def _count(value):
+    return f"{value:,}" if isinstance(value, int) else "–"
+
+
+# Prompt speed from under this many seconds of prompt work is noise (e.g.
+# a cached prompt: 4 tokens in 0.1 s).
+MIN_PROMPT_SECONDS = 5
+
+
+def _prompt_speed(mut):
+    if (mut.get("prompt_seconds") or 0) < MIN_PROMPT_SECONDS:
+        return "– (too little prompt work to measure)"
+    return _num(mut.get("prompt_tokens_per_second"))
+
+
+def render_metrics(record):
+    """The report's Run metrics section (same figures as CyberSecEval's)."""
+    metrics = (record or {}).get("run_metrics")
+    if not metrics:
+        return ["Not recorded for this run (runs started before 2026-10-08, or from the command line)."]
+    lines = []
+    if "duration_seconds" in metrics:
+        segments = metrics.get("segments") or 1
+        lines.append(f"- **Duration:** {_duration_text(metrics['duration_seconds'])}"
+                     + (f" over {segments} segments (resumed)" if segments > 1 else ""))
+    if metrics.get("unavailable"):
+        return lines + [f"- **Tokens:** unavailable: {metrics['unavailable']}"]
+    mut = metrics.get("model_under_test") or {}
+    lines += [
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Generated tokens (incl. reasoning) | {_count(mut.get('completion_tokens'))} |",
+        f"| Prompt tokens processed (cached text excluded) | {_count(mut.get('prompt_tokens'))} |",
+        f"| Generation speed (tokens/s) | {_num(mut.get('generation_tokens_per_second'))} |",
+        f"| Prompt processing (tokens/s) | {_prompt_speed(mut)} |",
+        "",
+        "From llama-server's /metrics counters, read before and after the run. Exact only if nothing "
+        "else used Framework meanwhile: other benchmarks wait for the run, interactive chat does not. "
+        "Prompt tokens count only what the server had to process: text it still had cached from an "
+        "earlier request (a repeated question, a chat template, a multi-turn history) isn't counted.",
+    ]
+    return lines
+
+
 def render_report(source, run_dir, record, rows):
     run = os.path.basename(os.path.normpath(run_dir))
     lines = [f"# {run}", ""]
@@ -356,6 +519,8 @@ def render_report(source, run_dir, record, rows):
             f"- **Harness:** {harness_text}; sample limit {record.get('limit') or 'none (full run)'}",
             f"- **Fingerprint:** `{record.get('fingerprint', '')[:16]}`",
         ]
+    if source == "runs":
+        lines += ["", "## Run metrics", ""] + render_metrics(record)
     # One narrow Metric | Value table per task: Nextcloud's markdown viewer
     # scrolls wide tables sideways (operator, 2026-10-02).
     lines += ["", "## Results", ""]
@@ -529,6 +694,11 @@ class NextcloudError(RuntimeError):
     pass
 
 
+class FileLocked(NextcloudError):
+    """HTTP 423: someone has the file open in Nextcloud (the Text editor
+    locks a file while it's open for editing)."""
+
+
 class Nextcloud:
     def __init__(self, base_url, user, password, opener=None):
         self.base = base_url.rstrip("/")
@@ -553,7 +723,8 @@ class Nextcloud:
         except (urllib.error.URLError, OSError) as err:
             raise NextcloudError(f"{method} {path} -> {type(err).__name__}: {err}") from err
         if status not in ok:
-            raise NextcloudError(f"{method} {path} -> HTTP {status}: {payload[:300]!r}")
+            error = FileLocked if status == 423 else NextcloudError
+            raise error(f"{method} {path} -> HTTP {status}: {payload[:300]!r}")
         if payload and payload.lstrip()[:1] in (b"{", b"["):
             return json.loads(payload)
         return None
@@ -652,13 +823,15 @@ def upsert_rows(nc, table_id, col_ids, rows):
 # What a ranked view shows (operator, 2026-10-01: the full 20-column table
 # with the internal Key first was unreadable). The rest stays in the base
 # table.
-VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Runtime", "Note",
-                "Date"]
+VIEW_COLUMNS = ["Model", "Score %", "Alt score %", "Comparable", "Empty answers", "Questions", "Tokens/s",
+                "Duration (min)", "Runtime", "Note", "Date"]
 RUNS_VIEW_COLUMNS = ["Date", "Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions",
-                     "Comparable", "Why not comparable", "Note", "Run"]
+                     "Duration (min)", "Tokens generated", "Tokens/s", "Comparable", "Why not comparable", "Note",
+                     "Run"]
 # The base table's column order: what a person reads first, the internal
 # upsert Key last.
-TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Series", "Comparable",
+TABLE_ORDER = ["Model", "Task", "Score %", "Alt score %", "Empty answers", "Questions", "Duration (min)",
+               "Tokens generated", "Tokens/s", "Series", "Comparable",
                "Why not comparable", "Runtime", "Model file / tag", "Note", "Date", "Source", "Run", "Metrics",
                "Empty %", "Unparsed", "Token budget", "Report", "Key"]
 
@@ -746,13 +919,48 @@ def ensure_share(nc, table_id, user):
         })
 
 
-def publish(nc, files, rows, share_with=None):
+def file_hashes(files):
+    return {rel: hashlib.sha256(content).hexdigest() for rel, content in files.items()}
+
+
+def load_state(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("files", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(path, hashes):
+    with open(path, "w") as fh:
+        json.dump({"files": hashes}, fh, indent=1, sort_keys=True)
+
+
+def changed_files(files, previous):
+    """Files that are new or differ from what the last publish uploaded."""
+    hashes = file_hashes(files)
+    return {rel for rel in files if previous.get(rel) != hashes[rel]}
+
+
+def publish(nc, files, rows, share_with=None, only=None, locked=None):
+    """Upload files (all, or just those in `only`), then sync the table.
+    A file that is locked (open in Nextcloud) is skipped and added to
+    `locked`, so one open report doesn't stop the whole publish."""
     nc.ensure_folder(FOLDER)
+    made = set()
     for rel in sorted(files):
+        if only is not None and rel not in only:
+            continue
         parent = os.path.dirname(rel)
-        if parent:
+        if parent and parent not in made:
             nc.ensure_folder(f"{FOLDER}/{parent}")
-        nc.put_file(f"{FOLDER}/{rel}", files[rel])
+            made.add(parent)
+        try:
+            nc.put_file(f"{FOLDER}/{rel}", files[rel])
+        except FileLocked:
+            if locked is None:
+                raise
+            locked.append(rel)
     for rel in STALE_FILES:
         if rel not in files:
             nc.delete_file(f"{FOLDER}/{rel}")
@@ -771,6 +979,7 @@ def main(argv=None):
     parser.add_argument("--dry-run", metavar="DIR", help="render into DIR instead of publishing")
     parser.add_argument("--results-root", default=RESULTS_ROOT)
     parser.add_argument("--findings", default=FINDINGS_FILE)
+    parser.add_argument("--all", action="store_true", help="upload every file, changed or not")
     args = parser.parse_args(argv)
 
     findings = None
@@ -779,6 +988,7 @@ def main(argv=None):
             findings = fh.read()
     generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     files, rows = build_files(collect(args.results_root), findings, generated)
+    rows = rows + collect_cse(args.results_root)  # Tables only, not the leaderboard
 
     if args.dry_run:
         for rel, content in files.items():
@@ -797,14 +1007,26 @@ def main(argv=None):
         return 2
     nc = Nextcloud(env["NEXTCLOUD_EVAL_REPORTS_URL"], env["NEXTCLOUD_EVAL_REPORTS_USER"],
                    env["NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD"])
+    state_path = os.path.join(args.results_root, STATE_FILE)
+    only = None if args.all else changed_files(files, load_state(state_path))
+    locked = []
     try:
         table_id, (created, updated, unchanged) = publish(
-            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None)
+            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None, only=only, locked=locked)
     except NextcloudError as err:
         print(f"publish FAILED: {err}", file=sys.stderr)
         return 1
-    print(f"published {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
-          f"{created} rows created, {updated} updated, {unchanged} unchanged")
+    # Locked files stay out of the record, so the next publish retries them.
+    hashes = {rel: h for rel, h in file_hashes(files).items() if rel not in locked}
+    try:
+        save_state(state_path, hashes)
+    except OSError as err:  # next publish just uploads everything again
+        print(f"publish: could not save {state_path}: {err}", file=sys.stderr)
+    sent = (len(files) if only is None else len(only)) - len(locked)
+    skipped = (f"; {len(locked)} locked (open in Nextcloud?), retried next publish: {', '.join(locked)}"
+               if locked else "")
+    print(f"published {sent} changed of {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
+          f"{created} rows created, {updated} updated, {unchanged} unchanged{skipped}")
     return 0
 
 

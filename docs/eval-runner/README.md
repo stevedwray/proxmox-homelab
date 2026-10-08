@@ -19,9 +19,9 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   `~/git/proxmox-homelab-eval-runner` is no longer needed: deploy from
   the main checkout on `stable` with the normal wrapper.
 - **Where the control page lives.** CyberSecEval's panel is now a Dash
-  app, and its old HTML index is gone. The Eval battery page still runs
-  on `panel-web` and is reached at `https://cse-panel-api.<domain>/eval`,
-  linked from the Dash header. Its back link points to the Dash UI.
+  app, and its old HTML index is gone. Since 2026-10-08 the Eval battery
+  is a tab in that Dash app too; the old page at
+  `https://cse-panel-api.<domain>/eval` redirects there.
 - **An outage, now fixed.** The Dash cutover (2026-10-07) was first
   deployed from a branch without this work. For a few hours that
   dropped `/eval` (404) and the Redis password, so the eval workers
@@ -50,12 +50,20 @@ See [`plan.md`](./plan.md) for decisions, steps and usage.
   - `eval-run gpqa|ifeval|bfcl|agentbench|repobench [--pilot|--limit N]
     [--note] [--max-gen-toks]`, plus `resume|selftest|results|publish`.
   - The GPU-free selftests for every image are the deploy gate.
-- **Control panel:** cse-panel `/eval` ("Eval battery").
+- **Control panel:** the Eval battery tab of the Dash panel at
+  `https://cse-panel.<domain>/` (`app-ui/eval_tab.py`), with a Compare tab
+  across every benchmark (`docs/benchmark-panel/`). The old HTML page at
+  `cse-panel-api.<domain>/eval` was retired on 2026-10-08 and now
+  redirects there; its JSON API (`/eval/api/*`) stays.
   - `eval_battery.py` enqueues on the Redis queues `eval-runner` (runs)
     and `eval-runner-ctl` (cancel, publish, status).
   - On ai-services-stack, the `eval-runner-worker-runs` and
     `eval-runner-worker-ctl` systemd units run `eval_tasks.py`, driving
-    `eval-run`. Each run waits for idle Framework slots.
+    `eval-run`. Each run first takes the Framework lock it shares with
+    CyberSecEval (`framework:run-lock`, see
+    `docs/benchmark-panel/README.md`), and records duration, tokens and
+    tokens/s from llama-server's `/metrics` in the job and `run.json`.
+    Until 2026-10-08 it waited for idle Framework slots instead.
   - cse-panel's Redis requires `CSE_PANEL_REDIS_PASSWORD` (OpenBao
     `services/cse-panel`).
   - MikroTik rule `ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
@@ -106,8 +114,8 @@ loads only the fields in the current checkout's `secrets/manifest.json`.
    Collabora, or leave it. The operator hasn't decided.
 3. Cosmetic: the empty "Alt score %" cells show a lone "%" for BFCL and
    AgentBench. Offered, not done.
-4. Not done: a shared Framework lock with CSE (v1 waits for idle slots
-   instead). Revisit after the CSE branch merges.
+4. The shared Framework lock with CSE and the run metrics are phase 2
+   of `docs/benchmark-panel/` (branch `task/framework-run-lock`).
 5. Real scored runs of the other benchmarks need the operator's
    go-ahead, or the operator starts them from the panel.
 6. Known side issues:

@@ -69,7 +69,12 @@ def make_tree(root):
                    "server": {"model_id": "glm-5.3-flash", "props": {
                        "model_path": "/m/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf",
                        "build_info": "b11309-a4d880fd5", "n_ctx": 131072,
-                       "params": {"temperature": 1.0, "top_p": 0.95}}}}, fh)
+                       "params": {"temperature": 1.0, "top_p": 0.95}}},
+                   "run_metrics": {"source": "llama-server /metrics", "segments": 1, "duration_seconds": 5430.0,
+                                   "model_under_test": {"prompt_tokens": 51234, "completion_tokens": 123456,
+                                                        "prompt_seconds": 40.0, "generation_seconds": 6100.0,
+                                                        "generation_tokens_per_second": 20.2,
+                                                        "prompt_tokens_per_second": 1280.9}}}, fh)
     hist = os.path.join(root, summarize.HISTORICAL_DIR)
     os.makedirs(hist)
     write_run(hist, "qwen36-35b-redo", ["gpqa", "ifeval"], gpqa_rows=gpqa_rows(["(A)", ""]),
@@ -102,10 +107,12 @@ class CollectTest(unittest.TestCase):
         self.assertEqual((glm["Score %"], glm["Empty answers"], glm["Unparsed"]), (50.0, 1, 1))
         self.assertEqual(glm["Empty %"], 33.3)
         self.assertEqual(glm["Comparable"], "yes")
+        self.assertEqual((glm["Duration (min)"], glm["Tokens generated"], glm["Tokens/s"]), (90.5, 123456, 20.2))
         bug6 = [r for r in rows if r["Run"] == "qwen36-35b"][0]
         self.assertEqual(bug6["Comparable"], "no")
         self.assertIn("Bug 6", bug6["Why not comparable"])
         self.assertEqual(bug6["Runtime"], "Ollama")
+        self.assertEqual((bug6["Duration (min)"], bug6["Tokens/s"]), (None, None))
         self.assertTrue(bug6["Key"].startswith("historical/qwen36-35b/ifeval/"))
 
 
@@ -167,6 +174,26 @@ class RenderTest(unittest.TestCase):
         self.assertIn("| Score (flexible-extract) | 50.00% |", report)
         self.assertIn("| Strict-match | 25.00% |", report)
         self.assertIn("| Empty answers | 1 (33.3%) |", report)
+
+    def test_report_has_run_metrics(self):
+        report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
+        self.assertIn("## Run metrics\n\n- **Duration:** 1h 30m 30s\n", report)
+        self.assertIn("| Generated tokens (incl. reasoning) | 123,456 |", report)
+        self.assertIn("| Generation speed (tokens/s) | 20.2 |", report)
+        self.assertNotIn("## Run metrics", self.files["historical/qwen36-35b/report.md"].decode())
+
+    def test_run_metrics_unavailable_or_missing(self):
+        self.assertIn("unavailable: reloaded", "\n".join(publish.render_metrics(
+            {"run_metrics": {"duration_seconds": 60, "unavailable": "reloaded"}})))
+        self.assertIn("Not recorded", publish.render_metrics({})[0])
+
+    def test_prompt_tokens_are_labelled_and_tiny_prompt_work_has_no_speed(self):
+        cached = {"run_metrics": {"duration_seconds": 40, "model_under_test": {
+            "prompt_tokens": 4, "completion_tokens": 520, "prompt_seconds": 0.1, "generation_seconds": 27.4,
+            "generation_tokens_per_second": 19.0, "prompt_tokens_per_second": 40.0}}}
+        text = "\n".join(publish.render_metrics(cached))
+        self.assertIn("| Prompt tokens processed (cached text excluded) | 4 |", text)
+        self.assertIn("| Prompt processing (tokens/s) | – (too little prompt work to measure) |", text)
 
     def test_report_header_is_tidy(self):
         report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
@@ -325,6 +352,114 @@ class PublishTest(unittest.TestCase):
         self.assertTrue(publish._same(198.0, 198))
         self.assertTrue(publish._same("43.94", 43.94))
         self.assertFalse(publish._same(43.0, 43.94))
+
+
+class ChangedOnlyTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        make_tree(self.tmp.name)
+        self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), "# f\n", "NOW")
+
+    def test_only_changed_files_are_uploaded(self):
+        state = publish.file_hashes(self.files)
+        run = "runs/glm-5.3-flash-both-20261002T000000Z/report.md"
+        changed = dict(self.files, **{run: b"new report"})
+        self.assertEqual(publish.changed_files(changed, state), {run})
+        nc = FakeNextcloud()
+        publish.publish(nc, changed, self.rows, only={run})
+        self.assertEqual(set(nc.state["files"]), {f"{publish.FOLDER}/{run}"})
+
+    def test_locked_file_is_skipped_and_the_rest_still_publishes(self):
+        nc = FakeNextcloud()
+        run = "runs/glm-5.3-flash-both-20261002T000000Z/report.md"
+        original = nc.put_file
+
+        def put_file(rel, content):
+            if rel.endswith(run):
+                raise publish.FileLocked("PUT ... -> HTTP 423")
+            original(rel, content)
+        nc.put_file = put_file
+        locked = []
+        table_id, _ = publish.publish(nc, self.files, self.rows, locked=locked)
+        self.assertEqual(locked, [run])
+        self.assertIn(f"{publish.FOLDER}/leaderboard.md", nc.state["files"])
+        self.assertNotIn(f"{publish.FOLDER}/{run}", nc.state["files"])
+        with self.assertRaises(publish.FileLocked):  # callers that don't ask still see it
+            publish.publish(nc, self.files, self.rows)
+
+    def test_423_becomes_file_locked(self):
+        import urllib.error
+
+        def locked(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 423, "Locked", {}, io.BytesIO(b"<locked/>"))
+        nc = publish.Nextcloud("http://x", "u", "p", opener=locked)
+        with self.assertRaises(publish.FileLocked):
+            nc.put_file("Reports/eval-runner/a.md", b"x")
+
+    def test_state_round_trip_and_missing_state_means_everything(self):
+        path = os.path.join(self.tmp.name, publish.STATE_FILE)
+        self.assertEqual(publish.changed_files(self.files, publish.load_state(path)), set(self.files))
+        publish.save_state(path, publish.file_hashes(self.files))
+        self.assertEqual(publish.changed_files(self.files, publish.load_state(path)), set())
+        self.assertNotIn(publish.STATE_FILE, {os.path.basename(d) for _, d, _, _ in publish.collect(self.tmp.name)})
+
+
+CSE_RECORD = {"job_id": "3bf79d63-aaaa", "benchmark": "mitre", "model": "glm-5.3-flash", "model_file": "GLM.gguf",
+              "build": "b11309", "finished_at": "2026-10-07T18:40:17+00:00", "duration_seconds": 262,
+              "completion_tokens": 3883, "tokens_per_second": 18.2, "report": "Reports/cyberseceval/x/mitre/",
+              "ok": True, "headline": {"metric": "malicious %", "value": 50.0, "better": "lower", "n": 4,
+                                       "alt_metric": "refusal %", "alt_value": 25.0}}
+
+
+class CseRowsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        make_tree(self.tmp.name)
+        os.makedirs(os.path.join(self.tmp.name, publish.CSE_DIR))
+        with open(os.path.join(self.tmp.name, publish.CSE_DIR, "3bf79d63-aaaa.json"), "w") as fh:
+            json.dump(CSE_RECORD, fh)
+        with open(os.path.join(self.tmp.name, publish.CSE_DIR, "broken.json"), "w") as fh:
+            fh.write("{not json")
+
+    def test_cse_row(self):
+        (row,) = publish.collect_cse(self.tmp.name)
+        self.assertEqual((row["Key"], row["Task"], row["Score %"], row["Alt score %"], row["Questions"]),
+                         ("cyberseceval/3bf79d63-aaaa/mitre", "CyberSecEval mitre", 50.0, 25.0, 4))
+        self.assertEqual(row["Metrics"], "malicious % (lower is better) / refusal %")
+        self.assertEqual((row["Duration (min)"], row["Tokens/s"], row["Source"], row["Date"]),
+                         (4.4, 18.2, "cyberseceval", "2026-10-07"))
+        self.assertEqual(set(row), {t for t, _ in publish.COLUMNS})
+        self.assertEqual(row["Note"], "")
+        old = publish.cse_row(dict(CSE_RECORD, model_verified=False, ok=False))
+        self.assertEqual(old["Note"], "model not verified: recorded before 2026-10-08, from the request, "
+                                      "not the server; run reported an error")
+
+    def test_cse_rows_stay_out_of_the_leaderboard_and_runs(self):
+        collected = publish.collect(self.tmp.name)
+        self.assertNotIn("_cse", [os.path.basename(d) for _, d, _, _ in collected])
+        files, _ = publish.build_files(collected, "# f\n", "NOW")
+        self.assertNotIn("CyberSecEval", files["leaderboard.md"].decode())
+
+    def test_compare_rows_have_both_sources(self):
+        rows = publish.compare_rows(self.tmp.name)
+        self.assertEqual({r["Source"].split(" ")[0] for r in rows}, {"eval-runner", "historical", "cyberseceval"})
+        self.assertIn("Tokens/s", rows[0])
+
+    def test_compare_rows_use_labels_and_keep_the_recorded_name(self):
+        rows = publish.compare_rows(self.tmp.name, aliases={"glm-5.3-flash": "GLM · llama.cpp"})
+        glm = [r for r in rows if r["Model name"] == "glm-5.3-flash"]
+        self.assertTrue(glm and all(r["Model"] == "GLM · llama.cpp" for r in glm))
+
+    def test_shipped_alias_file_loads_and_has_no_accidental_merges(self):
+        labels = publish.load_aliases()
+        self.assertIn("glm-5.3-flash", labels)
+        # merging is allowed, but should be a deliberate edit, not a typo
+        self.assertEqual(len(set(labels.values())), len(labels))
+
+    def test_cyberseceval_view(self):
+        self.assertIn(("CyberSecEval", "\U0001F6E1", None, {"Source": "cyberseceval"}), publish.VIEWS)
 
 
 class ClientTest(unittest.TestCase):
