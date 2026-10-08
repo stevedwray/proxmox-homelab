@@ -8,9 +8,12 @@ manages :8080: GLM is loaded and is the boot default. The old hand-run GLM
 is gone, and `nathanw-llamacpp.service` is disabled; its removal is part of
 phase 3.
 
-**Open: phase 3, managed llama.cpp builds** (see [plan.md](plan.md)). Keep
-several backends side by side, Nathanw's fork first, then check for
-updates, build, try a candidate, promote and roll back.
+**Phase 3, managed llama.cpp builds: live 2026-10-09** (see
+[plan.md](plan.md)). llama-swap and the embeddings server run builds from
+`/storage/llama-builds/<backend>/current`. To update, ask: "check for
+updates", "build the newest fork as a candidate", "promote it", "roll it
+back". The benchmark panel's Framework bar shows each backend's build and
+how far behind it is.
 
 **Done in the close-out (2026-10-09):**
 - Reboot test: llama-swap, its nft table, the GLM preload and :8080 all
@@ -21,6 +24,32 @@ updates, build, try a candidate, promote and roll back.
   `config.yaml.bak-2026-10-09`.
 
 ## Log
+
+- 2026-10-09, phase 3 rollout (approval `llama-builds-rollout`):
+  - **Installed:** `framework-desktop-llama-builds.yml` (with-secrets-prod-tiny)
+    installed the tool, config, clone and daily timer; the first status
+    check published to cse-panel Redis.
+    - **No MikroTik rule needed:** LAN → mgmt_seg :6379 is already
+      allowed. The drafted rule play was dropped.
+  - **Builds at today's exact commits:**
+    - fork 20261008-b02cb35f2 (build 10710; 3 min, 79 MB);
+    - upstream 20261008-a4d880fd5 (build 11309; about 3 min, 66 MB).
+    - Both have RUNPATH `$ORIGIN`, with every lib resolved inside the
+      build dir.
+  - **llama-swap config** switched to the managed builds and validated
+    (7 models). GLM restarted from `upstream/current` with the same
+    `build_info` b11309-a4d880fd5.
+  - **`framework-desktop-llamacpp-native.yml`:** embeddings now run from
+    fork/current (b10710-b02cb35f2; the 768-dim probe passed), and
+    `nathanw-llamacpp.service` was deleted.
+  - **cse-panel-stack deployed.** The header shows "llama.cpp builds: fork
+    20261008-b02cb35f2 (104 behind) · upstream 20261008-a4d880fd5 (205
+    behind) · upstream-hip not built".
+  - **Not yet done:**
+    - the first HIP build;
+    - updating fork or upstream to their newest commits (candidates
+      first);
+    - deleting `~/llama.cpp` and `~/llama.cpp-upstream` after a while.
 
 - 2026-10-09: the operator adopted llama-swap. They want several llama.cpp
   backends kept side by side ("under heavy development; nathanw is good on
