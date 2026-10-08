@@ -178,6 +178,14 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
+- 2026-10-08, eval-runner reports share widened to permissions 15 (read,
+  update, create, delete), as for Reports/cyberseceval (5a7cb828),
+  approval `eval-share-delete`. The ai-services-stack eval play ran with
+  failed=0. Nextcloud now reports `/Reports/eval-runner` -> steve's
+  `/eval-runner`, perms 15. The play showed changed=0 because the role's
+  uri PUT doesn't report changes. Deleted files go to the eval-reports
+  account's trash; the run stays in Tables and the leaderboard.
+
 - 2026-10-08, prompts/responses, Nextcloud links and changed-only
   publishing deployed (307ac3ed, plus 096964b0), approval
   `eval-samples-links`: the ai-services-stack eval play and cse-panel-stack
@@ -189,8 +197,8 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
     the first build missed; fixed in 096964b0 and redeployed.
   - Nextcloud reports the share as `/Reports/eval-runner` -> steve's
     `/eval-runner`, permissions 1 (read only), so the operator can't delete
-    there. Asked: a "Delete run" button in the panel (recommended) or
-    delete rights on the share. Not decided yet.
+    there. The operator chose delete rights over a panel "Delete run"
+    button.
 
 - 2026-10-08, size options reordered (4bcff2ce, 1461e402), approval
   `benchmark-panel-dash-order`: cse-panel-stack ran with failed=0, 15
