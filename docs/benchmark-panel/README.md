@@ -168,8 +168,8 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   `/_dash-dependencies` found all 14 callbacks wired to existing IDs,
   with no duplicate outputs.
 
-**Phase 4 (built 2026-10-08, branch `task/benchmark-compare`, cut from
-`task/benchmark-panel-dash`; not deployed yet):**
+**Phase 4 (2026-10-08, branch `task/benchmark-compare`, cut from
+`task/benchmark-panel-dash`; deployed):**
 - **Headline per CyberSecEval run:** `cse_tasks._headline`, stored as
   `result["headline"]` as `{metric, value %, better, n}`:
   - MITRE: malicious % (alt: refusal %), over all categories;
@@ -228,6 +228,30 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   table.
 
 ## Log
+
+- 2026-10-08, phase 4 deployed, approval `benchmark-phase4`:
+  - **First, the lock test was stopped:**
+    - CSE job b82ad477 had shown "Waiting for Framework (eval gpqa)", so
+      the lock worked; it was deleted with force.
+    - Four queued eval pilots were cancelled.
+    - The running GPQA (df5691d8) was cancelled after 1h47m.
+  - **Deployed:** the ai-services-stack eval play, cse-controller and
+    cse-panel-stack, all with failed=0.
+  - **Backfill:** 23 CSE rows. Each `record_cse` publishes, which takes
+    about 4 s; batching is a possible later improvement.
+  - **Two fixes found live:**
+    - 12ea959d: Celery drops the worker dir from sys.path after loading
+      the app, so `compare`'s lazy `import publish` failed.
+    - fc022520: backfilled runs only knew the requested model (the
+      default preset's Qwen GGUF path), so they're now named
+      "<short name> (unverified)" with a Note explaining why.
+  - **Live check:** `/compare` returned 77 rows (13 eval-runner, 41
+    historical, 23 CyberSecEval). Rendered in panel-ui, that's 24 models x
+    13 benchmarks with full runs only, or 25 x 14 with everything.
+  - **Noticed:** the same model appears under several names (Ollama tags
+    like `eval-qwen36-35b-a3b:q4_k_m-ctx32k`, `qwen36-35b`, GGUF names),
+    so Compare splits them into separate rows. A model alias map would
+    merge them; not done.
 
 - 2026-10-08, prompt-token label deployed (0a0770eb), approval
   `eval-prompt-token-label`. Publishing then hit HTTP 423: with share
