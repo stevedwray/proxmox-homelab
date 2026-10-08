@@ -431,6 +431,10 @@ class CseRowsTest(unittest.TestCase):
         self.assertEqual((row["Duration (min)"], row["Tokens/s"], row["Source"], row["Date"]),
                          (4.4, 18.2, "cyberseceval", "2026-10-07"))
         self.assertEqual(set(row), {t for t, _ in publish.COLUMNS})
+        self.assertEqual(row["Note"], "")
+        old = publish.cse_row(dict(CSE_RECORD, model_verified=False, ok=False))
+        self.assertEqual(old["Note"], "model not verified: recorded before 2026-10-08, from the request, "
+                                      "not the server; run reported an error")
 
     def test_cse_rows_stay_out_of_the_leaderboard_and_runs(self):
         collected = publish.collect(self.tmp.name)

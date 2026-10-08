@@ -63,6 +63,13 @@ class HeadlineTest(unittest.TestCase):
                          (M, "GLM.gguf", 18.2, True))
         self.assertEqual(row["report"], "Reports/cyberseceval/20261008T0500/mitre/")
         self.assertEqual(cse_tasks._compare_row("j1", "mitre", result, None)["report"], "")
+        self.assertTrue(row["model_verified"])
+
+    def test_old_runs_are_marked_unverified(self):
+        result = {"rc": 0, "headline": self.h("mitre"),
+                  "backend_model": "/models/q/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"}
+        row = cse_tasks._compare_row("j1", "mitre", result, None)
+        self.assertEqual((row["model"], row["model_verified"]), ("Qwen3.8-Flash-Next-UD-Q4_K_XL (unverified)", False))
 
     def test_backfill_sends_rows_for_scored_runs(self):
         root = Path(tempfile.mkdtemp())

@@ -824,16 +824,30 @@ def _headline(benchmark: str, stats) -> dict | None:
     return None
 
 
+def _short_model_name(name: str) -> str:
+    """/models/x/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf -> Qwen3.8-Flash-Next-UD-Q4_K_XL"""
+    base = os.path.basename(name or "")
+    base = re.sub(r"\.gguf$", "", base)
+    return re.sub(r"-\d{5}-of-\d{5}$", "", base) or (name or "")
+
+
 def _compare_row(job_id: str, benchmark: str, result: dict, run_group_stamp: str | None) -> dict:
-    """The run's row for the shared results table (publish.py adds it)."""
+    """The run's row for the shared results table (publish.py adds it).
+    Runs from before 2026-10-08 never recorded which model answered, only
+    the one requested (the default preset always named the old Qwen GGUF),
+    so their model is marked unverified."""
     headline = result.get("headline") or {}
     metrics = result.get("run_metrics") or {}
     mut = metrics.get("model_under_test") or {}
     served = result.get("served_model") or {}
+    verified = bool(served.get("alias") or served.get("id"))
+    model = (served.get("alias") or served.get("id")) if verified else \
+        f"{_short_model_name(result.get('backend_model') or '')} (unverified)"
     return {
         "job_id": job_id,
         "benchmark": benchmark,
-        "model": served.get("alias") or served.get("id") or result.get("backend_model") or "",
+        "model": model,
+        "model_verified": verified,
         "model_file": os.path.basename(served.get("path") or "") or "",
         "build": served.get("build") or "",
         "headline": headline or None,

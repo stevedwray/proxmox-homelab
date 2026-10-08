@@ -548,7 +548,7 @@ def samples(run_name, offset=0, limit=10):
 
 # ------------------------------------------------- results across benchmarks
 CSE_DIR = "_cse"
-CSE_FIELDS = ("job_id", "benchmark", "model", "model_file", "build", "headline", "finished_at",
+CSE_FIELDS = ("job_id", "benchmark", "model", "model_verified", "model_file", "build", "headline", "finished_at",
               "duration_seconds", "completion_tokens", "tokens_per_second", "report", "ok")
 
 

@@ -73,6 +73,8 @@ def cell_tooltip(row):
     parts = [row.get("Metrics") or "", f"{row.get('Date') or '?'} · run {row.get('Run') or '?'}"]
     if row.get("Tokens/s"):
         parts.append(f"{row['Tokens/s']} tokens/s")
+    if row.get("Note"):
+        parts.append(row["Note"])
     return "\n".join(p for p in parts if p)
 
 

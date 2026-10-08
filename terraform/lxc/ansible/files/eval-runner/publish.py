@@ -293,7 +293,10 @@ def cse_row(record):
         "Why not comparable": "",
         "Model file / tag": record.get("model_file") or "",
         "Runtime": f"llama.cpp {record['build']}" if record.get("build") else "",
-        "Note": "" if record.get("ok", True) else "run reported an error",
+        "Note": "; ".join(n for n in (
+            "" if record.get("model_verified", True) else
+            "model not verified: recorded before 2026-10-08, from the request, not the server",
+            "" if record.get("ok", True) else "run reported an error") if n),
         "Source": "cyberseceval",
         "Run": record["job_id"],
         "Date": (record.get("finished_at") or "")[:10],
@@ -319,7 +322,7 @@ def compare_rows(results_root):
     to what the panel's Compare tab needs."""
     rows = [r for _, _, _, rs in collect(results_root) for r in rs] + collect_cse(results_root)
     keep = ("Model", "Task", "Score %", "Alt score %", "Metrics", "Questions", "Comparable", "Series",
-            "Tokens/s", "Duration (min)", "Source", "Run", "Date")
+            "Tokens/s", "Duration (min)", "Source", "Run", "Date", "Note")
     return [{k: r.get(k) for k in keep} for r in rows]
 
 
