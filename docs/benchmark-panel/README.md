@@ -251,6 +251,10 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
       for multi-select the same day.
     - Eval runs that are still going are skipped. A ticked unfinished
       CyberSecEval run is cancelled, and the dialog says so.
+    - Deployed (6c3da81b), approval `panel-results-multidelete`:
+      cse-panel-stack ran with failed=0 and has 25 callbacks. A browser tab
+      still open from before logged KeyErrors for the removed callbacks;
+      reloading it fixes that.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;
