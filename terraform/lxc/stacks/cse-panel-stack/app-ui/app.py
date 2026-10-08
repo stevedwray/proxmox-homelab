@@ -8,15 +8,16 @@ doing) above one tab per benchmark family, each with its own Run /
 Results switch. CyberSecEval lives here; the Eval battery is eval_tab.py.
 """
 import os
-import re
 
 import dash
 import dash_bootstrap_components as dbc
 import requests
+from plotly.subplots import make_subplots
 from dash import Input, Output, State, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import request
 
+import compare_tab
 import eval_tab
 
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
@@ -150,8 +151,14 @@ results_tab = html.Div([
     ])),
 
     dbc.Card(className="mt-3", children=dbc.CardBody([
-        html.H4("Results chart", className="card-title mb-3"),
+        html.H4("Results by benchmark", className="card-title mb-1"),
+        html.P("Each run's headline number, one panel per benchmark. Hover a bar for its sample size. "
+               "Runs from before 2026-10-08 have no headline recorded.", className="text-muted small"),
         dcc.Graph(id="results-chart", config={"displaylogo": False}),
+    ])),
+    dbc.Card(className="mt-3", children=dbc.CardBody([
+        html.H4("Speed and duration", className="card-title mb-3"),
+        dcc.Graph(id="speed-chart", config={"displaylogo": False}),
     ])),
 ])
 
@@ -202,6 +209,8 @@ app.layout = dbc.Container(
             dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
                     label_style={"fontSize": "1.15rem"}),
             dbc.Tab(eval_family, tab_id="eval", label="Eval battery",
+                    label_style={"fontSize": "1.15rem"}),
+            dbc.Tab(compare_tab.layout(), tab_id="compare", label="Compare",
                     label_style={"fontSize": "1.15rem"}),
         ]),
     ],
@@ -393,25 +402,15 @@ def _run_metrics_block(metrics):
     return block + [table]
 
 
-def _first_numeric_metric(stats_summary):
-    """First [key, value] pair in stats_summary whose value string has a
-    parseable percentage (e.g. "1/1 (100%)" -> 100.0) -- the primary
-    headline metric most benchmarks surface first, e.g. mitre's
-    malicious %."""
-    for key, value in stats_summary:
-        match = re.search(r"\((-?\d+(?:\.\d+)?)%\)", str(value))
-        if match:
-            return key, float(match.group(1))
-    return None
+MODEL_COLOURS = ["#6f42c1", "#20c997", "#fd7e14", "#0dcaf0", "#d63384", "#ffc107", "#198754", "#adb5bd"]
+CHART_LAYOUT = {"template": "plotly_dark", "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)"}
 
 
 def _empty_chart_figure(message):
     return {
         "data": [],
         "layout": {
-            "template": "plotly_dark",
-            "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
+            **CHART_LAYOUT,
             "xaxis": {"visible": False},
             "yaxis": {"visible": False},
             "annotations": [{
@@ -423,44 +422,68 @@ def _empty_chart_figure(message):
     }
 
 
+def _run_label(job):
+    """model · MM-DD HH:MM, so runs read as who and when, not job ids."""
+    when = (job.get("finished_at") or job.get("submitted_at") or "")[5:16].replace("T", " ")
+    return f"{job.get('model') or '?'} · {when}"
+
+
+def _colours(jobs):
+    models = sorted({j.get("model") or "?" for j in jobs})
+    return {m: MODEL_COLOURS[i % len(MODEL_COLOURS)] for i, m in enumerate(models)}
+
+
 def _results_chart_figure(jobs):
-    labels, values, metric_names = [], [], []
-    for job in jobs:
-        if job.get("state") != "SUCCESS":
-            continue
-        metric = _first_numeric_metric(job.get("stats_summary") or [])
-        if metric is None:
-            continue
-        key, value = metric
-        labels.append(f"{job.get('benchmark', '?')} ({job.get('job_id', '?')[:8]})")
-        values.append(value)
-        metric_names.append(key)
+    """One panel per benchmark: each finished run's headline, in its own
+    units, oldest to newest."""
+    scored = [j for j in jobs if j.get("state") == "SUCCESS" and (j.get("headline") or {}).get("value") is not None]
+    if not scored:
+        return _empty_chart_figure("No scored runs yet (runs record a headline from 2026-10-08).")
+    benchmarks = sorted({j["benchmark"] for j in scored})
+    titles = []
+    for b in benchmarks:
+        head = next(j["headline"] for j in scored if j["benchmark"] == b)
+        titles.append(f"{b}: {head['metric']} ({head['better']} is better)")
+    fig = make_subplots(rows=len(benchmarks), cols=1, subplot_titles=titles, vertical_spacing=0.32 / len(benchmarks))
+    colours = _colours(scored)
+    for row, b in enumerate(benchmarks, 1):
+        runs = sorted((j for j in scored if j["benchmark"] == b), key=lambda j: j.get("finished_at") or "")
+        fig.add_bar(
+            row=row, col=1, x=[_run_label(j) for j in runs], y=[j["headline"]["value"] for j in runs],
+            marker_color=[colours[j.get("model") or "?"] for j in runs], showlegend=False,
+            text=[f"{j['headline']['value']:.1f}%" for j in runs], textposition="auto",
+            customdata=[[j["headline"].get("n"), j["job_id"][:8]] for j in runs],
+            hovertemplate="%{x}<br>%{y:.1f}% of %{customdata[0]} cases<br>job %{customdata[1]}<extra></extra>",
+        )
+        fig.update_yaxes(range=[0, 100], ticksuffix="%", row=row, col=1)
+    fig.update_layout(**CHART_LAYOUT, height=max(260, 230 * len(benchmarks)), margin={"t": 40, "b": 20})
+    return fig
 
-    if not values:
-        return _empty_chart_figure("No completed runs yet.")
 
-    return {
-        "data": [{
-            "x": labels,
-            "y": values,
-            "type": "bar",
-            "marker": {"color": "#6f42c1"},
-            "text": metric_names,
-            "hovertemplate": "%{x}<br>%{text}: %{y}%<extra></extra>",
-        }],
-        "layout": {
-            "template": "plotly_dark",
-            "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
-            "yaxis": {"title": "% (first headline metric)", "range": [0, 100]},
-            "margin": {"t": 20},
-        },
-    }
+def _speed_chart_figure(jobs):
+    """Generation speed and duration per finished run."""
+    runs = [j for j in jobs if j.get("state") == "SUCCESS" and (j.get("run_metrics") or {}).get("duration_seconds")]
+    if not runs:
+        return _empty_chart_figure("No run metrics yet.")
+    runs = sorted(runs, key=lambda j: j.get("finished_at") or j.get("submitted_at") or "")
+    labels = [f"{j['benchmark']} · {_run_label(j)}" for j in runs]
+    colours = _colours(runs)
+    fig = make_subplots(rows=1, cols=2, subplot_titles=["Generation speed (tokens/s)", "Duration (minutes)"])
+    fig.add_bar(row=1, col=1, x=labels, showlegend=False, marker_color=[colours[j.get("model") or "?"] for j in runs],
+                y=[((j["run_metrics"].get("model_under_test") or {}).get("generation_tokens_per_second")) for j in runs],
+                hovertemplate="%{x}<br>%{y} tokens/s<extra></extra>")
+    fig.add_bar(row=1, col=2, x=labels, showlegend=False, marker_color=[colours[j.get("model") or "?"] for j in runs],
+                y=[round(j["run_metrics"]["duration_seconds"] / 60, 1) for j in runs],
+                hovertemplate="%{x}<br>%{y} min<extra></extra>")
+    fig.update_xaxes(showticklabels=False)
+    fig.update_layout(**CHART_LAYOUT, height=300, margin={"t": 40, "b": 20})
+    return fig
 
 
 @app.callback(
     Output("jobs-table", "data"),
     Output("results-chart", "figure"),
+    Output("speed-chart", "figure"),
     Input("poll-interval", "n_intervals"),
 )
 def poll_jobs(_n):
@@ -470,7 +493,7 @@ def poll_jobs(_n):
     except requests.RequestException:
         raise PreventUpdate
     rows = [{**job, **_metric_columns(job)} for job in jobs]
-    return rows, _results_chart_figure(rows)
+    return rows, _results_chart_figure(rows), _speed_chart_figure(rows)
 
 
 @app.callback(

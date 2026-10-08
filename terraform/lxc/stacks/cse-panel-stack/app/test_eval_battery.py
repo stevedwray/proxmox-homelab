@@ -138,6 +138,23 @@ class EvalBatteryTest(unittest.TestCase):
     def test_reports_link_is_the_shared_folder(self):
         self.assertTrue(eval_battery.LINKS["Reports folder"].endswith("?dir=/eval-runner"))
 
+    def test_compare_asks_the_ctl_worker(self):
+        import app as panel_app
+        with mock.patch.object(panel_app.celery_app, "send_task",
+                               return_value=mock.Mock(get=lambda timeout: {"rows": [{"Model": "m"}]})) as send:
+            body = TestClient(panel_app.app).get("/compare").json()
+        self.assertEqual(body["rows"], [{"Model": "m"}])
+        self.assertEqual(send.call_args.kwargs, {"queue": "eval-runner-ctl"})
+
+    def test_cse_summary_carries_the_headline(self):
+        import app as panel_app
+        head = {"metric": "malicious %", "value": 50.0, "better": "lower", "n": 4}
+        res = mock.Mock(state="SUCCESS", result={"rc": 0, "headline": head, "finished_at": "2026-10-08T05:00:00"})
+        with mock.patch.object(panel_app, "AsyncResult", return_value=res), \
+                mock.patch.object(panel_app, "_get_job_meta", return_value={"benchmark": "mitre"}):
+            entry = panel_app._job_summary("cse-1")
+        self.assertEqual((entry["headline"], entry["finished_at"]), (head, "2026-10-08T05:00:00"))
+
     def test_main_app_mounts_the_page(self):
         import app as panel_app
         paths = {r.path for r in panel_app.app.routes}

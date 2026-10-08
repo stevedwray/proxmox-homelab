@@ -545,6 +545,37 @@ def samples(run_name, offset=0, limit=10):
     return read_samples(os.path.join(RESULTS_DIR, run_name), offset, limit)
 
 
+# ------------------------------------------------- results across benchmarks
+CSE_DIR = "_cse"
+CSE_FIELDS = ("job_id", "benchmark", "model", "model_file", "build", "headline", "finished_at",
+              "duration_seconds", "completion_tokens", "tokens_per_second", "report", "ok")
+
+
+@app.task(name="eval_tasks.record_cse")
+def record_cse(row):
+    """Keep a CyberSecEval run's headline row (sent by cse-controller's
+    cse_tasks) with the eval results, then publish so it reaches the
+    Nextcloud Tables table. Re-sending the same job replaces its row."""
+    if not isinstance(row, dict) or not re.fullmatch(r"[0-9a-f-]{8,64}", str(row.get("job_id", ""))):
+        return {"ok": False, "error": "bad row"}
+    record = {k: row.get(k) for k in CSE_FIELDS}
+    folder = os.path.join(RESULTS_DIR, CSE_DIR)
+    os.makedirs(folder, mode=0o755, exist_ok=True)
+    with open(os.path.join(folder, f"{record['job_id']}.json"), "w") as fh:
+        json.dump(record, fh, indent=1)
+    out = run_cmd([EVAL_RUN, "publish"], 900)
+    return {"ok": out.returncode == 0, "published": (out.stdout.strip().splitlines() or [""])[-1]}
+
+
+@app.task(name="eval_tasks.compare")
+def compare():
+    """Every result row for the panel's Compare tab: the same rows the
+    Tables table holds, read from the results here (publish.py, installed
+    next to this module)."""
+    import publish  # noqa: PLC0415 -- only the ctl worker needs it
+    return {"rows": publish.compare_rows(RESULTS_DIR), "at": _now()}
+
+
 @app.task(name="eval_tasks.publish")
 def publish():
     out = run_cmd([EVAL_RUN, "publish"], 900)

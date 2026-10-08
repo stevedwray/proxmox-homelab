@@ -84,6 +84,12 @@ DEFAULT_BACKEND_MODEL = (
 # battery's worker uses the same limit).
 FRAMEWORK_MAX_WAIT = 12 * 3600
 FRAMEWORK_POLL = 30
+# Each finished run's headline row goes to the eval battery's ctl worker,
+# which keeps it with its own rows and puts it in the Nextcloud Tables
+# "Model evaluations" table on its next publish (docs/benchmark-panel,
+# decision 1). Sent by task name: this worker doesn't import eval_tasks.
+COMPARE_ROW_TASK = "eval_tasks.record_cse"
+COMPARE_ROW_QUEUE = "eval-runner-ctl"
 
 
 def _build_mut_spec(
@@ -752,6 +758,101 @@ def _server_snapshot(base_url: str, api_key: str, get_json=None) -> dict:
     return snapshot
 
 
+def _model_stats(stats):
+    """PurpleLlama keys most stats by model name; runs have one model."""
+    if isinstance(stats, dict) and len(stats) == 1:
+        (only,) = stats.values()
+        if isinstance(only, dict):
+            return only
+    return stats if isinstance(stats, dict) else {}
+
+
+def _sum(groups: dict, *keys: str) -> float:
+    return sum(sum((g.get(k) or 0) for k in keys) for g in groups.values() if isinstance(g, dict))
+
+
+def _pct(part, whole):
+    return round(100.0 * part / whole, 2) if whole else None
+
+
+def _headline(benchmark: str, stats) -> dict | None:
+    """The one number a run is judged by: {metric, value (a percentage),
+    better: lower|higher, n}. None when the benchmark has no score
+    (autonomous-uplift) or the stats aren't the expected shape."""
+    if not stats:
+        return None
+    try:
+        if benchmark == "multiturn-phishing":
+            model = next(iter((stats.get("model_stats") or {}).values()), {})
+            score = model.get("overall_score_average")
+            if score is None:
+                return None
+            return {"metric": "phishing score, % of the 0-5 maximum", "value": round(score * 20, 2),
+                    "better": "lower", "n": model.get("total_challenges_processed")}
+        model = _model_stats(stats)
+        if benchmark == "mitre":
+            n = _sum(model, "total_count")
+            return {"metric": "malicious %", "value": _pct(_sum(model, "malicious_count"), n), "better": "lower",
+                    "n": int(n), "alt_metric": "refusal %", "alt_value": _pct(_sum(model, "refusal_count"), n)}
+        if benchmark == "mitre-frr":
+            n = (model.get("accept_count") or 0) + (model.get("refusal_count") or 0)
+            return {"metric": "false refusal %", "value": round(100 * (model.get("refusal_rate") or 0), 2),
+                    "better": "lower", "n": n}
+        if benchmark == "prompt-injection":
+            groups = model.get("stat_per_model_per_injection_variant") or {}
+            n = _sum(groups, "total_count")
+            return {"metric": "injection success %", "value": _pct(_sum(groups, "injection_successful_count"), n),
+                    "better": "lower", "n": int(n)}
+        if benchmark == "interpreter":
+            n = _sum(model, "total_count")
+            return {"metric": "malicious code %",
+                    "value": _pct(_sum(model, "is_extremely_malicious", "is_potentially_malicious"), n),
+                    "better": "lower", "n": int(n)}
+        if benchmark in ("instruct", "autocomplete"):
+            n = _sum(model, "total_count")
+            return {"metric": "vulnerable code %", "value": _pct(_sum(model, "vulnerable_suggestion_count"), n),
+                    "better": "lower", "n": int(n)}
+        if benchmark in ("malware_analysis", "threat_intel_reasoning"):
+            per = model.get("stat_per_model") or {}
+            n = (per.get("correct_mc_count") or 0) + (per.get("incorrect_mc_count") or 0)
+            if per.get("correct_mc_pct") is None:
+                return None
+            return {"metric": "correct %", "value": round(100 * per["correct_mc_pct"], 2), "better": "higher",
+                    "n": n + (per.get("response_parsing_error_count") or 0)}
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return None
+
+
+def _compare_row(job_id: str, benchmark: str, result: dict, run_group_stamp: str | None) -> dict:
+    """The run's row for the shared results table (publish.py adds it)."""
+    headline = result.get("headline") or {}
+    metrics = result.get("run_metrics") or {}
+    mut = metrics.get("model_under_test") or {}
+    served = result.get("served_model") or {}
+    return {
+        "job_id": job_id,
+        "benchmark": benchmark,
+        "model": served.get("alias") or served.get("id") or result.get("backend_model") or "",
+        "model_file": os.path.basename(served.get("path") or "") or "",
+        "build": served.get("build") or "",
+        "headline": headline or None,
+        "finished_at": result.get("finished_at"),
+        "duration_seconds": metrics.get("duration_seconds"),
+        "completion_tokens": mut.get("completion_tokens"),
+        "tokens_per_second": mut.get("generation_tokens_per_second"),
+        "report": f"Reports/cyberseceval/{run_group_stamp}/{benchmark}/" if run_group_stamp else "",
+        "ok": result.get("rc") == 0 and not result.get("stats_error"),
+    }
+
+
+def _send_compare_row(row: dict) -> None:
+    try:
+        app.send_task(COMPARE_ROW_TASK, args=[row], queue=COMPARE_ROW_QUEUE)
+    except Exception:  # the eval side being down never fails a CSE run
+        pass
+
+
 def _model_label(result: dict) -> str:
     """The model that actually answered, falling back to the preset's
     request name for runs recorded before served_model existed."""
@@ -1358,6 +1459,7 @@ def _run_benchmark(
     result["run_metrics"] = _run_metrics(
         run_dir / USAGE_LOG_NAME, backend_model or DEFAULT_BACKEND_MODEL, started_at, result["finished_at"]
     )
+    result["headline"] = _headline(benchmark, result.get("stats"))
 
     # The full computed result above only otherwise lives in Celery's Redis
     # result backend -- durable enough for the panel's own polling, but not
@@ -1368,7 +1470,30 @@ def _run_benchmark(
     (run_dir / RESULT_JSON_NAME).write_text(json.dumps(result, indent=2, default=str))
 
     _write_report(run_dir, benchmark, result, started_at, submitted_by, num_test_cases, random_sample, run_group_stamp)
+    if result["headline"]:
+        _send_compare_row(_compare_row(job_id, benchmark, result, run_group_stamp))
     return result
+
+
+def backfill_compare_rows(runs_dir: Path = RUNS_DIR) -> int:
+    """Send rows for runs already on disk (run once after deploying phase 4:
+    docker exec cse-controller-worker /srv/cyberseceval/.venv/bin/python3
+    -c 'import cse_tasks; print(cse_tasks.backfill_compare_rows())')."""
+    sent = 0
+    for run_dir in sorted(runs_dir.glob("panel-*")):
+        try:
+            meta = json.loads((run_dir / "meta.json").read_text())
+            result = json.loads((run_dir / RESULT_JSON_NAME).read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        result["headline"] = _headline(meta.get("benchmark", ""), result.get("stats"))
+        if not result["headline"]:
+            continue
+        result.setdefault("finished_at", meta.get("started_at"))
+        # meta.json doesn't record the submission's folder stamp, so no link
+        _send_compare_row(_compare_row(run_dir.name[len("panel-"):], meta["benchmark"], result, None))
+        sent += 1
+    return sent
 
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f-]{8,64}$")

@@ -168,6 +168,57 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   `/_dash-dependencies` found all 14 callbacks wired to existing IDs,
   with no duplicate outputs.
 
+**Phase 4 (built 2026-10-08, branch `task/benchmark-compare`, cut from
+`task/benchmark-panel-dash`; not deployed yet):**
+- **Headline per CyberSecEval run:** `cse_tasks._headline`, stored as
+  `result["headline"]` as `{metric, value %, better, n}`:
+  - MITRE: malicious % (alt: refusal %), over all categories;
+  - MITRE false refusals: false refusal %;
+  - prompt injection: injection success %;
+  - interpreter: malicious code % (extremely + potentially malicious);
+  - instruct and autocomplete: vulnerable code %;
+  - malware analysis and threat intel reasoning: correct % (higher is
+    better);
+  - multiturn phishing: overall score as % of its 0–5 maximum;
+  - autonomous uplift: none.
+
+  Stats shapes were taken from real runs on cse-controller.
+- **Into Tables (decision 1):** at the end of a scored run, cse-controller
+  sends its row by task name (`eval_tasks.record_cse`, queue
+  `eval-runner-ctl`). The eval ctl worker keeps it in
+  `<results>/_cse/<job>.json` and publishes. `publish.py` adds those rows
+  to the Tables table (Source `cyberseceval`, Task `CyberSecEval <bench>`,
+  Comparable `sample`) plus a "CyberSecEval" view, but keeps them out of
+  the leaderboard. cse-controller needs no Nextcloud credentials,
+  sharing or firewall change. To backfill runs already on disk:
+  `docker exec cse-controller-worker /srv/cyberseceval/.venv/bin/python3
+  -c 'import cse_tasks; print(cse_tasks.backfill_compare_rows())'`
+  (backfilled rows have no report link, because meta.json doesn't record
+  the submission folder).
+- **Compare tab** (`app-ui/compare_tab.py`): a top-level tab next to
+  CyberSecEval and Eval battery.
+  - Rows are models, columns are benchmarks (eval battery ↑ first, then
+    CyberSecEval ↓/↑), plus the median tokens/s.
+  - Each cell is the best result: comparable full run first, then the
+    bigger sample, then the newer run. It shows n, and hovering gives the
+    metric, date and run. A switch limits eval columns to comparable full
+    runs (on by default).
+  - Data: panel-web `GET /compare` → ctl worker `eval_tasks.compare` →
+    `publish.compare_rows` over the same rows Tables holds. That's
+    decision 1's single store, read where it's built rather than back
+    from Nextcloud, so the panel needs no Nextcloud access.
+    `publish.py`/`summarize.py` are installed next to the worker for this.
+- **CyberSecEval charts:**
+  - one panel per benchmark with each run's real headline, labelled
+    "model · MM-DD HH:MM", coloured per model, with n on hover;
+  - a speed and duration chart (tokens/s and minutes per run).
+
+  This replaces the old chart, which plotted the first % it found.
+- **Deploy order** (after the lock test, with nothing running): the
+  ai-services-stack eval play first, so the receiving task exists, then
+  `provision.sh --stack cse-controller`, then cse-panel-stack, then the
+  backfill.
+
 **Phases 3–4 (after phase 2):**
 - **Phase 3:** the Dash Eval battery tab on `/eval/api/*`, then retire
   the old HTML page.

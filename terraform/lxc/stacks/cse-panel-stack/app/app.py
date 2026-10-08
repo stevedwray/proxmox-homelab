@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 
 from celery import Celery, group
 from celery.result import AsyncResult, GroupResult
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 BROKER_URL = os.environ["CELERY_BROKER_URL"]
@@ -370,6 +370,10 @@ def _job_summary(job_id: str) -> dict:
         # backend at run time; absent for runs from before 2026-10-08).
         served = result.get("served_model") or {}
         entry["model"] = served.get("alias") or served.get("id") or ""
+        # The benchmark's one headline number (cse_tasks._headline; absent
+        # before 2026-10-08) and when it finished, for the results chart.
+        entry["headline"] = result.get("headline")
+        entry["finished_at"] = result.get("finished_at")
         if served.get("changed_during_run"):
             entry["model"] += f" -> {served['changed_during_run']}"
         if result.get("stats_error"):
@@ -404,6 +408,21 @@ def framework():
         "checked": status.get("checked"),
         "error": status.get("error"),
     }
+
+
+COMPARE_TIMEOUT = 60
+
+
+@app.get("/compare")
+def compare():
+    """Every benchmark result row (eval battery, historical and CyberSecEval
+    headlines) for the Compare tab: built by the eval battery's ctl worker
+    from the same rows it puts in the Nextcloud Tables table."""
+    result = celery_app.send_task("eval_tasks.compare", queue="eval-runner-ctl")
+    try:
+        return result.get(timeout=COMPARE_TIMEOUT)
+    except Exception as err:  # worker down or slow
+        raise HTTPException(504, f"the eval worker didn't answer: {type(err).__name__}")
 
 
 @app.get("/healthz")

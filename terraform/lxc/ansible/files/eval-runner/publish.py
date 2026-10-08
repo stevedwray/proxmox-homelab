@@ -14,7 +14,9 @@ operator by the deploy):
 
 and the Nextcloud Tables table "Model evaluations": one row per
 (run, task, results file), upserted by its Key column, with saved views
-for comparable GPQA / IFEval results.
+for comparable GPQA / IFEval results. CyberSecEval runs add one headline
+row each (Source "cyberseceval"): cse-controller sends it to the panel
+worker (eval_tasks.record_cse), which keeps it in <results>/_cse/.
 
 The report/manifest layout follows docs/reporting-platform/CONVENTION.md.
 samples_*.jsonl files are never uploaded: they contain GPQA questions,
@@ -63,6 +65,7 @@ except ImportError:  # pragma: no cover - unit tests skip the xlsx checks
 RESULTS_ROOT = "/results"
 FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
 FOLDER = "Reports/eval-runner"
+CSE_DIR = "_cse"
 STATE_FILE = "_publish-state.json"
 TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
@@ -127,6 +130,8 @@ VIEWS = [
     ("32k budget: IFEval", "\u23F3", "IFEval", {"Series": "32k"}),
     # Every eval-runner run, newest first.
     ("Recent eval-runner runs", "\U0001F9EA", None, {"Source": "eval-runner"}),
+    # Every CyberSecEval run's headline (cse-controller, via eval_tasks.record_cse).
+    ("CyberSecEval", "\U0001F6E1", None, {"Source": "cyberseceval"}),
 ]
 # Earlier view titles, renamed in place on publish (same view id, so
 # shares and any manual tweaks survive).
@@ -256,6 +261,66 @@ def collect_run(run_dir, source):
                        samples if os.path.exists(samples) else None, record, stamp)
             rows[row["Key"]] = row
     return record, list(rows.values())
+
+
+def cse_row(record):
+    """A Tables row from a CyberSecEval headline record (cse_tasks._compare_row)."""
+    head = record.get("headline") or {}
+    better = head.get("better")
+    metrics = f"{head.get('metric', '')} ({better} is better)" if better else head.get("metric", "")
+    if head.get("alt_metric"):
+        metrics += f" / {head['alt_metric']}"
+    duration = record.get("duration_seconds")
+    return {
+        "Key": f"cyberseceval/{record['job_id']}/{record['benchmark']}",
+        "Model": record.get("model") or "",
+        "Task": f"CyberSecEval {record['benchmark']}",
+        "Score %": head.get("value"),
+        "Alt score %": head.get("alt_value"),
+        "Metrics": metrics,
+        "Questions": head.get("n"),
+        "Empty answers": None,
+        "Empty %": None,
+        "Unparsed": None,
+        "Token budget": None,
+        "Duration (min)": round(duration / 60, 1) if isinstance(duration, (int, float)) else None,
+        "Tokens generated": record.get("completion_tokens"),
+        "Tokens/s": record.get("tokens_per_second"),
+        "Series": "",
+        # CyberSecEval runs are samples of each benchmark's dataset; Compare
+        # shows their size (Questions) instead of a comparable flag.
+        "Comparable": "sample",
+        "Why not comparable": "",
+        "Model file / tag": record.get("model_file") or "",
+        "Runtime": f"llama.cpp {record['build']}" if record.get("build") else "",
+        "Note": "" if record.get("ok", True) else "run reported an error",
+        "Source": "cyberseceval",
+        "Run": record["job_id"],
+        "Date": (record.get("finished_at") or "")[:10],
+        "Report": record.get("report") or "",
+    }
+
+
+def collect_cse(results_root):
+    rows = []
+    for path in sorted(glob.glob(os.path.join(results_root, CSE_DIR, "*.json"))):
+        try:
+            with open(path) as fh:
+                record = json.load(fh)
+            if record.get("headline"):
+                rows.append(cse_row(record))
+        except (OSError, ValueError, KeyError):
+            continue
+    return rows
+
+
+def compare_rows(results_root):
+    """Every result row (eval-runner, historical and CyberSecEval), trimmed
+    to what the panel's Compare tab needs."""
+    rows = [r for _, _, _, rs in collect(results_root) for r in rs] + collect_cse(results_root)
+    keep = ("Model", "Task", "Score %", "Alt score %", "Metrics", "Questions", "Comparable", "Series",
+            "Tokens/s", "Duration (min)", "Source", "Run", "Date")
+    return [{k: r.get(k) for k in keep} for r in rows]
 
 
 def collect(results_root):
@@ -902,6 +967,7 @@ def main(argv=None):
             findings = fh.read()
     generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     files, rows = build_files(collect(args.results_root), findings, generated)
+    rows = rows + collect_cse(args.results_root)  # Tables only, not the leaderboard
 
     if args.dry_run:
         for rel, content in files.items():

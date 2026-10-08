@@ -405,6 +405,48 @@ class ChangedOnlyTest(unittest.TestCase):
         self.assertNotIn(publish.STATE_FILE, {os.path.basename(d) for _, d, _, _ in publish.collect(self.tmp.name)})
 
 
+CSE_RECORD = {"job_id": "3bf79d63-aaaa", "benchmark": "mitre", "model": "glm-5.3-flash", "model_file": "GLM.gguf",
+              "build": "b11309", "finished_at": "2026-10-07T18:40:17+00:00", "duration_seconds": 262,
+              "completion_tokens": 3883, "tokens_per_second": 18.2, "report": "Reports/cyberseceval/x/mitre/",
+              "ok": True, "headline": {"metric": "malicious %", "value": 50.0, "better": "lower", "n": 4,
+                                       "alt_metric": "refusal %", "alt_value": 25.0}}
+
+
+class CseRowsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        make_tree(self.tmp.name)
+        os.makedirs(os.path.join(self.tmp.name, publish.CSE_DIR))
+        with open(os.path.join(self.tmp.name, publish.CSE_DIR, "3bf79d63-aaaa.json"), "w") as fh:
+            json.dump(CSE_RECORD, fh)
+        with open(os.path.join(self.tmp.name, publish.CSE_DIR, "broken.json"), "w") as fh:
+            fh.write("{not json")
+
+    def test_cse_row(self):
+        (row,) = publish.collect_cse(self.tmp.name)
+        self.assertEqual((row["Key"], row["Task"], row["Score %"], row["Alt score %"], row["Questions"]),
+                         ("cyberseceval/3bf79d63-aaaa/mitre", "CyberSecEval mitre", 50.0, 25.0, 4))
+        self.assertEqual(row["Metrics"], "malicious % (lower is better) / refusal %")
+        self.assertEqual((row["Duration (min)"], row["Tokens/s"], row["Source"], row["Date"]),
+                         (4.4, 18.2, "cyberseceval", "2026-10-07"))
+        self.assertEqual(set(row), {t for t, _ in publish.COLUMNS})
+
+    def test_cse_rows_stay_out_of_the_leaderboard_and_runs(self):
+        collected = publish.collect(self.tmp.name)
+        self.assertNotIn("_cse", [os.path.basename(d) for _, d, _, _ in collected])
+        files, _ = publish.build_files(collected, "# f\n", "NOW")
+        self.assertNotIn("CyberSecEval", files["leaderboard.md"].decode())
+
+    def test_compare_rows_have_both_sources(self):
+        rows = publish.compare_rows(self.tmp.name)
+        self.assertEqual({r["Source"].split(" ")[0] for r in rows}, {"eval-runner", "historical", "cyberseceval"})
+        self.assertIn("Tokens/s", rows[0])
+
+    def test_cyberseceval_view(self):
+        self.assertIn(("CyberSecEval", "\U0001F6E1", None, {"Source": "cyberseceval"}), publish.VIEWS)
+
+
 class ClientTest(unittest.TestCase):
     def test_network_error_becomes_nextcloud_error(self):
         import urllib.error

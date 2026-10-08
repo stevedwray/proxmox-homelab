@@ -1113,6 +1113,18 @@
         mode: "0644"
       register: eval_runner_worker_lock_module
 
+    # The Compare tab's data (eval_tasks.compare) comes from publish.py's
+    # own row builder, so the ctl worker imports it (and summarize.py).
+    - name: Install publish.py and summarize.py next to the panel worker
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/{{ item }}"
+        dest: "{{ eval_runner_worker_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - publish.py
+        - summarize.py
+      register: eval_runner_worker_publish_modules
+
     - name: Install the panel worker's broker settings
       ansible.builtin.copy:
         dest: /etc/eval-runner/worker.env
@@ -1159,7 +1171,7 @@
       ansible.builtin.systemd:
         name: "eval-runner-worker-{{ item.name }}"
         enabled: true
-        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_lock_module.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_lock_module.changed or eval_runner_worker_publish_modules.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
         daemon_reload: true
       loop: "{{ eval_runner_workers }}"
       loop_control:

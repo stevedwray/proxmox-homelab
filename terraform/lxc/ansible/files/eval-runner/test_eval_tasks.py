@@ -331,6 +331,39 @@ class SamplesTest(unittest.TestCase):
 
 
 @unittest.skipUnless(eval_tasks, "celery not installed")
+class CseRowTest(unittest.TestCase):
+    def test_record_cse_stores_the_row_and_publishes(self):
+        root = tempfile.mkdtemp()
+        host = FakeHost()
+        row = {"job_id": "3bf79d63-aaaa", "benchmark": "mitre", "headline": {"value": 50.0}, "extra": "dropped"}
+        with mock.patch.object(eval_tasks, "RESULTS_DIR", root), mock.patch.object(eval_tasks, "run_cmd", host):
+            out = eval_tasks.record_cse.apply(args=[row]).get()
+            bad = eval_tasks.record_cse.apply(args=[{"job_id": "../x"}]).get()
+        self.assertTrue(out["ok"])
+        with open(os.path.join(root, "_cse", "3bf79d63-aaaa.json")) as fh:
+            stored = json.load(fh)
+        self.assertEqual((stored["benchmark"], stored["headline"]), ("mitre", {"value": 50.0}))
+        self.assertNotIn("extra", stored)
+        self.assertIn([eval_tasks.EVAL_RUN, "publish"], host.calls)
+        self.assertFalse(bad["ok"])
+
+    def test_compare_uses_publish_rows(self):
+        # Only the "publish" entry: patch.dict(sys.modules) would also drop
+        # modules Celery imports during the call and break later tests.
+        fake = mock.Mock(compare_rows=lambda root: [{"Model": "m", "Task": "IFEval"}])
+        saved = sys.modules.get("publish")
+        sys.modules["publish"] = fake
+        try:
+            out = eval_tasks.compare.apply().get()
+        finally:
+            if saved is None:
+                del sys.modules["publish"]
+            else:
+                sys.modules["publish"] = saved
+        self.assertEqual(out["rows"], [{"Model": "m", "Task": "IFEval"}])
+
+
+@unittest.skipUnless(eval_tasks, "celery not installed")
 class StatusTest(unittest.TestCase):
     def test_framework_status(self):
         def get_json(path):
