@@ -230,7 +230,11 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
-- 2026-10-08, built (not yet deployed):
+- 2026-10-08, deployed (cd09cde2), approval `benchmark-labels-retire-page`.
+  The ai-services-stack eval play and cse-panel-stack both ran with
+  failed=0. Live: Compare showed 25 labelled models, with variants next to
+  each other and "recorded as <name>" on hover; `/eval` returned 307 to
+  `https://cse-panel.<domain>/`; `/eval/api/state` returned 200.
   - **Model labels for Compare:** `model_aliases.json`, installed next to
     the eval worker, gives each recorded name a readable label (model ·
     quant · runtime · ctx). Compare sorts by it, so variants sit together,
