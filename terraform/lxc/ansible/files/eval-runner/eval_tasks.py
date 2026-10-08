@@ -37,6 +37,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -572,6 +573,12 @@ def compare():
     """Every result row for the panel's Compare tab: the same rows the
     Tables table holds, read from the results here (publish.py, installed
     next to this module)."""
+    # Celery only has the worker's directory on sys.path while it imports
+    # the app, so a later import of a module next to this one needs it put
+    # back (found live 2026-10-08: ModuleNotFoundError: publish).
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
     import publish  # noqa: PLC0415 -- only the ctl worker needs it
     return {"rows": publish.compare_rows(RESULTS_DIR), "at": _now()}
 
