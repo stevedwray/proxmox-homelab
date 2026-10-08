@@ -187,6 +187,14 @@ class RenderTest(unittest.TestCase):
             {"run_metrics": {"duration_seconds": 60, "unavailable": "reloaded"}})))
         self.assertIn("Not recorded", publish.render_metrics({})[0])
 
+    def test_prompt_tokens_are_labelled_and_tiny_prompt_work_has_no_speed(self):
+        cached = {"run_metrics": {"duration_seconds": 40, "model_under_test": {
+            "prompt_tokens": 4, "completion_tokens": 520, "prompt_seconds": 0.1, "generation_seconds": 27.4,
+            "generation_tokens_per_second": 19.0, "prompt_tokens_per_second": 40.0}}}
+        text = "\n".join(publish.render_metrics(cached))
+        self.assertIn("| Prompt tokens processed (cached text excluded) | 4 |", text)
+        self.assertIn("| Prompt processing (tokens/s) | – (too little prompt work to measure) |", text)
+
     def test_report_header_is_tidy(self):
         report = self.files["runs/glm-5.3-flash-both-20261002T000000Z/report.md"].decode()
         self.assertIn("- **Started:** 2026-10-02 00:00 UTC", report)

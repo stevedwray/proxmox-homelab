@@ -85,6 +85,10 @@ class EvalTabTest(unittest.TestCase):
         self.assertTrue(eval_tab.can_resume(dict(DONE, state="failed")))
         self.assertTrue(eval_tab.can_cancel({"state": "waiting"}))
         self.assertIn("unavailable", text(eval_tab.metrics_block({"duration_seconds": 5, "unavailable": "reloaded"})))
+        cached = text(eval_tab.metrics_block({"duration_seconds": 40, "model_under_test": {
+            "prompt_tokens": 4, "completion_tokens": 520, "prompt_seconds": 0.1, "prompt_tokens_per_second": 40.0}}))
+        self.assertIn("Prompt tokens processed (cached text excluded)", cached)
+        self.assertIn("too little prompt work", cached)
 
     def submit(self, rows, budget=False, note=""):
         """rows: {task: (on, size, count)} in TASKS order."""

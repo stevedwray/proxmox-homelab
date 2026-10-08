@@ -178,6 +178,16 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
+- 2026-10-08, smoke test review (6 runs on glm-5.3-flash, 01:24–03:35 UTC):
+  all completed and published with 0 harness errors, the queue chained
+  in table order, and metrics were recorded on every run (17–19 tok/s
+  generation). Found: llama-server's prompt counter excludes cached text
+  (GPQA showed 4 prompt tokens after a repeated question), so the label
+  is now "Prompt tokens processed (cached text excluded)", and prompt
+  speed shows "–" under 5 s of prompt work. Not yet exercised: the lock
+  against an overlapping CyberSecEval run. RepoBench on GLM is prompt
+  bound (about 145 tok/s), so a full run would take about 18 h.
+
 - 2026-10-08, eval-runner reports share widened to permissions 15 (read,
   update, create, delete), as for Reports/cyberseceval (5a7cb828),
   approval `eval-share-delete`. The ai-services-stack eval play ran with

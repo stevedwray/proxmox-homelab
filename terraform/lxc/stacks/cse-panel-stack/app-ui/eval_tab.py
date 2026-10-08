@@ -25,6 +25,7 @@ PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000
 NEXTCLOUD_URL = "https://nextcloud.lab.gibbsgreatly.xyz"
 SHARED_REPORTS_DIR = "/eval-runner"
 SAMPLES_PAGE = 10
+MIN_PROMPT_SECONDS = 5
 
 # Duplicated from app/eval_battery.py (panel-web), which validates again.
 TASKS = {
@@ -112,15 +113,20 @@ def metrics_block(metrics):
     if metrics.get("unavailable"):
         return block + [html.P(f"Tokens unavailable: {metrics['unavailable']}", className="text-warning")]
     mut = metrics.get("model_under_test") or {}
+    # Under MIN_PROMPT_SECONDS of prompt work (e.g. a cached prompt) the
+    # speed is noise; publish.py applies the same rule.
+    prompt_speed = (mut.get("prompt_tokens_per_second", "–") if (mut.get("prompt_seconds") or 0) >= MIN_PROMPT_SECONDS
+                    else "– (too little prompt work to measure)")
     rows = [
         ("Generated tokens (incl. reasoning)", f"{mut['completion_tokens']:,}" if "completion_tokens" in mut else "–"),
-        ("Prompt tokens", f"{mut['prompt_tokens']:,}" if "prompt_tokens" in mut else "–"),
+        ("Prompt tokens processed (cached text excluded)", f"{mut['prompt_tokens']:,}" if "prompt_tokens" in mut else "–"),
         ("Generation speed (tokens/s)", mut.get("generation_tokens_per_second", "–")),
-        ("Prompt processing (tokens/s)", mut.get("prompt_tokens_per_second", "–")),
+        ("Prompt processing (tokens/s)", prompt_speed),
     ]
     table = dbc.Table([html.Tbody([html.Tr([html.Td(k), html.Td(str(v))]) for k, v in rows])],
                       bordered=True, hover=True, size="sm")
-    return block + [table, html.P("From llama-server's /metrics counters, read before and after the run.",
+    return block + [table, html.P("From llama-server's /metrics counters, read before and after the run. "
+                                  "Prompt text the server still had cached from an earlier request isn't counted.",
                                   className="text-muted small")]
 
 

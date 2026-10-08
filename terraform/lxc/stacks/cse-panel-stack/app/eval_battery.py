@@ -292,7 +292,7 @@ function metricsLine(m) {
   if (mut) {
     parts.push(`${mut.completion_tokens.toLocaleString()} tokens generated`);
     if (mut.generation_tokens_per_second != null) parts.push(`${mut.generation_tokens_per_second} tokens/s`);
-    parts.push(`${mut.prompt_tokens.toLocaleString()} prompt tokens`);
+    parts.push(`${mut.prompt_tokens.toLocaleString()} prompt tokens processed (cached text excluded)`);
   } else if (m.unavailable) {
     parts.push(`tokens unavailable: ${esc(m.unavailable)}`);
   }

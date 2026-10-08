@@ -367,6 +367,17 @@ def _count(value):
     return f"{value:,}" if isinstance(value, int) else "–"
 
 
+# Prompt speed from under this many seconds of prompt work is noise (e.g.
+# a cached prompt: 4 tokens in 0.1 s).
+MIN_PROMPT_SECONDS = 5
+
+
+def _prompt_speed(mut):
+    if (mut.get("prompt_seconds") or 0) < MIN_PROMPT_SECONDS:
+        return "– (too little prompt work to measure)"
+    return _num(mut.get("prompt_tokens_per_second"))
+
+
 def render_metrics(record):
     """The report's Run metrics section (same figures as CyberSecEval's)."""
     metrics = (record or {}).get("run_metrics")
@@ -385,12 +396,14 @@ def render_metrics(record):
         "| Metric | Value |",
         "|---|---|",
         f"| Generated tokens (incl. reasoning) | {_count(mut.get('completion_tokens'))} |",
-        f"| Prompt tokens | {_count(mut.get('prompt_tokens'))} |",
+        f"| Prompt tokens processed (cached text excluded) | {_count(mut.get('prompt_tokens'))} |",
         f"| Generation speed (tokens/s) | {_num(mut.get('generation_tokens_per_second'))} |",
-        f"| Prompt processing (tokens/s) | {_num(mut.get('prompt_tokens_per_second'))} |",
+        f"| Prompt processing (tokens/s) | {_prompt_speed(mut)} |",
         "",
         "From llama-server's /metrics counters, read before and after the run. Exact only if nothing "
-        "else used Framework meanwhile: other benchmarks wait for the run, interactive chat does not.",
+        "else used Framework meanwhile: other benchmarks wait for the run, interactive chat does not. "
+        "Prompt tokens count only what the server had to process: text it still had cached from an "
+        "earlier request (a repeated question, a chat template, a multi-turn history) isn't counted.",
     ]
     return lines
 
