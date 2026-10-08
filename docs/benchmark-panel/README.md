@@ -178,6 +178,20 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 
 ## Log
 
+- 2026-10-08, prompts/responses, Nextcloud links and changed-only
+  publishing deployed (307ac3ed, plus 096964b0), approval
+  `eval-samples-links`: the ai-services-stack eval play and cse-panel-stack
+  both ran with failed=0.
+  - The live GPQA run (`glm-5.3-flash-gpqa-32k-limit1-20261008T012450Z`)
+    returned question #0: exact_match 1.0, answer (D), expected (D),
+    with readable prompt text.
+  - Real lm_eval 0.4.12 wraps the prompt JSON in a one-item list, which
+    the first build missed; fixed in 096964b0 and redeployed.
+  - Nextcloud reports the share as `/Reports/eval-runner` -> steve's
+    `/eval-runner`, permissions 1 (read only), so the operator can't delete
+    there. Asked: a "Delete run" button in the panel (recommended) or
+    delete rights on the share. Not decided yet.
+
 - 2026-10-08, size options reordered (4bcff2ce, 1461e402), approval
   `benchmark-panel-dash-order`: cse-panel-stack ran with failed=0, 15
   callbacks. Typing 30 in GPQA's box selected Choose on the live server.
