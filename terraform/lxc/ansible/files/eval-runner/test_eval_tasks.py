@@ -285,6 +285,50 @@ class MetricsTest(unittest.TestCase):
             self.assertEqual(json.load(fh)["task"], "bfcl")
 
 
+def gpqa_sample(doc_id, filt, extracted, match):
+    return {"doc_id": doc_id, "doc": {"Question": "q"}, "target": "(B)", "filter": filt,
+            "arguments": {"gen_args_0": {"arg_0": json.dumps([{"role": "user", "content": f"Question {doc_id}?"}]),
+                                         "arg_1": {"max_gen_toks": 8192}}},
+            "resps": [["Thinking... The answer is (B)"]], "filtered_resps": [extracted],
+            "metrics": ["exact_match"], "exact_match": match}
+
+
+@unittest.skipUnless(eval_tasks, "celery not installed")
+class SamplesTest(unittest.TestCase):
+    def write(self, root, name, rows):
+        path = os.path.join(root, "glm", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    def test_one_row_per_question_using_the_headline_filter(self):
+        root = tempfile.mkdtemp()
+        rows = []
+        for doc in range(3):
+            rows += [gpqa_sample(doc, "strict-match", "[invalid]", 0.0), gpqa_sample(doc, "flexible-extract", "(B)", 1.0)]
+        self.write(root, "samples_gpqa_diamond_cot_zeroshot_2026-10-08T14-00-00.jsonl", rows)
+        out = eval_tasks.read_samples(root, offset=1, limit=1)
+        task = out["tasks"][0]
+        self.assertEqual((task["task"], task["total"], task["offset"]), ("gpqa_diamond_cot_zeroshot", 3, 1))
+        item = task["items"][0]
+        self.assertEqual((item["doc_id"], item["extracted"], item["target"]), (1, "(B)", "(B)"))
+        self.assertEqual(item["scores"], {"exact_match": 1.0})
+        self.assertEqual(item["prompt"], "[user]\nQuestion 1?")
+        self.assertIn("The answer is (B)", item["response"])
+
+    def test_newest_file_wins_and_long_text_is_clipped(self):
+        root = tempfile.mkdtemp()
+        self.write(root, "samples_ifeval_2026-10-08T10-00-00.jsonl", [{"doc_id": 0, "resps": [["old"]]}])
+        self.write(root, "samples_ifeval_2026-10-08T11-00-00.jsonl", [{"doc_id": 0, "resps": [["x" * 20000]]}])
+        item = eval_tasks.read_samples(root)["tasks"][0]["items"][0]
+        self.assertTrue(item["response"].startswith("xxx"))
+        self.assertIn("more characters", item["response"])
+
+    def test_wrapper_runs_and_bad_names(self):
+        self.assertFalse(eval_tasks.read_samples(tempfile.mkdtemp())["available"])
+        self.assertEqual(eval_tasks.samples.apply(args=["../etc"]).get()["reason"], "bad run name")
+
+
 @unittest.skipUnless(eval_tasks, "celery not installed")
 class StatusTest(unittest.TestCase):
     def test_framework_status(self):

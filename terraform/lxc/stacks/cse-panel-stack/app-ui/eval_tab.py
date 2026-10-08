@@ -20,6 +20,11 @@ from dash.exceptions import PreventUpdate
 from flask import request
 
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
+# The reports folder as the operator sees it (shared from the eval-reports
+# account into their root; see app/eval_battery.py SHARED_REPORTS_DIR).
+NEXTCLOUD_URL = "https://nextcloud.lab.gibbsgreatly.xyz"
+SHARED_REPORTS_DIR = "/eval-runner"
+SAMPLES_PAGE = 10
 
 # Duplicated from app/eval_battery.py (panel-web), which validates again.
 TASKS = {
@@ -130,6 +135,11 @@ def job_detail(job):
         if job.get(key):
             meta += ["  ·  ", html.Strong(f"{label}: "), str(job[key])]
     children = [html.H4(title, className="card-title"), html.P(meta, className="text-muted")]
+    if job.get("run") and job.get("state") in ("done", "failed", "cancelled"):
+        children.append(html.P(html.A(
+            "This run's report in Nextcloud →",
+            href=f"{NEXTCLOUD_URL}/apps/files/?dir={SHARED_REPORTS_DIR}/runs/{job['run']}",
+            target="_blank", rel="noopener")))
     if job.get("error"):
         children.append(dbc.Alert(html.Pre(job["error"], className="mb-0"), color="danger"))
     if job.get("results"):
@@ -141,6 +151,47 @@ def job_detail(job):
     elif job.get("published"):
         children.append(html.P(f"Published: {job['published']}", className="text-muted small"))
     return children + metrics_block(job_metrics(job))
+
+
+def _verdict(scores):
+    values = [v for v in (scores or {}).values() if isinstance(v, (int, float, bool))]
+    if not values:
+        return ""
+    return "✓ correct" if all(float(v) >= 1 for v in values) else "✗ wrong"
+
+
+def samples_view(page, offset):
+    """One page of prompts and responses, per task, as accordions."""
+    if not page:
+        return [html.P("Press Show to load this run's prompts and responses.", className="text-muted small")]
+    if page.get("error"):
+        return [dbc.Alert(page["error"], color="warning")]
+    if not page.get("available"):
+        return [html.P(page.get("reason") or "Not available for this run.", className="text-muted")]
+    out = []
+    pre = {"whiteSpace": "pre-wrap", "maxHeight": "420px", "overflowY": "auto"}
+    for task in page.get("tasks") or []:
+        items = task.get("items") or []
+        first, last = offset + 1, offset + len(items)
+        out.append(html.H6(f"{task['task']} · {first}–{last} of {task['total']}" if items
+                           else f"{task['task']} · nothing at {first} (of {task['total']})", className="mt-3"))
+        accordion = []
+        for item in items:
+            title = " · ".join(p for p in (
+                f"#{item.get('doc_id')}", _verdict(item.get("scores")),
+                f"answer {item['extracted']}" if item.get("extracted") else "",
+                f"expected {item['target']}" if item.get("target") else "") if p)
+            body = [html.Strong("Prompt"), html.Pre(item.get("prompt") or "(not recorded)", style=pre),
+                    html.Strong("Response"), html.Pre(item.get("response") or "(empty)", style=pre)]
+            if item.get("scores"):
+                body.append(html.P("Scores: " + ", ".join(f"{k} {v}" for k, v in item["scores"].items()),
+                                   className="text-muted small mb-0"))
+            accordion.append(dbc.AccordionItem(body, title=title))
+        if accordion:
+            out.append(dbc.Accordion(accordion, start_collapsed=True, always_open=True))
+    out.append(html.P("Read live from the run's files on ai-services-stack; not copied to Nextcloud.",
+                      className="text-muted small mt-2 mb-0"))
+    return out
 
 
 def can_cancel(job):
@@ -252,6 +303,17 @@ runs_section = html.Div([
                        style={"display": "none"}),
         ], className="mt-2"),
     ])),
+    dbc.Card(id="eval-samples-card", className="mt-3", style={"display": "none"}, children=dbc.CardBody([
+        html.Div([
+            html.H5("Prompts and responses", className="mb-0 me-auto"),
+            dbc.Button("Show", id="eval-samples-show", color="primary", size="sm", className="me-2"),
+            dbc.Button("‹ Previous", id="eval-samples-prev", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Next ›", id="eval-samples-next", color="secondary", size="sm", outline=True),
+        ], className="d-flex align-items-center"),
+        dcc.Loading(html.Div(id="eval-samples", children=samples_view(None, 0)), type="dot"),
+    ])),
+    dcc.Store(id="eval-samples-offset", data=0),
 ])
 
 
@@ -369,13 +431,46 @@ def select(selected_rows, rows):
     Output("eval-detail", "children"),
     Output("eval-cancel-btn", "style"),
     Output("eval-resume-btn", "style"),
+    Output("eval-samples-card", "style"),
     Input("eval-selected", "data"),
     Input("eval-jobs", "data"),
 )
 def detail(job_id, jobs):
     job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
     hidden = {"display": "none"}
-    return job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden)
+    return (job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden),
+            ({} if job and job.get("run") else hidden))
+
+
+def fetch_samples(job_id, offset):
+    try:
+        resp = requests.get(f"{PANEL_API_BASE_URL}/eval/api/jobs/{job_id}/samples",
+                            params={"offset": offset, "limit": SAMPLES_PAGE}, timeout=40)
+        body = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        return {"error": f"Couldn't load them: {exc}"}
+    if resp.status_code != 200:
+        return {"error": f"Couldn't load them: {body.get('detail')}"}
+    return body
+
+
+@callback(
+    Output("eval-samples", "children"),
+    Output("eval-samples-offset", "data"),
+    Input("eval-samples-show", "n_clicks"),
+    Input("eval-samples-prev", "n_clicks"),
+    Input("eval-samples-next", "n_clicks"),
+    Input("eval-selected", "data"),
+    State("eval-samples-offset", "data"),
+    prevent_initial_call=True,
+)
+def show_samples(_show, _prev, _next, job_id, offset):
+    trigger = ctx.triggered_id
+    if trigger == "eval-selected" or not job_id:  # a different run: start again
+        return samples_view(None, 0), 0
+    offset = {"eval-samples-show": 0, "eval-samples-prev": max(0, (offset or 0) - SAMPLES_PAGE),
+              "eval-samples-next": (offset or 0) + SAMPLES_PAGE}[trigger]
+    return samples_view(fetch_samples(job_id, offset), offset), offset
 
 
 @callback(

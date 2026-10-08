@@ -137,6 +137,36 @@ class EvalTabTest(unittest.TestCase):
         self.assertEqual(eval_tab.typing_a_number_picks_choose(30), "count")
         self.assertIn("30 of 198", eval_tab.update_size("count", 30, {"task": "gpqa"}))
 
+    def test_finished_run_links_to_its_own_folder(self):
+        links = [c for c in eval_tab.job_detail(DONE) if hasattr(c, "children") and hasattr(c.children, "href")]
+        self.assertTrue(links[0].children.href.endswith("?dir=/eval-runner/runs/glm-ifeval-limit5-S"))
+
+    def test_samples_view(self):
+        page = {"available": True, "tasks": [{"task": "gpqa_diamond_cot_zeroshot", "total": 50, "offset": 10, "items": [
+            {"doc_id": 10, "prompt": "Q?", "response": "The answer is (B)", "extracted": "(B)", "target": "(B)",
+             "scores": {"exact_match": 1.0}},
+            {"doc_id": 11, "prompt": "Q2?", "response": "", "extracted": "[invalid]", "target": "(C)",
+             "scores": {"exact_match": 0.0}}]}]}
+        out = eval_tab.samples_view(page, 10)
+        self.assertEqual(out[0].children, "gpqa_diamond_cot_zeroshot · 11–12 of 50")
+        titles = [item.title for item in out[1].children]
+        self.assertEqual(titles, ["#10 · ✓ correct · answer (B) · expected (B)",
+                                  "#11 · ✗ wrong · answer [invalid] · expected (C)"])
+        self.assertIn("record scores only", text(eval_tab.samples_view(
+            {"available": False, "reason": "BFCL, AgentBench and RepoBench record scores only"}, 0)))
+
+    def test_paging_and_reset(self):
+        with mock.patch.object(eval_tab, "fetch_samples", return_value={"available": False, "reason": "r"}) as fetch:
+            with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-samples-next")):
+                _, offset = eval_tab.show_samples(1, None, 1, "j1", 10)
+            self.assertEqual((offset, fetch.call_args.args), (20, ("j1", 20)))
+            with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-samples-prev")):
+                _, offset = eval_tab.show_samples(1, 1, 1, "j1", 5)
+            self.assertEqual(offset, 0)
+            with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-selected")):
+                _, offset = eval_tab.show_samples(1, 1, 1, "j2", 30)
+            self.assertEqual(offset, 0)
+
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})
         with mock.patch.object(eval_tab.requests, "get", return_value=resp):

@@ -32,6 +32,7 @@ publish.py reads.
 """
 
 import datetime
+import glob
 import json
 import os
 import re
@@ -450,6 +451,95 @@ def cancel(job_id):
     if job.get("run") and job.get("state") == "running":
         run_cmd(["docker", "stop", f"eval-{job['run']}"], 120)
     return job
+
+
+# ---------------------------------------------------------------- samples
+# The panel's "prompts and responses" view. lm_eval tasks (GPQA, IFEval)
+# write samples_<task>_<stamp>.jsonl next to their results; the wrappers
+# (BFCL, AgentBench, RepoBench) keep no per-item log the panel can read.
+# Read on demand and returned through the result backend, never copied to
+# Nextcloud (GPQA's licence forbids reposting its questions).
+SAMPLE_TEXT_MAX = 12000
+SAMPLES_PAGE_MAX = 25
+# For tasks scored under several filters, the row the headline uses.
+PRIMARY_FILTER = {"gpqa_diamond_cot_zeroshot": "flexible-extract"}
+
+
+def _clip(text, limit=SAMPLE_TEXT_MAX):
+    text = "" if text is None else str(text)
+    return text if len(text) <= limit else text[:limit] + f"\n… ({len(text) - limit:,} more characters)"
+
+
+def _prompt_text(row):
+    """The prompt as sent: lm_eval keeps it in arguments.gen_args_0.arg_0,
+    for chat APIs a JSON list of messages."""
+    args = (row.get("arguments") or {}).get("gen_args_0") or {}
+    raw = args.get("arg_0") if isinstance(args, dict) else None
+    if raw is None and isinstance(row.get("arguments"), list) and row["arguments"]:
+        raw = row["arguments"][0][0] if isinstance(row["arguments"][0], list) else row["arguments"][0]
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return raw
+    if isinstance(raw, list):
+        return "\n\n".join(f"[{m.get('role', '?')}]\n{m.get('content', '')}" if isinstance(m, dict) else str(m)
+                           for m in raw)
+    return "" if raw is None else json.dumps(raw)
+
+
+def _sample_item(row):
+    resps = row.get("resps") or [[""]]
+    response = resps[0][0] if resps and resps[0] else ""
+    scores = {m: row.get(m) for m in (row.get("metrics") or []) if m in row}
+    return {
+        "doc_id": row.get("doc_id"),
+        "prompt": _clip(_prompt_text(row)),
+        "response": _clip(response),
+        "extracted": _clip((row.get("filtered_resps") or [""])[0], 500),
+        "target": _clip(row.get("target"), 500),
+        "scores": scores,
+    }
+
+
+def read_samples(run_dir, offset=0, limit=10):
+    """One page of a run's prompts and responses, per task."""
+    files = sorted(glob.glob(os.path.join(run_dir, "**", "samples_*.jsonl"), recursive=True))
+    if not files:
+        return {"available": False,
+                "reason": "No per-question log for this run: only GPQA and IFEval keep one "
+                          "(BFCL, AgentBench and RepoBench record scores only)."}
+    newest = {}
+    for path in files:  # samples_<task>_<stamp>.jsonl; a resume's newer file wins
+        task = os.path.basename(path)[len("samples_"):].rsplit("_", 1)[0]
+        newest[task] = path
+    tasks = []
+    for task, path in sorted(newest.items()):
+        rows = {}
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                doc = row.get("doc_id")
+                primary = PRIMARY_FILTER.get(task)
+                if doc not in rows or (primary and row.get("filter") == primary):
+                    rows[doc] = row
+        ordered = [rows[d] for d in sorted(rows, key=lambda d: (d is None, d))]
+        page = ordered[offset:offset + limit]
+        tasks.append({"task": task, "total": len(ordered), "offset": offset,
+                      "items": [_sample_item(r) for r in page]})
+    return {"available": True, "tasks": tasks}
+
+
+@app.task(name="eval_tasks.samples")
+def samples(run_name, offset=0, limit=10):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_name or ""):
+        return {"available": False, "reason": "bad run name"}
+    offset = max(0, int(offset or 0))
+    limit = max(1, min(SAMPLES_PAGE_MAX, int(limit or 10)))
+    return read_samples(os.path.join(RESULTS_DIR, run_name), offset, limit)
 
 
 @app.task(name="eval_tasks.publish")

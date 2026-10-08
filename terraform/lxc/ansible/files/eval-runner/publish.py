@@ -26,8 +26,13 @@ Environment (from /etc/eval-runner/eval-runner.env):
   NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD  its app password
   NEXTCLOUD_EVAL_TABLE_SHARE_WITH      user to share the table with (optional)
 
+Only files whose content changed since the last publish are uploaded
+(their hashes are kept in <results-root>/_publish-state.json), so in
+Nextcloud only the folders of new or changed runs get a new timestamp.
+
 Usage:
-  publish.py                    publish everything
+  publish.py                    publish what changed
+  publish.py --all              upload every file again
   publish.py --dry-run DIR      render everything into DIR, no network
 """
 
@@ -35,6 +40,7 @@ import argparse
 import base64
 import datetime
 import glob
+import hashlib
 import io
 import json
 import os
@@ -57,6 +63,7 @@ except ImportError:  # pragma: no cover - unit tests skip the xlsx checks
 RESULTS_ROOT = "/results"
 FINDINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "findings.md")
 FOLDER = "Reports/eval-runner"
+STATE_FILE = "_publish-state.json"
 TABLE_TITLE = "Model evaluations"
 TABLE_EMOJI = "📊"
 TABLES_API = "/index.php/apps/tables/api/1"
@@ -807,12 +814,40 @@ def ensure_share(nc, table_id, user):
         })
 
 
-def publish(nc, files, rows, share_with=None):
+def file_hashes(files):
+    return {rel: hashlib.sha256(content).hexdigest() for rel, content in files.items()}
+
+
+def load_state(path):
+    try:
+        with open(path) as fh:
+            return json.load(fh).get("files", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(path, hashes):
+    with open(path, "w") as fh:
+        json.dump({"files": hashes}, fh, indent=1, sort_keys=True)
+
+
+def changed_files(files, previous):
+    """Files that are new or differ from what the last publish uploaded."""
+    hashes = file_hashes(files)
+    return {rel for rel in files if previous.get(rel) != hashes[rel]}
+
+
+def publish(nc, files, rows, share_with=None, only=None):
+    """Upload files (all, or just those in `only`), then sync the table."""
     nc.ensure_folder(FOLDER)
+    made = set()
     for rel in sorted(files):
+        if only is not None and rel not in only:
+            continue
         parent = os.path.dirname(rel)
-        if parent:
+        if parent and parent not in made:
             nc.ensure_folder(f"{FOLDER}/{parent}")
+            made.add(parent)
         nc.put_file(f"{FOLDER}/{rel}", files[rel])
     for rel in STALE_FILES:
         if rel not in files:
@@ -832,6 +867,7 @@ def main(argv=None):
     parser.add_argument("--dry-run", metavar="DIR", help="render into DIR instead of publishing")
     parser.add_argument("--results-root", default=RESULTS_ROOT)
     parser.add_argument("--findings", default=FINDINGS_FILE)
+    parser.add_argument("--all", action="store_true", help="upload every file, changed or not")
     args = parser.parse_args(argv)
 
     findings = None
@@ -858,13 +894,20 @@ def main(argv=None):
         return 2
     nc = Nextcloud(env["NEXTCLOUD_EVAL_REPORTS_URL"], env["NEXTCLOUD_EVAL_REPORTS_USER"],
                    env["NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD"])
+    state_path = os.path.join(args.results_root, STATE_FILE)
+    only = None if args.all else changed_files(files, load_state(state_path))
     try:
         table_id, (created, updated, unchanged) = publish(
-            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None)
+            nc, files, rows, env.get("NEXTCLOUD_EVAL_TABLE_SHARE_WITH") or None, only=only)
     except NextcloudError as err:
         print(f"publish FAILED: {err}", file=sys.stderr)
         return 1
-    print(f"published {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
+    try:
+        save_state(state_path, file_hashes(files))
+    except OSError as err:  # next publish just uploads everything again
+        print(f"publish: could not save {state_path}: {err}", file=sys.stderr)
+    sent = len(files) if only is None else len(only)
+    print(f"published {sent} changed of {len(files)} files to {FOLDER}/; table '{TABLE_TITLE}' (id {table_id}): "
           f"{created} rows created, {updated} updated, {unchanged} unchanged")
     return 0
 

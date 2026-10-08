@@ -44,10 +44,15 @@ TASKS = {
 }
 BUDGET_TASKS = ("gpqa", "ifeval")
 NEXTCLOUD = "https://nextcloud.lab.gibbsgreatly.xyz"
+# The eval-reports account's Reports/eval-runner folder, as it appears to
+# the operator it's shared with: received shares land in the receiver's
+# root under the folder's own name (this Nextcloud sets no share_folder).
+SHARED_REPORTS_DIR = "/eval-runner"
 LINKS = {
     "Results table (Nextcloud Tables)": f"{NEXTCLOUD}/apps/tables",
-    "Reports folder": f"{NEXTCLOUD}/apps/files/?dir=/Reports/eval-runner",
+    "Reports folder": f"{NEXTCLOUD}/apps/files/?dir={SHARED_REPORTS_DIR}",
 }
+SAMPLES_TIMEOUT = 30
 
 
 def _redis():
@@ -150,6 +155,21 @@ def resume(job_id: str, x_authentik_username: str | None = Header(default=None))
              note=f"resume of {job.get('task', '')} {job['run']}", submitted_by=kwargs["submitted_by"])
     _remember(result.id)
     return {"submitted": [result.id]}
+
+
+@router.get("/api/jobs/{job_id}/samples")
+def samples(job_id: str, offset: int = 0, limit: int = 10):
+    """One page of the run's prompts and responses, read on demand by the
+    eval worker (eval_tasks.samples) from the run's own files."""
+    job = _job(job_id)
+    if not job.get("run"):
+        raise HTTPException(409, "this job has no run yet")
+    result = celery_app.send_task("eval_tasks.samples", args=[job["run"], max(0, offset), max(1, min(25, limit))],
+                                  queue=CTL_QUEUE)
+    try:
+        return result.get(timeout=SAMPLES_TIMEOUT)
+    except Exception as err:  # worker down or slow: say so rather than hang the page
+        raise HTTPException(504, f"the eval worker didn't answer: {type(err).__name__}")
 
 
 @router.post("/api/publish")

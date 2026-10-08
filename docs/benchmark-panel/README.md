@@ -143,6 +143,25 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
     card (log tail or results, errors, publish status, the run-metrics
     table), Cancel and Resume buttons for the selected run, "Publish to
     Nextcloud now", and the Nextcloud links.
+- **Prompts and responses** (2026-10-08): a card under the run detail
+  loads 10 at a time, with Previous and Next. Each entry is a collapsed
+  row ("#12 · ✓ correct · answer (B) · expected (B)") that opens to the
+  full prompt and response. panel-web `GET /eval/api/jobs/<id>/samples`
+  asks the ctl worker (`eval_tasks.samples`), which reads the run's
+  lm_eval `samples_*.jsonl` (newest file per task, GPQA's
+  flexible-extract row) and clips each text at 12,000 characters. Only
+  GPQA and IFEval keep such a log; BFCL, AgentBench and RepoBench write
+  scores only. Nothing is copied to Nextcloud, because GPQA's licence
+  forbids reposting its questions.
+- **Nextcloud links:** a folder shared to the operator lands in their
+  root as `/eval-runner`, not `/Reports/eval-runner` (that path is the
+  service account's). The Reports link uses `/eval-runner`, and each
+  finished run links straight to `/eval-runner/runs/<run>`.
+- **Publishing only what changed:** `publish.py` keeps per-file hashes in
+  `<results>/_publish-state.json` and uploads only new or changed files,
+  so only the new run's folder (plus the leaderboard files) gets a fresh
+  timestamp. `publish.py --all` re-uploads everything. Before this fix,
+  every publish re-uploaded every run's folder.
 - The old `/eval` HTML page is still linked under the tab. Retire it
   after the operator has used the tab.
 - Tests: `app-ui/test_eval_tab.py` (8). An in-process check of Dash's

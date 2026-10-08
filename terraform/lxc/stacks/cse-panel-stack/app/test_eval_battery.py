@@ -124,6 +124,20 @@ class EvalBatteryTest(unittest.TestCase):
         self.redis.set("eval:framework", json.dumps({"model": "glm-5.3-flash", "busy": 0, "slots": 4}))
         self.assertEqual(self.client.get("/eval/api/state").json()["framework"]["model"], "glm-5.3-flash")
 
+    def test_samples_ask_the_ctl_worker_for_the_jobs_run(self):
+        self.redis.set("eval:job:j1", json.dumps({"run": "glm-gpqa-limit1-S", "state": "done"}))
+        page = {"available": True, "tasks": []}
+        with mock.patch.object(eval_battery.celery_app, "send_task",
+                               return_value=mock.Mock(get=lambda timeout: page)) as send:
+            body = self.client.get("/eval/api/jobs/j1/samples?offset=10&limit=500").json()
+        self.assertEqual(body, page)
+        self.assertEqual(send.call_args.args, ("eval_tasks.samples",))
+        self.assertEqual(send.call_args.kwargs, {"args": ["glm-gpqa-limit1-S", 10, 25], "queue": "eval-runner-ctl"})
+        self.assertEqual(self.client.get("/eval/api/jobs/nope/samples").status_code, 409)
+
+    def test_reports_link_is_the_shared_folder(self):
+        self.assertTrue(eval_battery.LINKS["Reports folder"].endswith("?dir=/eval-runner"))
+
     def test_main_app_mounts_the_page(self):
         import app as panel_app
         paths = {r.path for r in panel_app.app.routes}

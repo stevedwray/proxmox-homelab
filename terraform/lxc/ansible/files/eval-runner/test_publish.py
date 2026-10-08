@@ -346,6 +346,30 @@ class PublishTest(unittest.TestCase):
         self.assertFalse(publish._same(43.0, 43.94))
 
 
+class ChangedOnlyTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        make_tree(self.tmp.name)
+        self.files, self.rows = publish.build_files(publish.collect(self.tmp.name), "# f\n", "NOW")
+
+    def test_only_changed_files_are_uploaded(self):
+        state = publish.file_hashes(self.files)
+        run = "runs/glm-5.3-flash-both-20261002T000000Z/report.md"
+        changed = dict(self.files, **{run: b"new report"})
+        self.assertEqual(publish.changed_files(changed, state), {run})
+        nc = FakeNextcloud()
+        publish.publish(nc, changed, self.rows, only={run})
+        self.assertEqual(set(nc.state["files"]), {f"{publish.FOLDER}/{run}"})
+
+    def test_state_round_trip_and_missing_state_means_everything(self):
+        path = os.path.join(self.tmp.name, publish.STATE_FILE)
+        self.assertEqual(publish.changed_files(self.files, publish.load_state(path)), set(self.files))
+        publish.save_state(path, publish.file_hashes(self.files))
+        self.assertEqual(publish.changed_files(self.files, publish.load_state(path)), set())
+        self.assertNotIn(publish.STATE_FILE, {os.path.basename(d) for _, d, _, _ in publish.collect(self.tmp.name)})
+
+
 class ClientTest(unittest.TestCase):
     def test_network_error_becomes_nextcloud_error(self):
         import urllib.error
