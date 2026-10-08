@@ -264,6 +264,11 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
     - The header says which zone; it's UTC if the browser doesn't say.
     - panel-ui now pins `tzdata`, because the slim image may have no zone
       files.
+    - Deployed (f8910d1a), approval `panel-local-time`: failed=0, 27
+      callbacks. tzdata installed; in the live container 21:30 UTC on
+      2026-10-08 came out as 2026-10-09 10:30 in Pacific/Auckland. A tab
+      still open from before raised IndexError: it sends one input fewer
+      than the server now expects. Reloading fixes it.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;
