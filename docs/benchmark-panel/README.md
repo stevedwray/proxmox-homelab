@@ -235,7 +235,12 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
 - 2026-10-09, Results lists and deleting runs (`fix/panel-results-delete`),
   operator report: the run list kept growing, the selected run's results
   were at the bottom under it, and there was no way to delete a run.
-  Not deployed yet.
+  Deployed (d1fd0279), approval `panel-results-delete`: the
+  ai-services-stack eval play (selftest OK), cse-controller and
+  cse-panel-stack all ran with failed=0. Live: 21 callbacks, both Delete
+  buttons wired, and `DELETE /eval/api/jobs/<unknown>` returned 404. The
+  first real delete is the operator's, and it is also the first live test
+  of deleting Tables rows.
   - **Both tabs:** the run list shows ten runs a page, so the selected
     run's results sit right under it. The selection stays on the same run
     when new runs are added at the top. A **Delete run** button under the
