@@ -13,7 +13,7 @@ import dash
 import dash_bootstrap_components as dbc
 import requests
 from plotly.subplots import make_subplots
-from dash import Input, Output, State, dash_table, dcc, html
+from dash import Input, Output, State, ctx, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import request
 
@@ -114,7 +114,16 @@ run_tab = dbc.Card(dbc.CardBody([
 results_tab = html.Div([
     dbc.Card(className="mt-3", children=dbc.CardBody([
         html.H4("Recent runs", className="card-title mb-3"),
-        html.P("Select a run to see its results below.", className="text-muted small"),
+        html.Div([
+            html.Span("Click a run to see its results below. Tick runs to delete them.",
+                      className="text-muted small me-auto"),
+            dbc.Button("Select all finished", id="cse-select-all", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Clear", id="cse-select-none", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Delete selected", id="cse-delete-btn", color="danger", size="sm", disabled=True),
+        ], className="d-flex align-items-center mb-2"),
+        dcc.ConfirmDialog(id="cse-delete-confirm"),
         dash_table.DataTable(
             id="jobs-table",
             columns=[
@@ -130,10 +139,11 @@ results_tab = html.Div([
                 {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
             data=[],
-            row_selectable="single",
+            row_selectable="multi",
             selected_rows=[],
-            # Ten to a page, so the selected run's results below stay in view.
+            # Ten to a page, so the clicked run's results below stay in view.
             page_size=10,
+            style_data_conditional=eval_tab.viewed_style(None),
             style_table={"width": "100%", "overflowX": "auto"},
             style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
             style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
@@ -141,17 +151,12 @@ results_tab = html.Div([
             style_as_list_view=True,
         ),
         dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
-        dcc.Store(id="cse-selected"),
-    ])),
-    dbc.Card(className="mt-3", children=dbc.CardBody([
-        html.Div(id="run-detail", children=[
-            html.P("Select a run above to see its results.", className="text-muted"),
-        ]),
-        # Always in the layout; shown once a run is selected.
-        dbc.Button("Delete run", id="cse-delete-btn", color="danger", size="sm", outline=True,
-                   className="mt-2", style={"display": "none"}),
-        dcc.ConfirmDialog(id="cse-delete-confirm"),
+        dcc.Store(id="cse-selected"),  # the run whose results are shown
+        dcc.Store(id="cse-checked"),   # the ticked runs
         dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
+    ])),
+    dbc.Card(className="mt-3", children=dbc.CardBody(id="run-detail", children=[
+        html.P("Click a run above to see its results.", className="text-muted"),
     ])),
 
     dbc.Card(className="mt-3", children=dbc.CardBody([
@@ -507,53 +512,92 @@ def _speed_chart_figure(jobs):
     Output("speed-chart", "figure"),
     Output("jobs-table", "selected_rows"),
     Input("poll-interval", "n_intervals"),
-    State("cse-selected", "data"),
+    State("cse-checked", "data"),
 )
-def poll_jobs(_n, selected=None):
+def poll_jobs(_n, checked=None):
     try:
         resp = requests.get(f"{PANEL_API_BASE_URL}/jobs", timeout=10)
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
     rows = [{**job, **_metric_columns(job), "id": job["job_id"]} for job in jobs]
-    # New runs are added at the top, so keep the selection on the same run,
-    # not the same row number.
-    keep = [i for i, row in enumerate(rows) if row["id"] == selected][:1] if selected else []
+    # New runs are added at the top, so keep the ticks on the same runs,
+    # not the same row numbers.
+    keep = eval_tab.selected_index(rows, checked)
     return rows, _results_chart_figure(rows), _speed_chart_figure(rows), keep
 
 
 @app.callback(
     Output("cse-selected", "data"),
+    Input("jobs-table", "active_cell"),
+    prevent_initial_call=True,
+)
+def select_job(active_cell):
+    """Clicking a run shows its results (ticking it doesn't)."""
+    if not active_cell or not active_cell.get("row_id"):
+        raise PreventUpdate
+    return active_cell["row_id"]
+
+
+@app.callback(
+    Output("cse-checked", "data"),
+    Output("cse-delete-btn", "children"),
+    Output("cse-delete-btn", "disabled"),
     Input("jobs-table", "selected_rows"),
     State("jobs-table", "data"),
 )
-def select_job(selected_rows, rows):
-    if not selected_rows or not rows or selected_rows[0] >= len(rows):
-        return None
-    return rows[selected_rows[0]]["job_id"]
+def tick_jobs(selected_rows, rows):
+    ids = [rows[i]["job_id"] for i in selected_rows or [] if rows and i < len(rows)]
+    return ids, f"Delete selected ({len(ids)})" if ids else "Delete selected", not ids
 
 
-def cse_delete_message(job):
-    running = job.get("state") in ("PENDING", "WAITING", "STARTED", "RETRY")
-    return (f"Delete the {job.get('benchmark', '?')} run {job['job_id'][:8]} for good?\n\n"
-            + ("It hasn't finished: deleting it cancels it first.\n\n" if running else "")
-            + "This removes its results on cse-controller, its report folder in Nextcloud and its row in "
-              "Compare and the results table. This can't be undone.")
+CSE_UNFINISHED = ("PENDING", "WAITING", "STARTED", "RETRY")
+
+
+@app.callback(
+    Output("jobs-table", "selected_rows", allow_duplicate=True),
+    Input("cse-select-all", "n_clicks"),
+    Input("cse-select-none", "n_clicks"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def tick_many_jobs(_all, _none, rows):
+    if ctx.triggered_id == "cse-select-none":
+        return []
+    return [i for i, row in enumerate(rows or []) if row.get("state") not in CSE_UNFINISHED]
+
+
+def cse_delete_message(jobs):
+    names = [f"{j.get('benchmark', '?')} {j['job_id'][:8]} ({j.get('state_label') or j.get('state')})" for j in jobs]
+    shown = "\n".join(f"  • {n}" for n in names[:12]) + (f"\n  … and {len(names) - 12} more" if len(names) > 12 else "")
+    running = sum(j.get("state") in CSE_UNFINISHED for j in jobs)
+    return (f"Delete {len(jobs)} run{'s' if len(jobs) != 1 else ''} for good?\n\n{shown}\n\n"
+            + (f"{running} of them haven't finished: deleting cancels them first.\n\n" if running else "")
+            + "For each run this removes its results on cse-controller, its report folder in Nextcloud and "
+              "its row in Compare and the results table. This can't be undone.")
 
 
 @app.callback(
     Output("cse-delete-confirm", "displayed"),
     Output("cse-delete-confirm", "message"),
     Input("cse-delete-btn", "n_clicks"),
-    State("cse-selected", "data"),
+    State("cse-checked", "data"),
     State("jobs-table", "data"),
     prevent_initial_call=True,
 )
-def confirm_cse_delete(clicks, job_id, rows):
-    job = next((r for r in rows or [] if r.get("job_id") == job_id), None)
-    if not clicks or not job:
+def confirm_cse_delete(clicks, checked, rows):
+    jobs = [r for r in rows or [] if r.get("job_id") in set(checked or [])]
+    if not clicks or not jobs:
         raise PreventUpdate
-    return True, cse_delete_message(job)
+    return True, cse_delete_message(jobs)
+
+
+def _delete_one(job_id):
+    """DELETE a job, cancelling it first if it's unfinished (the dialog said so)."""
+    d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10).json()
+    if d.get("in_progress"):
+        d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10).json()
+    return d
 
 
 @app.callback(
@@ -561,34 +605,41 @@ def confirm_cse_delete(clicks, job_id, rows):
     Output("delete-result", "color"),
     Output("delete-result", "is_open"),
     Input("cse-delete-confirm", "submit_n_clicks"),
-    State("cse-selected", "data"),
+    State("cse-checked", "data"),
     prevent_initial_call=True,
 )
-def delete_cse_job(clicks, job_id):
-    if not clicks or not job_id:
+def delete_cse_jobs(clicks, checked):
+    if not clicks or not checked:
         raise PreventUpdate
-    try:
-        d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10).json()
-        if d.get("in_progress"):  # the dialog said it would cancel it
-            d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10).json()
-    except (requests.RequestException, ValueError) as exc:
-        return f"Delete failed: {exc}", "danger", True
-    if "deleted" not in d:
-        return f"Delete failed: {d.get('error', '?')}", "danger", True
-    return (f"Run {job_id[:8]} deleted. Nextcloud and Compare catch up in a minute or so.", "success", True)
+    deleted, errors = 0, []
+    for job_id in checked:
+        try:
+            d = _delete_one(job_id)
+        except (requests.RequestException, ValueError) as exc:
+            errors.append(f"{job_id[:8]}: {exc}")
+            continue
+        if "deleted" in d:
+            deleted += 1
+        else:
+            errors.append(f"{job_id[:8]}: {d.get('error', '?')}")
+    text = f"Deleted {deleted} run{'s' if deleted != 1 else ''}. Nextcloud and Compare catch up in a minute or so."
+    if errors:
+        return f"{text} Failed: {'; '.join(errors)}", "danger", True
+    return text, "success", True
 
 
 @app.callback(
     Output("run-detail", "children"),
-    Output("cse-delete-btn", "style"),
+    Output("jobs-table", "style_data_conditional"),
     Input("cse-selected", "data"),
     Input("jobs-table", "data"),
 )
 def show_run_detail(job_id, data):
     job = next((r for r in data or [] if r.get("job_id") == job_id), None) if job_id else None
     if not job:
-        return [html.P("Select a run above to see its results.", className="text-muted")], {"display": "none"}
-    return run_detail(job), {}
+        return ([html.P("Click a run above to see its results.", className="text-muted")],
+                eval_tab.viewed_style(None))
+    return run_detail(job), eval_tab.viewed_style(job_id)
 
 
 def run_detail(job):

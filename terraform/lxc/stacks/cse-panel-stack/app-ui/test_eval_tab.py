@@ -70,28 +70,37 @@ class CseResultsTest(unittest.TestCase):
     JOBS = [{"job_id": "c2", "benchmark": "mitre", "state": "SUCCESS", "state_label": "Done"},
             {"job_id": "c1", "benchmark": "instruct", "state": "STARTED", "state_label": "Running"}]
 
-    def test_poll_keeps_the_selection_on_the_same_run(self):
+    def test_poll_keeps_the_ticks_on_the_same_runs(self):
         resp = mock.Mock(json=lambda: {"jobs": self.JOBS})
         with mock.patch.object(panel_ui.requests, "get", return_value=resp):
-            rows, _, _, kept = panel_ui.poll_jobs(1, "c1")
-            *_, none = panel_ui.poll_jobs(2, "gone")
-        self.assertEqual(([r["id"] for r in rows], kept, none), (["c2", "c1"], [1], []))
+            rows, _, _, kept = panel_ui.poll_jobs(1, ["c1", "gone"])
+        self.assertEqual(([r["id"] for r in rows], kept), (["c2", "c1"], [1]))
 
-    def test_delete_button_only_with_a_run_selected(self):
-        self.assertEqual(panel_ui.show_run_detail(None, self.JOBS)[1], {"display": "none"})
+    def test_clicking_shows_and_ticking_counts(self):
+        self.assertEqual(panel_ui.select_job({"row": 0, "column": 1, "row_id": "c2"}), "c2")
         detail, style = panel_ui.show_run_detail("c2", self.JOBS)
-        self.assertEqual(style, {})
         self.assertIn("mitre", text(detail))
-        self.assertIn("cancels it first", panel_ui.cse_delete_message(self.JOBS[1]))
-        self.assertNotIn("cancels", panel_ui.cse_delete_message(self.JOBS[0]))
+        self.assertIn('{id} = "c2"', str(style))
+        self.assertEqual(panel_ui.tick_jobs([0, 1], self.JOBS), (["c2", "c1"], "Delete selected (2)", False))
+        self.assertEqual(panel_ui.tick_jobs([], self.JOBS), ([], "Delete selected", True))
+        with mock.patch.object(panel_ui, "ctx", mock.Mock(triggered_id="cse-select-all")):
+            self.assertEqual(panel_ui.tick_many_jobs(1, None, self.JOBS), [0])  # finished only
 
-    def test_confirmed_delete_forces_only_after_the_api_says_in_progress(self):
-        answers = iter([{"error": "job is started", "in_progress": True}, {"deleted": "c1"}])
+    def test_message_lists_runs_and_warns_about_unfinished(self):
+        message = panel_ui.cse_delete_message(self.JOBS)
+        self.assertIn("Delete 2 runs", message)
+        self.assertIn("instruct c1", message)
+        self.assertIn("1 of them haven't finished", message)
+        self.assertNotIn("finished:", panel_ui.cse_delete_message(self.JOBS[:1]))
+
+    def test_confirmed_delete_deletes_each_and_forces_only_when_told_in_progress(self):
+        answers = iter([{"deleted": "c2"}, {"error": "job is started", "in_progress": True}, {"deleted": "c1"}])
         resp = mock.Mock(json=lambda: next(answers))
         with mock.patch.object(panel_ui.requests, "delete", return_value=resp) as delete:
-            message, colour, _ = panel_ui.delete_cse_job(1, "c1")
+            message, colour, _ = panel_ui.delete_cse_jobs(1, ["c2", "c1"])
         self.assertEqual(colour, "success")
-        self.assertEqual(delete.call_args.kwargs.get("params"), {"force": "true"})
+        self.assertIn("Deleted 2 runs", message)
+        self.assertEqual([c.kwargs.get("params") for c in delete.call_args_list], [None, None, {"force": "true"}])
 
 
 @unittest.skipUnless(eval_tab, "dash not installed")
@@ -203,37 +212,55 @@ class EvalTabTest(unittest.TestCase):
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})
         with mock.patch.object(eval_tab.requests, "get", return_value=resp):
-            jobs, rows, links, selected = eval_tab.poll(1)
-            *_, kept = eval_tab.poll(2, "j1")
+            jobs, rows, links, ticked = eval_tab.poll(1)
+            *_, kept = eval_tab.poll(2, ["j1"])
         self.assertEqual(rows[0]["task"], "ifeval")
         self.assertEqual(len([l for l in links if hasattr(l, "href")]), 2)
-        self.assertEqual((selected, kept), ([], [0]))
+        self.assertEqual((ticked, kept), ([], [0]))
 
-    def test_selection_follows_the_run_when_new_runs_arrive(self):
-        rows = [{"id": "new"}, {"id": "j1"}]
-        self.assertEqual(eval_tab.selected_index(rows, "j1"), [1])
-        self.assertEqual(eval_tab.selected_index(rows, "deleted"), [])
+    def test_ticks_follow_the_runs_when_new_runs_arrive(self):
+        rows = [{"id": "new"}, {"id": "j1"}, {"id": "j0"}]
+        self.assertEqual(eval_tab.selected_index(rows, ["j0", "j1", "deleted"]), [1, 2])
 
-    def test_delete_button_and_message(self):
-        self.assertTrue(eval_tab.can_delete(DONE))
-        self.assertFalse(eval_tab.can_delete(dict(DONE, state="running")))
-        self.assertFalse(eval_tab.can_delete(None))
-        self.assertIn("glm-ifeval-limit5-S", eval_tab.delete_message(DONE))
-        self.assertIn("never started", eval_tab.delete_message({"state": "cancelled"}))
-        styles = eval_tab.detail("j1", [DONE])
-        self.assertEqual(styles[3], {})  # delete shown
-        self.assertEqual(eval_tab.detail("j1", [dict(DONE, state="running")])[3], {"display": "none"})
+    def test_clicking_shows_and_ticking_counts(self):
+        self.assertEqual(eval_tab.select({"row": 1, "column": 0, "row_id": "j1"}), "j1")
+        out = eval_tab.detail("j1", [DONE])
+        self.assertIn('{id} = "j1"', str(out[4]))
+        rows = [eval_tab.job_row(DONE), eval_tab.job_row(dict(DONE, id="j2"))]
+        self.assertEqual(eval_tab.tick([1], rows), (["j2"], "Delete selected (1)", False))
+        running = dict(DONE, id="j3", state="running")
+        with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-select-all")):
+            self.assertEqual(eval_tab.tick_many(1, None, [DONE, running]), [0])
+        with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-select-none")):
+            self.assertEqual(eval_tab.tick_many(None, 1, [DONE, running]), [])
 
-    def test_confirmed_delete_calls_the_api(self):
-        resp = mock.Mock(status_code=200, json=lambda: {"deleted": ["j1"], "run": "glm-ifeval-limit5-S"})
+    def test_delete_plan_and_message(self):
+        running = dict(DONE, id="j3", state="running", run="r3")
+        never = {"id": "j4", "task": "bfcl", "state": "cancelled"}
+        doomed, skipped = eval_tab.delete_plan([DONE, running, never], ["j1", "j3", "j4"])
+        self.assertEqual(([j["id"] for j in doomed], [j["id"] for j in skipped]), (["j1", "j4"], ["j3"]))
+        message = eval_tab.delete_message(doomed, skipped)
+        self.assertIn("Delete 2 runs", message)
+        self.assertIn("glm-ifeval-limit5-S", message)
+        self.assertIn("bfcl job (never started a run)", message)
+        self.assertIn("1 ticked run is still going", message)
+
+    def test_confirmed_delete_deletes_each_ticked_run(self):
+        answers = iter([(200, {"deleted": ["j1"], "run": "glm-ifeval-limit5-S"}), (404, {"detail": "no such job"}),
+                        (200, {"deleted": ["j4"], "run": None})])
+
+        def fake(method, url, **_):
+            status, body = next(answers)
+            return mock.Mock(status_code=status, json=lambda: body)
+        jobs = [DONE, dict(DONE, id="j2"), {"id": "j4", "task": "bfcl", "state": "cancelled"}]
         with panel_ui.server.test_request_context(), \
                 mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-delete-confirm")), \
-                mock.patch.object(eval_tab.requests, "request", return_value=resp) as req:
-            message, colour, _ = eval_tab.act(None, None, None, 1, "j1")
-        self.assertEqual(req.call_args.args[:2], ("DELETE", f"{eval_tab.PANEL_API_BASE_URL}/eval/api/jobs/j1"))
+                mock.patch.object(eval_tab.requests, "request", side_effect=fake) as req:
+            message, colour, _ = eval_tab.act(None, None, None, 1, None, ["j1", "j2", "j4"], jobs)
+        self.assertEqual([c.args[0] for c in req.call_args_list], ["DELETE"] * 3)
         self.assertEqual(colour, "success")
-        self.assertIn("glm-ifeval-limit5-S deleted", message)
-
+        self.assertEqual(message, "Deleted 1 run, removed 1 job that never ran. "
+                                  "Nextcloud and the results table catch up in a minute or so.")
 
 if __name__ == "__main__":
     unittest.main()

@@ -241,10 +241,16 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   buttons wired, and `DELETE /eval/api/jobs/<unknown>` returned 404. The
   first real delete is the operator's, and it is also the first live test
   of deleting Tables rows.
-  - **Both tabs:** the run list shows ten runs a page, so the selected
-    run's results sit right under it. The selection stays on the same run
-    when new runs are added at the top. A **Delete run** button under the
-    results asks for confirmation first.
+  - **Both tabs:** the run list shows ten runs a page, so the clicked
+    run's results sit right under it, and that row is highlighted.
+    - Ticks are for deleting: **Delete selected (N)**, with **Select all
+      finished** and **Clear** beside it. The confirm dialog lists the runs
+      first.
+    - Ticks stay on the same runs when new runs are added at the top.
+    - The first version had one Delete button per run; the operator asked
+      for multi-select the same day.
+    - Eval runs that are still going are skipped. A ticked unfinished
+      CyberSecEval run is cancelled, and the dialog says so.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;

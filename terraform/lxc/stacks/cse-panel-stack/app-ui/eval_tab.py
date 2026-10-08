@@ -213,20 +213,37 @@ def can_delete(job):
     return bool(job) and job.get("state") not in LIVE_STATES
 
 
-def delete_message(job):
-    """The confirm dialog's text for deleting this job's run."""
-    if not job.get("run"):
-        return "Remove this job from the list? It never started a run, so there is nothing else to delete."
-    return (f"Delete run {job['run']} for good?\n\n"
-            "This removes its results on ai-services-stack, its report folder in Nextcloud, its rows in "
-            "the results table and Compare, and every entry for it here (resumes included). "
-            "The leaderboard is republished without it. This can't be undone.")
+def delete_plan(jobs, ids):
+    """The ticked jobs split into (to delete, still going so left alone)."""
+    ticked = [j for j in jobs or [] if j.get("id") in set(ids or [])]
+    return [j for j in ticked if can_delete(j)], [j for j in ticked if not can_delete(j)]
 
 
-def selected_index(rows, job_id):
-    """The table row to keep selected after a refresh: new runs are added at
-    the top, so the same index would point at a different run."""
-    return [i for i, row in enumerate(rows) if row.get("id") == job_id][:1] if job_id else []
+def delete_message(doomed, skipped):
+    """The confirm dialog's text for deleting the ticked runs."""
+    names = [j.get("run") or f"{j.get('task') or '?'} job (never started a run)" for j in doomed]
+    shown = "\n".join(f"  • {n}" for n in names[:12]) + (f"\n  … and {len(names) - 12} more" if len(names) > 12 else "")
+    text = f"Delete {len(doomed)} run{'s' if len(doomed) != 1 else ''} for good?\n\n{shown}\n\n"
+    if skipped:
+        text += f"{len(skipped)} ticked run{'s are' if len(skipped) != 1 else ' is'} still going and won't be deleted.\n\n"
+    return text + ("For each run this removes its results on ai-services-stack, its report folder in Nextcloud, "
+                   "its rows in the results table and Compare, and every entry for it here (resumes included). "
+                   "The leaderboard is republished without them. This can't be undone.")
+
+
+def selected_index(rows, job_ids):
+    """The table rows to keep ticked after a refresh: new runs are added at
+    the top, so the same row numbers would point at different runs."""
+    wanted = set(job_ids or [])
+    return [i for i, row in enumerate(rows) if row.get("id") in wanted]
+
+
+def viewed_style(job_id):
+    """Highlight the run whose results are shown below the list."""
+    rules = [{"if": {"state": "active"}, "backgroundColor": "#2a2a4a", "border": "1px solid #333"}]
+    if job_id:
+        rules.append({"if": {"filter_query": f'{{id}} = "{job_id}"'}, "backgroundColor": "#2a2a4a"})
+    return rules
 
 
 def size_hint(task, size, count):
@@ -303,6 +320,16 @@ runs_section = html.Div([
                        size="sm", outline=True),
         ], className="d-flex align-items-center mb-2"),
         html.Div(id="eval-links", className="small mb-3"),
+        html.Div([
+            html.Span("Click a run to see its results below. Tick runs to delete them.",
+                      className="text-muted small me-auto"),
+            dbc.Button("Select all finished", id="eval-select-all", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Clear", id="eval-select-none", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Delete selected", id="eval-delete-btn", color="danger", size="sm", disabled=True),
+        ], className="d-flex align-items-center mb-2"),
+        dcc.ConfirmDialog(id="eval-delete-confirm"),
         dash_table.DataTable(
             id="eval-jobs-table",
             columns=[
@@ -314,8 +341,9 @@ runs_section = html.Div([
                 {"name": "Tokens", "id": "tokens"},
                 {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
-            # Ten to a page, so the selected run's results below stay in view.
-            data=[], row_selectable="single", selected_rows=[], page_size=10,
+            # Ten to a page, so the clicked run's results below stay in view.
+            data=[], row_selectable="multi", selected_rows=[], page_size=10,
+            style_data_conditional=viewed_style(None),
             **TABLE_STYLE,
         ),
         dbc.Alert(id="eval-action-result", is_open=False, className="mt-3"),
@@ -327,12 +355,9 @@ runs_section = html.Div([
         html.Div([
             dbc.Button("Cancel run", id="eval-cancel-btn", color="danger", size="sm", className="me-2",
                        style={"display": "none"}),
-            dbc.Button("Resume run", id="eval-resume-btn", color="secondary", size="sm", className="me-2",
-                       style={"display": "none"}),
-            dbc.Button("Delete run", id="eval-delete-btn", color="danger", size="sm", outline=True,
+            dbc.Button("Resume run", id="eval-resume-btn", color="secondary", size="sm",
                        style={"display": "none"}),
         ], className="mt-2"),
-        dcc.ConfirmDialog(id="eval-delete-confirm"),
     ])),
     dbc.Card(id="eval-samples-card", className="mt-3", style={"display": "none"}, children=dbc.CardBody([
         html.Div([
@@ -352,7 +377,8 @@ def layout():
     return html.Div([
         dcc.Interval(id="eval-poll", interval=5000, n_intervals=0),
         dcc.Store(id="eval-jobs"),
-        dcc.Store(id="eval-selected"),
+        dcc.Store(id="eval-selected"),  # the run whose results are shown
+        dcc.Store(id="eval-checked"),   # the ticked runs
         html.Div(run_section, id="eval-run-section"),
         html.Div(runs_section, id="eval-runs-section"),
     ])
@@ -437,9 +463,9 @@ def submit(_n, on, on_ids, sizes, counts, budget, note):
     Output("eval-links", "children"),
     Output("eval-jobs-table", "selected_rows"),
     Input("eval-poll", "n_intervals"),
-    State("eval-selected", "data"),
+    State("eval-checked", "data"),
 )
-def poll(_n, selected=None):
+def poll(_n, checked=None):
     try:
         state = requests.get(f"{PANEL_API_BASE_URL}/eval/api/state", timeout=10).json()
     except (requests.RequestException, ValueError):
@@ -451,26 +477,52 @@ def poll(_n, selected=None):
             links.append("  ·  ")
         links.append(html.A(label, href=url, target="_blank", rel="noopener"))
     rows = [job_row(j) for j in jobs]
-    return jobs, rows, links, selected_index(rows, selected)
+    return jobs, rows, links, selected_index(rows, checked)
 
 
 @callback(
     Output("eval-selected", "data"),
+    Input("eval-jobs-table", "active_cell"),
+    prevent_initial_call=True,
+)
+def select(active_cell):
+    """Clicking a run shows its results (ticking it doesn't)."""
+    if not active_cell or not active_cell.get("row_id"):
+        raise PreventUpdate
+    return active_cell["row_id"]
+
+
+@callback(
+    Output("eval-checked", "data"),
+    Output("eval-delete-btn", "children"),
+    Output("eval-delete-btn", "disabled"),
     Input("eval-jobs-table", "selected_rows"),
     State("eval-jobs-table", "data"),
 )
-def select(selected_rows, rows):
-    if not selected_rows or not rows or selected_rows[0] >= len(rows):
-        return None
-    return rows[selected_rows[0]]["id"]
+def tick(selected_rows, rows):
+    ids = [rows[i]["id"] for i in selected_rows or [] if rows and i < len(rows)]
+    return ids, f"Delete selected ({len(ids)})" if ids else "Delete selected", not ids
+
+
+@callback(
+    Output("eval-jobs-table", "selected_rows", allow_duplicate=True),
+    Input("eval-select-all", "n_clicks"),
+    Input("eval-select-none", "n_clicks"),
+    State("eval-jobs", "data"),
+    prevent_initial_call=True,
+)
+def tick_many(_all, _none, jobs):
+    if ctx.triggered_id == "eval-select-none":
+        return []
+    return [i for i, job in enumerate(jobs or []) if can_delete(job)]
 
 
 @callback(
     Output("eval-detail", "children"),
     Output("eval-cancel-btn", "style"),
     Output("eval-resume-btn", "style"),
-    Output("eval-delete-btn", "style"),
     Output("eval-samples-card", "style"),
+    Output("eval-jobs-table", "style_data_conditional"),
     Input("eval-selected", "data"),
     Input("eval-jobs", "data"),
 )
@@ -478,22 +530,43 @@ def detail(job_id, jobs):
     job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
     hidden = {"display": "none"}
     return (job_detail(job), ({} if can_cancel(job) else hidden), ({} if can_resume(job) else hidden),
-            ({} if can_delete(job) else hidden), ({} if job and job.get("run") else hidden))
+            ({} if job and job.get("run") else hidden), viewed_style(job and job_id))
 
 
 @callback(
     Output("eval-delete-confirm", "displayed"),
     Output("eval-delete-confirm", "message"),
     Input("eval-delete-btn", "n_clicks"),
-    State("eval-selected", "data"),
+    State("eval-checked", "data"),
     State("eval-jobs", "data"),
     prevent_initial_call=True,
 )
-def confirm_delete(clicks, job_id, jobs):
-    job = next((j for j in jobs or [] if j.get("id") == job_id), None) if job_id else None
-    if not clicks or not job:
+def confirm_delete(clicks, checked, jobs):
+    doomed, skipped = delete_plan(jobs, checked)
+    if not clicks or not doomed:
         raise PreventUpdate
-    return True, delete_message(job)
+    return True, delete_message(doomed, skipped)
+
+
+def delete_jobs(job_ids):
+    """DELETE each job; a 404 means an earlier delete already took it (a
+    resume goes with its run). Returns (deleted runs, removed, errors)."""
+    runs, removed, errors = [], 0, []
+    for job_id in job_ids:
+        try:
+            status, data = _request("DELETE", f"/eval/api/jobs/{job_id}")
+        except requests.RequestException as exc:
+            errors.append(str(exc))
+            continue
+        if status == 404:
+            continue
+        if status != 200:
+            errors.append(str(data.get("detail")))
+        elif data.get("run"):
+            runs.append(data["run"])
+        else:
+            removed += 1
+    return runs, removed, errors
 
 
 def fetch_samples(job_id, offset):
@@ -536,25 +609,30 @@ def show_samples(_show, _prev, _next, job_id, offset):
     Input("eval-publish-btn", "n_clicks"),
     Input("eval-delete-confirm", "submit_n_clicks"),
     State("eval-selected", "data"),
+    State("eval-checked", "data"),
+    State("eval-jobs", "data"),
     prevent_initial_call=True,
 )
-def act(cancel_clicks, resume_clicks, publish_clicks, delete_clicks, job_id):
+def act(cancel_clicks, resume_clicks, publish_clicks, delete_clicks, job_id, checked=None, jobs=None):
     trigger = ctx.triggered_id
     clicks = {"eval-cancel-btn": cancel_clicks, "eval-resume-btn": resume_clicks,
               "eval-publish-btn": publish_clicks, "eval-delete-confirm": delete_clicks}.get(trigger)
     if not clicks:
         return no_update, no_update, no_update
     if trigger == "eval-delete-confirm":
-        if not job_id:
-            return "Select a run first.", "warning", True
-        try:
-            status, data = _request("DELETE", f"/eval/api/jobs/{job_id}")
-        except requests.RequestException as exc:
-            return f"Delete failed: {exc}", "danger", True
-        if status != 200:
-            return f"Delete failed: {data.get('detail')}", "danger", True
-        what = f"Run {data['run']} deleted" if data.get("run") else "Removed from the list"
-        return f"{what}. Nextcloud and the results table catch up in a minute or so.", "success", True
+        doomed, _ = delete_plan(jobs, checked)
+        runs, removed, errors = delete_jobs([j["id"] for j in doomed])
+        done = []
+        if runs:
+            done.append(f"Deleted {len(runs)} run{'s' if len(runs) != 1 else ''}")
+        if removed:
+            done.append(f"removed {removed} job{'s' if removed != 1 else ''} that never ran")
+        text = (", ".join(done) or "Nothing deleted") + "."
+        if runs:
+            text += " Nextcloud and the results table catch up in a minute or so."
+        if errors:
+            return f"{text} Failed: {'; '.join(errors)}", "danger", True
+        return text, "success", True
     if trigger == "eval-publish-btn":
         path, done = "/eval/api/publish", "Publish requested; the reports update in a minute or so."
     elif not job_id:
