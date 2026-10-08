@@ -282,6 +282,9 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
     - Not done: live token counts during a run. That needs a worker change,
       and its deploy restarts the run worker, so it waits for a gap
       between runs.
+    - Deployed (5dbdeb87), approval `panel-persist-progress`: failed=0, 27
+      callbacks. The running IFEval showed "27m 15s so far". The run and
+      the three queued jobs weren't touched.
   - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
     the run or a resume of it is still going) removes:
     - every panel entry for the run, resumes included;
