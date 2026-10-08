@@ -178,6 +178,7 @@ def request_for(task, size, count, note, budget):
 
 def benchmark_row(task):
     spec = SIZES[task]
+    per_level = spec.get("per_level", 1)
     return dbc.Row(className="py-2 border-bottom border-secondary", children=[
         dbc.Col(dbc.Switch(id={"type": "eval-on", "task": task}, value=False,
                            label=html.Span([html.Strong(spec["name"]), html.Br(),
@@ -185,15 +186,18 @@ def benchmark_row(task):
                 md=5),
         dbc.Col([
             html.Div([
+                # Choose last, so its number box sits right after it.
+                # Labels show what actually runs (RepoBench: all levels).
                 dbc.RadioItems(
                     id={"type": "eval-size", "task": task}, value="pilot", inline=True,
-                    options=[{"label": f"Pilot ({spec['pilot']})", "value": "pilot"},
-                             {"label": "Choose", "value": "count"},
-                             {"label": f"Full ({spec['max']})", "value": "full"}],
-                    className="me-2",
+                    options=[{"label": f"Pilot ({spec['pilot'] * per_level:,})", "value": "pilot"},
+                             {"label": f"Full ({spec['max'] * per_level:,})", "value": "full"},
+                             {"label": "Choose" + (" per level" if per_level > 1 else ""), "value": "count"}],
+                    className="me-1",
                 ),
                 dbc.Input(id={"type": "eval-count", "task": task}, type="number", min=1, max=spec["max"], step=1,
-                          value=min(50, spec["max"]), size="sm", style={"maxWidth": "90px"}),
+                          value=min(50, spec["max"]), size="sm",
+                          style={"maxWidth": "90px", "display": "none"}),
             ], className="d-flex align-items-center flex-wrap"),
             html.Div(id={"type": "eval-hint", "task": task}, className="text-muted small mt-1"),
         ], md=7),
@@ -273,14 +277,16 @@ def _post(path, json=None):
 
 
 @callback(
-    Output({"type": "eval-count", "task": MATCH}, "disabled"),
+    Output({"type": "eval-count", "task": MATCH}, "style"),
     Output({"type": "eval-hint", "task": MATCH}, "children"),
     Input({"type": "eval-size", "task": MATCH}, "value"),
     Input({"type": "eval-count", "task": MATCH}, "value"),
     State({"type": "eval-size", "task": MATCH}, "id"),
 )
 def update_size(size, count, size_id):
-    return size != "count", size_hint(size_id["task"], size, count)
+    """The number box only shows with Choose."""
+    style = {"maxWidth": "90px", "display": "block" if size == "count" else "none"}
+    return style, size_hint(size_id["task"], size, count)
 
 
 @callback(
