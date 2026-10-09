@@ -176,7 +176,7 @@ class SwapConfigTest(unittest.TestCase):
         with open(self.catalog, "w") as fh:
             json.dump({"default": "glm-upstream", "models": [
                 {"id": "glm", "name": "GLM", "gguf": "/m/GLM-00001-of-00002.gguf", "backends": ["upstream", "upstream-hip"],
-                 "args": ["--chat-template-kwargs", '{"reasoning_effort":"high"}'], "note": "no fork"},
+                 "settings": {"chat_template_kwargs": {"reasoning_effort": "high"}}, "note": "no fork"},
                 {"id": "qwen", "name": "Qwen", "gguf": "/m/qwen.gguf", "backends": ["fork", "upstream", "upstream-hip"]},
             ]}, fh)
         self.config = os.path.join(t, "config.yaml")
@@ -288,3 +288,77 @@ class ShippedCatalogTest(unittest.TestCase):
         default_model, _, backend = catalog["default"].rpartition("-")
         self.assertIn(default_model, ids)
         self.assertIn(backend, lb.BACKEND_LABEL.values())
+
+
+class SettingsTest(SwapConfigTest):
+    """Structured settings, variants and overrides (docs/model-params, phase A)."""
+
+    def entries(self, overrides=None):
+        return dict(lb.swap_entries(self.cfg, lb.load_catalog(self.cfg), size=lambda g: 1, overrides=overrides or {}))
+
+    def test_settings_become_flags_in_a_fixed_order(self):
+        self.assertEqual(lb.settings_args({"min_p": 0.01, "ctx_size": 131072, "jinja": True, "temperature": 1,
+                                           "chat_template_kwargs": {"enable_thinking": False},
+                                           "extra_args": ["--no-mmap"]}),
+                         ["--ctx-size", "131072", "--jinja", "--chat-template-kwargs", '{"enable_thinking":false}',
+                          "--temp", "1.0", "--min-p", "0.01", "--no-mmap"])
+        self.assertEqual(lb.settings_args({"jinja": False, "chat_template_kwargs": {}}), [])
+        with self.assertRaises(lb.Fail):
+            lb.settings_args({"temprature": 1})
+
+    def test_override_layers_over_the_catalogue_and_null_removes(self):
+        e = self.entries({"glm": {"settings": {"temperature": 0.6, "chat_template_kwargs": None}}})
+        cmd = e["glm-upstream"]["cmd"]
+        self.assertIn("--temp 0.6", cmd)
+        self.assertNotIn("reasoning_effort", cmd)
+        self.assertNotIn("--temp", self.entries()["glm-upstream"]["cmd"])
+
+    def test_variants_add_entries_per_backend_and_build(self):
+        variants = [{"suffix": "effort-medium", "label": "effort medium",
+                     "settings": {"chat_template_kwargs": {"reasoning_effort": "medium"}}}]
+        lb.set_link(os.path.join(self.root, "fork"), "candidate", "20261009-bbbbbbbbb")
+        e = self.entries({"glm": {"variants": variants}, "qwen": {"variants": [{"suffix": "t06", "settings": {"temperature": 0.6}}]}})
+        self.assertEqual(list(e), ["glm-upstream", "glm-upstream-effort-medium",
+                                   "qwen-nathanw", "qwen-nathanw-t06", "qwen-nathanw-candidate", "qwen-nathanw-candidate-t06",
+                                   "qwen-upstream", "qwen-upstream-t06"])
+        v = e["glm-upstream-effort-medium"]
+        self.assertIn('"reasoning_effort":"medium"', v["cmd"])
+        self.assertIn("--alias glm-upstream-effort-medium", v["cmd"])
+        self.assertEqual(v["name"], "GLM [effort medium] · upstream 20261008-ccccccccc")
+        self.assertEqual((v["model"], v["variant"], v["candidate"]), ("glm", "effort-medium", False))
+
+    def test_bad_overrides_are_refused(self):
+        for bad in ({"nope": {}}, {"glm": {"settings": {"bogus": 1}}},
+                    {"glm": {"variants": [{"suffix": "Has Space"}]}}, {"glm": {"variants": [{"suffix": "candidate"}]}},
+                    {"glm": {"variants": [{"suffix": "hip"}]}}):
+            with self.assertRaises(lb.Fail, msg=bad):
+                self.entries(bad)
+
+    def test_overrides_file_is_read_by_swap_config(self):
+        path = os.path.join(self.tmp.name, "overrides.json")
+        with open(path, "w") as fh:
+            json.dump({"qwen": {"settings": {"top_k": 20}}}, fh)
+        self.cfg["swap"]["overrides"] = path
+        entries = dict(lb.swap_entries(self.cfg, lb.load_catalog(self.cfg), size=lambda g: 1))
+        self.assertIn("--top-k 20", entries["qwen-nathanw"]["cmd"])
+
+    def test_models_status_for_the_panel(self):
+        with mock.patch.object(lb, "running_models", return_value=["qwen-nathanw"]):
+            st = lb.models_status(self.cfg, overrides={"qwen": {"settings": {"top_k": 20}}}, size=lambda g: 1)
+        qwen = next(m for m in st["models"] if m["id"] == "qwen")
+        self.assertEqual((qwen["catalog"], qwen["override"]["settings"], qwen["effective"]), ({}, {"top_k": 20}, {"top_k": 20}))
+        self.assertEqual(st["loaded"], ["qwen-nathanw"])
+        self.assertEqual([e["id"] for e in st["entries"]], ["glm-upstream", "qwen-nathanw", "qwen-upstream"])
+        self.assertIn("reasoning_format", st["setting_keys"])
+        json.dumps(st)  # publishable
+
+
+class ShippedCatalogSettingsTest(unittest.TestCase):
+    def test_every_shipped_model_has_valid_settings(self):
+        with open(os.path.join(HERE, "..", "llama-swap", "models.json")) as fh:
+            catalog = json.load(fh)
+        for m in lb.effective_models(catalog, {}):
+            self.assertNotIn("args", m, m["id"])
+            lb.settings_args(m["settings"])
+        laguna = next(m for m in catalog["models"] if m["id"] == "laguna-s-2.1-heretic")
+        self.assertEqual(laguna["settings"]["reasoning_format"], "deepseek")

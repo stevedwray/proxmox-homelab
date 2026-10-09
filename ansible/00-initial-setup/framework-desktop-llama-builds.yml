@@ -62,6 +62,9 @@
         cmake: ["-DGGML_HIP=ON", "-DAMDGPU_TARGETS=gfx1151", "-DGGML_NATIVE=ON"]
     llama_builds_swap:
       models: "{{ llama_builds_etc }}/models.json"
+      # Settings changed later (the panel's Models page, docs/model-params);
+      # written on Framework, never by this playbook.
+      overrides: "{{ llama_builds_etc }}/overrides.json"
       config: /home/steve/llama-swap/config.yaml
       url: http://127.0.0.1:8099
       bin: /usr/local/bin/llama-swap

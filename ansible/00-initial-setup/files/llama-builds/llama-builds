@@ -11,8 +11,9 @@ rollback after its source is gone. Three symlinks per backend:
   candidate  the newest build, for <model>-<backend>-candidate
   previous   the build current replaced, for rollback
 
-llama-swap's config is written from the model catalogue (models.json) and
-these links (phase 4): one entry per model and backend, and a candidate
+llama-swap's config is written from the model catalogue (models.json), the
+overrides file (overrides.json, settings changed later) and these links
+(phase 4): one entry per model and backend, and a candidate
 entry only while a backend's candidate differs from its current build.
 build, promote and rollback rewrite it. A rewrite makes llama-swap reload,
 which stops the loaded model, so it is refused while a benchmark holds
@@ -368,12 +369,86 @@ def _shell_arg(arg):
     return arg if re.fullmatch(r"[A-Za-z0-9_./:=,+-]+", arg) else "'" + arg.replace("'", "'\\''") + "'"
 
 
-def swap_entries(cfg, catalog, size=weights_mb):
-    """[(entry id, {name, description, cmd})], grouped by model, current
-    before candidate. Backends with no current build get no entry."""
+# Settings a model (or variant) can have, in the order their flags are
+# written, and how each becomes llama-server flags.
+SETTINGS = (
+    ("ctx_size", lambda v: ["--ctx-size", str(int(v))]),
+    ("parallel", lambda v: ["--parallel", str(int(v))]),
+    ("jinja", lambda v: ["--jinja"] if v else []),
+    ("chat_template_file", lambda v: ["--chat-template-file", str(v)]),
+    ("chat_template_kwargs", lambda v: ["--chat-template-kwargs", json.dumps(v, separators=(",", ":"))] if v else []),
+    ("reasoning_format", lambda v: ["--reasoning-format", str(v)]),
+    ("reasoning_budget", lambda v: ["--reasoning-budget", str(int(v))]),
+    ("temperature", lambda v: ["--temp", str(float(v))]),
+    ("top_p", lambda v: ["--top-p", str(float(v))]),
+    ("top_k", lambda v: ["--top-k", str(int(v))]),
+    ("min_p", lambda v: ["--min-p", str(float(v))]),
+    ("extra_args", lambda v: [str(a) for a in v]),
+)
+SETTING_KEYS = tuple(k for k, _ in SETTINGS)
+VARIANT_RE = re.compile(r"^[a-z0-9][a-z0-9.]*(-[a-z0-9.]+)*$")
+
+
+def settings_args(settings):
+    """llama-server flags for a settings object (unknown keys refused)."""
+    unknown = set(settings) - set(SETTING_KEYS)
+    if unknown:
+        raise Fail(f"unknown setting(s): {', '.join(sorted(unknown))}; known: {', '.join(SETTING_KEYS)}")
+    out = []
+    for key, flags in SETTINGS:
+        if settings.get(key) is not None:
+            out += flags(settings[key])
+    return out
+
+
+def merge_settings(base, override):
+    """override layered over base; a null value removes the setting."""
+    out = dict(base or {})
+    for key, value in (override or {}).items():
+        if value is None:
+            out.pop(key, None)
+        else:
+            out[key] = value
+    return out
+
+
+def load_overrides(cfg):
+    """{model id: {settings, variants}} from the overrides file, or {}."""
+    path = swap_cfg(cfg).get("overrides")
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def effective_models(catalog, overrides):
+    """The catalogue's models with overrides applied: each gets its final
+    settings and variants (an override's variants list replaces the
+    catalogue's)."""
+    models = []
+    known = {m["id"] for m in catalog["models"]}
+    stray = set(overrides) - known
+    if stray:
+        raise Fail(f"overrides for unknown model(s): {', '.join(sorted(stray))}")
+    for model in catalog["models"]:
+        over = overrides.get(model["id"], {})
+        m = dict(model, settings=merge_settings(model.get("settings"), over.get("settings")),
+                 variants=over.get("variants", model.get("variants", [])))
+        for v in m["variants"]:
+            if not VARIANT_RE.match(v.get("suffix", "")) or v["suffix"] in ("candidate",) + tuple(BACKEND_LABEL.values()):
+                raise Fail(f"{model['id']}: bad variant suffix {v.get('suffix')!r}")
+        settings_args(m["settings"])  # validate
+        models.append(m)
+    return models
+
+
+def swap_entries(cfg, catalog, size=weights_mb, overrides=None):
+    """[(entry id, {name, description, cmd, ...})], grouped by model, current
+    before candidate, each followed by its variants. Backends with no
+    current build get no entry. Ids: <model>-<backend>[-candidate][-<variant>]."""
     swap = swap_cfg(cfg)
     entries = []
-    for model in catalog["models"]:
+    for model in effective_models(catalog, load_overrides(cfg) if overrides is None else overrides):
         mb = size(model["gguf"])
         for backend in model["backends"]:
             if backend not in cfg["backends"]:
@@ -383,19 +458,46 @@ def swap_entries(cfg, catalog, size=weights_mb):
             builds = [("current", cur, "")] if cur else []
             if cand and cand != cur:
                 builds.append(("candidate", cand, "-candidate"))
+            label = BACKEND_LABEL.get(backend, backend)
             for link, name, suffix in builds:
-                entry_id = f"{model['id']}-{BACKEND_LABEL.get(backend, backend)}{suffix}"
-                argv = [os.path.join(bdir, link, "bin", "llama-server"), "--host", "0.0.0.0",
-                        "--port", str(swap.get("model_port", 8080)), "--api-key-file", swap["api_key_file"],
-                        "--alias", entry_id, "--n-gpu-layers", "999", "--metrics", "-m", model["gguf"],
-                        *model.get("args", [])]
-                what = f"{BACKEND_LABEL.get(backend, backend)} {'CANDIDATE ' if suffix else ''}{name}"
-                entries.append((entry_id, {
-                    "name": f"{model['name']} · {what}",
-                    "description": " ".join(x for x in (f"{mb:,} MiB of weights.", model.get("note", "")) if x),
-                    "cmd": f"{swap['memgate']} {mb}\n" + " ".join(_shell_arg(a) for a in argv),
-                }))
+                for variant in [None, *model["variants"]]:
+                    settings = merge_settings(model["settings"], variant and variant.get("settings"))
+                    entry_id = f"{model['id']}-{label}{suffix}" + (f"-{variant['suffix']}" if variant else "")
+                    argv = [os.path.join(bdir, link, "bin", "llama-server"), "--host", "0.0.0.0",
+                            "--port", str(swap.get("model_port", 8080)), "--api-key-file", swap["api_key_file"],
+                            "--alias", entry_id, "--n-gpu-layers", "999", "--metrics", "-m", model["gguf"],
+                            *settings_args(settings)]
+                    what = f"{label} {'CANDIDATE ' if suffix else ''}{name}"
+                    tag = f" [{variant.get('label') or variant['suffix']}]" if variant else ""
+                    entries.append((entry_id, {
+                        "name": f"{model['name']}{tag} · {what}",
+                        "description": " ".join(x for x in (f"{mb:,} MiB of weights.", model.get("note", "")) if x),
+                        "cmd": f"{swap['memgate']} {mb}\n" + " ".join(_shell_arg(a) for a in argv),
+                        "model": model["id"], "backend": backend, "build": name, "candidate": bool(suffix),
+                        "variant": variant["suffix"] if variant else None, "settings": settings,
+                    }))
     return entries
+
+
+def models_status(cfg, catalog=None, overrides=None, size=weights_mb):
+    """What the panel's Models page shows (Redis key framework:llama-models):
+    each model's catalogue and effective settings, its variants, its entries,
+    and which entry is loaded."""
+    catalog = catalog or load_catalog(cfg)
+    overrides = load_overrides(cfg) if overrides is None else overrides
+    entries = swap_entries(cfg, catalog, size, overrides)
+    return {
+        "checked": now(), "default": catalog.get("default"), "loaded": running_models(cfg),
+        "setting_keys": list(SETTING_KEYS),
+        "models": [{"id": m["id"], "name": m["name"], "gguf": m["gguf"], "backends": m["backends"],
+                    "note": m.get("note", ""), "catalog": m.get("settings", {}),
+                    "override": overrides.get(m["id"], {}),
+                    "effective": next(e for e in effective_models(catalog, overrides) if e["id"] == m["id"])["settings"],
+                    "variants": next(e for e in effective_models(catalog, overrides) if e["id"] == m["id"])["variants"]}
+                   for m in catalog["models"]],
+        "entries": [{"id": eid, **{k: e[k] for k in ("name", "model", "backend", "build", "candidate", "variant")}}
+                    for eid, e in entries],
+    }
 
 
 def render_swap(cfg, entries):
@@ -555,20 +657,35 @@ def resp(*args):
     return b"".join(out)
 
 
-def publish(cfg, st):
+def publish(cfg, st, models=None):
+    """Write the build status (and, if given, the models status) to Redis."""
     target = cfg.get("publish")
     if not target:
         raise Fail("no publish target in the config")
     with open(target["password_file"]) as fh:
         password = fh.read().strip()
+    sets = [("SET", target.get("key", "framework:llama-builds"), json.dumps(st), "EX", STATUS_TTL)]
+    if models is not None:
+        sets.append(("SET", target.get("models_key", "framework:llama-models"), json.dumps(models), "EX", STATUS_TTL))
     with socket.create_connection((target["host"], int(target.get("port", 6379))), timeout=10) as sock:
         reader = sock.makefile("rb")
-        for cmd in (("AUTH", password), ("SELECT", target.get("db", 1)),
-                    ("SET", target.get("key", "framework:llama-builds"), json.dumps(st), "EX", STATUS_TTL)):
+        for cmd in (("AUTH", password), ("SELECT", target.get("db", 1)), *sets):
             sock.sendall(resp(*cmd))
             reply = reader.readline().decode().strip()
             if not reply.startswith("+"):
                 raise Fail(f"redis {cmd[0]}: {reply}")
+
+
+def models_or_none(cfg):
+    """The models status to publish, or None (no swap section, or a broken
+    catalogue/override, which `swap-config` reports itself)."""
+    if not cfg.get("swap"):
+        return None
+    try:
+        return models_status(cfg)
+    except (Fail, OSError, ValueError) as err:
+        print(f"(models status not published: {err})", file=sys.stderr)
+        return None
 
 
 # ------------------------------------------------------------------ main
@@ -599,7 +716,7 @@ def main(argv=None):
             st = status(cfg, do_fetch=not args.no_fetch)
             print(json.dumps(st, indent=1) if args.json else "\n".join(status_lines(st)))
             if args.publish:
-                publish(cfg, st)
+                publish(cfg, st, models_or_none(cfg))
             return 0
         os.makedirs(cfg["root"], exist_ok=True)
         with open(os.path.join(cfg["root"], ".lock"), "w") as lock:
@@ -618,7 +735,7 @@ def main(argv=None):
                     print(f"(llama-swap config not rewritten: {err})", file=sys.stderr)
             if cfg.get("publish"):
                 try:  # keep the panel current; a Redis blip isn't the command's failure
-                    publish(cfg, status(cfg, do_fetch=False))
+                    publish(cfg, status(cfg, do_fetch=False), models_or_none(cfg))
                 except (Fail, OSError) as err:
                     print(f"(status not published: {err})", file=sys.stderr)
         return 0
