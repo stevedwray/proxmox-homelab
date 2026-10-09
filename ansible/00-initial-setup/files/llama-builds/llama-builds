@@ -7,17 +7,25 @@ one branch of one git remote. Builds go to <root>/<backend>/<date>-<sha>/bin
 and are self-contained (RPATH $ORIGIN), so a build dir can be kept for
 rollback after its source is gone. Three symlinks per backend:
 
-  current    what llama-swap starts (its macros point at current/bin/llama-server)
-  candidate  the newest build, for llm-control's "candidate" entries
+  current    what llama-swap starts for <model>-<backend>
+  candidate  the newest build, for <model>-<backend>-candidate
   previous   the build current replaced, for rollback
 
-A link change takes effect the next time a model is loaded; nothing reloads.
+llama-swap's config is written from the model catalogue (models.json) and
+these links (phase 4): one entry per model and backend, and a candidate
+entry only while a backend's candidate differs from its current build.
+build, promote and rollback rewrite it. A rewrite makes llama-swap reload,
+which stops the loaded model, so it is refused while a benchmark holds
+Framework, and the model that was loaded is loaded again afterwards.
 
   llama-builds status [--json] [--publish] [--no-fetch]
   llama-builds build <backend> [ref]     build ref (default: the tracked branch) -> candidate
   llama-builds promote <backend>         current := candidate
   llama-builds rollback <backend>        current := previous
   llama-builds prune <backend>           keep the newest <keep> builds plus the linked ones
+  llama-builds swap-config [--dry-run] [--force]
+                                         rewrite llama-swap's config if it changed
+  llama-builds preload                   load the default model if none is loaded (boot)
 
 --publish writes the status JSON to cse-panel's Redis (key framework:llama-builds),
 where the Benchmark Control Panel shows it in its header.
@@ -32,6 +40,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 
 CONFIG = os.environ.get("LLAMA_BUILDS_CONFIG", "/etc/llama-builds/backends.json")
 BUILD_RE = re.compile(r"^\d{8}-[0-9a-f]{9}$")
@@ -297,6 +308,242 @@ def build(cfg, backend, ref=None):
     return f"{backend}: built {name} ({info['version']}); candidate -> {name}. Try it in llm-control, then: llama-builds promote {backend}"
 
 
+# ------------------------------------------------------------------ llama-swap config
+
+BACKEND_LABEL = {"fork": "fork", "upstream": "upstream", "upstream-hip": "hip"}
+SWAP_HEADER = """\
+# Written by `llama-builds swap-config` from /etc/llama-builds/models.json and
+# the builds under {root} -- do not edit by hand; edit models.json (in the repo:
+# ansible/00-initial-setup/files/llama-swap/models.json) and run
+# `llama-builds swap-config`. docs/llama-swap/plan.md, phase 4.
+#
+# llama-swap is the control page (https://llm-control.<lab domain>): pick a
+# model and it starts that llama-server on 0.0.0.0:8080, where every client
+# already talks to it. No secrets here; the servers read /etc/llamacpp/api-key.
+
+# Qwen3.8-Flash-Next (~104 GiB of weights) takes minutes to load from NVMe.
+healthCheckTimeout: 900
+logLevel: info
+logToStdout: "proxy,upstream"
+sendLoadingState: false
+# Never unload on idle; a model stays loaded until another is loaded.
+globalTTL: 0
+unloadTimeout: 60
+# No startup preload hook: it also fires on every config reload and would
+# load the default over whatever was loaded. llama-swap-preload.service loads
+# the default at boot instead.
+
+models:
+"""
+
+
+def swap_cfg(cfg):
+    swap = cfg.get("swap")
+    if not swap:
+        raise Fail("no swap section in the config")
+    return swap
+
+
+def load_catalog(cfg):
+    with open(swap_cfg(cfg)["models"]) as fh:
+        return json.load(fh)
+
+
+SHARD_RE = re.compile(r"^(.*)-\d{5}-of-(\d{5})\.gguf$")
+
+
+def weights_mb(gguf):
+    """Size of a model's weights in MiB (all shards of a split GGUF)."""
+    m = SHARD_RE.match(gguf)
+    paths = ([f"{m.group(1)}-{i:05d}-of-{m.group(2)}.gguf" for i in range(1, int(m.group(2)) + 1)]
+             if m else [gguf])
+    return -(-sum(os.path.getsize(p) for p in paths) // 2 ** 20)
+
+
+def _yaml_str(value):
+    return json.dumps(value)  # a JSON string is a valid YAML double-quoted scalar
+
+
+def _shell_arg(arg):
+    return arg if re.fullmatch(r"[A-Za-z0-9_./:=,+-]+", arg) else "'" + arg.replace("'", "'\\''") + "'"
+
+
+def swap_entries(cfg, catalog, size=weights_mb):
+    """[(entry id, {name, description, cmd})], grouped by model, current
+    before candidate. Backends with no current build get no entry."""
+    swap = swap_cfg(cfg)
+    entries = []
+    for model in catalog["models"]:
+        mb = size(model["gguf"])
+        for backend in model["backends"]:
+            if backend not in cfg["backends"]:
+                continue
+            bdir = backend_dir(cfg, backend)
+            cur, cand = link_target(bdir, "current"), link_target(bdir, "candidate")
+            builds = [("current", cur, "")] if cur else []
+            if cand and cand != cur:
+                builds.append(("candidate", cand, "-candidate"))
+            for link, name, suffix in builds:
+                entry_id = f"{model['id']}-{BACKEND_LABEL.get(backend, backend)}{suffix}"
+                argv = [os.path.join(bdir, link, "bin", "llama-server"), "--host", "0.0.0.0",
+                        "--port", str(swap.get("model_port", 8080)), "--api-key-file", swap["api_key_file"],
+                        "--alias", entry_id, "--n-gpu-layers", "999", "--metrics", "-m", model["gguf"],
+                        *model.get("args", [])]
+                what = f"{BACKEND_LABEL.get(backend, backend)} {'CANDIDATE ' if suffix else ''}{name}"
+                entries.append((entry_id, {
+                    "name": f"{model['name']} · {what}",
+                    "description": " ".join(x for x in (f"{mb:,} MiB of weights.", model.get("note", "")) if x),
+                    "cmd": f"{swap['memgate']} {mb}\n" + " ".join(_shell_arg(a) for a in argv),
+                }))
+    return entries
+
+
+def render_swap(cfg, entries):
+    out = [SWAP_HEADER.format(root=cfg["root"])]
+    for entry_id, e in entries:
+        out += [f"  {_yaml_str(entry_id)}:", f"    name: {_yaml_str(e['name'])}",
+                f"    description: {_yaml_str(e['description'])}",
+                f"    proxy: {_yaml_str('http://127.0.0.1:' + str(swap_cfg(cfg).get('model_port', 8080)))}",
+                "    cmd: |", *[f"      {line}" for line in e["cmd"].splitlines()], ""]
+    out += ["routing:", "  router:", "    use: group", "    settings:", "      groups:",
+            "        # One model at a time: they all use :8080, and most need most of the memory.",
+            "        chat:", "          swap: true", "          exclusive: true", "          members:"]
+    out += [f"            - {_yaml_str(entry_id)}" for entry_id, _ in entries]
+    return "\n".join(out) + "\n"
+
+
+def redis_get(cfg, key):
+    target = cfg["publish"]
+    with open(target["password_file"]) as fh:
+        password = fh.read().strip()
+    with socket.create_connection((target["host"], int(target.get("port", 6379))), timeout=10) as sock:
+        reader = sock.makefile("rb")
+        for cmd in (("AUTH", password), ("SELECT", target.get("db", 1))):
+            sock.sendall(resp(*cmd))
+            reply = reader.readline().decode().strip()
+            if not reply.startswith("+"):
+                raise Fail(f"redis {cmd[0]}: {reply}")
+        sock.sendall(resp("GET", key))
+        head = reader.readline().decode().strip()
+        if head == "$-1":
+            return None
+        if not head.startswith("$"):
+            raise Fail(f"redis GET: {head}")
+        return reader.read(int(head[1:]) + 2)[:-2].decode()
+
+
+def swap_http(cfg, path, timeout=10):
+    with urllib.request.urlopen(swap_cfg(cfg)["url"] + path, timeout=timeout) as r:
+        return r.read()
+
+
+def running_models(cfg):
+    try:
+        return [m["model"] for m in json.loads(swap_http(cfg, "/running")).get("running", [])]
+    except (OSError, ValueError):
+        return []
+
+
+def load_model(cfg, entry_id):
+    """Ask llama-swap to start a model and wait until it is healthy."""
+    swap_http(cfg, f"/upstream/{urllib.request.quote(entry_id)}/health", timeout=swap_cfg(cfg).get("load_timeout", 900))
+
+
+def port_free(port, host="127.0.0.1"):
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return False
+    except OSError:
+        return True
+
+
+def wait_port_free(port, seconds=90, sleep=time.sleep):
+    """True once nothing listens on port: the old model has gone. Loading
+    another before that could put two models in memory at once, which has
+    hard-reset Framework before (llm-memgate waits for memory too)."""
+    for _ in range(seconds // 3):
+        if port_free(port):
+            return True
+        sleep(3)
+    return port_free(port)
+
+
+def wait_for_swap(cfg, tries=30):
+    for _ in range(tries):
+        try:
+            swap_http(cfg, "/health")
+            return True
+        except OSError:
+            time.sleep(2)
+    return False
+
+
+def swap_config(cfg, dry_run=False, force=False, size=weights_mb):
+    """Rewrite llama-swap's config if its content changed."""
+    swap = swap_cfg(cfg)
+    catalog = load_catalog(cfg)
+    entries = swap_entries(cfg, catalog, size)
+    text = render_swap(cfg, entries)
+    ids = [e for e, _ in entries]
+    try:
+        with open(swap["config"]) as fh:
+            old = fh.read()
+    except OSError:
+        old = None
+    if old == text:
+        return f"llama-swap config unchanged ({len(ids)} entries)"
+    if dry_run:
+        return f"would write {len(ids)} entries:\n  " + "\n  ".join(ids)
+    if not force and cfg.get("publish"):
+        holder = redis_get(cfg, swap.get("lock_key", "framework:run-lock"))
+        if holder:
+            raise Fail(f"a benchmark holds Framework ({holder}); a rewrite would stop its model. "
+                       "Run `llama-builds swap-config` when it is done (or --force)")
+    was = running_models(cfg)
+    tmp = swap["config"] + ".new"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+    if swap.get("bin"):
+        out = subprocess.run([swap["bin"], "-config", tmp, "-validate"], capture_output=True, text=True)
+        if out.returncode:
+            os.unlink(tmp)
+            raise Fail(f"llama-swap rejected the new config: {(out.stderr or out.stdout).strip()[-500:]}")
+    if old is not None:
+        with open(swap["config"] + ".prev", "w") as fh:
+            fh.write(old)
+    os.replace(tmp, swap["config"])
+    msg = f"llama-swap config written: {len(ids)} entries"
+    target = next((m for m in was if m in ids), None)
+    if was and not target:
+        target = catalog.get("default") if catalog.get("default") in ids else None
+        msg += f"; {', '.join(was)} has no entry now"
+    if target:
+        time.sleep(swap.get("reload_wait", 5))  # llama-swap polls the file every 2 s
+        if not wait_for_swap(cfg):
+            return msg + f"; llama-swap didn't come back, load {target} in llm-control"
+        if not wait_port_free(swap.get("model_port", 8080)):
+            return msg + f"; the old model still holds :{swap.get('model_port', 8080)}, so {target} was not loaded"
+        try:
+            load_model(cfg, target)
+            msg += f"; {target} loaded again"
+        except OSError as err:
+            msg += f"; loading {target} failed ({err}), load it in llm-control"
+    return msg
+
+
+def preload(cfg):
+    """Boot: load the catalogue's default model, unless one is loaded."""
+    if not wait_for_swap(cfg, tries=60):
+        raise Fail("llama-swap isn't answering")
+    if running_models(cfg):
+        return f"already loaded: {', '.join(running_models(cfg))}"
+    default = load_catalog(cfg).get("default")
+    if not default:
+        return "no default model in the catalogue"
+    load_model(cfg, default)
+    return f"{default} loaded"
+
+
 # ------------------------------------------------------------------ publish
 
 def resp(*args):
@@ -338,9 +585,16 @@ def main(argv=None):
     p.add_argument("ref", nargs="?")
     for name in ("promote", "rollback", "prune"):
         sub.add_parser(name).add_argument("backend")
+    p = sub.add_parser("swap-config")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true", help="rewrite even while a benchmark holds Framework")
+    sub.add_parser("preload")
     args = parser.parse_args(argv)
     try:
         cfg = load_config()
+        if args.cmd == "preload":
+            print(preload(cfg))
+            return 0
         if args.cmd == "status":
             st = status(cfg, do_fetch=not args.no_fetch)
             print(json.dumps(st, indent=1) if args.json else "\n".join(status_lines(st)))
@@ -354,8 +608,14 @@ def main(argv=None):
             except BlockingIOError:
                 raise Fail("another llama-builds command is running")
             action = {"build": lambda: build(cfg, args.backend, args.ref), "promote": lambda: promote(cfg, args.backend),
-                      "rollback": lambda: rollback(cfg, args.backend), "prune": lambda: prune(cfg, args.backend)}
+                      "rollback": lambda: rollback(cfg, args.backend), "prune": lambda: prune(cfg, args.backend),
+                      "swap-config": lambda: swap_config(cfg, args.dry_run, args.force)}
             print(action[args.cmd]())
+            if args.cmd in ("build", "promote", "rollback") and cfg.get("swap"):
+                try:  # the links changed, so the entries may have
+                    print(swap_config(cfg))
+                except (Fail, OSError) as err:
+                    print(f"(llama-swap config not rewritten: {err})", file=sys.stderr)
             if cfg.get("publish"):
                 try:  # keep the panel current; a Redis blip isn't the command's failure
                     publish(cfg, status(cfg, do_fetch=False))

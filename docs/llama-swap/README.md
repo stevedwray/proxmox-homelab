@@ -23,7 +23,24 @@ how far behind it is.
   brought GLM back in about a minute. The backup is
   `config.yaml.bak-2026-10-09`.
 
+**Phase 4, one entry per model and build:** built 2026-10-09 on
+`task/llama-swap-catalogue`, not deployed yet. llama-swap's config is
+generated from a model catalogue (10 models) and the builds, as
+`<model>-<backend>` entries. See [plan.md](plan.md).
+
 ## Log
+
+- 2026-10-09, phase 4 built after the first test round:
+  - Each eval benchmark was run once on 7 llm-control entries, but
+    "candidate" and "current" were the same build for both models, so the
+    round covered 5 combinations.
+  - Only 2 of the 10 models on disk had entries.
+  - The operator decided:
+    - all 10 GGUFs (not the Ollama store);
+    - every backend that can load each model;
+    - names that always say model and backend;
+    - unused copies left on disk.
+  - Not deployed yet.
 
 - 2026-10-09, first update cycle (approvals `llama-builds-candidates`,
   `llama-builds-smoke`):

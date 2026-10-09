@@ -12,9 +12,15 @@
 # Clients keep using llama-server on :8080 directly; they never go through
 # llama-swap, so only the control page switches models.
 #
-# The config is SEEDED from files/llama-swap/config.yaml only when the live
-# file is missing. After that it is edited in place on framework and
-# llama-swap reloads it on save; re-running this playbook never overwrites it.
+# The config is WRITTEN by `llama-builds swap-config` (framework-desktop-llama-builds.yml,
+# run that first) from the model catalogue files/llama-swap/models.json and
+# the builds on disk: one entry per model and backend (docs/llama-swap/plan.md,
+# phase 4). Don't edit it by hand; edit models.json and run
+# `llama-builds swap-config`. This playbook writes it only if it is missing.
+#
+# The boot default (models.json "default") is loaded by
+# llama-swap-preload.service, not a preload hook in the config: the hook also
+# fires on every config reload and would load over whatever was loaded.
 #
 # Phase 1 (default): installs and starts llama-swap idle. Touches nothing
 # else -- the hand-run GLM on :8080 and nathanw-llamacpp.service are left
@@ -65,8 +71,8 @@
       # build fork + upstream, first). Candidate and HIP builds are optional.
       - /storage/llama-builds/fork/current/bin/llama-server
       - /storage/llama-builds/upstream/current/bin/llama-server
-      - /mnt/nvme2/models-gguf/qwen3.8-flash-next-q4/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf
-      - /mnt/nvme2/models-gguf/glm-5.3-flash/UD-IQ2_XXS-glm5-next/GLM-5.3-Flash-UD-IQ2_XXS-00001-of-00004.gguf
+      - /usr/local/bin/llama-builds
+      - /etc/llama-builds/models.json
 
   tasks:
     - name: Rollback -- stop llama-swap and hand :8080 back
@@ -87,7 +93,7 @@
         - name: Stop here -- :8080 is now empty (the old chat unit was retired 2026-10-09)
           ansible.builtin.meta: end_host
 
-    - name: Check both llama-server builds and both model files exist
+    - name: Check the builds, llama-builds and the model catalogue exist
       ansible.builtin.stat:
         path: "{{ item }}"
       loop: "{{ framework_llama_swap_required_paths }}"
@@ -151,14 +157,13 @@
         group: "{{ framework_llama_swap_user }}"
         mode: "0755"
 
-    - name: Seed the config (only if missing -- the live file is edited in place)
-      ansible.builtin.copy:
-        src: files/llama-swap/config.yaml
-        dest: "{{ framework_llama_swap_config }}"
-        owner: "{{ framework_llama_swap_user }}"
-        group: "{{ framework_llama_swap_user }}"
-        mode: "0644"
-        force: false
+    # Only when missing (a fresh install: nothing can be loaded yet, hence
+    # --force). Otherwise llama-builds owns it; see the header.
+    - name: Write the config from the model catalogue (only if missing)
+      ansible.builtin.command:
+        argv: [/usr/local/bin/llama-builds, swap-config, --force]
+        creates: "{{ framework_llama_swap_config }}"
+      become_user: "{{ framework_llama_swap_user }}"
 
     - name: Create /etc/llama-swap
       ansible.builtin.file:
@@ -183,19 +188,6 @@
       ansible.builtin.command:
         argv: [nft, -f, "{{ framework_llama_swap_nft }}"]
       changed_when: framework_llama_swap_nft_file.changed
-
-    # One-off (2026-10-07): the first seed config had a llama-swap API key,
-    # which meant a browser login popup. Authentik replaces it.
-    - name: Remove the old API key block from the live config
-      ansible.builtin.replace:
-        path: "{{ framework_llama_swap_config }}"
-        regexp: '^apiKeys:\n  - "\$\{env\.LLAMA_SWAP_API_KEY\}"\n\n?'
-        replace: ""
-
-    - name: Remove the old API key env file
-      ansible.builtin.file:
-        path: /etc/llama-swap/llama-swap.env
-        state: absent
 
     - name: Validate the live config
       ansible.builtin.command:
@@ -271,6 +263,37 @@
         name: llama-swap.service
         enabled: true
         state: started
+        daemon_reload: true
+
+    # Loads models.json's default at boot if nothing is loaded. Enabled, not
+    # started here: this playbook never loads a model.
+    - name: Write the boot preload unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/llama-swap-preload.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llama-swap.yml -- do not edit by hand
+          [Unit]
+          Description=Load the default model in llama-swap at boot (llama-builds preload)
+          After=llama-swap.service
+          Requires=llama-swap.service
+
+          [Service]
+          Type=oneshot
+          User={{ framework_llama_swap_user }}
+          ExecStart=/usr/local/bin/llama-builds preload
+          # The biggest models take minutes to load from NVMe.
+          TimeoutStartSec=1000
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable the boot preload (not started now)
+      ansible.builtin.systemd_service:
+        name: llama-swap-preload.service
+        enabled: true
         daemon_reload: true
 
     - name: Flush handlers so a changed binary or unit takes effect
