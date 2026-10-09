@@ -60,7 +60,7 @@ VALUES
     (601100,   0,   85, 0, 1, 1, 0,  1680.210,  1681.810,   121.6700, 2.70526, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: undead start'),
     (601100,   1,  215, 0, 1, 1, 0, -2914.080,  -254.480,    52.9968, 0.00000, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: tauren start'),
     (601100, 530, 3431, 0, 1, 1, 0, 10353.100, -6353.790,    33.4026, 5.31605, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: blood elf start'),
-    (601100, 530, 3526, 0, 1, 1, 0, -3958.140,-13927.700,   100.6150, 2.08364, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: draenei start'),
+    (601100, 530,    0, 0, 1, 1, 0, -3960.000,-13927.000,   101.2380, 4.18890, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: draenei start'),
     (601100, 609, 4298, 0, 1, 1, 0,  2361.940, -5658.270,   426.0280, 3.65997, 120, 0, 0, 128, 0, 0, '', 0, 'Homelab QoL heirloom vendor: death knight start');
 
 COMMIT;

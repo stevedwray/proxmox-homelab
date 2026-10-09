@@ -4,7 +4,7 @@
 START TRANSACTION;
 
 INSERT INTO `playercreateinfo_item` (`race`, `class`, `itemid`, `amount`, `Note`)
-VALUES (0, 0, 41597, 4, 'Homelab QoL: four equipped 32-slot Abyssal Bags')
+VALUES (0, 0, 41600, 4, 'Homelab QoL: four equipped 22-slot Glacial Bags')
 ON DUPLICATE KEY UPDATE
     `amount` = VALUES(`amount`),
     `Note` = VALUES(`Note`);

@@ -14,6 +14,7 @@ and their Altbots.
 | Experience | `1.25x` for all XP categories. |
 | Questing | Normal quest and class-quest progression; do not grant quest completions or bypass attunements. |
 | Training and upkeep | Altbots use Playerbot `maintenance`: spells/skills, repairs, consumables, enchants, and bags. This intentionally removes trainer and vendor errands. |
+| Weapon skills | New characters begin with every normal WotLK weapon skill for their class. This does not grant class spells, talents, armor/shield proficiencies, or dual wield. |
 | Gear | Keep normal drops and upgrades. Do not enable automatic BiS/epic gearing. Playerbot `autogear match` remains an occasional catch-up tool, not the normal progression path. |
 | Gold | Not a constraint. Characters receive enough starting money for ordinary travel and incidental costs; bot upkeep is supplied through `maintenance`. |
 | Heirlooms | Free at character creation/start-of-play, using a dedicated vendor rather than requiring emblems, PvP, or an auction economy. |
@@ -42,7 +43,10 @@ and their Altbots.
   source updates are disabled. The rebuilt authserver/worldserver listen
   normally on TCP 3724/8085; Transmog's character tables exist.
 - **Completed 2026-09-29:** new characters receive 10,000g and four equipped
-  32-slot Abyssal Bags. Existing character Aldred was topped up to 10,000g.
+  22-slot Glacial Bags. Existing character Aldred was topped up to 10,000g.
+- **Completed 2026-09-29:** new characters receive all normal WotLK weapon
+  skills for their class through the versioned creation-skill rule. This omits
+  talent-gated proficiencies, shields/armor, and class spells.
 
 ## Delivery plan
 
@@ -93,12 +97,19 @@ nearby group of corpses.
 
 The egg's native `START_PLAYER_MONEY` setting is `100000000` copper (10,000g).
 The idempotent world migration
-`scripts/azerothcore-qol/sql/001-starter-package.sql` adds four `41597`
-Abyssal Bags for every valid race/class creation template. AzerothCore equips
+`scripts/azerothcore-qol/sql/001-starter-package.sql` adds four `41600`
+Glacial Bags for every valid race/class creation template. AzerothCore equips
 new bags in available bag slots during character creation, rather than placing
 them loose in the initial inventory. Existing characters are intentionally not
 given bags retrospectively; existing Aldred was topped up to the same 10,000g
 floor.
+
+The originally deployed `41597` Abyssal Bag was discovered to be a
+Warlock-only Soul Bag. **Corrected 2026-09-29:** migration
+`003-fix-starter-bag.sql` replaced the global creation row with the largest
+ordinary all-class alternative, the 22-slot Glacial Bag (`41600`). It does not
+alter existing character inventories. After the restart, only the `41600 × 4`
+row remained and both realm services were listening normally.
 
 The server was restarted to reload the world create-item cache. `worldserver`
 and `authserver` were verified listening on TCP 8085 and 3724 after the
@@ -210,6 +221,12 @@ race starts share one vendor.
 The migration was imported into the live world database and server 4 was
 restarted. The vendor has 39 stock records and nine spawn records; both
 `authserver` and `worldserver` resumed listening on TCP 3724 and 8085.
+
+**Corrected 2026-09-29:** the Ammen Vale vendor was initially placed below the
+nearby verified terrain height. Migration
+`004-fix-draenei-heirloom-vendor-placement.sql` moves only that spawn beside
+the normal Draenei starter NPC at its confirmed ground height. The server was
+restarted and both realm services were verified listening normally afterward.
 
 ### Phase 4 — controlled cutover
 
