@@ -200,7 +200,9 @@ class SwapConfigTest(unittest.TestCase):
         entries = dict(lb.swap_entries(self.cfg, lb.load_catalog(self.cfg), size=lambda g: 97127))
         glm = entries["glm-upstream"]
         self.assertEqual(glm["name"], "GLM · upstream 20261008-ccccccccc")
-        self.assertIn("97,127 MiB", glm["description"])
+        self.assertEqual(glm["description"], "97,127 MiB")  # no status reason, no note
+        self.assertEqual(glm["metadata"]["note"], "no fork")
+        self.assertEqual((glm["metadata"]["status"], glm["metadata"]["backend"]), ("untested", "upstream"))
         first, second = glm["cmd"].splitlines()
         self.assertEqual(first, "/usr/local/bin/llm-memgate 97127")
         self.assertIn(os.path.join(self.root, "upstream", "current", "bin", "llama-server"), second)
@@ -363,3 +365,31 @@ class ShippedCatalogSettingsTest(unittest.TestCase):
         laguna = next(m for m in catalog["models"] if m["id"] == "laguna-s-2.1-heretic")
         self.assertEqual(laguna["settings"]["reasoning_format"], "deepseek")
         self.assertNotIn("fork", laguna["backends"])  # the fork's b10814 can't run Laguna
+
+
+class StatusMetadataTest(SwapConfigTest):
+    def test_status_per_backend_with_a_star_default_and_a_short_description(self):
+        catalog = lb.load_catalog(self.cfg)
+        catalog["models"][1]["status"] = {"*": {"status": "works", "checked": "2026-10-09"},
+                                          "upstream": {"status": "broken", "reason": "emits control token 14"}}
+        catalog["models"][1]["tags"] = ["thinking"]
+        e = dict(lb.swap_entries(self.cfg, catalog, size=lambda g: 16017, overrides={}))
+        self.assertEqual(e["qwen-nathanw"]["description"], "16,017 MiB")
+        self.assertEqual(e["qwen-nathanw"]["metadata"]["status"], "works")
+        self.assertEqual(e["qwen-upstream"]["description"], "16,017 MiB · broken: emits control token 14")
+        self.assertEqual(e["qwen-upstream"]["metadata"]["tags"], ["thinking"])
+        self.assertNotIn("broken", e["qwen-upstream"]["name"])  # names stay as they were
+        catalog["models"][1]["status"] = {"*": {"status": "fine"}}
+        with self.assertRaises(lb.Fail):
+            lb.swap_entries(self.cfg, catalog, size=lambda g: 1, overrides={})
+
+    def test_metadata_is_rendered_and_parses(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("pyyaml not installed")
+        doc = yaml.safe_load(lb.render_swap(self.cfg, lb.swap_entries(self.cfg, lb.load_catalog(self.cfg),
+                                                                       size=lambda g: 1, overrides={})))
+        meta = doc["models"]["glm-upstream"]["metadata"]
+        self.assertEqual((meta["model"], meta["backend"], meta["build"], meta["variant"]),
+                         ("glm", "upstream", "20261008-ccccccccc", None))

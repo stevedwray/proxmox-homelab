@@ -4,6 +4,8 @@
     "/etc/llama-builds/models.json by framework-desktop-llama-builds.yml. `llama-builds swap-config` writes",
     "llama-swap's config from this file and the builds on disk: one entry per model and backend, named",
     "<id>-<nathanw|upstream|hip>, plus a -candidate entry while that backend has a candidate build different from current.",
+    "tags: short labels (thinking, coder, moe, vision-stripped, ...). status: {backend label or '*': {status: works|broken|untested,",
+    "  reason, checked}}. Both go into each entry's metadata (/v1/models); the llm-control description shows only the size and a status reason.",
     "settings: llama-server settings (keys: ctx_size, parallel, jinja, chat_template_file, chat_template_kwargs, reasoning_format,",
     "  reasoning_budget, temperature, top_p, top_k, min_p, extra_args), after the common flags (port 8080, API key, --alias <entry id>, all layers on GPU).",
     "variants: [{suffix, label, settings}] -> extra entries <id>-<backend>[-candidate]-<suffix>, settings layered over the model's.",
@@ -34,7 +36,22 @@
         "top_p": 0.95,
         "min_p": 0.01
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "thinking"
+      ],
+      "status": {
+        "upstream": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
+        },
+        "hip": {
+          "status": "works",
+          "reason": "one IFEval prompt reasoned to the 32k cap",
+          "checked": "2026-10-09"
+        }
+      }
     },
     {
       "id": "qwen3.8-flash-next-q4",
@@ -48,7 +65,17 @@
       "settings": {
         "ctx_size": 131072
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "thinking"
+      ],
+      "status": {
+        "*": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
+        }
+      }
     },
     {
       "id": "qwen3.8-flash-next-q2",
@@ -62,7 +89,10 @@
       "settings": {
         "ctx_size": 131072
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "thinking"
+      ]
     },
     {
       "id": "laguna-s-2.1",
@@ -78,7 +108,17 @@
         "jinja": true,
         "reasoning_format": "deepseek"
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "thinking"
+      ],
+      "status": {
+        "upstream": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
+        }
+      }
     },
     {
       "id": "laguna-s-2.1-heretic",
@@ -94,7 +134,10 @@
         "reasoning_format": "deepseek"
       },
       "variants": [],
-      "note": "Not on the Nathanw fork: its build b10814 emits control token 14 ('〈|') hundreds of times in place of reasoning (checked 2026-10-09); upstream b11514 reasons normally."
+      "note": "Not on the Nathanw fork: its build b10814 emits control token 14 ('〈|') hundreds of times in place of reasoning (checked 2026-10-09); upstream b11514 reasons normally.",
+      "tags": [
+        "thinking"
+      ]
     },
     {
       "id": "qwen3-coder-next",
@@ -109,7 +152,10 @@
         "ctx_size": 131072,
         "jinja": true
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "coder"
+      ]
     },
     {
       "id": "qwen3-coder-30b-a3b",
@@ -124,7 +170,11 @@
         "ctx_size": 131072,
         "jinja": true
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "coder",
+        "moe"
+      ]
     },
     {
       "id": "qwen3.6-35b-a3b",
@@ -139,7 +189,10 @@
         "ctx_size": 131072,
         "jinja": true
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "moe"
+      ]
     },
     {
       "id": "gemma4-26b-a4b-qat",
@@ -156,7 +209,19 @@
         "jinja": true,
         "chat_template_file": "/etc/llama-builds/templates/google-gemma-4-it.jinja"
       },
-      "variants": []
+      "variants": [],
+      "tags": [
+        "thinking",
+        "moe",
+        "vision-stripped"
+      ],
+      "status": {
+        "nathanw": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
+        }
+      }
     },
     {
       "id": "qwen3.8-27b",
@@ -171,7 +236,8 @@
         "ctx_size": 131072,
         "jinja": true
       },
-      "variants": []
+      "variants": [],
+      "tags": []
     }
   ]
 }

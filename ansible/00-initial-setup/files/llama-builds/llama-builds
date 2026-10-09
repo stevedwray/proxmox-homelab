@@ -387,6 +387,27 @@ SETTINGS = (
 )
 SETTING_KEYS = tuple(k for k, _ in SETTINGS)
 VARIANT_RE = re.compile(r"^[a-z0-9][a-z0-9.]*(-[a-z0-9.]+)*$")
+STATUSES = ("works", "broken", "untested")
+
+
+def entry_status(model, backend):
+    """{status, reason, checked} for a model on a backend: the catalogue's
+    status for that backend, else its "*" entry, else untested."""
+    table = model.get("status") or {}
+    found = table.get(BACKEND_LABEL.get(backend, backend)) or table.get("*") or {}
+    status = found.get("status", "untested")
+    if status not in STATUSES:
+        raise Fail(f"{model['id']}: status {status!r} is not one of {', '.join(STATUSES)}")
+    return {"status": status, "reason": found.get("reason", ""), "checked": found.get("checked", "")}
+
+
+def entry_description(mb, status):
+    """Short, for the llm-control page: the size, and the status only when
+    it has something to say. Everything else is in metadata."""
+    text = f"{mb:,} MiB"
+    if status["reason"]:
+        text += f" · {status['status']}: {status['reason']}"
+    return text
 
 
 def settings_args(settings):
@@ -469,10 +490,17 @@ def swap_entries(cfg, catalog, size=weights_mb, overrides=None):
                             *settings_args(settings)]
                     what = f"{label} {'CANDIDATE ' if suffix else ''}{name}"
                     tag = f" [{variant.get('label') or variant['suffix']}]" if variant else ""
+                    status = entry_status(model, backend)
+                    meta = {"model": model["id"], "backend": label, "build": name, "candidate": bool(suffix),
+                            "variant": variant["suffix"] if variant else None, "weights_mib": mb,
+                            "tags": model.get("tags", []), **status}
+                    if model.get("note"):
+                        meta["note"] = model["note"]
                     entries.append((entry_id, {
                         "name": f"{model['name']}{tag} · {what}",
-                        "description": " ".join(x for x in (f"{mb:,} MiB of weights.", model.get("note", "")) if x),
+                        "description": entry_description(mb, status),
                         "cmd": f"{swap['memgate']} {mb}\n" + " ".join(_shell_arg(a) for a in argv),
+                        "metadata": meta,
                         "model": model["id"], "backend": backend, "build": name, "candidate": bool(suffix),
                         "variant": variant["suffix"] if variant else None, "settings": settings,
                     }))
@@ -490,12 +518,14 @@ def models_status(cfg, catalog=None, overrides=None, size=weights_mb):
         "checked": now(), "default": catalog.get("default"), "loaded": running_models(cfg),
         "setting_keys": list(SETTING_KEYS),
         "models": [{"id": m["id"], "name": m["name"], "gguf": m["gguf"], "backends": m["backends"],
-                    "note": m.get("note", ""), "catalog": m.get("settings", {}),
+                    "note": m.get("note", ""), "tags": m.get("tags", []), "status": m.get("status", {}),
+                    "catalog": m.get("settings", {}),
                     "override": overrides.get(m["id"], {}),
                     "effective": next(e for e in effective_models(catalog, overrides) if e["id"] == m["id"])["settings"],
                     "variants": next(e for e in effective_models(catalog, overrides) if e["id"] == m["id"])["variants"]}
                    for m in catalog["models"]],
-        "entries": [{"id": eid, **{k: e[k] for k in ("name", "model", "backend", "build", "candidate", "variant")}}
+        "entries": [{"id": eid, **{k: e[k] for k in ("name", "model", "backend", "build", "candidate", "variant")},
+                     **{k: e["metadata"][k] for k in ("status", "reason", "checked", "tags")}}
                     for eid, e in entries],
     }
 
@@ -505,6 +535,8 @@ def render_swap(cfg, entries):
     for entry_id, e in entries:
         out += [f"  {_yaml_str(entry_id)}:", f"    name: {_yaml_str(e['name'])}",
                 f"    description: {_yaml_str(e['description'])}",
+                # JSON is valid YAML: one line, shown only in /v1/models.
+                f"    metadata: {json.dumps(e['metadata'], ensure_ascii=False)}",
                 f"    proxy: {_yaml_str('http://127.0.0.1:' + str(swap_cfg(cfg).get('model_port', 8080)))}",
                 "    cmd: |", *[f"      {line}" for line in e["cmd"].splitlines()], ""]
     out += ["routing:", "  router:", "    use: group", "    settings:", "      groups:",
