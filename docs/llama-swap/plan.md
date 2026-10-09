@@ -230,6 +230,21 @@ really 5. Only 2 of the 10 models on disk had entries.
     went away.
 - **Boot:** `llama-swap-preload.service` runs `llama-builds preload`, which
   loads the default model if none is loaded.
+- **Ollama copies:** `/storage/models/llm` came out of the Ollama store.
+  The Gemma4 file had two problems llama.cpp can't handle, both fixed
+  2026-10-09:
+  - **The vision tower was in the same GGUF** (355 `v.*` tensors plus the
+    projector), so llama.cpp refused it: "expected 1014 tensors, got 658".
+    `files/llama-swap/gguf-strip-vision.py` wrote a text-only copy with the
+    same 658 text tensors to `/mnt/nvme2/models-gguf/gemma4-26b-a4b-qat/`.
+  - **The GGUF had no chat template** (Ollama keeps it in its manifest), so
+    llama-server fell back to ChatML and produced garbage.
+    `files/llama-swap/templates/google-gemma-4-it.jinja`, llama.cpp's own
+    Gemma 4 template, is passed with `--chat-template-file`.
+
+  Checked live on the fork: correct answer, reasoning separated, about
+  61 tok/s. Every other catalogue file has its own template and no
+  vision tensors.
 - **Not checked yet:** whether every model loads on every backend. Entries
   that don't load fail cleanly (llm-memgate, or llama-server's own error);
   try them from llm-control and note the results here.
