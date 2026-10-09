@@ -143,6 +143,11 @@
           "status": "works",
           "reason": "",
           "checked": "2026-10-09"
+        },
+        "hip": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
         }
       }
     },
