@@ -190,11 +190,11 @@ class SwapConfigTest(unittest.TestCase):
 
     def test_one_entry_per_built_backend_and_no_candidate_equal_to_current(self):
         # upstream-hip has no build; the candidates equal current
-        self.assertEqual(self.ids(), ["glm-upstream", "qwen-fork", "qwen-upstream"])
+        self.assertEqual(self.ids(), ["glm-upstream", "qwen-nathanw", "qwen-upstream"])
 
     def test_a_distinct_candidate_gets_its_own_entry(self):
         lb.set_link(os.path.join(self.root, "fork"), "candidate", "20261009-bbbbbbbbb")
-        self.assertEqual(self.ids(), ["glm-upstream", "qwen-fork", "qwen-fork-candidate", "qwen-upstream"])
+        self.assertEqual(self.ids(), ["glm-upstream", "qwen-nathanw", "qwen-nathanw-candidate", "qwen-upstream"])
 
     def test_entry_names_say_backend_and_build_and_cmd_is_right(self):
         entries = dict(lb.swap_entries(self.cfg, lb.load_catalog(self.cfg), size=lambda g: 97127))
@@ -214,7 +214,7 @@ class SwapConfigTest(unittest.TestCase):
             self.skipTest("pyyaml not installed")
         doc = yaml.safe_load(lb.render_swap(self.cfg, lb.swap_entries(self.cfg, lb.load_catalog(self.cfg),
                                                                        size=lambda g: 1)))
-        self.assertEqual(list(doc["models"]), ["glm-upstream", "qwen-fork", "qwen-upstream"])
+        self.assertEqual(list(doc["models"]), ["glm-upstream", "qwen-nathanw", "qwen-upstream"])
         self.assertEqual(doc["routing"]["router"]["settings"]["groups"]["chat"]["members"], list(doc["models"]))
         self.assertNotIn("hooks", doc)
         self.assertTrue(doc["models"]["glm-upstream"]["cmd"].startswith("/usr/local/bin/llm-memgate 1\n"))
@@ -242,13 +242,13 @@ class SwapConfigTest(unittest.TestCase):
     def test_the_loaded_model_is_loaded_again_after_the_rewrite(self):
         self.cfg.pop("publish", None)
         loaded = []
-        with mock.patch.object(lb, "running_models", return_value=["qwen-fork"]), \
+        with mock.patch.object(lb, "running_models", return_value=["qwen-nathanw"]), \
                 mock.patch.object(lb, "wait_for_swap", return_value=True), \
                 mock.patch.object(lb, "wait_port_free", return_value=True), \
                 mock.patch.object(lb, "load_model", side_effect=lambda cfg, m: loaded.append(m)):
             msg = lb.swap_config(self.cfg, size=lambda g: 1)
-        self.assertEqual(loaded, ["qwen-fork"])
-        self.assertIn("qwen-fork loaded again", msg)
+        self.assertEqual(loaded, ["qwen-nathanw"])
+        self.assertIn("qwen-nathanw loaded again", msg)
 
     def test_an_old_name_falls_back_to_the_default_and_a_busy_port_loads_nothing(self):
         loaded = []

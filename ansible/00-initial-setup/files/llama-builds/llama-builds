@@ -7,7 +7,7 @@ one branch of one git remote. Builds go to <root>/<backend>/<date>-<sha>/bin
 and are self-contained (RPATH $ORIGIN), so a build dir can be kept for
 rollback after its source is gone. Three symlinks per backend:
 
-  current    what llama-swap starts for <model>-<backend>
+  current    what llama-swap starts for <model>-<nathanw|upstream|hip>
   candidate  the newest build, for <model>-<backend>-candidate
   previous   the build current replaced, for rollback
 
@@ -310,7 +310,7 @@ def build(cfg, backend, ref=None):
 
 # ------------------------------------------------------------------ llama-swap config
 
-BACKEND_LABEL = {"fork": "fork", "upstream": "upstream", "upstream-hip": "hip"}
+BACKEND_LABEL = {"fork": "nathanw", "upstream": "upstream", "upstream-hip": "hip"}  # names in llm-control
 SWAP_HEADER = """\
 # Written by `llama-builds swap-config` from /etc/llama-builds/models.json and
 # the builds under {root} -- do not edit by hand; edit models.json (in the repo:

@@ -3,7 +3,7 @@
     "The models llama-swap offers on Framework (docs/llama-swap/plan.md, phase 4). Installed to",
     "/etc/llama-builds/models.json by framework-desktop-llama-builds.yml. `llama-builds swap-config` writes",
     "llama-swap's config from this file and the builds on disk: one entry per model and backend, named",
-    "<id>-<backend>, plus <id>-<backend>-candidate while that backend has a candidate build different from current.",
+    "<id>-<nathanw|upstream|hip>, plus a -candidate entry while that backend has a candidate build different from current.",
     "backends: the llama-builds backends that can load the model (fork, upstream, upstream-hip).",
     "args: extra llama-server flags, after the common ones (port 8080, API key, --alias <entry id>, all layers on GPU).",
     "Chat templates for GGUFs that lack one (Ollama copies) are in files/llama-swap/templates/ -> /etc/llama-builds/templates/.",

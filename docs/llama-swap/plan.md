@@ -210,7 +210,7 @@ really 5. Only 2 of the 10 models on disk had entries.
   Ollama store and the pre-rewrite GLM copy stay out; the operator decided
   to leave them on disk for now.
 - **Entries:** `llama-builds swap-config` writes one per model and backend
-  with a current build. Each is named `<model>-<fork|upstream|hip>`, and
+  with a current build. Each is named `<model>-<nathanw|upstream|hip>` ("nathanw" is the fork backend; renamed from "fork" the same day), and
   shown as "<model> · <backend> <build>".
   - `<model>-<backend>-candidate` exists only while that backend's
     candidate differs from its current build.
