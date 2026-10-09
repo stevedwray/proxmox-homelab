@@ -259,7 +259,7 @@ class EvalTabTest(unittest.TestCase):
             jobs, rows, links, ticked = eval_tab.poll(1)
             *_, kept = eval_tab.poll(2, ["j1"])
         self.assertEqual(rows[0]["task"], "ifeval")
-        self.assertEqual(len([l for l in links if hasattr(l, "href")]), 2)
+        self.assertEqual(len([link for link in links if hasattr(link, "href")]), 2)
         self.assertEqual((ticked, kept), ([], [0]))
 
     def test_ticks_follow_the_runs_when_new_runs_arrive(self):
