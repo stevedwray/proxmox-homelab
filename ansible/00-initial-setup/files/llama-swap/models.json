@@ -73,9 +73,10 @@
     {
       "id": "gemma4-26b-a4b-qat",
       "name": "Gemma4-26B-A4B QAT Q4_0",
-      "gguf": "/storage/models/llm/Gemma4-26B-A4B-QAT-Q4_0.gguf",
+      "gguf": "/mnt/nvme2/models-gguf/gemma4-26b-a4b-qat/Gemma4-26B-A4B-QAT-Q4_0-text.gguf",
       "backends": ["fork", "upstream", "upstream-hip"],
-      "args": ["--ctx-size", "131072", "--jinja"]
+      "args": ["--ctx-size", "131072", "--jinja"],
+      "note": "Text-only copy of /storage/models/llm/Gemma4-26B-A4B-QAT-Q4_0.gguf (Ollama layout, vision tower in the same file, which llama.cpp refuses); same text weights. No image input."
     },
     {
       "id": "qwen3.8-27b",
