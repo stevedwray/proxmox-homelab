@@ -23,7 +23,38 @@ how far behind it is.
   brought GLM back in about a minute. The backup is
   `config.yaml.bak-2026-10-09`.
 
+**Phase 4, one entry per model and build: live 2026-10-09** (branch
+`task/llama-swap-catalogue`). llama-swap's config is
+generated from a model catalogue (10 models) and the builds, as
+`<model>-<backend>` entries. See [plan.md](plan.md).
+
 ## Log
+
+- 2026-10-09, phase 4 built after the first test round:
+  - Each eval benchmark was run once on 7 llm-control entries, but
+    "candidate" and "current" were the same build for both models, so the
+    round covered 5 combinations.
+  - Only 2 of the 10 models on disk had entries.
+  - The operator decided:
+    - all 10 GGUFs (not the Ollama store);
+    - every backend that can load each model;
+    - names that always say model and backend;
+    - unused copies left on disk.
+  - Deployed under approval `llama-swap-catalogue`, with Framework free (no
+    lock, no live jobs):
+    1. The llama-builds playbook ran with failed=0. Its dry run listed 29
+       entries and measured every model's size.
+    2. The llama-swap playbook ran with failed=0.
+       `llama-swap-preload.service` was enabled, and llama-swap wasn't
+       restarted.
+    3. `llama-builds swap-config` printed "29 entries; glm-5.3-flash has
+       no entry now; glm-5.3-flash-upstream loaded again" in 1m16s.
+       - The reload through `/upstream/<id>/health` worked.
+       - `/running` and `:8080/props` show `glm-5.3-flash-upstream` on
+         b11514-de7fa0a3c, with one chat llama-server running.
+       - The old config is `config.yaml.prev`.
+  - Not yet tried: loading the 8 new models and the HIP/fork entries of
+    each.
 
 - 2026-10-09, first update cycle (approvals `llama-builds-candidates`,
   `llama-builds-smoke`):

@@ -13,6 +13,13 @@
 # This playbook builds nothing. Builds are started on request:
 #   llama-builds build <backend> [ref]; llama-builds promote <backend>
 #
+# It also installs the model catalogue (files/llama-swap/models.json ->
+# /etc/llama-builds/models.json), from which `llama-builds swap-config`
+# writes llama-swap's config (phase 4): one entry per model and backend.
+# This playbook only shows what that would write (--dry-run); writing it
+# reloads llama-swap, which stops the loaded model, so that is run on
+# purpose, and build/promote/rollback run it themselves.
+#
 # The publish step connects from framework (LAN) to cse-panel's Redis
 # (mgmt_seg :6379). The existing firewall policy already allows LAN to
 # mgmt_seg; verified 2026-10-09, so no extra MikroTik rule was added.
@@ -53,6 +60,18 @@
         branch: master
         hip: true
         cmake: ["-DGGML_HIP=ON", "-DAMDGPU_TARGETS=gfx1151", "-DGGML_NATIVE=ON"]
+    llama_builds_swap:
+      models: "{{ llama_builds_etc }}/models.json"
+      # Settings changed later (the panel's Models page, docs/model-params);
+      # written on Framework, never by this playbook.
+      overrides: "{{ llama_builds_etc }}/overrides.json"
+      config: /home/steve/llama-swap/config.yaml
+      url: http://127.0.0.1:8099
+      bin: /usr/local/bin/llama-swap
+      memgate: /usr/local/bin/llm-memgate
+      api_key_file: /etc/llamacpp/api-key
+      model_port: 8080
+      lock_key: framework:run-lock
     llama_builds_redis_host: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
     llama_builds_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
 
@@ -88,7 +107,7 @@
         dest: "{{ llama_builds_etc }}/backends.json"
         mode: "0644"
         content: "{{ {'root': llama_builds_root, 'jobs': llama_builds_jobs, 'keep': llama_builds_keep,
-                      'backends': llama_builds_backends,
+                      'backends': llama_builds_backends, 'swap': llama_builds_swap,
                       'publish': {'host': llama_builds_redis_host, 'port': 6379, 'db': 1,
                                   'key': 'framework:llama-builds',
                                   'password_file': llama_builds_etc ~ '/redis-password'}} | to_nice_json }}\n"
@@ -107,6 +126,20 @@
         src: files/llama-builds/llama-builds
         dest: /usr/local/bin/llama-builds
         mode: "0755"
+
+    - name: Install the model catalogue (what llama-swap offers)
+      ansible.builtin.copy:
+        src: files/llama-swap/models.json
+        dest: "{{ llama_builds_etc }}/models.json"
+        mode: "0644"
+
+    # For GGUFs without a chat template of their own (copies out of Ollama).
+    - name: Install the chat templates the catalogue refers to
+      ansible.builtin.copy:
+        src: files/llama-swap/templates/
+        dest: "{{ llama_builds_etc }}/templates/"
+        mode: "0644"
+        directory_mode: "0755"
 
     - name: Clone the source repository (remote "fork"; llama-builds adds the others)
       ansible.builtin.command:
@@ -163,3 +196,14 @@
     - name: Report build status
       ansible.builtin.debug:
         msg: "{{ llama_builds_status.stdout_lines }}"
+
+    # Read-only: lists the entries without writing (writing reloads llama-swap).
+    - name: Show the llama-swap entries the catalogue and builds give
+      ansible.builtin.command: /usr/local/bin/llama-builds swap-config --dry-run
+      become_user: "{{ llama_builds_user }}"
+      register: llama_builds_swap_preview
+      changed_when: false
+
+    - name: Report the llama-swap entries
+      ansible.builtin.debug:
+        msg: "{{ llama_builds_swap_preview.stdout_lines }}"

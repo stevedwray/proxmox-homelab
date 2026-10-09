@@ -33,16 +33,15 @@ llama.cpp build:
   WebUI, CVE enrichment, Traefik `llm.<domain>` and the metrics scrape all keep
   talking to `llama-server` on :8080 and get whatever is loaded. They can't
   switch models; only the control page does.
-- **Saving the config reloads llama-swap and loads the boot default (GLM)**,
-  so don't save it while another model is in use or a benchmark is running.
-- **Models and builds** live in `/home/steve/llama-swap/config.yaml` (edit in
-  VS Code; it reloads on save). Seed copy:
-  `ansible/00-initial-setup/files/llama-swap/config.yaml`. The seed has three
-  entries:
-  - `glm-5.3-flash`: upstream build, same flags as the current hand-run
-    process;
-  - `qwen3.8-flash-next`: the Nathanw fork, same as `nathanw-llamacpp.service`;
-  - `qwen3.8-flash-next-upstream`: upstream build, for comparison; may not load.
+- **The config is generated** (phase 4, below) by `llama-builds swap-config`
+  from the model catalogue
+  `ansible/00-initial-setup/files/llama-swap/models.json` and the builds on
+  disk. Don't edit `/home/steve/llama-swap/config.yaml` by hand.
+- **Writing the config reloads llama-swap, which stops the loaded model.**
+  `swap-config` refuses while a benchmark holds Framework, and loads the
+  previous model again afterwards. The boot default is loaded by
+  `llama-swap-preload.service`, not a preload hook in the config, because the
+  hook fires on every reload too.
 
 The UI doesn't edit commands or flags; that's the config file. llama-swap
 doesn't build llama.cpp either.
@@ -192,8 +191,69 @@ Framework bar shows a second line, e.g. "llama.cpp builds: fork
   first build. llm-control has `*-candidate` and `*-hip` entries for GLM
   and Qwen.
 
+## Phase 4: one entry per model and build (built 2026-10-09, branch `task/llama-swap-catalogue`)
+
+Why: llama-swap's config had fixed "candidate" entries pointing at each
+backend's `candidate` link. After a promote that link points at the same
+build as `current`, so the 2026-10-09 test round's "7 combinations" were
+really 5. Only 2 of the 10 models on disk had entries.
+
+- **Catalogue:** `files/llama-swap/models.json` lists each model once:
+  - its GGUF (the first shard of a split model);
+  - its llama-server flags;
+  - the backends that can load it (GLM: upstream and HIP only; everything
+    else: fork, upstream and HIP);
+  - the boot default.
+
+  It's installed to `/etc/llama-builds/models.json`. It holds the 10 chat
+  models from `/mnt/nvme2/models-gguf` and `/storage/models/llm`. The old
+  Ollama store and the pre-rewrite GLM copy stay out; the operator decided
+  to leave them on disk for now.
+- **Entries:** `llama-builds swap-config` writes one per model and backend
+  with a current build. Each is named `<model>-<nathanw|upstream|hip>` ("nathanw" is the fork backend; renamed from "fork" the same day), and
+  shown as "<model> · <backend> <build>".
+  - `<model>-<backend>-candidate` exists only while that backend's
+    candidate differs from its current build.
+  - The entry id is also the server's `--alias`, so benchmark records say
+    exactly which model and backend answered. Names recorded before
+    (`glm-5.3-flash`, `qwen3.8-flash-next`, …) stay as they are in old
+    results.
+  - Each entry starts through `llm-memgate` with the weights' size,
+    measured from the files.
+- **When it's written:** `build`, `promote` and `rollback` run it, and so
+  can a person. It writes only when the content changed. It refuses while
+  `framework:run-lock` is held (`--force` overrides). It checks the new file
+  with `llama-swap -validate`, keeps the old one as `config.yaml.prev`, and
+  then:
+  - waits for :8080 to be free;
+  - loads again whatever was loaded, or the default if that model's name
+    went away.
+- **Boot:** `llama-swap-preload.service` runs `llama-builds preload`, which
+  loads the default model if none is loaded.
+- **Ollama copies:** `/storage/models/llm` came out of the Ollama store.
+  The Gemma4 file had two problems llama.cpp can't handle, both fixed
+  2026-10-09:
+  - **The vision tower was in the same GGUF** (355 `v.*` tensors plus the
+    projector), so llama.cpp refused it: "expected 1014 tensors, got 658".
+    `files/llama-swap/gguf-strip-vision.py` wrote a text-only copy with the
+    same 658 text tensors to `/mnt/nvme2/models-gguf/gemma4-26b-a4b-qat/`.
+  - **The GGUF had no chat template** (Ollama keeps it in its manifest), so
+    llama-server fell back to ChatML and produced garbage.
+    `files/llama-swap/templates/google-gemma-4-it.jinja`, llama.cpp's own
+    Gemma 4 template, is passed with `--chat-template-file`.
+
+  Checked live on the fork: correct answer, reasoning separated, about
+  61 tok/s. Every other catalogue file has its own template and no
+  vision tensors.
+- **Not checked yet:** whether every model loads on every backend. Entries
+  that don't load fail cleanly (llm-memgate, or llama-server's own error);
+  try them from llm-control and note the results here.
+
 ## Rollback
 
+- **The generated config:** `cp /home/steve/llama-swap/config.yaml.prev
+  /home/steve/llama-swap/config.yaml` restores the one before the last
+  rewrite. That reloads llama-swap, so the model has to be loaded again.
 - **A llama.cpp build:** `llama-builds rollback <backend>` points
   `current` back at the previous build. Reload the model in llm-control.
 - **llama-swap itself:** run
