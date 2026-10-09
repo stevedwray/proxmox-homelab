@@ -522,7 +522,7 @@ branches if two sessions run concurrently.
 
 | Item | Reason deferred |
 |---|---|
-| Grafana TLS on LXC | Requires cert rotation infrastructure; separate workstream |
+| Grafana TLS on LXC | Requires cert rotation infrastructure; separate workstream. Still open, verified 2026-09-28: the LXC serves plain HTTP on `:3000`, and TLS is only at Traefik (`grafana.lab…`, valid cert). |
 | Portainer HTTPS management | Portainer Enterprise feature; not planned |
 | Storage/stack validation scripts complexity | Low change frequency; address in CC-5d if time allows |
 | `scripts/validate-*.py` complexity | Agent harness scripts; refactor only if schema changes required |

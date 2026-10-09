@@ -1,6 +1,25 @@
 # gaming-stack-lab (planning workspace)
 
-## CHECKPOINT — 2026-09-26
+## CHECKPOINT — 2026-09-26 (status re-verified 2026-09-28)
+
+**Status refresh, 2026-09-28** — checked against live, supersedes the
+tables below where they differ:
+
+- **AzerothCore is live** (Wings server 4, verified 2026-09-26 — see the
+  component table further down). Its TCP 3724/8085 were closed on a
+  2026-09-28 probe, consistent with the shared game-slot interlock (only
+  one game server runs at a time), not a failure.
+- **ARK appmanifest cleanup is live but not merged.** The running ARK
+  container's startup (`docker inspect`, 2026-09-28) already contains the
+  `rm -f .../appmanifest_2430930.acf` step from branch
+  `fix/ark-update-workaround`, i.e. the egg was edited in the Panel ahead
+  of the repo. That branch (egg JSON + `update-ark-survival-ascended.yml`)
+  still needs merging for the repo to match live.
+- The LAN→ARK UDP rule (`*9C`) and AzerothCore rule (`*B1`) are mirrored
+  into `ansible/00-initial-setup/mikrotik-game-seg.yml` (`fb717060`,
+  stable-reconciliation) — gap (2) below is closed.
+- The gaming branch is merged: it reached `stable` via stable
+  reconciliation (PR #430) and `main` via PR #434.
 
 **Goal**: add ARK: Survival Ascended alongside `gaming-stack-lab`'s
 existing Minecraft (`foreverworld`), with a real start/stop/console
@@ -48,20 +67,20 @@ design work.
 | ARK server | Live, real, permanent (id 2) — `gaming-stack-lab` `192.168.60.10:7777`, `TheIsland_WP`, casual-tuned settings |
 | `Foreverworld` (Minecraft) | Live under Wings as server 3, with world/mod/RCON and two-direction interlock checks passed. The old Compose source is stopped and the pre-copy snapshot is retained for the confidence period. |
 | Migration implementation | Completed production migration with checked-in eggs, shared interlock, additive allocations, full-copy rollback path, and operator in-game verification. |
-| Branch | `feat/gaming-stack-lab-ark-mods`; not merged to `stable`/`main` |
-| Known, flagged-not-fixed gaps | (1) `gaming-stack-lab`'s own Terraform state doesn't resolve from its working directory (workspace-selection mismatch, not empty) — **do not run `terragrunt apply` against this stack** until diagnosed separately; the `ansible_playbook` field is live-patched directly in the gitignored `inventory.yml` as a workaround. (2) The LAN→`game_seg` UDP rule for ARK's game/peer/query ports (`7777`/`7778`/`27015`), applied live via RouterOS CLI, is **not yet mirrored into `pve.yaml`** — do that before this is considered done. (3) `MIKROTIK_USER`'s SOPS credential lacks RouterOS write permission (API returns "not enough permissions (9)") — every live firewall change this session went through manual operator CLI instead; worth fixing the credential's own permissions separately. |
+| Branch | Merged to `main` (via stable reconciliation #430 → #434). `fix/ark-update-workaround` is live but not merged. |
+| Known, flagged-not-fixed gaps | (1) `gaming-stack-lab`'s own Terraform state doesn't resolve from its working directory (workspace-selection mismatch, not empty) — **do not run `terragrunt apply` against this stack** until diagnosed separately; the `ansible_playbook` field is live-patched directly in the gitignored `inventory.yml` as a workaround. (2) ~~The LAN→`game_seg` UDP rule for ARK's ports is not mirrored into IaC~~ — **done 2026-09-26**, mirrored into `mikrotik-game-seg.yml` (`fb717060`). (3) `MIKROTIK_USER`'s SOPS credential lacks RouterOS write permission (API returns "not enough permissions (9)") — every live firewall change this session went through manual operator CLI instead; worth fixing the credential's own permissions separately. |
 
 ### Future plans / next steps, in likely priority order
 
-1. **Mirror the LAN→ARK-ports firewall rule into `pve.yaml`** (small, no
-   research needed — just hasn't been done yet).
-2. **AzerothCore** — implement the interlocked egg fork,
-   allocation/firewall reconciliation, and explicit resource/gameplay
-   decisions in `plan.md`.
+1. ~~Mirror the LAN→ARK-ports firewall rule into IaC~~ — **done
+   2026-09-26** (`fb717060`, `mikrotik-game-seg.yml`).
+2. ~~**AzerothCore**~~ — **live 2026-09-26** as Wings server 4. Only the
+   operator's party join/follow/assist gameplay check remains.
+2a. **Merge `fix/ark-update-workaround`** — its egg change is already live
+   (verified 2026-09-28); the repo lags.
 3. **Diagnose `gaming-stack-lab`'s Terraform workspace problem** before
    any future `terragrunt apply` against that stack is attempted for real.
-4. **Decide on `stable`/`main` promotion** for this branch — an operator
-   call, not something to do unprompted.
+4. ~~Decide on `stable`/`main` promotion~~ — done (#430, #434).
 5. Optional, explicitly deferred by the operator: port-forwarding +
    hairpin NAT to make ARK's in-game "Join" button work directly from the
    public server-browser listing, instead of the console/Favorites

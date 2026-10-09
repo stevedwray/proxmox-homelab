@@ -41,6 +41,7 @@ as-is.
 | Cutover: ai-services-stack | done — whole-setup interactive tests deferred (2026-09-27) |
 | ai-tiny-06 zone membership docs | done (2026-09-27) |
 | Phase 4 decommission (after ≥7-day soak) | not started |
+| pve-tiny backup job + first post-import backup | done 2026-09-28 — see docs/catch-up/README.md hand-back for plan 03 (PBS `iscsi-backup`, namespace `pve-tiny`, daily 12:30, retention = PBS prune job keep-last 2) |
 
 ## Hand-backs
 
