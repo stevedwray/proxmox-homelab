@@ -130,6 +130,14 @@
         dest: "{{ llama_builds_etc }}/models.json"
         mode: "0644"
 
+    # For GGUFs without a chat template of their own (copies out of Ollama).
+    - name: Install the chat templates the catalogue refers to
+      ansible.builtin.copy:
+        src: files/llama-swap/templates/
+        dest: "{{ llama_builds_etc }}/templates/"
+        mode: "0644"
+        directory_mode: "0755"
+
     - name: Clone the source repository (remote "fork"; llama-builds adds the others)
       ansible.builtin.command:
         cmd: git clone --origin fork {{ llama_builds_backends.fork.url }} {{ llama_builds_root }}/src

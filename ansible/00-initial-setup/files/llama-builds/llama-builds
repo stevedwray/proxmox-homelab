@@ -361,7 +361,7 @@ def weights_mb(gguf):
 
 
 def _yaml_str(value):
-    return json.dumps(value)  # a JSON string is a valid YAML double-quoted scalar
+    return json.dumps(value, ensure_ascii=False)  # a JSON string is a valid YAML double-quoted scalar
 
 
 def _shell_arg(arg):

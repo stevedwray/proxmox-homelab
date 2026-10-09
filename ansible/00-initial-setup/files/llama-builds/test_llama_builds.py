@@ -280,6 +280,11 @@ class ShippedCatalogTest(unittest.TestCase):
             self.assertTrue(set(m["backends"]) <= set(lb.BACKEND_LABEL), m["id"])
             self.assertTrue(m["gguf"].endswith(".gguf"), m["id"])
         self.assertNotIn("fork", next(m for m in catalog["models"] if m["id"] == "glm-5.3-flash")["backends"])
+        templates = os.path.join(HERE, "..", "llama-swap", "templates")
+        for m in catalog["models"]:  # every template it names is shipped
+            for arg in m.get("args", []):
+                if arg.startswith("/etc/llama-builds/templates/"):
+                    self.assertTrue(os.path.exists(os.path.join(templates, os.path.basename(arg))), arg)
         default_model, _, backend = catalog["default"].rpartition("-")
         self.assertIn(default_model, ids)
         self.assertIn(backend, lb.BACKEND_LABEL.values())

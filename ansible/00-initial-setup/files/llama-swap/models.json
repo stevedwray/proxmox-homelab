@@ -6,6 +6,7 @@
     "<id>-<backend>, plus <id>-<backend>-candidate while that backend has a candidate build different from current.",
     "backends: the llama-builds backends that can load the model (fork, upstream, upstream-hip).",
     "args: extra llama-server flags, after the common ones (port 8080, API key, --alias <entry id>, all layers on GPU).",
+    "Chat templates for GGUFs that lack one (Ollama copies) are in files/llama-swap/templates/ -> /etc/llama-builds/templates/.",
     "default: the entry loaded at boot (llama-swap-preload.service).",
     "Weights' size for llm-memgate is measured from the files when the config is written."
   ],
@@ -75,8 +76,9 @@
       "name": "Gemma4-26B-A4B QAT Q4_0",
       "gguf": "/mnt/nvme2/models-gguf/gemma4-26b-a4b-qat/Gemma4-26B-A4B-QAT-Q4_0-text.gguf",
       "backends": ["fork", "upstream", "upstream-hip"],
-      "args": ["--ctx-size", "131072", "--jinja"],
-      "note": "Text-only copy of /storage/models/llm/Gemma4-26B-A4B-QAT-Q4_0.gguf (Ollama layout, vision tower in the same file, which llama.cpp refuses); same text weights. No image input."
+      "args": ["--ctx-size", "131072", "--jinja",
+               "--chat-template-file", "/etc/llama-builds/templates/google-gemma-4-it.jinja"],
+      "note": "Text-only copy of /storage/models/llm/Gemma4-26B-A4B-QAT-Q4_0.gguf (Ollama layout: vision tower in the same file, which llama.cpp refuses, and no chat template in the GGUF); same text weights. No image input. Chat template: llama.cpp's Gemma 4 one."
     },
     {
       "id": "qwen3.8-27b",
