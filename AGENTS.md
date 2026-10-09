@@ -1,5 +1,12 @@
 # Workflow Instructions
 
+<!--
+This file is kept in sync with the repo's canonical CLAUDE.md by hand.
+CLAUDE.md is the source of truth (edit there first) -- this copy exists
+because Codex reads AGENTS.md automatically, not CLAUDE.md. If the two
+drift, CLAUDE.md wins. Last synced 2026-10-10.
+-->
+
 ## Branch Model
 
 ```
@@ -10,20 +17,26 @@ stable                             ← validated per its tier, ready for pve
 main                               ← current production state
 ```
 
-All active validation runs directly against `pve` through the normal production
-approval flow (see Production Credential Controls). `pve-test-vm` is retired
-and is not a validation target. Match validation depth to the change risk;
-high-blast-radius changes require a more explicit production preflight,
-rollback plan, and targeted regression checks rather than a separate test
-environment.
+All active validation runs directly against the production node that owns
+the stack (`pve`, `pve-tiny`, or the bare-metal Framework host) through the normal
+production approval flow (see Production Credential Controls). **`pve-test-vm`
+is retired and is not a validation target** (retired 2026-09-26; the VM is
+stopped). Match validation depth to the change risk; high-blast-radius changes
+require a more explicit production preflight, rollback plan, and targeted
+regression checks rather than a separate test environment.
 
 | Branch | Meaning | Promotion gate |
 |---|---|---|
-| `stable` | Validated directly on `pve` under the production approval flow, at the depth appropriate to the change class. | See Validation Tiers below. |
+| `stable` | Validated directly on the owning production node under the production approval flow, at the depth appropriate to the change class. | See Validation Tiers below. |
 | `main` | Deployed to pve; smoke test passed. | Incremental deploy on pve succeeds with no regressions. |
 
 `baseline/teardown-validated` is frozen as a historical marker (last full-teardown-validated state). Do not use as a development base.
 `dev/pve-test` is retired (archival only — do not use as a PR target).
+`archive/*` and `prod/pve-infra` are kept on purpose; do not delete them.
+Unmerged branches and their next steps are tracked in
+[docs/workflow/open-branches.md](docs/workflow/open-branches.md) — update it
+when a branch is merged or dropped, and delete a feature branch once its PR
+merges.
 
 Do not develop directly on `stable` or `main`. All active work happens on short-lived `feat/`, `fix/`, `task/`, or `work/*` branches cut from the current working HEAD.
 
@@ -33,7 +46,7 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 - All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
 - Validate on the short-lived branch (live runs, tests, populate checks).
-- Promote to `stable` once the appropriate validation tier passes directly on `pve` under the production approval flow.
+- Promote to `stable` once the appropriate validation tier passes directly on the owning production node, under the production approval flow.
 - `stable` is a **promotion target only** — never use it as the base for a new development branch.
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `stable` → `main` only after a successful incremental deploy to pve.
@@ -41,22 +54,27 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 ## Validation Tiers
 
-Match validation depth to change risk. All active validation is against `pve`
-via `./with-secrets-prod`/`./with-secrets-prod-framework` under the normal
+Match validation depth to change risk. All active validation runs against the
+owning production node via its `./with-secrets-prod*` wrapper under the normal
 production approval flow (Preflight Summary → Operator Approval →
 `TASK_APPROVAL` → execute — see Production Credential Controls).
+`scripts/teardown-deploy-test.sh` is pve-test-vm-only (it self-wraps
+`with-secrets`, not `with-secrets-prod`) and is dormant while pve-test-vm is
+retired.
 
 | Change class | Minimum validation |
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
 | Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` directly on `pve`, under the production approval flow |
-| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Review the production `terragrunt plan`; after approval, apply on `pve`, then test the explicit source-to-target path and 1–2 affected adjacent consumers. |
-| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Review the production plan and rollback path before approval; apply on `pve`, then run targeted checks for every affected path and consumer. |
-| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers directly on `pve`, under the production approval flow, and check their actual login/routing paths (targeted `scripts/provision.sh --stack <name>` calls via `./with-secrets-prod`/`./with-secrets-prod-framework`, in dependency order). |
+| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Review the production `terragrunt plan`; after approval, apply on the owning node, then test the explicit source-to-target path and 1–2 affected adjacent consumers. |
+| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Review the production plan and rollback path before approval; apply on the owning node, then run targeted checks for every affected path and consumer. |
+| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Redeploy the changed stack plus a small, explicit sample of its real consumers directly on `pve`, under the production approval flow, and check their actual login/routing paths (targeted `scripts/provision.sh --stack <name>` calls via the owning node's `./with-secrets-prod*` wrapper, in dependency order). |
 | Harbor (or another shared internal registry/cache) — version bump or config change that doesn't alter what consumers pull or push against | `scripts/provision.sh --stack harbor-stack` directly on `pve`, under the production approval flow, then re-run `scripts/provision.sh --stack <name>` for 1–2 stacks that actually pull through it (cover at least one native-adapter project and one proxy-cache project) to confirm no regression. Full teardown not required — unlike Authentik/Traefik, a Harbor outage doesn't break stacks that are already running (their images are already resident locally); it only blocks new pulls, deploys, and scans. |
 
-Batch related changes during development and run the appropriate tier.
+Batch related changes during development and run the appropriate tier. Prefer narrow, targeted validation over full redeploys — the goal is validation depth matched to actual blast radius, not maximum caution by default.
+
+**Full teardown cycles (`scripts/teardown-deploy-test.sh cycle` / `destroy`) require an explicit operator request by name** — and, with pve-test-vm retired, reviving it first. Never fold one into a plan. Work in terms of containers or sets of containers by default.
 
 **Ansible changes are not low-risk even when they appear comment-only.** A `# nosonar` comment placed inside a Jinja `{{ }}` expression block or a `content: |` env file block becomes runtime-evaluated content that can silently break deployments. Always run `--syntax-check` on the affected playbooks after any Ansible edit, no matter how trivial it looks. See `docs/teardown-test/lessons-learned.md` §12–13 for specific failure modes.
 
@@ -84,6 +102,20 @@ Batch related changes during development and run the appropriate tier.
 - Clean up stale `artifacts/` contents as the plan progresses and at closeout.
 - See `docs/workflow/documentation-workspaces.md` for the canonical rule.
 
+## Planning Big Infrastructure Work For Local-Model Execution
+
+When asked a big, open-ended infrastructure question — "what would it
+take to add X", a new stack, a cross-cutting change — and the goal is
+work a local model (via VS Code Copilot) can safely execute
+afterward, follow the process in `docs/agent-design/README.md`, not an
+ad hoc plan. In short: research this repo's real conventions, surface
+genuine judgment calls to the operator rather than default them
+silently, then write `docs/<workspace>/plan.md` as bounded steps per
+`docs/agent-design/step-packet-schema.md` — converting every step's
+judgment into literal file content or exact commands before calling it
+done, not leaving it as something to figure out at execution time. See
+`docs/media-stack-lab/` for a real worked example.
+
 ## Production Credential Controls
 
 Production access is strictly controlled and defaults to read-only. There
@@ -93,7 +125,13 @@ but every node goes through the same controls, not a bespoke copy per node.
 ### Production Nodes
 
 Declared in `terraform/PRODUCTION_NODES` (one node name per line) — currently
-`pve`, `pve-tiny` and `pve-framework`. This file is the single source of truth for
+`pve`, `pve-tiny` and `pve-framework`. `pve-framework` is no longer a Proxmox
+node: the Framework box is a bare-metal Ubuntu host managed by Ansible, under
+the same approval-gated treatment (`docs/framework-ubuntu/decisions.md`
+Decision 9). In practice its playbooks run through `./with-secrets-prod` (the
+`pve` profile carries the step-ca/node_exporter/LLM secrets they need); the
+`pve-framework` profile still holds only the old Proxmox API token. This file
+is the single source of truth for
 "which nodes are production"; both `./with-secrets`'s safety rail and the
 `with-secrets-prod*` wrappers read it. Adding a node here, plus its own
 `.env.<node>`, a `hosts/<node>` entry and profile in `secrets/manifest.json`,
@@ -124,7 +162,7 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
     without explicit `ALLOW_PVE=true`
   - Cannot load production secrets (separate per-node files)
 
-- **`./with-secrets-prod`** / **`./with-secrets-prod-framework`** (production, strict controls)
+- **`./with-secrets-prod`** / **`./with-secrets-prod-tiny`** / **`./with-secrets-prod-framework`** (production, strict controls)
   - Thin per-node entrypoints over the shared `scripts/with-secrets-prod-lib.sh`
     engine — one wrapper file per production node, not duplicated logic
   - Use only for intentional production workflows against that node
@@ -151,7 +189,7 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
 ### Approval Flow For Production Mutations
 
 1. **Preflight Summary** — Session reports to operator:
-   - target environment (which production node, e.g. `pve` or `pve-framework`)
+   - target environment (which production node: `pve`, `pve-tiny` or `pve-framework`)
    - whether mutating or read-only
    - exact objects to be changed
    - specific commands
@@ -163,7 +201,8 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
    ```bash
    export TASK_APPROVAL="task-name-from-docs"
    ./with-secrets-prod <command>              # node = pve
-   ./with-secrets-prod-framework <command>    # node = pve-framework
+   ./with-secrets-prod-tiny <command>         # node = pve-tiny
+   ./with-secrets-prod-framework <command>    # node = pve-framework (legacy; Framework playbooks use ./with-secrets-prod)
    ```
    This acknowledges an approval already given in chat; the wrapper cannot
    verify chat history by itself.
@@ -195,7 +234,7 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
 - Treat `.env` as non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in OpenBao, referenced from `secrets/manifest.json`.
 - New Terraform secrets should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, as the KV field name — there is no separate mapping layer.
 - Write or rotate secrets only with `scripts/openbao_write.py` after an explicit `bao login -method=oidc -no-store`; never persist a write token to `~/.vault-token`, never write secret values into files, and never commit AppRole SecretIDs.
-- `terraform/secrets.*.enc.yaml` (SOPS) are frozen and not authoritative; a pre-commit hook rejects edits to them.
+- The old SOPS files (`terraform/secrets.*.enc.yaml`) are deleted; OpenBao is the only secret source. A pre-commit hook rejects any attempt to re-add or edit them.
 - GitHub Actions secrets are for CI-only values. CI reads secret-store values from OpenBao via GitHub OIDC (`auth/jwt-github`), never a stored credential.
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
@@ -208,7 +247,7 @@ Some scripts call `./with-secrets` internally; others rely on it being in the en
 |---|---|---|
 | `scripts/provision.sh` | None — relies on env vars injected by caller | `./with-secrets scripts/provision.sh --stack <name>` |
 | `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
-| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
+| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally; pve-test-vm only, dormant while it is retired | `./scripts/teardown-deploy-test.sh <args>` |
 
 For `scripts/teardown-deploy-test.sh cycle`, pass `--approval-packet <path>` by default.
 When session context sets `env.disposable: true`, pass `--disposable` and omit `--approval-packet`.
@@ -223,7 +262,7 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 |---|---|---|
 | `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
 | `technitium-stack` | Docker Compose (Technitium DNS) | **The live authoritative DNS** on `pve` — MikroTik's zone-delegate rule points here. `dig` query against its IP |
-| `dns-stack` | systemd (CoreDNS) | **Rollback-only, not the active delegate target** since the cutover documented in `docs/dns-refactor/README.md` — do not assume this is live DNS just because it's deployed. `dig` query against the DNS container IP if you do need to check it |
+| `dns-stack` | systemd (CoreDNS) | **Removed from `pve`, 2026-09-08** (`pct destroy`, not just stopped) — was rollback-only since the cutover documented in `docs/dns-refactor/README.md`, decommissioned after fixing 8 stacks' hardcoded Docker-daemon-level dependency on it (see `reference_dns_stack_docker_daemon_dependency`). The stopped `pve-test-vm` still contains its own instance — re-check its dependents before relying on it if that VM is ever revived. |
 | `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
 | `openbao-stack` | systemd (OpenBao, native `.deb`) | **The secrets store** (192.168.20.16). `curl --cacert certs/homelab-root.crt https://192.168.20.16:8200/v1/sys/health` must show `"sealed":false`. Runbook: `docs/reference/secrets-management.md` |
 | `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
@@ -233,9 +272,10 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
 | `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
 | `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
+| `mcp-utility-stack` | Docker Compose (`cve-mcp-server` + `docs-rag-mcp` + `pgvector`) | `curl` to `:8000/mcp` (cve-mcp-server) and `:8001/mcp` (docs-rag-mcp) |
 
 ## Execution Guardrails
 
-- Before any `terragrunt apply` or deployment validation run, confirm the target is the intended production node. Run it through the matching `./with-secrets-prod*` wrapper under the production approval flow, and stop if the resolved target differs from the approved target.
+- Before any `terragrunt apply` or deployment validation run, confirm the target is the intended production node: run it through the matching `./with-secrets-prod*` wrapper under the production approval flow, and stop if the resolved target differs from the approved target — treat a mismatch as a targeting error.
 - For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.
 - `pvesh` runs only on a Proxmox node itself; it is not installed on the operator's workstation. For read-only API checks from the workstation, use `./with-secrets` and curl against `${TF_VAR_proxmox_api_url}` with the `PROXMOX_READONLY_TOKEN_ID`/`PROXMOX_READONLY_TOKEN_SECRET` header (`Authorization: PVEAPIToken=<id>=<secret>`), or SSH to the target node and run `pvesh`/`pct list` there.
