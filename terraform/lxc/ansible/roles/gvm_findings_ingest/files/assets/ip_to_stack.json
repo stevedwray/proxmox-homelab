@@ -1,9 +1,8 @@
 {
-  "_comment": "Reverse IP->stack registry, derived directly from .env's LAB_IP_* vars (the canonical IP registry in this repo -- do not maintain a second one by hand, regenerate from .env if it drifts). Hosts that are bare-metal/hypervisor, not an application stack, map to null (matches the existing zone:null precedent for non-VLAN-zoned hosts like pve itself).",
+  "_comment": "Reverse IP->stack registry, derived directly from .env's LAB_IP_* vars (the canonical IP registry in this repo -- do not maintain a second one by hand, regenerate from .env if it drifts). Hosts that are bare-metal/hypervisor, not an application stack, map to null (matches the existing zone:null precedent for non-VLAN-zoned hosts like pve itself). 2026-09-29: removed 192.168.20.13 (dns-stack) -- confirmed `pct destroy`'d on pve 2026-09-08 (see CLAUDE.md's Stack Service Types table); a stale mapping here was still tagging live GVM findings (e.g. CVE-1999-0524) as belonging to a stack that no longer exists. LAB_IP_DNS itself is also stale in .env (says 'retired 2026-07-05, kept as rollback' -- contradicted by the actual 2026-09-08 pct destroy) but that's out of scope here; this file just needs to stop attributing findings to a destroyed CT.",
   "192.168.20.10": "authentik-stack",
   "192.168.20.11": "step-ca-stack",
   "192.168.20.12": "monitoring-stack",
-  "192.168.20.13": "dns-stack",
   "192.168.20.14": "graylog-stack",
   "192.168.20.15": "technitium-stack",
   "192.168.20.20": "portainer-stack",
