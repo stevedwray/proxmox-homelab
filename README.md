@@ -5,8 +5,10 @@ docs for the Proxmox homelab.
 
 The active working model is:
 
-- `pve-test-vm` is the validation environment
-- `pve` is production
+- `pve` and `pve-tiny` are the production Proxmox nodes; the Framework
+  Desktop is a bare-metal Ubuntu host under the same production controls
+- Changes are validated directly on the production node that owns the stack,
+  under an explicit approval flow (`pve-test-vm` was retired 2026-09-26)
 - Terraform/Terragrunt entry point is `terraform/lxc/`
 - Ansible handles host bootstrap and stack provisioning
 - Proxmox SDN VLAN zones provide network segmentation
@@ -46,8 +48,8 @@ proxmox-homelab/
 │   └── terraform-providers/     # Local provider mirror/cache
 ├── secrets/manifest.json        # Secret references (values live in OpenBao)
 ├── .env.template                # Local environment template
-├── AGENTS.md                    # Codex workflow instructions
-└── CLAUDE.md                    # Claude workflow notes
+├── CLAUDE.md                    # Canonical agent workflow instructions
+└── AGENTS.md                    # Codex copy of CLAUDE.md (also .github/copilot-instructions.md)
 ```
 
 ## Active workflow
@@ -103,7 +105,9 @@ stack-owned edge route tasks, see
 
 ## Secrets management
 
-Use `./with-secrets` for `pve-test-vm` work and `./with-secrets-prod` for `pve`.
+Use the per-node production wrappers — `./with-secrets-prod` (`pve`, and the
+Framework host's playbooks), `./with-secrets-prod-tiny` (`pve-tiny`) — and
+`./with-secrets` only for non-production work.
 Secret values live in OpenBao; the wrappers read them with read-only
 identities, and Git holds only references (`secrets/manifest.json`).
 
@@ -112,8 +116,9 @@ for the current workflow.
 
 ## Current notes
 
-- `pve-test-vm` is the current validation target; older `pve-test` references
-  should be treated as historical unless a doc explicitly says otherwise.
+- `pve-test-vm` (and the older `pve-test`) are retired; treat references to
+  them as historical unless a doc explicitly says otherwise. The VM is stopped,
+  not deleted.
 - The design uses Proxmox SDN VLAN zones. VLAN-backed zones are the current SDN model.
 - Some SDN VLAN setup is still manual because current automation does not yet
   fully apply VLAN zones automatically.

@@ -1,49 +1,51 @@
 # Open branches
 
-What is still unmerged after the branch sweep on 2026-10-10. Each item is
-merged or dropped from its own work session; update this list when one is.
+Unmerged work and what each branch still needs. Update this list whenever a
+branch is merged or dropped. Long-lived branches that are kept on purpose are
+listed in [branch-model.md](branch-model.md#long-lived-branches-kept-on-purpose).
 
-## The sweep (2026-10-10)
+## Current state (2026-10-10)
 
-- **Merged to stable first:**
-  - #461: benchmark panel results, delete, local time, saved settings.
-  - #462: llama-swap catalogue and model-params phase A.
-  - #463: the GLM-5.3-Flash evaluation doc.
-  - #464: deep-research Nextcloud push logging, rescued from
-    `task/llama-swap-plan`. Not deployed yet; it goes out with the next
-    ai-services-stack deploy.
-- **Deleted:**
-  - 29 local and 20 remote branches already merged into stable;
-  - 6 local snapshots wholly contained in other branches;
-  - `task/glm-5.3-flash-eval`, `fix/deep-research-push-logging` and
-    `task/llama-swap-plan` after #463/#464. The last one's only other
-    commit was the superseded 2026-10-01 llama-swap front-proxy plan.
-- **Worktrees:** `proxmox-homelab-eval-runner` (clean, its branch merged as
-  #455) was removed, and the stale `/tmp` one was pruned.
-- **Kept on purpose:** `stable`, `main`, `baseline/teardown-validated`,
-  `dev/pve-test` and `archive/*`.
-
-## Follow-up (later on 2026-10-10)
-
-- **Merged to stable:** #435 (`fix/ark-update-workaround`, merged
-  directly), #444 (stale `dns-stack` GVM IP mapping) and #439 (catch-up
-  plans + arr UI port lockdown).
-- **Rescued:** `81f88809`, a teardown fix that existed only on the local,
-  frozen `baseline/teardown-validated` ref, is now PR #467.
-- **Pushed:** `feat/azerothcore-starter-weapon-skills` is now PR #466.
-- **stable → main:** stable is about 340 commits ahead of main (last
-  promotion #434, 2026-09-28). It waits on the pending ai-services-stack
-  deploy (#464).
-
-## Still open
+- `main` and `stable` hold the same tree: stable was promoted in #469
+  (`8052c476`), so `main` is ahead only by that merge commit.
+- No open PRs and no unmerged short-lived branches.
+- No extra worktrees or stashes in the main checkout. The two bake-off clones
+  (`../proxmox-homelab-agent-test`, `../proxmox-homelab-opencode`) were
+  removed.
 
 | Branch | Where | Last commit | What | Next |
 |---|---|---|---|---|
-| `feat/azerothcore-starter-weapon-skills` | PR #466, 6 commits | 2026-09-29 | AzerothCore QoL: universal starter bags, Draenei heirloom vendor placement, starter weapon skills, each with docs. | Merges cleanly into stable; check it matches what runs. |
-| `fix/teardown-skip-portainer-backup-when-stopped` | PR #467, 1 commit | 2026-10-10 | Skip the Portainer pre-destroy backup in `teardown-deploy-test.sh` when the LXC isn't running. | `bash -n`/shellcheck clean; not exercised live. |
-| `fix/ark-update-workaround` | local + remote | 2026-09-27 | Merged (#435); branch not yet deleted. | Delete local and remote. |
-| `prod/pve-infra` | local + remote | 2026-05-25 | "Promote validated pve infrastructure state" and planning docs for the baseline, credential and data refactors; far behind stable. | Kept (operator, 2026-10-10). |
+| `prod/pve-infra` | local + remote, 2 commits not on stable | 2026-05-25 | "Promote validated pve infrastructure state" and planning docs for the baseline, credential and data refactors. | Kept (operator, 2026-10-10). |
 
-The local `baseline/teardown-validated` ref still carries `81f88809`
-(now on PR #467); reset it to `origin/baseline/teardown-validated` once
-#467 merges.
+## Loose ends
+
+- **CT 170 on pve-test-vm.** The Stage 10 minecraft-stack exemplar run
+  (`docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md`) created it
+  at 192.168.1.60. pve-test-vm is stopped, so the CT is probably still on its
+  disk. If that VM is ever started, check `pct list` and destroy 170.
+- **Issue #470.** Trivy found problems in the eval-runner Dockerfiles when
+  #469 was promoted. This isn't a branch, but the promotion merged with these
+  findings knowingly accepted.
+
+## History
+
+### Sweep (2026-10-10, morning)
+
+- Merged to stable: #461–#465 (benchmark panel results, llama-swap catalogue,
+  GLM-5.3-Flash eval doc, deep-research push logging, sweep record).
+- Deleted 29 local and 20 remote branches already merged into stable, six
+  local snapshots contained in other branches, and the
+  `proxmox-homelab-eval-runner` worktree.
+
+### Follow-up (2026-10-10, afternoon)
+
+- Merged to stable: #435 (ARK update workaround, merged directly), #444 (stale
+  `dns-stack` GVM IP mapping), #439 (catch-up plans and arr UI port lockdown),
+  #466 (AzerothCore starter bags, Draenei vendor and weapon skills, previously
+  local only), #467 (teardown fix `81f88809`, rescued from the local
+  `baseline/teardown-validated` ref).
+- Deployed #464 to ai-services-stack on pve-tiny, then promoted stable to
+  `main` in #469.
+- Deleted every merged branch, reset the local `baseline/teardown-validated`
+  to origin, and unset the misleading upstreams on `archive/teardown-validated`
+  and `archive/dev-pve-test`.
