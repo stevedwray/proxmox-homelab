@@ -492,8 +492,34 @@ def _resolve_target_preflight_command(repo_root: Path, expected_target: str) -> 
         return tuple(configured_command.split())
 
     target = expected_target.strip() or os.environ.get("PVE_ENV", "").strip() or "pve-test"
-    wrapper_name = "with-secrets-prod" if target == "pve" else "with-secrets"
+    wrapper_name = _production_wrapper_name(repo_root, target)
     return (str(repo_root / wrapper_name), "bash", "-c", "echo $TF_VAR_proxmox_node")
+
+
+def _production_wrapper_name(repo_root: Path, target: str) -> str:
+    """Map a Proxmox node name to its per-node with-secrets-prod* wrapper.
+
+    terraform/PRODUCTION_NODES is the single source of truth for which
+    nodes are production-trust; every production node has its own
+    with-secrets-prod* entrypoint (with-secrets-prod for pve itself,
+    with-secrets-prod-<suffix> for the others, e.g. with-secrets-prod-tiny
+    for pve-tiny). Only "pve" was special-cased here previously, so any
+    edge-reconcile apply against pve-tiny or pve-framework silently fell
+    back to the dev `with-secrets` wrapper, which correctly refuses a
+    production node -- found live 2026-10-07 running this against pve-tiny.
+    """
+    if target == "pve":
+        return "with-secrets-prod"
+    prod_nodes_file = repo_root / "terraform" / "PRODUCTION_NODES"
+    if prod_nodes_file.exists():
+        prod_nodes = {
+            line.strip()
+            for line in prod_nodes_file.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        if target in prod_nodes and target.startswith("pve-"):
+            return f"with-secrets-prod-{target[len('pve-'):]}"
+    return "with-secrets"
 
 
 def _tcp_health_check(host: str, port: int) -> HealthCheckResult:

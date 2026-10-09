@@ -29,8 +29,10 @@ rules (e.g. `edge_seg -> mgmt_seg` forward-auth) automatically, without
 being on the same physical node as those other three stacks.
 
 Reachable from `edge_seg` (Traefik forward-auth, matching every other
-mgmt_seg web UI) and reachable *from* `cse_seg` on port 6379 only (the
-worker on `cse-controller` connecting out to this stack's Redis) — see
+mgmt_seg web UI) and on port 6379 only from `cse_seg` (the worker on
+`cse-controller`) and from `ai-services-stack` (eval-runner's panel
+workers, `mikrotik-firewall-eval-runner-panel.yml`, 2026-10-02), both
+connecting out to this stack's Redis — see
 `docs/cyberseceval-panel/plan.md`'s cross-zone firewall step. This stack
 does not itself reach into `cse_seg`; the connection is always initiated
 from the isolated side outward, matching `cse_seg`'s own default-deny
@@ -38,8 +40,11 @@ design (narrow egress allows, never inbound).
 
 ## Inputs
 
-None via `.env`/OpenBao beyond the standard `lab_ip_cse_panel`/`lab_gw_mgmt`
-template variables. `panel-web` trusts the `X-Authentik-Username`/
+`CSE_PANEL_REDIS_PASSWORD` (OpenBao `services/cse-panel`, added
+2026-10-02): Redis `requirepass` (in `/srv/cse-panel/redis.conf`, not on
+the command line) and the password in every broker URL (panel-web,
+Flower, cse-controller's worker, eval-runner's panel workers). Beyond
+that, the standard `lab_ip_cse_panel`/`lab_gw_mgmt` template variables. `panel-web` trusts the `X-Authentik-Username`/
 `X-Authentik-Email` headers Traefik's forward-auth adds (same pattern as
 `netbox-stack`'s `REMOTE_AUTH_HEADER`) for attributing who submitted a
 job — not for authorization; Authentik/Traefik forward-auth is the actual
@@ -57,6 +62,7 @@ loading — assumes the target engine already has one loaded.
 |---|---|---|
 | `panel-web-http` | 8000 | tcp |
 | `flower-http` | 5555 | tcp |
+| `panel-ui-http` | 8050 | tcp |
 
 Both exposed to the browser only through Traefik/Authentik forward-auth
 (see `edge.yaml`), never directly.
@@ -80,6 +86,9 @@ Both exposed to the browser only through Traefik/Authentik forward-auth
   (`app.py`/`requirements.txt`), written by the deploy playbook, not
   baked into the image (matches `cse-controller`'s own bind-mount-not-image
   convention).
+- `/srv/cse-panel/panel-ui` — `panel-ui`'s own application code
+  (`app.py`/`requirements.txt`), same bind-mount-not-image convention as
+  `panel-web`.
 
 ## What May Depend on This Stack
 
@@ -110,6 +119,7 @@ other stacks build on.
 | `terraform/lxc/stacks/cse-panel-stack/stack.yaml` | Terraform-side stack definition |
 | `terraform/lxc/stacks/cse-panel-stack/docker-compose.yml` | Redis/Flower/panel-web container definitions |
 | `terraform/lxc/stacks/cse-panel-stack/app/app.py` | panel-web's FastAPI application |
+| `terraform/lxc/stacks/cse-panel-stack/app-ui/app.py` | panel-ui's Dash application |
 | `terraform/lxc/stacks/cse-panel-stack/edge.yaml` | Traefik/Authentik routing (EdgeManifest) |
 | `terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl` | Terragrunt entrypoint |
 | `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml` | Stack playbook |

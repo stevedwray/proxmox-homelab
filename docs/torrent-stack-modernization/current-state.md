@@ -11,6 +11,29 @@ nothing uncommitted.
 **Execution mode**: this session drives steps directly (operator
 decision — no local-model handoff for this stack).
 
+**Status refresh, 2026-09-28** (checked against live; supersedes the
+2026-09-12 text below where they differ):
+
+- **Jellyseerr setup is done**: `/api/v1/settings/public` reports
+  `initialized: true`, and `/` redirects to `/login`, not `/setup`.
+- **The arr libraries are populated** (read-only sqlite counts inside CT
+  80011): radarr 50 movies, sonarr 63 series, lidarr 4 artists. The
+  import pass looks done for movies/TV; this can't distinguish imports
+  from new grabs, and lidarr's 4 artists may mean the music import wasn't
+  run. Operator to confirm.
+- **The arr apps' built-in auth appears to be off**: radarr/sonarr/lidarr/
+  prowlarr return `200` on `/` at their direct ports
+  (`192.168.80.11:7878/8989/8686/9696`) with no login redirect. The
+  Traefik routes are still forwardAuth-gated (`302` to Authentik), but
+  anything that can reach `media_seg` directly bypasses that gate.
+  **Closed 2026-09-28**: direct access is now dropped at the MikroTik
+  (only Traefik may connect), via
+  `ansible/00-initial-setup/mikrotik-firewall-torrent-lab-ui-lockdown.yml`
+  (docs/catch-up/01-arr-port-lockdown.md).
+- **Legacy `torrent-stack` (CT 100) is stopped** on `pve` (not destroyed),
+  so the `/incoming` sharing risk (item 5) is dormant while it stays off.
+- This workspace and `torrent-stack-lab` are on `main` (as of #434).
+
 ## What's actually live right now
 
 `torrent-stack-lab` is deployed and running on `pve`:
@@ -272,7 +295,8 @@ manual UI steps, or judgment calls):
    save-path fix landed, and qBittorrent doesn't retroactively move
    already-added torrents when a category's path changes later.
    Anything grabbed from now on lands in its own subfolder correctly.
-3. **Jellyseerr's setup wizard** — also where its real auth gets
+3. ~~**Jellyseerr's setup wizard**~~ — **done** (verified live
+   2026-09-28, `initialized: true`). Also where its real auth gets
    configured ("Sign in with Jellyfin"), since it has no edge-level
    gate.
 4. ~~qBittorrent Host-header allowlist~~ — **found already satisfied,
@@ -293,10 +317,13 @@ manual UI steps, or judgment calls):
    (its own auth is the only gate it has).
 5. **Watch `/incoming` sharing** with legacy's own qBittorrent for real
    collisions (accepted temporary risk, not a long-term design).
-6. **Each arr app's own "import existing library" pass** — fresh
+6. **Each arr app's own "import existing library" pass** — **largely
+   done as of 2026-09-28** (radarr 50, sonarr 63, lidarr 4; see the
+   status refresh at the top). Original note: fresh
    install means empty databases; point root folders at `/movies`,
    `/tv`, `/music` and let each app rediscover what's already there.
-7. **Cutover/decommission of legacy `torrent-stack`** — explicitly a
+7. **Cutover/decommission of legacy `torrent-stack`** — CT 100 found
+   **stopped** 2026-09-28 (not destroyed). Explicitly a
    separate, later, operator-initiated decision. Not scheduled here.
 
 ## Noted for future — operator confirmed 2026-09-12, not in scope now

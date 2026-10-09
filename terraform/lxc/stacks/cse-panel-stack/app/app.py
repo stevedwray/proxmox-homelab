@@ -25,15 +25,14 @@ brokers/JSON. The full raw result is still returned alongside the
 summary on GET /jobs/{id}, so this stays usable as a real API for other
 integrations, not just this one HTML page.
 """
-import html
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 
 from celery import Celery, group
 from celery.result import AsyncResult, GroupResult
-from fastapi import FastAPI, Header
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 BROKER_URL = os.environ["CELERY_BROKER_URL"]
@@ -52,7 +51,7 @@ DELETE_TASK_NAME = "cse_tasks.delete_run_dirs"
 # run_dir about to be deleted out from under it, or (worse, given
 # task_acks_late) let a killed-but-redelivered task resurrect a "deleted"
 # run. Simpler and safer to just require every job be finished first.
-NON_TERMINAL_STATES = {"PENDING", "STARTED", "RETRY"}
+NON_TERMINAL_STATES = {"PENDING", "WAITING", "STARTED", "RETRY"}
 
 # The set of benchmarks proven to work in the 2026-09-19 small-batch run
 # (docs/cyberseceval-implementation/current-state.md) -- deliberately not
@@ -142,6 +141,8 @@ KNOWN_BACKENDS = {
 
 STATE_LABELS = {
     "PENDING": "Queued",
+    # Set by cse_tasks.py while it waits for the shared Framework lock.
+    "WAITING": "Waiting for Framework",
     "STARTED": "Running",
     "SUCCESS": "Done",
     "FAILURE": "Failed",
@@ -149,12 +150,25 @@ STATE_LABELS = {
     "REVOKED": "Cancelled",
 }
 
+# The Framework lock both benchmark workers take before a run
+# (terraform/lxc/ansible/files/framework-lock/framework_lock.py), and the
+# eval battery worker's status of Framework; both in this Redis, DB 1.
+FRAMEWORK_LOCK_KEY = "framework:run-lock"
+EVAL_FRAMEWORK_KEY = "eval:framework"
+# Framework's llama.cpp builds and how far behind they are, published daily
+# by `llama-builds status --publish` on Framework (docs/llama-swap/plan.md).
+LLAMA_BUILDS_KEY = "framework:llama-builds"
+
 RECENT_JOBS_KEY = "cse_panel:recent_job_ids"
 RECENT_SUITES_KEY = "cse_panel:recent_suite_ids"
 RECENT_MAX = 50
 JOB_META_TTL = 86400  # matches Celery's own default result_expires
 
 app = FastAPI(title="CyberSecEval Control Panel")
+
+# eval-runner's benchmark battery page (/eval), docs/eval-runner/panel-plan.md.
+from eval_battery import router as eval_battery_router  # noqa: E402
+app.include_router(eval_battery_router)
 
 
 class TestSpec(BaseModel):
@@ -192,7 +206,21 @@ def _resolve_backend(base_url: str | None, model: str | None) -> tuple[str, str,
     return base_url or "", model or "", "custom"
 
 
-def _job_kwargs(spec: TestSpec, submitted_by: str) -> dict:
+def _new_run_group_stamp() -> str:
+    """One label shared by every job in a single submission (a whole
+    suite, or a standalone job as a suite-of-one) -- becomes the
+    top-level Nextcloud folder for that submission. Generated here, once,
+    before dispatch, since jobs in a suite run sequentially (worker
+    concurrency=1) and their own individual start times would otherwise
+    drift apart by however long earlier benchmarks in the suite take,
+    landing suite-mates in different folders instead of one shared one
+    (operator request 2026-09-30: "top level folder for the run date and
+    time, and that folder have subfolders for each benchmark type")."""
+    now = datetime.now(timezone.utc)
+    return f"{now.strftime('%Y-%m-%d_%H%M')}_{uuid.uuid4().hex[:8]}"
+
+
+def _job_kwargs(spec: TestSpec, submitted_by: str, run_group_stamp: str) -> dict:
     return {
         "benchmark": spec.benchmark,
         "num_test_cases": spec.num_test_cases,
@@ -201,6 +229,7 @@ def _job_kwargs(spec: TestSpec, submitted_by: str) -> dict:
         "backend_model": spec.backend_model,
         "backend_api_key": spec.backend_api_key,
         "random_sample": spec.random_sample,
+        "run_group_stamp": run_group_stamp,
     }
 
 
@@ -337,11 +366,67 @@ def _job_summary(job_id: str) -> dict:
         result = res.result or {}
         entry["ok"] = result.get("rc") == 0 and "stats_error" not in result
         entry["stats_summary"] = _flatten_stats(result.get("stats"))
+        # Duration, tokens and tokens/s, recorded by cse-controller's
+        # cse_tasks.py (absent for runs from before 2026-10-07).
+        entry["run_metrics"] = result.get("run_metrics")
+        # The model that actually answered (cse_tasks.py reads it from the
+        # backend at run time; absent for runs from before 2026-10-08).
+        served = result.get("served_model") or {}
+        entry["model"] = served.get("alias") or served.get("id") or ""
+        # The benchmark's one headline number (cse_tasks._headline; absent
+        # before 2026-10-08) and when it finished, for the results chart.
+        entry["headline"] = result.get("headline")
+        entry["finished_at"] = result.get("finished_at")
+        if served.get("changed_during_run"):
+            entry["model"] += f" -> {served['changed_during_run']}"
         if result.get("stats_error"):
             entry["stats_error"] = result["stats_error"]
     elif res.state == "FAILURE":
         entry["error"] = str(res.result)
+    elif res.state == "WAITING":
+        held_by = (res.info or {}).get("held_by") or {}
+        if held_by:
+            entry["state_label"] = f"Waiting for Framework ({held_by.get('suite')} {held_by.get('benchmark')})"
     return entry
+
+
+def _redis_json(key: str):
+    raw = celery_app.backend.client.get(key)
+    try:
+        return json.loads(raw) if raw else None
+    except (TypeError, ValueError):
+        return {"raw": str(raw)}
+
+
+@app.get("/framework")
+def framework():
+    """Who holds Framework (the shared benchmark lock) and what it serves
+    (the eval worker's 30 s status: loaded model, busy slots)."""
+    status = _redis_json(EVAL_FRAMEWORK_KEY) or {}
+    return {
+        "lock": _redis_json(FRAMEWORK_LOCK_KEY),
+        "model": status.get("model"),
+        "busy": status.get("busy"),
+        "slots": status.get("slots"),
+        "checked": status.get("checked"),
+        "error": status.get("error"),
+        "builds": _redis_json(LLAMA_BUILDS_KEY),
+    }
+
+
+COMPARE_TIMEOUT = 60
+
+
+@app.get("/compare")
+def compare():
+    """Every benchmark result row (eval battery, historical and CyberSecEval
+    headlines) for the Compare tab: built by the eval battery's ctl worker
+    from the same rows it puts in the Nextcloud Tables table."""
+    result = celery_app.send_task("eval_tasks.compare", queue="eval-runner-ctl")
+    try:
+        return result.get(timeout=COMPARE_TIMEOUT)
+    except Exception as err:  # worker down or slow
+        raise HTTPException(504, f"the eval worker didn't answer: {type(err).__name__}")
 
 
 @app.get("/healthz")
@@ -380,7 +465,7 @@ def submit_job(
         backend_api_key=backend_api_key,
         random_sample=random_sample,
     )
-    result = celery_app.send_task(TASK_NAME, kwargs=_job_kwargs(spec, submitted_by))
+    result = celery_app.send_task(TASK_NAME, kwargs=_job_kwargs(spec, submitted_by, _new_run_group_stamp()))
     celery_app.backend.client.lpush(RECENT_JOBS_KEY, result.id)
     celery_app.backend.client.ltrim(RECENT_JOBS_KEY, 0, RECENT_MAX - 1)
     resolved_base_url, resolved_model, backend_label = _resolve_backend(backend_base_url, backend_model)
@@ -445,8 +530,9 @@ def submit_suite(body: SuiteRequest, x_authentik_username: str | None = Header(d
     if not body.tests:
         return {"error": "tests list is empty"}
     submitted_by = x_authentik_username or "unknown"
+    run_group_stamp = _new_run_group_stamp()
     job_group = group(
-        celery_app.signature(TASK_NAME, kwargs=_job_kwargs(t, submitted_by))
+        celery_app.signature(TASK_NAME, kwargs=_job_kwargs(t, submitted_by, run_group_stamp))
         for t in body.tests
     )
     result = job_group.apply_async()
@@ -543,501 +629,3 @@ def delete_suite(suite_id: str, force: bool = False):
     # is already done, no need to block the response on it.
     celery_app.send_task(DELETE_TASK_NAME, kwargs={"job_ids": job_ids})
     return {"deleted": suite_id, "jobs": job_ids, "cancelled": [r.id for r in in_progress]}
-
-
-@app.get("/", response_class=HTMLResponse)
-def index():
-    benchmark_checkboxes = "".join(
-        f'<label class="benchmark-row">'
-        f'<input type="checkbox" name="benchmark" value="{b}">'
-        f'<span class="benchmark-name">{b}</span>'
-        f'<span class="benchmark-desc">{html.escape(BENCHMARK_INFO[b]["description"])}</span>'
-        f'</label>'
-        for b in KNOWN_BENCHMARKS
-    )
-    backend_options = "".join(f'<option value="{name}">{name}</option>' for name in KNOWN_BACKENDS)
-    lab_domain = os.environ.get("LAB_DOMAIN", "")
-    flower_url = f"https://cse-panel-flower.{lab_domain}" if lab_domain else "#"
-    return f"""
-    <html><head><title>CyberSecEval Control Panel</title>
-    <style>
-      body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; color: #1a1a1a; }}
-      h1 {{ font-size: 1.4rem; }}
-      h2 {{ font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
-      .tabs {{ display: flex; gap: 0.3rem; margin-top: 1.2rem; border-bottom: 2px solid #eee; }}
-      .tab-btn {{ background: none; border: none; padding: 0.6rem 1.1rem; font-size: 1rem; font-family: inherit; cursor: pointer; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; }}
-      .tab-btn.active {{ color: #1a1a1a; font-weight: 600; border-bottom-color: #1a7f37; }}
-      .tab-pane {{ margin-top: 1.2rem; }}
-      .benchmark-list {{ border: 1px solid #eee; border-radius: 6px; }}
-      .benchmark-row {{ display: flex; align-items: baseline; gap: 0.6rem; padding: 0.45rem 0.7rem; border-bottom: 1px solid #f2f2f2; cursor: pointer; }}
-      .benchmark-row:last-child {{ border-bottom: none; }}
-      .benchmark-row:hover {{ background: #f7f9fc; }}
-      .benchmark-name {{ font-weight: 600; min-width: 9.5rem; flex-shrink: 0; }}
-      .benchmark-desc {{ color: #666; font-size: 0.85rem; }}
-      #run-form label.field {{ display: block; margin: 0.5rem 0; }}
-      #run-form input[type=text], #run-form input[type=number] {{ padding: 0.3rem; }}
-      button {{ padding: 0.4rem 1rem; cursor: pointer; }}
-      table {{ width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }}
-      th, td {{ text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top; }}
-      .state-Queued {{ color: #888; }}
-      .state-Running {{ color: #b8860b; font-weight: 600; }}
-      .state-Done {{ color: #1a7f37; font-weight: 600; }}
-      .state-Failed {{ color: #c62828; font-weight: 600; }}
-      .stats-list {{ margin: 0; padding-left: 0; list-style: none; font-size: 0.85rem; }}
-      .stats-list li {{ display: inline-block; margin-right: 0.8rem; }}
-      .muted {{ color: #888; font-size: 0.85rem; }}
-      .field-hint {{ margin: -0.3rem 0 0.6rem; }}
-      .result-hint {{ color: #666; font-size: 0.78rem; font-style: italic; margin-bottom: 0.3rem; max-width: 32rem; }}
-      .toast {{ margin: 0.5rem 0; padding: 0.5rem 0.8rem; border-radius: 4px; background: #eef; display: none; }}
-      details.advanced {{ margin-top: 2.5rem; color: #666; font-size: 0.85rem; }}
-      details.run-card {{ border: 1px solid #ddd; border-radius: 6px; margin-bottom: 0.7rem; }}
-      details.run-card summary {{ padding: 0.6rem 0.9rem; cursor: pointer; font-size: 0.95rem; list-style: none; }}
-      details.run-card summary::-webkit-details-marker {{ display: none; }}
-      details.run-card summary::before {{ content: "▸ "; color: #888; }}
-      details.run-card[open] summary::before {{ content: "▾ "; }}
-      details.run-card table {{ margin: 0; }}
-      details.run-card th:first-child, details.run-card td:first-child {{ padding-left: 0.9rem; }}
-      .delete-run-btn {{ float: right; font-size: 0.8rem; padding: 0.15rem 0.6rem; color: #b71c1c; background: none; border: 1px solid #b71c1c; border-radius: 4px; cursor: pointer; }}
-      .delete-run-btn:disabled {{ color: #999; border-color: #ccc; cursor: not-allowed; }}
-      #custom-backend-fields {{ display: none; }}
-      .view-link {{ font-size: 0.85rem; margin-left: 0.5rem; }}
-      tr.detail-row td {{ background: #fafafa; padding: 0; }}
-      .detail-box {{ padding: 0.8rem 1rem; }}
-      .transcript-entry {{ border-top: 1px solid #eee; padding: 0.6rem 0; }}
-      .transcript-entry:first-child {{ border-top: none; }}
-      .transcript-label {{ font-weight: 600; font-size: 0.8rem; color: #555; margin-top: 0.4rem; }}
-      .transcript-text {{ white-space: pre-wrap; font-size: 0.9rem; margin: 0.15rem 0 0; }}
-      .transcript-verdict {{ display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; background: #eef; }}
-      .transcript-meta {{ font-size: 0.8rem; color: #888; margin-top: 0.3rem; }}
-      .oplog-turn {{ border-left: 3px solid #ccc; padding: 0.3rem 0 0.3rem 0.7rem; margin: 0.5rem 0; }}
-      .oplog-turn.oplog-ai {{ border-left-color: #1565c0; }}
-      .oplog-turn.oplog-env {{ border-left-color: #999; }}
-      .oplog-turn .transcript-text {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.82rem; }}
-      .oplog-prompt {{ margin: 0.5rem 0; }}
-      .oplog-prompt summary {{ cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #555; }}
-      .oplog-prompt .transcript-text {{ margin-top: 0.3rem; }}
-    </style>
-    </head>
-    <body>
-      <h1>CyberSecEval Control Panel</h1>
-
-      <div class="tabs">
-        <button type="button" class="tab-btn active" id="tab-btn-run" onclick="showTab('run')">Run tests</button>
-        <button type="button" class="tab-btn" id="tab-btn-status" onclick="showTab('status')">Status</button>
-      </div>
-      <div class="toast" id="toast"></div>
-
-      <div id="tab-run" class="tab-pane">
-        <form id="run-form">
-          <div class="benchmark-list">{benchmark_checkboxes}</div>
-          <label class="field">Test cases per benchmark:
-            <input name="num_test_cases" type="number" value="2" min="1" max="2000">
-          </label>
-          <p class="muted field-hint">50 was never a real limit on the underlying benchmarks --
-            just an old placeholder in this form. Each benchmark's actual dataset size varies
-            (roughly 250-1900 test cases); asking for more than a benchmark actually has just
-            uses its whole dataset, it won't error.</p>
-          <label class="field checkbox-field">
-            <input name="random_sample" type="checkbox">
-            Pick a random subset each run (otherwise the same N test cases run every time)
-          </label>
-          <label class="field">Backend:
-            <select name="backend" id="backend-select">{backend_options}</select>
-          </label>
-          <div id="custom-backend-fields">
-            <label class="field">Backend base URL: <input name="backend_base_url" type="text" placeholder="http://host:port/v1" size="40"></label>
-            <label class="field">Backend model: <input name="backend_model" type="text" size="40"></label>
-            <label class="field">API key (optional): <input name="backend_api_key" type="text" size="30"></label>
-          </div>
-          <button type="submit">Run</button>
-        </form>
-      </div>
-
-      <div id="tab-status" class="tab-pane" style="display:none">
-        <div id="status"><p class="muted">Loading...</p></div>
-
-        <details class="advanced">
-          <summary>Advanced / API</summary>
-          <p>
-            <a href="/jobs">Recent jobs (raw)</a> &middot;
-            <a href="/suites">Recent suites (raw)</a> &middot;
-            <a href="/backends">Known backends (raw)</a> &middot;
-            <a href="/docs">API docs</a> &middot;
-            <a href="{flower_url}">Flower (task/queue internals)</a>
-          </p>
-        </details>
-      </div>
-
-      <script>
-        const KNOWN_BACKENDS = {json.dumps([[name, b["base_url"], b["model"]] for name, b in KNOWN_BACKENDS.items()])};
-        const BENCHMARK_HINTS = {json.dumps({b: info["result_hint"] for b, info in BENCHMARK_INFO.items()})};
-
-        document.getElementById('backend-select').addEventListener('change', (e) => {{
-          document.getElementById('custom-backend-fields').style.display =
-            e.target.value === 'custom' ? 'block' : 'none';
-        }});
-
-        function showTab(name) {{
-          document.getElementById('tab-run').style.display = name === 'run' ? 'block' : 'none';
-          document.getElementById('tab-status').style.display = name === 'status' ? 'block' : 'none';
-          document.getElementById('tab-btn-run').classList.toggle('active', name === 'run');
-          document.getElementById('tab-btn-status').classList.toggle('active', name === 'status');
-        }}
-
-        function showToast(msg) {{
-          const t = document.getElementById('toast');
-          t.textContent = msg;
-          t.style.display = 'block';
-          setTimeout(() => {{ t.style.display = 'none'; }}, 4000);
-        }}
-
-        document.getElementById('run-form').addEventListener('submit', async (e) => {{
-          e.preventDefault();
-          const form = new FormData(e.target);
-          const benchmarks = form.getAll('benchmark');
-          if (benchmarks.length === 0) {{ showToast('Pick at least one benchmark.'); return; }}
-          const numTestCases = parseInt(form.get('num_test_cases') || '2', 10);
-          const randomSample = form.get('random_sample') === 'on';
-          const backendName = form.get('backend');
-          let baseUrl = null, model = null, apiKey = null;
-          if (backendName === 'custom') {{
-            baseUrl = form.get('backend_base_url') || null;
-            model = form.get('backend_model') || null;
-            apiKey = form.get('backend_api_key') || null;
-          }} else {{
-            const preset = KNOWN_BACKENDS.find(b => b[0] === backendName);
-            if (preset) {{ baseUrl = preset[1]; model = preset[2]; }}
-          }}
-          const tests = benchmarks.map(b => ({{
-            benchmark: b, num_test_cases: numTestCases, random_sample: randomSample,
-            backend_base_url: baseUrl, backend_model: model, backend_api_key: apiKey,
-          }}));
-          const res = await fetch('/suites', {{
-            method: 'POST',
-            headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{tests}}),
-          }});
-          const body = await res.json();
-          if (body.error) {{ showToast('Error: ' + body.error); }}
-          else {{ showToast(`Submitted ${{tests.length}} test(s).`); showTab('status'); refreshStatus(); }}
-        }});
-
-        function stateClass(label) {{ return 'state-' + label.replace(/[^A-Za-z]/g, ''); }}
-
-        function hintLine(benchmark) {{
-          const hint = BENCHMARK_HINTS[benchmark];
-          return hint ? `<div class="result-hint">${{esc(hint)}}</div>` : '';
-        }}
-
-        function renderStats(job) {{
-          const hint = hintLine(job.benchmark);
-          if (job.state_label === 'Failed') {{
-            return hint + `<span style="color:#c62828">${{esc((job.error || '').slice(0, 160))}}</span>`;
-          }}
-          if (job.stats_error) {{
-            return hint + `<span class="muted">${{esc(job.stats_error)}}</span>`;
-          }}
-          if (job.stats_summary && job.stats_summary.length) {{
-            return hint + '<ul class="stats-list">' +
-              job.stats_summary.map(([k, v]) => `<li><b>${{esc(k)}}</b>: ${{esc(v)}}</li>`).join('') +
-              '</ul>';
-          }}
-          return '<span class="muted">-</span>';
-        }}
-
-        // Tracks which jobs' transcripts are expanded and caches fetched
-        // results, so the accordion survives the 4s poll rebuild instead
-        // of getting wiped every refresh.
-        const expandedJobs = new Set();
-        const transcriptCache = {{}};
-        // Same problem, one level deeper: the autonomous-uplift system-
-        // prompt <details> has no open-state tracking of its own, so the
-        // 4s poll rebuild reset it to closed the instant it was opened --
-        // confirmed live 2026-09-24 ("the text folds out and folds right
-        // back up again"). Keyed by jobId-entryIndex since a job could in
-        // principle have more than one operation_log entry.
-        const expandedPrompts = new Set();
-        let lastSuitesBody = {{suites: []}};
-        // Jobs submitted via the raw POST /jobs API rather than /suites --
-        // no suite card to show them in, but they still need to be
-        // visible and cancellable (see docs/cyberseceval-panel/README.md:
-        // the previous "Individual jobs" section was removed as pure
-        // clutter, but that also removed the only way to see/cancel a
-        // standalone job -- confirmed live 2026-09-25 when exactly this
-        // kind of job got stuck for 3 days with no way to clear it).
-        let lastStandaloneJobs = [];
-
-        // Each run (suite) gets its own collapsible card instead of
-        // everything sharing one continuous table -- the operator asked
-        // for runs to be visually separated, not just marked with a
-        // header row in the middle of one long scroll. openSuites tracks
-        // the operator's own manual expand/collapse choices so they
-        // survive the 4s poll rebuild; every run starts folded, operator
-        // opens whichever ones they actually want to look at.
-        const openSuites = new Set();
-
-        function renderJobRow(job, standalone) {{
-          const when = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '';
-          const isOpen = expandedJobs.has(job.job_id);
-          const viewLink = (job.state_label === 'Done' || job.state_label === 'Failed')
-            ? `<a href="#" class="view-link" onclick="toggleJob('${{job.job_id}}'); return false;">${{isOpen ? 'hide' : 'view'}} prompts &amp; responses</a>`
-            : '';
-          const running = job.state_label === 'Queued' || job.state_label === 'Running' || job.state_label === 'Retrying';
-          const actionCell = standalone
-            ? `<td><button type="button" class="delete-run-btn" onclick="deleteJob(event, '${{job.job_id}}', ${{running}})">${{running ? 'Cancel &amp; delete' : 'Delete'}}</button></td>`
-            : '';
-          let html = `<tr>
-            <td>${{when}}</td>
-            <td>${{job.benchmark}}</td>
-            <td>${{job.backend}}</td>
-            <td class="${{stateClass(job.state_label)}}">${{job.state_label}}</td>
-            <td>${{renderStats(job)}}${{viewLink}}</td>
-            ${{actionCell}}
-          </tr>`;
-          if (isOpen) {{
-            html += `<tr class="detail-row"><td colspan="${{standalone ? 6 : 5}}">${{renderJobDetail(job.job_id)}}</td></tr>`;
-          }}
-          return html;
-        }}
-
-        async function deleteJob(event, jobId, running) {{
-          event.preventDefault();
-          event.stopPropagation();
-          const msg = running
-            ? 'This job is still in progress. Deleting will cancel it (including a stuck/hung job) and remove its results. Continue?'
-            : 'Delete this job and its results? This cannot be undone.';
-          if (!confirm(msg)) return;
-          try {{
-            const url = `/jobs/${{jobId}}` + (running ? '?force=true' : '');
-            const res = await fetch(url, {{method: 'DELETE'}});
-            const body = await res.json();
-            if (body.error) {{ showToast('Error: ' + body.error); return; }}
-            lastStandaloneJobs = lastStandaloneJobs.filter(j => j.job_id !== jobId);
-            expandedJobs.delete(jobId);
-            renderTable();
-            showToast(body.cancelled && body.cancelled.length ? 'Job cancelled and deleted.' : 'Job deleted.');
-          }} catch (err) {{
-            showToast(`Failed to delete (${{err.message}}).`);
-          }}
-        }}
-
-        // A benchmark's transcript entries don't share one exact schema --
-        // pick whichever of these fields is actually present rather than
-        // assuming one fixed shape. "Present" means the key exists at
-        // all, even if its value is an empty string -- an empty response
-        // is a real (if uninteresting) result and should say so, not
-        // silently vanish as if that field didn't exist.
-        const PROMPT_KEYS = ['test_case_prompt', 'prompt', 'mutated_prompt', 'question'];
-        const RESPONSE_KEYS = ['response', 'model_output', 'model_response'];
-        const VERDICT_KEYS = ['judge_response', 'judgement', 'judgment', 'answered_correctly'];
-        const SKIP_KEYS = new Set([...PROMPT_KEYS, ...RESPONSE_KEYS, ...VERDICT_KEYS,
-          'model', 'prompt_id', 'pass_id', 'judge_question', 'user_input']);
-
-        function firstPresentKey(entry, keys) {{
-          for (const k of keys) {{ if (entry[k] !== undefined) return k; }}
-          return null;
-        }}
-
-        function esc(s) {{
-          const d = document.createElement('div');
-          d.textContent = String(s);
-          return d.innerHTML;
-        }}
-
-        function textOrEmpty(v) {{
-          return esc(v) || '<span class="muted">(empty)</span>';
-        }}
-
-        // autonomous-uplift's responses.json has a completely different
-        // shape from every other benchmark -- one continuous live SSH
-        // session logged as a single operation_log string with >>> USER:
-        // (environment/target output) and >>> AI: (the model's own
-        // command) markers, not a prompt/response pair. Without this, it
-        // fell through to the generic metadata dump -- the entire
-        // multi-turn conversation joined into one unreadable line.
-        function renderOperationLog(log) {{
-          const parts = log.split(/(>>> (?:USER|AI): )/);
-          let html = '';
-          for (let i = 1; i < parts.length; i += 2) {{
-            const isAI = parts[i].includes('AI');
-            const text = (parts[i + 1] || '').trim();
-            if (!text) continue;
-            html += `<div class="oplog-turn ${{isAI ? 'oplog-ai' : 'oplog-env'}}">
-              <div class="transcript-label">${{isAI ? 'Model command' : 'Target/environment output'}}</div>
-              <p class="transcript-text">${{textOrEmpty(text)}}</p>
-            </div>`;
-          }}
-          return html || '<p class="muted">(no operations recorded)</p>';
-        }}
-
-        function renderTranscriptEntry(entry, i, jobId) {{
-          if (entry.operation_log !== undefined) {{
-            const headerParts = ['attacker', 'target', 'model']
-              .filter(k => entry[k])
-              .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
-            // Collapsed by default -- this is the system prompt actually
-            // given to the model (the red-team objective plus a leaked-
-            // credential list), genuinely useful for research but long
-            // enough (2000+ chars) that showing it open by default would
-            // bury the actual attack turns below it. Open state tracked
-            // in expandedPrompts (keyed by job+entry) so it survives the
-            // 4s poll rebuild instead of snapping shut the instant it's
-            // opened -- confirmed live 2026-09-24.
-            const promptKey = `${{jobId}}-${{i}}`;
-            const promptOpen = expandedPrompts.has(promptKey);
-            const systemPrompt = entry.system_prompt
-              ? `<details class="oplog-prompt" ${{promptOpen ? 'open' : ''}} ontoggle="onPromptToggle('${{promptKey}}', this.open)"><summary>System prompt (what the model was actually told)</summary><p class="transcript-text">${{textOrEmpty(entry.system_prompt)}}</p></details>`
-              : '';
-            return `<div class="transcript-entry"><b>Attack session ${{i + 1}}</b>
-              ${{headerParts.length ? `<div class="transcript-meta">${{headerParts.join(' &middot; ')}}</div>` : ''}}
-              ${{systemPrompt}}
-              ${{renderOperationLog(entry.operation_log)}}
-            </div>`;
-          }}
-          const promptKey = firstPresentKey(entry, PROMPT_KEYS);
-          const responseKey = firstPresentKey(entry, RESPONSE_KEYS);
-          const verdictKey = firstPresentKey(entry, VERDICT_KEYS);
-          const metaParts = Object.keys(entry)
-            .filter(k => !SKIP_KEYS.has(k) && entry[k] !== null && entry[k] !== undefined && entry[k] !== '')
-            .map(k => `${{esc(k)}}: ${{esc(entry[k])}}`);
-          let html = `<div class="transcript-entry"><b>Test case ${{i + 1}}</b>`;
-          if (promptKey) html += `<div class="transcript-label">Prompt</div><p class="transcript-text">${{textOrEmpty(entry[promptKey])}}</p>`;
-          if (entry.user_input !== undefined) html += `<div class="transcript-label">User input</div><p class="transcript-text">${{textOrEmpty(entry.user_input)}}</p>`;
-          if (responseKey) html += `<div class="transcript-label">Response</div><p class="transcript-text">${{textOrEmpty(entry[responseKey])}}</p>`;
-          if (verdictKey) html += `<div class="transcript-label">Judge verdict</div><span class="transcript-verdict">${{textOrEmpty(entry[verdictKey])}}</span>`;
-          if (entry.judge_question) html += `<div class="transcript-meta">Judge question: ${{esc(entry.judge_question)}}</div>`;
-          if (metaParts.length) html += `<div class="transcript-meta">${{metaParts.join(' &middot; ')}}</div>`;
-          html += '</div>';
-          return html;
-        }}
-
-        function renderJobDetail(jobId) {{
-          const cached = transcriptCache[jobId];
-          if (!cached) return '<div class="detail-box muted">Loading...</div>';
-          if (cached.error) return `<div class="detail-box"><p class="muted">${{esc(cached.error)}}</p></div>`;
-          if (!cached.transcript.length) return '<div class="detail-box"><p class="muted">No transcript available for this job.</p></div>';
-          return `<div class="detail-box">${{cached.transcript.map((entry, i) => renderTranscriptEntry(entry, i, jobId)).join('')}}</div>`;
-        }}
-
-        function onPromptToggle(key, isOpen) {{
-          if (isOpen) expandedPrompts.add(key); else expandedPrompts.delete(key);
-        }}
-
-        function jobsTable(jobs, standalone) {{
-          const rows = jobs.map(j => renderJobRow(j, standalone)).join('');
-          const actionHeader = standalone ? '<th></th>' : '';
-          return `<table><thead><tr><th>When</th><th>Benchmark</th><th>Backend</th><th>State</th><th>Result</th>${{actionHeader}}</tr></thead><tbody>${{rows}}</tbody></table>`;
-        }}
-
-        function onSuiteToggle(suiteId, isOpen) {{
-          if (isOpen) openSuites.add(suiteId); else openSuites.delete(suiteId);
-        }}
-
-        function renderSuiteCard(suite, isOpen) {{
-          const when = suite.submitted_at ? new Date(suite.submitted_at).toLocaleString() : '';
-          const stillRunning = suite.done < suite.total;
-          const deleteBtn = `<button type="button" class="delete-run-btn" onclick="deleteSuite(event, '${{suite.suite_id}}', ${{stillRunning}})">${{stillRunning ? 'Cancel &amp; delete' : 'Delete'}}</button>`;
-          return `<details class="run-card" ${{isOpen ? 'open' : ''}} ontoggle="onSuiteToggle('${{suite.suite_id}}', this.open)">
-            <summary><b>${{when}}</b> &middot; ${{suite.jobs.length}} benchmark(s) &middot;
-              ${{suite.done}}/${{suite.total}} done${{suite.failed ? ', ' + suite.failed + ' failed' : ''}}
-              <span class="muted">(run ${{suite.suite_id.slice(0, 8)}})</span>
-              ${{deleteBtn}}</summary>
-            ${{jobsTable(suite.jobs)}}
-          </details>`;
-        }}
-
-        async function deleteSuite(event, suiteId, stillRunning) {{
-          event.preventDefault();
-          event.stopPropagation();
-          const msg = stillRunning
-            ? 'This run is still in progress. Deleting will cancel whatever is currently running (including a stuck/hung job) and remove all its results. Continue?'
-            : 'Delete this run and all its results? This cannot be undone.';
-          if (!confirm(msg)) return;
-          try {{
-            const url = `/suites/${{suiteId}}` + (stillRunning ? '?force=true' : '');
-            const res = await fetch(url, {{method: 'DELETE'}});
-            const body = await res.json();
-            if (body.error) {{ showToast('Error: ' + body.error); return; }}
-            lastSuitesBody.suites = lastSuitesBody.suites.filter(s => s.suite_id !== suiteId);
-            openSuites.delete(suiteId);
-            renderTable();
-            showToast(body.cancelled && body.cancelled.length ? 'Run cancelled and deleted.' : 'Run deleted.');
-          }} catch (err) {{
-            showToast(`Failed to delete (${{err.message}}).`);
-          }}
-        }}
-
-        function renderTable() {{
-          const suitesNewestFirst = lastSuitesBody.suites.slice().reverse();
-          let html = suitesNewestFirst
-            .map(suite => renderSuiteCard(suite, openSuites.has(suite.suite_id)))
-            .join('');
-          if (lastStandaloneJobs.length) {{
-            const jobsNewestFirst = lastStandaloneJobs.slice().reverse();
-            html += `<details class="run-card" ${{openSuites.has('__standalone__') ? 'open' : ''}} ontoggle="onSuiteToggle('__standalone__', this.open)">
-              <summary><b>Individual jobs</b> <span class="muted">(submitted directly via the API, not part of a run)</span></summary>
-              ${{jobsTable(jobsNewestFirst, true)}}
-            </details>`;
-          }}
-          document.getElementById('status').innerHTML = html || '<p class="muted">No tests run yet.</p>';
-        }}
-
-        async function toggleJob(jobId) {{
-          if (expandedJobs.has(jobId)) {{
-            expandedJobs.delete(jobId);
-            renderTable();
-            return;
-          }}
-          expandedJobs.add(jobId);
-          // A retryable failure (network hiccup, or an expired Authentik
-          // session redirecting this background fetch to an HTML login
-          // page instead of JSON) shouldn't get stuck cached forever --
-          // closing and reopening should try again. A genuine "this job
-          // has no transcript" result from the server is fine to cache
-          // permanently, since refetching it would just say the same thing.
-          if (transcriptCache[jobId] && transcriptCache[jobId].retryable) {{
-            delete transcriptCache[jobId];
-          }}
-          renderTable();
-          if (!transcriptCache[jobId]) {{
-            try {{
-              const res = await fetch(`/jobs/${{jobId}}`);
-              if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
-              const job = await res.json();
-              const result = job.result || {{}};
-              transcriptCache[jobId] = result.transcript_error
-                ? {{error: result.transcript_error}}
-                : {{transcript: result.transcript || []}};
-            }} catch (err) {{
-              transcriptCache[jobId] = {{
-                error: `Failed to load (${{err.message}}). Your session may have expired -- try reloading the page, then click again.`,
-                retryable: true,
-              }};
-            }}
-            renderTable();
-          }}
-        }}
-
-        async function refreshStatus() {{
-          try {{
-            const [suitesRes, jobsRes] = await Promise.all([fetch('/suites'), fetch('/jobs')]);
-            if (!suitesRes.ok || !jobsRes.ok) throw new Error(`HTTP ${{suitesRes.status}}/${{jobsRes.status}}`);
-            lastSuitesBody = await suitesRes.json();
-            const allJobs = (await jobsRes.json()).jobs;
-            const inSuite = new Set();
-            for (const suite of lastSuitesBody.suites) {{
-              for (const job of suite.jobs) {{ inSuite.add(job.job_id); }}
-            }}
-            lastStandaloneJobs = allJobs.filter(j => !inSuite.has(j.job_id));
-            renderTable();
-          }} catch (err) {{
-            document.getElementById('status').innerHTML =
-              `<p class="muted" style="color:#c62828">Couldn't load status (${{esc(err.message)}}). Your session may have expired -- try reloading the page.</p>`;
-          }}
-        }}
-
-        refreshStatus();
-        setInterval(refreshStatus, 4000);
-      </script>
-    </body></html>
-    """

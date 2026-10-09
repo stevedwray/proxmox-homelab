@@ -1,6 +1,7 @@
 import os
 import asyncio
 import re
+from openai import AsyncOpenAI
 from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework import tool, AgentSession
 from tools import WORKSPACE_TOOLS, tool_quotas_ctx, with_quota, think_tool, QuotaAbortException
@@ -55,19 +56,71 @@ def _safe_format(template: str, **kwargs) -> str:
     return template.format_map(_SafeDict(**kwargs))
 
 def _get_default_options():
-    options = {"temperature": 0.0}
+    # Found live 2026-10-03: a test run sat "stuck" for over an hour --
+    # not actually hung, confirmed via the llama.cpp /slots endpoint
+    # (OPENAI_API_KEY auth): is_processing=true, n_decoded=65369 and
+    # climbing, max_tokens/n_predict both -1 (unbounded). The repeat_penalty
+    # fix above only guards against an exact short-window repeated token
+    # sequence (repeat_last_n=64) -- this was a longer-period degenerate
+    # pattern that evades that window but still never produces a real stop
+    # token. The existing 300s HTTP client timeout (see the comment below)
+    # never fires either, since it's a PER-READ timeout that resets on every
+    # streamed token -- a pathological-but-still-streaming generation looks
+    # "alive" to it forever. A hard max_tokens cap is the only backstop that
+    # actually bounds a single turn's output regardless of streaming
+    # behavior. 16384 is generous for any legitimate single turn (tool call,
+    # reasoning, or even a full final_report.md write) while guaranteeing a
+    # hard stop far short of actually exhausting the 131072 context window.
+    options = {"temperature": 0.0, "max_tokens": 16384}
     # OpenAI's official API rejects "chat_template_kwargs"
     if "api.openai.com" not in config.cfg.get("api", {}).get("openai_base_url", ""):
         options["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": config.cfg["settings"].get("enable_thinking", False)}
+            "chat_template_kwargs": {"enable_thinking": config.cfg["settings"].get("enable_thinking", False)},
+            # Found 2026-10-03: a live run got stuck generating the exact
+            # same sentence ("Discord's ASN is AS62041? ") forever -- a
+            # real, observed degenerate-repetition loop, not a dispatcher/
+            # quota bug. temperature: 0.0 is fully greedy/deterministic
+            # decoding with zero randomness to break out of a loop once
+            # the model enters one, and no repetition penalty was set
+            # anywhere. Confirmed `repeat_penalty` is accepted by this
+            # llama.cpp server (HTTP 200 on a direct request) before
+            # adding it. 1.15 is llama.cpp's own common default value --
+            # not tuned here, just enabled where it was previously fully
+            # absent. Left temperature at 0.0 -- that's a deliberate
+            # existing design choice (deterministic reasoning), and
+            # repeat_penalty is a narrower, more surgical mitigation for
+            # literal token-sequence repetition specifically.
+            "repeat_penalty": 1.15,
         }
     return options
 
+# Real production incident 2026-09-30/10-01: a live session's final-report
+# completion call hung silently for 18+ minutes with zero response -- the
+# framework LLM host's own CPU was confirmed flat/idle (VictoriaMetrics)
+# for the entire window, so the request never got real processing, yet no
+# timeout ever fired. Root cause: OpenAIChatCompletionClient.__init__ has
+# no `timeout` parameter of its own, and _build_client() never passed one
+# to the underlying AsyncOpenAI client either -- so it silently used the
+# openai SDK's own default (nominally 600s, but implemented via httpx as a
+# PER-READ timeout, which resets on any received byte, including a bare
+# keep-alive ping with no real content). A connection that stays
+# technically "alive" without producing a real response can therefore hang
+# indefinitely. Building our own AsyncOpenAI client with an explicit,
+# bounded total `timeout` and handing it in via `async_client=` closes
+# this gap -- a stuck completion now raises a catchable
+# openai.APITimeoutError instead of hanging the whole session forever.
+_LLM_TIMEOUT_SECONDS = 300
+
+
 def _build_client():
-    return OpenAIChatCompletionClient(
+    async_client = AsyncOpenAI(
         base_url=config.cfg["api"]["openai_base_url"],
         api_key=os.getenv("OPENAI_API_KEY", "dummy"),
-        model=config.cfg["api"]["openai_model"]
+        timeout=_LLM_TIMEOUT_SECONDS,
+    )
+    return OpenAIChatCompletionClient(
+        model=config.cfg["api"]["openai_model"],
+        async_client=async_client,
     )
 
 def create_local_agent(builder, subagent_callback=None, session_data=None):
@@ -158,13 +211,32 @@ def create_local_agent(builder, subagent_callback=None, session_data=None):
                 final_text = ""
                 current_input = instructions
                 has_requests = True
+                # Found 2026-10-02: a live run hung 52+ minutes with zero
+                # progress (llama.cpp's own decode counter flat, osint-mcp
+                # never reached) -- no step of this loop had any bound, so
+                # a stalled tool/connection (the specific case found: the
+                # MCP osint_investigate tool's session-level response await
+                # had no timeout -- now fixed in tools/osint.py) hung
+                # silently forever with no error. This is a second,
+                # generic guard: if the stream produces no update at all
+                # for this long, treat it as hung rather than wait forever.
+                # 300s is well above the worst documented single-tool-call
+                # latency (web_search measured at 145-147s under load).
+                idle_timeout = config.cfg.get("settings", {}).get("concurrency", {}).get(
+                    "subagent_idle_timeout_seconds", 300
+                )
                 while has_requests:
                     has_requests = False
                     user_input_requests = []
 
                     try:
                         stream = sub_agent.run(current_input, stream=True)
-                        async for update in stream:
+                        stream_iter = stream.__aiter__()
+                        while True:
+                            try:
+                                update = await asyncio.wait_for(stream_iter.__anext__(), timeout=idle_timeout)
+                            except StopAsyncIteration:
+                                break
                             if subagent_callback:
                                 await subagent_callback(update, is_subagent=True, agent_name=f"SubAgent_{task_name}")
                             for c in update.contents:
@@ -175,6 +247,11 @@ def create_local_agent(builder, subagent_callback=None, session_data=None):
                                 user_input_requests.extend(update.user_input_requests)
                     except QuotaAbortException as e:
                         return f"## Error for {task_name}\nTask forcefully aborted: {str(e)}\n---"
+                    except asyncio.TimeoutError:
+                        return (
+                            f"## Error for {task_name}\nSub-agent produced no progress for "
+                            f"{idle_timeout}s and was aborted as hung.\n---"
+                        )
 
                     if user_input_requests:
                         has_requests = True

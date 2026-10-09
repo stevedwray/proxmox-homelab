@@ -3,9 +3,13 @@ services:
   redis:
     image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/redis:7.4-alpine
     container_name: cse-panel-redis
+    # requirepass is in the mounted config (written by the playbook,
+    # readable only by the container's redis user), not on the command
+    # line where `ps`/`docker inspect` would show it.
     volumes:
       - /srv/cse-panel/redis-data:/data
-    command: ["redis-server", "--appendonly", "yes"]
+      - /srv/cse-panel/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     ports:
       - "6379:6379"
     restart: unless-stopped
@@ -14,7 +18,7 @@ services:
     image: harbor.lab.gibbsgreatly.xyz/dockerhub/mher/flower:2.0.1
     container_name: cse-panel-flower
     environment:
-      - CELERY_BROKER_URL=redis://cse-panel-redis:6379/0
+      - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@cse-panel-redis:6379/0
       - FLOWER_PORT=5555
     ports:
       - "5555:5555"
@@ -30,11 +34,27 @@ services:
     working_dir: /app
     command: ["bash", "-c", "pip install --no-cache-dir -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8000"]
     environment:
-      - CELERY_BROKER_URL=redis://cse-panel-redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://cse-panel-redis:6379/1
+      - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@cse-panel-redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@cse-panel-redis:6379/1
       - LAB_DOMAIN=${LAB_DOMAIN}
     ports:
       - "8000:8000"
     depends_on:
       - redis
+    restart: unless-stopped
+
+  panel-ui:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-panel-ui
+    volumes:
+      - /srv/cse-panel/panel-ui:/app
+    working_dir: /app
+    command: ["bash", "-c", "pip install --no-cache-dir -r requirements.txt && gunicorn -b 0.0.0.0:8050 --workers 2 app:server"]
+    environment:
+      - PANEL_API_BASE_URL=http://panel-web:8000
+      - LAB_DOMAIN=${LAB_DOMAIN}
+    ports:
+      - "8050:8050"
+    depends_on:
+      - panel-web
     restart: unless-stopped

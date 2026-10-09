@@ -29,6 +29,7 @@ locals {
     lab_ip_graylog              = var.lab_ip_graylog
     lab_ip_dns                  = var.lab_ip_dns
     lab_ip_technitium           = var.lab_ip_technitium
+    lab_ip_technitium_tiny      = var.lab_ip_technitium_tiny
     lab_ip_proxy                = var.lab_ip_proxy
     lab_ip_harbor               = var.lab_ip_harbor
     lab_ip_netbox               = var.lab_ip_netbox

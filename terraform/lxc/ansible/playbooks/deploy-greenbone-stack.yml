@@ -1018,6 +1018,44 @@
             mode: "0644"
           no_log: true
 
+        # Fleet-wide gvm-scan targets (docs/lxc-scan-and-monitoring-rollout/
+        # plan.md, gvm-07). Generated on the Ansible control host (where
+        # OpenBao AppRole creds and secrets/manifest.json live), never on
+        # greenbone-stack itself, then copied over -- same
+        # generate-locally-then-deliver shape the existing steve/openvas/
+        # mikrotik keys already use, just via a script instead of a single
+        # inline value because there are ~19 of these, not one.
+        - name: Create local temporary directory for fleet-targets generation
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: gvm-fleet-targets-
+          register: greenbone_fleet_targets_local_tempdir
+          delegate_to: localhost
+          become: false
+          no_log: true
+
+        - name: Generate the fleet-targets directory (targets.json + per-stack key/sudopass)
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "{{ playbook_dir }}/../../../../scripts/gvm_fleet_targets_generate.py"
+              - --out-dir
+              - "{{ greenbone_fleet_targets_local_tempdir.path }}"
+          delegate_to: localhost
+          become: false
+          changed_when: false
+          register: greenbone_fleet_targets_generated
+
+        - name: Show fleet-targets generation summary
+          ansible.builtin.debug:
+            msg: "{{ greenbone_fleet_targets_generated.stdout }}"
+
+        - name: Copy the generated fleet-targets directory onto greenbone-stack
+          ansible.builtin.copy:
+            src: "{{ greenbone_fleet_targets_local_tempdir.path }}/"
+            dest: "{{ greenbone_credential_program_tempdir.path }}/fleet/"
+            mode: "0644"
+
         - name: Create credentialed targets and unscheduled tasks
           ansible.builtin.command:
             cmd: >-
@@ -1026,6 +1064,7 @@
               -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key:/tmp/mikrotik-gvm-scan.key:ro
+              -v {{ greenbone_credential_program_tempdir.path }}/fleet:/tmp/fleet:ro
               -e GVM_USERNAME
               -e GVM_PASSWORD
               -e GREENBONE_STEVE_KEY_PATH
@@ -1033,6 +1072,7 @@
               -e GREENBONE_MIKROTIK_KEY_PATH
               -e GREENBONE_START_TASK_NAME
               -e GREENBONE_STATUS_TASK_NAME
+              -e GVM_FLEET_DIR=/tmp/fleet
               gvm-tools python3 /tmp/setup_credentials.py
             chdir: "{{ greenbone_compose_dir }}"
           environment:
@@ -1058,6 +1098,14 @@
             path: "{{ greenbone_credential_program_tempdir.path }}"
             state: absent
           no_log: true
+
+        - name: Remove local fleet-targets temporary directory
+          ansible.builtin.file:
+            path: "{{ greenbone_fleet_targets_local_tempdir.path }}"
+            state: absent
+          delegate_to: localhost
+          no_log: true
+          when: greenbone_fleet_targets_local_tempdir.path is defined
 
 - name: Deploy findings ingestion (GVM -> opensearch-stack)
   hosts: all
@@ -1101,6 +1149,44 @@
   roles:
     - role: docker_live_usage_reporter
       when: docker_live_usage_reporter_enabled | default(false) | bool
+
+- name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this stack's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - greenbone-stack
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
+  roles:
+    - gvm_scan_account
+
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [wazuh_agent_rollout]
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/greenbone-stack
+    wazuh_agent_group: pentest_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

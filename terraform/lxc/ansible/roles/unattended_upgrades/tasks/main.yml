@@ -54,16 +54,42 @@
       APT::Periodic::AutocleanInterval "7";
       APT::Periodic::Unattended-Upgrade "1";
 
-- name: Unmask apt-daily timers so unattended-upgrades can actually run
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    masked: false
+# FOUND LIVE 2026-09-30: ansible.builtin.systemd's masked: false never
+# actually unmasked these units -- it consistently reported
+# changed: false ("already unmasked") on every deploy since this
+# fleet's Debian 13 template was built, while the real unit files stayed
+# symlinked to /dev/null (confirmed via `ls -la
+# /etc/systemd/system/apt-daily-upgrade.timer`, dated the template's own
+# May 10 build timestamp, unchanged since). Root cause of ~5,600
+# Critical/High Wazuh vulnerability-detector findings across the fleet
+# -- not unfixed CVEs, just a security-patch backlog that unattended-
+# upgrades was never actually able to apply, despite this role
+# reporting success on every single redeploy. Checking real state via
+# `systemctl is-enabled` (returns the literal string "masked") and
+# unmasking with the real `systemctl unmask` command sidesteps whatever
+# state-detection gap the Ansible module has -- confirmed this combination
+# actually works by using it to diagnose the bug in the first place.
+- name: Check whether apt-daily units are currently masked
+  ansible.builtin.command:
+    argv: [systemctl, is-enabled, "{{ item }}"]
   loop:
     - apt-daily.service
     - apt-daily.timer
     - apt-daily-upgrade.service
     - apt-daily-upgrade.timer
+  register: unattended_upgrades_mask_check
+  changed_when: false
+  failed_when: false  # `systemctl is-enabled` exits non-zero for a masked unit; that's expected, not an error
+
+- name: Unmask apt-daily timers so unattended-upgrades can actually run
+  ansible.builtin.command:
+    argv: [systemctl, unmask, "{{ item.item }}"]
+  loop: "{{ unattended_upgrades_mask_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout | trim == 'masked'
   register: unattended_upgrades_unmask
+  changed_when: true
 
 - name: Reload systemd daemon after unmasking apt-daily units
   ansible.builtin.systemd:

@@ -1,5 +1,108 @@
 # Deep research: current state
 
+**2026-10-01, third follow-up: a clean run produced final_report.md but
+nothing appeared in Nextcloud -- root cause was missing observability,
+not a broken push.** With the LLM timeout fix in place, a session
+completed with zero exceptions anywhere in its log and a real
+`final_report.md` written, yet no file landed in `Reports/deep-research-agent/`.
+`push_report_to_nextcloud` never logged anything on any path (success,
+skip, or failure), so there was no way to tell whether it ran and failed
+or was never reached. Manually replaying the exact same MKCOL/PUT
+sequence against the same run's files succeeded immediately (real
+`204`/`405`-tolerated responses) -- the WebDAV mechanism, credential, and
+URL were never broken. Fixed by adding a log line to every exit path in
+`nextcloud_push.py` (stdout, captured by the container's syslog driver),
+so a future miss can actually be diagnosed instead of guessed at. Manually
+pushed the affected run's report as a one-off; the real automatic-push
+call site (`tui.py`'s `run_agent`) was not otherwise changed, so it's
+still unconfirmed whether this was a one-off transient failure or a real,
+reproducible gap -- next real run's container logs will show which.
+
+**2026-10-01 follow-up: the actual session-killing bug was a missing LLM
+client timeout, found via a second live test after the two fixes below.**
+With `web_search` genuinely at 60 and the spawn race mostly mitigated, a
+follow-up test ran a real, thorough multi-hour research session — then
+the final-report completion call hung silently for 18+ minutes with zero
+response. Diagnosed by querying VictoriaMetrics for `framework`'s own CPU
+over that exact window: flat at ~0.3% (idle) the entire time, meaning the
+request never got real processing server-side, yet nothing ever raised a
+timeout client-side. Root cause: `engine/orchestrator.py`'s
+`_build_client()` never passed a `timeout` to the LLM client.
+`OpenAIChatCompletionClient.__init__` (agent_framework_openai) has no
+`timeout` parameter of its own, so this fell through to the `openai` SDK's
+default — nominally 600s, but implemented via `httpx` as a **per-read**
+timeout that resets on any received byte, including a bare keep-alive with
+no real content, so a connection that stays technically "alive" without
+producing a real response can hang indefinitely.
+
+Fixed by constructing our own `AsyncOpenAI` client with an explicit,
+bounded 300s total timeout and handing it to `OpenAIChatCompletionClient`
+via its `async_client=` parameter (the only way to control this, since the
+wrapper doesn't expose `timeout` directly) — verified live afterward that
+the deployed client's actual `.timeout` is `300`, not just that it
+constructs without error. A stuck completion now raises a catchable
+`openai.APITimeoutError` instead of silently losing the entire session.
+
+**What this does *not* explain: why the request never got real processing
+in the first place.** Querying `framework`'s llama-server `/slots` and
+`/metrics` endpoints directly after the fact was inconclusive — `/slots`
+showed one slot retaining non-zero prompt-token metadata from the aborted
+connection, but `/metrics` reported `requests_processing: 0` and
+`requests_deferred: 0`, meaning the server considered itself fully idle,
+not queuing or stuck on anything. Leading theory, unconfirmed: a
+llama.cpp/Nathanw-fork scheduling quirk under a very large accumulated
+context (the final synthesis call for a multi-hour, many-subagent session)
+that drops a request from real processing while the HTTP connection stays
+open. Catching this live with the server's own debug/trace logging
+enabled, next time it recurs, would be the way to actually confirm it —
+not attempted here given the shared server also serves CyberSecEval and
+restarting or reconfiguring it was out of scope for this investigation.
+
+**Also confirmed working well in the same test**: the `resource_tracker`
+race fix and the corrected `web_search` quota both held up under a
+genuinely long, thorough multi-angle session (far more real search
+results and gathered material than any prior test) — the resource_tracker
+crashes still occurred (19 this run) but the agent handled every one
+gracefully, correctly reasoning "transient system fault" and working
+around it via already-gathered search snippets, exactly as designed.
+
+**2026-09-30/10-01 incident, two real bugs found from a bad real test run:**
+a live session hit `fetch_url_to_workspace`'s `ValueError: bad value(s) in
+fds_to_keep` 18 times — `multiprocessing`'s process-wide `resource_tracker`
+singleton isn't safe against concurrent `Queue()`/`Process()` creation, and
+real multi-subagent load raced on it. Each crash silently burned one unit
+of that tool's quota for a call that never ran. Fixed by serializing
+spawn+start behind a module-level `asyncio.Lock` in `tools/core.py`'s
+`run_with_hard_kill` (the wait itself stays fully concurrent). **Could not
+force this race to reproduce in an isolated 40-way synthetic test, with or
+without the lock** — it's load/timing-dependent and likely needs the full
+production combination (concurrent `web_search` HTTP + `markitdown`/
+`onnxruntime` thread spawning + subprocess spawns together) to trigger
+reliably. The fix is the textbook-correct mitigation for this documented
+Python pitfall regardless; real confirmation is zero further occurrences
+in actual usage, not a synthetic repro.
+
+**Separately, and more consequentially: the 2026-09-22 `web_search: 20 →
+60` quota fix silently never took effect.** `config_template.yaml` is only
+copied to the real runtime config (`~/.deep-research-agent/config.yaml`,
+on the persistent volume) the first time that file doesn't exist —
+`config.py`'s own bootstrap logic. The volume already had a `config.yaml`
+from before that fix, so every redeploy since kept silently using the
+stale value of 20. Verified live at the time by checking
+`config_template.yaml` inside the container, which showed 60 — the actual
+runtime `config.yaml` was never checked, a real verification gap. Fixed by
+directly patching the live file's `web_search` value to 60 (confirmed it
+survives redeploys, since redeploys never touch an already-existing file
+on this volume). **This will recur for any future `config_template.yaml`
+quota/setting change** unless the live `config.yaml` is also patched, or
+the volume is recreated from scratch — there is no reconciliation step.
+Worth fixing properly (e.g. a startup-time deep-merge of template values
+for keys the operator hasn't customized) if this class of change becomes
+frequent; not attempted here as it risks clobbering genuine live
+customizations (`enable_thinking`, `enable_session_persistence`) with no
+clean way to distinguish "stale default" from "deliberate override" in
+the current schema.
+
 Checked 2026-09-21. Originally gathered as a read-only inventory with no
 service or infrastructure changes. That is no longer true as of the
 incident below — this document now also records an actual outage caused by

@@ -559,6 +559,20 @@ way `foreverworld`'s data is.
    (16 GiB / 4 CPU / 60 GiB). The game-slot interlock prevents concurrent
    games but does not size an AzerothCore build.
 
+### Agreed post-launch QoL profile (2026-09-29)
+
+The realm now has a deliberately separate quality-of-life rollout: persistent
+Altbots, `1.25x` XP only, free heirlooms and starter gold, maximum bags,
+Transmog, and conservative group AoE loot. It preserves class quests and
+ordinary quest/dungeon progression. The implementation and staged rollback
+plan are in [`azerothcore-qol.md`](azerothcore-qol.md); it is not a reason to
+hand-edit a running game container.
+
+**Phase 1 completed 2026-09-29:** server 4 has `1.25x` kill, quest, and
+exploration XP; every non-XP rate remains at `1`. Restart verification found
+authserver/worldserver listening normally on TCP 3724/8085 under the existing
+game-slot interlock.
+
 ## Not covered by this plan
 
 - `terragrunt apply`, `provision.sh --stack pterodactyl-lab`, and

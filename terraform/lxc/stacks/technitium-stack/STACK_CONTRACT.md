@@ -11,14 +11,19 @@ separate bootstrap/dev zone (`TECHNITIUM_BOOTSTRAP_ZONE`, default
 The live `LAB_DOMAIN` zone stays on CoreDNS until later parity/cutover
 phases.
 
-**Status: production parallel live, not yet production-cut over.** This
-stack runs alongside `dns-stack` during the migration. The Phase 3 MikroTik
-delegate rehearsal has passed on `pve-test-vm`, and production `pve`
-parallel bring-up is now complete, but the production MikroTik FWD rule
-still points at CoreDNS. Do not treat this stack as the active production
-client path for `LAB_DOMAIN` until that delegate change is executed and
-validated. See `docs/dns-refactor/README.md` for the full migration
-workspace.
+**Status (2026-09-29): live production DNS, Technitium cluster primary, and
+the LAN's resolver.** Authoritative for `LAB_DOMAIN` since the 2026-07-05
+CoreDNS cutover (`docs/dns-refactor/`; `dns-stack` destroyed 2026-09-08).
+Since 2026-09-29 (`docs/lan-dns-technitium/`) it is also the **primary node
+of a two-node Technitium cluster** (`cluster.lab.gibbsgreatly.xyz`; node
+name `tech.cluster.lab.gibbsgreatly.xyz`; secondary `technitium-tiny-stack`
+on pve-tiny) and, together with the secondary, the **DNS resolver for the
+whole LAN** (the MikroTik's DHCP hands out 192.168.20.15 + .17), with DoH
+upstreams, Hagezi Pro + TIF-mini + StevenBlack blocklists, DNS rebinding
+protection and per-query logging to Graylog. Settings, blocklists, apps,
+users and every zone are configured here and synced to the secondary.
+The paragraph above describes the original bootstrap design and is kept as
+history.
 
 ## Network
 
@@ -122,10 +127,16 @@ No secret values are committed here. All sensitive values must come from the env
 
 ## What May Depend on This Stack
 
-- Nothing production-facing yet — during the bootstrap-zone phase this stack
-  is queried directly for validation only. Once cut over, the same
-  dependents as `dns-stack` apply: all `mgmt_seg`/`infra_seg` stacks
-  resolving lab FQDNs, especially `proxy-stack` and `authentik-stack`.
+- **Every LAN client** (DHCP-assigned resolver, with `technitium-tiny-stack`
+  as the second server).
+- The MikroTik's `lab-zone-delegate` / reverse-zone FWD rules (they point
+  only at this node, so SDN containers resolving `LAB_DOMAIN` through
+  their gateway depend on it alone — see the plan's follow-ups).
+- Docker daemons on the stacks that use it as their resolver, all
+  `mgmt_seg`/`infra_seg` stacks resolving lab FQDNs, especially
+  `proxy-stack` and `authentik-stack`.
+- `technitium-tiny-stack` (cluster secondary: config and zones come from
+  here; with this node down it keeps serving but can't take config changes).
 
 ## What Must Not Be Edited Casually
 
@@ -151,6 +162,19 @@ No secret values are committed here. All sensitive values must come from the env
   host` into other stacks without an equivalent documented justification
   (see `terraform/lxc/PLATFORM_CONTRACT.md`'s Orchestration boundary
   section).
+- Create Technitium zones only through the `technitium_zone` role. Once
+  this server is a Technitium cluster primary, the cluster owns every
+  catalog member zone's apex NS records and SOA primary name server and
+  the API rejects edits to them; `deploy-technitium-stack.yml` reconciles
+  them only while standalone and asserts them when clustered. See
+  `docs/lan-dns-technitium/plan.md` Phase 1.
+- Observability: node_exporter (lxc_base, :9100 TLS), cAdvisor
+  (/opt/cadvisor, :8080, separate compose project so it never recreates
+  the Technitium container), Technitium metrics
+  (`/api/dashboard/metrics/text`, token of the `metrics` user), server log
+  to console -> Docker syslog -> Graylog, and every DNS query via the Log
+  Exporter app -> Graylog "DNS Queries" index set. See
+  `docs/lan-dns-technitium/plan.md`.
 
 ## Playbook
 

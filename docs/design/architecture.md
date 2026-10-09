@@ -33,7 +33,7 @@ Brownfield homelab infrastructure rebuild — a deliberate greenfield redesign o
 | FR-09 | CI/CD pipeline via GitHub Actions with self-hosted runner on `build_seg` |
 | FR-10 | Observability stack: VictoriaMetrics + Grafana (metrics) and Graylog (logs) — see ADR-07 |
 | FR-11 | Supply chain: Trivy (scan), Syft (SBOM), Cosign (sign), Harbor (policy gate) |
-| FR-12 | Application stack migration: arr stack, Jellyfin, Pi-hole, game services |
+| FR-12 | Application stack migration: arr stack, Jellyfin, Pi-hole (superseded 2026-09-29: LAN DNS/ad-blocking moved to the Technitium cluster, `docs/lan-dns-technitium/`), game services |
 | FR-13 | Secrets management with Bitwarden and environment variable injection |
 | FR-14 | Code quality: ShellCheck, Ansible Lint, Snyk IaC, SonarCloud in CI |
 

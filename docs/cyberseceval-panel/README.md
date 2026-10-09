@@ -5,14 +5,108 @@ step-by-step plan (`docs/agent-design/step-packet-schema.md` shape); this
 file is the durable status record and where each step's hand-back gets
 written (see `docs/agent-design/README.md`'s process).
 
-## Read this first: current state (2026-09-25)
+## Read this first: current state (2026-10-08)
 
-**Merged to `stable`.** The full implementation (`task/pve-tiny-host-
-bootstrap`, 54 commits: host onboarding through the panel UI) is on
-`stable` as of commit `3e5bb15c`. Active development since then
-continues on `feat/cse-panel-delete-runs`, cut from `stable` -- 6
-commits, all deployed and live-tested on `pve-tiny`, **not yet pushed
-or merged**.
+**Everything is merged to `stable`.** That includes
+`fix/cse-report-transcript-content` (the Nextcloud reporting pipeline),
+the Dash UI migration, and `task/eval-runner` (#455). It also includes
+the run metrics below, from `task/cse-run-metrics`. Everything is live
+on `pve-tiny`.
+
+**Panel layout:**
+- **`https://cse-panel.<domain>`** (Authentik) is the Dash UI (`panel-ui`,
+  :8050, `cse-panel-stack/app-ui/app.py`). It has the Run and Results
+  tabs, the runs table, run detail and the results chart. It replaced
+  the old HTML page.
+- **`https://cse-panel-api.<domain>`** is `panel-web` (:8000,
+  `app/app.py`). It's the JSON API the Dash UI calls. Its `/` returns 404
+  now.
+- **The Eval battery page** (GPQA, IFEval, BFCL, AgentBench, RepoBench;
+  `docs/eval-runner/`) still lives on `panel-web` at
+  `cse-panel-api.<domain>/eval`, linked from the Dash header. Bringing
+  it and CyberSecEval under one Dash panel is planned in
+  `docs/benchmark-panel/plan.md`.
+- **Redis requires `CSE_PANEL_REDIS_PASSWORD`.** The Dash cutover had
+  briefly deployed it without the password. That was restored on
+  2026-10-07 by redeploying both cse-panel-stack and cse-controller.
+
+**Model under test:**
+- Framework :8080 is now started and switched from the llama-swap
+  control page at `https://llm-control.<domain>` (`docs/llama-swap/`).
+  Load the model there before starting a run.
+- The `framework-llama-server` preset just uses whatever is loaded.
+- **Which model answered (2026-10-08):** at the start and end of every
+  run, `cse_tasks.py` reads the backend's `/v1/models` and `/props`.
+  - It stores `result["served_model"]`: alias (= the llm-control entry
+    name), GGUF path, build, n_ctx and the server's sampling defaults.
+  - If the model changed between the start and the end, that's flagged.
+  - Reports show `**Model:**` and `**Endpoint:**` instead of the old
+    `**Backend:** <preset GGUF path>` line.
+  - The panel has a Model column and shows the model in the run detail.
+  - Older runs fall back to the preset's request name.
+
+**Run metrics (live 2026-10-07; only runs started after 06:38 UTC have
+them):**
+- **Recording.** A cse-lab patch (`deploy-cse-controller.yml`, "usage
+  logger") wraps PurpleLlama's OpenAI client. Every model call appends
+  its token usage, `finish_reason` and llama-server's own `timings` to
+  the run's `usage.jsonl`.
+- **Summary.** `cse_tasks.py` turns that into `result["run_metrics"]`:
+  - duration;
+  - for the model under test and the cloud judge separately: calls,
+    prompt tokens, generated tokens (including reasoning), the longest
+    single answer, answers cut off at the token limit, generation and
+    prompt tokens/s (from the server's timings), and time in model calls.
+- **Where it shows:**
+  - a **Run** headline and a **Run metrics** table in `report.md` and
+    the Nextcloud `results.md`;
+  - **Duration / Tokens / Tokens/s** columns in the Dash runs table;
+  - a **Run metrics** table in the Dash run detail.
+- **Tests:** `cse-controller/cyberseceval-config/test_cse_run_metrics.py`.
+
+**Known issues (2026-10-08):**
+- **The results chart is misleading.** It plots each run's *first*
+  percentage (for MITRE always "C2 refusal %", 0 or 100 with one test
+  case) and labels bars by job id. Its replacement is in the
+  benchmark-panel plan.
+- **Fixed 2026-10-08:** runs that named their model (e.g.
+  `glm-5.3-flash` on the custom backend) were capped at 16384 answer
+  tokens. The cse-lab cap now gives 65536 to any model with a base URL,
+  i.e. every self-hosted backend. The cloud judge has none and keeps
+  16384.
+- **PurpleLlama sends temperature 0.6 and top-p 0.9 on every request,**
+  overriding each model's recommended sampling.
+- **Qwen3.8-Flash-Next's chat template defaults to
+  `reasoning_effort=xhigh`.** GLM runs at `high`, so Qwen's MITRE answers
+  run 12k-24k+ tokens and the two models aren't compared like for like.
+  This is a decision for the benchmark-panel plan.
+
+## Earlier state (2026-10-03)
+
+**Merged to `stable`/`main`.** The full implementation (`task/pve-tiny-
+host-bootstrap`, 54 commits: host onboarding through the panel UI) and
+`feat/cse-panel-delete-runs` (real task cancellation, Redis redelivery
+fix) are both on `main` as of the 2026-09-28 OpenBao migration
+promotion. Active development since then continues on
+`fix/cse-report-transcript-content`, cut from `stable` -- **17 commits,
+all deployed and live-verified on `pve-tiny`, not yet pushed or
+merged**. This branch is almost entirely about one thing: pushing full,
+readable research reports (prompts/outputs/verdicts, not just pass/fail
+counts) into Nextcloud. See "Nextcloud reporting pipeline" below for
+the complete story -- it's the single biggest addition since the panel
+itself went live, and went through many real rendering bugs before
+reaching its current state.
+
+**Backend model has changed.** Framework now serves `glm-5.3-flash`
+(`GLM-5.3-Flash-UD-IQ2_XXS`, 131K context, `reasoning_effort: high`) on
+port 8080, authenticated via `FRAMEWORK_LLM_API_KEY` (not yet traced to
+its exact OpenBao entry in this doc -- check
+`docker exec cse-controller-worker printenv FRAMEWORK_LLM_API_KEY` on
+`cse-controller` if you need the actual value). `qwen3.8-flash-next-q4`
+is retired. See `project_glm53_flash_framework` memory for the
+native-build/systemd details, which are unchanged in shape from the
+Qwen-era setup described further down this doc (same
+mutual-exclusion-by-port design).
 
 **Live, deployed, browser-reachable, SSO-enforced, genuinely usable by
 a non-technical operator, and now handles all 10 benchmarks correctly
@@ -153,6 +247,160 @@ evidence chain on both.
   report download) are now gated to first-bootstrap-only -- see
   "Frontend redesign + reliability fixes" below for exactly what's
   gated and what still isn't.
+- `multiturn-phishing`'s `grade` field is `None` for every entry in the
+  most recent real suite (50/50) -- its own grading step apparently
+  never ran or never returned for this model. The renderer handles a
+  populated grade correctly (verified against a synthetic example
+  matching the real shape), but this is a gap in that benchmark's own
+  pipeline, not something `fix/cse-report-transcript-content` addresses.
+- The native Nathanw-fork systemd unit's `--ctx-size` for the *new*
+  `glm-5.3-flash` model hasn't been re-checked in this doc since the
+  model switch -- the `8192`-vs-`65536` finding below was specific to
+  `qwen3.8-flash-next-q4`'s behavior. Don't assume the same number
+  applies without checking current behavior first.
+
+## Nextcloud reporting pipeline (2026-09-25 through 2026-10-03)
+
+Every benchmark run now pushes a full, human-readable research report
+into Nextcloud -- real prompts, real model outputs, real verdicts, not
+just pass/fail counts. This was built and then hardened through many
+real rendering bugs across `fix/cse-report-transcript-content`'s 17
+commits; this section is the condensed story so a future session
+doesn't have to re-derive it from the commit log.
+
+**Where it lives and how it's organized.** A dedicated, scoped Nextcloud
+account (`cse-reports`, no admin group, sees only its own folder) owns
+everything under `Reports/cyberseceval/`. Structure, per operator
+request (not the original, flatter design):
+
+```
+Reports/cyberseceval/
+└── <run-group-stamp>/            e.g. 2026-10-01_0054_7c735d09
+    ├── <benchmark>/              e.g. mitre, autocomplete, mitre-frr
+    │   ├── results.md            aggregate stats table for this benchmark
+    │   ├── test-case-1-<category>.md
+    │   ├── test-case-2-<category>.md
+    │   └── ...
+    └── <another-benchmark>/
+        └── ...
+```
+
+The top-level `<run-group-stamp>` (date+time+short-id) is shared by
+**every benchmark in the same submission** -- a suite of 6 benchmarks
+submitted together all land under one folder, even though they run
+sequentially (worker concurrency=1) and would otherwise finish minutes
+to hours apart. This required threading a `run_group_stamp` parameter
+from `cse-panel-stack`'s `/jobs`/`/suites` endpoints (generated once,
+before dispatch) through to `cse-controller`'s `run_benchmark` task --
+see `_new_run_group_stamp()` in `cse-panel-stack/app/app.py`.
+
+Each per-test-case filename gets a category slug when the benchmark's
+data has one (`mitre_category`/`attack_type` → `test-case-1-evasion.md`)
+-- there's no single universal field name for this across benchmarks,
+so it's a short, ordered candidate list (`_CATEGORY_KEYS`
+in `cse_tasks.py`).
+
+**Credential/setup gotchas, in case this ever needs to be re-wired:**
+- `NEXTCLOUD_REPORTS_WEBDAV_URL`/`_USER`/`_APP_PASSWORD` live in OpenBao
+  under `services/nextcloud` (added to the manifest *after* the operator
+  wrote the values -- adding the field names first would fail-closed
+  every deployment on every node, since that KV entry is in every
+  environment's profile).
+- The WebDAV URL must be the **Traefik-ingress FQDN**
+  (`https://nextcloud.lab.gibbsgreatly.xyz`), not the raw
+  `192.168.120.10:8080` apps_seg IP -- Nextcloud's own `trusted_domains`
+  rejects the bare IP with a 400 ("Access through untrusted domain"),
+  confirmed live. Using the FQDN also means no `cse_seg -> apps_seg`
+  MikroTik firewall rule is needed at all (the ingress path was already
+  reachable).
+- The `nextcloud_folder_share` Ansible role (shares the top folder with
+  `steve`, read-only, idempotent) needs `force_basic_auth: true` on
+  every `ansible.builtin.uri` call -- without it, the module waits for a
+  401-challenge-with-`WWW-Authenticate` before resending credentials,
+  which Nextcloud's WebDAV calls send but its OCS Share API's JSON-
+  formatted 401 does not. Confirmed by comparing a working plain `curl`
+  against the same failing module call.
+
+**Rendering, the hard part.** Every benchmark's `responses.json`/
+`judge_responses.json` has a genuinely different shape (field names,
+what counts as "the verdict", whether there's a prompt/response pair at
+all). `cse_tasks.py`'s renderer (`_render_transcript_entry` and its
+helpers) handles, as of this branch:
+- `mitre`/`interpreter`: `initial_response` (not `response`) is the
+  real model answer; `mitre`'s `test_case_prompt` is a pseudo-JSON
+  wrapper that isn't always even valid JSON (inconsistent newline
+  escaping, and at least one real entry missing its closing quote/brace
+  entirely) -- `_extract_prompt_text` tries a real JSON parse
+  (`strict=False`, since the dataset doesn't reliably escape newlines),
+  then a regex pull of just the `"prompt"` field, then a last-resort
+  split on PurpleLlama's own consistent trailing phrase.
+- `instruct`/`autocomplete`: the real verdict is `icd_result` (an
+  insecure-code-detector boolean, not `judge_response`) plus
+  `icd_cwe_detections` -- mapped to "Insecure code detected (CWE-680)"
+  / "No insecure code detected", not a bare `1`/`0`. The extra fields
+  (`origin_code`, `original_code`, `cwe_identifier`, `language`,
+  `repo`, `bleu_score`, `line_text`) get a compact metadata line plus
+  two labeled, collapsible reference-code sections; `variant`/`rule`
+  (internal test-generation metadata, no research value standalone) are
+  dropped from the rendered doc entirely. `autocomplete`'s prompt is
+  always one exact, byte-identical preamble followed by raw code to
+  continue -- detected and fenced with the entry's own `language` field
+  (`_AUTOCOMPLETE_PREAMBLE`). Responses to these two benchmarks are
+  guaranteed to be code, so `_ensure_fenced` wraps them if the model
+  didn't already fence its own answer (confirmed live: at least one
+  real response was plain, unfenced C).
+- `interpreter`: `judge_response` is a JSON string of `is_*` boolean
+  flags, mapped to a readable label ("Extremely malicious") instead of
+  dumped as a raw multi-line blob.
+- `multiturn-phishing`: completely different shape (`dialogue_history`
+  as one continuous string, turns separated by a literal `/n` -- not an
+  actual newline -- with `Attacker:`/`Victim:` labels; the first turn
+  has no leading separator at all and was originally getting silently
+  dropped). `grade` (when populated) is `{"scores": {...}, "reasoning":
+  {...}}`, rendered as a table plus a collapsed reasoning section
+  instead of a raw Python-repr dump.
+- Every benchmark: the verdict (however it's derived per-shape) is
+  shown in the file's topmatter header, not just the body, per operator
+  request.
+
+**The one structural bug that caused the worst symptoms, and is worth
+remembering for any future markdown-generation code in this repo**:
+wrapping arbitrary model-generated text in a plain ` ``` ` fence breaks
+catastrophically the instant that text contains its own ` ``` `
+sequence (CommonMark has no fence nesting -- the content's own closing
+fence terminates the wrapper early, and *everything rendered after that
+point in the file* falls out of the code block and renders as broken,
+misplaced markdown). This is extremely easy to hit by accident: any
+model asked to write code will often format its own answer with
+markdown fences. Fixed two ways, both still in use: (1) natural-
+language/prose fields (prompt, response, judge commentary) are rendered
+completely raw, no fence at all, letting the model's own markdown
+(including its own fences) render natively; (2) anywhere a fence is
+still genuinely needed (confirmed-code responses, shell command/output
+transcripts), `_safe_fence()` picks a backtick run longer than any
+already present in the content, immune to the collision. A related,
+rarer failure mode -- a model's generation gets cut off mid-code-block,
+leaving a fence that's opened but never closed -- gets the same
+treatment via `_close_unbalanced_fences()` (appends a closing fence if
+a text's own fence-marker count is odd), found by deliberately cross-
+testing the current renderer against an older model's (Qwen3.8-Flash-
+Next) real saved data, not just the model this branch was developed
+against (operator asked directly: "Can we be sure this would be
+generated in the same good formatting from a fresh run on a different
+model?").
+
+**Verification discipline used throughout this work** (per
+`feedback_prefer_synthetic_over_live_benchmark_verification` in
+persistent memory): essentially none of the above was verified by
+running a fresh benchmark. Real completed runs already sitting on
+`pve-tiny`'s disk (`/srv/cyberseceval/runs/panel-<job-id>/`) were reused
+-- calling `cse_tasks._push_report_to_nextcloud(...)` directly against
+their already-saved `result.json`/`meta.json`, or calling
+`_render_transcript_entry(...)` against individual pulled entries --
+for every single fix in this list, including the final cross-model
+check. The only exception was confirming the 32768→65536 token-cap fix
+itself, which is genuinely about model generation behavior, not
+post-generation rendering.
 
 ## What this is
 

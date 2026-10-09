@@ -1,0 +1,172 @@
+---
+# mikrotik-lan-dns-resolver.yml
+#
+# Chooses which resolvers LAN (bridgeLocal) clients are told to use.
+# docs/lan-dns-technitium/plan.md, Phase 4.
+#
+#   lan_dns_mode=technitium (default): DHCP hands out both Technitium
+#     nodes; IPv6 RA stops advertising DNS (clients resolve over IPv4).
+#   lan_dns_mode=pihole: rollback -- DHCP hands out argon-02 only (the
+#     pre-cutover live value) and RA advertises the Pi-hole ULAs again.
+#
+# Usage (run from the repo root):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-lan-dns-resolver.yml -e lan_dns_mode=pihole
+#
+# Must be the prod wrapper: ./with-secrets loads pve-test-vm's
+# LAB_IP_TECHNITIUM (192.168.20.115). A pre-task enforces PVE_ENV=pve.
+#
+# Existing leases keep their old DNS until renewal (MikroTik lease-time is
+# 30m today), so the change reaches every client within ~30 minutes.
+
+- name: Set the LAN's advertised DNS resolvers
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+    lan_dns_effective_mode: "{{ lan_dns_mode | default('technitium') }}"
+    lan_dns_technitium_ips:
+      - "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+      - "{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}"
+    lan_dns_modes:
+      technitium:
+        dhcp_dns_server: "{{ lan_dns_technitium_ips | join(',') }}"
+        nd_advertise_dns: "no"
+      pihole:
+        dhcp_dns_server: "192.168.1.23"
+        nd_advertise_dns: "yes"
+    lan_dns_target: "{{ lan_dns_modes[lan_dns_effective_mode] }}"
+    lan_dns_subnet: "192.168.1.0/24"
+
+  pre_tasks:
+    - name: Refuse to run without the production environment loaded
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'PVE_ENV') == 'pve'
+        fail_msg: >-
+          PVE_ENV is '{{ lookup('env', 'PVE_ENV') }}'. The LAN router serves
+          production: run this through ./with-secrets-prod, not ./with-secrets
+          (which defaults to pve-test-vm and its Technitium IP, 192.168.20.115).
+
+    - name: Assert a known mode was requested
+      ansible.builtin.assert:
+        that:
+          - lan_dns_effective_mode in ['technitium', 'pihole']
+
+    - name: Assert MikroTik credentials are set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+          - mikrotik_user | length > 0
+
+    - name: Refuse to cut over unless both Technitium nodes block and resolve
+      ansible.builtin.shell: |
+        set -euo pipefail
+        test "$(dig +short @{{ item }} googlesyndication.com A)" = 0.0.0.0
+        dig @{{ item }} github.com A | grep -q 'status: NOERROR'
+      args:
+        executable: /bin/bash
+      loop: "{{ lan_dns_technitium_ips }}"
+      changed_when: false
+      when: lan_dns_effective_mode == 'technitium'
+
+  tasks:
+    - name: Fetch DHCP networks
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/network"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+        return_content: true
+      register: lan_dns_networks
+      no_log: true
+
+    - name: Select the bridgeLocal DHCP network
+      ansible.builtin.set_fact:
+        lan_dns_network: "{{ lan_dns_networks.json | selectattr('address', 'equalto', lan_dns_subnet) | first }}"
+
+    - name: Set the DHCP dns-server option
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/network/{{ lan_dns_network['.id'] }}"
+        method: PATCH
+        body_format: json
+        body:
+          dns-server: "{{ lan_dns_target.dhcp_dns_server }}"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+        status_code: [200]
+      changed_when: true
+      when: lan_dns_network['dns-server'] | default('') != lan_dns_target.dhcp_dns_server
+      no_log: true
+
+    - name: Fetch IPv6 ND entries
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ipv6/nd"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+        return_content: true
+      register: lan_dns_nd
+      no_log: true
+
+    - name: Select the bridgeLocal ND entry
+      ansible.builtin.set_fact:
+        lan_dns_nd_entry: "{{ lan_dns_nd.json | selectattr('interface', 'equalto', 'bridgeLocal') | first }}"
+
+    # The ND entry's dns list (fd00::22,fd00::23) is left in place so the
+    # pihole mode only has to flip advertise-dns back on.
+    - name: Set RA DNS advertisement
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ipv6/nd/{{ lan_dns_nd_entry['.id'] }}"
+        method: PATCH
+        body_format: json
+        body:
+          advertise-dns: "{{ lan_dns_target.nd_advertise_dns }}"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+        status_code: [200]
+      changed_when: true
+      when: lan_dns_nd_entry['advertise-dns'] | default('') != lan_dns_target.nd_advertise_dns
+      no_log: true
+
+    - name: Re-read both objects
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private network
+        return_content: true
+      loop:
+        - "ip/dhcp-server/network/{{ lan_dns_network['.id'] }}"
+        - "ipv6/nd/{{ lan_dns_nd_entry['.id'] }}"
+      register: lan_dns_after
+      no_log: true
+
+    - name: Assert the router now advertises the requested resolvers
+      ansible.builtin.assert:
+        that:
+          - lan_dns_after.results[0].json['dns-server'] == lan_dns_target.dhcp_dns_server
+          - lan_dns_after.results[1].json['advertise-dns'] == lan_dns_target.nd_advertise_dns

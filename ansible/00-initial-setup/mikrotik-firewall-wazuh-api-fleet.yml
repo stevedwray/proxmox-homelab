@@ -1,0 +1,297 @@
+---
+# Opens the Wazuh manager API port (55000) fleet-wide, plus the agent
+# comms/enrollment ports (1514,1515) for the 5 zones that never got any
+# Wazuh rule at all. Found live 2026-09-30 while diagnosing why
+# ai-services-stack's Wazuh enrollment failed at "Authenticate to the
+# Wazuh manager API": every already-registered agent (the original
+# 8-stack pilot) is still in the "default" group on the live manager --
+# none of them have ever actually run the group-assignment code path
+# (added to terraform/lxc/ansible/roles/wazuh_agent after their original
+# 2026-08-29 enrollment), so this was never exercised for ANY host, not
+# just ai_seg. Confirmed via a live read of the MikroTik ruleset
+# (GET /rest/ip/firewall/filter): every existing Wazuh rule only opens
+# 1514,1515, none open 55000, anywhere.
+#
+# wazuh_agent_group is set to each stack's own zone name verbatim
+# (confirmed across all 24 in-scope playbooks, zero inconsistencies --
+# e.g. ai-services-stack: ai_seg, newt-connector: connector_seg), so the
+# fix is organized the same way: one CIDR-scoped rule per zone.
+#
+# infra_seg (192.168.40.0/24) needs no rule -- wazuh-stack lives in that
+# same subnet, so intra-zone traffic never hits the MikroTik forward
+# chain at all (confirmed live: harbor-stack, infra_seg, connected on
+# all 3 ports in 0.00s with no rule present).
+#
+# Same idempotent pattern as mikrotik-firewall-ai-services-stack.yml:
+# match by full criteria (not comment alone), insert before the first
+# forward drop/reject rule, re-read and assert after apply.
+
+- name: Ensure Wazuh manager API (55000) and remaining agent-comms (1514,1515) rules exist on the live MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    lab_ip_wazuh: "{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}"
+    lab_subnet_mgmt_cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | mandatory('LAB_SUBNET_MGMT_CIDR env var is required') }}"
+    lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | mandatory('LAB_SUBNET_EDGE_CIDR env var is required') }}"
+    lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
+    lab_subnet_build_cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | mandatory('LAB_SUBNET_BUILD_CIDR env var is required') }}"
+    lab_subnet_pentest_cidr: "{{ lookup('env', 'LAB_SUBNET_PENTEST_CIDR') | mandatory('LAB_SUBNET_PENTEST_CIDR env var is required') }}"
+
+    # Zones that already have 1514,1515 (original pilot rollout) -- only
+    # the new 55000 API rule is missing for these four.
+    # Zones with no Wazuh rule at all yet (ai_seg, media_seg, game_seg,
+    # build_seg, pentest_seg) get both an API rule and a comms rule.
+    # infra_seg is deliberately absent -- same subnet as wazuh-stack,
+    # no MikroTik rule applies to intra-zone traffic.
+    wazuh_fleet_rules:
+      - comment: "mgmt_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_mgmt_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "edge_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_edge_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "connector_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.110.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "apps_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.120.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "ai_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "ai_seg agents to Wazuh manager (1514,1515)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "1514,1515"
+      - comment: "media_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.80.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "media_seg agents to Wazuh manager (1514,1515)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.80.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "1514,1515"
+      - comment: "game_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.60.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "game_seg agents to Wazuh manager (1514,1515)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "192.168.60.0/24"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "1514,1515"
+      - comment: "build_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_build_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "build_seg agents to Wazuh manager (1514,1515)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_build_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "1514,1515"
+      - comment: "pentest_seg agents to Wazuh manager API (55000)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_pentest_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "55000"
+      - comment: "pentest_seg agents to Wazuh manager (1514,1515)"
+        chain: forward
+        action: accept
+        protocol: tcp
+        src-address: "{{ lab_subnet_pentest_cidr }}"
+        dst-address: "{{ lab_ip_wazuh }}"
+        dst-port: "1514,1515"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add each missing Wazuh fleet rule before the first forward drop/reject
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ item | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ wazuh_fleet_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Add each missing Wazuh fleet rule when no forward drop/reject anchor exists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ item }}"
+        status_code: [200, 201]
+      loop: "{{ wazuh_fleet_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when:
+        - forward_drop_anchor == {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert every Wazuh fleet rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
+            | list | length > 0
+        fail_msg: "Expected MikroTik forward allow rule '{{ item.comment }}' was not found after apply."
+      loop: "{{ wazuh_fleet_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+
+    - name: Report Wazuh fleet firewall rules are present
+      ansible.builtin.debug:
+        msg: "All {{ wazuh_fleet_rules | length }} Wazuh fleet MikroTik firewall rules confirmed present."

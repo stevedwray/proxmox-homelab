@@ -1,0 +1,573 @@
+# eval-runner
+
+Status: **the whole battery and its control panel are live, and merged to
+`stable` (#455, 2026-10-07).** See "Current state" below.
+
+Runs the eval battery (CyberSecEval aside: it has its own panel) from
+`ai-services-stack` (`ai_seg`, on `pve-tiny`) as a client of whatever
+model Framework's llama-server is serving. It replaces running them on
+`framework` or garuda. The previous dedicated harness LXC (`ai-stack`,
+VMID 116) was removed in the pve teardown.
+
+See [`plan.md`](./plan.md) for decisions, steps and usage.
+
+## Current state (2026-10-08)
+
+**Changed since the 2026-10-02 checkpoint below:**
+- **Merged to `stable`** in #455 on 2026-10-07. A stable merge resolved
+  conflicts with the CyberSecEval Dash migration. The worktree
+  `~/git/proxmox-homelab-eval-runner` is no longer needed: deploy from
+  the main checkout on `stable` with the normal wrapper.
+- **Where the control page lives.** CyberSecEval's panel is now a Dash
+  app, and its old HTML index is gone. Since 2026-10-08 the Eval battery
+  is a tab in that Dash app too; the old page at
+  `https://cse-panel-api.<domain>/eval` redirects there.
+- **An outage, now fixed.** The Dash cutover (2026-10-07) was first
+  deployed from a branch without this work. For a few hours that
+  dropped `/eval` (404) and the Redis password, so the eval workers
+  couldn't connect. Redeploying cse-panel-stack and cse-controller the
+  same day fixed both. Afterwards, `/eval/api/state` showed fresh
+  Framework status.
+- **Framework.** :8080 is now started and switched from the llama-swap
+  control page (`https://llm-control.<domain>`, `docs/llama-swap/`). GLM
+  is the boot default. `framework_status()` and `runmeta.py` still talk
+  to `llama-server` directly, which keeps working because clients don't
+  go through llama-swap.
+- **Results.** The full AgentBench run finished: GLM-5.3-Flash scored
+  55% on os-std (n=100, seed 42). It's recorded in `findings.md` §5.
+- **Next: one control panel for every benchmark.**
+  `docs/benchmark-panel/plan.md` covers bringing this page and
+  CyberSecEval under one Dash panel. It includes the same run metrics
+  (tokens, tokens/s) that CyberSecEval runs now record (eval-runner
+  records only start and finish times), and a shared Framework lock.
+  That supersedes open item 4 below.
+
+## Earlier checkpoint (2026-10-02)
+
+**Live (all on pve-tiny):**
+- **eval-runner on `ai-services-stack`** (192.168.50.11): the whole
+  battery.
+  - `eval-run gpqa|ifeval|bfcl|agentbench|repobench [--pilot|--limit N]
+    [--note] [--max-gen-toks]`, plus `resume|selftest|results|publish`.
+  - The GPU-free selftests for every image are the deploy gate.
+- **Control panel:** the Eval battery tab of the Dash panel at
+  `https://cse-panel.<domain>/` (`app-ui/eval_tab.py`), with a Compare tab
+  across every benchmark (`docs/benchmark-panel/`). The old HTML page at
+  `cse-panel-api.<domain>/eval` was retired on 2026-10-08 and now
+  redirects there; its JSON API (`/eval/api/*`) stays.
+  - `eval_battery.py` enqueues on the Redis queues `eval-runner` (runs)
+    and `eval-runner-ctl` (cancel, publish, status).
+  - On ai-services-stack, the `eval-runner-worker-runs` and
+    `eval-runner-worker-ctl` systemd units run `eval_tasks.py`, driving
+    `eval-run`. Each run first takes the Framework lock it shares with
+    CyberSecEval (`framework:run-lock`, see
+    `docs/benchmark-panel/README.md`), and records duration, tokens and
+    tokens/s from llama-server's `/metrics` in the job and `run.json`.
+    Until 2026-10-08 it waited for idle Framework slots instead.
+  - cse-panel's Redis requires `CSE_PANEL_REDIS_PASSWORD` (OpenBao
+    `services/cse-panel`).
+  - MikroTik rule `ansible/00-initial-setup/mikrotik-firewall-eval-runner-panel.yml`.
+  - Plan and rollout log: `panel-plan.md`.
+- **Nextcloud:**
+  - Tables "Model evaluations" (table id 2), shared with steve with
+    *manage*. Manage keeps the views in the sidebar despite a Tables
+    2.3.1 UI race.
+  - Views: GPQA, IFEval, BFCL, AgentBench and RepoBench (rebuilt), each
+    showing every result with a Comparable column; two 32k views; Recent
+    eval-runner runs. No preset sorts, so every column header sorts.
+  - `Reports/eval-runner/`: `leaderboard.xlsx`, `leaderboard.md` (tables
+    at most 4 columns), `findings.md`, and per-run `report.md` with
+    Metric | Value tables.
+- **Data:**
+  - 41 historical rows (GPQA/IFEval, 18 BFCL, 2 AgentBench).
+  - 5 GLM-5.3-Flash smoke runs (2026-10-02, limit 3-15).
+  - **In progress at the checkpoint:** a full AgentBench run started from
+    the panel by steve at 22:38Z, `glm-5.3-flash-agentbench-20261001T223808Z`,
+    roughly 1.5-2.5 h. It has no note, so `reasoning_effort=high` isn't
+    recorded. It publishes automatically when done.
+- **Framework :8080:** GLM-5.3-Flash, hand-started (high effort, 131k
+  context).
+
+**Working copy:** the main checkout `~/git/proxmox-homelab` belongs to
+another session (CSE work, branch `fix/cse-report-transcript-content`).
+eval-runner work happens in the worktree `~/git/proxmox-homelab-eval-runner`,
+on `task/eval-runner`. Deploy from that worktree: the secrets wrapper
+loads only the fields in the current checkout's `secrets/manifest.json`.
+- **eval-runner play only:**
+  `ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles ./with-secrets-prod-tiny ansible-playbook -i ~/git/proxmox-homelab/terraform/lxc/environments/pve-tiny/ai-services-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml --start-at-task 'Create eval-runner build and config directories'`,
+  wrapped in `script -qec … /dev/null`.
+- **Other stacks:** the same pattern, with that stack's inventory under
+  `~/git/proxmox-homelab/terraform/lxc/environments/pve-tiny/`.
+
+**Branches (not merged; the operator decides):**
+- `task/eval-runner`: about 50 commits.
+- `task/glm-5.3-flash-eval`: 4 commits.
+- Merge note: the CSE branch also edits
+  `cse-panel-stack/app/app.py` (13 lines); `task/eval-runner` adds 5.
+  Whichever merges second resolves a small conflict.
+
+**Open / next:**
+1. Report the AgentBench full run's result when it finishes. It is
+   GLM's first comparable AgentBench number: os-std, 100 episodes,
+   seed 42.
+2. Nextcloud Office (an xlsx viewer): Euro-Office Document Server,
+   Collabora, or leave it. The operator hasn't decided.
+3. Cosmetic: the empty "Alt score %" cells show a lone "%" for BFCL and
+   AgentBench. Offered, not done.
+4. The shared Framework lock with CSE and the run metrics are phase 2
+   of `docs/benchmark-panel/` (branch `task/framework-run-lock`).
+5. Real scored runs of the other benchmarks need the operator's
+   go-ahead, or the operator starts them from the panel.
+6. Known side issues:
+   - the steve-user task in `deploy-nextcloud-stack.yml` lacks
+     `docker exec -e OC_PASS`;
+   - the GLM CPU spin (GLM doc §8);
+   - two failed `steve` logins in the Nextcloud log from my diagnostics
+     on 2026-10-01 at 21:36Z. Harmless, and the cause is known.
+
+**How to resume:**
+- Read `plan.md`, `panel-plan.md` and this README.
+- `plan.md` is generated by `docs/eval-runner/artifacts/genplan.py`
+  (git-ignored; a copy is in both checkouts). Rerun it after changing any
+  eval-runner file, then re-run the gates.
+- Tests: about 90 in `terraform/lxc/ansible/files/eval-runner` and 8 in
+  `cse-panel-stack/app`. A venv with openpyxl, rapidfuzz, celery,
+  fastapi and httpx runs them all; without those, the affected tests
+  are skipped.
+- Check the job: `curl -s http://192.168.20.30:8000/eval/api/state`.
+
+## Progress
+
+| Step | Status |
+|---|---|
+| eval-runner-01-manifest-hf-token | done 2026-10-01, all critical gates pass |
+| Operator: write HF_TOKEN | done 2026-10-01 (loads via `printenv`; token fetches `gpqa_diamond.csv` with HTTP 206, anonymous gets 401) |
+| eval-runner-02-dockerfile | done 2026-10-01, all critical gates pass |
+| eval-runner-03-eval-run-script | done 2026-10-01, all critical gates pass |
+| eval-runner-04-playbook-play | done 2026-10-01, all critical gates pass |
+| eval-runner-05-battery-doc-pointer | done 2026-10-01, all critical gates pass |
+| eval-runner-06a/b/c (selftest server, script, summariser) | done 2026-10-01, all critical gates pass |
+| eval-runner-07-stack-yaml-pointer | done 2026-10-01, all critical gates pass |
+| eval-runner-06d–g (runmeta, selftest checks, unit tests) | done 2026-10-01, all critical gates pass |
+| Operator: deploy to pve-tiny | done 2026-10-01. Latest deploy (`dca91fc4`): `failed=0`, all 4 self-test stages OK |
+| eval-runner-06h–j, 08–10 (publish, Nextcloud, findings, manifest) | done 2026-10-01, all critical gates pass |
+| Operator: Nextcloud deploy + app password + publish | done 2026-10-01 |
+| Smoke test | replaced by the deploy-time `eval-run selftest` (passes). A real pilot against Framework is optional, operator's call |
+
+## Hand-backs
+
+### 2026-10-01: steps 01–05 (run directly by Claude Code, not the local model)
+
+Each file was written from the same tested scratch copies the plan's literal
+content was generated from. Gate results:
+
+- **01:** `only-hf-token-added` → `OK`; `one-line-diff` → `1  1  secrets/manifest.json`.
+- **02:** `exact-content` → `542fdf7e…c4fb` (match).
+- **03:** `exact-content` → `dfc3a470…c36f` (match); `executable` → `OK`;
+  `shellcheck` → clean.
+- **04:** `exact-appended-play` → `2b32c4ce…99b8` (match); `append-only` →
+  `66  0`; `syntax-check` → exit 0.
+- **05:** `section-present` → `1`; `append-only` → `0`.
+
+From this commit until the `HF_TOKEN` value is written, `./with-secrets*`
+loads on this branch fail closed. Nothing should deploy from the branch
+before that.
+
+### 2026-10-01: deploy to pve-tiny
+
+Ran `TASK_APPROVAL=eval-runner-deploy ./with-secrets-prod-tiny
+scripts/provision.sh --stack ai-services-stack` (inventory target
+`192.168.50.11` checked first).
+
+- **First attempt, rc=1:** the image build failed after `pip install`
+  had succeeded. `python -c "import nltk; ..."` raised `ImportError:
+  Blocked import of locale from current working directory`. nltk 3.10.1
+  refuses imports that resolve under the cwd, and the build's default cwd
+  is `/`, which contains the stdlib. Reproduced on framework (same nltk):
+  `-P` doesn't help, running from any other directory does.
+- **Fix (`156fc493`):** move `WORKDIR /results` above the `RUN`. The
+  plan's literal Dockerfile and step 02's hash were updated to match
+  (`11e7dce6…7e85`).
+- **Second attempt, rc=0:** recap `ok=101 changed=9 failed=0 ignored=1`.
+  The one ignored failure is the existing `Timeout when waiting for
+  192.168.20.11:443` check in the Docker-base play, unrelated. The
+  eval-runner play's reachability task printed `Framework /v1/models
+  returned HTTP 200`. Image `eval-runner:local` is 780 MB. `curl` and
+  `python3` are both present on the CT, which settles the open question in
+  `plan.md`.
+
+### 2026-10-01: smoke test (partial, stopped)
+
+`eval-run ifeval --pilot` started `eval-glm-5.3-flash-ifeval-pilot-20261001T020318Z`.
+
+**Proven:**
+- Model id auto-detected as `glm-5.3-flash`.
+- lm_eval picked up `timeout: 3600`, `num_concurrent: 1` and
+  `max_gen_toks: 8192`.
+- Framework's `/slots` showed the request being generated, from
+  `192.168.50.11`.
+
+**Not proven:**
+- A completed run and results files.
+- GPQA (the gated dataset, inside the container).
+
+The container was stopped (`docker stop`, exit 137) and removed after
+about 10 minutes, with 0 of 40 prompts finished, at operator request.
+The operator hadn't intended this work to start GPU jobs, and a
+CyberSecEval suite from `cse_seg` (`192.168.100.70`) was running against
+the same server at the time.
+
+**Timing note for the next attempt:** with reasoning at `high`, a single
+IFEval answer from GLM-5.3-Flash ran to 6,387 tokens. Sharing the server
+with another client roughly halves per-request speed (10 vs ~18 tok/s).
+Budget a couple of hours for a 40-prompt pilot, and run it when nothing
+else is using Framework.
+
+### 2026-10-01: GPU-free self-test, results summary, non-root image
+
+Operator direction: build the harness out thoroughly and put it in place,
+without running GPU jobs. Added in `2793ec09`:
+
+- **`eval-run selftest`:** runs `mock_openai.py` (a stdlib stand-in
+  OpenAI server, `127.0.0.1:18080`) inside the image, then both tasks at
+  `--limit 2` with the real run's lm_eval flags. `summarize.py --check`
+  is the pass/fail. The deploy runs it as a gate.
+- **`eval-run results`:** headline GPQA (flex/strict) and IFEval
+  (prompt strict/loose) per run. Checked locally against framework's
+  historical Qwen3.6-35B `results_*.json`, where it reproduces 57.07% and
+  90.39%/91.87%. `--check` correctly fails a GPQA-only directory.
+- **Non-root image (uid 1000):** the results directory is chowned to 1000
+  (that uid is the CT's existing `automation` account), and the HF cache
+  moved to the `eval-runner-hf` volume. The old root-owned
+  `eval-runner-hf-cache` volume is removed by the play.
+- **Sorted pip pins**, plus a comment on why `--only-binary` isn't
+  possible (Sonar S7018/S8541). The "2 high vulnerabilities" Sonar flag
+  is in the `python:3.12-slim` base image, which deep-research uses too.
+  Not addressed here.
+- **A pointer in `ai-services-stack/stack.yaml`'s header comment.**
+
+Deploy: `ok=105 changed=11 failed=0 ignored=1` (the usual
+`192.168.20.11:443` check). The self-test summary was `GPQA flex 0.00%,
+GPQA strict 0.00%, n=2, IFEval p-strict 50.00%, IFEval p-loose 50.00%,
+n=2` / `selftest OK`. These scores are meaningless (canned replies). What
+counts is that the gated GPQA dataset downloaded as the non-root user and
+both tasks scored.
+
+Manual checks on the CT afterwards:
+- `eval-run --help` works, and `eval-run results` prints `no runs yet`.
+- A second self-test takes 15 s with cached datasets.
+- The `samples_ifeval_*.jsonl` response is the mock's reply, so the
+  request path works end to end.
+- No leftover `eval-*` containers.
+
+`plan.md` was regenerated so its literal content and hashes match the
+deployed files. All 19 gates were re-run against the branch and pass.
+
+### 2026-10-01: request guard, run metadata, resume, response flags, unit tests
+
+Operator direction: do everything possible before any run exercises the
+local models. Commits `5181323c` and `dca91fc4`.
+
+**Verified first, from lm_eval 0.4.12's installed source:**
+- The chat payload sends `max_tokens`, `temperature` (task default 0;
+  both tasks pin 0.0), `stop` and `seed: 1234`.
+- `--use_cache` commits each response as it arrives (`add_partial` into
+  `SqliteDict(autocommit=True)`).
+- The cache key ignores the model.
+- llama-server's `/props` doesn't expose `--chat-template-kwargs`.
+
+**Built:**
+- **`runmeta.py` (start/exec/check):** server fingerprint, run naming,
+  and the exact lm_eval argv, all in `run.json`.
+- **`eval-run resume`:** refuses if the fingerprint changed; `--force`
+  overrides.
+- **`eval-run delete <run>`** (added 2026-10-09, behind the panel's
+  Delete run button): removes the run's results, its Nextcloud folder
+  and table rows, and republishes. Refuses while the run is running.
+- **`--note`.**
+- **`selftest_checks.py`:** asserts what lm_eval actually sent.
+- **Response-quality flags** in `summarize.py`.
+- **`mock_openai.py` additions:** request log, every-Nth-empty replies,
+  `/props`, configurable port and model path.
+- **Selftest output pruning:** keeps the 5 most recent.
+- **22 unit tests:** `python3 -m unittest discover -s
+  terraform/lxc/ansible/files/eval-runner -p "test_*.py"`.
+
+**Evidence:**
+- **Selftest on the CT:**
+  1. `Cached requests: 0, Requests remaining: 4`, then `checks OK (4
+     requests)` (max_tokens 8192, temperature 0, seed 1234, model id), and
+     empty-flag total 2 as configured.
+  2. On resume: `Cached requests: 4, Requests remaining: 0`, and the mock
+     saw no new requests.
+  3. Change detection: `props.model_path: '/models/selftest-mock.gguf' ->
+     '/models/some-other-model.gguf'`, exit 3.
+- **Host paths on the CT:**
+  - Bad arguments, path traversal and unknown runs all exit 2 before
+    starting anything.
+  - A planted run whose recorded server differs from Framework was
+    refused by `eval-run resume`, with a field-by-field diff. That needed
+    only GETs of `/v1/models` and `/props`, with no inference and no
+    container started. It also confirmed that `runmeta` parses the real
+    llama-server `/props`.
+- **Flags on real history:** Qwen3.6-35B's GPQA redo has 49 of 198 empty
+  responses and 54 unparsed; its IFEval redo has 16 of 541 empty. These
+  match hand counts. Recorded in the eval-battery doc as a caveat on its
+  leading 57.07% GPQA score.
+- **Deploys:** `ok=105 failed=0` both times, self-test OK. Five selftest
+  dirs are kept, about 140 KB each.
+
+`plan.md` was regenerated from the deployed files (13 steps, 26 gates).
+Embedded content was compared byte for byte with the repo, and all gates
+pass.
+
+### 2026-10-01: historical comparison, backup coverage, battery survey
+
+Commit `9e780305` (deployed: `ok=105 failed=0`, self-test OK).
+
+**Comparability rule (`summarize.exclusion_reason`):** a historical result
+counts only if lm_eval's own recorded config shows a full run
+(`limit: null`) with `max_gen_toks` 8192.
+- Surveyed all 22 historical GPQA/IFEval results on framework. The rule
+  selects exactly the eval-battery doc's valid set, with matching numbers:
+  Gemma4-26B 43.94/92.98, A4B-QAT 27.27/89.83, Laguna 24.24/75.42,
+  Qwen3.6-35B redo 57.07/90.39, Qwen3.8-27B 43.43/89.46, Qwen3-Coder-30B
+  IFEval redo 81.33.
+- It excludes the Gemma4 pilots, the Bug 6 Qwen3.6 runs (GPQA 0.00,
+  IFEval 17.74), and Qwen3-Coder-30B's uncapped `ctx163k` GPQA 11.62.
+
+**Import:** 36 files, ~42 MB, into `/srv/eval-runner/results/_historical/`
+(uid 1000). Exact commands are in `plan.md` ("import historical
+results"). `eval-run results` now prints a historical section plus an
+excluded list with reasons.
+
+**Finding: GPQA empty answers under the 8192 budget.**
+
+| Model | Empty GPQA answers (of 198) |
+|---|---|
+| Gemma4-26B | 91 |
+| Gemma4-26B-A4B-QAT | 134 |
+| Laguna S2.1 | 114 |
+| Qwen3.8-27B | 105 |
+| Qwen3.6-35B | 49 |
+
+Historical GPQA therefore largely measures finishing inside 8192 tokens.
+
+I tried a derived "accuracy on parsed answers" figure and removed it
+again. It was biased: answered subsets skew easy and differ per model (it
+gave Qwen3.8-27B an implausible 94.5%).
+
+**Backups, checked read-only on pve-tiny:**
+- Job `48087a29…`: 12:30, `all 1`, `exclude 910`, `pbs-iscsi`, enabled.
+- CT 50013 snapshots: 2026-09-29T23:32Z and 2026-09-30T23:34Z.
+- `rootfs` has no `backup=0`, and `mp0` (Docker) is `backup=1`.
+
+Results are covered, with PBS keep-last-2 retention.
+
+**Battery survey:**
+- The custom RepoBench scripts are lost; they were on the ai-stack LXC
+  only.
+- BFCL was run with the `bfcl` CLI on framework; only logs and results
+  remain.
+- AgentBench is a 6.7 GB `Eugleo/agent-bench` checkout on garuda.
+
+None of these is packaged yet; that needs operator decisions.
+
+### 2026-10-01: results and findings in Nextcloud (Tables + reports)
+
+Operator direction: tabulate and document results nicely for comparison
+and analysis, in Nextcloud. Use existing data where possible and
+synthetic data where required.
+
+**Research:**
+- Nextcloud 35.0.0 had no table or spreadsheet app.
+- Tables 2.3.1 (stable) supports it.
+- Collabora/ONLYOFFICE were skipped: they're heavy and not needed for
+  sortable, filterable tables.
+
+**Built:** commits `842895fe`, `3efbf3ce` and `d77bc30c`.
+- `publish.py` with `--dry-run`, and `eval-run publish`.
+- `mock_nextcloud.py`, which enforces the Tables input contract.
+- Selftest stage 5: publish twice over real HTTP, no duplicates.
+- `docs/eval-runner/findings.md`.
+- Nextcloud playbook tasks: install Tables, create the `eval-reports`
+  account.
+- ai-services playbook: Nextcloud env, `findings.md` into the image, the
+  folder-share play.
+- Manifest field `services/nextcloud:NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`.
+- 46 unit tests.
+
+**Live sequence:**
+1. **Slip:** a probe `occ app:enable tables` installed Tables 2.3.1 on
+   prod outside the playbook (`app:enable` installs missing apps). It was
+   the intended end state. The playbook run then reported `ok`
+   (idempotent).
+2. **`nextcloud-stack` deploy on `pve`:** `ok=102 failed=0`, and
+   `eval-reports` was created (the app container wasn't restarted).
+   Side note: the existing `steve` user task sets `OC_PASS` without
+   `docker exec -e`, so it would only work if the user already exists.
+   Left as is.
+3. **App password:** the operator piped it straight into OpenBao
+   (`WRITE OK: services/nextcloud now at version 6`). Verified it loads
+   (72 alnum characters) and authenticates: WebDAV 207, Tables API 200.
+4. **ai-services deploy:** `failed=0`, self-test OK including stage 5,
+   folder share created.
+5. **First real publish: failed at `PUT /views/2` with HTTP 500.** The
+   Nextcloud log showed `foreach() argument must be of type array|object,
+   string given` in `ViewUpdateInput.php`. Read the Tables PHP source and
+   fixed it (`d77bc30c`):
+   - `columnSettings`, filter and sort are now sent as real arrays;
+   - views are re-applied on every publish, which repaired the
+     half-created one;
+   - the table column order and sort are set through OCS v2;
+   - network errors are reported cleanly;
+   - the mock now enforces the contract.
+6. **Later publishes:**
+   `published 21 files … 0 rows created, 0 updated, 21 unchanged`, both
+   times. The 21 rows were created by the failed attempt, and the
+   round-trip comparison is now proven.
+7. **Verified through the API:**
+   - table 2 "Model evaluations": 21 rows, 20 columns, Key first, sorted
+     Task ASC then Score DESC;
+   - views "Comparable: GPQA/IFEval" with is-equal filters and Score DESC
+     sort;
+   - table share to `steve`, read-only;
+   - folder `Reports/eval-runner` shared to `steve` (perms 1), with
+     leaderboard.md/.csv, findings.md and historical/.
+8. **Cleanup:** deleted the auto-created "Welcome to Nextcloud Tables!"
+   table owned by `eval-reports`.
+
+**Data used:** the published rows are the real historical results from
+framework. Synthetic data was only used where there was no real data
+yet: the selftest's mock-LLM run and the mock-Nextcloud publish, plus
+unit-test fixtures. No synthetic rows were published to the real
+Nextcloud.
+
+`plan.md` was regenerated (19 steps, 36 gates, all pass). Step 01's
+manifest gate is now scoped to its own entry, because the manifest
+legitimately has two additions.
+
+### 2026-10-01 (evening): spreadsheet, token-budget series, rest of the battery
+
+**Operator direction:**
+- Wide markdown tables read badly and the CSV opened as plain text.
+- Add the 32k series.
+- Build the rest of the battery: AgentBench sandboxes on
+  ai-services-stack's Docker, RepoBench rebuilt as a new series, and
+  BFCL as in history.
+
+**xlsx + series:** built in `44daed73` and `2d736ebe`, and deployed under
+`eval-runner-xlsx-series`.
+- The first deploy's selftest gate failed: the new context check refused
+  the mock's 4096-token context. Fixed the mock and added a unit test.
+- The redeploy passed: `ok=111 failed=0`, `selftest OK`.
+- `eval-run publish`: 21 files, 21 rows updated (Series filled in),
+  `leaderboard.xlsx` uploaded and `leaderboard.csv` deleted.
+- Read-only check of Nextcloud's apps: `eurooffice` 11.0.5 and `office`
+  1.1.0 are enabled, but no Document Server is configured (proposal
+  above).
+
+**Battery:** BFCL, AgentBench and RepoBench wrappers, two new images, the
+sandbox image, the historical importer, and 70 unit tests passing.
+- **BFCL:** the historical package set resolves for Python 3.12.
+- **AgentBench:**
+  - Found that 240 of the 800 os-std episodes `apt-get` packages at
+    start. The sandbox image pre-installs them, so networking can be
+    disabled.
+  - Found that the HTTP agent's 120 s timeout would cut off slow models.
+    The patch raises it.
+  - The patch also keeps the API key out of every config file.
+- **RepoBench:** rebuilt from upstream's code, verified against its
+  `run.py`, `data/utils.py`, `eval.py` and `metrics.py`.
+- **History:** 18 BFCL and 2 AgentBench historical results converted, not
+  yet copied to the CT.
+- **Not done yet:** this part isn't deployed. That needs the
+  `eval-runner-battery` approval.
+
+**Deploy `eval-runner-battery`:** commits `8866caaa`, `7d0f2422` and
+`ac0ba820`.
+- **Disk:** the CT's `/var/lib/docker` was at 86% (3.3 GB free) from 19
+  dangling images left by rebuilds. Pruned them and the build cache
+  (about 7.5 GB, now 50% used). The play now prunes dangling images
+  after each build.
+- **Selftest catch 1, BFCL:** qwen-agent imports `soundfile`, which
+  bfcl-eval doesn't declare. Framework's venv had `soundfile`,
+  `transformers` and `safetensors` installed by hand. The image now
+  installs them too, so it resolves to the identical 109-package set.
+- **Selftest catch 2, AgentBench:** the episodes ran in real network-less
+  sandboxes, but the closing `calculate_overall` failed with "No workers
+  available". Sandbox teardown stalls the worker heartbeat past the
+  controller's 11 s tolerance. The wrapper now waits and re-runs the
+  assigner, which sends no requests and only recalculates.
+- **Final deploy:** `ok=112 failed=0`, "all selftests OK":
+  - GPQA/IFEval and publish;
+  - BFCL: 2 cases, resume with 0 new requests;
+  - AgentBench: 2 sandbox episodes, resume with 0 new requests;
+  - RepoBench: dataset download, 15 completions, resume with 0 new
+    requests.
+- **History import:** 20 historical results files copied.
+- **`eval-run publish`:** 61 files, 20 rows created, 21 unchanged.
+- **Verified through the API:**
+  - 41 rows: 18 BFCL, 11 GPQA, 10 IFEval and 2 AgentBench;
+  - 7 views, each with two filters;
+  - `leaderboard.xlsx`, `leaderboard.md` and `findings.md` in the
+    folder, and no CSV.
+
+### 2026-10-02: first real smoke runs (GLM-5.3-Flash)
+
+**Operator go-ahead:** Framework is quiet, so run brief smoke tests to
+produce real data for the reports.
+
+**Change:** commit `9d5b7a97`.
+- `eval-run --limit N` for smoke runs.
+- A "Recent eval-runner runs" Tables view listing every eval-runner run,
+  newest first. Pilots and smoke runs never rank, so the ranked views
+  hide them.
+- Deployed by running only the eval-runner play (`--start-at-task`)
+  under `eval-runner-smoke`. All selftests OK.
+
+**Runs:** against `glm-5.3-flash` (llama.cpp, `reasoning_effort=high`),
+all exit 0, in 32 minutes total:
+
+| Run | Size | Score | Time | Notes |
+|---|---|---|---|---|
+| BFCL | 10 cases | 80% | 1 min | |
+| IFEval | 10 prompts | 60% strict | 13 min | 1 empty answer |
+| GPQA | 5 questions | 80% flexible-extract | 3 min | reasoning goes to llama-server's separate reasoning field, so answers are short |
+| AgentBench | 3 episodes | 33% | 4 min | |
+| RepoBench | 15 completions | EM 66.67% / ES 83.0 | 11 min | |
+
+**Gotcha found:** the first eval-runner-only deploy ran the secrets
+wrapper from the main checkout. That checkout was on another branch,
+whose `secrets/manifest.json` lacks `NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD`,
+so the env file got an empty password and `publish` refused to run.
+
+**Fixed:** re-ran the play from the `task/eval-runner` worktree, then
+published (71 files, 5 rows created). Verified through the API that the
+new view is shared with steve and holds the 5 rows.
+
+### 2026-10-02: report and Tables usability fixes (from the operator's first look)
+
+Everything below was regenerated from stored results; nothing was rerun.
+Each fix was applied by one `publish` run with the new `publish.py`
+mounted. The images pick it up at the next eval-runner deploy.
+
+- **Markdown:** no table is wider than 4 columns (Nextcloud scrolls wider
+  ones), and a test enforces it.
+  - Run reports have one Metric | Value table per benchmark.
+  - Leaderboard ranks show `# | Model | Score | Empty`.
+  - Non-comparable results are a bullet list.
+  - New "Latest eval-runner runs" section at the top.
+- **Report header:** readable start time, rounded sampling parameters,
+  and a harness line that's correct for every benchmark.
+- **Views vanishing from the sidebar:** this is a Tables 2.3.1 UI race.
+  Tables and shared views load in parallel, and the tables reply
+  overwrites the view list. The table share now carries manage
+  permission, so the views come with the table. Existing shares are
+  upgraded on publish.
+- **Smoke runs missing from the per-benchmark views:** those views were
+  full-runs-only.
+  - They are renamed in place (same ids) to just GPQA, IFEval, BFCL,
+    AgentBench and RepoBench (rebuilt).
+  - Each now shows every result for its benchmark, with a Comparable
+    column; comparable runs sort first, then by score.

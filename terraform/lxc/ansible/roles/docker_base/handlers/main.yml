@@ -1,0 +1,8 @@
+---
+# See tasks/main.yml's daemon.json write (docs/logging/docker-log-driver-
+# audit.md, log-01) -- only fires when docker_base_manage_daemon_json is
+# true and the rendered content actually changed.
+- name: Restart Docker (docker_base)
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted

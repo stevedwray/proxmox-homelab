@@ -50,30 +50,15 @@
   hosts: all
   become: true
   gather_facts: true
+  # Migrated to docker_base-owned daemon.json (docs/logging/docker-log-
+  # driver-audit.md, log-02) -- was json-file with no Graylog forwarding
+  # (this stack's own hand-written task below, now removed). Fleet
+  # default is syslog; no docker_base_daemon_extra override needed here.
+  vars:
+    docker_base_manage_daemon_json: true
   roles:
     - lxc_base
     - docker_base
-
-  tasks:
-    - name: Configure Docker daemon logging
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        mode: "0644"
-        content: |
-          {
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "50m",
-              "max-file": "7"
-            }
-          }
-      notify: Restart Docker
-
-  handlers:
-    - name: Restart Docker
-      ansible.builtin.systemd:
-        name: docker
-        state: restarted
 
 - name: Deploy cve-mcp-server compose stack
   hosts: all
@@ -87,6 +72,8 @@
     # not part of this repo, a sibling checkout. See
     # docs/mcp-stack/plan.md and ~/git/cve-mcp-server/docs/api-service-plan.md.
     mcp_source_dir: "{{ lookup('env', 'CVE_MCP_SOURCE_DIR') | default('/home/steve/git/cve-mcp-server', true) }}"
+    maltego_source_dir: "{{ lookup('env', 'MALTEGO_MCP_SOURCE_DIR') | default('/home/steve/git/maltego-mcp', true) }}"
+    maltego_build_dir: "{{ mcp_compose_dir }}/maltego-mcp"
 
     # Secrets -- OpenBao (see secrets/manifest.json). Full key set per
     # the operator's 2026-08-01 decision (includes the threat-intel cluster,
@@ -97,6 +84,34 @@
     mcp_virustotal_key: "{{ lookup('env', 'VIRUSTOTAL_KEY') | mandatory('VIRUSTOTAL_KEY env var is required') }}"
     mcp_shodan_key: "{{ lookup('env', 'SHODAN_KEY') | mandatory('SHODAN_KEY env var is required') }}"
     mcp_greynoise_api_key: "{{ lookup('env', 'GREYNOISE_API_KEY') | mandatory('GREYNOISE_API_KEY env var is required') }}"
+    # Tier 2 (maltego-mcp enrichment only, not consumed by cve-mcp-server).
+    # Confirmed live in OpenBao 2026-10-02 (64-char key, real API call
+    # verified) before being added here -- see
+    # docs/maltego-integration/README.md's Tier 2 section.
+    mcp_otx_api_key: "{{ lookup('env', 'OTX_API_KEY') | mandatory('OTX_API_KEY env var is required') }}"
+    # Phase 3 osint-mcp auth. Confirmed live in OpenBao 2026-10-02 (64-char
+    # operator-generated token) before being added here -- see
+    # docs/maltego-integration/README.md's Phase 3 section.
+    mcp_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
+    # Phase 4 (company/person OSINT, docs/maltego-integration/README.md).
+    # Confirmed live in OpenBao 2026-10-03 (scratch-manifest --check dry
+    # run passed for all 5 profiles before promoting to mandatory() here)
+    # -- same safe-staging pattern as every other new secret in this
+    # project (see OTX_API_KEY/OSINT_MCP_TOKEN's own history above).
+    mcp_companies_house_api_key: "{{ lookup('env', 'COMPANIES_HOUSE_API_KEY') | mandatory('COMPANIES_HOUSE_API_KEY env var is required') }}"
+    mcp_hunter_api_key: "{{ lookup('env', 'HUNTER_API_KEY') | mandatory('HUNTER_API_KEY env var is required') }}"
+    # Phase 5 (content-creator OSINT, docs/maltego-integration/README.md).
+    # All four confirmed live in OpenBao (scratch-manifest --check dry run
+    # passed for all 5 profiles before promoting to mandatory() here --
+    # same safe-staging pattern as every other new secret in this project).
+    # YOUTUBE_API_KEY/TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET confirmed
+    # 2026-10-04; STEAM_API_KEY confirmed same day once the operator
+    # resolved the one-time $10 purchase needed to activate a Steam Web
+    # API key.
+    mcp_youtube_api_key: "{{ lookup('env', 'YOUTUBE_API_KEY') | mandatory('YOUTUBE_API_KEY env var is required') }}"
+    mcp_steam_api_key: "{{ lookup('env', 'STEAM_API_KEY') | mandatory('STEAM_API_KEY env var is required') }}"
+    mcp_twitch_client_id: "{{ lookup('env', 'TWITCH_CLIENT_ID') | mandatory('TWITCH_CLIENT_ID env var is required') }}"
+    mcp_twitch_client_secret: "{{ lookup('env', 'TWITCH_CLIENT_SECRET') | mandatory('TWITCH_CLIENT_SECRET env var is required') }}"
 
     # docs-rag-mcp -- source lives in this repo, not a sibling clone (see
     # header comment above for why this differs from cve-mcp-server).
@@ -115,6 +130,11 @@
     # though the server itself was healthy.
     docs_rag_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8001,127.0.0.1:8001"
     docs_rag_postgres_password: "{{ lookup('env', 'DOCS_RAG_POSTGRES_PASSWORD') | mandatory('DOCS_RAG_POSTGRES_PASSWORD env var is required') }}"
+    # osint-mcp (Phase 3) -- same DNS-rebinding-protection gotcha as
+    # docs-rag-mcp above: must include 127.0.0.1 for in-container checks,
+    # plus the LXC's real IP for deep-research-agent's cross-container
+    # calls. See docs/maltego-integration/README.md's Phase 3 section.
+    osint_mcp_allowed_hosts: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8010,127.0.0.1:8010"
     # Pulled through Harbor's proxy-cache, not directly from Docker Hub --
     # same convention as every other third-party image in this repo (e.g.
     # PentAGI's own pgvector, ollama:rocm). FQDN via Traefik/edge_seg, not
@@ -158,13 +178,1412 @@
         dest: "{{ mcp_build_dir }}/"
         mode: preserve
 
-    # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
-    # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
-    # `COPY pyproject.toml README.md ./` never copies LICENSE into the
-    # build context that hatchling actually sees, so `uv sync --no-dev`
-    # fails validating the license field. Nobody had built this image
-    # before this deployment (see cve-mcp-server's own docs/api-service-plan.md).
-    # Patch the copied Dockerfile rather than the upstream source tree.
+    # --- maltego-mcp: vendored from https://github.com/lidless-labs/maltego-mcp
+    # (MIT, inspected and pinned at commit cb810042 2026-10-02 -- see
+    # docs/maltego-integration/README.md). Phase 1 only: no HTTP daemon, no
+    # MCP protocol usage -- invoked on demand via `docker compose run --rm`
+    # against a small driver script that calls its own exported lookup/graph
+    # functions directly. See docs/maltego-integration/plan.md. ---
+
+    - name: Create maltego-mcp build directory
+      ansible.builtin.file:
+        path: "{{ maltego_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy maltego-mcp source files from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/{{ item }}"
+        dest: "{{ maltego_build_dir }}/{{ item }}"
+        mode: preserve
+      loop:
+        - package.json
+        - package-lock.json
+        - tsconfig.json
+        - tsup.config.ts
+        - index.ts
+        - cli.ts
+        - mcp-bin.ts
+        - mcp-server.ts
+        - README.md
+        - LICENSE
+
+    # dest is the *parent* dir here, not "{{ maltego_build_dir }}/src" --
+    # same ansible.builtin.copy trailing-slash semantics as the
+    # cve-mcp-server src/ copy above.
+    - name: Copy maltego-mcp src/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/src"
+        dest: "{{ maltego_build_dir }}/"
+        mode: preserve
+
+    # tsup.config.ts declares a "demo-basic" build entry pointing at
+    # scripts/demo-basic.ts -- omitting scripts/ makes `npm run build` fail
+    # with "Cannot find demo-basic: scripts/demo-basic.ts" (found live
+    # 2026-10-02, first real build attempt). Copy the whole directory
+    # rather than patching tsup.config.ts to drop the entry, to stay
+    # faithful to the pinned upstream build as-is.
+    - name: Copy maltego-mcp scripts/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ maltego_source_dir }}/scripts"
+        dest: "{{ maltego_build_dir }}/"
+        mode: preserve
+
+    - name: Write maltego-mcp Dockerfile
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/Dockerfile"
+        mode: "0640"
+        content: |
+          # syntax=docker/dockerfile:1
+          #
+          # maltego-mcp, vendored from https://github.com/lidless-labs/maltego-mcp
+          # (MIT license, inspected and pinned at commit cb810042 2026-10-02 --
+          # see docs/maltego-integration/README.md). Not pulled through Harbor --
+          # same convention as cve-mcp-server's own Dockerfile in this stack
+          # (single small image, no second consumer yet).
+          #
+          # Phase 1 only: this image has no long-running server command. It is
+          # invoked per-call via `docker compose run --rm maltego-mcp node
+          # dist/phase1-expand-domain.js <domain> <outputPath>`, never `docker
+          # compose up`. See docs/maltego-integration/plan.md.
+          FROM node:20-slim AS builder
+          WORKDIR /app
+          COPY package.json package-lock.json tsconfig.json tsup.config.ts ./
+          COPY index.ts cli.ts mcp-bin.ts mcp-server.ts ./
+          COPY src ./src
+          COPY scripts ./scripts
+          RUN npm ci && npm run build
+          # Bundle the Phase 1 driver the same way tsup.config.ts's own
+          # entries are bundled (tsup/esbuild resolves the whole src/
+          # dependency graph from one entry file; it does not need to be
+          # listed in tsup.config.ts itself). Found live 2026-10-02: an
+          # earlier version of this driver imported from "./dist/graph/
+          # graph.js" etc. assuming dist/ mirrors src/'s directory
+          # structure -- it does not. tsup.config.ts has splitting:false,
+          # so each entry bundles into one flat file with no per-module
+          # output at all; dist/graph/, dist/lookups/ never exist.
+          COPY phase1-expand-domain.ts investigate.ts osint-mcp-server.ts company_person.ts ./
+          RUN npx tsup phase1-expand-domain.ts osint-mcp-server.ts --format esm --target node20 --platform node --out-dir dist --clean false --no-dts
+
+          FROM node:20-slim
+          RUN useradd --create-home --shell /usr/sbin/nologin app
+          # Phase 4 (docs/maltego-integration/README.md): Sherlock
+          # (sherlock-project/sherlock on GitHub, MIT, actively maintained,
+          # pinned to the version confirmed live 2026-10-03) for
+          # find_username -- shelled out to the real upstream tool rather
+          # than reimplementing its 400+-site detection logic, same
+          # vendoring principle as maltego-mcp itself. --break-system-packages
+          # is the standard escape hatch for Debian bookworm's PEP 668
+          # "externally managed environment" guard in a disposable,
+          # single-purpose container image like this one. python3-pip is
+          # purged after install -- it's an installer, not a runtime
+          # dependency of the installed package.
+          #
+          # Found live 2026-10-03: a bare `apt-get update` on this LXC
+          # times out connecting directly to deb.debian.org -- confirmed
+          # via a direct reproduction, not assumed from the generic exit-
+          # code-100 error alone. This LXC's own apt-cacher-ng proxy
+          # ({{ apt_cacher_host }}:3142, already in its inventory for the
+          # host's own apt sources) is required for any apt-get inside a
+          # Docker build here too -- Docker builds don't inherit the
+          # host's own apt.conf.d proxy config automatically, confirmed by
+          # testing both ways. PyPI (pip) is reachable directly -- only
+          # the Debian mirror itself needs the proxy.
+          RUN echo 'Acquire::http::Proxy "http://{{ apt_cacher_host }}:3142";' > /etc/apt/apt.conf.d/01proxy && \
+              apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && \
+              pip install --break-system-packages --no-cache-dir sherlock-project==0.16.2 && \
+              apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy
+          WORKDIR /app
+          COPY --from=builder /app/node_modules ./node_modules
+          COPY --from=builder /app/dist ./dist
+          ENV MALTEGO_MCP_OUTPUT_DIR=/home/app/MaltegoGraphs
+          RUN mkdir -p /home/app/MaltegoGraphs && chown -R app:app /home/app
+          USER app
+          # No ENTRYPOINT ["node"] -- found live 2026-10-02: with it, `docker
+          # compose run --rm maltego-mcp node dist/phase1-expand-domain.js ...`
+          # doubled up into `node node dist/phase1-expand-domain.js`, which
+          # tried (and failed) to run a file literally named "node". A bare
+          # CMD lets `docker compose run` fully override it with the real
+          # command (e.g. `docker compose run --rm maltego-mcp node
+          # dist/phase1-expand-domain.js <domain> <outputFileName>`).
+          CMD ["node", "dist/mcp-server.js"]
+
+    - name: Write maltego-mcp Phase 1 driver script
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/phase1-expand-domain.ts"
+        mode: "0640"
+        content: |
+          // Thin CLI wrapper around investigate.ts's shared investigateDomain()/
+          // writeMtgxNative(). Logic moved to investigate.ts 2026-10-02 so
+          // osint-mcp-server.ts can reuse it without duplicating lookup/graph code.
+          // Usage:
+          //   node dist/phase1-expand-domain.js <domain> <outputFileName>
+          // outputFileName is relative to MALTEGO_MCP_OUTPUT_DIR.
+          import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+
+          const [domain, outputFileName] = process.argv.slice(2);
+          if (!domain || !outputFileName) {
+            console.error("usage: node dist/phase1-expand-domain.js <domain> <outputFileName>");
+            process.exit(1);
+          }
+
+          const outputDir = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
+          const outputPath = join(outputDir, outputFileName);
+
+          const graph = await investigateDomain(domain);
+          await writeMtgxNative(graph, outputPath);
+          console.log(`wrote ${outputPath} (${graph.entityCount()} entities, ${graph.linkCount()} links)`);
+    - name: Write maltego-mcp shared investigate.ts module
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/investigate.ts"
+        mode: "0640"
+        content: |
+          // Shared investigation logic: domain -> DNS + WHOIS + ASN(per A record) +
+          // crt.sh + VirusTotal/Shodan/GreyNoise/AlienVault OTX enrichment -> Graph.
+          // Extracted from phase1-expand-domain.ts (2026-10-02) so the same logic
+          // can be called from both the CLI driver and osint-mcp-server.ts -- was
+          // previously a single top-level-await script, not reusable.
+          import { writeFile, mkdir } from "node:fs/promises";
+          import { dirname } from "node:path";
+          import JSZip from "jszip";
+          import { Graph } from "./src/graph/graph.js";
+          import { dnsLookup } from "./src/lookups/dns.js";
+          import { whoisLookup } from "./src/lookups/whois.js";
+          import { asnLookup } from "./src/lookups/asn.js";
+          import { crtshLookup } from "./src/lookups/crtsh.js";
+
+          // Tier 1 enrichment: VirusTotal/Shodan/GreyNoise. Request/response shapes
+          // verified 2026-10-02 against this operator's own already-working
+          // cve-mcp-server fork (~/git/cve-mcp-server/src/cve_mcp/api/{ip_intel,
+          // shodan_client,hash_intel}.py), not re-derived from scratch. All three
+          // use the same OpenBao-managed keys already live in shared/external-apis
+          // (no new secret needed for this batch). GreyNoise note: its free
+          // /v3/community endpoint was deprecated Jan 2026 (per that same cve-mcp
+          // fork's own comment) -- this calls the real /v3/ip/{ip} endpoint, which
+          // needs a real (possibly paid-tier) key, not the old free-community one.
+          // Every call degrades gracefully on missing key, non-200, or network
+          // error -- enrichment is best-effort, never blocks graph generation.
+          interface VtStats { malicious: number; suspicious: number; harmless: number; undetected: number }
+          async function vtLookup(kind: "ip_addresses" | "domains", value: string): Promise<{ stats?: VtStats; reputation?: number; asOwner?: string } | undefined> {
+            const key = process.env.VIRUSTOTAL_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://www.virustotal.com/api/v3/${kind}/${encodeURIComponent(value)}`, { headers: { "x-apikey": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const attrs = body?.data?.attributes ?? {};
+              return { stats: attrs.last_analysis_stats, reputation: attrs.reputation, asOwner: attrs.as_owner };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function shodanLookup(ip: string): Promise<{ org?: string; ports?: number[]; hostnames?: string[]; vulns?: string[] } | undefined> {
+            const key = process.env.SHODAN_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(ip)}?key=${key}`);
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              return { org: body.org, ports: body.ports, hostnames: body.hostnames, vulns: Object.keys(body.vulns ?? {}) };
+            } catch {
+              return undefined;
+            }
+          }
+
+          async function greynoiseLookup(ip: string): Promise<{ noise?: boolean; riot?: boolean; classification?: string; name?: string } | undefined> {
+            const key = process.env.GREYNOISE_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.greynoise.io/v3/ip/${encodeURIComponent(ip)}`, { headers: { key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              if (body.error) return undefined;
+              return { noise: body.noise, riot: body.riot, classification: body.classification, name: body.name };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Tier 2: AlienVault OTX. Endpoint/header confirmed 2026-10-02 against
+          // the official LevelBlue docs (otx.alienvault.com/assets/static/
+          // external_api.html) -- a different, unaffiliated source (an old gist)
+          // showed a singular "/indicator/" path that looked plausible but was
+          // stale/wrong; verified against the official docs instead of guessing.
+          // Confirmed live 2026-10-02 with a real operator-provisioned key
+          // (pulse_info.count/pulses matched this exact shape against the real
+          // API). Still degrades gracefully to undefined on a missing/invalid key
+          // or network error, same as every other enrichment call here.
+          async function otxLookup(kind: "domain" | "IPv4", value: string): Promise<{ pulseCount: number; pulseNames: string[] } | undefined> {
+            const key = process.env.OTX_API_KEY;
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://otx.alienvault.com/api/v1/indicators/${kind}/${encodeURIComponent(value)}/general`, { headers: { "X-OTX-API-KEY": key } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const pulses: Array<{ name?: string }> = body?.pulse_info?.pulses ?? [];
+              return { pulseCount: body?.pulse_info?.count ?? 0, pulseNames: pulses.slice(0, 5).map((p) => p.name ?? "").filter(Boolean) };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Each Maltego entity type has its own "main value" field name,
+          // authoritative source: this machine's installed Maltego entity
+          // definitions (~/.maltego/v4.13.0/.../com-paterva-maltego-entities-
+          // common.jar, maltego.<Type>.entity's <Properties value="..."> attribute)
+          // -- found live 2026-10-02 after a v2 fix rendered correctly (icons,
+          // links, topology) but every entity showed "<empty>" because
+          // "properties.value" isn't a real field on any of these entity types.
+          export const VALUE_FIELD_NAME: Record<string, string> = {
+            "maltego.Domain": "fqdn",
+            "maltego.IPv4Address": "ipv4-address",
+            "maltego.AS": "as.number",
+            "maltego.Phrase": "text",
+          };
+
+          function escapeXml(value: unknown): string {
+            return String(value)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;");
+          }
+
+          export async function writeMtgxNative(graph: Graph, outputPath: string): Promise<void> {
+            graph.applyLayout();
+
+            const nodeXml = graph.allEntities().map((e) => {
+              const props = [
+                `<mtg:Property name="${escapeXml(VALUE_FIELD_NAME[e.type] ?? "properties.value")}" displayName="Value" type="string"><mtg:Value>${escapeXml(e.value)}</mtg:Value></mtg:Property>`,
+                ...Object.entries(e.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              const x = e.position?.x ?? 0;
+              const y = e.position?.y ?? 0;
+              return `    <node id="${e.id}">
+                <data key="d0"><mtg:MaltegoEntity xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="${escapeXml(e.type)}"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoEntity></data>
+                <data key="d1"><mtg:EntityRenderer xmlns:mtg="http://maltego.paterva.com/xml/mtgx"><mtg:Position x="${x}" y="${y}"/></mtg:EntityRenderer></data>
+              </node>`;
+            }).join("\n");
+
+            const edgeXml = graph.allLinks().map((l) => {
+              const props = [
+                l.label ? `<mtg:Property name="maltego.link.manual.type" displayName="Label" type="string"><mtg:Value>${escapeXml(l.label)}</mtg:Value></mtg:Property>` : "",
+                ...Object.entries(l.properties)
+                  .filter(([, v]) => v !== undefined && v !== "")
+                  .map(([k, v]) => `<mtg:Property name="${escapeXml(k)}" displayName="${escapeXml(k)}" type="string"><mtg:Value>${escapeXml(v)}</mtg:Value></mtg:Property>`),
+              ].join("");
+              return `    <edge id="${l.id}" source="${l.from}" target="${l.to}">
+                <data key="d2"><mtg:MaltegoLink xmlns:mtg="http://maltego.paterva.com/xml/mtgx" type="maltego.link.manual-link"><mtg:Properties>${props}</mtg:Properties></mtg:MaltegoLink></data>
+              </edge>`;
+            }).join("\n");
+
+            const graphml = `<?xml version="1.0" encoding="UTF-8"?>
+          <graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:mtg="http://maltego.paterva.com/xml/mtgx" xmlns:y="http://www.yworks.com/xml/graphml">
+            <key id="d0" for="node" attr.name="MaltegoEntity"/>
+            <key id="d1" for="node" attr.name="EntityRenderer" yfiles.type="nodegraphics"/>
+            <key id="d2" for="edge" attr.name="MaltegoLink"/>
+            <graph id="G" edgedefault="directed">
+          ${nodeXml}
+          ${edgeXml}
+            </graph>
+          </graphml>`;
+
+            const zip = new JSZip();
+            zip.file("Graphs/Graph1.graphml", graphml);
+            zip.file("version.properties", "maltego.graph.version=1.3\nmaltego.client.version=4.13\n");
+            const bytes = await zip.generateAsync({ type: "uint8array" });
+            await mkdir(dirname(outputPath), { recursive: true });
+            await writeFile(outputPath, bytes);
+          }
+
+          export async function investigateDomain(domain: string): Promise<Graph> {
+            const graph = new Graph(`investigate-${domain}`, `Investigate: ${domain}`);
+            const domainEntity = graph.addEntity({ type: "Domain", value: domain, properties: {} });
+
+            const [dns, whois, crtsh, domainVt, domainOtx] = await Promise.all([
+              dnsLookup(domain),
+              whoisLookup(domain),
+              crtshLookup(domain),
+              vtLookup("domains", domain),
+              otxLookup("domain", domain),
+            ]);
+
+            if (domainVt?.stats) {
+              domainEntity.properties.vt_malicious = String(domainVt.stats.malicious ?? 0);
+              domainEntity.properties.vt_suspicious = String(domainVt.stats.suspicious ?? 0);
+              if (domainVt.reputation !== undefined) domainEntity.properties.vt_reputation = String(domainVt.reputation);
+            }
+            if (domainOtx) {
+              domainEntity.properties.otx_pulse_count = String(domainOtx.pulseCount);
+              if (domainOtx.pulseNames.length > 0) domainEntity.properties.otx_pulse_names = domainOtx.pulseNames.join(", ");
+            }
+
+            if (dns.ok) {
+              for (const ip of dns.data.a) {
+                const ipEntity = graph.ensureEntity({ type: "IPv4Address", value: ip, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: ipEntity.id, label: "resolves_to", properties: { source: "dns" } });
+                const [asn, vt, shodan, greynoise, otx] = await Promise.all([
+                  asnLookup(ip),
+                  vtLookup("ip_addresses", ip),
+                  shodanLookup(ip),
+                  greynoiseLookup(ip),
+                  otxLookup("IPv4", ip),
+                ]);
+                if (asn.ok) {
+                  const asnEntity = graph.ensureEntity({
+                    type: "AS",
+                    value: `AS${asn.data.asn}`,
+                    properties: { organization: asn.data.organization ?? "", country: asn.data.country ?? "" },
+                  });
+                  graph.addLink({ from: ipEntity.id, to: asnEntity.id, label: "hosted_in", properties: { source: "team-cymru" } });
+                }
+                if (vt?.stats) {
+                  ipEntity.properties.vt_malicious = String(vt.stats.malicious ?? 0);
+                  ipEntity.properties.vt_suspicious = String(vt.stats.suspicious ?? 0);
+                  if (vt.reputation !== undefined) ipEntity.properties.vt_reputation = String(vt.reputation);
+                }
+                if (shodan) {
+                  ipEntity.properties.shodan_org = shodan.org ?? "";
+                  ipEntity.properties.shodan_ports = (shodan.ports ?? []).join(",");
+                  if ((shodan.vulns ?? []).length > 0) ipEntity.properties.shodan_vulns = shodan.vulns!.join(",");
+                }
+                if (greynoise) {
+                  ipEntity.properties.greynoise_classification = greynoise.classification ?? "";
+                  ipEntity.properties.greynoise_noise = String(greynoise.noise ?? false);
+                  ipEntity.properties.greynoise_riot = String(greynoise.riot ?? false);
+                }
+                if (otx) {
+                  ipEntity.properties.otx_pulse_count = String(otx.pulseCount);
+                  if (otx.pulseNames.length > 0) ipEntity.properties.otx_pulse_names = otx.pulseNames.join(", ");
+                }
+              }
+              for (const ns of dns.data.ns) {
+                const nsEntity = graph.ensureEntity({ type: "Domain", value: ns, properties: {} });
+                graph.addLink({ from: domainEntity.id, to: nsEntity.id, label: "has_nameserver", properties: { source: "dns" } });
+              }
+            }
+
+            if (whois.ok) {
+              domainEntity.properties.registrar = whois.data.registrar ?? "";
+              domainEntity.properties.creationDate = whois.data.creationDate ?? "";
+            }
+
+            if (crtsh.ok) {
+              for (const cert of crtsh.data.certs.slice(0, 20)) {
+                const certEntity = graph.ensureEntity({
+                  type: "Phrase",
+                  value: `[Certificate] ${cert.commonName}`,
+                  properties: { issuer: cert.issuer, notBefore: cert.notBefore, notAfter: cert.notAfter },
+                });
+                graph.addLink({ from: domainEntity.id, to: certEntity.id, label: "certificate", properties: { source: "crt.sh" } });
+                for (const san of cert.sans) {
+                  if (san === domain) continue;
+                  const sanEntity = graph.ensureEntity({ type: "Domain", value: san, properties: {} });
+                  graph.addLink({ from: certEntity.id, to: sanEntity.id, label: "SAN", properties: { source: "crt.sh" } });
+                }
+              }
+            }
+
+            return graph;
+          }
+
+    - name: Write osint-mcp-server.ts (Phase 3 HTTP MCP server)
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/osint-mcp-server.ts"
+        mode: "0640"
+        content: |
+          // OSINT MCP server, Phase 3: exposes investigateDomain() (DNS/WHOIS/ASN/
+          // crt.sh + VirusTotal/Shodan/GreyNoise/OTX enrichment) as one real MCP
+          // tool over Streamable HTTP, so deep-research-agent (a different
+          // container on the same pve-tiny LXC host) can call it over the network
+          // -- maltego-mcp's own mcp-server.ts speaks stdio only, which cannot
+          // cross a container boundary, so this is a separate purpose-built server
+          // (same precedent as docs-rag-mcp: in-repo, not vendored), reusing
+          // investigate.ts's logic rather than duplicating it.
+          //
+          // Auth: a single shared-secret bearer token (OSINT_MCP_TOKEN), checked
+          // on every request before the MCP transport ever sees it. Unlike
+          // cve-mcp-server/docs-rag-mcp (no app-layer auth, network-only via
+          // MikroTik rules), this is a new network-reachable surface and the
+          // original design brief explicitly asked for real auth even on LAN --
+          // see docs/maltego-integration/README.md.
+          import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+          import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+          import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+          import { z } from "zod";
+          import { join } from "node:path";
+          import { investigateDomain, writeMtgxNative } from "./investigate.js";
+          import {
+            companiesHouseLookup,
+            secEdgarLookup,
+            hunterDomainSearch,
+            hunterEmailFinder,
+            sherlockUsernameCheck,
+            withRetry,
+            youtubeChannelLookup,
+            steamProfileLookup,
+            twitchChannelLookup,
+            findCreatorContactEmails,
+          } from "./company_person.js";
+
+          const TOKEN = process.env.OSINT_MCP_TOKEN;
+          if (!TOKEN) {
+            console.error("fatal: OSINT_MCP_TOKEN is not set");
+            process.exit(1);
+          }
+
+          const PORT = Number(process.env.PORT ?? "8010");
+          const OUTPUT_DIR = process.env.MALTEGO_MCP_OUTPUT_DIR ?? "/home/app/MaltegoGraphs";
+
+          // Found live 2026-10-03: this server had ZERO per-request logging --
+          // diagnosing a real find_username failure required reconstructing the
+          // whole call from deep-research-agent's own session JSON (a different
+          // container) instead of just reading this server's own logs. Every tool
+          // call now logs start/outcome/duration to stdout (captured by `docker
+          // logs`), so a future failure is diagnosable from this container alone.
+          // Deliberately plain console.log (stdout, picked up by the Docker json-file
+          // log driver like every other stack here) rather than a logging
+          // dependency -- this is a low-traffic internal tool server, not worth a
+          // new library for.
+          function withLogging<Args extends Record<string, unknown>>(
+            toolName: string,
+            handler: (args: Args) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>,
+          ) {
+            return async (args: Args) => {
+              const start = Date.now();
+              console.log(`[${new Date(start).toISOString()}] ${toolName} start args=${JSON.stringify(args).slice(0, 300)}`);
+              try {
+                const result = await handler(args);
+                const ms = Date.now() - start;
+                const outcome = result.isError ? "error" : "ok";
+                const preview = result.content?.[0]?.text?.slice(0, 200) ?? "";
+                console.log(`[${new Date().toISOString()}] ${toolName} ${outcome} (${ms}ms): ${preview}`);
+                return result;
+              } catch (err: any) {
+                const ms = Date.now() - start;
+                console.error(`[${new Date().toISOString()}] ${toolName} threw (${ms}ms): ${err?.stack ?? err}`);
+                throw err;
+              }
+            };
+          }
+
+          function getServer(): McpServer {
+            const server = new McpServer({ name: "osint-mcp", version: "1.0.0" });
+            server.registerTool(
+              "investigate_domain",
+              {
+                description:
+                  "Investigate a domain: DNS resolution, WHOIS, certificate transparency (crt.sh), " +
+                  "ASN/hosting info, and threat-intel enrichment (VirusTotal, Shodan, GreyNoise, AlienVault OTX " +
+                  "-- each best-effort, degrading silently if its API key is unset or the call fails). " +
+                  "Returns a text summary and, if writeMtgx is true, saves a .mtgx file Maltego Desktop can open.",
+                inputSchema: {
+                  domain: z.string().describe("Domain name to investigate, e.g. example.com"),
+                  writeMtgx: z.boolean().optional().describe("Also write a .mtgx file to the shared output directory (default: false)"),
+                  outputFileName: z.string().optional().describe("File name for the .mtgx, relative to the output directory (required if writeMtgx is true)"),
+                },
+              },
+              withLogging("investigate_domain", async ({ domain, writeMtgx, outputFileName }) => {
+                const graph = await investigateDomain(domain);
+                let mtgxPath: string | undefined;
+                if (writeMtgx) {
+                  if (!outputFileName) {
+                    return { content: [{ type: "text", text: "error: outputFileName is required when writeMtgx is true" }], isError: true };
+                  }
+                  mtgxPath = join(OUTPUT_DIR, outputFileName);
+                  await writeMtgxNative(graph, mtgxPath);
+                }
+                const entities = graph.allEntities();
+                const lines = [
+                  `Investigated ${domain}: ${entities.length} entities, ${graph.allLinks().length} links.`,
+                  ...entities.map((e) => {
+                    const notable = Object.entries(e.properties)
+                      .filter(([k]) => k.startsWith("vt_") || k.startsWith("shodan_") || k.startsWith("greynoise_") || k.startsWith("otx_"))
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(" ");
+                    return `- [${e.type.replace("maltego.", "")}] ${e.value}${notable ? ` (${notable})` : ""}`;
+                  }),
+                ];
+                if (mtgxPath) lines.push(`Saved .mtgx to ${mtgxPath}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            // Phase 4 (docs/maltego-integration/README.md): company and person
+            // OSINT, free-tier only (OpenCorporates/HaveIBeenPwned skipped per
+            // operator decision 2026-10-03). Each new tool degrades to a plain
+            // "no data" message rather than an error when its provider's key is
+            // unset -- same convention as investigate_domain's own Tier 1/2
+            // providers above.
+            server.registerTool(
+              "investigate_company",
+              {
+                description:
+                  "Look up a company by name: UK Companies House registry data (company number, status, " +
+                  "incorporation date, registered address, SIC codes, officers) and/or US SEC EDGAR filings " +
+                  "(CIK, recent filings) if it's a US public company. Optionally pass a known domain to also " +
+                  "run Hunter.io Domain Search for the company's email pattern and known people. Covers UK-" +
+                  "registered and US-public companies only -- other jurisdictions fall back to general web search.",
+                inputSchema: {
+                  name: z.string().describe("Company name to search for"),
+                  domain: z.string().optional().describe("The company's domain, if known, to also look up email patterns"),
+                },
+              },
+              withLogging("investigate_company", async ({ name, domain }) => {
+                const [companiesHouse, secEdgar, hunter] = await Promise.all([
+                  withRetry(() => companiesHouseLookup(name)),
+                  withRetry(() => secEdgarLookup(name)),
+                  domain ? withRetry(() => hunterDomainSearch(domain)) : Promise.resolve(undefined),
+                ]);
+                const lines: string[] = [`Company lookup for "${name}":`];
+                if (companiesHouse) {
+                  lines.push(
+                    `\nUK Companies House: ${companiesHouse.companyName} (${companiesHouse.companyNumber})`,
+                    `  Status: ${companiesHouse.companyStatus ?? "unknown"}, incorporated: ${companiesHouse.dateOfCreation ?? "unknown"}`,
+                    `  Registered office: ${companiesHouse.registeredOfficeAddress ?? "unknown"}`,
+                    `  SIC codes: ${(companiesHouse.sicCodes ?? []).join(", ") || "none listed"}`,
+                  );
+                  if (companiesHouse.officers?.length) {
+                    lines.push(`  Officers: ${companiesHouse.officers.map((o) => `${o.name} (${o.role ?? "officer"})`).join("; ")}`);
+                  }
+                }
+                if (secEdgar) {
+                  lines.push(
+                    `\nUS SEC EDGAR: ${secEdgar.title} (CIK ${secEdgar.cik}, ticker ${secEdgar.ticker})`,
+                    `  SIC: ${secEdgar.sicDescription ?? "unknown"}`,
+                    `  Recent filings: ${secEdgar.recentFilings.slice(0, 5).map((f) => `${f.form} (${f.filingDate})`).join(", ") || "none"}`,
+                  );
+                }
+                if (hunter) {
+                  lines.push(
+                    `\nHunter.io domain search for ${domain}: email pattern ${hunter.pattern ?? "unknown"}`,
+                    `  Known people: ${hunter.emails.slice(0, 10).map((e) => `${e.value}${e.position ? ` (${e.position})` : ""}`).join(", ") || "none found"}`,
+                  );
+                }
+                if (!companiesHouse && !secEdgar && !hunter) {
+                  lines.push("\nNo data found from any configured provider -- try general web search, or the company may not be UK-registered/US-public.");
+                }
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "find_person_email",
+              {
+                description:
+                  "Find a person's likely professional email address given their full name and their employer's " +
+                  "domain, using Hunter.io's Email Finder. Returns the likely email, a confidence score, and " +
+                  "their position if known. For legitimate due-diligence/security-research use -- this finds a " +
+                  "probable professional contact address, not personal/private information.",
+                inputSchema: {
+                  fullName: z.string().describe("The person's full name, e.g. 'Jane Smith'"),
+                  domain: z.string().describe("Their employer's domain, e.g. example.com"),
+                },
+              },
+              withLogging("find_person_email", async ({ fullName, domain }) => {
+                const result = await withRetry(() => hunterEmailFinder(fullName, domain));
+                if (!result?.email) {
+                  return { content: [{ type: "text", text: `No email found for ${fullName} at ${domain} (Hunter.io has no data, or HUNTER_API_KEY is unset).` }] };
+                }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `${fullName} at ${domain}: ${result.email} (confidence ${result.score ?? "unknown"}/100${result.position ? `, position: ${result.position}` : ""}${result.verificationStatus ? `, verification: ${result.verificationStatus}` : ""})`,
+                    },
+                  ],
+                };
+              }),
+            );
+
+            server.registerTool(
+              "find_username",
+              {
+                description:
+                  "Check whether a given username exists across 400+ social media and web platforms, using the " +
+                  "open-source Sherlock tool. Returns which platforms have a matching account. Useful for " +
+                  "correlating a person's or organization's public footprint across platforms given one known " +
+                  "handle -- does not access private/non-public account data.",
+                inputSchema: {
+                  username: z.string().describe("The username/handle to check across platforms"),
+                },
+              },
+              withLogging("find_username", async ({ username }) => {
+                const result = await sherlockUsernameCheck(username);
+                if (!result.ok) {
+                  // Reason surfaced all the way through now (2026-10-03 fix) --
+                  // previously this collapsed every distinct failure into one
+                  // generic "unavailable or timed out" message with no way to tell
+                  // them apart without SSHing into the container.
+                  return { content: [{ type: "text", text: `Username check for "${username}" failed: ${result.reason}` }], isError: true };
+                }
+                if (result.matches.length === 0) {
+                  return { content: [{ type: "text", text: `No matches found for username "${username}" across checked platforms.` }] };
+                }
+                const lines = [`Found "${username}" on ${result.matches.length} platform(s):`, ...result.matches.map((m) => `- ${m.site}: ${m.url}`)];
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            // Phase 5 (docs/maltego-integration/README.md, 2026-10-04): content-
+            // creator research. TikTok deliberately has no tool here -- confirmed
+            // during scoping that its official API requires the TARGET's own OAuth
+            // consent to read their stats, so there is no way to look up a third
+            // party's profile at all, free or paid.
+            server.registerTool(
+              "investigate_youtube_channel",
+              {
+                description:
+                  "Look up a YouTube channel by its @handle: title, description, country, creation date, " +
+                  "subscriber/view/video counts. Does NOT return a business contact email -- YouTube Data API v3 " +
+                  "does not expose that field even though it may be shown on the channel's public About page.",
+                inputSchema: {
+                  handle: z.string().describe("The channel's @handle, e.g. @mkbhd (the @ is optional)"),
+                },
+              },
+              withLogging("investigate_youtube_channel", async ({ handle }) => {
+                const result = await withRetry(() => youtubeChannelLookup(handle));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No YouTube channel found for "${handle}" (or YOUTUBE_API_KEY is unset).` }] };
+                }
+                const lines = [
+                  `YouTube channel "${result.title}" (${result.channelId}):`,
+                  `  Subscribers: ${result.subscriberCount ?? "hidden"}, Views: ${result.viewCount ?? "unknown"}, Videos: ${result.videoCount ?? "unknown"}`,
+                  `  Country: ${result.country ?? "unknown"}, Created: ${result.publishedAt ?? "unknown"}`,
+                ];
+                if (result.description) lines.push(`  Description: ${result.description.slice(0, 300)}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "investigate_steam_profile",
+              {
+                description:
+                  "Look up a Steam profile by its vanity URL name or SteamID64: persona name, real name (if " +
+                  "public), country, current game, and profile visibility. Respects the profile owner's own " +
+                  "privacy settings -- a private profile returns minimal data, which is reported explicitly.",
+                inputSchema: {
+                  vanityOrId: z.string().describe("The profile's vanity URL slug (e.g. 'gaben') or a 17-digit SteamID64"),
+                },
+              },
+              withLogging("investigate_steam_profile", async ({ vanityOrId }) => {
+                const result = await withRetry(() => steamProfileLookup(vanityOrId));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No Steam profile found for "${vanityOrId}" (or STEAM_API_KEY is unset).` }] };
+                }
+                const lines = [
+                  `Steam profile "${result.personaName}" (${result.steamId}): ${result.profileUrl}`,
+                  `  Visibility: ${result.visibility}`,
+                ];
+                if (result.realName) lines.push(`  Real name: ${result.realName}`);
+                if (result.countryCode) lines.push(`  Country: ${result.countryCode}`);
+                if (result.currentGame) lines.push(`  Currently playing: ${result.currentGame}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "investigate_twitch_channel",
+              {
+                description:
+                  "Look up a Twitch channel by username: display name, bio/description, account creation date, " +
+                  "broadcaster type. Does NOT return follower count -- Twitch decommissioned cross-user follower " +
+                  "lookups in 2023; the replacement endpoint only works for a channel's own moderators. Also does " +
+                  "NOT return a view count -- Twitch froze that field in 2022 and officially deprecated it, so it " +
+                  "no longer reflects real data for any channel.",
+                inputSchema: {
+                  username: z.string().describe("The channel's Twitch login/username"),
+                },
+              },
+              withLogging("investigate_twitch_channel", async ({ username }) => {
+                const result = await withRetry(() => twitchChannelLookup(username));
+                if (!result) {
+                  return { content: [{ type: "text", text: `No Twitch channel found for "${username}" (or TWITCH_CLIENT_ID/TWITCH_CLIENT_SECRET is unset).` }] };
+                }
+                const lines = [
+                  `Twitch channel "${result.displayName}" (id ${result.id}):`,
+                  `  Broadcaster type: ${result.broadcasterType || "normal"}, Created: ${result.createdAt ?? "unknown"}`,
+                  `  (follower count and view count both unavailable -- see tool description)`,
+                ];
+                if (result.description) lines.push(`  Bio: ${result.description.slice(0, 300)}`);
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
+            server.registerTool(
+              "find_creator_contact_email",
+              {
+                description:
+                  "Fetch a creator's own bio/contact page (YouTube About tab, a Twitch panel, a Linktree-style " +
+                  "bio-link page, etc.) and extract any email address published on it. This is NOT a lookup API -- " +
+                  "no platform exposes an individual creator's email via any API, free or paid -- it automates the " +
+                  "one thing that does work: reading a page the creator themselves chose to publish contact info on. " +
+                  "JS-rendered reveal-on-click email buttons (common on YouTube About tabs) will often yield nothing, " +
+                  "which is reported honestly rather than guessed.",
+                inputSchema: {
+                  url: z.string().describe("The full URL of the creator's bio/about/contact page to check"),
+                },
+              },
+              withLogging("find_creator_contact_email", async ({ url }) => {
+                const result = await findCreatorContactEmails(url);
+                if (!result) {
+                  return { content: [{ type: "text", text: `Could not fetch ${url}.` }] };
+                }
+                if (result.emails.length === 0) {
+                  return { content: [{ type: "text", text: `No email address found on ${url} (page may require JS to reveal it, or publishes none).` }] };
+                }
+                return { content: [{ type: "text", text: `Found on ${url}: ${result.emails.join(", ")}` }] };
+              }),
+            );
+
+            return server;
+          }
+
+          // createMcpExpressApp() defaults to localhost-only DNS-rebinding
+          // protection (host: "127.0.0.1"), rejecting any request whose Host
+          // header isn't literally 127.0.0.1/localhost/::1 with a 403 -- found
+          // live 2026-10-02: a cross-container call using the LXC's real IP
+          // (192.168.50.10) got rejected before auth even ran. Explicit
+          // allowedHosts opts out of that default and allows the real reachable
+          // addresses instead, same pattern as cve-mcp-server's own
+          // MCP_ALLOWED_HOSTS (must include 127.0.0.1 too, for in-container
+          // health checks -- same gotcha documented for docs-rag-mcp).
+          // hostHeaderValidation() compares against hostname only, port-agnostic --
+          // found live 2026-10-02: passing "192.168.50.10:8010" verbatim never
+          // matched the parsed hostname "192.168.50.10", 403 on every real request.
+          // OSINT_MCP_ALLOWED_HOSTS still takes the familiar "host:port,host:port"
+          // shape (matching cve-mcp-server's own MCP_ALLOWED_HOSTS convention) --
+          // the port is stripped here before passing to allowedHosts.
+          const allowedHosts = (process.env.OSINT_MCP_ALLOWED_HOSTS ?? "127.0.0.1:8010")
+            .split(",")
+            .map((entry) => entry.trim().replace(/:\d+$/, ""));
+          const app = createMcpExpressApp({ host: "0.0.0.0", allowedHosts });
+
+          app.use((req, res, next) => {
+            const auth = req.headers.authorization ?? "";
+            if (auth !== `Bearer ${TOKEN}`) {
+              res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "unauthorized" }, id: null });
+              return;
+            }
+            next();
+          });
+
+          app.post("/mcp", async (req, res) => {
+            const server = getServer();
+            try {
+              const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+              await server.connect(transport);
+              await transport.handleRequest(req, res, req.body);
+              res.on("close", () => {
+                transport.close();
+                server.close();
+              });
+            } catch (error) {
+              console.error("error handling MCP request:", error);
+              if (!res.headersSent) {
+                res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "internal server error" }, id: null });
+              }
+            }
+          });
+
+          app.get("/mcp", (_req, res) => {
+            res.writeHead(405).end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "method not allowed" }, id: null }));
+          });
+
+          app.listen(PORT, () => {
+            console.log(`osint-mcp listening on :${PORT}`);
+          });
+
+    - name: Write maltego-mcp company_person.ts module (Phase 4)
+      ansible.builtin.copy:
+        dest: "{{ maltego_build_dir }}/company_person.ts"
+        mode: "0640"
+        content: |
+          // Phase 4 (docs/maltego-integration/README.md): company and person OSINT
+          // lookups. Same best-effort, never-throws convention as every provider in
+          // investigate.ts -- missing API key, non-200, or network error all
+          // degrade to `undefined`, never block or throw. Free-tier only: operator
+          // decision 2026-10-03 skipped OpenCorporates (no longer free) and
+          // HaveIBeenPwned (paid-only for the person-relevant endpoint).
+          import { execFile } from "node:child_process";
+          import { promisify } from "node:util";
+          import { mkdtemp, readFile, rm } from "node:fs/promises";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+
+          const execFileAsync = promisify(execFile);
+
+          // A single automatic retry for a transient network blip (timeout,
+          // connection reset) on an otherwise-correct request -- distinct from a
+          // real failure (bad auth, 404, rate limit), which retrying wouldn't fix
+          // and would just waste a second round-trip on. One retry, not a full
+          // backoff/retry policy -- these are interactive, single-shot OSINT
+          // lookups inside a live agent turn, not a background batch job.
+          export async function withRetry<T>(fn: () => Promise<T | undefined>): Promise<T | undefined> {
+            const first = await fn();
+            if (first !== undefined) return first;
+            await new Promise((r) => setTimeout(r, 500));
+            return fn();
+          }
+
+          // Companies House: HTTP Basic auth with the API key as username and an
+          // EMPTY password (not a bearer token, not a custom header) -- confirmed
+          // against the official docs 2026-10-03; Companies House's own support
+          // forum calls this out as the most common first-timer mistake. Free, no
+          // usage fees, 600 req/5min, UK-registered companies only.
+          export interface CompanyHouseResult {
+            companyNumber: string;
+            companyName: string;
+            companyStatus?: string;
+            dateOfCreation?: string;
+            registeredOfficeAddress?: string;
+            sicCodes?: string[];
+            officers?: Array<{ name: string; role?: string; appointedOn?: string }>;
+          }
+
+          function companiesHouseAuthHeader(key: string): string {
+            return `Basic ${Buffer.from(`${key}:`).toString("base64")}`;
+          }
+
+          export async function companiesHouseLookup(name: string): Promise<CompanyHouseResult | undefined> {
+            // .trim() found necessary live 2026-10-03: the real operator-provisioned
+            // key in OpenBao had a stray leading tab character (a copy-paste
+            // artifact), which silently broke Basic Auth with a 400 "Invalid
+            // Authorization header" -- not an obviously-key-related error message,
+            // so worth defending against generally rather than assuming clean input.
+            const key = process.env.COMPANIES_HOUSE_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              const authHeader = companiesHouseAuthHeader(key);
+              const searchRes = await fetch(
+                `https://api.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(name)}&items_per_page=1`,
+                { headers: { Authorization: authHeader } },
+              );
+              if (!searchRes.ok) return undefined;
+              const searchBody = await searchRes.json();
+              const best = searchBody?.items?.[0];
+              if (!best?.company_number) return undefined;
+
+              const [profileRes, officersRes] = await Promise.all([
+                fetch(`https://api.company-information.service.gov.uk/company/${best.company_number}`, { headers: { Authorization: authHeader } }),
+                fetch(`https://api.company-information.service.gov.uk/company/${best.company_number}/officers?items_per_page=10`, { headers: { Authorization: authHeader } }),
+              ]);
+
+              const result: CompanyHouseResult = { companyNumber: best.company_number, companyName: best.title ?? best.company_name ?? name };
+              if (profileRes.ok) {
+                const profile = await profileRes.json();
+                result.companyStatus = profile.company_status;
+                result.dateOfCreation = profile.date_of_creation;
+                result.sicCodes = profile.sic_codes;
+                const addr = profile.registered_office_address;
+                if (addr) {
+                  result.registeredOfficeAddress = [addr.address_line_1, addr.address_line_2, addr.locality, addr.postal_code, addr.country]
+                    .filter(Boolean)
+                    .join(", ");
+                }
+              }
+              if (officersRes.ok) {
+                const officers = await officersRes.json();
+                result.officers = (officers.items ?? []).slice(0, 10).map((o: any) => ({
+                  name: o.name,
+                  role: o.officer_role,
+                  appointedOn: o.appointed_on,
+                }));
+              }
+              return result;
+            } catch {
+              return undefined;
+            }
+          }
+
+          // SEC EDGAR: free, no API key, US public companies only. SEC.gov requires
+          // a descriptive User-Agent identifying the requester on all automated
+          // requests (their own stated policy) -- a generic/missing one risks being
+          // rate-limited or blocked. company_tickers.json is a small (~1400-entry)
+          // static file mapping ticker/name to CIK, cached in-process since it
+          // rarely changes and SEC explicitly asks callers not to hammer it.
+          // Confirmed live 2026-10-03: SEC.gov rejects requests with HTTP 403 unless
+          // the User-Agent follows their exact documented format, "Company/Project
+          // Name contact@domain.com" -- a vague descriptive string (what this was
+          // originally) gets blocked, not just a missing header. Needs a real,
+          // identifying contact per their fair-access policy, so this is an
+          // operator-configurable env var (non-secret -- it's an identifying
+          // convention, not sensitive, same class as a User-Agent string) rather
+          // than a guessed value baked into source.
+          const SEC_USER_AGENT = process.env.SEC_EDGAR_USER_AGENT ?? "homelab-osint-research admin@gibbsgreatly.xyz";
+
+          interface SecTickerEntry { cik_str: number; ticker: string; title: string }
+          let secTickersCache: SecTickerEntry[] | undefined;
+
+          // Found live 2026-10-03: a plain substring match on lowercase title
+          // failed for "Tesla Inc" against SEC's own registered title "Tesla,
+          // Inc." -- the comma broke the match even though it's obviously the
+          // same company. Strips punctuation before comparing, since a model's
+          // natural phrasing of a company name ("Apple Inc", "Microsoft
+          // Corporation") will rarely match the exact registered title's
+          // formatting ("Apple Inc.", "MICROSOFT CORP") otherwise.
+          function normalizeCompanyName(s: string): string {
+            return s.toLowerCase().replace(/[.,]/g, "").replace(/\s+/g, " ").trim();
+          }
+
+          async function secEdgarFindCik(nameOrTicker: string): Promise<SecTickerEntry | undefined> {
+            try {
+              if (!secTickersCache) {
+                const res = await fetch("https://www.sec.gov/files/company_tickers.json", { headers: { "User-Agent": SEC_USER_AGENT } });
+                if (!res.ok) return undefined;
+                const body = await res.json();
+                secTickersCache = Object.values(body) as SecTickerEntry[];
+              }
+              const q = normalizeCompanyName(nameOrTicker);
+              return (
+                secTickersCache.find((e) => e.ticker.toLowerCase() === nameOrTicker.toLowerCase()) ??
+                secTickersCache.find((e) => normalizeCompanyName(e.title).includes(q))
+              );
+            } catch {
+              return undefined;
+            }
+          }
+
+          export interface SecEdgarResult {
+            cik: string;
+            ticker: string;
+            title: string;
+            sicDescription?: string;
+            recentFilings: Array<{ form: string; filingDate: string; accessionNumber: string }>;
+          }
+
+          export async function secEdgarLookup(nameOrTicker: string): Promise<SecEdgarResult | undefined> {
+            try {
+              const match = await secEdgarFindCik(nameOrTicker);
+              if (!match) return undefined;
+              const cik = String(match.cik_str).padStart(10, "0");
+              const res = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: { "User-Agent": SEC_USER_AGENT } });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const recent = body.filings?.recent;
+              const recentFilings = recent
+                ? recent.form.slice(0, 10).map((form: string, i: number) => ({
+                    form,
+                    filingDate: recent.filingDate[i],
+                    accessionNumber: recent.accessionNumber[i],
+                  }))
+                : [];
+              return { cik, ticker: match.ticker, title: match.title, sicDescription: body.sicDescription, recentFilings };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Hunter.io: free tier, 50 credits/month, no card required. Domain Search
+          // finds a company's email pattern and known people at that domain; Email
+          // Finder returns one specific likely email given a name + domain. Request/
+          // response shapes verified against the official v2 API docs 2026-10-03.
+          export interface HunterDomainResult {
+            organization?: string;
+            pattern?: string;
+            emails: Array<{ value: string; firstName?: string; lastName?: string; position?: string; confidence: number }>;
+          }
+
+          export async function hunterDomainSearch(domain: string): Promise<HunterDomainResult | undefined> {
+            const key = process.env.HUNTER_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              const res = await fetch(`https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${key}&limit=10`);
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const data = body.data;
+              if (!data) return undefined;
+              return {
+                organization: data.organization,
+                pattern: data.pattern,
+                emails: (data.emails ?? []).map((e: any) => ({
+                  value: e.value,
+                  firstName: e.first_name,
+                  lastName: e.last_name,
+                  position: e.position,
+                  confidence: e.confidence,
+                })),
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          export interface HunterEmailResult {
+            email?: string;
+            score?: number;
+            position?: string;
+            verificationStatus?: string;
+          }
+
+          export async function hunterEmailFinder(fullName: string, domain: string): Promise<HunterEmailResult | undefined> {
+            const key = process.env.HUNTER_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              const res = await fetch(
+                `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&full_name=${encodeURIComponent(fullName)}&api_key=${key}`,
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const data = body.data;
+              if (!data?.email) return undefined;
+              return { email: data.email, score: data.score, position: data.position, verificationStatus: data.verification?.status };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Sherlock (sherlock-project/sherlock on GitHub, MIT, actively maintained):
+          // checks a username across 400+ platforms. Shelled out to the real
+          // upstream tool (vendored via pip in the Dockerfile, pinned version) --
+          // using the actual tool rather than reimplementing its site-detection
+          // logic, same principle as maltego-mcp itself. No native JSON output
+          // confirmed via its own argparse source 2026-10-03 -- --csv is the most
+          // structured machine-parseable format it has. Real column order
+          // confirmed live against actual output (not assumed from the source
+          // read alone -- a live run's result looked wrong, every URL was a
+          // platform's generic homepage, not a real per-user profile link):
+          // username,name,url_main,url_user,exists,http_status,response_time_s --
+          // url_user (index 3) is the real profile URL, url_main (index 2) is just
+          // the platform's homepage. The CSV file already contains claimed/found
+          // results only, but `exists` is still checked defensively in case that
+          // ever changes.
+          export interface SherlockMatch { site: string; url: string }
+
+          // Found live 2026-10-03: a real run reported two find_username calls that
+          // both failed (one "Error: Function failed.", one with no result at all)
+          // but this function's catch-all swallowed the real reason into a bare
+          // `undefined` -- the MCP layer could only ever report "Sherlock unavailable
+          // or timed out" regardless of which it actually was. Now returns a tagged
+          // result so the caller (and the logging wrapper in osint-mcp-server.ts) can
+          // tell execFileAsync's hard 90s timeout apart from a missing/corrupt CSV or
+          // any other failure, instead of re-diagnosing via SSH every time.
+          export type SherlockResult = { ok: true; matches: SherlockMatch[] } | { ok: false; reason: string };
+
+          // Found live 2026-10-03 (now diagnosable thanks to the tagged SherlockResult
+          // above): two concurrent find_username calls both hit the 90s exec timeout
+          // and got SIGTERM-killed, even though a single solo run only takes ~63s.
+          // Reproduced directly against the live server -- this isn't a rare race,
+          // it's the expected outcome of two full 400+-site Sherlock scans
+          // contending for the same CPU/network on this LXC's limited resources.
+          // Rather than just raising the timeout (which only buys a bit of margin
+          // before the same contention reappears at 3+ concurrent calls), Sherlock
+          // runs are serialized in-process: a queued second caller waits for the
+          // first to finish rather than racing it for resources, so each individual
+          // run gets to complete in its normal ~60-70s window. The outer timeout is
+          // still bumped to give a solo run comfortable headroom over the observed
+          // 63s.
+          let sherlockQueue: Promise<unknown> = Promise.resolve();
+
+          export function sherlockUsernameCheck(username: string): Promise<SherlockResult> {
+            const task = sherlockQueue.then(() => runSherlock(username));
+            // Keep the queue chain alive even if this run fails -- a failed run must
+            // not permanently wedge every later queued call behind a rejected promise.
+            sherlockQueue = task.catch(() => undefined);
+            return task;
+          }
+
+          async function runSherlock(username: string): Promise<SherlockResult> {
+            let dir: string | undefined;
+            try {
+              dir = await mkdtemp(join(tmpdir(), "sherlock-"));
+              try {
+                await execFileAsync("sherlock", [username, "--csv", "--folderoutput", dir, "--timeout", "10"], { timeout: 120_000 });
+              } catch (execErr: any) {
+                // Confirmed live 2026-10-03: Sherlock routinely exits non-zero
+                // (observed exit code 1) even after successfully writing a
+                // complete, valid CSV with real results -- across 400+ sites,
+                // something failing/timing out individually is the norm, not the
+                // exception, and Sherlock's own exit code reflects that rather
+                // than "did it produce usable output overall." execFileAsync
+                // throws on any non-zero exit, which was silently discarding
+                // perfectly good results on what looked like "transient failures"
+                // but was actually this exit-code mismatch every time. Fall
+                // through and try reading the CSV regardless -- only a genuinely
+                // missing/unreadable file below means real failure. But a timeout
+                // kill (SIGTERM, execErr.signal/killed set) means the CSV may
+                // genuinely not exist yet -- remember this specific cause so the
+                // outer catch can report it accurately rather than a generic one.
+                if (execErr?.killed || execErr?.signal) {
+                  throw Object.assign(new Error(`sherlock killed after 120s timeout (signal ${execErr.signal ?? "?"})`), { cause: "timeout" });
+                }
+              }
+              const csv = await readFile(join(dir, `${username}.csv`), "utf-8");
+              const lines = csv.trim().split("\n").slice(1); // skip header row
+              const matches = lines
+                .map((line) => {
+                  // Naive comma split: Sherlock's own site names and URLs don't
+                  // contain unescaped commas in practice. Acceptable for a
+                  // best-effort OSINT tool, same resilience trade-off as every
+                  // other lookup in this file.
+                  const parts = line.split(",");
+                  return { site: parts[1], url: parts[3], exists: parts[4] };
+                })
+                .filter((r) => r.site && r.url && r.exists === "Claimed")
+                .map(({ site, url }) => ({ site, url }));
+              return { ok: true, matches };
+            } catch (err: any) {
+              return { ok: false, reason: err?.message ?? String(err) };
+            } finally {
+              if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+            }
+          }
+
+          // Phase 5 (2026-10-04): content-creator research, added after scoping
+          // which platforms genuinely have a free, low-friction, third-party-lookup
+          // API. Confirmed via research before building (verify-before-encode
+          // policy): TikTok's official API requires the TARGET's own OAuth consent
+          // to read their stats -- there is no way to look up someone else's public
+          // profile, so it's skipped entirely, not just deprioritized. YouTube Data
+          // API v3 does NOT expose a channel's "for business inquiries" email at
+          // the API level even though it's shown on the public About page --
+          // confirmed before building rather than assumed, so this tool returns
+          // stats/metadata only and is honest about not having the email.
+          export interface YoutubeChannelResult {
+            channelId: string;
+            title: string;
+            description?: string;
+            country?: string;
+            publishedAt?: string;
+            subscriberCount?: string;
+            viewCount?: string;
+            videoCount?: string;
+          }
+
+          export async function youtubeChannelLookup(handle: string): Promise<YoutubeChannelResult | undefined> {
+            const key = process.env.YOUTUBE_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              const forHandle = handle.startsWith("@") ? handle : `@${handle}`;
+              const res = await fetch(
+                `https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&forHandle=${encodeURIComponent(forHandle)}&key=${key}`,
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const item = body.items?.[0];
+              if (!item) return undefined;
+              return {
+                channelId: item.id,
+                title: item.snippet?.title,
+                description: item.snippet?.description,
+                country: item.snippet?.country,
+                publishedAt: item.snippet?.publishedAt,
+                subscriberCount: item.statistics?.subscriberCount,
+                viewCount: item.statistics?.viewCount,
+                videoCount: item.statistics?.videoCount,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Steam Web API: free, one-time key signup at steamcommunity.com/dev/apikey
+          // (requires the account to own at least one purchase). ResolveVanityURL
+          // turns a profile's custom URL slug into a SteamID64, which
+          // GetPlayerSummaries then looks up -- a two-step flow because Steam has no
+          // single "look up by vanity name" endpoint. Respects the profile's own
+          // privacy settings: realname/lastlogoff/gameextrainfo are only present if
+          // the owner made their profile public.
+          export interface SteamProfileResult {
+            steamId: string;
+            personaName: string;
+            profileUrl: string;
+            realName?: string;
+            countryCode?: string;
+            currentGame?: string;
+            visibility: "public" | "private" | "friends_only" | "unknown";
+          }
+
+          export async function steamProfileLookup(vanityOrId: string): Promise<SteamProfileResult | undefined> {
+            const key = process.env.STEAM_API_KEY?.trim();
+            if (!key) return undefined;
+            try {
+              // A raw 17-digit SteamID64 can be used directly; anything else is
+              // treated as a vanity URL slug needing resolution first.
+              let steamId = /^\d{17}$/.test(vanityOrId) ? vanityOrId : undefined;
+              if (!steamId) {
+                const resolveRes = await fetch(
+                  `https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?key=${key}&vanityurl=${encodeURIComponent(vanityOrId)}`,
+                );
+                if (!resolveRes.ok) return undefined;
+                const resolveBody = await resolveRes.json();
+                if (resolveBody.response?.success !== 1) return undefined;
+                steamId = resolveBody.response.steamid;
+              }
+              const summaryRes = await fetch(
+                `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${key}&steamids=${steamId}`,
+              );
+              if (!summaryRes.ok) return undefined;
+              const summaryBody = await summaryRes.json();
+              const player = summaryBody.response?.players?.[0];
+              if (!player) return undefined;
+              // communityvisibilitystate: 1 = private, 3 = public. The code here
+              // previously treated 2 ("Friends Only") as a dead legacy value per
+              // Steam's own docs -- confirmed live 2026-10-04 that's wrong: a real
+              // profile (Gabe Newell's own) returned exactly 2, so it's very much
+              // still in active use. Mapped properly now instead of falling through
+              // to "unknown".
+              let visibility: "public" | "private" | "friends_only" | "unknown" = "unknown";
+              if (player.communityvisibilitystate === 3) visibility = "public";
+              else if (player.communityvisibilitystate === 1) visibility = "private";
+              else if (player.communityvisibilitystate === 2) visibility = "friends_only";
+              return {
+                steamId: player.steamid,
+                personaName: player.personaname,
+                profileUrl: player.profileurl,
+                realName: player.realname,
+                countryCode: player.loccountrycode,
+                currentGame: player.gameextrainfo,
+                visibility,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Twitch Helix API: free, light signup (Twitch dev console, no approval
+          // queue) -- but unlike the others, this is OAuth-based even for public
+          // read-only endpoints. Uses the client_credentials grant (app-only token,
+          // no user ever needs to log in) and caches the resulting app token
+          // in-process since Twitch tokens are valid ~60 days, to avoid re-minting
+          // one on every call. Confirmed before building: Twitch decommissioned
+          // cross-user follower lookups in 2023 ("Get Users Follows" removed); the
+          // replacement "Get Channel Followers" needs a moderator-scoped token for
+          // THAT specific channel, which is useless for arbitrary third-party
+          // lookups -- so this tool reports bio/profile metadata only and is
+          // explicit that follower count isn't available, rather than silently
+          // omitting it without explanation. view_count is deliberately NOT exposed
+          // here either: confirmed live 2026-10-04 (Get Users returned 0 for a
+          // streamer with billions of real views) and verified against Twitch's own
+          // deprecation announcement -- the underlying view-tracking service was
+          // shut down 2022-04-14, the field froze permanently that day, and Twitch's
+          // own changelog (2022-06-27) tells developers to stop displaying it. It
+          // isn't just unreliable, it's a frozen historical artifact, so surfacing
+          // it (even labeled "deprecated") would still risk being read as real data.
+          export interface TwitchChannelResult {
+            id: string;
+            displayName: string;
+            description?: string;
+            createdAt?: string;
+            broadcasterType?: string;
+          }
+
+          let twitchAppToken: { token: string; expiresAt: number } | undefined;
+
+          async function getTwitchAppToken(clientId: string, clientSecret: string): Promise<string | undefined> {
+            if (twitchAppToken && twitchAppToken.expiresAt > Date.now()) return twitchAppToken.token;
+            try {
+              const res = await fetch(
+                `https://id.twitch.tv/oauth2/token?client_id=${clientId}&client_secret=${clientSecret}&grant_type=client_credentials`,
+                { method: "POST" },
+              );
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              if (!body.access_token) return undefined;
+              twitchAppToken = { token: body.access_token, expiresAt: Date.now() + (body.expires_in - 60) * 1000 };
+              return twitchAppToken.token;
+            } catch {
+              return undefined;
+            }
+          }
+
+          export async function twitchChannelLookup(username: string): Promise<TwitchChannelResult | undefined> {
+            const clientId = process.env.TWITCH_CLIENT_ID?.trim();
+            const clientSecret = process.env.TWITCH_CLIENT_SECRET?.trim();
+            if (!clientId || !clientSecret) return undefined;
+            try {
+              const token = await getTwitchAppToken(clientId, clientSecret);
+              if (!token) return undefined;
+              const res = await fetch(`https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`, {
+                headers: { "Client-Id": clientId, Authorization: `Bearer ${token}` },
+              });
+              if (!res.ok) return undefined;
+              const body = await res.json();
+              const user = body.data?.[0];
+              if (!user) return undefined;
+              return {
+                id: user.id,
+                displayName: user.display_name,
+                description: user.description,
+                createdAt: user.created_at,
+                broadcasterType: user.broadcaster_type || undefined,
+              };
+            } catch {
+              return undefined;
+            }
+          }
+
+          // Creator bio-page email scraper: NOT an API -- confirmed during scoping
+          // that no platform exposes an individual creator's contact email via any
+          // API, free or paid. This automates the one thing that does work: a
+          // creator who chooses to publish a contact email on a page they control
+          // (YouTube About tab, a Twitch panel, a Linktree-style bio-link page) can
+          // have that page fetched and the email extracted, same as a human OSINT
+          // researcher would do by reading the page. Best-effort and page-specific:
+          // JS-rendered pages (e.g. a YouTube About tab's email button is revealed
+          // by a client-side "reveal" click, not present in the raw HTML) will
+          // often yield nothing, which this reports honestly rather than guessing.
+          // Every quantifier here is explicitly bounded (not unbounded `+`/`*`), so
+          // there's no input-length-dependent backtracking blowup possible -- worst
+          // case is a small fixed amount of work regardless of how long the page is.
+          const EMAIL_REGEX = /[a-zA-Z0-9._%+-]{1,64}@(?:[a-zA-Z0-9-]{1,63}\.){1,8}[a-zA-Z]{2,24}/g;
+
+          export interface CreatorContactResult {
+            url: string;
+            emails: string[];
+          }
+
+          // Confirmed live 2026-10-04 against a real page (monzo.com/press/): the
+          // naive regex also pulled in a placeholder form example (you@example.com),
+          // a Sentry error-tracking ingest ID that happens to match the email shape
+          // (a long hex string @ an ingest.sentry.io domain), and one real match
+          // corrupted by an adjacent un-decoded JSON unicode escape inside an inline
+          // <script> blob (`>` bleeding directly into the next word with no
+          // boundary for the regex to stop at, since "u003ehelp@monzo.com" is all
+          // valid local-part characters). None of these are hypothetical -- all
+          // three appeared in one real fetch.
+          const PLACEHOLDER_DOMAINS = new Set(["example.com", "example.org", "example.net", "test.com", "yourdomain.com", "domain.com"]);
+          const TRACKING_DOMAINS = new Set(["sentry.io", "ingest.sentry.io", "google-analytics.com", "googletagmanager.com", "doubleclick.net", "segment.io", "amplitude.com"]);
+
+          function isLikelyRealEmail(email: string): boolean {
+            const [localPart, domain] = email.toLowerCase().split("@");
+            if (!domain) return false;
+            if (PLACEHOLDER_DOMAINS.has(domain)) return false;
+            if ([...TRACKING_DOMAINS].some((d) => domain === d || domain.endsWith(`.${d}`))) return false;
+            // A long hex-only local part is a tracking/error-reporting ID, not a
+            // human-published contact address (e.g. Sentry's own ingest keys).
+            if (/^[0-9a-f]{16,}$/.test(localPart)) return false;
+            return true;
+          }
+
+          export async function findCreatorContactEmails(url: string): Promise<CreatorContactResult | undefined> {
+            try {
+              const res = await fetch(url, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" },
+              });
+              if (!res.ok) return undefined;
+              // Decode the common JSON/JS unicode-escaped HTML entities that show up
+              // inline inside <script> blobs (e.g. ">" for ">") to a plain
+              // space before matching, so one doesn't silently fuse into the start
+              // of an adjacent real email's local part.
+              const text = (await res.text()).replace(/\\u00[23][0-9a-f]/gi, " ");
+              const matches = [...new Set(text.match(EMAIL_REGEX) ?? [])]
+                // Filter out the most common false positives: image/font/CSS
+                // asset references and tracking-pixel-style filenames that match
+                // the email regex shape but are evidently not contact addresses.
+                .filter((m) => !/\.(png|jpg|jpeg|gif|svg|webp|css|js|woff2?)$/i.test(m))
+                .filter(isLikelyRealEmail);
+              return { url, emails: matches };
+            } catch {
+              return undefined;
+            }
+          }
+
     - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
       ansible.builtin.replace:
         path: "{{ mcp_build_dir }}/Dockerfile"
@@ -390,6 +1809,86 @@
               volumes:
                 - mcp-home:/home/app
 
+            maltego-mcp:
+              build:
+                context: ./maltego-mcp
+              container_name: maltego-mcp
+              # Phase 1 only -- no HTTP port, no long-running server. This service
+              # is invoked on demand via `docker compose run --rm maltego-mcp node
+              # phase1-expand-domain.mjs <domain> <outputFileName>`, never started
+              # by `docker compose up`. See docs/maltego-integration/plan.md.
+              profiles: ["tools"]
+              # Tier 1 enrichment keys (VirusTotal/Shodan/GreyNoise) --
+              # reusing the same OpenBao-backed vars already defined above
+              # for cve-mcp-server's own use, not a new secret. See
+              # docs/maltego-integration/README.md's Phase 2 notes.
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                # Tier 2: AlienVault OTX. Key written to OpenBao and added
+                # to secrets/manifest.json 2026-10-02, verified via a
+                # scratch-manifest --check dry run plus a real API call
+                # before being promoted to mandatory() here -- see
+                # docs/maltego-integration/README.md's Tier 2 section.
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
+              volumes:
+                - maltego-mcp-output:/home/app/MaltegoGraphs
+
+            osint-mcp:
+              # Phase 3: a real, always-on MCP server (Streamable HTTP) so
+              # deep-research-agent -- a different container, same pve-tiny
+              # LXC host -- can call investigate_domain() over the network.
+              # maltego-mcp's own mcp-server.ts speaks stdio only, which
+              # cannot cross a container boundary, so this is a separate
+              # purpose-built server sharing the same build context/image
+              # (same source, same node_modules) but a different command.
+              # See docs/maltego-integration/README.md's Phase 3 section.
+              build:
+                context: ./maltego-mcp
+              container_name: osint-mcp
+              command: ["node", "dist/osint-mcp-server.js"]
+              restart: unless-stopped
+              ports:
+                - "8010:8010"
+              environment:
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+                OTX_API_KEY: "{{ mcp_otx_api_key }}"
+                # Shared-secret bearer token -- the brief explicitly asked
+                # for real auth even on LAN (unlike cve-mcp-server/
+                # docs-rag-mcp, which have none). The server refuses to
+                # start at all without it (process.exit(1) in
+                # osint-mcp-server.ts) rather than ever listening
+                # unauthenticated. See docs/maltego-integration/README.md.
+                OSINT_MCP_TOKEN: "{{ mcp_osint_mcp_token }}"
+                # createMcpExpressApp() defaults to localhost-only DNS-
+                # rebinding protection -- a cross-container call using the
+                # LXC's real IP got rejected 403 before auth even ran until
+                # this was set explicitly. See osint-mcp-server.ts.
+                OSINT_MCP_ALLOWED_HOSTS: "{{ osint_mcp_allowed_hosts }}"
+                # Phase 4: company/person OSINT. Confirmed live in OpenBao
+                # 2026-10-03 (both are now mandatory() above). SEC_EDGAR_
+                # USER_AGENT is not a secret -- SEC.gov's own fair-access
+                # policy requires a real identifying User-Agent on
+                # automated requests (confirmed live 2026-10-03: a generic
+                # one gets HTTP 403, not just a missing header).
+                COMPANIES_HOUSE_API_KEY: "{{ mcp_companies_house_api_key }}"
+                HUNTER_API_KEY: "{{ mcp_hunter_api_key }}"
+                SEC_EDGAR_USER_AGENT: "homelab-osint-research admin@gibbsgreatly.xyz"
+                # Phase 5: content-creator OSINT. Not yet confirmed live in
+                # OpenBao -- staged with default('', true) above, same
+                # degrade-gracefully convention as every other provider key
+                # in company_person.ts (empty key -> tool reports "unset"
+                # rather than erroring).
+                YOUTUBE_API_KEY: "{{ mcp_youtube_api_key }}"
+                STEAM_API_KEY: "{{ mcp_steam_api_key }}"
+                TWITCH_CLIENT_ID: "{{ mcp_twitch_client_id }}"
+                TWITCH_CLIENT_SECRET: "{{ mcp_twitch_client_secret }}"
+              volumes:
+                - maltego-mcp-output:/home/app/MaltegoGraphs
+
             pgvector:
               image: "{{ mcp_registry_host }}/dockerhub/pgvector/pgvector:pg16"
               container_name: docs-rag-pgvector
@@ -439,6 +1938,7 @@
 
           volumes:
             mcp-home:
+            maltego-mcp-output:
             docs-rag-pgdata:
       no_log: true
 
@@ -447,6 +1947,26 @@
         project_src: "{{ mcp_compose_dir }}"
         build: always
         state: present
+
+    # maltego-mcp has profiles: ["tools"] (deliberate -- it's stdio-only,
+    # invoked on demand, never a daemon, see docs/maltego-integration/
+    # README.md). docker_compose_v2's state:present above only builds/
+    # starts default-profile services, so it silently never touches
+    # maltego-mcp (found live 2026-10-02: provision.sh reported changed=4
+    # with no maltego-mcp container or volume ever created). Build it
+    # explicitly here, but never `up` it -- `--profile tools up` would
+    # start it as a long-running daemon, which is not what Phase 1 wants.
+    - name: Build maltego-mcp image (profile-gated, not started as a daemon)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --profile
+          - tools
+          - build
+          - maltego-mcp
+        chdir: "{{ mcp_compose_dir }}"
+      changed_when: true
 
     - name: Wait for cve-mcp-server HTTP endpoint to come up
       ansible.builtin.uri:
@@ -533,6 +2053,44 @@
           - docs_rag_health_after_restart.status in [200, 400, 401, 405, 406]
         fail_msg: "docs-rag-mcp did not respond on :8001/mcp after the corpus-change restart (last status: {{ docs_rag_health_after_restart.status | default('unknown') }})"
       when: corpus_changed
+
+- name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this stack's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - mcp-utility-stack
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
+  roles:
+    - gvm_scan_account
+
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [wazuh_agent_rollout]
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/mcp-utility-stack
+    wazuh_agent_group: ai_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

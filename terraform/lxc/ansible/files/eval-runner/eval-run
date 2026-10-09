@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# eval-run -- start, resume, self-test and summarise eval battery runs
+# (GPQA, IFEval, BFCL, AgentBench, RepoBench) against whatever model
+# Framework's llama-server is serving right now. Installed by deploy-ai-services-stack.yml's "Install eval-runner"
+# play; see docs/eval-runner/plan.md. Secrets never pass through this
+# script: containers get them only via --env-file.
+set -euo pipefail
+
+ENV_FILE=/etc/eval-runner/eval-runner.env
+RESULTS_DIR=/srv/eval-runner/results
+IMAGE=eval-runner:local
+BFCL_IMAGE=eval-runner-bfcl:local
+AGENTBENCH_IMAGE=eval-runner-agentbench:local
+HF_VOLUME=eval-runner-hf:/home/app/.cache/huggingface
+DOCKER_SOCK=/var/run/docker.sock
+
+usage() {
+  cat <<'USAGE'
+Usage: eval-run <gpqa|ifeval> [--pilot|--limit N] [--concurrency N] [--max-gen-toks N] [--note TEXT]
+       eval-run <bfcl|agentbench|repobench> [--pilot|--limit N] [--note TEXT]
+       eval-run resume <run> [--force]
+       eval-run selftest
+       eval-run results [run...]
+       eval-run publish [--dry-run | --remove PREFIX...]
+       eval-run delete <run>
+
+gpqa|ifeval  Start one detached run (container eval-<run>) against the model
+             Framework's llama-server is serving. Uses Framework's GPU for
+             hours -- check nothing else needs it first.
+bfcl         BFCL v3 "simple" (400 cases, bfcl-eval 2025.8.6.2), as every
+             historical BFCL number.
+agentbench   AgentBench os-std, 100 episodes sampled with seed 42, as the
+             historical numbers. Each episode runs in a throwaway sandbox
+             container on this CT's Docker, with networking disabled.
+repobench    RepoBench (rebuilt): Python v1.1, 3 settings x 5 context
+             levels. A new series; the historical RepoBench numbers came
+             from scripts that are lost, so they aren't comparable.
+  --pilot          a small sample instead of the full task: 40 examples
+                   (gpqa/ifeval/bfcl), 10 episodes (agentbench), 5 per
+                   level and setting (repobench)
+  --limit N        a smoke test of N items (repobench: per level and setting).
+                   Like --pilot, listed but never ranked
+  --concurrency N  parallel requests (gpqa/ifeval only; default 1, as every
+                   historical result)
+  --max-gen-toks N token budget per answer (default 8192, the budget every
+                   comparable result used). A larger one, e.g. 32768, starts
+                   a separate series (run name gets -32k), ranked only
+                   against runs at the same budget. Expect several times
+                   the 8192 run's duration.
+  --note TEXT      stored in run.json. Use it for server settings the API
+                   can't show, e.g. "reasoning_effort=high"
+resume       Re-run an interrupted run. Answers already received are
+             replayed from its cache. Refuses if the server's fingerprint
+             (model, build, sampling defaults, chat template) has changed,
+             unless --force.
+selftest     Exercise the whole harness against a stand-in server inside
+             each image -- GPQA/IFEval and publishing, then BFCL, AgentBench
+             (two real sandbox episodes) and RepoBench (no Framework, no
+             GPU). Exits non-zero on failure.
+results      Headline scores and response-quality flags per run.
+publish      Push everything (eval-runner runs + historical) to Nextcloud:
+             Reports/eval-runner/ (leaderboard.xlsx/.md, findings.md, one
+             report.md + manifest.json per run) and the Tables table
+             "Model evaluations" (rows upserted, never duplicated).
+             --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
+             --remove runs/<run> or cyberseceval/<job id> first deletes a
+             deleted run's Nextcloud folder and table rows.
+delete       Delete a finished run for good: its results here, its report
+             folder in Nextcloud and its rows in the table, then republish
+             the leaderboard without it. Refuses while the run's container
+             is running.
+USAGE
+}
+
+die() {
+  echo "eval-run: $*" >&2
+  exit 2
+}
+
+# Run a short helper container (runmeta.py / summarize.py) in the foreground.
+helper() {
+  docker run --rm --env-file "$ENV_FILE" -v "${RESULTS_DIR}:/results" \
+    --entrypoint python "$IMAGE" "$@"
+}
+
+refuse_if_running() {
+  local running
+  running=$(docker ps --filter 'name=^eval-' --format '{{.Names}}')
+  if [[ -n "$running" ]]; then
+    echo "eval-run: an eval is already running: $running" >&2
+    exit 1
+  fi
+}
+
+# image_args <task>: the image (and, for agentbench, the Docker socket its
+# task server starts sandboxes through) a run of <task> needs.
+image_args() {
+  case "$1" in
+    bfcl) echo "$BFCL_IMAGE" ;;
+    agentbench)
+      echo "-v ${DOCKER_SOCK}:${DOCKER_SOCK} --group-add $(stat -c %g "$DOCKER_SOCK") $AGENTBENCH_IMAGE"
+      ;;
+    *) echo "$IMAGE" ;;
+  esac
+}
+
+launch() {
+  local run="$1" task="$2"
+  local -a image
+  read -r -a image <<<"$(image_args "$task")"
+  docker run -d --name "eval-${run}" \
+    --env-file "$ENV_FILE" \
+    -v "${RESULTS_DIR}:/results" \
+    -v "$HF_VOLUME" \
+    --entrypoint python \
+    "${image[@]}" /opt/eval-runner/runmeta.py exec "/results/${run}" >/dev/null
+  echo "Started eval-${run}"
+  echo "  follow:  docker logs -f eval-${run}"
+  echo "  scores:  eval-run results ${run}"
+  echo "  resume:  eval-run resume ${run}   (if it's interrupted)"
+  echo "  cleanup: docker rm eval-${run}   (after it exits)"
+}
+
+valid_run_name() {
+  [[ "$1" =~ ^[A-Za-z0-9_.-]+$ ]] && [[ -f "${RESULTS_DIR}/$1/run.json" ]]
+}
+
+cmd_start() {
+  local short="$1"
+  shift
+  local -a extra=()
+  local concurrency=1 note="" max_gen_toks=8192
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pilot) extra+=(--pilot); shift ;;
+      --limit)
+        [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || die "--limit needs a positive integer"
+        extra+=(--limit "$2"); shift 2 ;;
+      --concurrency) concurrency="${2:?--concurrency needs a value}"; shift 2 ;;
+      --max-gen-toks) max_gen_toks="${2:?--max-gen-toks needs a value}"; shift 2 ;;
+      --note) note="${2?--note needs a value}"; shift 2 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  [[ "$concurrency" =~ ^[1-9][0-9]*$ ]] || die "--concurrency must be a positive integer"
+  if [[ "$short" != gpqa && "$short" != ifeval && "$concurrency" != 1 ]]; then
+    die "--concurrency only applies to gpqa/ifeval"
+  fi
+  [[ "$max_gen_toks" =~ ^[1-9][0-9]*$ ]] || die "--max-gen-toks must be a positive integer"
+  refuse_if_running
+
+  local run
+  run=$(helper /opt/eval-runner/runmeta.py start --task "$short" "${extra[@]}" \
+    --concurrency "$concurrency" --max-gen-toks "$max_gen_toks" --note "$note")
+  launch "$run" "$short"
+  if [[ -z "$note" ]]; then
+    echo "  note:    no --note given; server-side chat-template kwargs (reasoning effort etc.) are not recorded"
+  fi
+}
+
+cmd_resume() {
+  local run="${1:-}" force=0
+  [[ -n "$run" ]] || die "resume needs a run name (see: ls ${RESULTS_DIR})"
+  shift
+  if [[ "${1:-}" == "--force" ]]; then
+    force=1
+    shift
+  fi
+  [[ $# -eq 0 ]] || die "unexpected arguments: $*"
+  valid_run_name "$run" || die "no run named '$run' under ${RESULTS_DIR}"
+  refuse_if_running
+
+  local rc=0
+  helper /opt/eval-runner/runmeta.py check "/results/${run}" || rc=$?
+  if [[ $rc -eq 3 && $force -eq 0 ]]; then
+    die "server changed since this run started; resuming would mix answers from two configurations (use --force to override)"
+  elif [[ $rc -ne 0 && $rc -ne 3 ]]; then
+    die "could not check the server (exit $rc)"
+  fi
+  docker rm "eval-${run}" >/dev/null 2>&1 || true
+  launch "$run" "$(helper /opt/eval-runner/runmeta.py field "/results/${run}" task)"
+}
+
+[[ $# -ge 1 ]] || { usage >&2; exit 2; }
+case "$1" in
+  gpqa|ifeval|bfcl|agentbench|repobench)
+    cmd_start "$@"
+    ;;
+  resume)
+    shift
+    cmd_resume "$@"
+    ;;
+  selftest)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    selftest_in() {
+      local -a image
+      read -r -a image <<<"$(image_args "$1")"
+      shift
+      docker run --rm \
+        --env-file "$ENV_FILE" \
+        -e "SELFTEST_RUN=$stamp" \
+        -v "${RESULTS_DIR}:/results" \
+        -v "$HF_VOLUME" \
+        --entrypoint /bin/sh \
+        "${image[@]}" "$@"
+    }
+    # GPQA/IFEval + publishing, then each wrapper: <limit> <expected requests>
+    # (bfcl and agentbench: one request per case/episode; repobench: one per
+    # setting x level).
+    selftest_in gpqa /opt/eval-runner/selftest.sh
+    selftest_in bfcl /opt/eval-runner/wrapper_selftest.sh bfcl 2 2
+    selftest_in agentbench /opt/eval-runner/wrapper_selftest.sh agentbench 2 2
+    selftest_in repobench /opt/eval-runner/wrapper_selftest.sh repobench 1 15
+    echo "all selftests OK"
+    ;;
+  results)
+    shift
+    targets=()
+    for name in "$@"; do
+      [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "bad run name '$name'"
+      targets+=("/results/${name}")
+    done
+    exec docker run --rm \
+      -v "${RESULTS_DIR}:/results:ro" \
+      --entrypoint python \
+      "$IMAGE" /opt/eval-runner/summarize.py "${targets[@]}"
+    ;;
+  publish)
+    shift
+    if [[ "${1:-}" == "--dry-run" ]]; then
+      [[ $# -eq 1 ]] || die "unexpected arguments: $*"
+      rm -rf "${RESULTS_DIR}/_publish-preview"
+      helper /opt/eval-runner/publish.py --dry-run /results/_publish-preview
+      echo "preview: ${RESULTS_DIR}/_publish-preview/"
+    else
+      remove=()
+      while [[ $# -gt 0 ]]; do
+        [[ "$1" == --remove && "${2:-}" =~ ^(runs|cyberseceval)/[A-Za-z0-9_.-]+$ ]] \
+          || die "unexpected arguments: $*"
+        remove+=(--remove "$2")
+        shift 2
+      done
+      helper /opt/eval-runner/publish.py "${remove[@]}"
+    fi
+    ;;
+  delete)
+    [[ $# -eq 2 && "$2" =~ ^[A-Za-z0-9_.-]+$ && "$2" != _* ]] || die "delete needs one run name"
+    run="$2"
+    if [[ -n "$(docker ps -q --filter "name=^eval-${run}\$")" ]]; then
+      die "eval-${run} is still running; cancel it first"
+    fi
+    docker rm "eval-${run}" >/dev/null 2>&1 || true
+    rm -rf "${RESULTS_DIR:?}/${run}"
+    echo "deleted ${RESULTS_DIR}/${run}"
+    helper /opt/eval-runner/publish.py --remove "runs/${run}"
+    ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

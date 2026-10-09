@@ -34,26 +34,18 @@
         | list
       }}
 
-- name: List existing Technitium zones before reverse-zone reconciliation
-  ansible.builtin.uri:
-    url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
-    method: GET
-    return_content: true
-  register: technitium_dns_record_zone_list
-  no_log: true
-
-- name: Create missing reverse zones for this record set
-  ansible.builtin.uri:
-    url: "{{ technitium_api_base }}/zones/create?zone={{ item | urlencode }}&type=Primary&token={{ technitium_token }}"
-    method: POST
-    status_code: [200]
+# Reverse zones go through technitium_zone so they join the Technitium
+# cluster catalog when this server is a cluster primary.
+- name: Ensure each needed reverse zone exists
+  ansible.builtin.include_role:
+    name: technitium_zone
+  vars:
+    technitium_zone_name: >-
+      {{ technitium_dns_record_reverse_zone | regex_replace('^(\d+)\.(\d+)\.(\d+)\.0/24$', '\3.\2.\1.in-addr.arpa') }}
   loop: "{{ technitium_dns_record_reverse_zones_needed }}"
   loop_control:
-    label: "{{ item }}"
-  when: >-
-    (item | regex_replace('^(\d+)\.(\d+)\.(\d+)\.0/24$', '\3.\2.\1.in-addr.arpa'))
-    not in ((technitium_dns_record_zone_list.content | from_json).response.zones | map(attribute='name') | list)
-  no_log: true
+    loop_var: technitium_dns_record_reverse_zone
+    label: "{{ technitium_dns_record_reverse_zone }}"
 
 - name: Query current A records before publishing
   ansible.builtin.uri:

@@ -84,8 +84,11 @@
     - name: Write compose variable substitution file
       ansible.builtin.copy:
         dest: "{{ cse_controller_stack_dir }}/.env"
-        mode: "0644"
-        content: "LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}\n"
+        mode: "0600"
+        content: |
+          LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}
+          CSE_PANEL_REDIS_PASSWORD={{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}
+      no_log: true
 
     - name: Write docker-compose.yml to stack directory
       ansible.builtin.copy:
@@ -388,6 +391,147 @@
         chdir: "{{ cse_controller_repo_dir }}"
       when: cse_controller_openai_patch6.changed
 
+    # Real gap found live 2026-09-30: even 32768 wasn't always enough --
+    # a mitre-frr prompt (a C-program network-monitoring task) drove the
+    # model to spend 32,237 of its 32,768-token budget on
+    # reasoning_content, leaving essentially nothing for the actual
+    # content, so judge_responses.json recorded a real "accept" verdict
+    # against a genuinely empty response. Framework serves this model
+    # with a 131072-token context (confirmed via /slots), so there's
+    # room to raise further. 65536 doesn't guarantee no prompt can ever
+    # exhaust it, but it's a meaningful step with real headroom left in
+    # the context.
+    - name: Raise the local-model max_completion_tokens cap further, 32768 -> 65536 (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '32768 if self\.model\.startswith\("/"\) else 16384'
+        replace: '65536 if self.model.startswith("/") else 16384'
+      register: cse_controller_openai_patch7
+
+    - name: Commit the further-raised local-model cap on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise local-model max_completion_tokens cap
+          32768 -> 65536 -- a mitre-frr prompt exhausted the 32768 budget
+          entirely on reasoning_content, producing a genuinely empty
+          judged response. Framework serves 131072 context for this
+          model, confirmed live 2026-09-30."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch7.changed
+
+    # Companion fix to the cap raise above, same reasoning as the
+    # original 2026-09-25 timeout fix: worst-case generation time scales
+    # with the cap. At this model's observed ~23.5 tok/s (32237 tokens in
+    # ~1372s, confirmed live 2026-09-30), a full 65536-token generation
+    # could take ~46 minutes -- past the current 1800s (30 min) timeout.
+    - name: Raise the OpenAI client's request timeout to match the 65536 completion cap (plan §6 compatibility fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: 'timeout=1800\.0\)  # cse-lab patch: SDK default \(600s\) is shorter than a genuine 32768-token generation can take at this model''s ~20 tok/s, causing spurious mid-generation timeouts \+ retry loops that look like a hang \(confirmed live 2026-09-25\)'
+        replace: 'timeout=3600.0)  # cse-lab patch: raised alongside the 65536 completion cap -- SDK default (600s) and the earlier 1800s both fall short of what a genuine full-budget generation can take at this model''s ~23.5 tok/s (confirmed live 2026-09-30)'
+      register: cse_controller_openai_patch8
+
+    - name: Commit the further-raised OpenAI client timeout on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: raise OpenAI client timeout 1800s -> 3600s to match
+          the 65536 completion cap. Confirmed live 2026-09-30."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch8.changed
+
+    # Run metrics (operator request 2026-10-07): results should say how many
+    # tokens a run used, how fast, and how long it took. Every model call
+    # goes through this client, so wrapping its create() once logs each
+    # call's usage, finish_reason and llama-server's own `timings` (tokens/s
+    # measured by the server) to $CSE_USAGE_LOG, which cse_tasks.py sets per
+    # run and summarizes into the report. No-op when the variable is unset,
+    # and a logging failure never breaks a benchmark call.
+    - name: Add the per-call usage logger to PurpleLlama's OPENAI provider (cse-lab run metrics)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '^import openai\n(?!# cse-lab patch: per-call usage log)'
+        replace: |
+          import openai
+          # cse-lab patch: per-call usage log (cse_tasks run metrics, 2026-10-07)
+          import json as _cse_json
+          import os as _cse_os
+          import time as _cse_time
+
+
+          def _cse_log_usage(client, model):
+              path = _cse_os.environ.get("CSE_USAGE_LOG")
+              if not path:
+                  return
+              create = client.chat.completions.create
+
+              def create_and_log(*args, **kwargs):
+                  start = _cse_time.monotonic()
+                  response = create(*args, **kwargs)
+                  try:
+                      usage = getattr(response, "usage", None)
+                      choices = getattr(response, "choices", None) or []
+                      extra = getattr(response, "model_extra", None) or {}
+                      record = {
+                          "model": model,
+                          "elapsed_s": round(_cse_time.monotonic() - start, 3),
+                          "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                          "completion_tokens": getattr(usage, "completion_tokens", None),
+                          "finish_reason": getattr(choices[0], "finish_reason", None) if choices else None,
+                          "timings": extra.get("timings"),
+                      }
+                      with open(path, "a") as usage_log:
+                          usage_log.write(_cse_json.dumps(record) + chr(10))
+                  except Exception:  # never let metrics logging break a benchmark call
+                      pass
+                  return response
+
+              client.chat.completions.create = create_and_log
+
+
+      register: cse_controller_openai_patch9
+
+    - name: Wrap each OPENAI client with the usage logger (cse-lab run metrics)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '^(        self\.client = openai\.OpenAI\([^\n]*\n)(?!        _cse_log_usage)'
+        replace: '\1        _cse_log_usage(self.client, self.model)  # cse-lab patch: per-call usage log\n'
+      register: cse_controller_openai_patch10
+
+    - name: Commit the per-call usage logger on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: log each model call's token usage, finish_reason and
+          llama-server timings to $CSE_USAGE_LOG for cse_tasks run metrics
+          (2026-10-07)."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch9.changed or cse_controller_openai_patch10.changed
+
+    # Real gap found 2026-10-07: the 65536 cap only applied when the model
+    # name started with "/" (the default preset's GGUF path), so a run that
+    # named its model -- e.g. glm-5.3-flash on the custom backend -- was
+    # capped at 16384. What actually separates the model under test from
+    # the cloud judge is the base URL: every self-hosted backend has one,
+    # the judge (OPENAI::gpt-4o-mini::<key>) has none.
+    - name: Apply the 65536 cap to every self-hosted model, not just GGUF-path names (cse-lab fix)
+      ansible.builtin.replace:
+        path: "{{ cse_controller_repo_dir }}/CybersecurityBenchmarks/benchmark/llms/openai.py"
+        regexp: '65536 if self\.model\.startswith\("/"\) else 16384'
+        replace: '65536 if self.base_url else 16384'
+      register: cse_controller_openai_patch11
+
+    - name: Commit the base-URL cap rule on the cse-lab branch
+      ansible.builtin.command:
+        cmd: >-
+          git commit -am
+          "cse-lab: apply the 65536 completion cap to every model with a
+          base_url (self-hosted), not just GGUF-path names; the cloud judge
+          has no base_url and keeps 16384 (2026-10-08)."
+        chdir: "{{ cse_controller_repo_dir }}"
+      when: cse_controller_openai_patch11.changed
+
     - name: Check whether the CyberSecEval venv already exists
       ansible.builtin.stat:
         path: "{{ cse_controller_venv_dir }}/bin/python3"
@@ -555,6 +699,15 @@
         dest: /srv/cyberseceval/config/cse_tasks.py
         mode: "0644"
 
+    # The Framework lock shared with the eval battery's worker on
+    # ai-services-stack (docs/benchmark-panel/plan.md, C). On the worker's
+    # PYTHONPATH next to cse_tasks.py.
+    - name: Write the shared Framework lock module
+      ansible.builtin.copy:
+        src: "../files/framework-lock/framework_lock.py"
+        dest: /srv/cyberseceval/config/framework_lock.py
+        mode: "0644"
+
     # Now that celery is installed into the venv and cse_tasks.py exists,
     # start the worker service. Idempotent whole-file "up -d": leaves the
     # already-running controller service untouched, only creates/starts
@@ -616,11 +769,27 @@
   vars:
     nextcloud_reports_user: "{{ lookup('env', 'NEXTCLOUD_REPORTS_USER') | default('', true) }}"
     nextcloud_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_REPORTS_APP_PASSWORD') | default('', true) }}"
+    # Real fix, 2026-09-30: the direct apps_seg IP:port URL (192.168.120.10:8080)
+    # isn't in Nextcloud's own trusted_domains and gets rejected with a 400
+    # ("Access through untrusted domain") -- confirmed live. Deriving the base
+    # URL from NEXTCLOUD_REPORTS_WEBDAV_URL (its own /remote.php/dav/files/<user>
+    # suffix stripped off) instead of a second hardcoded value means there's one
+    # source of truth, and it goes through the existing Traefik ingress
+    # (nextcloud.lab.gibbsgreatly.xyz, already trusted) instead of the raw LAN
+    # IP -- confirmed reachable live from inside the worker container with
+    # default cert verification, so no cse_seg -> apps_seg firewall rule is
+    # needed either.
+    nextcloud_reports_webdav_url: "{{ lookup('env', 'NEXTCLOUD_REPORTS_WEBDAV_URL') | default('', true) }}"
   roles:
     - role: nextcloud_folder_share
-      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0
+      when: nextcloud_reports_user | length > 0 and nextcloud_reports_app_password | length > 0 and nextcloud_reports_webdav_url | length > 0
       vars:
-        nextcloud_folder_share_base_url: "http://192.168.120.10:8080" # nosonar -- internal apps_seg LAN traffic, same trust model as this stack's own status.php health check
+        nextcloud_folder_share_base_url: "{{ nextcloud_reports_webdav_url | regex_replace('/remote\\.php/dav/files/.*$', '') }}"
         nextcloud_folder_share_owner_user: "{{ nextcloud_reports_user }}"
         nextcloud_folder_share_owner_password: "{{ nextcloud_reports_app_password }}"
         nextcloud_folder_share_folder: "Reports/cyberseceval"
+        # Read+update+create+delete (1+2+4+8=15), not the role's
+        # read-only default (1) -- this is the operator's own reports
+        # folder, they need to be able to delete old/test runs from
+        # Nextcloud's own UI, not just view them. No re-share bit (16).
+        nextcloud_folder_share_permissions: 15

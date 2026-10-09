@@ -3,8 +3,10 @@
 # container names and can break Graylog field attribution.
 # %programname% gives a clean APPNAME: "sshd", "docker-grafana", etc.
 # Note: %programname% truncates at '/', so Docker tags use '-' not '/' as separator.
+# %STRUCTURED-DATA% is '-' when a message has none (identical output to the
+# old literal '- -'); Technitium's Log Exporter puts clientIp etc. there.
 template(name="GraylogForward" type="string"
-  string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - - %msg%\n")
+  string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - %STRUCTURED-DATA% %msg%\n")
 
 $WorkDirectory /var/spool/rsyslog
 

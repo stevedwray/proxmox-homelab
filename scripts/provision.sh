@@ -371,6 +371,10 @@ WAZUH_FINDINGS_INGEST_KEYS = (
     "wazuh_findings_ingest_enabled",
 )
 
+TPOT_FINDINGS_INGEST_KEYS = (
+    "tpot_findings_ingest_enabled",
+)
+
 DOCKER_LIVE_USAGE_REPORTER_KEYS = (
     "docker_live_usage_reporter_enabled",
 )
@@ -454,6 +458,10 @@ for key in GVM_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in WAZUH_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in TPOT_FINDINGS_INGEST_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
@@ -710,6 +718,7 @@ provision_stack() {
 
   [[ "$check_mode" == "true" ]] && cmd+=(--check)
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
+  [[ -n "${ANSIBLE_SKIP_TAGS:-}" ]] && cmd+=(--skip-tags "$ANSIBLE_SKIP_TAGS")
 
   log "RUN ${stack}: ${cmd[*]}"
   if ! "${cmd[@]}"; then

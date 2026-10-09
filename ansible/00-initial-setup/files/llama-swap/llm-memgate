@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llama-swap.yml -- do not edit by hand
+#
+# llm-memgate <weights_mb> <command> [args...]
+#
+# Memory pre-flight for one llama-server start under llama-swap. framework is
+# a 122 GB unified-memory APU and each chat model is ~95-104 GiB, so two
+# resident at once hangs the host (2026-09-21). Waits until MemAvailable is at
+# least <weights_mb> + LLM_MEMGATE_FLOOR_MB (default 4096), then execs the
+# command, so llama-swap's SIGTERM reaches llama-server directly. Gives up
+# after LLM_MEMGATE_WAIT_S seconds (default 120) and exits 1; llama-swap then
+# reports the load as failed and the message is in its upstream log.
+#
+# It also refuses at once a model whose weights exceed the GPU's GTT ceiling
+# (ttm.pages_limit): loading one anyway ends in "Not enough memory for
+# command submission", a lost GPU device and amdgpu errors flooding the
+# console (2026-10-08, after the ceiling dropped from 112 to 93 GB).
+set -euo pipefail
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: llm-memgate <weights_mb> <command> [args...]" >&2
+  exit 2
+fi
+
+floor_mb="${LLM_MEMGATE_FLOOR_MB:-4096}"
+wait_s="${LLM_MEMGATE_WAIT_S:-120}"
+weights_mb="$1"
+need_mb=$(( weights_mb + floor_mb ))
+shift
+
+gtt_total_mb=0
+for f in /sys/class/drm/card*/device/mem_info_gtt_total; do
+  [ -r "$f" ] && gtt_total_mb=$(( $(cat "$f") / 1048576 )) && break
+done
+if (( gtt_total_mb > 0 && weights_mb > gtt_total_mb )); then
+  echo "llm-memgate: model needs ${weights_mb}MB but the GPU's GTT ceiling is ${gtt_total_mb}MB" \
+       "(ttm.pages_limit), refusing to start $1" >&2
+  exit 1
+fi
+
+deadline=$(( SECONDS + wait_s ))
+while :; do
+  avail_mb=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+  if (( avail_mb >= need_mb )); then
+    echo "llm-memgate: MemAvailable ${avail_mb}MB >= ${need_mb}MB, starting $1" >&2
+    exec "$@"
+  fi
+  if (( SECONDS >= deadline )); then
+    echo "llm-memgate: MemAvailable ${avail_mb}MB < ${need_mb}MB after ${wait_s}s, refusing to start $1" >&2
+    exit 1
+  fi
+  sleep 2
+done

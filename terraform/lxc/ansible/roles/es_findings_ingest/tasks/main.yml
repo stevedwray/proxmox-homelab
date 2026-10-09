@@ -108,13 +108,29 @@
         - harbor-findings-normalize.json
 
     # ---------------------------------------------------------------
-    # Read-only Harbor robot (system-level, repository:pull only) --
-    # fully independent of harbor_repull's own mirror-push robot and the
-    # shared CI robot. Same idempotent "unique name, credential file is
-    # the only existence check" shape harbor_repull's own robot task uses
-    # -- see that role's tasks/main.yml for the full rationale (Harbor's
-    # GET /robots doesn't reliably list project-scoped robots, so a fresh
-    # unique name each time sidesteps needing a trustworthy lookup).
+    # Read-only Harbor robot (system-level) -- fully independent of
+    # harbor_repull's own mirror-push robot and the shared CI robot. Same
+    # idempotent "unique name, credential file is the only existence check"
+    # shape harbor_repull's own robot task uses -- see that role's
+    # tasks/main.yml for the full rationale (Harbor's GET /robots doesn't
+    # reliably list project-scoped robots, so a fresh unique name each time
+    # sidesteps needing a trustworthy lookup).
+    #
+    # repository:list, artifact:list/read, and artifact-addition:read were
+    # added 2026-09-29 -- confirmed live that repository:pull alone is
+    # sufficient in Harbor's 8 PUBLIC projects (Harbor is lenient there) but
+    # 403s on `pentagi`, the one PRIVATE project (metadata.public=false),
+    # which enforces the RBAC check strictly and needs the distinct
+    # list/read actions per resource, including its OWN resource type for
+    # the /additions/vulnerabilities endpoint specifically (all confirmed
+    # valid via GET /api/v2.0/permissions). This had been failing
+    # es-findings-ingest.service's exit code on every single run since the
+    # project existed -- errors=1 every day, never investigated until now;
+    # fixed incrementally live, one 403'ing endpoint at a time behind the
+    # last: repository:list cleared the project-listing 403, artifact:
+    # list/read cleared the per-repo artifact-listing 403 behind that, and
+    # artifact-addition:read cleared the vulnerability-report-fetch 403
+    # behind that.
     # ---------------------------------------------------------------
 
     - name: Check for existing Harbor robot credential
@@ -165,6 +181,14 @@
               access:
                 - resource: "repository"
                   action: "pull"
+                - resource: "repository"
+                  action: "list"
+                - resource: "artifact"
+                  action: "list"
+                - resource: "artifact"
+                  action: "read"
+                - resource: "artifact-addition"
+                  action: "read"
         status_code: 201
       register: es_findings_ingest_harbor_robot_create
       when:

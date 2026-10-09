@@ -147,6 +147,7 @@ zones:
     attachment: mgmt_seg
     containers:
       - "cse-panel-stack (VMID 20030) — 192.168.20.30"
+      - "technitium-tiny-stack (VMID 20017) — 192.168.20.17 — LAN DNS cluster secondary, docs/lan-dns-technitium/plan.md"
   cse_seg:
     description: CyberSecEval compute/orchestration — isolated by design
     attachment: cse_seg

@@ -19,10 +19,9 @@
 #   - ttm.pages_limit/ttm.page_pool_size GRUB tuning, reusing the existing
 #     shared task (tasks/proxmox-gpu-unified-memory-tuning.yml) so the
 #     ceiling is computed from this host's actual RAM rather than the
-#     literal old-host page count -- pmx_gpu_gtt_reserved_host_mb: 32768
-#     matches the documented 32GB-on-128GB policy
-#     (proxmox-strix-halo-setup-notes.md §6 / plan.md §8), not the task's
-#     own 16GB default
+#     literal old-host page count -- now a fixed 112 GiB ceiling
+#     (pmx_gpu_gtt_ceiling_mb_fixed, see vars below for why), not the
+#     32GB-reserve formula
 #   - Mesa Vulkan + ROCm/HIP packages via plain apt -- no LXC abstraction
 #     boundary to reason about anymore, this IS the Ubuntu host directly
 #   - NFS client (nfs-common) + an on-demand automount fstab entry for the
@@ -94,9 +93,16 @@
     framework_nas_export: "nas.gibbsgreatly.xyz:/volume1/Models"
     framework_nas_mount_point: /mnt/nas-models
     pmx_gpu_unified_memory_tuning_enabled: true
-    # Matches "we used 32GB on a 128GB box" (proxmox-strix-halo-setup-notes.md
-    # §6) rather than the shared task's own 16GB default -- overridden
-    # deliberately, not left at default.
+    # 112 GiB GTT ceiling (ttm.pages_limit=29360128), the 16/112 split. The
+    # chat models need it: Qwen3.8-Flash-Next ~106 GB, GLM-5.3-Flash ~97 GB;
+    # neither fits under the old 93 GB. Live since 2026-07-28, set by hand.
+    # A re-run of this playbook on 2026-09-27 recomputed "RAM minus 32 GB"
+    # (93 GB) and wrote it to /etc/default/grub; the 2026-10-08 reboot after
+    # an apt upgrade applied it and GLM's load lost the GPU. So the ceiling
+    # is a fixed number here, not derived. llm-memgate keeps a 4 GB floor
+    # of free RAM before any model loads and refuses one bigger than this.
+    pmx_gpu_gtt_ceiling_mb_fixed: 114688
+    # Only used when pmx_gpu_gtt_ceiling_mb_fixed is unset.
     pmx_gpu_gtt_reserved_host_mb: 32768
     # 192.168.40.11:3142 -- confirmed reachable from this host (nc test,
     # 2026-07-20), matching the existing "all zones and LAN to Harbor and

@@ -1,0 +1,94 @@
+diff -ru a/src/client/agents/http_agent.py b/src/client/agents/http_agent.py
+--- a/src/client/agents/http_agent.py
++++ b/src/client/agents/http_agent.py
+@@ -1,4 +1,5 @@
+ import contextlib
++import os
+ import time
+ import warnings
+
+@@ -175,7 +176,10 @@
+         super().__init__(**kwargs)
+         self.url = url
+         self.proxies = proxies or {}
+-        self.headers = headers or {}
++        # eval-runner: header values may reference environment variables
++        # ("Bearer ${OPENAI_API_KEY}"), so no API key is written into
++        # config files or the run's output config.yaml.
++        self.headers = {k: os.path.expandvars(str(v)) for k, v in (headers or {}).items()}
+         self.body = body or {}
+         self.return_format = return_format
+         self.prompter = Prompter.get_prompter(prompter)
+@@ -192,7 +196,11 @@
+                 body.update(self._handle_history(history))
+                 with no_ssl_verification():
+                     resp = requests.post(
+-                        self.url, json=body, headers=self.headers, proxies=self.proxies, timeout=120
++                        # eval-runner: 120s timed out slow models mid-answer
++                        # (3072 tokens at ~17 tok/s is ~180s); the timeout
++                        # doesn't change answers, only spurious failures.
++                        self.url, json=body, headers=self.headers, proxies=self.proxies,
++                        timeout=int(os.environ.get("AGENTBENCH_HTTP_TIMEOUT", "3600")),
+                     )
+                 # print(resp.status_code, resp.text)
+                 if resp.status_code != 200:
+diff -ru a/src/client/agents/__init__.py b/src/client/agents/__init__.py
+--- a/src/client/agents/__init__.py
++++ b/src/client/agents/__init__.py
+@@ -1,2 +1,6 @@
+-from .fastchat_client import FastChatAgent
++# eval-runner: FastChat pulls in torch/transformers; only HTTPAgent is used.
++try:
++    from .fastchat_client import FastChatAgent
++except ImportError:
++    FastChatAgent = None
+ from .http_agent import HTTPAgent
+diff -ru a/src/server/tasks/os_interaction/task.py b/src/server/tasks/os_interaction/task.py
+--- a/src/server/tasks/os_interaction/task.py
++++ b/src/server/tasks/os_interaction/task.py
+@@ -31,6 +31,11 @@
+             tty=True,
+             stdin_open=True,
+             remove=True,
++            # eval-runner: the model's shell commands run here, so no
++            # network. Every package the task inits would apt-get is baked
++            # into the local-os/default image instead (their apt-get then
++            # fails harmlessly -- init exit codes are ignored).
++            network_disabled=True,
+             # name="os-pipeline-ubuntu",
+             labels={"created_by": "os-pipeline"},
+         )
+@@ -374,7 +379,32 @@
+         }
+
+     def get_indices(self) -> List[Any]:
+-        return list(self.problem_configs.keys())
++        # NOTE: patched 2026-08-05 -- AgentBench's os-std has no built-in
++        # sample-count limit (800 episodes total, ~90-100s each at
++        # concurrency=1 == ~20+ hours for a single model). Set
++        # AGENTBENCH_SAMPLE_LIMIT to cap it for controlled/subsampled runs.
++        #
++        # NOTE: patched 2026-08-06 -- neither a plain prefix slice
++        # (indices[:N]) nor a fixed stride (indices[::k]) is representative:
++        # the 800 tasks are 14 base task_ids x ~70 injection-variant copies
++        # each, and BOTH the first-100 prefix AND a stride-8 sample landed
++        # on 0/100 pass by coincidence of how copies are ordered, against a
++        # model that scores 27% over the full 800. Set AGENTBENCH_SAMPLE_SEED
++        # (any int) alongside AGENTBENCH_SAMPLE_LIMIT to take a genuine
++        # random sample instead -- robust to whatever periodic structure
++        # the underlying ordering has. Falls back to a plain prefix slice
++        # if seed is unset, preserving old behavior.
++        import os
++        import random
++        indices = list(self.problem_configs.keys())
++        limit = os.getenv("AGENTBENCH_SAMPLE_LIMIT")
++        seed = os.getenv("AGENTBENCH_SAMPLE_SEED")
++        if limit and seed:
++            rng = random.Random(int(seed))
++            indices = rng.sample(indices, min(int(limit), len(indices)))
++        elif limit:
++            indices = indices[: int(limit)]
++        return indices
+
+     def extract_action(self, raw: str):
+         think_pattern = r"Think:\s*(.+)"

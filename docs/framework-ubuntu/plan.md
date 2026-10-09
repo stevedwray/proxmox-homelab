@@ -116,7 +116,22 @@ cold from this section alone.
   both confirmed working. No systemd `Conflicts=` or gateway design
   needed.
 
-### Current state of the host, as of this checkpoint
+### Current state of the host (2026-10-08)
+
+The table after this one is the July 2026 checkpoint and no longer
+matches the host. LLM serving now works like this:
+
+| Service | Port | How it runs | State |
+| --- | --- | --- | --- |
+| llama-swap (model control page) | 8099, reached only through Traefik at `https://llm-control.<domain>` (Authentik) | `llama-swap.service`, `ansible/00-initial-setup/framework-desktop-llama-swap.yml`, `docs/llama-swap/` | active |
+| Chat model (`llama-server`, started by llama-swap) | 8080 (API key) | GLM-5.3-Flash on the upstream build, or Qwen3.8-Flash-Next on the Nathanw fork or upstream (plus candidate and HIP entries), picked on the control page | GLM loaded, and the boot default |
+| llama.cpp builds | — | `llama-builds` (`framework-desktop-llama-builds.yml`): backends `fork`, `upstream`, `upstream-hip` under `/storage/llama-builds/<backend>/{current,candidate,previous}`; a daily status check publishes to the benchmark panel | adopted 2026-10-09 |
+| `nathanw-llamacpp-embed.service` (nomic-embed) | 8085 | Nathanw fork `current` build, `framework-desktop-llamacpp-native.yml` | active |
+| `nathanw-llamacpp.service` (old Qwen chat unit) | — | retired 2026-10-09; `framework-desktop-llamacpp-native.yml` deletes it | removed |
+| Open WebUI | 8081 | Docker | up |
+| llama-router (HIP, `/opt/llamacpp-docker`), Ollama, LM Studio, ComfyUI | — | — | not running |
+
+### Current state of the host, as of the July 2026 checkpoint (historical)
 
 Four services running concurrently, each independently verified,
 switchable via two tested scripts:
@@ -777,6 +792,26 @@ being re-derived:
   re-deriving it, unless the operator wants to revisit the split (the
   16/112 split mentioned earlier in this workspace's history remains an
   option, not a default).
+
+  **Superseded (2026-10-09): the ceiling is 112 GiB**
+  (`ttm.pages_limit=29360128`, the 16/112 split).
+  - **History:** live by hand since 2026-07-28, because the chat models
+    need it (Qwen3.8-Flash-Next ~106 GB, GLM-5.3-Flash ~97 GB). A re-run
+    of `framework-desktop-bootstrap.yml` on 2026-09-27 recomputed "RAM
+    minus 32 GB" (93 GB) into `/etc/default/grub`. The 2026-10-08 reboot
+    after an apt upgrade applied it, GLM's preload lost the GPU ("Not
+    enough memory for command submission"), and amdgpu errors flooded the
+    console.
+  - **Now:** the bootstrap sets `pmx_gpu_gtt_ceiling_mb_fixed: 114688`.
+    `llm-memgate` refuses a model bigger than the ceiling, and still
+    requires 4 GB of free RAM before any model loads.
+  - **Verified 2026-10-09** after the reboot:
+    - the kernel reported "114688M of GTT memory ready", with no amdgpu
+      errors;
+    - llama-swap preloaded GLM within a minute (`llm-memgate` let it
+      through at 123.7 GB free), using about 98 GiB of GTT;
+    - `:8080/health` returned 200, and a test question got "ok" at
+      16 tok/s.
 - **The Vulkan long-context reliability bug is real and separate from
   the OOM issue.** `proxmox-strix-halo-setup-notes.md` §8 documents a
   genuine kernel-level GPU ring timeout/reset (`ring comp_1.1.0 timeout

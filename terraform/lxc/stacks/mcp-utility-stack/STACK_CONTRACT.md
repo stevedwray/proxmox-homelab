@@ -40,9 +40,9 @@ folding it in here instead of a new stack.
 | `NVD_API_KEY` | secrets.common.enc.yaml | Raises NVD rate limit from 5/30s to 50/30s |
 | `GITHUB_TOKEN` | secrets.common.enc.yaml | GitHub Advisories/Code Search rate limit |
 | `VULNCHECK_TOKEN` | secrets.common.enc.yaml | NVD++ fallback source |
-| `VIRUSTOTAL_KEY` | secrets.common.enc.yaml | Threat-intel cluster, deliberately in scope per 2026-08-01 operator decision |
-| `SHODAN_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision |
-| `GREYNOISE_API_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision |
+| `VIRUSTOTAL_KEY` | secrets.common.enc.yaml | Threat-intel cluster, deliberately in scope per 2026-08-01 operator decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment (same key, not duplicated) — see `docs/maltego-integration/README.md`. Was broken 2026-08-01 through 2026-10-02 (401 "Wrong API key", stored value was 23 chars vs VT's real 64-hex-char format); operator rotated it 2026-10-02, confirmed working live against the real VirusTotal v3 API. |
+| `SHODAN_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment — confirmed working live 2026-10-02. |
+| `GREYNOISE_API_KEY` | secrets.common.enc.yaml | Threat-intel cluster, same decision. Also consumed by `maltego-mcp`'s Tier 1 enrichment — confirmed working live 2026-10-02 against the real `/v3/ip/{ip}` endpoint (its old free `/v3/community` endpoint was deprecated Jan 2026, found via this operator's own `cve-mcp-server` fork). |
 
 `ABUSEIPDB_KEY`/`URLSCAN_KEY`/`CIRCL_PDNS_USER`/`CIRCL_PDNS_PASS` are
 intentionally left unset — those sources stay unreachable both at the app
@@ -57,6 +57,8 @@ allowlist).
 |---------|------|----------|-------|
 | `cve-mcp-http` | `8000` | `tcp` | MCP Streamable HTTP endpoint at `/api/mcp`. No built-in authentication — access control is network-level only (MikroTik inbound rule), see Security notes below. |
 | `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`, `get_document`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
+| `maltego-mcp` | (none — stdio/on-demand only, Phase 1) | invoked via `docker compose run --rm`, not a daemon | domain -> DNS/WHOIS/ASN/crt.sh -> `.mtgx`, see `docs/maltego-integration/plan.md`. Deliberately not `cve-mcp-server` (whose contract, repo, and name are CVE-only) — see that plan's `README.md` for why. |
+| `osint-mcp` | `8010` | `tcp`, MCP Streamable HTTP at `/mcp` | Phase 3: same investigation logic as `maltego-mcp` (domain -> DNS/WHOIS/ASN/crt.sh + VirusTotal/Shodan/GreyNoise/OTX enrichment), exposed as a real `investigate_domain` MCP tool for `deep-research-agent` (a different container, same LXC host) to call over the network. **Unlike its two siblings, this one requires `Authorization: Bearer <OSINT_MCP_TOKEN>`** — the brief explicitly asked for real auth even on LAN. Refuses to start at all without a token configured (`process.exit(1)`), never listens unauthenticated. See `docs/maltego-integration/README.md`'s Phase 3 section. |
 
 ## Dependencies
 
@@ -192,6 +194,17 @@ session (Laguna S 2.1 via Ollama) via `.vscode/mcp.json` — see
   protection rejecting the Host header) instead of the expected
   200/401/405/406, so the wait task times out even though the server is
   genuinely healthy.
+- **`maltego-mcp` has no `profiles` activation by default** (`docker
+  compose up -d` will not start it) — this is deliberate, not a bug,
+  because it speaks stdio and has nothing to serve as a background daemon
+  in Phase 1. Do not add `restart: unless-stopped` or remove the
+  `profiles: ["tools"]` line without re-reading
+  `docs/maltego-integration/README.md` first.
+- **`osint-mcp` refuses to start at all without `OSINT_MCP_TOKEN` set**
+  (`process.exit(1)` in `osint-mcp-server.ts`) — this is deliberate, not
+  a startup bug. Never remove that check to "fix" a container that won't
+  come up; the fix is to configure the token, not bypass auth on a
+  network-reachable service.
 
 ## Playbook
 

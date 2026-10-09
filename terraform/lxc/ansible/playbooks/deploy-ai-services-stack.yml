@@ -19,30 +19,19 @@
   hosts: all
   become: true
   gather_facts: true
+  # Migrated to docker_base-owned daemon.json (docs/logging/docker-log-
+  # driver-audit.md, log-02) -- was json-file with no Graylog forwarding
+  # (this stack's own hand-written task below, now removed). Fleet
+  # default is syslog; no docker_base_daemon_extra override needed here.
+  # Safe alongside this stack's own per-service log-driver overrides (2 of
+  # its services already set syslog explicitly at the compose level, per
+  # the audit's own note) -- this only changes the daemon-wide default for
+  # whatever doesn't already override it.
+  vars:
+    docker_base_manage_daemon_json: true
   roles:
     - lxc_base
     - docker_base
-
-  tasks:
-    - name: Configure Docker daemon logging
-      ansible.builtin.copy:
-        dest: /etc/docker/daemon.json
-        mode: "0644"
-        content: |
-          {
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "50m",
-              "max-file": "7"
-            }
-          }
-      notify: Restart Docker
-
-  handlers:
-    - name: Restart Docker
-      ansible.builtin.systemd:
-        name: docker
-        state: restarted
 
 - name: Deploy OpenWebUI and SearXNG compose stack
   hosts: all
@@ -164,6 +153,15 @@
     # llamacpp route above -- not a new egress rule.
     ai_services_deep_research_openai_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, matches ai_services_openwebui_llamacpp_api_base above
     ai_services_tavily_api_key: "{{ lookup('env', 'TAVILY_API_KEY') | mandatory('TAVILY_API_KEY env var is required') }}"
+    # Phase 3 OSINT MCP client (docs/maltego-integration/README.md). URL
+    # built from the same LAB_IP_MCP_UTILITY var docs-rag-mcp/cve-mcp-
+    # server's own allowed-hosts entries use, not a hardcoded IP.
+    # OSINT_MCP_TOKEN already exists in OpenBao (services/mcp-utility,
+    # confirmed live 2026-10-02 for osint-mcp itself) and this stack's own
+    # pve-tiny profile already includes that entry -- safe to use
+    # mandatory() directly, not a staged default-empty rollout.
+    ai_services_osint_mcp_url: "http://{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8010/mcp"
+    ai_services_osint_mcp_token: "{{ lookup('env', 'OSINT_MCP_TOKEN') | mandatory('OSINT_MCP_TOKEN env var is required') }}"
 
     # web-search-mcp + mcpo: headless-browser web search (Playwright/
     # Chromium against Bing/Brave/DuckDuckGo, no API key/quota), replacing
@@ -538,6 +536,25 @@
                 # docs/deep-research/current-state.md for the full
                 # investigation. Free tier: 1000 searches/month.
                 TAVILY_API_KEY: "{{ ai_services_tavily_api_key }}"
+                # Phase 3 OSINT MCP client (docs/maltego-integration/
+                # README.md) -- osint_investigate is a real MCPTool
+                # (agent_framework.MCPStreamableHTTPTool), the first this
+                # codebase has used. Degrades to None (absent from the
+                # Searcher's tool list) if either var is unset -- see
+                # tools/osint.py -- so this is safe even if the other
+                # stack's deploy order ever changes.
+                OSINT_MCP_URL: "{{ ai_services_osint_mcp_url }}"
+                OSINT_MCP_TOKEN: "{{ ai_services_osint_mcp_token }}"
+                # Best-effort WebDAV push of final_report.md to Nextcloud
+                # (docs/nextcloud-stack/plan.md nextcloud-P2-10/11/12).
+                # Deliberately default('', true), not mandatory -- a
+                # missing/not-yet-provisioned Nextcloud credential must
+                # never block a deep-research deploy, matching
+                # push_report_to_nextcloud's own silent no-op on empty
+                # values.
+                NEXTCLOUD_DR_REPORTS_WEBDAV_URL: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_WEBDAV_URL') | default('', true) }}"
+                NEXTCLOUD_DR_REPORTS_USER: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+                NEXTCLOUD_DR_REPORTS_APP_PASSWORD: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
               # Mounted at ~/.deep-research-agent specifically, NOT the
               # whole /home/app home dir -- real bug found and fixed
               # 2026-09-22: mounting the entire home dir meant every image
@@ -862,9 +879,358 @@
             print(json.dumps({"models": discovered, "warnings": warnings}))
       changed_when: false
 
+- name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this stack's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - ai-services-stack
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
+  roles:
+    - gvm_scan_account
+
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [wazuh_agent_rollout]
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/ai-services-stack
+    wazuh_agent_group: ai_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
+
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all
   become: true
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Share deep-research's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    nextcloud_dr_reports_user: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_USER') | default('', true) }}"
+    nextcloud_dr_reports_app_password: "{{ lookup('env', 'NEXTCLOUD_DR_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: nextcloud_dr_reports_user | length > 0 and nextcloud_dr_reports_app_password | length > 0
+      vars:
+        # NOT the bare apps_seg IP -- confirmed live 2026-09-30 that Nextcloud
+        # rejects any Host header not in its own trusted_domains list with a
+        # "400 Bad Request / Access through untrusted domain" guest page,
+        # and the bare IP was never added there. CyberSecEval's own runtime
+        # push (cse_tasks.py) already uses this same FQDN and demonstrably
+        # works -- this play now matches that, not the plan doc's illustrative
+        # (and wrong) bare-IP example.
+        nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
+        nextcloud_folder_share_owner_user: "{{ nextcloud_dr_reports_user }}"
+        nextcloud_folder_share_owner_password: "{{ nextcloud_dr_reports_app_password }}"
+        nextcloud_folder_share_folder: "Reports/deep-research-agent"
+
+- name: Install eval-runner (GPQA/IFEval/BFCL/AgentBench/RepoBench against Framework's llama-server)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    repo_root: "{{ (playbook_dir + '/../../../..') | realpath }}"
+    eval_runner_source_dir: "{{ repo_root }}/terraform/lxc/ansible/files/eval-runner"
+    eval_runner_build_dir: /opt/eval-runner
+    eval_runner_framework_host: "{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}"
+    eval_runner_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+    eval_runner_hf_token: "{{ lookup('env', 'HF_TOKEN') | mandatory('HF_TOKEN env var is required') }}"
+    # Publishing to Nextcloud (eval-run publish). Only the app password is
+    # secret; until it exists in OpenBao it's empty and publish says it isn't
+    # configured, without failing the deploy.
+    eval_runner_nextcloud_url: "https://nextcloud.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    eval_runner_nextcloud_user: eval-reports
+    eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+    eval_runner_table_share_with: steve
+    # The control panel's worker (eval_tasks.py; docs/eval-runner/panel-plan.md)
+    # connects out to cse-panel-stack's Redis (mgmt_seg, MikroTik rule
+    # mikrotik-firewall-eval-runner-panel.yml).
+    eval_runner_worker_dir: /opt/eval-runner-worker
+    eval_runner_cse_panel_ip: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}"
+    eval_runner_redis_password: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}"
+    eval_runner_workers:
+      - { name: runs, queue: eval-runner }
+      - { name: ctl, queue: eval-runner-ctl }
+  tasks:
+    - name: Create eval-runner build and config directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ eval_runner_build_dir }}"
+        - /etc/eval-runner
+
+    # Owned by uid 1000: the image runs as its non-root `app` user (see the
+    # Dockerfile), which writes results here through a bind mount.
+    - name: Create eval-runner results directory
+      ansible.builtin.file:
+        path: /srv/eval-runner/results
+        state: directory
+        owner: "1000"
+        group: "1000"
+        mode: "0755"
+
+    - name: Copy eval-runner build context (Dockerfile and image helpers)
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/{{ item }}"
+        dest: "{{ eval_runner_build_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - Dockerfile
+        - Dockerfile.agentbench
+        - Dockerfile.agentbench-sandbox
+        - Dockerfile.bfcl
+        - agentbench-constraints.txt
+        - agentbench.patch
+        - agentbench_run.py
+        - bfcl-constraints.txt
+        - bfcl_run.py
+        - mock_nextcloud.py
+        - mock_openai.py
+        - publish.py
+        - repobench_run.py
+        - runmeta.py
+        - selftest.sh
+        - selftest_checks.py
+        - summarize.py
+        - wrapper_common.py
+        - wrapper_selftest.sh
+
+    # Canonical copy lives with the docs; the image ships it so `eval-run
+    # publish` can mirror it into Nextcloud next to the leaderboard.
+    - name: Copy findings.md into the eval-runner build context
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/docs/eval-runner/findings.md"
+        dest: "{{ eval_runner_build_dir }}/findings.md"
+        mode: "0644"
+
+    # The first deploy (2026-10-01) ran the image as root with this volume
+    # at /root/.cache; the non-root image uses eval-runner-hf instead. Safe
+    # to drop: it only ever cached public/gated datasets, re-downloadable.
+    - name: Remove the old root-owned HF cache volume
+      community.docker.docker_volume:
+        name: eval-runner-hf-cache
+        state: absent
+
+    # One image per harness (their pinned dependencies conflict), plus the
+    # sandbox AgentBench starts one throwaway container of per episode.
+    - name: Build eval-runner images
+      community.docker.docker_image:
+        name: "{{ item.name }}"
+        tag: "{{ item.tag }}"
+        source: build
+        build:
+          path: "{{ eval_runner_build_dir }}"
+          dockerfile: "{{ item.dockerfile }}"
+        force_source: true
+      loop:
+        - { name: eval-runner, tag: local, dockerfile: Dockerfile }
+        - { name: eval-runner-bfcl, tag: local, dockerfile: Dockerfile.bfcl }
+        - { name: eval-runner-agentbench, tag: local, dockerfile: Dockerfile.agentbench }
+        - { name: local-os/default, tag: latest, dockerfile: Dockerfile.agentbench-sandbox }
+      loop_control:
+        label: "{{ item.name }}:{{ item.tag }}"
+
+    # Every force_source rebuild leaves the previous image untagged; 13 of
+    # those (plus 4 old deep-research builds) had filled /var/lib/docker
+    # to 86% by 2026-10-01. Dangling only: tagged and in-use images stay.
+    - name: Remove dangling images left by rebuilds
+      community.docker.docker_prune:
+        images: true
+        images_filters:
+          dangling: true
+
+    - name: Install eval-runner env file
+      ansible.builtin.copy:
+        dest: /etc/eval-runner/eval-runner.env
+        mode: "0600"
+        content: |
+          LLM_BASE_URL=http://{{ eval_runner_framework_host }}:8080
+          OPENAI_API_KEY={{ eval_runner_llm_api_key }}
+          HF_TOKEN={{ eval_runner_hf_token }}
+          NEXTCLOUD_EVAL_REPORTS_URL={{ eval_runner_nextcloud_url }}
+          NEXTCLOUD_EVAL_REPORTS_USER={{ eval_runner_nextcloud_user }}
+          NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD={{ eval_runner_nextcloud_app_password }}
+          NEXTCLOUD_EVAL_TABLE_SHARE_WITH={{ eval_runner_table_share_with }}
+      no_log: true
+
+    - name: Install eval-run script
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/eval-run"
+        dest: /usr/local/bin/eval-run
+        mode: "0755"
+
+    - name: Install python3-venv for the panel worker
+      ansible.builtin.apt:
+        name: python3-venv
+        state: present
+
+    - name: Create the panel worker venv (celery/redis pinned as cse-panel)
+      ansible.builtin.pip:
+        name:
+          - celery==5.4.0
+          - redis==5.2.1
+        virtualenv: "{{ eval_runner_worker_dir }}/.venv"
+        virtualenv_command: python3 -m venv
+      register: eval_runner_worker_venv
+
+    - name: Install the panel worker's task module
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/eval_tasks.py"
+        dest: "{{ eval_runner_worker_dir }}/eval_tasks.py"
+        mode: "0644"
+      register: eval_runner_worker_module
+
+    # The Framework lock shared with cse-controller's CyberSecEval worker
+    # (docs/benchmark-panel/plan.md, C).
+    - name: Install the shared Framework lock module
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/terraform/lxc/ansible/files/framework-lock/framework_lock.py"
+        dest: "{{ eval_runner_worker_dir }}/framework_lock.py"
+        mode: "0644"
+      register: eval_runner_worker_lock_module
+
+    # The Compare tab's data (eval_tasks.compare) comes from publish.py's
+    # own row builder, so the ctl worker imports it (and summarize.py), and
+    # shows models by their model_aliases.json labels.
+    - name: Install publish.py and summarize.py next to the panel worker
+      ansible.builtin.copy:
+        src: "{{ eval_runner_source_dir }}/{{ item }}"
+        dest: "{{ eval_runner_worker_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - publish.py
+        - summarize.py
+        - model_aliases.json
+      register: eval_runner_worker_publish_modules
+
+    - name: Install the panel worker's broker settings
+      ansible.builtin.copy:
+        dest: /etc/eval-runner/worker.env
+        mode: "0600"
+        content: |
+          CELERY_BROKER_URL=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/0
+          CELERY_RESULT_BACKEND=redis://:{{ eval_runner_redis_password }}@{{ eval_runner_cse_panel_ip }}:6379/1
+      no_log: true
+      register: eval_runner_worker_env
+
+    # Two workers from one module: "runs" takes benchmark runs one at a time;
+    # "ctl" takes cancel/publish (and writes Framework's status), so those
+    # aren't stuck behind a run that takes hours. Root, because they drive
+    # eval-run and docker exactly as the operator does over ssh.
+    - name: Install the panel worker systemd units
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/eval-runner-worker-{{ item.name }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=eval-runner panel worker ({{ item.name }}: queue {{ item.queue }})
+          After=network-online.target docker.service
+          Wants=network-online.target
+
+          [Service]
+          EnvironmentFile=/etc/eval-runner/eval-runner.env
+          EnvironmentFile=/etc/eval-runner/worker.env
+          WorkingDirectory={{ eval_runner_worker_dir }}
+          ExecStart={{ eval_runner_worker_dir }}/.venv/bin/celery -A eval_tasks worker -Q {{ item.queue }} --concurrency 1 -n {{ item.name }}@%%h --loglevel INFO
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+      loop: "{{ eval_runner_workers }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: eval_runner_worker_units
+
+    # Restarted only when something changed: a restart mid-run makes Celery
+    # redeliver the run task, which re-attaches to the still-running
+    # container (eval_tasks._run_job) rather than starting it again.
+    - name: Enable and (re)start the panel workers
+      ansible.builtin.systemd:
+        name: "eval-runner-worker-{{ item.name }}"
+        enabled: true
+        state: "{{ 'restarted' if (eval_runner_worker_venv.changed or eval_runner_worker_module.changed or eval_runner_worker_lock_module.changed or eval_runner_worker_publish_modules.changed or eval_runner_worker_env.changed or eval_runner_worker_units.changed) else 'started' }}"
+        daemon_reload: true
+      loop: "{{ eval_runner_workers }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Check Framework's llama-server is reachable with this key
+      ansible.builtin.uri:
+        url: "http://{{ eval_runner_framework_host }}:8080/v1/models"
+        headers:
+          Authorization: "Bearer {{ eval_runner_llm_api_key }}"
+      register: eval_runner_models
+      failed_when: false
+      no_log: true
+
+    - name: Report Framework reachability (non-fatal, Framework may be serving nothing right now)
+      ansible.builtin.debug:
+        msg: "Framework /v1/models returned HTTP {{ eval_runner_models.status | default('unreachable') }}"
+
+    # Runs the real start/exec/check path against a stand-in server inside
+    # each image -- no Framework, no GPU. Proves the gated GPQA download,
+    # IFEval's nltk data, scoring, the request settings lm_eval sends
+    # (max_tokens 8192, temperature 0), the empty-response flags, resume from
+    # cache and server-change detection; then BFCL, AgentBench (two real
+    # network-less sandbox episodes) and RepoBench (dataset download, raw
+    # completions) end to end, each with its historical request shape and
+    # resume, on every deploy.
+    - name: Run eval-runner self-test
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/eval-run
+          - selftest
+      register: eval_runner_selftest
+      changed_when: false
+      failed_when: eval_runner_selftest.rc != 0 or 'all selftests OK' not in eval_runner_selftest.stdout
+
+    - name: Show eval-runner self-test summary
+      ansible.builtin.debug:
+        msg: "{{ eval_runner_selftest.stdout_lines | select('match', '^(==|checks OK|check OK|.*selftest OK|all selftests OK|server )') | list }}"
+
+- name: Share eval-runner's Nextcloud Reports folder with steve
+  hosts: all
+  gather_facts: false
+  vars:
+    eval_runner_nextcloud_app_password: "{{ lookup('env', 'NEXTCLOUD_EVAL_REPORTS_APP_PASSWORD') | default('', true) }}"
+  roles:
+    - role: nextcloud_folder_share
+      when: eval_runner_nextcloud_app_password | length > 0
+      vars:
+        nextcloud_folder_share_base_url: "https://nextcloud.lab.gibbsgreatly.xyz"
+        nextcloud_folder_share_owner_user: eval-reports
+        nextcloud_folder_share_owner_password: "{{ eval_runner_nextcloud_app_password }}"
+        nextcloud_folder_share_folder: "Reports/eval-runner"
+        # Read+delete (1+8=9): the operator deletes old/test runs from
+        # Nextcloud's own UI (asked 2026-10-08). Not update (2): with it,
+        # Nextcloud's Text editor opens a report for editing and locks it
+        # (HTTP 423), and publish can't overwrite it -- found the same day
+        # at 15. Deleted files go to the eval-reports account's trash, and
+        # the run stays in the Tables table and the leaderboard; publish
+        # uploads it again only if its files change (or `publish.py --all`).
+        nextcloud_folder_share_permissions: 9

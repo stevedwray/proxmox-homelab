@@ -14,6 +14,10 @@
 # real host-side margin — a squeezed host falls back to the general
 # OOM-killer, which can take down anything).
 #
+# pmx_gpu_gtt_ceiling_mb_fixed, when set, is the ceiling itself instead of
+# "total RAM minus pmx_gpu_gtt_reserved_host_mb" -- for a host whose ceiling
+# is a deliberate number (framework: 112 GiB, see its bootstrap playbook).
+#
 # Opt-in only — set pmx_gpu_unified_memory_tuning_enabled: true on the
 # specific host(s) that have this GPU class. Do not enable on pve/pve-test-vm.
 #
@@ -32,12 +36,27 @@
     success_msg: >-
       Reserving {{ pmx_gpu_gtt_reserved_host_mb }} MB for the host out of
       {{ ansible_memtotal_mb }} MB total.
+  when:
+    - pmx_gpu_unified_memory_tuning_enabled | bool
+    - pmx_gpu_gtt_ceiling_mb_fixed | default('') | string | length == 0
+
+- name: Compute GTT ceiling (fixed, or from actual host RAM)
+  ansible.builtin.set_fact:
+    pmx_gpu_gtt_ceiling_mb: >-
+      {{ pmx_gpu_gtt_ceiling_mb_fixed | int if (pmx_gpu_gtt_ceiling_mb_fixed | default('') | string | length > 0)
+         else (ansible_memtotal_mb | int) - (pmx_gpu_gtt_reserved_host_mb | int) }}
   when: pmx_gpu_unified_memory_tuning_enabled | bool
 
-- name: Compute GTT ceiling from actual host RAM
-  ansible.builtin.set_fact:
-    pmx_gpu_gtt_ceiling_mb: "{{ (ansible_memtotal_mb | int) - (pmx_gpu_gtt_reserved_host_mb | int) }}"
-  when: pmx_gpu_unified_memory_tuning_enabled | bool
+- name: Assert a fixed GTT ceiling still leaves the host at least 8 GB
+  ansible.builtin.assert:
+    that:
+      - (pmx_gpu_gtt_ceiling_mb | int) + 8192 <= (ansible_memtotal_mb | int)
+    fail_msg: >-
+      pmx_gpu_gtt_ceiling_mb_fixed ({{ pmx_gpu_gtt_ceiling_mb }} MB) leaves less than 8 GB of this
+      host's {{ ansible_memtotal_mb }} MB.
+  when:
+    - pmx_gpu_unified_memory_tuning_enabled | bool
+    - pmx_gpu_gtt_ceiling_mb_fixed | default('') | string | length > 0
 
 - name: Compute ttm page count (1 page = 4KiB = 1/256 MiB)
   ansible.builtin.set_fact:
@@ -88,6 +107,6 @@
     msg: >-
       GTT ceiling set to {{ pmx_gpu_gtt_ceiling_mb }} MB
       ({{ pmx_gpu_gtt_pages }} pages) out of {{ ansible_memtotal_mb }} MB
-      total, reserving {{ pmx_gpu_gtt_reserved_host_mb }} MB for the host.
+      total, leaving {{ (ansible_memtotal_mb | int) - (pmx_gpu_gtt_ceiling_mb | int) }} MB for the host.
       {{ 'A REBOOT IS REQUIRED for this to take effect.' if _grub_cmdline_updated.changed else 'Already up to date -- no reboot needed.' }}
   when: pmx_gpu_unified_memory_tuning_enabled | bool

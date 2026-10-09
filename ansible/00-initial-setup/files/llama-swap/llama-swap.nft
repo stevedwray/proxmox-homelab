@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+# Managed by proxmox-homelab ansible/00-initial-setup/framework-desktop-llama-swap.yml -- do not edit by hand
+#
+# llama-swap's control page (:8099) has no login of its own. Users log in
+# through Authentik at https://llm-control.<lab domain>, which Traefik
+# (proxy-stack, 192.168.30.10) forwards here. This table lets only Traefik
+# and framework itself reach :8099, so the page can't be opened directly
+# without that login. Loaded by llama-swap.service (ExecStartPre), and
+# removed when it stops. Nothing else on framework is affected.
+
+table inet llama_swap
+delete table inet llama_swap
+
+table inet llama_swap {
+  chain input {
+    type filter hook input priority 0; policy accept;
+    tcp dport 8099 iif "lo" accept
+    tcp dport 8099 ip saddr 192.168.30.10 accept
+    tcp dport 8099 drop
+  }
+}

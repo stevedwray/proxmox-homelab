@@ -9,7 +9,7 @@ spec:
       host: cse-panel.${LAB_DOMAIN}
       backend:
         type: url
-        url: http://${LAB_IP_CSE_PANEL}:8000
+        url: http://${LAB_IP_CSE_PANEL}:8050
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}
@@ -23,6 +23,19 @@ spec:
       backend:
         type: url
         url: http://${LAB_IP_CSE_PANEL}:5555
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: cse-panel-api
+      host: cse-panel-api.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_CSE_PANEL}:8000
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}

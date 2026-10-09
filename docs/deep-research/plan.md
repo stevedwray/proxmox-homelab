@@ -10,6 +10,15 @@ viewer — see `docs/reporting-platform/plan.md`. Broader Phase 2/3
 measurement (eval harness, job-model decoupling, quota fix, `cve-mcp`
 wiring) not yet done — see Phase 5 for what's confirmed but unbuilt.
 
+**Re-verified 2026-09-28:** both edge routes (`deep-research`,
+`deep-research-files`) return `302` to Authentik (auth done). Still
+unbuilt, confirmed from the source in
+`terraform/lxc/ansible/files/deep-research-agent/`: there's no job layer
+(runs still tied to the `textual-serve` session), and no `cve-mcp` or
+`docs-rag` tool wiring, although `cve-mcp` itself is live at
+`192.168.50.10:8000/mcp`. `ai-services-stack` now runs on `pve-tiny`
+(`docs/ai-stacks-pve-tiny/`), not `pve`.
+
 **Same day, later:** `web_search` switched from DDGS scraping to Tavily's
 real API after a genuine production incident, and two rounds of real
 production hangs were fully root-caused and fixed — a subprocess
@@ -20,6 +29,66 @@ after the first two fixes didn't stop a live recurrence) an O(n²)
 session-log bug in `engine/tui.py` fixed by throttling `_write_log()`.
 Verified live with a 30,408x speedup on the same workload. Full
 narrative in `docs/deep-research/current-state.md`'s 2026-09-22 entries.
+
+**2026-09-27:** `ai-services-stack` (and therefore `deep-research`) moved
+from `pve` to `pve-tiny`, still in `ai_seg` (same VLAN/subnet on both
+nodes). All subsequent work targets `pve-tiny` via
+`./with-secrets-prod-tiny`.
+
+**2026-09-30/10-01, four more real bugs found via live testing, all fixed
+and deployed to `stable`** (full narrative and evidence in
+`current-state.md`'s dated entries — this is a summary, not a
+replacement):
+1. A `multiprocessing.resource_tracker` concurrency race crashed
+   `fetch_url_to_workspace` repeatedly under real multi-subagent load
+   (`ValueError: bad value(s) in fds_to_keep`), burning quota on calls
+   that never ran. Mitigated with a spawn-serializing lock in
+   `tools/core.py`; **could not force a clean synthetic repro either way**,
+   so this is the textbook-correct fix for a documented Python pitfall,
+   not a confirmed-fixed root cause.
+2. The 2026-09-22 `web_search: 20 → 60` quota fix had silently never taken
+   effect live — `config_template.yaml` only seeds the real runtime
+   `config.yaml` (on the persistent volume) the first time that file
+   doesn't exist, so every redeploy since kept the stale value. Fixed by
+   patching the live file directly; **this will recur for any future
+   quota/setting change** until a proper reconciliation step exists (not
+   built — see current-state.md for why).
+3. The actual session-killing bug: a final-report LLM completion call
+   hung silently for 18+ minutes with zero response. Diagnosed via
+   VictoriaMetrics (framework's CPU was flat/idle the entire window --
+   the request never got real server-side processing) and confirmed the
+   LLM client (`engine/orchestrator.py`) never set a `timeout`, so it fell
+   through to the `openai` SDK's per-read default that never fires as
+   long as any byte trickles in. Fixed with an explicit 300s bounded
+   timeout via a manually-constructed `AsyncOpenAI` client. **The
+   underlying trigger for why the request stalled server-side is still
+   not confirmed** (leading theory: a llama.cpp/Nathanw-fork scheduling
+   quirk under very large accumulated context) -- out of scope to chase
+   further since the server is shared with CyberSecEval.
+4. A clean run (no exceptions, real `final_report.md` written) produced
+   nothing in Nextcloud. Root cause was missing observability, not a
+   broken push: `push_report_to_nextcloud` never logged any outcome, so
+   there was no way to tell whether it ran and failed or was never
+   reached. Manually replaying the exact same MKCOL/PUT sequence
+   succeeded immediately, proving the mechanism itself was sound. Fixed
+   by logging every exit path; **still unconfirmed whether the original
+   miss was a one-off or a reproducible gap in the `run_agent` call
+   site** -- the next real run's logs will show which.
+
+**2026-09-30, new feature: Nextcloud report push.** Adapted from
+CyberSecEval's own `_push_report_to_nextcloud` (see
+`docs/nextcloud-stack/plan.md` Phase 2, steps `nextcloud-P2-08` through
+`nextcloud-P2-13`). `deep-research` now pushes each run's
+`final_report.md` to `Reports/deep-research-agent/<run-id>/` in Nextcloud
+via WebDAV, using a scoped `dr-reports` service account (OpenBao-backed,
+not shared with CyberSecEval's `cse-reports`). Live and verified working
+(a real report round-tripped successfully after the logging fix above).
+Along the way, found and fixed two real bugs in the *design*, not just
+the code: the bare apps_seg IP was never in Nextcloud's `trusted_domains`
+(both this push and CyberSecEval's own `nextcloud_folder_share` role hit
+this), and this repo's own firewall-rule plan for it was based on a wrong
+assumption about the traffic path (CyberSecEval's real, working config
+already routes through the FQDN/Traefik, not directly to the container).
 
 This plan delivers in two stages. **Stage A** reproduces Donato Capitella's
 own design as literally as practical — Local Agent Builder skill, Microsoft
@@ -931,8 +1000,9 @@ otherwise, was judged the lower-effort path).
   2. `scripts/provision.sh --stack technitium-stack` — separately required to actually publish the new DNS record to the live authoritative Technitium server. This one **is** self-contained (it regenerates zone records from all EdgeManifests and pushes them as part of its own normal per-stack apply), unlike step 1.
 - Verified after both steps: `dig @192.168.20.15 +short deep-research.lab.gibbsgreatly.xyz` → `192.168.30.10`; `https://deep-research.lab.gibbsgreatly.xyz/` → `200`. Regression-checked `openwebui`/`searxng` routes still `200` — no disruption to existing routes.
 
-**Not yet done (step 2):** add the Authentik OIDC app/provider for this
-route, deliberately deferred to a separate, smaller change per the
+**~~Not yet done (step 2)~~ — superseded:** Authentik `forwardAuth` is
+live on both routes (Stage B, verified again 2026-09-28). Original note:
+add the Authentik OIDC app/provider for this route, deliberately deferred to a separate, smaller change per the
 operator's own two-step preference — currently `auth.mode: none` means this
 route is unauthenticated on the open internet-facing edge, same posture as
 `searxng` today. Do not leave this route in this state long-term.

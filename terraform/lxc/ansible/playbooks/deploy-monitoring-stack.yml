@@ -227,6 +227,10 @@
                   labels: {stack: media-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_OPENBAO') }}:9100"]
                   labels: {stack: openbao-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:9100"]
+                  labels: {stack: technitium-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:9100"]
+                  labels: {stack: technitium-tiny-stack}
 
             # Framework's native llama.cpp servers (--metrics), which
             # replaced Ollama's textfile collector --
@@ -267,6 +271,10 @@
                   labels: {stack: gaming-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:8080"]
                   labels: {stack: media-stack-lab}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:8080"]
+                  labels: {stack: technitium-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:8080"]
+                  labels: {stack: technitium-tiny-stack}
 
             - job_name: minecraft-status
               scrape_interval: 15s
@@ -290,11 +298,22 @@
                     stack: gaming-stack-lab
                     server: foreverworld
 
-            - job_name: coredns
+            # Technitium's native Prometheus endpoint (v15.0+). Needs an API
+            # token of the Technitium user "metrics" (Dashboard: View only);
+            # clustering syncs users and tokens, so one token serves both
+            # nodes. Replaces the coredns job (dns-stack destroyed
+            # 2026-09-08). docs/lan-dns-technitium/plan.md.
+            - job_name: technitium
               scrape_interval: 15s
+              scheme: http
+              metrics_path: /api/dashboard/metrics/text
+              authorization:
+                credentials: "{{ lookup('env', 'TECHNITIUM_METRICS_TOKEN') | mandatory('TECHNITIUM_METRICS_TOKEN env var is required') }}"
               static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_DNS') }}:9153"
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM') }}:5380"]
+                  labels: {stack: technitium-stack, node: pve}
+                - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:5380"]
+                  labels: {stack: technitium-tiny-stack, node: pve-tiny}
 
             - job_name: authentik
               static_configs:
@@ -971,6 +990,44 @@
   roles:
     - role: docker_live_usage_reporter
       when: docker_live_usage_reporter_enabled | default(false) | bool
+
+- name: Provision the dedicated GVM credentialed-scan account (docs/lxc-scan-and-monitoring-rollout/plan.md gvm-06)
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this stack's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - monitoring-stack
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
+  roles:
+    - gvm_scan_account
+
+- name: Enroll this host as a Wazuh agent (docs/lxc-scan-and-monitoring-rollout/plan.md waz-02)
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [wazuh_agent_rollout]
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/monitoring-stack
+    wazuh_agent_group: mgmt_seg
+    wazuh_agent_docker_monitoring_enabled: true
+  roles:
+    - wazuh_agent
 
 - name: Enable unattended security updates (fleet rollout, 2026-08-30)
   hosts: all

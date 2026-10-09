@@ -414,6 +414,14 @@ test 82 pass / 0 fail (Authentik health/API/LDAP/OIDC for 10 apps, 14
 forwardAuth routes, Portainer, Harbor incl. robot, Grafana, NetBox, Graylog,
 Wazuh, Proxmox RO token, Pterodactyl, Nextcloud, Jellyfin, Immich).
 
+**Re-verified live 2026-09-28** (read-only `pct exec` on `pve`): the
+`docker-image-prune.timer` is enabled and active on portainer, monitoring,
+netbox, wazuh and authentik; guest `resolv.conf` is `192.168.20.1` on
+monitoring, `192.168.40.1` on wazuh, and `192.168.20.15` on authentik (set
+deliberately by `deploy-authentik-stack.yml`'s "Restore host resolver"
+task, which runs after `lxc_base`; not drift). The egg 19 item below was
+not re-checked.
+
 **Known follow-ups (not merge-caused):**
 - Pterodactyl egg 19 default `AC_AI_PLAYERBOT_ADD_CLASS_ACCOUNT_POOL_SIZE`
   still 1 in Panel (server 4 already runs 4); plan eggs/servers/game config
