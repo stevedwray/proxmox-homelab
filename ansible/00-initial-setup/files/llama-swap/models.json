@@ -69,11 +69,10 @@
       "name": "Laguna-S-2.1 UD-Q4_K_M",
       "gguf": "/storage/models/llm/Laguna-S-2.1-UD-Q4_K_M-merged.gguf",
       "backends": [
-        "fork",
         "upstream",
         "upstream-hip"
       ],
-      "note": "Scored 75.5% BFCL on llama.cpp vs 92.75% on Ollama (2026-09); check tool calls before trusting it.",
+      "note": "Not on the Nathanw fork: its build b10814 emits control token 14 ('〈|') hundreds of times in place of reasoning (checked 2026-10-09); upstream b11514 reasons normally. Scored 75.5% BFCL on llama.cpp vs 92.75% on Ollama (2026-09); check tool calls before trusting it.",
       "settings": {
         "ctx_size": 131072,
         "jinja": true,
@@ -86,7 +85,6 @@
       "name": "Laguna-S-2.1 Heretic Q4_K_M",
       "gguf": "/storage/models/llm/Laguna-S-2.1-Heretic-Q4_K_M.gguf",
       "backends": [
-        "fork",
         "upstream",
         "upstream-hip"
       ],
@@ -95,7 +93,8 @@
         "jinja": true,
         "reasoning_format": "deepseek"
       },
-      "variants": []
+      "variants": [],
+      "note": "Not on the Nathanw fork: its build b10814 emits control token 14 ('〈|') hundreds of times in place of reasoning (checked 2026-10-09); upstream b11514 reasons normally."
     },
     {
       "id": "qwen3-coder-next",

@@ -362,3 +362,4 @@ class ShippedCatalogSettingsTest(unittest.TestCase):
             lb.settings_args(m["settings"])
         laguna = next(m for m in catalog["models"] if m["id"] == "laguna-s-2.1-heretic")
         self.assertEqual(laguna["settings"]["reasoning_format"], "deepseek")
+        self.assertNotIn("fork", laguna["backends"])  # the fork's b10814 can't run Laguna
