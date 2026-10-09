@@ -23,12 +23,27 @@ merged or dropped from its own work session; update this list when one is.
 - **Kept on purpose:** `stable`, `main`, `baseline/teardown-validated`,
   `dev/pve-test` and `archive/*`.
 
+## Follow-up (later on 2026-10-10)
+
+- **Merged to stable:** #435 (`fix/ark-update-workaround`, merged
+  directly), #444 (stale `dns-stack` GVM IP mapping) and #439 (catch-up
+  plans + arr UI port lockdown).
+- **Rescued:** `81f88809`, a teardown fix that existed only on the local,
+  frozen `baseline/teardown-validated` ref, is now PR #467.
+- **Pushed:** `feat/azerothcore-starter-weapon-skills` is now PR #466.
+- **stable → main:** stable is about 340 commits ahead of main (last
+  promotion #434, 2026-09-28). It waits on the pending ai-services-stack
+  deploy (#464).
+
 ## Still open
 
 | Branch | Where | Last commit | What | Next |
 |---|---|---|---|---|
-| `fix/uvm-stale-dns-stack-ip-mapping` | PR #444 | 2026-09-29 | Removes `192.168.20.13 → dns-stack` from GVM's `ip_to_stack.json`. Still needed: stable still has the mapping, so findings are attributed to a destroyed CT. | Merges cleanly into stable. |
-| `task/catch-up-01-arr-lockdown` | PR #439 | 2026-09-28 | The catch-up plans (docs/catch-up), the status refresh, and the arr UI port lockdown (01). Contains the deleted `task/catch-up-plans` and `task/status-refresh-2026-09-28`. | Merges cleanly into stable. |
-| `fix/ark-update-workaround` | PR #435 | 2026-09-27 | ARK update-check playbook (`update-ark-survival-ascended.yml`) and appmanifest cleanup on server stop. | Merges cleanly into stable; check it matches what runs. |
-| `feat/azerothcore-starter-weapon-skills` | local only, 6 commits | 2026-09-29 | AzerothCore QoL: universal starter bags (`003-fix-starter-bag.sql`), Draenei heirloom vendor placement, starter weapon skills, each with docs. Contains the deleted `fix/azerothcore-starter-bags`, `fix/draenei-heirloom-vendor` and `preserve/gaming-stack-lab-starter-bags-orphan`. | Push, PR. Merges cleanly into stable. |
-| `prod/pve-infra` | local + remote | 2026-05-25 | "Promote validated pve infrastructure state" and planning docs for the baseline, credential and data refactors; 1,867 commits behind stable. | Kept (operator, 2026-10-10). |
+| `feat/azerothcore-starter-weapon-skills` | PR #466, 6 commits | 2026-09-29 | AzerothCore QoL: universal starter bags, Draenei heirloom vendor placement, starter weapon skills, each with docs. | Merges cleanly into stable; check it matches what runs. |
+| `fix/teardown-skip-portainer-backup-when-stopped` | PR #467, 1 commit | 2026-10-10 | Skip the Portainer pre-destroy backup in `teardown-deploy-test.sh` when the LXC isn't running. | `bash -n`/shellcheck clean; not exercised live. |
+| `fix/ark-update-workaround` | local + remote | 2026-09-27 | Merged (#435); branch not yet deleted. | Delete local and remote. |
+| `prod/pve-infra` | local + remote | 2026-05-25 | "Promote validated pve infrastructure state" and planning docs for the baseline, credential and data refactors; far behind stable. | Kept (operator, 2026-10-10). |
+
+The local `baseline/teardown-validated` ref still carries `81f88809`
+(now on PR #467); reset it to `origin/baseline/teardown-validated` once
+#467 merges.
