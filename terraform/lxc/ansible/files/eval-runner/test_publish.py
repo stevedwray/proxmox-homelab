@@ -354,6 +354,22 @@ class PublishTest(unittest.TestCase):
         self.assertFalse(publish._same(43.0, 43.94))
 
 
+class RemoveTest(unittest.TestCase):
+    def test_removed_run_loses_its_folder_and_rows_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            make_tree(tmp)
+            files, rows = publish.build_files(publish.collect(tmp), None, "NOW")
+            nc = FakeNextcloud()
+            publish.publish(nc, files, rows + [publish.cse_row(CSE_RECORD)])
+            run = "runs/glm-5.3-flash-both-20261002T000000Z"
+            self.assertEqual(publish.remove(nc, [run, "cyberseceval/3bf79d63-aaaa"]), 3)
+            self.assertIn(f"{publish.FOLDER}/{run}", nc.state["deleted"])
+            self.assertEqual(len(nc.state["rows"]), 3)  # the historical rows stay
+            self.assertEqual(publish.remove(nc, [run]), 0)  # a second delete is harmless
+            # a prefix only matches whole path segments
+            self.assertEqual(publish.remove(nc, ["historical/qwen36"]), 0)
+
+
 class ChangedOnlyTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

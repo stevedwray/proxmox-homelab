@@ -5,8 +5,10 @@ battery (GPQA, IFEval, BFCL, AgentBench, RepoBench). Every run records
 which model answered, its scores, duration, tokens and tokens/s, and
 both kinds of run share one queue for Framework.
 
-Status: **decisions made; phase 1 deployed (2026-10-08); phase 2 next.** See
-[plan.md](plan.md).
+Status: **phases 1–4 deployed and merged to stable (#458, 2026-10-08).**
+Follow-up on `fix/panel-results-delete` (2026-10-09): paged Results lists
+and a Delete run button on both tabs; see the Log. The history below
+is kept as written at the time. See [plan.md](plan.md).
 
 ## Where things stand (2026-10-08)
 
@@ -229,6 +231,80 @@ from `task/framework-run-lock`; deployed 2026-10-08):**
   table.
 
 ## Log
+
+- 2026-10-09, Results lists and deleting runs (`fix/panel-results-delete`),
+  operator report: the run list kept growing, the selected run's results
+  were at the bottom under it, and there was no way to delete a run.
+  Deployed (d1fd0279), approval `panel-results-delete`: the
+  ai-services-stack eval play (selftest OK), cse-controller and
+  cse-panel-stack all ran with failed=0. Live: 21 callbacks, both Delete
+  buttons wired, and `DELETE /eval/api/jobs/<unknown>` returned 404. The
+  first real delete is the operator's, and it is also the first live test
+  of deleting Tables rows.
+  - **Both tabs:** the run list shows ten runs a page, so the clicked
+    run's results sit right under it, and that row is highlighted.
+    - Ticks are for deleting: **Delete selected (N)**, with **Select all
+      finished** and **Clear** beside it. The confirm dialog lists the runs
+      first.
+    - Ticks stay on the same runs when new runs are added at the top.
+    - The first version had one Delete button per run; the operator asked
+      for multi-select the same day.
+    - Eval runs that are still going are skipped. A ticked unfinished
+      CyberSecEval run is cancelled, and the dialog says so.
+    - Deployed (6c3da81b), approval `panel-results-multidelete`:
+      cse-panel-stack ran with failed=0 and has 25 callbacks. A browser tab
+      still open from before logged KeyErrors for the removed callbacks;
+      reloading it fixes that.
+  - **Times in the browser's time zone** (operator request, same day):
+    - A clientside callback reads the zone (`Intl…timeZone`, e.g.
+      `Pacific/Auckland`) into a store.
+    - Submitted/finished times, chart labels, the lock's "since" and the
+      builds' "checked" are converted with `zoneinfo`, so daylight saving
+      is right for older dates.
+    - The header says which zone; it's UTC if the browser doesn't say.
+    - panel-ui now pins `tzdata`, because the slim image may have no zone
+      files.
+    - Deployed (f8910d1a), approval `panel-local-time`: failed=0, 27
+      callbacks. tzdata installed; in the live container 21:30 UTC on
+      2026-10-08 came out as 2026-10-09 10:30 in Pacific/Auckland. A tab
+      still open from before raised IndexError: it sends one input fewer
+      than the server now expects. Reloading fixes it.
+  - **Kept settings and live progress** (operator request, same day):
+    - The run forms, the open tab and Run/Results view, and Compare's
+      full-runs switch are kept in the browser (Dash persistence,
+      localStorage). A value a callback sets isn't kept: typing a number
+      selects Choose, but after a reload the size is back to the default.
+    - A running eval job shows "12m 5s so far" in Duration and "Running
+      for …" in its detail, with a note that lm_eval's log only moves when
+      an answer comes back. A 32k IFEval answer sat at "Requesting API
+      0/1" for 20+ minutes.
+    - Charts keep their zoom across refreshes (`uirevision`).
+    - Not done: live token counts during a run. That needs a worker change,
+      and its deploy restarts the run worker, so it waits for a gap
+      between runs.
+    - Deployed (5dbdeb87), approval `panel-persist-progress`: failed=0, 27
+      callbacks. The running IFEval showed "27m 15s so far". The run and
+      the three queued jobs weren't touched.
+  - **Eval battery delete** (`DELETE /eval/api/jobs/<id>`, refused while
+    the run or a resume of it is still going) removes:
+    - every panel entry for the run, resumes included;
+    - its results on ai-services-stack, through the ctl worker's
+      `eval_tasks.delete_run` and `eval-run delete <run>`;
+    - its Nextcloud folder and Tables rows (`publish.py --remove
+      runs/<run>`), then republishes the leaderboard without it.
+  - **CyberSecEval delete:** the × in each row is gone. Its old wiring
+    also sent a delete for any job that dropped out of the list, such as
+    one whose Redis entry expired. `cse_tasks.delete_run_dirs` now also
+    removes:
+    - the run's Nextcloud folder (`Reports/cyberseceval/<stamp>/<benchmark>`),
+      plus the submission folder once it is empty;
+    - its Compare/Tables row (`eval_tasks.forget_cse`).
+
+    New runs record their folder stamp in `meta.json`. For older runs, the
+    folder is found from the run's exact start time in `results.md`.
+  - **Noticed, not changed:** CyberSecEval runs submitted as a suite (more
+    than one benchmark at once) never reach `/jobs`, so the Results list
+    doesn't show them.
 
 - 2026-10-08, deployed (cd09cde2), approval `benchmark-labels-retire-page`.
   The ai-services-stack eval play and cse-panel-stack both ran with

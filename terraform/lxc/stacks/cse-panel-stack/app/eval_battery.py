@@ -10,7 +10,7 @@ ai-services-stack (terraform/lxc/ansible/files/eval-runner/eval_tasks.py),
 which connects out to this stack's Redis:
 
   queue eval-runner      eval_tasks.run / eval_tasks.resume (one at a time)
-  queue eval-runner-ctl  eval_tasks.cancel / eval_tasks.publish
+  queue eval-runner-ctl  eval_tasks.cancel / publish / delete_run
   key eval:framework     Framework status, written by the worker every 30 s
   key eval:job:<id>      per-job state, log tail and results
 
@@ -54,6 +54,7 @@ LINKS = {
     "Reports folder": f"{NEXTCLOUD}/apps/files/?dir={SHARED_REPORTS_DIR}",
 }
 SAMPLES_TIMEOUT = 30
+LIVE_STATES = ("queued", "waiting", "starting", "running", "publishing")
 
 
 def _redis():
@@ -156,6 +157,30 @@ def resume(job_id: str, x_authentik_username: str | None = Header(default=None))
              note=f"resume of {job.get('task', '')} {job['run']}", submitted_by=kwargs["submitted_by"])
     _remember(result.id)
     return {"submitted": [result.id]}
+
+
+@router.delete("/api/jobs/{job_id}")
+def delete(job_id: str):
+    """Delete a run for good: every panel entry for its run (the original
+    job and any resumes of it), and, through the worker (eval_tasks.delete_run),
+    its results, its Nextcloud folder and its table rows. A job that never
+    got a run (e.g. cancelled while queued) only leaves the list."""
+    client = _redis()
+    ids = [i.decode() if isinstance(i, bytes) else i for i in client.lrange(RECENT_KEY, 0, -1)]
+    job = _job(job_id)
+    if not job and job_id not in ids:
+        raise HTTPException(404, "no such job")
+    run = job.get("run")
+    related = [i for i in ids if i == job_id or (run and _job(i).get("run") == run)]
+    live = [i for i in related if _job(i).get("state") in LIVE_STATES]
+    if live:
+        raise HTTPException(409, "this run is still going; cancel it first")
+    if run:
+        celery_app.send_task("eval_tasks.delete_run", args=[run], queue=CTL_QUEUE)
+    for i in related:
+        client.delete(f"eval:job:{i}")
+        client.lrem(RECENT_KEY, 0, i)
+    return {"deleted": related, "run": run}
 
 
 @router.get("/api/jobs/{job_id}/samples")

@@ -281,6 +281,9 @@ local models. Commits `5181323c` and `dca91fc4`.
   and the exact lm_eval argv, all in `run.json`.
 - **`eval-run resume`:** refuses if the fingerprint changed; `--force`
   overrides.
+- **`eval-run delete <run>`** (added 2026-10-09, behind the panel's
+  Delete run button): removes the run's results, its Nextcloud folder
+  and table rows, and republishes. Refuses while the run is running.
 - **`--note`.**
 - **`selftest_checks.py`:** asserts what lm_eval actually sent.
 - **Response-quality flags** in `summarize.py`.

@@ -65,6 +65,48 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(panel_ui.framework_status_color({"error": "refused"}), "danger")
 
 
+@unittest.skipUnless(panel_ui, "dash not installed")
+class CseResultsTest(unittest.TestCase):
+    JOBS = [{"job_id": "c2", "benchmark": "mitre", "state": "SUCCESS", "state_label": "Done",
+             "submitted_at": "2026-10-08T18:00:00.123456+00:00"},
+            {"job_id": "c1", "benchmark": "instruct", "state": "STARTED", "state_label": "Running"}]
+
+    def test_poll_keeps_the_ticks_on_the_same_runs(self):
+        resp = mock.Mock(json=lambda: {"jobs": self.JOBS})
+        with mock.patch.object(panel_ui.requests, "get", return_value=resp):
+            rows, _, _, kept = panel_ui.poll_jobs(1, ["c1", "gone"])
+            local, *_ = panel_ui.poll_jobs(2, [], "Pacific/Auckland")
+        self.assertEqual(([r["id"] for r in rows], kept), (["c2", "c1"], [1]))
+        self.assertEqual(local[0]["submitted_local"], "2026-10-09 07:00")
+        self.assertEqual(panel_ui._run_label(local[0]), "? · 10-09 07:00")
+
+    def test_clicking_shows_and_ticking_counts(self):
+        self.assertEqual(panel_ui.select_job({"row": 0, "column": 1, "row_id": "c2"}), "c2")
+        detail, style = panel_ui.show_run_detail("c2", self.JOBS)
+        self.assertIn("mitre", text(detail))
+        self.assertIn('{id} = "c2"', str(style))
+        self.assertEqual(panel_ui.tick_jobs([0, 1], self.JOBS), (["c2", "c1"], "Delete selected (2)", False))
+        self.assertEqual(panel_ui.tick_jobs([], self.JOBS), ([], "Delete selected", True))
+        with mock.patch.object(panel_ui, "ctx", mock.Mock(triggered_id="cse-select-all")):
+            self.assertEqual(panel_ui.tick_many_jobs(1, None, self.JOBS), [0])  # finished only
+
+    def test_message_lists_runs_and_warns_about_unfinished(self):
+        message = panel_ui.cse_delete_message(self.JOBS)
+        self.assertIn("Delete 2 runs", message)
+        self.assertIn("instruct c1", message)
+        self.assertIn("1 of them haven't finished", message)
+        self.assertNotIn("finished:", panel_ui.cse_delete_message(self.JOBS[:1]))
+
+    def test_confirmed_delete_deletes_each_and_forces_only_when_told_in_progress(self):
+        answers = iter([{"deleted": "c2"}, {"error": "job is started", "in_progress": True}, {"deleted": "c1"}])
+        resp = mock.Mock(json=lambda: next(answers))
+        with mock.patch.object(panel_ui.requests, "delete", return_value=resp) as delete:
+            message, colour, _ = panel_ui.delete_cse_jobs(1, ["c2", "c1"])
+        self.assertEqual(colour, "success")
+        self.assertIn("Deleted 2 runs", message)
+        self.assertEqual([c.kwargs.get("params") for c in delete.call_args_list], [None, None, {"force": "true"}])
+
+
 @unittest.skipUnless(eval_tab, "dash not installed")
 class EvalTabTest(unittest.TestCase):
     def test_row_has_metrics(self):
@@ -99,7 +141,7 @@ class EvalTabTest(unittest.TestCase):
         ids_ = [{"type": "eval-on", "task": t} for t in tasks]
         resp = mock.Mock(status_code=200, json=lambda: {"submitted": ["a"]})
         with panel_ui.server.test_request_context(headers={"X-Authentik-Username": "steve"}), \
-                mock.patch.object(eval_tab.requests, "post", return_value=resp) as post:
+                mock.patch.object(eval_tab.requests, "request", return_value=resp) as post:
             result = eval_tab.submit(1, on, ids_, sizes, counts, budget, note)
         return result, [c.kwargs["json"] for c in post.call_args_list], post
 
@@ -171,13 +213,98 @@ class EvalTabTest(unittest.TestCase):
                 _, offset = eval_tab.show_samples(1, 1, 1, "j2", 30)
             self.assertEqual(offset, 0)
 
+    def test_running_job_shows_elapsed_time(self):
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 8, 23, 11, 1, tzinfo=timezone.utc)
+        job = {"id": "j9", "task": "ifeval", "mode": "limit", "limit": 1, "state": "running",
+               "run": "glm-ifeval-limit1-S", "run_started": "2026-10-08T22:50:47Z"}
+        self.assertEqual(eval_tab.job_row(job, now=now)["duration"], "20m 14s so far")
+        self.assertEqual(eval_tab.job_row(DONE, now=now)["duration"], "3m 12s")
+        self.assertEqual(eval_tab.running_for(dict(job, state="queued"), now), "")
+        self.assertIn("Running for", text(eval_tab.job_detail(job, "Pacific/Auckland")))
+        self.assertNotIn("Running for", text(eval_tab.job_detail(DONE)))
+
+    def test_settings_are_kept_in_the_browser(self):
+        found = {}
+
+        def walk(c):
+            if getattr(c, "id", None) is not None:
+                found[json.dumps(c.id, sort_keys=True) if isinstance(c.id, dict) else c.id] = (
+                    getattr(c, "persistence", None), getattr(c, "persistence_type", None))
+            kids = getattr(c, "children", None)
+            for k in kids if isinstance(kids, (list, tuple)) else [kids]:
+                if hasattr(k, "to_plotly_json"):
+                    walk(k)
+        walk(panel_ui.app.layout)
+        for cid in ("family", "cse-section", "eval-section", "benchmarks", "num-test-cases", "eval-budget",
+                    "eval-note", "compare-full-only", '{"task": "gpqa", "type": "eval-size"}',
+                    '{"task": "gpqa", "type": "eval-on"}', '{"task": "gpqa", "type": "eval-count"}'):
+            self.assertEqual(found[cid], (True, "local"), cid)
+        self.assertEqual(panel_ui.CHART_LAYOUT["uirevision"], "keep")
+
+    def test_local_time(self):
+        lt = eval_tab.local_time
+        self.assertEqual(lt("2026-10-08T21:30:00Z", "Pacific/Auckland"), "2026-10-09 10:30")  # NZDT, +13
+        self.assertEqual(lt("2026-07-08T21:30:00+00:00", "Pacific/Auckland"), "2026-07-09 09:30")  # NZST, +12
+        self.assertEqual(lt("2026-10-08T21:30:05.123456+00:00", None), "2026-10-08 21:30")  # unknown: UTC
+        self.assertEqual(lt("2026-10-08T21:30:00Z", "Not/AZone"), "2026-10-08 21:30")
+        self.assertEqual((lt("", "UTC"), lt(None), lt("garbage")), ("", "", "garbage"))
+        row = eval_tab.job_row(DONE, "Pacific/Auckland")
+        self.assertEqual(row["submitted"], "2026-10-09 03:00")
+        self.assertIn("2026-10-09 03:00", text(eval_tab.job_detail(DONE, "Pacific/Auckland")))
+
     def test_poll_builds_rows_and_links(self):
         resp = mock.Mock(json=lambda: {"jobs": [DONE], "links": {"Tables": "https://x/t", "Reports": "https://x/r"}})
         with mock.patch.object(eval_tab.requests, "get", return_value=resp):
-            jobs, rows, links = eval_tab.poll(1)
+            jobs, rows, links, ticked = eval_tab.poll(1)
+            *_, kept = eval_tab.poll(2, ["j1"])
         self.assertEqual(rows[0]["task"], "ifeval")
-        self.assertEqual(len([l for l in links if hasattr(l, "href")]), 2)
+        self.assertEqual(len([link for link in links if hasattr(link, "href")]), 2)
+        self.assertEqual((ticked, kept), ([], [0]))
 
+    def test_ticks_follow_the_runs_when_new_runs_arrive(self):
+        rows = [{"id": "new"}, {"id": "j1"}, {"id": "j0"}]
+        self.assertEqual(eval_tab.selected_index(rows, ["j0", "j1", "deleted"]), [1, 2])
+
+    def test_clicking_shows_and_ticking_counts(self):
+        self.assertEqual(eval_tab.select({"row": 1, "column": 0, "row_id": "j1"}), "j1")
+        out = eval_tab.detail("j1", [DONE])
+        self.assertIn('{id} = "j1"', str(out[4]))
+        rows = [eval_tab.job_row(DONE), eval_tab.job_row(dict(DONE, id="j2"))]
+        self.assertEqual(eval_tab.tick([1], rows), (["j2"], "Delete selected (1)", False))
+        running = dict(DONE, id="j3", state="running")
+        with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-select-all")):
+            self.assertEqual(eval_tab.tick_many(1, None, [DONE, running]), [0])
+        with mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-select-none")):
+            self.assertEqual(eval_tab.tick_many(None, 1, [DONE, running]), [])
+
+    def test_delete_plan_and_message(self):
+        running = dict(DONE, id="j3", state="running", run="r3")
+        never = {"id": "j4", "task": "bfcl", "state": "cancelled"}
+        doomed, skipped = eval_tab.delete_plan([DONE, running, never], ["j1", "j3", "j4"])
+        self.assertEqual(([j["id"] for j in doomed], [j["id"] for j in skipped]), (["j1", "j4"], ["j3"]))
+        message = eval_tab.delete_message(doomed, skipped)
+        self.assertIn("Delete 2 runs", message)
+        self.assertIn("glm-ifeval-limit5-S", message)
+        self.assertIn("bfcl job (never started a run)", message)
+        self.assertIn("1 ticked run is still going", message)
+
+    def test_confirmed_delete_deletes_each_ticked_run(self):
+        answers = iter([(200, {"deleted": ["j1"], "run": "glm-ifeval-limit5-S"}), (404, {"detail": "no such job"}),
+                        (200, {"deleted": ["j4"], "run": None})])
+
+        def fake(method, url, **_):
+            status, body = next(answers)
+            return mock.Mock(status_code=status, json=lambda: body)
+        jobs = [DONE, dict(DONE, id="j2"), {"id": "j4", "task": "bfcl", "state": "cancelled"}]
+        with panel_ui.server.test_request_context(), \
+                mock.patch.object(eval_tab, "ctx", mock.Mock(triggered_id="eval-delete-confirm")), \
+                mock.patch.object(eval_tab.requests, "request", side_effect=fake) as req:
+            message, colour, _ = eval_tab.act(None, None, None, 1, None, ["j1", "j2", "j4"], jobs)
+        self.assertEqual([c.args[0] for c in req.call_args_list], ["DELETE"] * 3)
+        self.assertEqual(colour, "success")
+        self.assertEqual(message, "Deleted 1 run, removed 1 job that never ran. "
+                                  "Nextcloud and the results table catch up in a minute or so.")
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,12 @@ class FakeRedis:
         items = self.lists.get(key, [])
         return items[start:] if end == -1 else items[start:end + 1]
 
+    def lrem(self, key, count, value):
+        self.lists[key] = [v for v in self.lists.get(key, []) if v != value]
+
+    def delete(self, key):
+        self.data.pop(key, None)
+
 
 @unittest.skipUnless(eval_battery, "fastapi/httpx/celery not installed")
 class EvalBatteryTest(unittest.TestCase):
@@ -114,6 +120,29 @@ class EvalBatteryTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(self.sent[-1][0], "eval_tasks.resume")
         self.assertEqual(self.sent[-1][2]["run_name"], "glm-bfcl-S")
+
+    def test_delete_removes_the_run_and_its_resumes_and_asks_the_worker(self):
+        first, other = self.submit().json()["submitted"][0], self.submit().json()["submitted"][0]
+        eval_battery._put_job(first, state="failed", run="glm-bfcl-S")
+        eval_battery._put_job(other, state="done", run="glm-ifeval-S")
+        resumed = self.client.post(f"/eval/api/jobs/{first}/resume").json()["submitted"][0]
+        eval_battery._put_job(resumed, state="running")
+        self.assertEqual(self.client.delete(f"/eval/api/jobs/{first}").status_code, 409)  # resume still going
+        eval_battery._put_job(resumed, state="done")
+        res = self.client.delete(f"/eval/api/jobs/{first}").json()
+        self.assertEqual((sorted(res["deleted"]), res["run"]), (sorted([first, resumed]), "glm-bfcl-S"))
+        self.assertEqual(self.sent[-1], ("eval_tasks.delete_run", ["glm-bfcl-S"], None, "eval-runner-ctl"))
+        self.assertEqual([j["id"] for j in self.client.get("/eval/api/state").json()["jobs"]], [other])
+        self.assertEqual(self.client.delete(f"/eval/api/jobs/{first}").status_code, 404)
+
+    def test_delete_a_job_that_never_got_a_run_only_clears_the_list(self):
+        job = self.submit().json()["submitted"][0]
+        self.assertEqual(self.client.delete(f"/eval/api/jobs/{job}").status_code, 409)  # queued
+        eval_battery._put_job(job, state="cancelled")
+        sent = len(self.sent)
+        self.assertEqual(self.client.delete(f"/eval/api/jobs/{job}").json()["run"], None)
+        self.assertEqual(len(self.sent), sent)
+        self.assertEqual(self.client.get("/eval/api/state").json()["jobs"], [])
 
     def test_publish_goes_to_control_queue(self):
         self.client.post("/eval/api/publish")

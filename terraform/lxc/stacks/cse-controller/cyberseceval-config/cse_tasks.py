@@ -30,7 +30,7 @@ import signal
 import subprocess
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -90,6 +90,8 @@ FRAMEWORK_POLL = 30
 # decision 1). Sent by task name: this worker doesn't import eval_tasks.
 COMPARE_ROW_TASK = "eval_tasks.record_cse"
 COMPARE_ROW_QUEUE = "eval-runner-ctl"
+# ...and a deleted run's row is dropped again (eval_tasks.forget_cse).
+COMPARE_FORGET_TASK = "eval_tasks.forget_cse"
 
 
 def _build_mut_spec(
@@ -1378,6 +1380,8 @@ def _run_benchmark(
         "backend_model": backend_model or DEFAULT_BACKEND_MODEL,
         "random_sample": random_sample,
         "started_at": started_at,
+        # The run's Nextcloud folder, for deleting it later (delete_run_dirs).
+        "run_group_stamp": run_group_stamp,
     }))
     # Which model is actually loaded -- read now, and again at the end.
     snapshot_args = (
@@ -1513,20 +1517,111 @@ def backfill_compare_rows(runs_dir: Path = RUNS_DIR) -> int:
 _JOB_ID_RE = re.compile(r"^[0-9a-f-]{8,64}$")
 
 
+REPORTS_ROOT = "Reports/cyberseceval"
+# How many submission folders before a run's start to look through for an
+# older run's report folder (see _report_folder).
+REPORT_SEARCH_MAX = 20
+
+
+def _dav(method: str, url: str, auth: str, headers: dict | None = None) -> tuple[int | None, bytes]:
+    """One WebDAV request: (status, body), status None if unreachable."""
+    request = urllib.request.Request(url, method=method)
+    request.add_header("Authorization", auth)
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, b""
+    except urllib.error.URLError:
+        return None, b""
+
+
+def _dav_children(base: str, auth: str, folder: str) -> list[str] | None:
+    """Names in a Nextcloud folder, or None if it can't be listed."""
+    status, body = _dav("PROPFIND", f"{base}/{folder}", auth, {"Depth": "1"})
+    if status != 207:
+        return None
+    hrefs = re.findall(r"<(?:\w+:)?href>([^<]+)</(?:\w+:)?href>", body.decode(errors="replace"))
+    names = [unquote(h.rstrip("/").rsplit("/", 1)[-1]) for h in hrefs]
+    return names[1:]  # the first entry is the folder itself
+
+
+def _report_folder(base: str, auth: str, meta: dict) -> str | None:
+    """A run's folder in Nextcloud: Reports/cyberseceval/<stamp>/<benchmark>.
+    Runs from before 2026-10-09 didn't record the stamp, so for those it's
+    the submission folder at or before the run's start whose results.md
+    names this run's exact start time."""
+    benchmark = meta.get("benchmark")
+    if not benchmark:
+        return None
+    if meta.get("run_group_stamp"):
+        return f"{REPORTS_ROOT}/{meta['run_group_stamp']}/{benchmark}"
+    started = meta.get("started_at") or ""
+    if len(started) < 16:
+        return None
+    latest = f"{started[:10]}_{started[11:13]}{started[14:16]}"  # stamp format: YYYY-MM-DD_HHMM_xxxxxxxx
+    stamps = sorted((s for s in _dav_children(base, auth, REPORTS_ROOT) or []
+                     if re.fullmatch(r"\d{4}-\d\d-\d\d_\d{4}_\w+", s) and s[:15] <= latest), reverse=True)
+    for stamp in stamps[:REPORT_SEARCH_MAX]:
+        status, body = _dav("GET", f"{base}/{REPORTS_ROOT}/{stamp}/{benchmark}/results.md", auth)
+        if status == 200 and f"**Started:** {started}".encode() in body:
+            return f"{REPORTS_ROOT}/{stamp}/{benchmark}"
+    return None
+
+
+def _delete_report(meta: dict) -> str:
+    """Delete a run's Nextcloud folder, and its submission folder once that
+    is empty. Returns what happened, for the task result."""
+    webdav_url = os.environ.get("NEXTCLOUD_REPORTS_WEBDAV_URL", "")
+    user = os.environ.get("NEXTCLOUD_REPORTS_USER", "")
+    password = os.environ.get("NEXTCLOUD_REPORTS_APP_PASSWORD", "")
+    if not (webdav_url and user and password):
+        return "nextcloud not configured"
+    import base64
+
+    base = webdav_url.rstrip("/")
+    auth = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+    folder = _report_folder(base, auth, meta)
+    if not folder:
+        return "no report folder found"
+    status, _ = _dav("DELETE", f"{base}/{folder}", auth)
+    if status not in (204, 404):
+        return f"{folder}: delete failed ({status})"
+    parent = folder.rsplit("/", 1)[0]
+    if _dav_children(base, auth, parent) == []:
+        _dav("DELETE", f"{base}/{parent}", auth)
+    return f"{folder}: deleted"
+
+
 @app.task(name="cse_tasks.delete_run_dirs")
 def delete_run_dirs(job_ids: list[str]) -> dict:
-    """Removes each job's run_dir (responses/transcripts/logs) from disk --
-    dispatched by the panel's DELETE /suites/{id} once it's already cleared
-    the job/suite out of Redis. job_ids only ever comes from real Celery
-    task ids the panel read back from its own GroupResult, but a
-    UUID-shaped sanity check costs nothing for a delete-by-path-join."""
-    removed, skipped = [], []
+    """Deletes each job's run for good, once the panel has cleared it out of
+    Redis (DELETE /jobs/{id} or /suites/{id}): its run_dir (responses,
+    transcripts, logs), its Nextcloud report folder, and its row in the
+    eval battery's Compare tab and Tables table. job_ids only ever come
+    from real Celery task ids the panel read back, but a UUID-shaped
+    sanity check costs nothing for a delete-by-path-join."""
+    removed, skipped, reports = [], [], {}
     for job_id in job_ids:
         if not _JOB_ID_RE.match(job_id):
             skipped.append(job_id)
             continue
         run_dir = RUNS_DIR / f"panel-{job_id}"
+        try:
+            meta = json.loads((run_dir / "meta.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            meta = None
+        if meta:
+            reports[job_id] = _delete_report(meta)
         if run_dir.is_dir():
             shutil.rmtree(run_dir)
             removed.append(job_id)
-    return {"removed": removed, "skipped": skipped}
+    valid = [j for j in job_ids if _JOB_ID_RE.match(j)]
+    if valid:
+        try:
+            app.send_task(COMPARE_FORGET_TASK, args=[valid], queue=COMPARE_ROW_QUEUE)
+        except Exception:  # the eval side being down doesn't stop the delete
+            pass
+    return {"removed": removed, "skipped": skipped, "reports": reports}

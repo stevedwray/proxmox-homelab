@@ -21,7 +21,8 @@ Usage: eval-run <gpqa|ifeval> [--pilot|--limit N] [--concurrency N] [--max-gen-t
        eval-run resume <run> [--force]
        eval-run selftest
        eval-run results [run...]
-       eval-run publish [--dry-run]
+       eval-run publish [--dry-run | --remove PREFIX...]
+       eval-run delete <run>
 
 gpqa|ifeval  Start one detached run (container eval-<run>) against the model
              Framework's llama-server is serving. Uses Framework's GPU for
@@ -62,6 +63,12 @@ publish      Push everything (eval-runner runs + historical) to Nextcloud:
              report.md + manifest.json per run) and the Tables table
              "Model evaluations" (rows upserted, never duplicated).
              --dry-run renders into ${RESULTS_DIR}/_publish-preview instead.
+             --remove runs/<run> or cyberseceval/<job id> first deletes a
+             deleted run's Nextcloud folder and table rows.
+delete       Delete a finished run for good: its results here, its report
+             folder in Nextcloud and its rows in the table, then republish
+             the leaderboard without it. Refuses while the run's container
+             is running.
 USAGE
 }
 
@@ -227,9 +234,26 @@ case "$1" in
       helper /opt/eval-runner/publish.py --dry-run /results/_publish-preview
       echo "preview: ${RESULTS_DIR}/_publish-preview/"
     else
-      [[ $# -eq 0 ]] || die "unexpected arguments: $*"
-      helper /opt/eval-runner/publish.py
+      remove=()
+      while [[ $# -gt 0 ]]; do
+        [[ "$1" == --remove && "${2:-}" =~ ^(runs|cyberseceval)/[A-Za-z0-9_.-]+$ ]] \
+          || die "unexpected arguments: $*"
+        remove+=(--remove "$2")
+        shift 2
+      done
+      helper /opt/eval-runner/publish.py "${remove[@]}"
     fi
+    ;;
+  delete)
+    [[ $# -eq 2 && "$2" =~ ^[A-Za-z0-9_.-]+$ && "$2" != _* ]] || die "delete needs one run name"
+    run="$2"
+    if [[ -n "$(docker ps -q --filter "name=^eval-${run}\$")" ]]; then
+      die "eval-${run} is still running; cancel it first"
+    fi
+    docker rm "eval-${run}" >/dev/null 2>&1 || true
+    rm -rf "${RESULTS_DIR:?}/${run}"
+    echo "deleted ${RESULTS_DIR}/${run}"
+    helper /opt/eval-runner/publish.py --remove "runs/${run}"
     ;;
   -h|--help)
     usage

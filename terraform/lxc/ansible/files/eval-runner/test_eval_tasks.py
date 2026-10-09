@@ -347,6 +347,28 @@ class CseRowTest(unittest.TestCase):
         self.assertIn([eval_tasks.EVAL_RUN, "publish"], host.calls)
         self.assertFalse(bad["ok"])
 
+    def test_forget_cse_drops_the_row_and_publishes_its_removal(self):
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "_cse"))
+        open(os.path.join(root, "_cse", "3bf79d63-aaaa.json"), "w").close()
+        host = FakeHost()
+        with mock.patch.object(eval_tasks, "RESULTS_DIR", root), mock.patch.object(eval_tasks, "run_cmd", host):
+            out = eval_tasks.forget_cse.apply(args=[["3bf79d63-aaaa", "../etc"]]).get()
+            bad = eval_tasks.forget_cse.apply(args=[["../etc"]]).get()
+        self.assertTrue(out["ok"])
+        self.assertFalse(os.path.exists(os.path.join(root, "_cse", "3bf79d63-aaaa.json")))
+        self.assertEqual(host.calls, [[eval_tasks.EVAL_RUN, "publish", "--remove", "cyberseceval/3bf79d63-aaaa"]])
+        self.assertFalse(bad["ok"])
+
+    def test_delete_run_goes_through_eval_run_and_rejects_odd_names(self):
+        host = FakeHost()
+        with mock.patch.object(eval_tasks, "run_cmd", host):
+            out = eval_tasks.delete_run.apply(args=["glm-bfcl-limit2-S"]).get()
+            for name in ("../x", "_historical", "_cse", ""):
+                self.assertFalse(eval_tasks.delete_run.apply(args=[name]).get()["ok"], name)
+        self.assertTrue(out["ok"])
+        self.assertEqual(host.calls, [[eval_tasks.EVAL_RUN, "delete", "glm-bfcl-limit2-S"]])
+
     def test_compare_uses_publish_rows(self):
         # Only the "publish" entry: patch.dict(sys.modules) would also drop
         # modules Celery imports during the call and break later tests.

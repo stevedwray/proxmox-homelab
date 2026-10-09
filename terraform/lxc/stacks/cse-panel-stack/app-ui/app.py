@@ -13,7 +13,7 @@ import dash
 import dash_bootstrap_components as dbc
 import requests
 from plotly.subplots import make_subplots
-from dash import Input, Output, State, dash_table, dcc, html
+from dash import Input, Output, State, ctx, dash_table, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import request
 
@@ -92,6 +92,7 @@ run_tab = dbc.Card(dbc.CardBody([
     html.H4("Submit a run", className="card-title mb-3"),
     dbc.Checklist(
         id="benchmarks",
+        **eval_tab.PERSIST,
         switch=True,
         inline=False,
         options=[
@@ -104,6 +105,7 @@ run_tab = dbc.Card(dbc.CardBody([
     dbc.Label("Test cases"),
     dcc.Slider(
         id="num-test-cases",
+        **eval_tab.PERSIST,
         min=1, max=50, step=1, value=2,
         tooltip={"placement": "bottom", "always_visible": True},
     ),
@@ -114,8 +116,16 @@ run_tab = dbc.Card(dbc.CardBody([
 results_tab = html.Div([
     dbc.Card(className="mt-3", children=dbc.CardBody([
         html.H4("Recent runs", className="card-title mb-3"),
-        html.P("Click a row to see its full results below. Click the × to delete a run.",
-               className="text-muted small"),
+        html.Div([
+            html.Span("Click a run to see its results below. Tick runs to delete them.",
+                      className="text-muted small me-auto"),
+            dbc.Button("Select all finished", id="cse-select-all", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Clear", id="cse-select-none", color="secondary", size="sm", outline=True,
+                       className="me-2"),
+            dbc.Button("Delete selected", id="cse-delete-btn", color="danger", size="sm", disabled=True),
+        ], className="d-flex align-items-center mb-2"),
+        dcc.ConfirmDialog(id="cse-delete-confirm"),
         dash_table.DataTable(
             id="jobs-table",
             columns=[
@@ -124,16 +134,18 @@ results_tab = html.Div([
                 {"name": "Model", "id": "model"},
                 {"name": "Backend", "id": "backend"},
                 {"name": "Submitted by", "id": "submitted_by"},
-                {"name": "Submitted at", "id": "submitted_at"},
+                {"name": "Submitted at", "id": "submitted_local"},
                 {"name": "State", "id": "state_label"},
                 {"name": "Duration", "id": "duration"},
                 {"name": "Tokens", "id": "tokens"},
                 {"name": "Tokens/s", "id": "tokens_per_second"},
             ],
             data=[],
-            row_deletable=True,
-            row_selectable="single",
+            row_selectable="multi",
             selected_rows=[],
+            # Ten to a page, so the clicked run's results below stay in view.
+            page_size=10,
+            style_data_conditional=eval_tab.viewed_style(None),
             style_table={"width": "100%", "overflowX": "auto"},
             style_header={"backgroundColor": "#1a1a2e", "color": "white", "fontWeight": "bold"},
             style_cell={"backgroundColor": "#16162a", "color": "white", "border": "1px solid #333",
@@ -141,10 +153,12 @@ results_tab = html.Div([
             style_as_list_view=True,
         ),
         dcc.Interval(id="poll-interval", interval=4000, n_intervals=0),
+        dcc.Store(id="cse-selected"),  # the run whose results are shown
+        dcc.Store(id="cse-checked"),   # the ticked runs
         dbc.Alert(id="delete-result", is_open=False, className="mt-3"),
     ])),
     dbc.Card(className="mt-3", children=dbc.CardBody(id="run-detail", children=[
-        html.P("Select a run above to see its results.", className="text-muted"),
+        html.P("Click a run above to see its results.", className="text-muted"),
     ])),
 
     dbc.Card(className="mt-3", children=dbc.CardBody([
@@ -165,7 +179,7 @@ def section_switch(switch_id):
     """The Run / Results switch inside a benchmark family's tab: a
     Bootstrap button group (dbc's RadioItems-as-buttons pattern)."""
     return html.Div(dbc.RadioItems(
-        id=switch_id, value="run",
+        id=switch_id, value="run", **eval_tab.PERSIST,
         options=[{"label": "Run", "value": "run"}, {"label": "Results", "value": "results"}],
         className="btn-group", inputClassName="btn-check",
         labelClassName="btn btn-outline-primary", labelCheckedClassName="active",
@@ -190,7 +204,8 @@ app.layout = dbc.Container(
     children=[
         html.Div([
             html.H1("Benchmark Control Panel", className="mb-0 me-auto"),
-            html.Div([html.Div(id="whoami"), html.Div(id="api-health", className="text-muted")],
+            html.Div([html.Div(id="whoami"), html.Div(id="tz-note", className="text-muted"),
+                      html.Div(id="api-health", className="text-muted")],
                      className="small text-end"),
         ], className="d-flex align-items-end mb-3"),
         # Who holds Framework (the benchmark lock shared by both families)
@@ -200,7 +215,10 @@ app.layout = dbc.Container(
                                             rel="noopener"), "."], className="text-muted small"),
         dcc.Interval(id="framework-interval", interval=10000, n_intervals=0),
         dcc.Store(id="jobs-store"),
-        dbc.Tabs(id="family", active_tab="cse", className="mt-3", children=[
+        # The browser's time zone (IANA name), set by the clientside
+        # callback below; every timestamp on the page is shown in it.
+        dcc.Store(id="browser-tz"),
+        dbc.Tabs(id="family", active_tab="cse", className="mt-3", **eval_tab.PERSIST, children=[
             dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
                     label_style={"fontSize": "1.15rem"}),
             dbc.Tab(eval_family, tab_id="eval", label="Eval battery",
@@ -210,6 +228,19 @@ app.layout = dbc.Container(
         ]),
     ],
 )
+
+
+app.clientside_callback(
+    "function(_) { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; }"
+    " catch (e) { return null; } }",
+    Output("browser-tz", "data"),
+    Input("browser-tz", "id"),
+)
+
+
+@app.callback(Output("tz-note", "children"), Input("browser-tz", "data"))
+def tz_note(tz):
+    return f"Times in {tz}" if tz else "Times in UTC"
 
 
 def _shown(visible):
@@ -234,19 +265,19 @@ def switch_eval(section):
     return _shown(section == "run"), _shown(section == "results")
 
 
-def framework_status_text(info: dict) -> str:
+def framework_status_text(info: dict, tz=None) -> str:
     model = info.get("model") or "no model loaded"
     lock = info.get("lock")
     if lock:
         who = f"{lock.get('suite') or '?'} {lock.get('benchmark') or ''}".strip()
-        since = f" since {lock['started']}" if lock.get("started") else ""
+        since = f" since {eval_tab.local_time(lock['started'], tz)}" if lock.get("started") else ""
         return f"Framework: {model} · busy with {who} (job {lock.get('job_id')}{since}); new benchmark runs wait"
     if info.get("error") and not info.get("model"):
         return f"Framework: unreachable ({info['error']})"
     return f"Framework: {model} · free"
 
 
-def builds_text(builds: dict | None) -> str:
+def builds_text(builds: dict | None, tz=None) -> str:
     """One line on Framework's llama.cpp builds (llama-builds status)."""
     if not builds or not builds.get("backends"):
         return "llama.cpp builds: no status yet (llama-builds publishes it daily)"
@@ -261,7 +292,7 @@ def builds_text(builds: dict | None) -> str:
         cand = (b.get("candidate") or {}).get("name")
         extra = f", candidate {cand}" if cand and cand != cur.get("name") else ""
         parts.append(f"{name} {cur['name']} ({lag}{extra})")
-    return f"llama.cpp builds: {' · '.join(parts)} · checked {(builds.get('checked') or '?')[:16].replace('T', ' ')}"
+    return f"llama.cpp builds: {' · '.join(parts)} · checked {eval_tab.local_time(builds.get('checked'), tz) or '?'}"
 
 
 def framework_status_color(info: dict) -> str:
@@ -276,14 +307,15 @@ def framework_status_color(info: dict) -> str:
     Output("framework-status", "children"),
     Output("framework-status", "color"),
     Input("framework-interval", "n_intervals"),
+    State("browser-tz", "data"),
 )
-def poll_framework(_n):
+def poll_framework(_n, tz=None):
     try:
         info = requests.get(f"{PANEL_API_BASE_URL}/framework", timeout=5).json()
     except (requests.RequestException, ValueError):
         return "Framework: status unavailable (panel-web unreachable)", "danger"
-    return [framework_status_text(info), html.Br(),
-            html.Small(builds_text(info.get("builds")), className="text-muted")], framework_status_color(info)
+    return [framework_status_text(info, tz), html.Br(),
+            html.Small(builds_text(info.get("builds"), tz), className="text-muted")], framework_status_color(info)
 
 
 @app.callback(
@@ -417,7 +449,10 @@ def _run_metrics_block(metrics):
 
 
 MODEL_COLOURS = ["#6f42c1", "#20c997", "#fd7e14", "#0dcaf0", "#d63384", "#ffc107", "#198754", "#adb5bd"]
-CHART_LAYOUT = {"template": "plotly_dark", "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)"}
+# uirevision: a refresh every few seconds keeps the person's zoom and
+# hidden traces instead of resetting the chart.
+CHART_LAYOUT = {"template": "plotly_dark", "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)",
+                "uirevision": "keep"}
 
 
 def _empty_chart_figure(message):
@@ -437,8 +472,9 @@ def _empty_chart_figure(message):
 
 
 def _run_label(job):
-    """model · MM-DD HH:MM, so runs read as who and when, not job ids."""
-    when = (job.get("finished_at") or job.get("submitted_at") or "")[5:16].replace("T", " ")
+    """model · MM-DD HH:MM (browser time), so runs read as who and when, not job ids."""
+    when = (job.get("finished_local") or job.get("submitted_local")
+            or eval_tab.local_time(job.get("finished_at") or job.get("submitted_at")))[5:]
     return f"{job.get('model') or '?'} · {when}"
 
 
@@ -498,59 +534,142 @@ def _speed_chart_figure(jobs):
     Output("jobs-table", "data"),
     Output("results-chart", "figure"),
     Output("speed-chart", "figure"),
+    Output("jobs-table", "selected_rows"),
     Input("poll-interval", "n_intervals"),
+    State("cse-checked", "data"),
+    State("browser-tz", "data"),
 )
-def poll_jobs(_n):
+def poll_jobs(_n, checked=None, tz=None):
     try:
         resp = requests.get(f"{PANEL_API_BASE_URL}/jobs", timeout=10)
         jobs = resp.json().get("jobs", [])
     except requests.RequestException:
         raise PreventUpdate
-    rows = [{**job, **_metric_columns(job)} for job in jobs]
-    return rows, _results_chart_figure(rows), _speed_chart_figure(rows)
+    rows = [{**job, **_metric_columns(job), "id": job["job_id"],
+             "submitted_local": eval_tab.local_time(job.get("submitted_at"), tz),
+             "finished_local": eval_tab.local_time(job.get("finished_at"), tz)} for job in jobs]
+    # New runs are added at the top, so keep the ticks on the same runs,
+    # not the same row numbers.
+    keep = eval_tab.selected_index(rows, checked)
+    return rows, _results_chart_figure(rows), _speed_chart_figure(rows), keep
+
+
+@app.callback(
+    Output("cse-selected", "data"),
+    Input("jobs-table", "active_cell"),
+    prevent_initial_call=True,
+)
+def select_job(active_cell):
+    """Clicking a run shows its results (ticking it doesn't)."""
+    if not active_cell or not active_cell.get("row_id"):
+        raise PreventUpdate
+    return active_cell["row_id"]
+
+
+@app.callback(
+    Output("cse-checked", "data"),
+    Output("cse-delete-btn", "children"),
+    Output("cse-delete-btn", "disabled"),
+    Input("jobs-table", "selected_rows"),
+    State("jobs-table", "data"),
+)
+def tick_jobs(selected_rows, rows):
+    ids = [rows[i]["job_id"] for i in selected_rows or [] if rows and i < len(rows)]
+    return ids, f"Delete selected ({len(ids)})" if ids else "Delete selected", not ids
+
+
+CSE_UNFINISHED = ("PENDING", "WAITING", "STARTED", "RETRY")
+
+
+@app.callback(
+    Output("jobs-table", "selected_rows", allow_duplicate=True),
+    Input("cse-select-all", "n_clicks"),
+    Input("cse-select-none", "n_clicks"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def tick_many_jobs(_all, _none, rows):
+    if ctx.triggered_id == "cse-select-none":
+        return []
+    return [i for i, row in enumerate(rows or []) if row.get("state") not in CSE_UNFINISHED]
+
+
+def cse_delete_message(jobs):
+    names = [f"{j.get('benchmark', '?')} {j['job_id'][:8]} ({j.get('state_label') or j.get('state')})" for j in jobs]
+    shown = "\n".join(f"  • {n}" for n in names[:12]) + (f"\n  … and {len(names) - 12} more" if len(names) > 12 else "")
+    running = sum(j.get("state") in CSE_UNFINISHED for j in jobs)
+    return (f"Delete {len(jobs)} run{'s' if len(jobs) != 1 else ''} for good?\n\n{shown}\n\n"
+            + (f"{running} of them haven't finished: deleting cancels them first.\n\n" if running else "")
+            + "For each run this removes its results on cse-controller, its report folder in Nextcloud and "
+              "its row in Compare and the results table. This can't be undone.")
+
+
+@app.callback(
+    Output("cse-delete-confirm", "displayed"),
+    Output("cse-delete-confirm", "message"),
+    Input("cse-delete-btn", "n_clicks"),
+    State("cse-checked", "data"),
+    State("jobs-table", "data"),
+    prevent_initial_call=True,
+)
+def confirm_cse_delete(clicks, checked, rows):
+    jobs = [r for r in rows or [] if r.get("job_id") in set(checked or [])]
+    if not clicks or not jobs:
+        raise PreventUpdate
+    return True, cse_delete_message(jobs)
+
+
+def _delete_one(job_id):
+    """DELETE a job, cancelling it first if it's unfinished (the dialog said so)."""
+    d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10).json()
+    if d.get("in_progress"):
+        d = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10).json()
+    return d
 
 
 @app.callback(
     Output("delete-result", "children"),
     Output("delete-result", "color"),
     Output("delete-result", "is_open"),
-    Input("jobs-table", "data"),
-    State("jobs-table", "data_previous"),
+    Input("cse-delete-confirm", "submit_n_clicks"),
+    State("cse-checked", "data"),
     prevent_initial_call=True,
 )
-def handle_row_delete(data, data_previous):
-    if not data_previous:
+def delete_cse_jobs(clicks, checked):
+    if not clicks or not checked:
         raise PreventUpdate
-    current_ids = {row["job_id"] for row in data}
-    previous_ids = {row["job_id"] for row in data_previous}
-    removed = previous_ids - current_ids
-    if not removed:
-        raise PreventUpdate
-
-    results = []
-    for job_id in removed:
+    deleted, errors = 0, []
+    for job_id in checked:
         try:
-            resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", timeout=10)
-            d = resp.json()
-            if d.get("in_progress"):
-                resp = requests.delete(f"{PANEL_API_BASE_URL}/jobs/{job_id}", params={"force": "true"}, timeout=10)
-                d = resp.json()
-            results.append(f"{job_id[:8]}: {'deleted' if 'deleted' in d else d.get('error', '?')}")
-        except requests.RequestException as exc:
-            results.append(f"{job_id[:8]}: ERROR {exc}")
-    return "; ".join(results), "info", True
+            d = _delete_one(job_id)
+        except (requests.RequestException, ValueError) as exc:
+            errors.append(f"{job_id[:8]}: {exc}")
+            continue
+        if "deleted" in d:
+            deleted += 1
+        else:
+            errors.append(f"{job_id[:8]}: {d.get('error', '?')}")
+    text = f"Deleted {deleted} run{'s' if deleted != 1 else ''}. Nextcloud and Compare catch up in a minute or so."
+    if errors:
+        return f"{text} Failed: {'; '.join(errors)}", "danger", True
+    return text, "success", True
 
 
 @app.callback(
     Output("run-detail", "children"),
-    Input("jobs-table", "selected_rows"),
-    State("jobs-table", "data"),
+    Output("jobs-table", "style_data_conditional"),
+    Input("cse-selected", "data"),
+    Input("jobs-table", "data"),
 )
-def show_run_detail(selected_rows, data):
-    if not selected_rows or not data:
-        return [html.P("Select a run above to see its results.", className="text-muted")]
+def show_run_detail(job_id, data):
+    job = next((r for r in data or [] if r.get("job_id") == job_id), None) if job_id else None
+    if not job:
+        return ([html.P("Click a run above to see its results.", className="text-muted")],
+                eval_tab.viewed_style(None))
+    return run_detail(job), eval_tab.viewed_style(job_id)
 
-    job = data[selected_rows[0]]
+
+def run_detail(job):
     header = [
         html.H4(f"{job.get('benchmark', '?')} — {job.get('job_id', '?')}", className="card-title"),
         html.P([
@@ -558,7 +677,7 @@ def show_run_detail(selected_rows, data):
             html.Strong("Model: "), job.get("model") or "not recorded", "  ·  ",
             html.Strong("Backend: "), job.get("backend", "?"), "  ·  ",
             html.Strong("Submitted by: "), job.get("submitted_by", "?"),
-            " at ", job.get("submitted_at", "?"),
+            " at ", job.get("submitted_local") or job.get("submitted_at", "?"),
         ], className="text-muted"),
     ]
 

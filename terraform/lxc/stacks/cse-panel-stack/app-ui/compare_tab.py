@@ -111,6 +111,7 @@ def layout():
             html.Div([
                 html.H4("Compare models", className="card-title mb-0 me-auto"),
                 dbc.Switch(id="compare-full-only", value=True, className="me-3 mb-0",
+                           persistence=True, persistence_type="local",
                            label="Eval battery: comparable full runs only"),
                 dbc.Button("Refresh", id="compare-refresh", color="secondary", size="sm", outline=True),
             ], className="d-flex align-items-center flex-wrap mb-2"),
