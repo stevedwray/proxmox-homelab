@@ -137,7 +137,14 @@
       "note": "Not on the Nathanw fork: its build b10814 emits control token 14 ('〈|') hundreds of times in place of reasoning (checked 2026-10-09); upstream b11514 reasons normally.",
       "tags": [
         "thinking"
-      ]
+      ],
+      "status": {
+        "upstream": {
+          "status": "works",
+          "reason": "",
+          "checked": "2026-10-09"
+        }
+      }
     },
     {
       "id": "qwen3-coder-next",
