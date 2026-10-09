@@ -2,7 +2,17 @@
 Nextcloud, per docs/nextcloud-stack/plan.md Phase 2. Never raises --
 final_report.md is already durable on this container's own workspace
 volume; Nextcloud being briefly unreachable or a rotated credential
-must never fail or block a run that has already completed."""
+must never fail or block a run that has already completed.
+
+Logs every outcome (success or the specific reason for a no-op/failure)
+to stdout -- captured by the container's syslog driver. Added 2026-10-01
+after a real run completed cleanly with no exception anywhere in its
+session log, yet nothing appeared in Nextcloud: with zero logging, there
+was no way to tell whether this function was ever called, called and
+failed, or skipped on one of its early-return guards. A later manual
+replay of the same PUT/MKCOL sequence succeeded immediately (real
+204/405-tolerated responses), proving the mechanism itself was never
+broken -- the missing observability was the actual bug."""
 import base64
 import os
 import urllib.error
@@ -15,11 +25,13 @@ def push_report_to_nextcloud(run_id: str) -> None:
     user = os.environ.get("NEXTCLOUD_DR_REPORTS_USER", "")
     password = os.environ.get("NEXTCLOUD_DR_REPORTS_APP_PASSWORD", "")
     if not (webdav_url and user and password):
+        print(f"[nextcloud_push] {run_id}: skipped, credentials not configured")
         return
 
     from tools.fs import _get_workspace_dir
     report_path = Path(_get_workspace_dir()) / run_id / "final_report.md"
     if not report_path.is_file():
+        print(f"[nextcloud_push] {run_id}: skipped, final_report.md not found at {report_path}")
         return
 
     auth_header = "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
@@ -38,8 +50,10 @@ def push_report_to_nextcloud(run_id: str) -> None:
             urllib.request.urlopen(request, timeout=15)
         except urllib.error.HTTPError as exc:
             if exc.code not in (405, 301):
+                print(f"[nextcloud_push] {run_id}: MKCOL {collection_url} failed with HTTP {exc.code}, giving up")
                 return
-        except urllib.error.URLError:
+        except urllib.error.URLError as exc:
+            print(f"[nextcloud_push] {run_id}: MKCOL {collection_url} failed with {exc.reason}, giving up")
             return
 
     put_url = f"{base}/Reports/deep-research-agent/{run_id}/final_report.md"
@@ -50,5 +64,8 @@ def push_report_to_nextcloud(run_id: str) -> None:
     request.add_header("Content-Type", "text/markdown")
     try:
         urllib.request.urlopen(request, timeout=15)
-    except (urllib.error.HTTPError, urllib.error.URLError):
-        pass
+        print(f"[nextcloud_push] {run_id}: pushed final_report.md to {put_url}")
+    except urllib.error.HTTPError as exc:
+        print(f"[nextcloud_push] {run_id}: PUT {put_url} failed with HTTP {exc.code}")
+    except urllib.error.URLError as exc:
+        print(f"[nextcloud_push] {run_id}: PUT {put_url} failed with {exc.reason}")

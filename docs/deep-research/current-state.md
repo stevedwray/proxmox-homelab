@@ -1,5 +1,23 @@
 # Deep research: current state
 
+**2026-10-01, third follow-up: a clean run produced final_report.md but
+nothing appeared in Nextcloud -- root cause was missing observability,
+not a broken push.** With the LLM timeout fix in place, a session
+completed with zero exceptions anywhere in its log and a real
+`final_report.md` written, yet no file landed in `Reports/deep-research-agent/`.
+`push_report_to_nextcloud` never logged anything on any path (success,
+skip, or failure), so there was no way to tell whether it ran and failed
+or was never reached. Manually replaying the exact same MKCOL/PUT
+sequence against the same run's files succeeded immediately (real
+`204`/`405`-tolerated responses) -- the WebDAV mechanism, credential, and
+URL were never broken. Fixed by adding a log line to every exit path in
+`nextcloud_push.py` (stdout, captured by the container's syslog driver),
+so a future miss can actually be diagnosed instead of guessed at. Manually
+pushed the affected run's report as a one-off; the real automatic-push
+call site (`tui.py`'s `run_agent`) was not otherwise changed, so it's
+still unconfirmed whether this was a one-off transient failure or a real,
+reproducible gap -- next real run's container logs will show which.
+
 **2026-10-01 follow-up: the actual session-killing bug was a missing LLM
 client timeout, found via a second live test after the two fixes below.**
 With `web_search` genuinely at 60 and the spawn race mostly mitigated, a
