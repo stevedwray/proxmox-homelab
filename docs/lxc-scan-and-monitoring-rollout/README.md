@@ -12,7 +12,15 @@ answers, and the bounded step packets.
 
 ## Status (2026-09-30): All tracks (GVM, Wazuh, Graylog) fully deployed and verified live
 
-### Track A -- GVM credentialed scanning: DONE
+### Track A -- GVM credentialed scanning: DONE (correction 2026-10-11 below)
+
+> **Correction 2026-10-11:** the "sudo elevation confirmed working" claim
+> below was wrong. GVM's elevate-privileges feature is su-based, not sudo:
+> every scheduled fleet scan ran `su -l gvm-scan` (switching to itself) and
+> reported `SSH Login Failed For Authenticated Checks`, with zero Local
+> Security Check results from 2026-09-30 to 2026-10-10. The fix and the
+> coverage gaps are tracked in
+> [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
 
 - `gvm-03` (secrets/manifest.json, 25 entries) done by the operator; `gvm-04`
   bootstrap run and verified (all 25 stacks' keypairs/passwords live in

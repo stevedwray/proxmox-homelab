@@ -1,0 +1,87 @@
+# gvm-coverage-cleanup
+
+Fixes the GVM/Greenbone credentialed-scan program so it actually scans
+with credentials, covers every host the operator wants covered, and fails
+loudly when it stops working. Plan: [plan.md](plan.md).
+
+## Status
+
+**2026-10-11: plan written, nothing executed.** Branch
+`work/gvm-coverage-cleanup`. Steps `gvmcov-01`…`gvmcov-14` are file edits
+only; the operator runbook at the end of plan.md does the production
+work (OpenBao writes, MikroTik rules, account rollout, greenbone-stack
+redeploy, verification).
+
+## What was found (2026-10-11, live evidence)
+
+- **No scheduled fleet credentialed scan has ever authenticated.** All 21
+  fleet hosts that GVM can reach, about 170 scheduled runs between
+  2026-09-30 and 2026-10-10: every run reported
+  `SSH Login Failed For Authenticated Checks`, with zero Local Security
+  Check results and zero `SSH Login Successful`. Source: gvm-bridge
+  `/findings/all` (25,669 results).
+- **Root cause: GVM's "elevate privileges" is su-based, not sudo.** Wazuh's
+  copy of the targets' sshd/PAM logs shows the `gvm-scan` key login
+  *succeeding* every time, followed by
+  `su: pam_unix(su-l:session): session opened for user gvm-scan by gvm-scan`.
+  GVM ran `su -l <elevate-credential login>`, and that login was
+  `gvm-scan` itself. Across 14 days there wasn't a single `sudo` call by
+  `gvm-scan`. The 2026-09-29 rollout's "verified" note was wrong. A
+  Greenbone forum thread also describes the elevate credential as su-based
+  ([forum](https://forum.greenbone.net/t/does-community-edition-support-ssh-elevate-method/22083)).
+- **4 fleet hosts were never reachable.** The MikroTik greenbone reach rules
+  covered only build/mgmt/edge/infra/ai/game and the flat LAN, so
+  media-stack-lab, torrent-stack-lab, newt-connector and nextcloud-stack
+  (VLANs 80/110/120) have no GVM results at all.
+- **The legacy root-key target was stale.** "managed Debian services" used
+  pve-test-vm's "+100" IPs (`.20.110` etc., all dead) and the destroyed
+  dns-stack. The pve/workstation/Pi/MikroTik targets were unscheduled.
+- **Credentials and targets were create-only.** Rotating a key in OpenBao,
+  or changing a host's IP, never reached GVM.
+- **Uncredentialed program gaps:** no CIDR scans at all for
+  pentest_seg/media_seg/cse_seg/connector_seg/apps_seg; the NAS and the
+  retired pve-test-vm were in the lan full-vuln exclusions.
+
+## Operator decisions (2026-10-11)
+
+| Question | Decision |
+|---|---|
+| Privilege model | Unprivileged `gvm-scan`: SSH key only, no elevate credential, sudo grant removed |
+| cse_seg hosts | Scan them (cse-controller, cse-code-eval: credentialed and CIDR) |
+| pentest_seg fixtures | Excluded (harness-target-pve, pentagi-upstream-control, cse-kali) |
+| Workstation + Raspberry Pis | Both move onto per-host `gvm-scan` with daily schedules |
+| NAS (Synology) | Uncredentialed weekly full-vuln (removed from the lan exclusions) |
+| Missing hosts (#5) | All get credentialed scans: pve, pve-tiny, framework, management-stack, media-stack, proxmox-backup-server, omada-controller, cse-panel-stack, technitium-tiny-stack |
+| Alerting (#2) | Required: added a coverage check to the daily findings ingest (gvmcov-14) |
+
+## Follow-ups (out of scope for this plan; not started)
+
+1. **gvm-bridge is unauthenticated and reachable from the LAN.**
+   `http://192.168.70.11:8010/findings/all` returned the full vulnerability
+   inventory to the operator workstation with no credentials, and
+   `/scan/start` would let anyone on the LAN start scans. It needs auth or a
+   firewall restriction.
+2. **No push notification channel exists in the repo.** Coverage failures
+   now show up as a failed `gvm-findings-ingest` systemd unit, the
+   `es-findings-sync-state/greenbone-coverage` document, and `COVERAGE ...`
+   journal lines. Delivering them somewhere (email, ntfy, Wazuh rule)
+   still needs a decision.
+3. **Scan cadence.** "Daily" fleet tasks only completed 2–11 times in 11
+   days. Revisit daily vs. weekly once a week of coverage documents shows
+   real run durations.
+4. **Stopped duplicate LXCs on pve.** VMIDs 40014/50011/50012/50013
+   (opensearch, mcp-utility, secpipe, ai-services) are leftovers from the
+   move to pve-tiny, where they now run.
+5. **OpenBao `services/greenbone` still holds `GREENBONE_STEVE_SSH_PRIVATE_KEY`**
+   (a copy of the operator's root key) and
+   `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY`. Nothing reads them after
+   gvmcov-05/09. Removing them is an operator OIDC write.
+6. The original 25 `scan-hosts/*` entries still hold an unused
+   `GVM_SCAN_SUDO_PASSWORD` value. It's harmless and is dropped on the next
+   rotation of each entry.
+7. The old `openvas` account on the workstation (garuda) is unused after
+   this plan.
+
+## Hand-backs
+
+(Executor: append one entry per completed step here.)
