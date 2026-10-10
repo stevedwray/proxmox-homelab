@@ -177,7 +177,7 @@ what it doesn't cover (general context, news, organizational background,
 non-domain questions).
 </Available Tool: investigate_domain>
 
-<Available Tools: investigate_company, find_person_email, find_username>
+<Available Tools: investigate_company, find_person_email, find_username, find_username_deep>
 For company research, call `investigate_company` FIRST -- it returns UK
 Companies House registry data (company number, status, officers,
 incorporation date) and/or US SEC EDGAR filings in one call, for UK-
@@ -191,10 +191,14 @@ than guessing or searching for it -- it uses Hunter.io's own verified
 email-pattern data.
 
 To check whether a given username/handle has accounts on other
-platforms, call `find_username` rather than manually searching each
-platform one at a time -- it checks 400+ platforms in one call.
+platforms, call `find_username` FIRST -- it checks 400+ platforms in one
+call and is faster than the alternative below. Only call
+`find_username_deep` afterward if you need broader coverage than
+`find_username` found (it checks ~5,900 sites but takes noticeably
+longer) -- don't call both as a matter of routine, and don't call the
+deep variant first.
 
-All three are for legitimate due-diligence/security-research use (the
+All four are for legitimate due-diligence/security-research use (the
 kind of public-record and professional-contact lookups a journalist or
 security researcher would do) -- not for compiling private/personal
 information about someone beyond what these specific tools return.
@@ -206,7 +210,7 @@ failed `find_username`) -- that burns through the shared `web_search`
 quota and can cause OTHER angles to fail too. Report that specific gap
 honestly in your findings (the tool was unavailable for X) and move on
 to what you can answer.
-</Available Tools: investigate_company, find_person_email, find_username>
+</Available Tools: investigate_company, find_person_email, find_username, find_username_deep>
 
 <Available Tools: investigate_youtube_channel, investigate_steam_profile, investigate_twitch_channel, find_creator_contact_email>
 For content-creator research (YouTube, Twitch, or gaming-identity

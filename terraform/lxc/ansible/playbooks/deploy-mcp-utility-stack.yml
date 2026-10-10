@@ -279,6 +279,18 @@
           # purged after install -- it's an installer, not a runtime
           # dependency of the installed package.
           #
+          # Phase 6 (2026-10-10): Maigret (soxoj/maigret, MIT) for
+          # find_username_deep -- same vendoring principle, pinned to
+          # 0.6.6 (latest on PyPI at write time). Confirmed independently
+          # (via GitHub API push dates, not README claims) that Maigret is
+          # actively maintained (commits as recent as the day before this
+          # was written) and is a genuine superset of Sherlock (~5,900
+          # sites vs Sherlock's narrower list, recursive username
+          # pivoting) rather than a replacement -- Sherlock itself is also
+          # still healthy, so both are kept side by side as a fast/deep
+          # pair, same pattern as investigate_company vs find_person_email
+          # being separate specialized tools rather than one merged tool.
+          #
           # Found live 2026-10-03: a bare `apt-get update` on this LXC
           # times out connecting directly to deb.debian.org -- confirmed
           # via a direct reproduction, not assumed from the generic exit-
@@ -291,7 +303,7 @@
           # the Debian mirror itself needs the proxy.
           RUN echo 'Acquire::http::Proxy "http://{{ apt_cacher_host }}:3142";' > /etc/apt/apt.conf.d/01proxy && \
               apt-get update && apt-get install -y --no-install-recommends python3 python3-pip && \
-              pip install --break-system-packages --no-cache-dir sherlock-project==0.16.2 && \
+              pip install --break-system-packages --no-cache-dir sherlock-project==0.16.2 maigret==0.6.6 && \
               apt-get purge -y python3-pip && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy
           WORKDIR /app
           COPY --from=builder /app/node_modules ./node_modules
@@ -623,6 +635,7 @@
             hunterDomainSearch,
             hunterEmailFinder,
             sherlockUsernameCheck,
+            maigretUsernameSearch,
             withRetry,
             youtubeChannelLookup,
             steamProfileLookup,
@@ -829,6 +842,35 @@
               }),
             );
 
+            // Phase 6 (2026-10-10): a deeper username search alongside find_username,
+            // not a replacement for it -- Maigret covers more sites (~5,900 vs
+            // Sherlock's narrower list) but takes longer, so the agent should default
+            // to find_username and only reach for this when it needs broader coverage.
+            server.registerTool(
+              "find_username_deep",
+              {
+                description:
+                  "A deeper, slower alternative to find_username: checks a username against ~5,900 sites (vs " +
+                  "find_username's ~400) using the open-source Maigret tool. Takes noticeably longer to run -- " +
+                  "prefer find_username first, and only use this when you need broader platform coverage than it " +
+                  "found, or confirmation across more sources. Does not access private/non-public account data.",
+                inputSchema: {
+                  username: z.string().describe("The username/handle to check across platforms"),
+                },
+              },
+              withLogging("find_username_deep", async ({ username }) => {
+                const result = await maigretUsernameSearch(username);
+                if (!result.ok) {
+                  return { content: [{ type: "text", text: `Deep username check for "${username}" failed: ${result.reason}` }], isError: true };
+                }
+                if (result.matches.length === 0) {
+                  return { content: [{ type: "text", text: `No matches found for username "${username}" across checked platforms (deep search).` }] };
+                }
+                const lines = [`Found "${username}" on ${result.matches.length} platform(s) (deep search):`, ...result.matches.map((m) => `- ${m.site}: ${m.url}`)];
+                return { content: [{ type: "text", text: lines.join("\n") }] };
+              }),
+            );
+
             // Phase 5 (docs/maltego-integration/README.md, 2026-10-04): content-
             // creator research. TikTok deliberately has no tool here -- confirmed
             // during scoping that its official API requires the TARGET's own OAuth
@@ -1012,7 +1054,7 @@
           // HaveIBeenPwned (paid-only for the person-relevant endpoint).
           import { execFile } from "node:child_process";
           import { promisify } from "node:util";
-          import { mkdtemp, readFile, rm } from "node:fs/promises";
+          import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
           import { tmpdir } from "node:os";
           import { join } from "node:path";
 
@@ -1326,6 +1368,109 @@
                 })
                 .filter((r) => r.site && r.url && r.exists === "Claimed")
                 .map(({ site, url }) => ({ site, url }));
+              return { ok: true, matches };
+            } catch (err: any) {
+              return { ok: false, reason: err?.message ?? String(err) };
+            } finally {
+              if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+            }
+          }
+
+          // Phase 6 (2026-10-10): Maigret (soxoj/maigret, MIT) for a deeper username
+          // search than Sherlock -- added alongside it, not in place of it, after
+          // scoping confirmed both tools are actively maintained (verified via each
+          // repo's own GitHub API push dates, not README claims) and that Maigret is
+          // a genuine superset: ~5,900 sites vs Sherlock's narrower list, plus
+          // recursive pivoting (follows a username discovered on one site into
+          // further searches). Recursion is deliberately disabled here
+          // (--no-recursion) -- after a whole session of taming unbounded-runtime
+          // bugs elsewhere in this project (an LLM generation with no token cap, a
+          // multiprocessing race under concurrency), an OSINT tool whose own docs
+          // describe no overall run-duration cap and an open-ended recursive
+          // expansion is exactly the shape of thing worth bounding deliberately
+          // rather than trusting it to terminate promptly on its own.
+          export interface MaigretMatch { site: string; url: string }
+          export type MaigretResult = { ok: true; matches: MaigretMatch[] } | { ok: false; reason: string };
+
+          // Maigret's ndjson report field names are NOT documented (confirmed by
+          // reading both the README and the official command-line-options docs
+          // before writing this) -- Sherlock's own CSV columns were also discovered
+          // wrong on first guess (url_main vs url_user, 2026-10-03) purely by
+          // inspecting real output, so this parser deliberately tries several
+          // plausible field-name candidates per value rather than committing to one
+          // guessed shape, and MUST be verified against a real run's actual ndjson
+          // output before this is considered done -- see the deployment/testing
+          // notes in the playbook commit for this feature.
+          function extractMaigretField(obj: any, candidates: string[]): string | undefined {
+            for (const key of candidates) {
+              const v = obj?.[key];
+              if (typeof v === "string" && v) return v;
+            }
+            return undefined;
+          }
+
+          function maigretClaimed(obj: any): boolean {
+            const status = obj?.status;
+            let statusStr: string | undefined;
+            if (typeof status === "string") statusStr = status;
+            else if (typeof status?.status === "string") statusStr = status.status;
+            if (statusStr) return /claim/i.test(statusStr);
+            // Fall back to an explicit boolean-ish field if no status string is found.
+            return obj?.exists === true || obj?.exists === "Claimed";
+          }
+
+          let maigretQueue: Promise<unknown> = Promise.resolve();
+
+          export function maigretUsernameSearch(username: string): Promise<MaigretResult> {
+            // Own serialization queue, independent of Sherlock's -- same
+            // CPU/network-contention risk under concurrent full scans (confirmed
+            // live 2026-10-03 for Sherlock specifically), applied preemptively here
+            // rather than waiting to rediscover the identical failure mode live.
+            const task = maigretQueue.then(() => runMaigret(username));
+            maigretQueue = task.catch(() => undefined);
+            return task;
+          }
+
+          async function runMaigret(username: string): Promise<MaigretResult> {
+            let dir: string | undefined;
+            try {
+              dir = await mkdtemp(join(tmpdir(), "maigret-"));
+              try {
+                await execFileAsync(
+                  "maigret",
+                  [username, "--json", "ndjson", "--folderoutput", dir, "--timeout", "15", "--retries", "0", "--no-recursion"],
+                  { timeout: 180_000 },
+                );
+              } catch (execErr: any) {
+                // Same exit-code-vs-output-validity mismatch confirmed for Sherlock
+                // is assumed likely here too (same class of tool, same many-sites-
+                // one-failing-shouldn't-fail-the-whole-run shape) -- fall through and
+                // try reading the report regardless, except on a genuine timeout kill.
+                if (execErr?.killed || execErr?.signal) {
+                  throw Object.assign(new Error(`maigret killed after 180s timeout (signal ${execErr.signal ?? "?"})`), { cause: "timeout" });
+                }
+              }
+              const files = await readdir(dir);
+              const reportFile = files.find((f) => f.endsWith(".ndjson"));
+              if (!reportFile) throw new Error(`no .ndjson report found in output dir (files present: ${files.join(", ") || "none"})`);
+              const raw = await readFile(join(dir, reportFile), "utf-8");
+              const matches = raw
+                .trim()
+                .split("\n")
+                .filter(Boolean)
+                .map((line) => {
+                  try {
+                    return JSON.parse(line);
+                  } catch {
+                    return undefined;
+                  }
+                })
+                .filter((obj) => obj && maigretClaimed(obj))
+                .map((obj) => ({
+                  site: extractMaigretField(obj, ["sitename", "site_name", "name", "site"]) ?? "unknown",
+                  url: extractMaigretField(obj, ["url_user", "url", "link"]) ?? "",
+                }))
+                .filter((m) => m.url);
               return { ok: true, matches };
             } catch (err: any) {
               return { ok: false, reason: err?.message ?? String(err) };
