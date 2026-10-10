@@ -1,5 +1,21 @@
 # Deep research: current state
 
+**2026-10-10: browser TUI text cannot be copied -- noted for later work,
+not yet investigated.** Found during multi-model comparison testing
+(launching runs via the web UI at deep-research.lab.gibbsgreatly.xyz):
+selecting text in the running session's output (e.g. an error message to
+copy into a bug report) and pressing Ctrl+C or Ctrl+Insert does not put
+it on the clipboard. Not reproduced or root-caused yet -- likely related
+to how textual-serve renders the TUI in-browser (a canvas/custom-paint
+surface rather than real selectable DOM text is a common cause for this
+class of symptom in terminal-in-browser UIs, but that's a guess, not
+confirmed). Same session surfaced a real, separate finding while this was
+noticed: `gemma4-26b-a4b-qat-upstream` fails tool calls with a llama.cpp
+500 ("Failed to parse tool call arguments as JSON ... invalid number;
+expected digit after '-'" -- a negative-number argument emitted
+truncated right after the minus sign), a model-specific tool-calling
+reliability issue, not a harness bug.
+
 **2026-10-01, third follow-up: a clean run produced final_report.md but
 nothing appeared in Nextcloud -- root cause was missing observability,
 not a broken push.** With the LLM timeout fix in place, a session
