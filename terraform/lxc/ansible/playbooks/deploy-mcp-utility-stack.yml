@@ -1451,8 +1451,13 @@
                 }
               }
               const files = await readdir(dir);
-              const reportFile = files.find((f) => f.endsWith(".ndjson"));
-              if (!reportFile) throw new Error(`no .ndjson report found in output dir (files present: ${files.join(", ") || "none"})`);
+              // Confirmed live 2026-10-10 against a real run: despite passing
+              // `--json ndjson`, the actual filename is `report_<username>_ndjson.json`
+              // (a literal ".json" extension, "ndjson" only appears mid-name) --
+              // matched on "ndjson" being present anywhere in the name, not a
+              // ".ndjson" extension as the CLI flag's own naming would suggest.
+              const reportFile = files.find((f) => f.includes("ndjson"));
+              if (!reportFile) throw new Error(`no ndjson report found in output dir (files present: ${files.join(", ") || "none"})`);
               const raw = await readFile(join(dir, reportFile), "utf-8");
               const matches = raw
                 .trim()
