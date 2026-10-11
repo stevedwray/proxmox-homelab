@@ -4,6 +4,7 @@ Context, evidence and operator decisions: [README.md](README.md). Step
 shape: [docs/agent-design/step-packet-schema.md](../agent-design/step-packet-schema.md).
 
 **How to run this plan.**
+
 - Steps `gvmcov-01`…`gvmcov-14` are file edits only. Each step's `change`
   is one literal shell block (heredoc file writes, or a Python edit script
   that asserts every anchor it replaces). Run it exactly as written from
@@ -2111,6 +2112,7 @@ scripts/gvm_scan_credentials_bootstrap.py \
   management-stack media-stack omada-controller proxmox-backup-server
 unset BAO_TOKEN
 ```
+
 Expect `done: 14 succeeded, 0 failed`. Don't pass `--all`, because that
 would rotate the 25 existing hosts too.
 
@@ -2120,6 +2122,7 @@ would rotate the 25 existing hosts too.
 TASK_APPROVAL=gvmcov-firewall ./with-secrets-prod ansible-playbook \
   ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml
 ```
+
 Then re-read `/ip/firewall/filter` in order and confirm each new
 `greenbone-stack: LAN/VLAN discovery+vuln scan reach -> <zone>` rule
 sits above the `vlan70-pentest` default-deny. Also confirm that an
@@ -2144,9 +2147,11 @@ for h in host-framework host-pi-22 host-pi-23 host-workstation; do
     --limit "$h" -K
 done
 ```
+
 This also removes `/etc/sudoers.d/gvm-scan` and the password from the
 existing 25 hosts. Expected per-host trouble spots, which don't block the
 other hosts:
+
 - management-stack, media-stack, proxmox-backup-server and
   omada-controller have never been Ansible-managed, so root SSH with the
   lab key is unconfirmed.
@@ -2159,8 +2164,10 @@ other hosts:
 ```bash
 TASK_APPROVAL=gvmcov-greenbone ./with-secrets-prod scripts/provision.sh --stack greenbone-stack
 ```
+
 This needs the full play, not just tags, because gvm-bridge is rebuilt in
 the main compose play. Expected output:
+
 - the scan program deletes and recreates `LAN scan: lan full-vuln`
   (excludes changed) and creates the five new zones' targets and tasks
 - schedules attach to every full-vuln task
@@ -2172,10 +2179,12 @@ Any task that is mid-scan prints WARN and is picked up on the next run.
 ### OP-5: verify
 
 1. **Idempotency.** Re-run only the two GMP programs:
+
    ```bash
    ANSIBLE_TAGS=scan-program,credential-program TASK_APPROVAL=gvmcov-greenbone \
      ./with-secrets-prod scripts/provision.sh --stack greenbone-stack
    ```
+
    Every fleet host should print `up to date`, every LAN target
    `up to date`, and nothing should print `deleted`. If anything rebuilds
    twice in a row, stop: the fingerprint or host comparison is unstable and
@@ -2204,5 +2213,12 @@ Any task that is mid-scan prints WARN and is picked up on the next run.
    connector/apps full-vuln tasks have reports, and media-stack-lab,
    torrent-stack-lab, newt-connector, nextcloud-stack, cse-controller and
    cse-code-eval appear in results.
-5. Record results in README.md's Hand-backs and Status, then update
-   docs/lxc-scan-and-monitoring-rollout/README.md's GVM status line.
+5. Record results in README.md's Hand-backs and Status. Then replace every
+   "planned, not yet executed" status pointer that names this workspace:
+   - docs/greenbone-stack/README.md ("Scan program status")
+   - docs/greenbone-stack/network-scan-rollout-plan.md (Status block)
+   - docs/lxc-scan-and-monitoring-rollout/README.md and plan.md (corrections)
+   - docs/opensearch-stack/README.md (GVM caveat)
+   - terraform/lxc/stacks/greenbone-stack/STACK_CONTRACT.md (gvm-bridge row)
+
+   `grep -rn "gvm-coverage-cleanup" docs terraform/lxc/stacks` lists them.

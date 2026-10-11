@@ -12,6 +12,12 @@ only; the operator runbook at the end of plan.md does the production
 work (OpenBao writes, MikroTik rules, account rollout, greenbone-stack
 redeploy, verification).
 
+Status pointers to this workspace were added on 2026-10-11 to
+docs/greenbone-stack/README.md, docs/greenbone-stack/network-scan-rollout-plan.md,
+docs/lxc-scan-and-monitoring-rollout/README.md and plan.md,
+docs/opensearch-stack/README.md, and greenbone-stack's STACK_CONTRACT.md.
+Update them when the plan is executed (plan.md OP-5 step 5).
+
 ## What was found (2026-10-11, live evidence)
 
 - **No scheduled fleet credentialed scan has ever authenticated.** All 21
@@ -45,12 +51,12 @@ redeploy, verification).
 ## Operator decisions (2026-10-11)
 
 | Question | Decision |
-|---|---|
+| --- | --- |
 | Privilege model | Unprivileged `gvm-scan`: SSH key only, no elevate credential, sudo grant removed |
 | cse_seg hosts | Scan them (cse-controller, cse-code-eval: credentialed and CIDR) |
 | pentest_seg fixtures | Excluded (harness-target-pve, pentagi-upstream-control, cse-kali) |
 | Workstation + Raspberry Pis | Both move onto per-host `gvm-scan` with daily schedules |
-| NAS (Synology) | Uncredentialed weekly full-vuln (removed from the lan exclusions) |
+| NAS (192.168.1.3, Asustor ADM) | Uncredentialed weekly full-vuln (removed from the lan exclusions) |
 | Missing hosts (#5) | All get credentialed scans: pve, pve-tiny, framework, management-stack, media-stack, proxmox-backup-server, omada-controller, cse-panel-stack, technitium-tiny-stack |
 | Alerting (#2) | Required: added a coverage check to the daily findings ingest (gvmcov-14) |
 

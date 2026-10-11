@@ -3,8 +3,29 @@
 Workspace for deploying [Greenbone Community Edition](https://greenbone.github.io/docs/latest/)
 (GVM/OpenVAS) — a vulnerability scanner — as `greenbone-stack`, a Debian LXC
 joining `pentagi-stack`'s existing `pentest_seg` zone (VLAN 70) and exposing
-its web UI (GSA) through Traefik. Deployed on both `pve-test-vm` (validation)
-and `pve` (production).
+its web UI (GSA) through Traefik. Runs on `pve` (production). `pve-test-vm`,
+the original validation environment, is retired.
+
+## Scan program status (2026-10-11)
+
+- **Uncredentialed CIDR scans:** discovery + weekly full-vuln for
+  build/mgmt/edge/infra/ai/game zones and the flat LAN, live since
+  2026-08-17 ([network-scan-rollout-plan.md](./network-scan-rollout-plan.md)).
+  pentest/media/cse/connector/apps zones have **no** CIDR scans yet.
+- **Credentialed scans are NOT working.** 25 per-host `fleet/*` tasks run
+  daily, but every scheduled run since 2026-09-30 has reported
+  `SSH Login Failed For Authenticated Checks`, with zero Local Security
+  Check results. GVM's elevate-privileges credential is su-based, not sudo,
+  so each scan ran `su -l gvm-scan`. Four fleet hosts on VLANs 80/110/120
+  have never been reached (no MikroTik rule). The fix, plus credentialed
+  coverage for the Proxmox nodes, framework, the workstation, the Pis and
+  the non-Ansible LXCs, is planned but **not yet executed**:
+  [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
+- **OCI Pangolin public edge:** credentialed audit task exists, unscheduled
+  by design.
+- **Known security gap:** `gvm-bridge` (`:8010`) has no authentication and
+  is reachable from the LAN (`/findings/all`, `/scan/start`). Tracked as a
+  follow-up in docs/gvm-coverage-cleanup/README.md.
 
 Status: **Live in production on `pve`, 2026-08-01.** Full deployment
 (LXC → compose stack → Traefik/Authentik edge route → DNS → per-user LDAP
@@ -237,10 +258,17 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 2. [pentagi-integration.md](./pentagi-integration.md) — PentAGI↔GVM
    on-demand integration: `gvm-bridge`, built, deployed, and validated
    end-to-end (2026-08-03).
-3. [network-scan-rollout-plan.md](./network-scan-rollout-plan.md) — scoped,
-   not started: turning GVM into a standing, scheduled discovery +
-   vulnerability scanning program across the whole LAN and every Proxmox
-   SDN zone, not just the one-off/agent-triggered targets above.
+3. [network-scan-rollout-plan.md](./network-scan-rollout-plan.md) — the
+   standing, scheduled discovery + vulnerability scanning program across
+   the LAN and SDN zones. Phases 1, 2 and 4 (weekly full-vuln) are live;
+   its Phase 3 credentialed design is superseded (see 4 and 5).
+4. [docs/lxc-scan-and-monitoring-rollout/](../lxc-scan-and-monitoring-rollout/README.md)
+   — the 2026-09-29 per-host `gvm-scan` credentialed fleet (deployed, but
+   it never authenticated; see 5).
+5. [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) —
+   **current plan** (2026-10-11, not yet executed): fixes credentialed auth,
+   covers every remaining host and zone, and adds a coverage check that
+   fails loudly.
 
 ## Key facts up front
 

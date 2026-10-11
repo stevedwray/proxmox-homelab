@@ -1,7 +1,15 @@
 ## Status
 
-**All three phases (GVM, Wazuh, Graylog) fully deployed to production and
-verified live as of 2026-09-30.** Written 2026-09-29 following
+> **Correction 2026-10-11:** Phase 1 (GVM) is deployed but has never
+> worked. GVM's elevate credential (`gvm-07`) is su-based, not sudo, so
+> every scheduled scan ran `su -l gvm-scan` and reported
+> `SSH Login Failed For Authenticated Checks`. The `gvm-01`/`gvm-07`
+> sudo design below is superseded by
+> [docs/gvm-coverage-cleanup/plan.md](../gvm-coverage-cleanup/plan.md)
+> (unprivileged, key-only `gvm-scan`; not yet executed).
+
+**All three phases (GVM, Wazuh, Graylog) deployed to production as of
+2026-09-30; Wazuh and Graylog verified live, GVM not (see correction above).** Written 2026-09-29 following
 `docs/agent-design/README.md`'s process, then executed directly in the
 same session (operator judged it too complex for `/implement-step`
 local-model dispatch) rather than handed off step by step. See `README.md`

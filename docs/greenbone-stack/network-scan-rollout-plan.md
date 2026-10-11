@@ -2,11 +2,19 @@
 
 Status: **Phases 1, 2, and 4 (weekly full-vuln scheduling) done and live in
 production, confirmed by a successful unattended overnight run 2026-08-17.**
-Phase 3's first pass (Linux/workstation/Pi hosts) has been designed since
-2026-08-19 but not yet run against production; a MikroTik-router extension
-to it was added 2026-09-03, also not yet run. Phase 4's daily-discovery
-half, Phase 5, and Phase 6 remain open — see each phase's own status line
-below. Decisions below were made with the operator 2026-08-16; this file is
+Phase 4's daily-discovery half, Phase 5, and Phase 6 remain open — see each
+phase's own status line below.
+
+**Update 2026-10-11 — Phase 3 and the zone list are superseded by
+[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) (planned,
+not yet executed).** The Phase 3 root-key targets below did run (manually,
+2026-08-29 to 2026-09-14) but were never scheduled, and their host list went
+stale (pve-test-vm "+100" IPs, the destroyed dns-stack). The per-host
+`gvm-scan` fleet that replaced them
+([docs/lxc-scan-and-monitoring-rollout/](../lxc-scan-and-monitoring-rollout/README.md))
+has never authenticated. The cleanup plan also adds CIDR scans for
+pentest/media/cse/connector/apps zones and the matching Phase 1 firewall
+reach, and drops the NAS and pve-test-vm from the lan Tier A exclusions. Decisions below were made with the operator 2026-08-16; this file is
 the plan to implement them. Read
 [README.md](./README.md) and [pentagi-integration.md](./pentagi-integration.md)
 first — this project extends the same `greenbone-stack`, but is a genuinely
@@ -304,6 +312,13 @@ just because the local tool call was cancelled.
 
 ## Phase 3 — Credentialed scanning (first pass: ready to apply, 2026-08-19)
 
+> **Superseded (2026-10-11).** Kept as history. The root-key/openvas/Pi
+> targets and credentials described here are deleted by
+> [docs/gvm-coverage-cleanup/plan.md](../gvm-coverage-cleanup/plan.md)
+> (`gvmcov-08`), and every host moves to a per-host, key-only `gvm-scan`
+> account. The SOPS references below are also historical: secrets have
+> lived in OpenBao since 2026-09-28.
+
 The first pass deliberately reuses SSH access that already exists; it does
 **not** provision users, keys, sudo policy, or SSH configuration on scan
 targets. It is intentionally a home-lab trade-off, recorded here rather than
@@ -507,6 +522,10 @@ actually running:
    real data exists, not decided now.
 
 ## What's next (2026-08-16 checkpoint)
+
+> Historical checkpoint. For current status and next steps see the Status
+> block at the top of this file and
+> [docs/gvm-coverage-cleanup/README.md](../gvm-coverage-cleanup/README.md).
 
 `task/gvm-lan-scan-rollout` has **Phase 1 and Phase 2 done and live on
 both `pve-test-vm` and production `pve`** as of 2026-08-16.

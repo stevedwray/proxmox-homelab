@@ -156,19 +156,26 @@ own redeploys of `ai-services-stack`/`mcp-utility-stack`. Verified live:
 Phase 3 section previously said this was undeployed -- that was stale,
 written before Track A's redeploys actually ran; corrected here.)
 
-**Both Track A and Track B are now fully deployed and verified live.**
-The only remaining open item from this whole rollout is `log-03`
-(fleet-wide verification pass across the other ~23 already-`syslog`
-stacks) -- a check, not new code; not run yet.
+**Track B (Wazuh) is fully deployed and verified live. Track A (GVM) is
+deployed but not working.** See the 2026-10-11 correction under Track A.
+Its fix, plus the GVM coverage gaps listed below, moved to
+[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) (planned,
+not yet executed). Still open here: `log-03` (fleet-wide verification pass
+across the other ~23 already-`syslog` stacks), a check rather than new
+code, not run yet.
 
 ## Known, deliberate gaps (not bugs -- documented, not silently dropped)
 
 - `media-stack`, `management-stack`, `omada-controller`,
   `proxmox-backup-server` are all real, running stacks on `pve`
   (confirmed via a live Proxmox API call) with **no Ansible playbook in
-  this repo at all** -- can't join this rollout until one exists. See
-  the comment above `IN_SCOPE_STACKS` in
-  `scripts/gvm_fleet_targets_generate.py`.
+  this repo at all**. For **GVM** this gap is closed by
+  docs/gvm-coverage-cleanup/ (`EXTRA_HOSTS` plus the standalone
+  `deploy-gvm-scan-accounts.yml`, once executed). For **Wazuh** it
+  remains open.
+- pve-tiny stacks added after this rollout (`cse-panel-stack`,
+  `technitium-tiny-stack`, `cse-controller`, `cse-code-eval`) were never in
+  the GVM scope. They're added by docs/gvm-coverage-cleanup/.
 - `pentagi-stack` (CTs confirmed destroyed 2026-09-28) and
   `pentagi-upstream-control` (a comparison baseline, not real
   production) are deliberately excluded.
