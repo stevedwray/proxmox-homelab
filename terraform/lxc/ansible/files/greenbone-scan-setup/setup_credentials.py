@@ -42,7 +42,7 @@ subnet.
 
 VLAN-organized scheduling: a GVM Target can only carry one
 ssh_credential_id for every host it contains, so each host keeps its own
-Target/Task and gets its zone's daily Schedule (ZONE_SCHEDULE_TIMES) plus
+Target/Task and gets one of its zone's weekly Schedules (ZONE_WEEKLY_SLOTS) plus
 a zone Tag (zone:<name>) for GSA-side grouping and filtering.
 """
 import datetime
@@ -56,23 +56,37 @@ from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
 
-# Daily, staggered ~45min apart overnight in the operator's own local time
-# (Pacific/Auckland, a real IANA zone so NZ DST transitions resolve
-# correctly -- see the 2026-09-30 UTC-vs-NZT fix in git history).
-ZONE_SCHEDULE_TIMES = {
-    "cse_seg": "23:30",
-    "lan": "00:15",
-    "mgmt_seg": "01:00",
-    "infra_seg": "01:45",
-    "ai_seg": "02:30",
-    "media_seg": "03:15",
-    "game_seg": "04:00",
-    "edge_seg": "04:45",
-    "pentest_seg": "05:30",
-    "connector_seg": "06:15",
-    "build_seg": "07:00",
-    "apps_seg": "07:45",
+# Weekly, not daily (operator decision 2026-10-12): greenbone-stack (2 cores,
+# memory-gated scan queue) completed only 2-4 of 11 daily runs for mgmt_seg's
+# 8 simultaneous hosts, and this plan grows the fleet from 25 to 40 tasks.
+# Each zone gets one or more (weekday, local start) slots; hosts in a zone
+# are dealt round-robin across its slots (MikroTik first, then targets.json
+# order) so no slot starts more than 4 hosts. Monday and Thursday mornings
+# are kept free -- the weekly CIDR full-vuln program runs Sunday
+# 22:00-Monday 04:00 and Wednesday 22:00-Thursday 02:00 (setup_schedules.py).
+# Times are Pacific/Auckland wall clock, a real IANA zone so NZ DST
+# transitions resolve correctly.
+ZONE_WEEKLY_SLOTS = {
+    "lan": [("TU", "00:30"), ("WE", "00:30"), ("FR", "00:30")],
+    "mgmt_seg": [("TU", "03:00"), ("WE", "03:00"), ("FR", "03:00")],
+    "infra_seg": [("SA", "00:30"), ("SU", "00:30")],
+    "ai_seg": [("SA", "03:00")],
+    "game_seg": [("SU", "03:00")],
+    "edge_seg": [("SA", "05:00")],
+    "media_seg": [("SU", "05:00")],
+    "cse_seg": [("TU", "05:00")],
+    "pentest_seg": [("WE", "05:00")],
+    "connector_seg": [("FR", "05:00")],
+    "build_seg": [("TU", "06:00")],
+    "apps_seg": [("WE", "06:00")],
 }
+WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+# The pre-2026-10-12 daily schedules ("Daily fleet scan: <zone>"), deleted
+# once no task uses them.
+LEGACY_DAILY_SCHEDULE_ZONES = [
+    "mgmt_seg", "infra_seg", "ai_seg", "media_seg", "game_seg", "edge_seg",
+    "pentest_seg", "connector_seg", "build_seg", "apps_seg", "cse_seg", "lan",
+]
 SCHEDULE_TIMEZONE = "Pacific/Auckland"
 
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
@@ -223,49 +237,66 @@ def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id):
         target_id=target_id,
         scanner_id=scanner_id,
         schedule_id=schedule_id,
-        comment="Managed credentialed task; daily per-zone schedule.",
+        comment="Managed credentialed task; weekly per-zone schedule.",
     )
     task_id = response.get("id")
     print(f"created task {name!r} ({task_id}) scheduled via {schedule_id!r}")
     return task_id
 
 
-def ensure_schedule(gmp, zone):
-    """One recurring daily GVM Schedule per network zone. Re-applies
-    icalendar/timezone on every run so a corrected ZONE_SCHEDULE_TIMES
-    value lands on already-created schedules too. Hand-builds the
-    iCalendar text rather than depending on the `icalendar` package."""
-    hhmm = ZONE_SCHEDULE_TIMES.get(zone)
-    if hhmm is None:
+def ensure_weekly_schedule(gmp, zone, slot_index):
+    """One recurring weekly GVM Schedule per (zone, slot). Re-applies
+    icalendar/timezone on every run so a corrected ZONE_WEEKLY_SLOTS value
+    lands on already-created schedules too. Hand-builds the iCalendar text
+    rather than depending on the `icalendar` package. DTSTART is the next
+    calendar date falling on the slot's weekday (a date's weekday doesn't
+    depend on timezone); gvmd applies SCHEDULE_TIMEZONE to the naive time."""
+    slots = ZONE_WEEKLY_SLOTS.get(zone)
+    if not slots:
         raise RuntimeError(
-            f"no schedule start time configured for zone {zone!r} -- add it to "
-            f"ZONE_SCHEDULE_TIMES in this file before this zone can be scheduled"
+            f"no weekly slot configured for zone {zone!r} -- add it to "
+            f"ZONE_WEEKLY_SLOTS in this file before this zone can be scheduled"
         )
-    name = f"Daily fleet scan: {zone}"
+    day, hhmm = slots[slot_index]
+    name = f"Weekly credentialed scan: {zone} #{slot_index + 1}"
     hour, minute = hhmm.split(":")
     now = datetime.datetime.now(datetime.timezone.utc)
+    first = now.date() + datetime.timedelta(days=(WEEKDAY_INDEX[day] - now.weekday()) % 7)
     icalendar = (
         "BEGIN:VCALENDAR\r\n"
         "VERSION:2.0\r\n"
         "PRODID:-//proxmox-homelab//gvm-fleet-schedule//EN\r\n"
         "BEGIN:VEVENT\r\n"
-        f"UID:gvm-fleet-schedule-{zone}@proxmox-homelab\r\n"
+        f"UID:gvm-fleet-weekly-{zone}-{slot_index + 1}@proxmox-homelab\r\n"
         f"DTSTAMP:{now.strftime('%Y%m%dT%H%M%SZ')}\r\n"
-        f"DTSTART:{now.strftime('%Y%m%d')}T{hour}{minute}00\r\n"
-        "RRULE:FREQ=DAILY\r\n"
+        f"DTSTART:{first.strftime('%Y%m%d')}T{hour}{minute}00\r\n"
+        "RRULE:FREQ=WEEKLY\r\n"
         "END:VEVENT\r\n"
         "END:VCALENDAR\r\n"
     )
-    comment = f"Credentialed scans for zone {zone!r}, daily at {hhmm} {SCHEDULE_TIMEZONE}."
+    comment = f"Credentialed scans for zone {zone!r} slot {slot_index + 1}, weekly {day} {hhmm} {SCHEDULE_TIMEZONE}."
     existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
     if existing:
         gmp.modify_schedule(existing, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
-        print(f"schedule {name!r} ({existing}) updated to daily at {hhmm} {SCHEDULE_TIMEZONE}")
+        print(f"schedule {name!r} ({existing}) updated to weekly {day} {hhmm} {SCHEDULE_TIMEZONE}")
         return existing
     response = gmp.create_schedule(name=name, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
     schedule_id = response.get("id")
-    print(f"created schedule {name!r} ({schedule_id}) daily at {hhmm} {SCHEDULE_TIMEZONE}")
+    print(f"created schedule {name!r} ({schedule_id}) weekly {day} {hhmm} {SCHEDULE_TIMEZONE}")
     return schedule_id
+
+
+def delete_legacy_daily_schedules(gmp):
+    for zone in LEGACY_DAILY_SCHEDULE_ZONES:
+        name = f"Daily fleet scan: {zone}"
+        schedule_id = find_by_name(gmp, gmp.get_schedules, "schedule", name)
+        if not schedule_id:
+            continue
+        try:
+            gmp.delete_schedule(schedule_id, ultimate=True)
+            print(f"deleted schedule {name!r} ({schedule_id})")
+        except Exception as exc:  # noqa: BLE001 -- still attached to a task left alone this run
+            print(f"WARN: could not delete schedule {name!r} yet ({exc}); re-run later")
 
 
 def ensure_zone_tag(gmp, zone, task_ids):
@@ -352,13 +383,18 @@ def main():
 
         cleanup_legacy(gmp)
 
-        schedule_ids_by_zone = {}
+        schedule_ids = {}
+        hosts_seen_by_zone = {}
         task_ids_by_zone = {}
 
         def schedule_for(zone):
-            if zone not in schedule_ids_by_zone:
-                schedule_ids_by_zone[zone] = ensure_schedule(gmp, zone)
-            return schedule_ids_by_zone[zone]
+            # Round-robin this zone's hosts across its weekly slots.
+            slots = ZONE_WEEKLY_SLOTS.get(zone) or [None]
+            slot_index = hosts_seen_by_zone.get(zone, 0) % len(slots)
+            hosts_seen_by_zone[zone] = hosts_seen_by_zone.get(zone, 0) + 1
+            if (zone, slot_index) not in schedule_ids:
+                schedule_ids[(zone, slot_index)] = ensure_weekly_schedule(gmp, zone, slot_index)
+            return schedule_ids[(zone, slot_index)]
 
         mikrotik_credential_id = ensure_credential(
             gmp, MIKROTIK_CREDENTIAL["name"], MIKROTIK_CREDENTIAL["login"], MIKROTIK_CREDENTIAL["key_path"],
@@ -383,6 +419,8 @@ def main():
 
         for zone, task_ids in task_ids_by_zone.items():
             ensure_zone_tag(gmp, zone, task_ids)
+
+        delete_legacy_daily_schedules(gmp)
 
         if START_TASK_NAME:
             task_id = find_by_name(gmp, gmp.get_tasks, "task", START_TASK_NAME)

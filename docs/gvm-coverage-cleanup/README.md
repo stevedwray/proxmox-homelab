@@ -7,7 +7,7 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 ## Status
 
 **2026-10-11: plan written, nothing executed.** Branch
-`work/gvm-coverage-cleanup`. Steps `gvmcov-01`…`gvmcov-14` are file edits
+`work/gvm-coverage-cleanup`. Steps `gvmcov-01`…`gvmcov-15` are file edits
 only; the operator runbook at the end of plan.md does the production
 work (OpenBao writes, MikroTik rules, account rollout, greenbone-stack
 redeploy, verification).
@@ -59,6 +59,7 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 | NAS (192.168.1.3, Asustor ADM) | Uncredentialed weekly full-vuln (removed from the lan exclusions) |
 | Missing hosts (#5) | All get credentialed scans: pve, pve-tiny, framework, management-stack, media-stack, proxmox-backup-server, omada-controller, cse-panel-stack, technitium-tiny-stack |
 | Alerting (#2) | Required: added a coverage check to the daily findings ingest (gvmcov-14) |
+| Cadence (2026-10-12) | Credentialed scans weekly, not daily; zones spread over 5 nights, max 4 hosts per slot (gvmcov-15). The scanner couldn't finish the daily load |
 
 ## Follow-ups (out of scope for this plan; not started)
 
@@ -72,9 +73,9 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    `es-findings-sync-state/greenbone-coverage` document, and `COVERAGE ...`
    journal lines. Delivering them somewhere (email, ntfy, Wazuh rule)
    still needs a decision.
-3. **Scan cadence.** "Daily" fleet tasks only completed 2–11 times in 11
-   days. Revisit daily vs. weekly once a week of coverage documents shows
-   real run durations.
+3. **Scan cadence.** Moved to weekly (gvmcov-15). Revisit slot sizes once
+   the coverage documents show real run durations; if lan/mgmt slots
+   still don't finish, split them further or grow greenbone-stack.
 4. **Stopped duplicate LXCs on pve.** VMIDs 40014/50011/50012/50013
    (opensearch, mcp-utility, secpipe, ai-services) are leftovers from the
    move to pve-tiny, where they now run.

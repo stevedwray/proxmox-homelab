@@ -291,8 +291,9 @@ AUTH_OK_NAME = "SSH Login Successful For Authenticated Checks"
 AUTH_FAIL_NAME = "SSH Login Failed For Authenticated Checks"
 # Unscheduled by design (docs/greenbone-stack/README.md) -- never "stale".
 COVERAGE_IGNORE_TASKS = {"Credentialed scan: OCI Pangolin public edge"}
-# Daily schedules; 48h tolerates one skipped night before alerting.
-COVERAGE_MAX_AGE_HOURS = 48
+# Weekly schedules (setup_credentials.py ZONE_WEEKLY_SLOTS); 8 days
+# tolerates a run that starts late or spans midnight before alerting.
+COVERAGE_MAX_AGE_HOURS = 8 * 24
 COVERAGE_ACTIVE_STATUSES = {"Running", "Requested", "Queued"}
 COVERAGE_FAILING = {"never_run", "auth_failed", "no_auth_evidence", "stale", "unscheduled"}
 

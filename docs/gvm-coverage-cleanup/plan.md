@@ -5,7 +5,7 @@ shape: [docs/agent-design/step-packet-schema.md](../agent-design/step-packet-sch
 
 **How to run this plan.**
 
-- Steps `gvmcov-01`…`gvmcov-14` are file edits only. Each step's `change`
+- Steps `gvmcov-01`…`gvmcov-15` are file edits only. Each step's `change`
   is one literal shell block (heredoc file writes, or a Python edit script
   that asserts every anchor it replaces). Run it exactly as written from
   the repo root, then run the gates. No step touches production.
@@ -2095,10 +2095,225 @@ print("gvm_findings_sync.py updated")
 PYEOF
 ```
 
+### gvmcov-15-weekly-cadence
+
+```yaml
+id: gvmcov-15-weekly-cadence
+title: Weekly credentialed scans, max 4 hosts per slot; 8-day coverage window
+depends_on: [gvmcov-08-setup-credentials, gvmcov-14-coverage-check]
+
+change: >
+  Run the Python edit block below. It replaces setup_credentials.py's daily
+  ZONE_SCHEDULE_TIMES/ensure_schedule with weekly ZONE_WEEKLY_SLOTS/
+  ensure_weekly_schedule, with hosts dealt round-robin across a zone's slots
+  and the old "Daily fleet scan: <zone>" schedules deleted once unused. It
+  also sets gvm_findings_sync.py's COVERAGE_MAX_AGE_HOURS to 8 * 24.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py
+    - terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+
+gates:
+  - id: compile
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py"
+    expect: "exit 0"
+    critical: true
+  - id: no-daily
+    cmd: "grep -c 'ZONE_SCHEDULE_TIMES\\|RRULE:FREQ=DAILY\\|COVERAGE_MAX_AGE_HOURS = 48' terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py"
+    expect: "prints ':0' for both files"
+    critical: true
+```
+
+Operator decision 2026-10-12, made after the plan was written: the run
+history showed greenbone-stack (2 cores) completing only 2–4 of 11 daily
+runs for mgmt_seg's 8 simultaneous hosts, and this plan grows the fleet to
+40 tasks. Slots (Pacific/Auckland; Monday and Thursday mornings are left
+for the weekly CIDR program):
+
+| Night (local start) | Slots |
+| --- | --- |
+| Tue | lan #1 00:30 (4), mgmt #1 03:00 (3), cse 05:00 (2), build 06:00 (1) |
+| Wed | lan #2 00:30 (4), mgmt #2 03:00 (3), pentest 05:00 (1), apps 06:00 (1) |
+| Fri | lan #3 00:30 (3), mgmt #3 03:00 (3), connector 05:00 (1) |
+| Sat | infra #1 00:30 (3), ai 03:00 (3), edge 05:00 (2) |
+| Sun | infra #2 00:30 (2), game 03:00 (2), media 05:00 (2) |
+
+Verified 2026-10-12 against a stubbed GMP with the real 39-host inventory
+plus MikroTik: 40 tasks across 17 slots, max 4 per slot, correct DTSTART
+weekdays, the legacy daily schedule deleted, and a second run changes
+nothing.
+
+```bash
+python3 - <<'PYEOF'
+from pathlib import Path
+
+path = Path("terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py")
+text = path.read_text(encoding="utf-8")
+assert "ZONE_WEEKLY_SLOTS" not in text, "weekly slots already present"
+
+def replace_once(old, new):
+    global text
+    count = text.count(old)
+    assert count == 1, f"expected exactly 1 match, found {count}: {old[:80]!r}"
+    text = text.replace(old, new)
+
+replace_once(
+    "Target/Task and gets its zone's daily Schedule (ZONE_SCHEDULE_TIMES) plus\n",
+    "Target/Task and gets one of its zone's weekly Schedules (ZONE_WEEKLY_SLOTS) plus\n",
+)
+
+old_start = text.index("# Daily, staggered ~45min apart overnight")
+old_end = text.index('SCHEDULE_TIMEZONE = "Pacific/Auckland"\n')
+text = text[:old_start] + '''# Weekly, not daily (operator decision 2026-10-12): greenbone-stack (2 cores,
+# memory-gated scan queue) completed only 2-4 of 11 daily runs for mgmt_seg's
+# 8 simultaneous hosts, and this plan grows the fleet from 25 to 40 tasks.
+# Each zone gets one or more (weekday, local start) slots; hosts in a zone
+# are dealt round-robin across its slots (MikroTik first, then targets.json
+# order) so no slot starts more than 4 hosts. Monday and Thursday mornings
+# are kept free -- the weekly CIDR full-vuln program runs Sunday
+# 22:00-Monday 04:00 and Wednesday 22:00-Thursday 02:00 (setup_schedules.py).
+# Times are Pacific/Auckland wall clock, a real IANA zone so NZ DST
+# transitions resolve correctly.
+ZONE_WEEKLY_SLOTS = {
+    "lan": [("TU", "00:30"), ("WE", "00:30"), ("FR", "00:30")],
+    "mgmt_seg": [("TU", "03:00"), ("WE", "03:00"), ("FR", "03:00")],
+    "infra_seg": [("SA", "00:30"), ("SU", "00:30")],
+    "ai_seg": [("SA", "03:00")],
+    "game_seg": [("SU", "03:00")],
+    "edge_seg": [("SA", "05:00")],
+    "media_seg": [("SU", "05:00")],
+    "cse_seg": [("TU", "05:00")],
+    "pentest_seg": [("WE", "05:00")],
+    "connector_seg": [("FR", "05:00")],
+    "build_seg": [("TU", "06:00")],
+    "apps_seg": [("WE", "06:00")],
+}
+WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+# The pre-2026-10-12 daily schedules ("Daily fleet scan: <zone>"), deleted
+# once no task uses them.
+LEGACY_DAILY_SCHEDULE_ZONES = [
+    "mgmt_seg", "infra_seg", "ai_seg", "media_seg", "game_seg", "edge_seg",
+    "pentest_seg", "connector_seg", "build_seg", "apps_seg", "cse_seg", "lan",
+]
+''' + text[old_end:]
+
+replace_once(
+    '        comment="Managed credentialed task; daily per-zone schedule.",\n',
+    '        comment="Managed credentialed task; weekly per-zone schedule.",\n',
+)
+
+fn_start = text.index("def ensure_schedule(gmp, zone):\n")
+fn_end = text.index("def ensure_zone_tag(")
+text = text[:fn_start] + '''def ensure_weekly_schedule(gmp, zone, slot_index):
+    """One recurring weekly GVM Schedule per (zone, slot). Re-applies
+    icalendar/timezone on every run so a corrected ZONE_WEEKLY_SLOTS value
+    lands on already-created schedules too. Hand-builds the iCalendar text
+    rather than depending on the `icalendar` package. DTSTART is the next
+    calendar date falling on the slot's weekday (a date's weekday doesn't
+    depend on timezone); gvmd applies SCHEDULE_TIMEZONE to the naive time."""
+    slots = ZONE_WEEKLY_SLOTS.get(zone)
+    if not slots:
+        raise RuntimeError(
+            f"no weekly slot configured for zone {zone!r} -- add it to "
+            f"ZONE_WEEKLY_SLOTS in this file before this zone can be scheduled"
+        )
+    day, hhmm = slots[slot_index]
+    name = f"Weekly credentialed scan: {zone} #{slot_index + 1}"
+    hour, minute = hhmm.split(":")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    first = now.date() + datetime.timedelta(days=(WEEKDAY_INDEX[day] - now.weekday()) % 7)
+    icalendar = (
+        "BEGIN:VCALENDAR\\r\\n"
+        "VERSION:2.0\\r\\n"
+        "PRODID:-//proxmox-homelab//gvm-fleet-schedule//EN\\r\\n"
+        "BEGIN:VEVENT\\r\\n"
+        f"UID:gvm-fleet-weekly-{zone}-{slot_index + 1}@proxmox-homelab\\r\\n"
+        f"DTSTAMP:{now.strftime('%Y%m%dT%H%M%SZ')}\\r\\n"
+        f"DTSTART:{first.strftime('%Y%m%d')}T{hour}{minute}00\\r\\n"
+        "RRULE:FREQ=WEEKLY\\r\\n"
+        "END:VEVENT\\r\\n"
+        "END:VCALENDAR\\r\\n"
+    )
+    comment = f"Credentialed scans for zone {zone!r} slot {slot_index + 1}, weekly {day} {hhmm} {SCHEDULE_TIMEZONE}."
+    existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
+    if existing:
+        gmp.modify_schedule(existing, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
+        print(f"schedule {name!r} ({existing}) updated to weekly {day} {hhmm} {SCHEDULE_TIMEZONE}")
+        return existing
+    response = gmp.create_schedule(name=name, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
+    schedule_id = response.get("id")
+    print(f"created schedule {name!r} ({schedule_id}) weekly {day} {hhmm} {SCHEDULE_TIMEZONE}")
+    return schedule_id
+
+
+def delete_legacy_daily_schedules(gmp):
+    for zone in LEGACY_DAILY_SCHEDULE_ZONES:
+        name = f"Daily fleet scan: {zone}"
+        schedule_id = find_by_name(gmp, gmp.get_schedules, "schedule", name)
+        if not schedule_id:
+            continue
+        try:
+            gmp.delete_schedule(schedule_id, ultimate=True)
+            print(f"deleted schedule {name!r} ({schedule_id})")
+        except Exception as exc:  # noqa: BLE001 -- still attached to a task left alone this run
+            print(f"WARN: could not delete schedule {name!r} yet ({exc}); re-run later")
+
+
+''' + text[fn_end:]
+
+replace_once(
+    "        schedule_ids_by_zone = {}\n"
+    "        task_ids_by_zone = {}\n"
+    "\n"
+    "        def schedule_for(zone):\n"
+    "            if zone not in schedule_ids_by_zone:\n"
+    "                schedule_ids_by_zone[zone] = ensure_schedule(gmp, zone)\n"
+    "            return schedule_ids_by_zone[zone]\n",
+    "        schedule_ids = {}\n"
+    "        hosts_seen_by_zone = {}\n"
+    "        task_ids_by_zone = {}\n"
+    "\n"
+    "        def schedule_for(zone):\n"
+    "            # Round-robin this zone's hosts across its weekly slots.\n"
+    "            slots = ZONE_WEEKLY_SLOTS.get(zone) or [None]\n"
+    "            slot_index = hosts_seen_by_zone.get(zone, 0) % len(slots)\n"
+    "            hosts_seen_by_zone[zone] = hosts_seen_by_zone.get(zone, 0) + 1\n"
+    "            if (zone, slot_index) not in schedule_ids:\n"
+    "                schedule_ids[(zone, slot_index)] = ensure_weekly_schedule(gmp, zone, slot_index)\n"
+    "            return schedule_ids[(zone, slot_index)]\n",
+)
+replace_once(
+    "        for zone, task_ids in task_ids_by_zone.items():\n"
+    "            ensure_zone_tag(gmp, zone, task_ids)\n",
+    "        for zone, task_ids in task_ids_by_zone.items():\n"
+    "            ensure_zone_tag(gmp, zone, task_ids)\n"
+    "\n"
+    "        delete_legacy_daily_schedules(gmp)\n",
+)
+path.write_text(text, encoding="utf-8")
+print("setup_credentials.py: weekly slots")
+
+path = Path("terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py")
+text = path.read_text(encoding="utf-8")
+replace_once(
+    "# Daily schedules; 48h tolerates one skipped night before alerting.\n"
+    "COVERAGE_MAX_AGE_HOURS = 48\n",
+    "# Weekly schedules (setup_credentials.py ZONE_WEEKLY_SLOTS); 8 days\n"
+    "# tolerates a run that starts late or spans midnight before alerting.\n"
+    "COVERAGE_MAX_AGE_HOURS = 8 * 24\n",
+)
+path.write_text(text, encoding="utf-8")
+print("gvm_findings_sync.py: 8-day coverage window")
+PYEOF
+```
+
 ## Operator runbook (production -- not step blocks)
 
 Run these in order, from the repo root on this branch, after
-gvmcov-01…14 are committed. Each production command follows CLAUDE.md's
+gvmcov-01…15 are committed. Each production command follows CLAUDE.md's
 Preflight → approval → `TASK_APPROVAL` → after-action flow.
 
 ### OP-1: create OpenBao credentials for the 14 new hosts (OIDC write)
@@ -2202,14 +2417,14 @@ Any task that is mid-scan prints WARN and is picked up on the next run.
    null for a task that has run, gvm-bridge's `last_report/report/scan_start`
    path is wrong for this gvmd version, so fix gvmcov-13 before trusting the
    coverage check.
-3. **Coverage check, after the first nightly cycle.** After the 19:00 UTC
+3. **Coverage check, after the first full week.** After the 19:00 UTC
    `gvm-findings-ingest` run, read
    `es-findings-sync-state/_doc/greenbone-coverage`. Expect
-   `"status": "ok"`. The first run after OP-4 will show `never_run` for
-   hosts not yet scanned. On greenbone-stack,
+   `"status": "ok"`. Until each host's weekly slot has come round, the check
+   shows `never_run` for it, so the first week fails by design. On greenbone-stack,
    `systemctl status gvm-findings-ingest` should not be failed (exit 3
    means coverage is failing).
-4. **New zones.** After Wednesday night's runs, the pentest/media/cse/
+4. **New zones.** After Wednesday night's CIDR runs, the pentest/media/cse/
    connector/apps full-vuln tasks have reports, and media-stack-lab,
    torrent-stack-lab, newt-connector, nextcloud-stack, cse-controller and
    cse-code-eval appear in results.
