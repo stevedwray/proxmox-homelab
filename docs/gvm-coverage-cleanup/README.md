@@ -6,8 +6,9 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-11: plan written, nothing executed.** Branch
-`work/gvm-coverage-cleanup`. Steps `gvmcov-01`…`gvmcov-15` are file edits
+**2026-10-12: code steps gvmcov-01…15 applied on `work/gvm-coverage-cleanup`
+(d5a0bfd3, 34bc19cb), every gate passed. Production runbook OP-1…OP-5 NOT run;
+live GVM is unchanged (still the broken daily fleet).** Plan written 2026-10-11. Steps `gvmcov-01`…`gvmcov-15` are file edits
 only; the operator runbook at the end of plan.md does the production
 work (OpenBao writes, MikroTik rules, account rollout, greenbone-stack
 redeploy, verification).
@@ -92,3 +93,11 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 ## Hand-backs
 
 (Executor: append one entry per completed step here.)
+
+- **2026-10-12, gvmcov-01…14:** applied by Claude exactly as written in
+  plan.md, in one commit (d5a0bfd3). All gates printed their expected
+  values: inventory 39 hosts, manifest 39 entries / 0 sudo fields, 30
+  playbooks syntax-check clean, zones 12, firewall destinations 11.
+- **2026-10-12, gvmcov-15:** added after the operator chose weekly cadence;
+  applied from plan.md (34bc19cb), byte-identical to the stub-tested copy.
+  Both gates passed.
