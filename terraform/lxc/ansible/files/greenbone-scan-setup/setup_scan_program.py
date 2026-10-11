@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
-"""One-shot, idempotent setup for the LAN/VLAN discovery + vulnerability
-scan program -- docs/greenbone-stack/network-scan-rollout-plan.md, Phase 2.
+"""Idempotent setup for the LAN/VLAN discovery + vulnerability scan program
+-- docs/greenbone-stack/network-scan-rollout-plan.md Phase 2, extended by
+docs/gvm-coverage-cleanup/plan.md (2026-10-11: added pentest_seg,
+media_seg, cse_seg, connector_seg and apps_seg; dropped the NAS and the
+retired pve-test-vm from the lan full-vuln exclusions).
 
-Run inside the greenbone-stack compose's throwaway gvm-tools container
-(same pattern as deploy-greenbone-stack.yml's other GMP calls, just Python
-instead of gvm-cli/XML -- this needed structured idempotency checks
-(get_targets/get_tasks by exact name) that were simpler to write directly
-against python-gvm than by regex-scraping gvm-cli's XML stdout):
+Run inside the greenbone-stack compose's throwaway gvm-tools container:
 
     docker compose run --rm \
       -v <this file>:/tmp/setup_scan_program.py:ro \
       -e GVM_USERNAME=admin -e GVM_PASSWORD=... \
       gvm-tools python3 /tmp/setup_scan_program.py
 
-python-gvm call shapes (create_target/create_task, alive_test as a plain
-string, get_scan_configs/get_scanners resolved by name filter rather than
-a hardcoded UUID) all mirror gvm-bridge/app.py's already-live-proven usage
--- see that file's scan_start()/_resolve_ids() for the precedent.
+Creates one Discovery and one Full-and-fast Target+Task per zone/LAN.
+Discovery Tasks stay unscheduled; full-vuln Tasks get their weekly
+Schedule from setup_schedules.py (run after this file by the playbook).
 
-Creates two GVM Targets and two Tasks per zone/LAN (one Discovery, one
-Full-and-fast pair) -- 14 Targets + 14 Tasks total. Does NOT attach a
-Schedule (Phase 4, not yet done); Tasks are created unscheduled and can be
-started manually (GSA, or `gmp.start_task`) until scheduling lands. Safe
-to re-run: every create is preceded by an exact-name lookup and skipped if
-already present.
+Reconciles, not create-only: if an existing Target's hosts/exclude_hosts
+differ from this file, its Task and Target are deleted (ultimate) and
+recreated -- gvmd refuses to change hosts on a Target in use by a Task.
+A Task that is currently running is left alone with a WARN and picked up
+on the next run. setup_schedules.py re-attaches the weekly Schedule to a
+recreated full-vuln Task by name.
 """
 import os
 import sys
@@ -40,34 +38,19 @@ DISCOVERY_CONFIG_NAME = "Discovery"
 FULL_CONFIG_NAME = "Full and fast"
 SCANNER_NAME = "OpenVAS Default"
 
-# GVM's own standard pairing for "Full and fast" -- confirmed live
-# 2026-08-16: create_target has no implicit port default (GmvResponseError
-# 400 "One of PORT_LIST and PORT_RANGE are required" if omitted, contrary
-# to this file's original draft assumption). Resolved by name, same
-# convention as the scan config/scanner, not hardcoded.
+# GVM's own standard pairing for "Full and fast"; create_target has no
+# implicit port default (confirmed live 2026-08-16).
 PORT_LIST_NAME = "All TCP and Nmap top 100 UDP"
 
-# GVM's standard combined default -- deliberately NOT gvm-bridge's
-# hardcoded "Consider Alive" (that was justified specifically for
-# pentest_seg's own deliberately ICMP-firewalled lab targets; every host
-# here is normal LAN/VLAN infrastructure that should respond to ICMP/ARP
-# like anything else). Revisit per-zone only if a specific zone is
-# observed to have real false-negative host-alive results.
-#
-# Exact string confirmed live 2026-08-16 against python-gvm's AliveTest
-# enum (gvm.protocols.gmp.requests.v224._targets.AliveTest) -- the
-# original draft guessed "ICMP, TCP-ACK Service Ping, ARP Ping" and it
-# does not match any enum value (raises InvalidArgument). The real
-# combined-default member is "ICMP, TCP-ACK Service & ARP Ping" (comma +
-# ampersand, "Service" not "Service Ping" in the middle clause).
+# GVM's standard combined default. Exact enum string confirmed live
+# 2026-08-16 against python-gvm's AliveTest enum.
 ALIVE_TESTS = "ICMP, TCP-ACK Service & ARP Ping"
 
-# Tier A hosts (docs/greenbone-stack/network-scan-rollout-plan.md Phase 2)
-# are excluded from the Full-and-fast target only -- still covered by
-# Discovery. Promoting one to full scanning later means removing it from
-# this list and re-running this script (idempotency check is by target
-# name, not content, so an already-existing Full-and-fast target won't be
-# auto-updated -- see "Known gap" at the bottom of this file).
+ACTIVE_TASK_STATUSES = {"Running", "Requested", "Queued", "Stop Requested", "Delete Requested"}
+
+# Tier A hosts are excluded from the Full-and-fast target only -- still
+# covered by Discovery, and every one of them has its own daily
+# credentialed scan (setup_credentials.py).
 ZONES = [
     {"key": "build_seg", "cidr": "192.168.10.0/24", "tier_a_exclude": []},
     {
@@ -79,20 +62,26 @@ ZONES = [
     {"key": "infra_seg", "cidr": "192.168.40.0/24", "tier_a_exclude": ["192.168.40.10"]},  # Harbor
     {"key": "ai_seg", "cidr": "192.168.50.0/24", "tier_a_exclude": []},
     {"key": "game_seg", "cidr": "192.168.60.0/24", "tier_a_exclude": []},
+    {"key": "pentest_seg", "cidr": "192.168.70.0/24", "tier_a_exclude": []},
+    {"key": "media_seg", "cidr": "192.168.80.0/24", "tier_a_exclude": []},
+    {"key": "cse_seg", "cidr": "192.168.100.0/24", "tier_a_exclude": []},
+    {"key": "connector_seg", "cidr": "192.168.110.0/24", "tier_a_exclude": []},
+    {"key": "apps_seg", "cidr": "192.168.120.0/24", "tier_a_exclude": []},
     {
         "key": "lan",
         "cidr": "192.168.1.0/24",
-        # MikroTik, pve, NAS, pve-test-vm
-        "tier_a_exclude": ["192.168.1.1", "192.168.1.2", "192.168.1.3", "192.168.1.41"],
+        "tier_a_exclude": ["192.168.1.1", "192.168.1.2"],  # MikroTik, pve
     },
 ]
 
-# Metasploitable2, harness-target -- deliberately excluded from every
-# routine target (both tiers), not just Full-and-fast. Both are permanent
-# red-team fixtures on the flat LAN; their findings are known/meaningless
-# noise for a "catch new vulnerabilities" mission, and they stay reachable
-# via the existing on-demand gvm-bridge/PentAGI path only.
-REDTEAM_EXCLUDE = ["192.168.1.113", "192.168.1.55"]
+# Permanent red-team / test fixtures -- excluded from every routine target
+# (both tiers) in their zone; their findings are known/meaningless noise
+# and they stay reachable via the on-demand gvm-bridge/PentAGI path only.
+FIXTURE_EXCLUDE = {
+    "lan": ["192.168.1.113", "192.168.1.55"],  # Metasploitable2, harness-target
+    # harness-target-pve, pentagi-upstream-control, cse-kali
+    "pentest_seg": ["192.168.70.12", "192.168.70.13", "192.168.70.210"],
+}
 
 
 def resolve_id(gmp, getter, name, tag):
@@ -109,39 +98,57 @@ def find_by_name(gmp, getter, tag, name):
     return el.get("id") if el is not None else None
 
 
-def ensure_target(gmp, name, cidr, exclude_hosts, port_list_id):
-    """exclude_hosts is a list[str] of individual addresses, per
-    python-gvm's Targets.create_target signature -- a pre-joined comma
-    string here fails live with GvmResponseError 400 "Error in host
-    specification" (confirmed 2026-08-16), the same "hosts wants a list,
-    not a string" shape as the hosts=[cidr] argument below.
-    """
-    existing = find_by_name(gmp, gmp.get_targets, "target", name)
-    if existing:
-        print(f"target {name!r} already exists ({existing}), skipping")
-        return existing
-    kwargs = {"exclude_hosts": exclude_hosts} if exclude_hosts else {}
-    response = gmp.create_target(
-        name=name,
-        hosts=[cidr],
-        alive_test=ALIVE_TESTS,
-        port_list_id=port_list_id,
-        **kwargs,
+def _host_set(text):
+    return {h.strip() for h in (text or "").split(",") if h.strip()}
+
+
+def target_matches(gmp, target_id, cidr, exclude_hosts):
+    target = gmp.get_target(target_id)
+    return (
+        _host_set(target.findtext("target/hosts")) == {cidr}
+        and _host_set(target.findtext("target/exclude_hosts")) == set(exclude_hosts)
     )
-    target_id = response.get("id")
-    print(f"created target {name!r} ({target_id})")
-    return target_id
 
 
-def ensure_task(gmp, name, config_id, target_id, scanner_id):
-    existing = find_by_name(gmp, gmp.get_tasks, "task", name)
-    if existing:
-        print(f"task {name!r} already exists ({existing}), skipping")
-        return existing
-    response = gmp.create_task(name=name, config_id=config_id, target_id=target_id, scanner_id=scanner_id)
-    task_id = response.get("id")
-    print(f"created task {name!r} ({task_id})")
-    return task_id
+def ensure_target_and_task(gmp, name, cidr, exclude_hosts, config_id, scanner_id, port_list_id):
+    """exclude_hosts is a list[str] of individual addresses -- a pre-joined
+    comma string fails live with GvmResponseError 400 "Error in host
+    specification" (confirmed 2026-08-16)."""
+    target_id = find_by_name(gmp, gmp.get_targets, "target", name)
+    task_id = find_by_name(gmp, gmp.get_tasks, "task", name)
+
+    if target_id and not target_matches(gmp, target_id, cidr, exclude_hosts):
+        if task_id:
+            status = gmp.get_task(task_id).findtext("task/status", default="unknown")
+            if status in ACTIVE_TASK_STATUSES:
+                print(f"WARN: task {name!r} is {status}; its target is stale, leaving it alone this run")
+                return
+            gmp.delete_task(task_id, ultimate=True)
+            print(f"deleted task {name!r} ({task_id}) -- target hosts/excludes changed")
+            task_id = None
+        gmp.delete_target(target_id, ultimate=True)
+        print(f"deleted target {name!r} ({target_id}) -- hosts/excludes changed")
+        target_id = None
+
+    if target_id:
+        print(f"target {name!r} already exists ({target_id}), up to date")
+    else:
+        kwargs = {"exclude_hosts": exclude_hosts} if exclude_hosts else {}
+        response = gmp.create_target(
+            name=name,
+            hosts=[cidr],
+            alive_test=ALIVE_TESTS,
+            port_list_id=port_list_id,
+            **kwargs,
+        )
+        target_id = response.get("id")
+        print(f"created target {name!r} ({target_id})")
+
+    if task_id:
+        print(f"task {name!r} already exists ({task_id}), skipping")
+    else:
+        response = gmp.create_task(name=name, config_id=config_id, target_id=target_id, scanner_id=scanner_id)
+        print(f"created task {name!r} ({response.get('id')})")
 
 
 def main():
@@ -155,31 +162,20 @@ def main():
         port_list_id = resolve_id(gmp, gmp.get_port_lists, PORT_LIST_NAME, "port_list")
 
         for zone in ZONES:
-            key, cidr, tier_a_exclude = zone["key"], zone["cidr"], zone["tier_a_exclude"]
+            key, cidr = zone["key"], zone["cidr"]
+            fixtures = FIXTURE_EXCLUDE.get(key, [])
 
-            discovery_exclude = list(REDTEAM_EXCLUDE) if key == "lan" else []
-            discovery_target_id = ensure_target(
-                gmp, f"LAN scan: {key} discovery", cidr, discovery_exclude, port_list_id
+            ensure_target_and_task(
+                gmp, f"LAN scan: {key} discovery", cidr, list(fixtures),
+                discovery_config_id, scanner_id, port_list_id,
             )
-            ensure_task(gmp, f"LAN scan: {key} discovery", discovery_config_id, discovery_target_id, scanner_id)
-
-            full_exclude = list(tier_a_exclude)
-            if key == "lan":
-                full_exclude += REDTEAM_EXCLUDE
-            full_target_id = ensure_target(
-                gmp, f"LAN scan: {key} full-vuln", cidr, full_exclude, port_list_id
+            ensure_target_and_task(
+                gmp, f"LAN scan: {key} full-vuln", cidr, list(zone["tier_a_exclude"]) + list(fixtures),
+                full_config_id, scanner_id, port_list_id,
             )
-            ensure_task(gmp, f"LAN scan: {key} full-vuln", full_config_id, full_target_id, scanner_id)
 
     print("done")
 
 
-# Known gap: this script is create-only, not a full reconciler -- if a
-# Target already exists, its exclude_hosts/alive_test/hosts are never
-# updated to match this file even if this file's own ZONES table changes
-# later (e.g. a Tier A host promoted off the exclude list). Re-running
-# after such a change requires manually deleting the stale Target (and its
-# Task) first, or extending this script with a real diff/update path --
-# not built, since Phase 2's first run has nothing to reconcile against.
 if __name__ == "__main__":
     sys.exit(main())

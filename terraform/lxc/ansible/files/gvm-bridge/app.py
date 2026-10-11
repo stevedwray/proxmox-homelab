@@ -243,5 +243,31 @@ def findings_all():
     return jsonify({"results": results})
 
 
+@app.get("/tasks/credentialed")
+def tasks_credentialed():
+    # Coverage-check source for gvm_findings_sync.py
+    # (docs/gvm-coverage-cleanup/plan.md): every credentialed Task with its
+    # status, schedule and last report's scan start. get_tasks only --
+    # get_reports is never called anywhere in this file (gvmd #2273, see
+    # scan_results()). Credentialed Task names all start with
+    # "Credentialed scan: " (setup_credentials.py,
+    # setup_oci_pangolin_credentialed.py).
+    with _open_gmp() as gmp:
+        gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
+        response = gmp.get_tasks(filter_string='name~"Credentialed scan: " rows=-1')
+
+    tasks = []
+    for t in response.findall("task"):
+        tasks.append(
+            {
+                "name": t.findtext("name"),
+                "status": t.findtext("status"),
+                "schedule": t.findtext("schedule/name") or None,
+                "last_report_scan_start": t.findtext("last_report/report/scan_start") or None,
+            }
+        )
+    return jsonify({"tasks": tasks})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8010")))  # nosec B104 — container-internal listener; exposure is controlled by Docker port mapping / Traefik, not this bind address

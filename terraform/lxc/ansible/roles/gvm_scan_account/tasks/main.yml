@@ -1,31 +1,26 @@
 ---
-# gvm_scan_account -- see defaults/main.yml and docs/lxc-scan-and-monitoring-
-# rollout/plan.md (gvm-01) for the design. Uses ansible.builtin modules only
-# -- ansible.posix isn't a declared collection dependency anywhere else in
-# this repo (checked: requirements.yml only lists community.docker), and
-# the one existing authorized_keys precedent (deploy-cse-kali.yml) writes it
-# by hand rather than via ansible.posix.authorized_key, so this role follows
-# that same convention instead of adding a new dependency for one file write.
+# gvm_scan_account -- see defaults/main.yml and docs/gvm-coverage-cleanup/
+# plan.md for the design. Uses ansible.builtin modules only (ansible.posix
+# isn't a declared collection dependency in this repo).
 
-- name: Fail closed if this stack's GVM scan public key/sudo password hash weren't supplied
+- name: Fail closed if this host's GVM scan public key wasn't supplied
   ansible.builtin.assert:
     that:
       - gvm_scan_account_public_key | length > 0
-      - gvm_scan_account_sudo_password_hash | length > 0
     fail_msg: >-
-      gvm_scan_account_public_key and gvm_scan_account_sudo_password_hash
-      must both be set by the including playbook (from this stack's own
-      OpenBao entry via scripts/gvm_scan_host_secret.py, see
-      docs/lxc-scan-and-monitoring-rollout/plan.md gvm-05) -- never
-      guessed or defaulted, same "never guessed" philosophy as
-      known_production_images.json's classify_artifact().
+      gvm_scan_account_public_key must be set by the including playbook
+      (from this host's own OpenBao entry via
+      scripts/gvm_scan_host_secret.py) -- never guessed or defaulted.
 
-- name: Create the gvm-scan system account
+# password "*" = no password can ever match, so no password login and no
+# `su gvm-scan`, but (unlike a "!"-prefixed locked password) sshd still
+# accepts public-key logins for the account.
+- name: Create the gvm-scan system account (key-only, no usable password)
   ansible.builtin.user:
     name: gvm-scan
     shell: /bin/bash
     create_home: true
-    password: "{{ gvm_scan_account_sudo_password_hash }}"
+    password: "*"
 
 - name: Ensure gvm-scan's .ssh directory exists
   ansible.builtin.file:
@@ -43,11 +38,7 @@
     group: gvm-scan
     mode: "0600"
 
-- name: Grant gvm-scan full sudo (password required -- GVM's ssh_elevate credential supplies it)
-  ansible.builtin.copy:
-    dest: /etc/sudoers.d/gvm-scan
-    content: "gvm-scan ALL=(ALL) ALL\n"
-    owner: root
-    group: root
-    mode: "0440"
-    validate: "visudo -cf %s"
+- name: Remove the old gvm-scan sudo grant (GVM never uses sudo)
+  ansible.builtin.file:
+    path: /etc/sudoers.d/gvm-scan
+    state: absent

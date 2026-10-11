@@ -11,8 +11,9 @@ OpenBaoClient/login() (same AppRole/env-var conventions, same read-only
 deploy-<node> role every other secret read in this repo already uses).
 
 Entry path: services/greenbone/scan-hosts/<stack>
-Fields: GVM_SCAN_SSH_PRIVATE_KEY, GVM_SCAN_SSH_PUBLIC_KEY,
-        GVM_SCAN_SUDO_PASSWORD
+Fields: GVM_SCAN_SSH_PRIVATE_KEY, GVM_SCAN_SSH_PUBLIC_KEY
+(entries written before 2026-10-11 also still hold an unused
+GVM_SCAN_SUDO_PASSWORD -- see docs/gvm-coverage-cleanup/plan.md)
 
 GVM_SCAN_SSH_PRIVATE_KEY is stored base64-encoded (see
 gvm_scan_credentials_bootstrap.py's docstring -- openbao_write.py's stdin

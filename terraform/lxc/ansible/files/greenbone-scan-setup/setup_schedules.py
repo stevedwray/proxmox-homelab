@@ -1,41 +1,28 @@
 #!/usr/bin/env python3
-"""Phase 4 (partial): attach weekly recurring GMP Schedules to the
-vulnerability ("full-vuln") Tasks created by setup_scan_program.py (Phase 2)
--- docs/greenbone-stack/network-scan-rollout-plan.md, Phase 4.
+"""Attach weekly recurring GMP Schedules to the vulnerability
+("full-vuln") Tasks created by setup_scan_program.py --
+docs/greenbone-stack/network-scan-rollout-plan.md Phase 4, extended by
+docs/gvm-coverage-cleanup/plan.md (2026-10-11: five new zones).
 
-Operator instruction, 2026-08-16: schedule only the vulnerability scans
-(not Discovery) to start tonight, staggered an hour apart, LAN segment
-last, first occurrence at 22:00 local time, recurring weekly thereafter.
-Daily discovery scheduling is a separate, not-yet-requested piece of
-Phase 4 -- out of scope for this script.
+Original operator instruction, 2026-08-16: schedule only the
+vulnerability scans (not Discovery), staggered an hour apart, LAN segment
+last, first occurrence 22:00 local time, recurring weekly. The five zones
+added 2026-10-11 run on a separate night (Wednesday) with the same
+one-hour stagger, so the Sunday night batch doesn't grow.
 
 Idempotent: looks up an existing Schedule by exact name first and reuses
-it (does not update its icalendar/timezone if already present -- same
-create-only idempotency shape as setup_scan_program.py; re-run after a
-genuine time change requires deleting the stale Schedule first, same
-"known gap" as that file). modify_task(schedule_id=...) is naturally
-idempotent -- setting the same schedule_id twice is a no-op.
+it (does not update its icalendar/timezone if already present -- delete
+the stale Schedule first if a time ever needs to change).
+modify_task(schedule_id=...) runs every time, so a full-vuln Task that
+setup_scan_program.py recreated gets its Schedule re-attached.
 
-Run the same way as setup_scan_program.py:
-    docker compose run --rm \
-      -v <this file>:/tmp/setup_schedules.py:ro \
-      -e GVM_USERNAME=admin -e GVM_PASSWORD=... \
-      gvm-tools python3 /tmp/setup_schedules.py
-
-DURATION is deliberately omitted from every VEVENT below. gvmd's own docs
-(docs/icalendar-schedules.md in greenbone/gvmd) list DURATION as an
-optional, recognized property, and RFC 5545 does not require one on a
-VEVENT -- a DTSTART-plus-RRULE-only event is a valid "point in time,
-recurring" trigger with no bounded window. This sidesteps an unresolved
-question (found no authoritative confirmation either way, live or in
-docs) of whether gvmd would treat an elapsed DURATION as a signal to stop
-an in-progress scan -- full-and-fast vuln scans routinely run well past
-an hour, and the one-hour spacing below is only meant to stagger *start*
-times, never to bound how long a scan is allowed to run.
+DURATION is deliberately omitted from every VEVENT -- gvmd defaults it to
+PT0S, which never force-stops an in-progress scan on a recurring
+schedule (resolved 2026-08-16 by reading gvmd's scheduler source).
 """
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from datetime import timezone as dt_timezone
 
 from gvm.connections import UnixSocketConnection
@@ -46,21 +33,25 @@ GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
 GVM_PASSWORD = os.environ["GVM_PASSWORD"]
 
-# Operator's local time zone, confirmed 2026-08-16 ("22:00 local time").
-# DTSTART below is a naive (no TZID/Z) local wall-clock time -- per
-# python-gvm's Schedules.create_schedule docstring, gvmd applies this
-# `timezone` argument to any datetime in the icalendar text that lacks
-# its own timezone info.
+# Naive local wall-clock times; gvmd applies SCAN_TIMEZONE to them.
 SCAN_TIMEZONE = "Pacific/Auckland"
 
-# First occurrence -- tonight, 2026-08-16. Order matches
-# setup_scan_program.py's ZONES table exactly; LAN deliberately last per
-# operator instruction ("finishing with the LAN segment scan"). One hour
-# apart, starting 22:00 -- rolls over past midnight for the last few
-# zones, which is fine, FIRST_RUN_LOCAL + timedelta(hours=i) handles the
-# date rollover automatically.
-FIRST_RUN_LOCAL = datetime(2026, 8, 16, 22, 0, 0)
-ZONE_ORDER = ["build_seg", "mgmt_seg", "edge_seg", "infra_seg", "ai_seg", "game_seg", "lan"]
+# First occurrence per zone; RRULE:FREQ=WEEKLY repeats it. The first seven
+# are unchanged from 2026-08-16 (their Schedules already exist live).
+ZONE_FIRST_RUN_LOCAL = {
+    "build_seg": datetime(2026, 8, 16, 22, 0, 0),
+    "mgmt_seg": datetime(2026, 8, 16, 23, 0, 0),
+    "edge_seg": datetime(2026, 8, 17, 0, 0, 0),
+    "infra_seg": datetime(2026, 8, 17, 1, 0, 0),
+    "ai_seg": datetime(2026, 8, 17, 2, 0, 0),
+    "game_seg": datetime(2026, 8, 17, 3, 0, 0),
+    "lan": datetime(2026, 8, 17, 4, 0, 0),
+    "pentest_seg": datetime(2026, 10, 14, 22, 0, 0),
+    "media_seg": datetime(2026, 10, 14, 23, 0, 0),
+    "cse_seg": datetime(2026, 10, 15, 0, 0, 0),
+    "connector_seg": datetime(2026, 10, 15, 1, 0, 0),
+    "apps_seg": datetime(2026, 10, 15, 2, 0, 0),
+}
 
 
 def find_by_name(gmp, getter, tag, name):
@@ -101,8 +92,7 @@ def main():
     with Gmp(connection, transform=EtreeCheckCommandTransform()) as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
 
-        for i, key in enumerate(ZONE_ORDER):
-            dtstart_local = FIRST_RUN_LOCAL + timedelta(hours=i)
+        for key, dtstart_local in ZONE_FIRST_RUN_LOCAL.items():
             task_name = f"LAN scan: {key} full-vuln"
             schedule_name = f"LAN scan: {key} full-vuln weekly"
 
@@ -117,10 +107,5 @@ def main():
     print("done")
 
 
-# Known gap, same shape as setup_scan_program.py's: this script is
-# create-only, not a reconciler. Re-running after FIRST_RUN_LOCAL or
-# ZONE_ORDER changes will NOT update an already-existing Schedule's
-# icalendar/timezone -- delete the stale Schedule first (GSA, or
-# `gmp.delete_schedule`) if the times ever need to change.
 if __name__ == "__main__":
     sys.exit(main())

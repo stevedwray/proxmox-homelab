@@ -248,7 +248,6 @@
         gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
   vars:
     gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
-    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
   roles:
     - gvm_scan_account
 
