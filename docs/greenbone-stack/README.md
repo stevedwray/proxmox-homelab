@@ -12,14 +12,15 @@ the original validation environment, is retired.
   build/mgmt/edge/infra/ai/game zones and the flat LAN, live since
   2026-08-17 ([network-scan-rollout-plan.md](./network-scan-rollout-plan.md)).
   pentest/media/cse/connector/apps zones have **no** CIDR scans yet.
-- **Credentialed scans are NOT working.** 25 per-host `fleet/*` tasks run
-  daily, but every scheduled run since 2026-09-30 has reported
-  `SSH Login Failed For Authenticated Checks`, with zero Local Security
-  Check results. GVM's elevate-privileges credential is su-based, not sudo,
-  so each scan ran `su -l gvm-scan`. Four fleet hosts on VLANs 80/110/120
-  have never been reached (no MikroTik rule). The fix, plus credentialed
-  coverage for the Proxmox nodes, framework, the workstation, the Pis and
-  the non-Ansible LXCs, is planned but **not yet executed**:
+- **Credentialed scans: working (2026-10-12), regrouping by VLAN pending.**
+  The su-based elevate credential was the reason every scheduled scan failed
+  to authenticate. It was removed, and `gvm-scan` is now an unprivileged,
+  key-only account. A live scan of apt-cacher-stack logged in and returned
+  package-level results. Coverage now spans 39 hosts, including the
+  Proxmox nodes, framework, the workstation, the Pis and the non-Ansible
+  LXCs, with firewall reach to every VLAN. Next: one shared key and one
+  weekly task per VLAN (code done, runbook pending), plus a per-host
+  coverage check in the daily findings ingest. See
   [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
 - **OCI Pangolin public edge:** credentialed audit task exists, unscheduled
   by design.
