@@ -6,8 +6,9 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-12 (afternoon): Phase 2, VLAN-grouped credentials, is code-complete
-(1a5b263c) and awaiting its runbook. The live state is the Phase 1 per-host design.**
+**2026-10-12 14:25: Phase 2, VLAN-grouped credentials, is LIVE.** 12 VLAN tasks
+cover all 39 hosts, plus MikroTik and OCI. R1–R4.1 are done; the live
+edge_seg scan (R4.2) is in progress.
 
 - **Phase 1 (per-host keys) is live and verified.** OP-1…OP-4 and OP-5.1 are
   done. OP-5.2 passed: `fleet/apt-cacher-stack` logged in
@@ -153,3 +154,11 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   schedules, no tags. The per-host coverage check correctly separates ok,
   auth_failed, no_auth_evidence, no_results, never_run and stale. All 32
   affected playbooks syntax-check. Phase 2 runbook pending.
+- **2026-10-12 14:25, Phase 2 runbook R1–R4.1: OK.** R1: 12 zone keys
+  written. R2: every host switched to its zone key (operator reported clean).
+  R3: full greenbone-stack play, `failed=0`; the credential program
+  rebuilt everything. gvm-bridge shows 14 credentialed tasks: 12
+  `Credentialed scan: <zone>` on `Weekly VLAN scan: <zone>` (lan 10, mgmt 9,
+  infra 5, ai 3, cse/game/media/edge 2, apps/build/connector/pentest 1 =
+  39 hosts), MikroTik on its own weekly slot, OCI unscheduled. R4.1
+  idempotency: both GMP tasks `ok`. R4.2 edge_seg live scan started.
