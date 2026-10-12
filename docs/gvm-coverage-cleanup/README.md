@@ -124,4 +124,7 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   exactly as the stub test predicted. Legacy pve/workstation/Pi/"managed
   Debian" tasks are gone, and the credential program exited 0, so all legacy
   deletions succeeded. The findings-ingest role deployed the new
-  gvm_findings_sync.py; the timer stays enabled. OP-5 pending.
+  gvm_findings_sync.py; the timer stays enabled.
+- **2026-10-12, OP-5.1 idempotency: PASS.** Re-run of `scan-program` +
+  `credential-program`: both GMP tasks reported `ok` (nothing created or
+  deleted); the only changes were temp-file copies.
