@@ -9,8 +9,8 @@
 # The inventory is generated, never hand-typed:
 #   ./with-secrets-prod python3 scripts/gvm_fleet_targets_generate.py \
 #     --emit-inventory /tmp/gvm-scan-inventory.json
-# Each host's gvm_scan_name is its OpenBao entry name
-# (services/greenbone/scan-hosts/<gvm_scan_name>).
+# Each host's gvm_scan_name is resolved to its VLAN/zone, and the host gets
+# that zone's shared key (services/greenbone/scan-zones/<zone>).
 - name: Provision the GVM credentialed-scan account on every scan host
   hosts: all
   become: true

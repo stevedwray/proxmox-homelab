@@ -968,8 +968,8 @@
       register: greenbone_schedule_setup
       tags: [schedule-program]
 
-    # Credentialed scanning (docs/gvm-coverage-cleanup/plan.md): per-host
-    # gvm-scan keys from OpenBao plus the MikroTik key.  This tag only touches
+    # Credentialed scanning (docs/gvm-coverage-cleanup/): one shared gvm-scan
+    # key per VLAN/zone from OpenBao plus the MikroTik key.  This tag only touches
     # greenbone-stack: it does not deploy accounts, SSH keys, or sudo policy
     # to any scanned host.  Stage the private keys as root-only files rather
     # than command-line environment values, then remove them after GMP has
@@ -1018,7 +1018,7 @@
           become: false
           no_log: true
 
-        - name: Generate the fleet-targets directory (targets.json + per-host key)
+        - name: Generate the fleet-targets directory (targets.json + per-zone key)
           ansible.builtin.command:
             argv:
               - python3

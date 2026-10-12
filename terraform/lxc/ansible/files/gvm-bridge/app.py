@@ -247,23 +247,31 @@ def findings_all():
 def tasks_credentialed():
     # Coverage-check source for gvm_findings_sync.py
     # (docs/gvm-coverage-cleanup/plan.md): every credentialed Task with its
-    # status, schedule and last report's scan start. get_tasks only --
-    # get_reports is never called anywhere in this file (gvmd #2273, see
-    # scan_results()). Credentialed Task names all start with
-    # "Credentialed scan: " (setup_credentials.py,
+    # status, schedule, last report's scan start and its target's hosts
+    # (one task covers a whole VLAN, so coverage is judged per host).
+    # get_tasks/get_targets only -- get_reports is never called anywhere in
+    # this file (gvmd #2273, see scan_results()). Credentialed Task names
+    # all start with "Credentialed scan: " (setup_credentials.py,
     # setup_oci_pangolin_credentialed.py).
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
         response = gmp.get_tasks(filter_string='name~"Credentialed scan: " rows=-1')
+        targets = gmp.get_targets(filter_string='name~"Credentialed scan: " rows=-1')
 
+    hosts_by_target = {
+        tg.get("id"): [h.strip() for h in (tg.findtext("hosts") or "").split(",") if h.strip()]
+        for tg in targets.findall("target")
+    }
     tasks = []
     for t in response.findall("task"):
+        target_el = t.find("target")
         tasks.append(
             {
                 "name": t.findtext("name"),
                 "status": t.findtext("status"),
                 "schedule": t.findtext("schedule/name") or None,
                 "last_report_scan_start": t.findtext("last_report/report/scan_start") or None,
+                "target_hosts": hosts_by_target.get(target_el.get("id") if target_el is not None else None, []),
             }
         )
     return jsonify({"tasks": tasks})

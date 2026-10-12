@@ -10,7 +10,7 @@
 # Failed For Authenticated Checks". Operator decision 2026-10-11: scan
 # unprivileged. This role now removes the old sudoers drop-in.
 
-# Deliberately no real default -- a security-relevant, per-host, unique
-# value that must come from that host's own OpenBao entry via
+# Deliberately no real default -- a security-relevant value, shared per
+# VLAN/zone (2026-10-12), that must come from that zone's OpenBao entry via
 # scripts/gvm_scan_host_secret.py, never guessed or shared across hosts.
 gvm_scan_account_public_key: ""

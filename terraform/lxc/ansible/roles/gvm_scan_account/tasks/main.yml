@@ -9,7 +9,7 @@
       - gvm_scan_account_public_key | length > 0
     fail_msg: >-
       gvm_scan_account_public_key must be set by the including playbook
-      (from this host's own OpenBao entry via
+      (from this host's VLAN/zone OpenBao entry via
       scripts/gvm_scan_host_secret.py) -- never guessed or defaulted.
 
 # password "*" = no password can ever match, so no password login and no

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""One-time, operator-run generation of GVM scan credentials.
+"""One-time, operator-run generation of GVM scan credentials -- one
+shared keypair per VLAN/zone (operator decision 2026-10-12,
+docs/gvm-coverage-cleanup/).
 
-  bao login -method=oidc -no-store
-  export BAO_TOKEN=<the token bao login printed>
-  scripts/gvm_scan_credentials_bootstrap.py --all
-  # or, for just the hosts not yet done:
-  scripts/gvm_scan_credentials_bootstrap.py host-pve cse-panel-stack
+  export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+  export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+  LAB_IP_OPENBAO=192.168.20.16 scripts/gvm_scan_credentials_bootstrap.py --all
+  # or, for just some zones:
+  LAB_IP_OPENBAO=192.168.20.16 scripts/gvm_scan_credentials_bootstrap.py lan mgmt_seg
 
-For each named scan host: generates a fresh ed25519 SSH keypair and writes
-both halves to OpenBao at services/greenbone/scan-hosts/<name> via
+For each named zone: generates a fresh ed25519 SSH keypair and writes
+both halves to OpenBao at services/greenbone/scan-zones/<zone> via
 scripts/openbao_write.py (piped via stdin, one value per line --
 openbao_write.py reads stdin non-interactively when it isn't a TTY). The
 private key is base64-encoded before writing (openbao_write.py's stdin
@@ -20,8 +22,8 @@ No sudo password is generated any more (docs/gvm-coverage-cleanup/plan.md):
 GVM's elevate-privileges feature is su-based, never sudo, so the gvm-scan
 account is SSH-key-only and unprivileged.
 
-Requires secrets/manifest.json to already declare, for each named host, an
-entry at services/greenbone/scan-hosts/<name> listing fields
+Requires secrets/manifest.json to already declare, for each named zone, an
+entry at services/greenbone/scan-zones/<zone> listing fields
 GVM_SCAN_SSH_PRIVATE_KEY and GVM_SCAN_SSH_PUBLIC_KEY.
 
 This script never logs in to OpenBao itself and never touches BAO_TOKEN
@@ -29,11 +31,11 @@ beyond reading it from the environment to pass through to
 openbao_write.py's subprocess -- the OIDC login stays entirely the
 operator's own, one-time action.
 
-Running this twice for the same host ROTATES that host's credentials
-(openbao_write.py always writes a fresh KV version). setup_credentials.py
-detects the changed key on the next greenbone-stack deploy and rebuilds
-that host's GVM credential/target/task, and deploy-gvm-scan-accounts.yml
-must be re-run so the host's authorized_keys matches.
+Running this twice for the same zone ROTATES that zone's key (openbao_write.py
+always writes a fresh KV version). Then re-run deploy-gvm-scan-accounts.yml
+(--limit to that zone's hosts) so their authorized_keys match, and redeploy
+greenbone-stack's credential program, which detects the changed key and
+rebuilds that zone's GVM credential/target/task.
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from gvm_fleet_targets_generate import ALL_SCAN_HOST_NAMES  # noqa: E402 -- same canonical list, not re-derived
+from gvm_fleet_targets_generate import all_scan_zones  # noqa: E402 -- same canonical list, not re-derived
 
 
 def generate_keypair() -> tuple[str, str]:
@@ -65,7 +67,7 @@ def generate_keypair() -> tuple[str, str]:
 
 
 def write_to_openbao(name: str, private_key: str, public_key: str) -> bool:
-    entry = f"services/greenbone/scan-hosts/{name}"
+    entry = f"services/greenbone/scan-zones/{name}"
     encoded_key = base64.b64encode(private_key.encode("utf-8")).decode("ascii")
     proc = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "openbao_write.py"), entry,
@@ -82,16 +84,17 @@ def write_to_openbao(name: str, private_key: str, public_key: str) -> bool:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("names", nargs="*", help="Scan host names to generate credentials for")
-    parser.add_argument("--all", action="store_true", help=f"Use the full list ({len(ALL_SCAN_HOST_NAMES)} hosts)")
+    zones = all_scan_zones()
+    parser.add_argument("names", nargs="*", help="Zone names to generate credentials for")
+    parser.add_argument("--all", action="store_true", help=f"Use every zone ({len(zones)} zones)")
     args = parser.parse_args(argv)
 
     if args.all:
-        names = ALL_SCAN_HOST_NAMES
+        names = zones
     elif args.names:
-        unknown = [n for n in args.names if n not in ALL_SCAN_HOST_NAMES]
+        unknown = [n for n in args.names if n not in zones]
         if unknown:
-            print(f"ERROR: not in the scan host list: {', '.join(unknown)}", file=sys.stderr)
+            print(f"ERROR: not a scan zone: {', '.join(unknown)}", file=sys.stderr)
             return 1
         names = args.names
     else:

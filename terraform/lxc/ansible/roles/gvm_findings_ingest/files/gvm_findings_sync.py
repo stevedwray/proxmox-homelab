@@ -291,11 +291,11 @@ AUTH_OK_NAME = "SSH Login Successful For Authenticated Checks"
 AUTH_FAIL_NAME = "SSH Login Failed For Authenticated Checks"
 # Unscheduled by design (docs/greenbone-stack/README.md) -- never "stale".
 COVERAGE_IGNORE_TASKS = {"Credentialed scan: OCI Pangolin public edge"}
-# Weekly schedules (setup_credentials.py ZONE_WEEKLY_SLOTS); 8 days
+# Weekly schedules (setup_credentials.py ZONE_WEEKLY_SLOT); 8 days
 # tolerates a run that starts late or spans midnight before alerting.
 COVERAGE_MAX_AGE_HOURS = 8 * 24
 COVERAGE_ACTIVE_STATUSES = {"Running", "Requested", "Queued"}
-COVERAGE_FAILING = {"never_run", "auth_failed", "no_auth_evidence", "stale", "unscheduled"}
+COVERAGE_FAILING = {"never_run", "auth_failed", "no_auth_evidence", "no_results", "stale", "unscheduled"}
 
 
 def fetch_credentialed_tasks(bridge_url: str, *, timeout: int = 60) -> list[dict]:
@@ -315,9 +315,13 @@ def _parse_gmp_time(value: str | None) -> datetime | None:
 
 
 def evaluate_coverage(tasks: list[dict], raw_results: list[dict], *, now: datetime) -> list[dict]:
-    """One row per credentialed Task: {"task", "status", "coverage",
-    "last_scan_start", "results_in_last_run"}. coverage is "ok",
-    "running", or one of COVERAGE_FAILING."""
+    """One row per (credentialed Task, target host): {"task", "host",
+    "status", "coverage", "last_scan_start", "results_in_last_run"}.
+    Per host, not per task, because one Task covers a whole VLAN
+    (setup_credentials.py) and a single host can fail to authenticate --
+    or be unreachable -- while the rest succeed. coverage is "ok",
+    "running", or one of COVERAGE_FAILING ("no_results" = the host
+    produced nothing at all in the last run: down, or filtered)."""
     results_by_task: dict[str, list[dict]] = {}
     for r in raw_results:
         results_by_task.setdefault(r.get("task_name") or "", []).append(r)
@@ -334,31 +338,39 @@ def evaluate_coverage(tasks: list[dict], raw_results: list[dict], *, now: dateti
                 created = _parse_gmp_time(r.get("creation_time"))
                 if created is not None and created >= started:
                     run_results.append(r)
-        names = {r.get("name") for r in run_results}
+        by_host: dict[str, set] = {}
+        for r in run_results:
+            by_host.setdefault(r.get("host") or "", set()).add(r.get("name"))
+        hosts = task.get("target_hosts") or sorted(by_host) or ["?"]
 
-        if task.get("status") in COVERAGE_ACTIVE_STATUSES:
-            coverage = "running"
-        elif not task.get("schedule"):
-            coverage = "unscheduled"
-        elif started is None:
-            coverage = "never_run"
-        elif AUTH_FAIL_NAME in names:
-            coverage = "auth_failed"
-        elif AUTH_OK_NAME not in names:
-            coverage = "no_auth_evidence"
-        elif (now - started).total_seconds() > COVERAGE_MAX_AGE_HOURS * 3600:
-            coverage = "stale"
-        else:
-            coverage = "ok"
-        rows.append(
-            {
-                "task": name,
-                "status": task.get("status"),
-                "coverage": coverage,
-                "last_scan_start": task.get("last_report_scan_start"),
-                "results_in_last_run": len(run_results),
-            }
-        )
+        for host in hosts:
+            names = by_host.get(host, set())
+            if task.get("status") in COVERAGE_ACTIVE_STATUSES:
+                coverage = "running"
+            elif not task.get("schedule"):
+                coverage = "unscheduled"
+            elif started is None:
+                coverage = "never_run"
+            elif not names:
+                coverage = "no_results"
+            elif AUTH_FAIL_NAME in names:
+                coverage = "auth_failed"
+            elif AUTH_OK_NAME not in names:
+                coverage = "no_auth_evidence"
+            elif (now - started).total_seconds() > COVERAGE_MAX_AGE_HOURS * 3600:
+                coverage = "stale"
+            else:
+                coverage = "ok"
+            rows.append(
+                {
+                    "task": name,
+                    "host": host,
+                    "status": task.get("status"),
+                    "coverage": coverage,
+                    "last_scan_start": task.get("last_report_scan_start"),
+                    "results_in_last_run": sum(1 for r in run_results if (r.get("host") or "") == host),
+                }
+            )
     return rows
 
 
@@ -368,8 +380,8 @@ def put_coverage_state(base_url: str, rows: list[dict], *, auth_header: str, ver
         "source": "greenbone-coverage",
         "checked_at": checked_at,
         "status": "ok" if not failing else "failing",
-        "tasks_total": len(rows),
-        "tasks_failing": len(failing),
+        "hosts_total": len(rows),
+        "hosts_failing": len(failing),
         "failing": failing,
         "tasks": rows,
     }
@@ -454,7 +466,7 @@ def main() -> int:
         rows = evaluate_coverage(credentialed_tasks, raw_results, now=datetime.now(timezone.utc))
         for row in rows:
             print(
-                f"COVERAGE {row['coverage'].upper()}: {row['task']} (status={row['status']}, "
+                f"COVERAGE {row['coverage'].upper()}: {row['task']} {row['host']} (status={row['status']}, "
                 f"last_scan_start={row['last_scan_start']}, results={row['results_in_last_run']})"
             )
         coverage_failing = sum(1 for row in rows if row["coverage"] in COVERAGE_FAILING)

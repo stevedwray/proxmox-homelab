@@ -19,11 +19,14 @@ Two sources of scan hosts, one canonical list each:
     omada-controller). IPs confirmed live 2026-10-11 via the Proxmox API
     / DNS, not assumed.
 
-For every host it reads that host's GVM scan credentials via
-gvm_scan_host_secret.py (skipping with a warning, not failing the whole
-run, if the OpenBao entry doesn't exist yet) and, with --out-dir, writes:
-  <out-dir>/targets.json   -- [{"name": str, "host": str, "zone": str}, ...]
-  <out-dir>/<name>.key     -- SSH private key
+Credentials are per VLAN/zone, not per host (operator decision
+2026-10-12): every host in a zone shares one gvm-scan keypair, stored at
+services/greenbone/scan-zones/<zone>. With --out-dir it reads each zone's
+key via gvm_scan_host_secret.py --zone (skipping a zone with a warning,
+not failing the whole run, if its OpenBao entry doesn't exist yet) and
+writes:
+  <out-dir>/targets.json   -- [{"zone": str, "hosts": [ip, ...], "names": [str, ...]}, ...]
+  <out-dir>/<zone>.key     -- that zone's SSH private key
 
 No sudo password is written any more: GVM's "elevate privileges" feature
 is su-based, not sudo-based (confirmed live 2026-10-11 from target sshd
@@ -157,6 +160,24 @@ def resolve_stack_ip(stack: str) -> str | None:
     return None
 
 
+def zone_for_name(name: str) -> str | None:
+    """The VLAN/zone a scan host belongs to -- EXTRA_HOSTS' zone, or the
+    stack's stack.yaml zone. Credentials are per zone (one shared gvm-scan
+    keypair per VLAN, operator decision 2026-10-12), so this is how a host
+    finds its key."""
+    if name in EXTRA_HOSTS:
+        return EXTRA_HOSTS[name]["zone"]
+    if name in IN_SCOPE_STACKS:
+        return resolve_stack_zone(name)
+    return None
+
+
+def all_scan_zones() -> list[str]:
+    """Every zone that has at least one scan host, sorted. Needs no env
+    vars (zones come from stack.yaml / EXTRA_HOSTS, not from IPs)."""
+    return sorted({z for z in (zone_for_name(n) for n in ALL_SCAN_HOST_NAMES) if z})
+
+
 def resolve_all_hosts() -> list[dict]:
     """Every scan host as {"name", "host", "zone", plus EXTRA_HOSTS'
     connection keys}. Skips (with a warning) any stack whose IP or zone
@@ -177,30 +198,41 @@ def resolve_all_hosts() -> list[dict]:
     return hosts
 
 
-def fetch_secret(name: str) -> dict | None:
+def fetch_zone_secret(zone: str) -> dict | None:
     result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "gvm_scan_host_secret.py"), "--stack", name],
+        [sys.executable, str(REPO_ROOT / "scripts" / "gvm_scan_host_secret.py"), "--zone", zone],
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
-        print(f"WARN: no GVM scan credentials for {name!r} yet ({result.stderr.strip()}), skipping", file=sys.stderr)
+        print(f"WARN: no GVM scan credentials for zone {zone!r} yet ({result.stderr.strip()}), skipping", file=sys.stderr)
         return None
     return json.loads(result.stdout)
 
 
 def write_fleet_dir(out_dir: Path, hosts: list[dict]) -> int:
+    """One entry per zone: {"zone", "hosts": [ip, ...], "names": [...]}
+    plus one <zone>.key -- every host in a zone shares that zone's key."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    manifest: list[dict[str, str]] = []
+    by_zone: dict[str, list[dict]] = {}
     for entry in hosts:
-        secret = fetch_secret(entry["name"])
+        by_zone.setdefault(entry["zone"], []).append(entry)
+    manifest: list[dict] = []
+    for zone in sorted(by_zone):
+        secret = fetch_zone_secret(zone)
         if secret is None:
             continue
-        key_path = out_dir / f"{entry['name']}.key"
+        key_path = out_dir / f"{zone}.key"
         key_path.write_text(secret["GVM_SCAN_SSH_PRIVATE_KEY"], encoding="utf-8")
         key_path.chmod(0o644)
-        manifest.append({"name": entry["name"], "host": entry["host"], "zone": entry["zone"]})
+        members = sorted(by_zone[zone], key=lambda e: e["name"])
+        manifest.append({
+            "zone": zone,
+            "hosts": [e["host"] for e in members],
+            "names": [e["name"] for e in members],
+        })
     (out_dir / "targets.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"wrote {len(manifest)}/{len(ALL_SCAN_HOST_NAMES)} fleet targets to {out_dir}")
+    covered = sum(len(z["hosts"]) for z in manifest)
+    print(f"wrote {len(manifest)} zones covering {covered}/{len(ALL_SCAN_HOST_NAMES)} hosts to {out_dir}")
     return 0
 
 
