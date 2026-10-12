@@ -116,3 +116,12 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   credentialed schedules, no findings-ingest update), so the live fleet is
   still the old daily setup. Fixed by gvmcov-16; re-run with the
   credential-program and findings-ingest tags.
+- **2026-10-12 13:32, OP-4 attempt 2 (tags `credential-program`, then
+  `findings-ingest`): OK**, both `failed=0`. Verified via gvm-bridge
+  `/tasks/credentialed`: 41 credentialed tasks: 39 fleet hosts (rebuilt,
+  status New), MikroTik, and OCI (unscheduled by design). The 40 scheduled
+  tasks sit in 17 `Weekly credentialed scan:` slots, max 4 per slot,
+  exactly as the stub test predicted. Legacy pve/workstation/Pi/"managed
+  Debian" tasks are gone, and the credential program exited 0, so all legacy
+  deletions succeeded. The findings-ingest role deployed the new
+  gvm_findings_sync.py; the timer stays enabled. OP-5 pending.
