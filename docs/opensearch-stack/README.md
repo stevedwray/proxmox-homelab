@@ -47,9 +47,10 @@ consumer).
   (critical count, by-severity, by-host-and-severity, critical/high-by-name
   panels). **Caveat (2026-10-11):** the credentialed GVM scans had never
   authenticated, so `gvm-findings` contains network-level findings only, with no
-  package-level Local Security Check findings. Fix planned in
-  docs/gvm-coverage-cleanup/, which also adds a daily credentialed-scan
-  coverage document at `es-findings-sync-state/_doc/greenbone-coverage`. Both indices share the `es-findings-sync-state` state index and
+  package-level Local Security Check findings. Fixed 2026-10-12
+  (docs/gvm-coverage-cleanup/). Package-level findings arrive as each
+  VLAN's weekly credentialed scan runs, and a daily per-host coverage
+  document is at `es-findings-sync-state/_doc/greenbone-coverage`. Both indices share the `es-findings-sync-state` state index and
   a common `es_findings_writer` OpenSearch role — see
   `docs/elasticsearch-stack/README.md` section 3 for the schema-compat
   rationale (future triage/correlation tools should be able to treat both

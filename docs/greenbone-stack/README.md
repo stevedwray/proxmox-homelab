@@ -12,16 +12,20 @@ the original validation environment, is retired.
   build/mgmt/edge/infra/ai/game zones and the flat LAN, live since
   2026-08-17 ([network-scan-rollout-plan.md](./network-scan-rollout-plan.md)).
   pentest/media/cse/connector/apps zones have **no** CIDR scans yet.
-- **Credentialed scans: working (2026-10-12), regrouping by VLAN pending.**
-  The su-based elevate credential was the reason every scheduled scan failed
-  to authenticate. It was removed, and `gvm-scan` is now an unprivileged,
-  key-only account. A live scan of apt-cacher-stack logged in and returned
-  package-level results. Coverage now spans 39 hosts, including the
-  Proxmox nodes, framework, the workstation, the Pis and the non-Ansible
-  LXCs, with firewall reach to every VLAN. Next: one shared key and one
-  weekly task per VLAN (code done, runbook pending), plus a per-host
-  coverage check in the daily findings ingest. See
-  [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
+- **Credentialed scans: working, grouped by VLAN (2026-10-12).** Each VLAN
+  has one shared, unprivileged, key-only `gvm-scan` key
+  (`services/greenbone/scan-zones/<zone>`) and one weekly task, capped at 4
+  hosts at a time: 12 tasks cover 39 hosts, including the Proxmox nodes,
+  framework, the workstation, the Pis and the non-Ansible LXCs. MikroTik
+  keeps its own task. The su-based elevate credential, which made every
+  earlier scheduled scan fail to authenticate, is gone. A daily per-host
+  coverage check runs in `gvm-findings-ingest` (output in
+  `/var/log/gvm-findings-ingest.log`; the unit exits 3 while any host is
+  failing). See [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
+- **gvm-bridge is loopback-only (127.0.0.1:8010) since 2026-10-12.** It has
+  no authentication; use an SSH tunnel to reach it.
+- **A full redeploy of this stack interrupts running scans.** Scheduled scans
+  run overnight (NZT), so do redeploys during the day.
 - **OCI Pangolin public edge:** credentialed audit task exists, unscheduled
   by design.
 - **Known security gap:** `gvm-bridge` (`:8010`) has no authentication and
@@ -267,9 +271,9 @@ issue. A simple retry is the expected fix, matching what resolved it here.
    — the 2026-09-29 per-host `gvm-scan` credentialed fleet (deployed, but
    it never authenticated; see 5).
 5. [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) —
-   **current plan** (2026-10-11, not yet executed): fixes credentialed auth,
-   covers every remaining host and zone, and adds a coverage check that
-   fails loudly.
+   **current state** (done 2026-10-12): working credentialed auth, VLAN-grouped
+   keys and tasks, every host and zone covered, and a per-host coverage
+   check.
 
 ## Key facts up front
 

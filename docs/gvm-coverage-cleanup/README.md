@@ -6,9 +6,15 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-12 14:25: Phase 2, VLAN-grouped credentials, is LIVE.** 12 VLAN tasks
-cover all 39 hosts, plus MikroTik and OCI. R1–R4.1 are done; the live
-edge_seg scan (R4.2) is in progress.
+**2026-10-12: DONE. Live on `pve` and merged to `stable` (#472, plus this
+close-out).** Credentialed scans are grouped by VLAN: 12 weekly VLAN tasks
+cover all 39 hosts, plus MikroTik and OCI. gvm-bridge is loopback-only, and
+a daily per-host coverage check runs in the findings ingest. Still open: the
+GVM verdict for the first VLAN scan (edge_seg). It's verified on the target
+side (shared key logins, no `su`), but the scan itself was interrupted once
+by a redeploy and was re-run. Plus the follow-ups below. The first full
+weekly cycle completes by Monday 2026-10-19; after that the coverage check
+should show every host `OK` or a specific failure.
 
 - **Phase 1 (per-host keys) is live and verified.** OP-1…OP-4 and OP-5.1 are
   done. OP-5.2 passed: `fleet/apt-cacher-stack` logged in
@@ -161,7 +167,11 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   infra 5, ai 3, cse/game/media/edge 2, apps/build/connector/pentest 1 =
   39 hosts), MikroTik on its own weekly slot, OCI unscheduled. R4.1
   idempotency: both GMP tasks `ok`. R4.2 edge_seg live scan started.
-8. **mcp-utility-stack is running pre-Maigret OSINT code (found 2026-10-12).**
+8. ~~mcp-utility-stack running pre-Maigret OSINT code~~ **Resolved 2026-10-12**
+   in a separate session: both branches combined and deployed from a worktree,
+   merged to `stable` via #472. The OSINT MCP lists 9 tools again, including
+   `find_username_deep`. The stray deploy touched no other host: it was the only
+   root login from the workstation in that window. Original finding:
    At 07:15 NZDT something on the workstation (not a Claude session, not
    in shell history) redeployed it from the shared checkout while it was on
    this branch. That applied the new gvm-scan role early (hence OP-3's
@@ -170,3 +180,20 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    (`/etc/sudoers.d/gvm-scan` deleted 18:20 UTC) and root SSH logins. The fix
    needs the OSINT branch rebased onto this one. The OSINT branch can't be
    deployed as-is: its role and secret paths predate this work.
+- **2026-10-12 15:0x, gvm-bridge loopback deployed** (from `stable`
+  bc105d86, `failed=0`). Port 8010 now refuses connections from the LAN.
+- **2026-10-12 15:11, first coverage-check run (OP-5.3): working as
+  designed.** It exited 3 (systemd shows that as "NOTIMPLEMENTED"). Output
+  goes to `/var/log/gvm-findings-ingest.log`, not the journal. Every host is
+  listed individually: 38 `NEVER_RUN` (waiting for their first weekly slot),
+  MikroTik `STALE` (last scanned 2026-09-13; its new slot is Wednesday 05:00).
+  `raw` fell from 25,669 to 9,756 because GVM deleted the reports of the
+  removed per-host and legacy tasks; the 1,883 findings already in OpenSearch
+  are unaffected.
+- **Lesson: a full greenbone-stack redeploy interrupts running scans.**
+  The R4.2 edge_seg scan showed `Interrupted` after the gvm-bridge deploy
+  restarted the scanner containers. Scheduled scans all run overnight, so
+  daytime deploys are safe; don't redeploy during an ad-hoc test scan.
+  edge_seg was re-run; Wazuh had already shown ~225 successful shared-key
+  `gvm-scan` logins on each edge host with zero `su` sessions.
+- **2026-10-12, close-out:** docs merged to `stable`.

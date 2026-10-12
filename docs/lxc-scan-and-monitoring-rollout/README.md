@@ -159,8 +159,8 @@ written before Track A's redeploys actually ran; corrected here.)
 **Track B (Wazuh) is fully deployed and verified live. Track A (GVM) is
 deployed but not working.** See the 2026-10-11 correction under Track A.
 Its fix, plus the GVM coverage gaps listed below, moved to
-[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) (planned,
-not yet executed). Still open here: `log-03` (fleet-wide verification pass
+[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md), done and
+live 2026-10-12 (VLAN-grouped keys). Still open here: `log-03` (fleet-wide verification pass
 across the other ~23 already-`syslog` stacks), a check rather than new
 code, not run yet.
 

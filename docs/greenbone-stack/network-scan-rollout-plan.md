@@ -6,13 +6,13 @@ Phase 4's daily-discovery half, Phase 5, and Phase 6 remain open — see each
 phase's own status line below.
 
 **Update 2026-10-11 — Phase 3 and the zone list are superseded by
-[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) (planned,
-not yet executed).** The Phase 3 root-key targets below did run (manually,
+[docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md) (done and
+live 2026-10-12).** The Phase 3 root-key targets below did run (manually,
 2026-08-29 to 2026-09-14) but were never scheduled, and their host list went
 stale (pve-test-vm "+100" IPs, the destroyed dns-stack). The per-host
 `gvm-scan` fleet that replaced them
 ([docs/lxc-scan-and-monitoring-rollout/](../lxc-scan-and-monitoring-rollout/README.md))
-has never authenticated. The cleanup plan also adds CIDR scans for
+never authenticated; it's now replaced by VLAN-grouped keys that do. The cleanup plan also adds CIDR scans for
 pentest/media/cse/connector/apps zones and the matching Phase 1 firewall
 reach, and drops the NAS and pve-test-vm from the lan Tier A exclusions. Decisions below were made with the operator 2026-08-16; this file is
 the plan to implement them. Read
