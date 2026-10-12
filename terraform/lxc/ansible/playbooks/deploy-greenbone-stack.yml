@@ -325,6 +325,13 @@
                 GSAD_HTTP_ONLY: "true"
                 GSAD_API_ONLY: "true"
                 GSAD_FOREGROUND: "true"
+                # The image's start-gsad runs `gsad $GSAD_ARGS` and falls back to
+                # "-f --http-only" when unset, so the GSAD_* flags above are not
+                # what configures it. Setting GSAD_ARGS replaces that default, so
+                # it must keep both flags. --timeout is idle minutes before the
+                # web UI session expires (default 15); there is no "never", so
+                # 1440 (24h).
+                GSAD_ARGS: "-f --http-only --timeout=1440"
               volumes:
                 - gvmd_socket_vol:/run/gvmd
               depends_on:

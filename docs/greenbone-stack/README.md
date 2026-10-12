@@ -411,3 +411,13 @@ that surfaced it.
 - `CLAUDE.md` — branch model, validation tiers, and production credential
   controls this plan follows (`pve-test-vm` is not production-gated;
   promotion past `stable` would be).
+
+## Web UI session timeout
+
+gsad expires an idle web UI session after `--timeout` minutes (default 15). The
+image's `start-gsad` runs `gsad $GSAD_ARGS` and defaults to `-f --http-only`
+when unset, so the compose sets `GSAD_ARGS: "-f --http-only --timeout=1440"`
+(24h; gsad has no "never"). Setting `GSAD_ARGS` replaces the default, so both
+flags must stay. The UI also sits behind Authentik forwardAuth, whose session
+length is separate. Apply with a targeted `docker compose up -d gsad` on the
+host: a full stack redeploy interrupts running scans.
