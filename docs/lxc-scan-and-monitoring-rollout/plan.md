@@ -6,7 +6,8 @@
 > `SSH Login Failed For Authenticated Checks`. The `gvm-01`/`gvm-07`
 > sudo design below is superseded by
 > [docs/gvm-coverage-cleanup/plan.md](../gvm-coverage-cleanup/plan.md)
-> (unprivileged, key-only `gvm-scan`; not yet executed).
+> (unprivileged, key-only `gvm-scan`, one shared key per VLAN; live
+> 2026-10-12).
 
 **All three phases (GVM, Wazuh, Graylog) deployed to production as of
 2026-09-30; Wazuh and Graylog verified live, GVM not (see correction above).** Written 2026-09-29 following
