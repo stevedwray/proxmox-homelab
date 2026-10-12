@@ -5,7 +5,7 @@ shape: [docs/agent-design/step-packet-schema.md](../agent-design/step-packet-sch
 
 **How to run this plan.**
 
-- Steps `gvmcov-01`…`gvmcov-15` are file edits only. Each step's `change`
+- Steps `gvmcov-01`…`gvmcov-16` are file edits only. Each step's `change`
   is one literal shell block (heredoc file writes, or a Python edit script
   that asserts every anchor it replaces). Run it exactly as written from
   the repo root, then run the gates. No step touches production.
@@ -2310,10 +2310,176 @@ print("gvm_findings_sync.py: 8-day coverage window")
 PYEOF
 ```
 
+### gvmcov-16-in-use-safe-deletion
+
+```yaml
+id: gvmcov-16-in-use-safe-deletion
+title: Delete every task still using a target before the target; never abort the whole run on one item
+depends_on: [gvmcov-15-weekly-cadence]
+
+change: >
+  Run the Python edit block below against setup_credentials.py. It adds
+  tasks_using_target(), which lists tasks via get_target(tasks=True) plus
+  trashcan tasks. delete_if_present() now deletes those tasks (and any
+  same-named duplicates) before the target, unless one is active.
+  cleanup_legacy() and each fleet host now catch GvmError, log WARN and
+  continue, and main() returns 1 at the end if anything failed.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py
+  forbidden_actions:
+    - "Any change outside allowed_paths"
+
+gates:
+  - id: compile
+    cmd: "python3 -m py_compile terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py"
+    expect: "exit 0"
+    critical: true
+  - id: wired
+    cmd: "grep -c 'def tasks_using_target\\|except GvmError\\|failures.append' terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py"
+    expect: "prints 5"
+    critical: true
+```
+
+Found live in the first OP-4 run (2026-10-12 13:28): the script deleted
+the legacy task `Credentialed scan: managed Debian services`, then gvmd
+refused to delete its target with `400 Target is in use`. Another task
+(differently named, or in the trashcan) still referenced it, and the
+uncaught error aborted the credential program before any fleet host was
+reconciled. Tested against a stub that reproduces gvmd's in-use refusals:
+a differently-named task and a trashed task on the legacy target are both
+deleted, then the target. A legacy credential held by an unmanaged target
+is logged as WARN, the fleet still reconciles, and the run exits 1. The
+weekly-cadence test from gvmcov-15 still passes unchanged.
+
+```bash
+python3 - <<'PYEOF'
+from pathlib import Path
+
+path = Path("terraform/lxc/ansible/files/greenbone-scan-setup/setup_credentials.py")
+text = path.read_text(encoding="utf-8")
+assert "def tasks_using_target" not in text, "gvmcov-16 already applied"
+
+def replace_once(old, new):
+    global text
+    count = text.count(old)
+    assert count == 1, f"expected exactly 1 match, found {count}: {old[:80]!r}"
+    text = text.replace(old, new)
+
+replace_once(
+    "from gvm.connections import UnixSocketConnection\n",
+    "from gvm.connections import UnixSocketConnection\n"
+    "from gvm.errors import GvmError\n",
+)
+
+old_start = text.index("def delete_if_present(gmp, kind, name):\n")
+old_end = text.index("def ensure_credential(gmp, name, login, key_path):\n")
+text = text[:old_start] + '''def tasks_using_target(gmp, target_id):
+    """{task_id: name} for every task that references target_id, including
+    tasks in the trashcan. Found live 2026-10-12 (docs/gvm-coverage-cleanup
+    gvmcov-16): deleting a legacy target failed with "Target is in use"
+    after its same-named task was gone -- another task (different name, or
+    trashed rather than ultimately deleted) still referenced it."""
+    users = {}
+    target = gmp.get_target(target_id, tasks=True)
+    for task in target.findall("target/tasks/task"):
+        users[task.get("id")] = task.findtext("name") or "?"
+    trash = gmp.get_tasks(trash=True, filter_string="rows=-1")
+    for task in trash.findall("task"):
+        target_el = task.find("target")
+        if target_el is not None and target_el.get("id") == target_id:
+            users[task.get("id")] = f"{task.findtext('name') or '?'} [trashcan]"
+    return users
+
+
+def delete_if_present(gmp, kind, name):
+    """kind is "task", "target" or "credential". Deletes every object of
+    that kind with that exact name (duplicates included). For a target,
+    first deletes every task still using it. Returns False only when a task
+    is active (running/queued) and so was left alone; GMP errors propagate
+    to the caller."""
+    getter = {"task": gmp.get_tasks, "target": gmp.get_targets, "credential": gmp.get_credentials}[kind]
+    deleter = {"task": gmp.delete_task, "target": gmp.delete_target, "credential": gmp.delete_credential}[kind]
+    for _ in range(10):
+        object_id = find_by_name(gmp, getter, kind, name)
+        if not object_id:
+            return True
+        if kind == "task":
+            status = task_status(gmp, object_id)
+            if status in ACTIVE_TASK_STATUSES:
+                print(f"WARN: task {name!r} is {status}, leaving it alone this run")
+                return False
+        if kind == "target":
+            for task_id, task_name in tasks_using_target(gmp, object_id).items():
+                if not task_name.endswith("[trashcan]") and task_status(gmp, task_id) in ACTIVE_TASK_STATUSES:
+                    print(f"WARN: task {task_name!r} using target {name!r} is active, leaving both alone this run")
+                    return False
+                gmp.delete_task(task_id, ultimate=True)
+                print(f"deleted task {task_name!r} ({task_id}) -- it still used target {name!r}")
+        deleter(object_id, ultimate=True)
+        print(f"deleted {kind} {name!r} ({object_id})")
+    raise RuntimeError(f"{kind} {name!r} still present after 10 deletions")
+
+
+def cleanup_legacy(gmp, failures):
+    """Best-effort: a legacy object that can't be removed is logged (and
+    fails the run at the end) but never blocks the fleet reconcile."""
+    for kind, name in (
+        [("task", n) for n in LEGACY_TASKS_AND_TARGETS]
+        + [("target", n) for n in LEGACY_TASKS_AND_TARGETS]
+        + [("credential", n) for n in LEGACY_CREDENTIALS]
+    ):
+        try:
+            delete_if_present(gmp, kind, name)
+        except GvmError as exc:
+            print(f"WARN: could not delete legacy {kind} {name!r}: {exc}")
+            failures.append(f"legacy {kind} {name!r}")
+
+
+''' + text[old_end:]
+
+replace_once(
+    "        cleanup_legacy(gmp)\n",
+    "        failures = []\n"
+    "        cleanup_legacy(gmp, failures)\n",
+)
+replace_once(
+    "        for fleet_target in load_fleet_targets(GVM_FLEET_DIR):\n"
+    "            zone = fleet_target[\"zone\"]\n"
+    "            task_id = reconcile_fleet_host(\n"
+    "                gmp, fleet_target, config_id, scanner_id, port_list_id, schedule_for(zone),\n"
+    "            )\n"
+    "            if task_id:\n",
+    "        for fleet_target in load_fleet_targets(GVM_FLEET_DIR):\n"
+    "            zone = fleet_target[\"zone\"]\n"
+    "            try:\n"
+    "                task_id = reconcile_fleet_host(\n"
+    "                    gmp, fleet_target, config_id, scanner_id, port_list_id, schedule_for(zone),\n"
+    "                )\n"
+    "            except GvmError as exc:\n"
+    "                print(f\"WARN: fleet host {fleet_target['name']!r} failed: {exc}\")\n"
+    "                failures.append(f\"fleet host {fleet_target['name']!r}\")\n"
+    "                continue\n"
+    "            if task_id:\n",
+)
+replace_once(
+    '    print("done")\n',
+    '        if failures:\n'
+    '            print(f"FAILED: {len(failures)} item(s): {\', \'.join(failures)}")\n'
+    '            return 1\n'
+    '\n'
+    '    print("done")\n',
+)
+path.write_text(text, encoding="utf-8")
+print("setup_credentials.py: in-use-safe deletion, per-item failures")
+PYEOF
+```
+
 ## Operator runbook (production -- not step blocks)
 
 Run these in order, from the repo root on this branch, after
-gvmcov-01…15 are committed. Each production command follows CLAUDE.md's
+gvmcov-01…16 are committed. Each production command follows CLAUDE.md's
 Preflight → approval → `TASK_APPROVAL` → after-action flow.
 
 ### OP-1: create OpenBao credentials for the 14 new hosts (OIDC write)

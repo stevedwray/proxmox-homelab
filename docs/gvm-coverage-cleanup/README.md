@@ -101,3 +101,18 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 - **2026-10-12, gvmcov-15:** added after the operator chose weekly cadence;
   applied from plan.md (34bc19cb), byte-identical to the stub-tested copy.
   Both gates passed.
+- **2026-10-12, OP-1:** 14 new OpenBao entries written (operator);
+  inventory resolves 39/39.
+- **2026-10-12, OP-3:** gvm-scan rolled out. All 35 root-SSH hosts
+  `failed=0 unreachable=0`, including the 4 never-before-managed LXCs.
+  Framework, the Pis and the workstation were run with `-K`.
+  `mcp-utility-stack` reported `changed=0` (expected 2), to be checked.
+- **2026-10-12 13:28, OP-4 attempt 1: FAILED partway.** Applied: main play
+  (gvm-bridge rebuilt, `/tasks/credentialed` live), LAN scan program, the
+  weekly CIDR schedules, and fleet key generation (39/39). The credential
+  program then aborted with `400 Target is in use`: it had deleted the
+  legacy `managed Debian services` task, but another task still referenced
+  that target. Nothing after that point ran (no fleet rebuild, no weekly
+  credentialed schedules, no findings-ingest update), so the live fleet is
+  still the old daily setup. Fixed by gvmcov-16; re-run with the
+  credential-program and findings-ingest tags.

@@ -53,6 +53,7 @@ import sys
 from pathlib import Path
 
 from gvm.connections import UnixSocketConnection
+from gvm.errors import GvmError
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
 
@@ -164,30 +165,66 @@ def task_status(gmp, task_id):
     return gmp.get_task(task_id).findtext("task/status", default="unknown")
 
 
+def tasks_using_target(gmp, target_id):
+    """{task_id: name} for every task that references target_id, including
+    tasks in the trashcan. Found live 2026-10-12 (docs/gvm-coverage-cleanup
+    gvmcov-16): deleting a legacy target failed with "Target is in use"
+    after its same-named task was gone -- another task (different name, or
+    trashed rather than ultimately deleted) still referenced it."""
+    users = {}
+    target = gmp.get_target(target_id, tasks=True)
+    for task in target.findall("target/tasks/task"):
+        users[task.get("id")] = task.findtext("name") or "?"
+    trash = gmp.get_tasks(trash=True, filter_string="rows=-1")
+    for task in trash.findall("task"):
+        target_el = task.find("target")
+        if target_el is not None and target_el.get("id") == target_id:
+            users[task.get("id")] = f"{task.findtext('name') or '?'} [trashcan]"
+    return users
+
+
 def delete_if_present(gmp, kind, name):
-    """kind is "task", "target" or "credential". Returns False only when a
-    task exists but is active (running/queued) and so was left alone."""
+    """kind is "task", "target" or "credential". Deletes every object of
+    that kind with that exact name (duplicates included). For a target,
+    first deletes every task still using it. Returns False only when a task
+    is active (running/queued) and so was left alone; GMP errors propagate
+    to the caller."""
     getter = {"task": gmp.get_tasks, "target": gmp.get_targets, "credential": gmp.get_credentials}[kind]
     deleter = {"task": gmp.delete_task, "target": gmp.delete_target, "credential": gmp.delete_credential}[kind]
-    object_id = find_by_name(gmp, getter, kind, name)
-    if not object_id:
-        return True
-    if kind == "task":
-        status = task_status(gmp, object_id)
-        if status in ACTIVE_TASK_STATUSES:
-            print(f"WARN: task {name!r} is {status}, leaving it alone this run")
-            return False
-    deleter(object_id, ultimate=True)
-    print(f"deleted {kind} {name!r} ({object_id})")
-    return True
+    for _ in range(10):
+        object_id = find_by_name(gmp, getter, kind, name)
+        if not object_id:
+            return True
+        if kind == "task":
+            status = task_status(gmp, object_id)
+            if status in ACTIVE_TASK_STATUSES:
+                print(f"WARN: task {name!r} is {status}, leaving it alone this run")
+                return False
+        if kind == "target":
+            for task_id, task_name in tasks_using_target(gmp, object_id).items():
+                if not task_name.endswith("[trashcan]") and task_status(gmp, task_id) in ACTIVE_TASK_STATUSES:
+                    print(f"WARN: task {task_name!r} using target {name!r} is active, leaving both alone this run")
+                    return False
+                gmp.delete_task(task_id, ultimate=True)
+                print(f"deleted task {task_name!r} ({task_id}) -- it still used target {name!r}")
+        deleter(object_id, ultimate=True)
+        print(f"deleted {kind} {name!r} ({object_id})")
+    raise RuntimeError(f"{kind} {name!r} still present after 10 deletions")
 
 
-def cleanup_legacy(gmp):
-    for name in LEGACY_TASKS_AND_TARGETS:
-        if delete_if_present(gmp, "task", name):
-            delete_if_present(gmp, "target", name)
-    for name in LEGACY_CREDENTIALS:
-        delete_if_present(gmp, "credential", name)
+def cleanup_legacy(gmp, failures):
+    """Best-effort: a legacy object that can't be removed is logged (and
+    fails the run at the end) but never blocks the fleet reconcile."""
+    for kind, name in (
+        [("task", n) for n in LEGACY_TASKS_AND_TARGETS]
+        + [("target", n) for n in LEGACY_TASKS_AND_TARGETS]
+        + [("credential", n) for n in LEGACY_CREDENTIALS]
+    ):
+        try:
+            delete_if_present(gmp, kind, name)
+        except GvmError as exc:
+            print(f"WARN: could not delete legacy {kind} {name!r}: {exc}")
+            failures.append(f"legacy {kind} {name!r}")
 
 
 def ensure_credential(gmp, name, login, key_path):
@@ -381,7 +418,8 @@ def main():
         scanner_id = resolve_id(gmp, gmp.get_scanners, SCANNER_NAME, "scanner")
         port_list_id = resolve_id(gmp, gmp.get_port_lists, PORT_LIST_NAME, "port_list")
 
-        cleanup_legacy(gmp)
+        failures = []
+        cleanup_legacy(gmp, failures)
 
         schedule_ids = {}
         hosts_seen_by_zone = {}
@@ -411,9 +449,14 @@ def main():
 
         for fleet_target in load_fleet_targets(GVM_FLEET_DIR):
             zone = fleet_target["zone"]
-            task_id = reconcile_fleet_host(
-                gmp, fleet_target, config_id, scanner_id, port_list_id, schedule_for(zone),
-            )
+            try:
+                task_id = reconcile_fleet_host(
+                    gmp, fleet_target, config_id, scanner_id, port_list_id, schedule_for(zone),
+                )
+            except GvmError as exc:
+                print(f"WARN: fleet host {fleet_target['name']!r} failed: {exc}")
+                failures.append(f"fleet host {fleet_target['name']!r}")
+                continue
             if task_id:
                 task_ids_by_zone.setdefault(zone, []).append(task_id)
 
@@ -437,6 +480,10 @@ def main():
             status = task.findtext("task/status", default="unknown")
             progress = task.findtext("task/progress", default="unknown")
             print(f"status {STATUS_TASK_NAME!r}: {status}, progress={progress}")
+
+        if failures:
+            print(f"FAILED: {len(failures)} item(s): {', '.join(failures)}")
+            return 1
 
     print("done")
 
