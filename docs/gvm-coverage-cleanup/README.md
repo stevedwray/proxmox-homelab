@@ -76,16 +76,15 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 
 ## Follow-ups (out of scope for this plan; not started)
 
-1. **gvm-bridge is unauthenticated and reachable from the LAN.**
-   `http://192.168.70.11:8010/findings/all` returned the full vulnerability
-   inventory to the operator workstation with no credentials, and
-   `/scan/start` would let anyone on the LAN start scans. It needs auth or a
-   firewall restriction.
-2. **No push notification channel exists in the repo.** Coverage failures
-   now show up as a failed `gvm-findings-ingest` systemd unit, the
+1. **gvm-bridge was unauthenticated and reachable from the LAN.** Fixed
+   2026-10-12 by binding it to `127.0.0.1:8010` (deploy-greenbone-stack.yml).
+   Its only client is the findings ingest on the same host.
+2. **Push alerting (Discord) moves to its own plan and session** (operator
+   2026-10-12). It should reuse catch-up plan 07's webhook
+   (`services/grafana` → `DISCORD_ALERT_WEBHOOK_URL`). Until then,
+   coverage failures show as the failed `gvm-findings-ingest` unit, the
    `es-findings-sync-state/greenbone-coverage` document, and `COVERAGE ...`
-   journal lines. Delivering them somewhere (email, ntfy, Wazuh rule)
-   still needs a decision.
+   journal lines.
 3. **Scan cadence.** Moved to weekly (gvmcov-15). Revisit slot sizes once
    the coverage documents show real run durations; if lan/mgmt slots
    still don't finish, split them further or grow greenbone-stack.
@@ -96,9 +95,9 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    (a copy of the operator's root key) and
    `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY`. Nothing reads them after
    gvmcov-05/09. Removing them is an operator OIDC write.
-6. After the Phase 2 cutover, the 39 OpenBao `services/greenbone/scan-hosts/*`
-   entries (per-host keys) are unused and no longer in the manifest. Deleting
-   them is an operator OIDC action (`bao kv metadata delete`).
+6. ~~Old per-host OpenBao entries / root-key copy~~: **done 2026-10-12**
+   (operator). The 39 `scan-hosts/*` entries were deleted; `services/greenbone`
+   is down to 4 fields, and version 1 (with the root key) is destroyed.
 7. The old `openvas` account on the workstation (garuda) is unused after
    this plan.
 
@@ -162,3 +161,12 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   infra 5, ai 3, cse/game/media/edge 2, apps/build/connector/pentest 1 =
   39 hosts), MikroTik on its own weekly slot, OCI unscheduled. R4.1
   idempotency: both GMP tasks `ok`. R4.2 edge_seg live scan started.
+8. **mcp-utility-stack is running pre-Maigret OSINT code (found 2026-10-12).**
+   At 07:15 NZDT something on the workstation (not a Claude session, not
+   in shell history) redeployed it from the shared checkout while it was on
+   this branch. That applied the new gvm-scan role early (hence OP-3's
+   `changed=0`) and dropped `find_username_deep`, which lives only on
+   `feat/osint-maigret-username-search`. Dated by Wazuh FIM
+   (`/etc/sudoers.d/gvm-scan` deleted 18:20 UTC) and root SSH logins. The fix
+   needs the OSINT branch rebased onto this one. The OSINT branch can't be
+   deployed as-is: its role and secret paths predate this work.

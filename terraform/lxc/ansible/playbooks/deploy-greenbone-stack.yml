@@ -523,8 +523,15 @@
                 # off that identity.
                 GVM_BRIDGE_USERNAME: "admin"
                 GVM_BRIDGE_PASSWORD: "{{ greenbone_admin_password }}"
+              # Loopback only (2026-10-12, docs/gvm-coverage-cleanup): the
+              # bridge has no authentication and acts as GVM admin, so on
+              # 0.0.0.0 anyone on the LAN could read every finding
+              # (/findings/all) or make greenbone scan any IP
+              # (/scan/start). Its only remaining client is
+              # gvm_findings_ingest on this same host (PentAGI, the
+              # original network client, was destroyed 2026-09-28).
               ports:
-                - 0.0.0.0:8010:8010
+                - 127.0.0.1:8010:8010
               volumes:
                 - gvmd_socket_vol:/run/gvmd
               depends_on:
