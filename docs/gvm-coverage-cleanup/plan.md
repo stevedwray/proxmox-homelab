@@ -2603,3 +2603,76 @@ Any task that is mid-scan prints WARN and is picked up on the next run.
    - terraform/lxc/stacks/greenbone-stack/STACK_CONTRACT.md (gvm-bridge row)
 
    `grep -rn "gvm-coverage-cleanup" docs terraform/lxc/stacks` lists them.
+
+## Phase 2 runbook (VLAN-grouped credentials, 2026-10-12)
+
+Operator decision 2026-10-12: one shared `gvm-scan` key per VLAN/zone
+instead of per host. Code in 1a5b263c (implemented directly by Claude and
+stub-tested from the live per-host state, not as step blocks; see
+README.md). Run R1–R3 back to back in one sitting. After R2 each host
+trusts only its zone key, so the per-host GVM tasks would fail
+authentication until R3 replaces them. Avoid the overnight windows: the
+first Phase 2 slot is Tuesday 00:30 (lan).
+
+### R1: create the 12 zone keys in OpenBao (operator, OIDC write)
+
+```bash
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+LAB_IP_OPENBAO=192.168.20.16 scripts/gvm_scan_credentials_bootstrap.py --all
+unset BAO_TOKEN
+./with-secrets-prod python3 scripts/gvm_fleet_targets_generate.py \
+  --emit-inventory /tmp/gvm-scan-inventory.json --out-dir /tmp/gvm-zone-check \
+  && ls /tmp/gvm-zone-check/*.key | wc -l; rm -rf /tmp/gvm-zone-check
+```
+Expect `done: 12 succeeded`, then `wrote 12 zones covering 39/39 hosts`
+and `12`. `--all` is correct here: it means the 12 zones, none of which
+exist yet.
+
+### R2: put each host on its zone key
+
+```bash
+export ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg
+TASK_APPROVAL=gvmcov-vlan-accounts ./with-secrets-prod ansible-playbook \
+  -i /tmp/gvm-scan-inventory.json terraform/lxc/ansible/playbooks/deploy-gvm-scan-accounts.yml \
+  --limit '!host-workstation:!host-framework:!host-pi-22:!host-pi-23'
+for h in host-framework host-pi-22 host-pi-23 host-workstation; do
+  TASK_APPROVAL=gvmcov-vlan-accounts ./with-secrets-prod ansible-playbook \
+    -i /tmp/gvm-scan-inventory.json terraform/lxc/ansible/playbooks/deploy-gvm-scan-accounts.yml \
+    --limit "$h" -K
+done
+```
+Expect `failed=0 unreachable=0` everywhere and `changed=1` per host (the
+`authorized_keys` swap). `-K` asks for that host's sudo password.
+
+### R3: redeploy greenbone-stack (full play; gvm-bridge changed)
+
+```bash
+TASK_APPROVAL=gvmcov-vlan-greenbone ./with-secrets-prod scripts/provision.sh --stack greenbone-stack 2>&1 \
+  | tee /tmp/gvmcov-r3.log
+grep -E "failed=" /tmp/gvmcov-r3.log
+python3 -c "import json,urllib.request as u; [print(t['status'].ljust(7), (t['schedule'] or '-').ljust(32), len(t['target_hosts']), t['name']) for t in json.load(u.urlopen('http://192.168.70.11:8010/tasks/credentialed'))['tasks']]"
+```
+Expect `failed=0` and 14 tasks: 12 `Credentialed scan: <zone>` (each on
+`Weekly VLAN scan: <zone>`, with its host count), MikroTik, and OCI
+(unscheduled). If R3 fails at the credential program with `FAILED: … (active)`,
+a per-host task was mid-scan. Re-run with
+`ANSIBLE_TAGS=credential-program` once it finishes.
+
+### R4: verify
+
+1. Nothing changes on a second run. Both lines must show `ok:`:
+   ```bash
+   ANSIBLE_TAGS=scan-program,credential-program TASK_APPROVAL=gvmcov-vlan-greenbone \
+     ./with-secrets-prod scripts/provision.sh --stack greenbone-stack 2>&1 | tee /tmp/gvmcov-r4.log
+   grep -A1 -E "TASK \[(Create/verify the LAN/VLAN scan program|Create credentialed targets)" /tmp/gvmcov-r4.log
+   ```
+2. One live zone scan. edge_seg has 2 hosts, so it's quick:
+   ```bash
+   GREENBONE_START_TASK_NAME="Credentialed scan: edge_seg" ANSIBLE_TAGS=credential-program \
+     TASK_APPROVAL=gvmcov-vlan-greenbone ./with-secrets-prod scripts/provision.sh --stack greenbone-stack
+   ```
+   When it is Done, both hosts (192.168.30.10, 192.168.30.11) must show
+   `SSH Login Successful` and LSC detections, with no `SSH Login Failed`.
+3. Record results in README.md, and update the status pointers listed in
+   OP-5 step 5.

@@ -6,12 +6,22 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-12: code steps gvmcov-01…15 applied on `work/gvm-coverage-cleanup`
-(d5a0bfd3, 34bc19cb), every gate passed. Production runbook OP-1…OP-5 NOT run;
-live GVM is unchanged (still the broken daily fleet).** Plan written 2026-10-11. Steps `gvmcov-01`…`gvmcov-15` are file edits
-only; the operator runbook at the end of plan.md does the production
-work (OpenBao writes, MikroTik rules, account rollout, greenbone-stack
-redeploy, verification).
+**2026-10-12 (afternoon): Phase 2, VLAN-grouped credentials, is code-complete
+(1a5b263c) and awaiting its runbook. The live state is the Phase 1 per-host design.**
+
+- **Phase 1 (per-host keys) is live and verified.** OP-1…OP-4 and OP-5.1 are
+  done. OP-5.2 passed: `fleet/apt-cacher-stack` logged in
+  (`SSH Login Successful`, no `SSH Login Failed`) and returned 8 package-level
+  detections. That's the first credentialed scan in this setup that has
+  ever authenticated.
+- **Phase 2 (operator decision 2026-10-12): one shared `gvm-scan` key per
+  VLAN/zone**, because 39 keys and 41 tasks had gotten out of hand. That
+  makes 12 zones, so 12 credentials, 12 multi-host targets and 12 tasks (plus
+  MikroTik and OCI), each weekly and capped at 4 concurrent hosts. Runbook:
+  plan.md "Phase 2 runbook (VLAN-grouped credentials)". The plan's
+  `gvmcov-01`…`16` step blocks describe Phase 1. Phase 2 was implemented
+  directly by Claude in 1a5b263c, stub-tested from the live state; it isn't
+  written as step blocks.
 
 Status pointers to this workspace were added on 2026-10-11 to
 docs/greenbone-stack/README.md, docs/greenbone-stack/network-scan-rollout-plan.md,
@@ -60,7 +70,8 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 | NAS (192.168.1.3, Asustor ADM) | Uncredentialed weekly full-vuln (removed from the lan exclusions) |
 | Missing hosts (#5) | All get credentialed scans: pve, pve-tiny, framework, management-stack, media-stack, proxmox-backup-server, omada-controller, cse-panel-stack, technitium-tiny-stack |
 | Alerting (#2) | Required: added a coverage check to the daily findings ingest (gvmcov-14) |
-| Cadence (2026-10-12) | Credentialed scans weekly, not daily; zones spread over 5 nights, max 4 hosts per slot (gvmcov-15). The scanner couldn't finish the daily load |
+| Cadence (2026-10-12) | Credentialed scans weekly, not daily (the scanner couldn't finish the daily load). Phase 2: one weekly slot per VLAN, max 4 hosts scanned at once (`max_hosts`) |
+| Grouping (2026-10-12) | **By VLAN: one shared `gvm-scan` key per zone** (12 zones, including a single `lan` key for pve, pve-tiny, framework, the workstation, the Pis and 4 LXCs). MikroTik keeps its own target. Replaces per-host keys |
 
 ## Follow-ups (out of scope for this plan; not started)
 
@@ -84,9 +95,9 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    (a copy of the operator's root key) and
    `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY`. Nothing reads them after
    gvmcov-05/09. Removing them is an operator OIDC write.
-6. The original 25 `scan-hosts/*` entries still hold an unused
-   `GVM_SCAN_SUDO_PASSWORD` value. It's harmless and is dropped on the next
-   rotation of each entry.
+6. After the Phase 2 cutover, the 39 OpenBao `services/greenbone/scan-hosts/*`
+   entries (per-host keys) are unused and no longer in the manifest. Deleting
+   them is an operator OIDC action (`bao kv metadata delete`).
 7. The old `openvas` account on the workstation (garuda) is unused after
    this plan.
 
@@ -128,3 +139,17 @@ Update them when the plan is executed (plan.md OP-5 step 5).
 - **2026-10-12, OP-5.1 idempotency: PASS.** Re-run of `scan-program` +
   `credential-program`: both GMP tasks reported `ok` (nothing created or
   deleted); the only changes were temp-file copies.
+- **2026-10-12, OP-5.2 live credentialed scan: PASS.**
+  `fleet/apt-cacher-stack` (scan start 2026-10-12T00:44:48Z): 53 results,
+  `SSH Login Successful` present, `SSH Login Failed` absent, 8 LSC detections
+  (`Determine OS and list of installed packages via SSH login`, dmidecode,
+  sudo, bash, ...). Wazuh showed only `gvm-scan` publickey logins with no `su`.
+  `last_report_scan_start` is filled in after a run, so the coverage check's
+  field path is correct.
+- **2026-10-12, Phase 2 code (1a5b263c): VLAN-grouped credentials.**
+  Stub-tested starting from the live per-host state: run 1 converges (one
+  running per-host task held back, rc 1), run 2 finishes cleanup (rc 0), and
+  run 3 is a no-op. Result: 12 zone tasks (`max_hosts=4`), MikroTik, OCI, 13
+  schedules, no tags. The per-host coverage check correctly separates ok,
+  auth_failed, no_auth_evidence, no_results, never_run and stale. All 32
+  affected playbooks syntax-check. Phase 2 runbook pending.
