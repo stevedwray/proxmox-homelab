@@ -36,10 +36,27 @@ osint_investigate = (
         # stalled/dropped connection leaves the tool-call await unbounded --
         # a real 52+ minute silent hang in a live run, invisible at the TCP
         # layer by the time it was inspected (socket already gone, nothing
-        # to time it out). osint-mcp's own lookups complete in seconds;
-        # 60s is generous headroom while turning any future stall into a
-        # fast, loud failure instead of an indefinite silent one.
-        request_timeout=60,
+        # to time it out). 60s was sized when osint-mcp's only tool was
+        # investigate_domain, which does complete in seconds.
+        #
+        # Found live 2026-10-10 (first real multi-angle run exercising the
+        # new find_username_deep/Sherlock-under-concurrency path): BOTH
+        # concurrent find_username calls in one run genuinely succeeded on
+        # osint-mcp's own side (confirmed via its per-request logs: 65.3s
+        # and 128.6s respectively) but were reported to this agent as
+        # "Error: Function failed." -- the client-side 60s timeout fired
+        # first every time, discarding correct results. This isn't a rare
+        # edge case: Sherlock/Maigret (Phase 4/6) are serialized in-process
+        # on osint-mcp's side specifically BECAUSE concurrent full scans
+        # contend for the same CPU/network (2026-10-03 finding), so a
+        # second or third concurrent find_username call queuing behind
+        # earlier ones is the expected outcome under this agent's own
+        # max_concurrent_tasks: 3, not a malfunction -- the old 60s budget
+        # just never accounted for it. Raised to 240s: comfortably covers
+        # a worst-case 2-3-deep Sherlock/Maigret queue while staying a
+        # small, bounded fraction of the original 52-minute silent-hang
+        # problem this timeout exists to catch in the first place.
+        request_timeout=240,
     )
     if _OSINT_MCP_URL and _OSINT_MCP_TOKEN
     else None

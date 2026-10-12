@@ -56,9 +56,14 @@
 
     lab_ip_greenbone: "{{ lookup('env', 'LAB_IP_GREENBONE') | mandatory('LAB_IP_GREENBONE env var is required') }}"
 
-    # One entry per destination. game_seg and the flat LAN have no
-    # LAB_SUBNET_*_CIDR env var (matching pve.yaml's own hardcoding of
-    # 192.168.60.0/24 for game_seg), so those two are hardcoded here too.
+    # One entry per destination. game_seg, media_seg, cse_seg,
+    # connector_seg, apps_seg and the flat LAN have no LAB_SUBNET_*_CIDR
+    # env var (matching pve.yaml's own hardcoding of 192.168.60.0/24 for
+    # game_seg), so those are hardcoded here too. media_seg, cse_seg,
+    # connector_seg and apps_seg added 2026-10-11
+    # (docs/gvm-coverage-cleanup/plan.md) -- before that GVM could not
+    # reach media-stack-lab, torrent-stack-lab, newt-connector,
+    # nextcloud-stack, cse-controller or cse-code-eval at all.
     greenbone_scan_destinations:
       - zone: build_seg
         cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | mandatory('LAB_SUBNET_BUILD_CIDR env var is required') }}"
@@ -72,6 +77,14 @@
         cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
       - zone: game_seg
         cidr: "192.168.60.0/24"
+      - zone: media_seg
+        cidr: "192.168.80.0/24"
+      - zone: cse_seg
+        cidr: "192.168.100.0/24"
+      - zone: connector_seg
+        cidr: "192.168.110.0/24"
+      - zone: apps_seg
+        cidr: "192.168.120.0/24"
       - zone: lan
         cidr: "192.168.1.0/24"
 

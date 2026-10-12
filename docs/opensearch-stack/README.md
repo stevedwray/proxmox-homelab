@@ -45,7 +45,11 @@ consumer).
   decision from the elasticsearch-stack era. Dashboard:
   `https://dashboards.lab.gibbsgreatly.xyz/app/dashboards#/view/gvm-vulnerability-findings`
   (critical count, by-severity, by-host-and-severity, critical/high-by-name
-  panels). Both indices share the `es-findings-sync-state` state index and
+  panels). **Caveat (2026-10-11):** the credentialed GVM scans had never
+  authenticated, so `gvm-findings` contains network-level findings only, with no
+  package-level Local Security Check findings. Fix planned in
+  docs/gvm-coverage-cleanup/, which also adds a daily credentialed-scan
+  coverage document at `es-findings-sync-state/_doc/greenbone-coverage`. Both indices share the `es-findings-sync-state` state index and
   a common `es_findings_writer` OpenSearch role — see
   `docs/elasticsearch-stack/README.md` section 3 for the schema-compat
   rationale (future triage/correlation tools should be able to treat both
