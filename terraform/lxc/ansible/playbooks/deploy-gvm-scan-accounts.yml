@@ -1,0 +1,36 @@
+---
+# Applies ONLY the gvm_scan_account role to every GVM credentialed-scan
+# host -- docs/gvm-coverage-cleanup/plan.md. Covers hosts that have no
+# deploy-*.yml of their own (Proxmox nodes, framework, the workstation, the
+# Raspberry Pis, management-stack, media-stack, proxmox-backup-server,
+# omada-controller) and is the targeted way to roll a role change out to
+# the stack fleet without a full per-stack redeploy.
+#
+# The inventory is generated, never hand-typed:
+#   ./with-secrets-prod python3 scripts/gvm_fleet_targets_generate.py \
+#     --emit-inventory /tmp/gvm-scan-inventory.json
+# Each host's gvm_scan_name is resolved to its VLAN/zone, and the host gets
+# that zone's shared key (services/greenbone/scan-zones/<zone>).
+- name: Provision the GVM credentialed-scan account on every scan host
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this host's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - "{{ gvm_scan_name }}"
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+  roles:
+    - gvm_scan_account

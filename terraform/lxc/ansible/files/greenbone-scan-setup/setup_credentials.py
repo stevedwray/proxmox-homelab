@@ -1,87 +1,82 @@
 #!/usr/bin/env python3
-"""Create the first-pass authenticated Greenbone scan objects, plus the
-fleet-wide gvm-scan credentialed targets (docs/lxc-scan-and-monitoring-
-rollout/plan.md, gvm-07).
+"""Reconcile Greenbone's credentialed scan objects -- one per VLAN/zone
+(docs/gvm-coverage-cleanup/README.md; operator decision 2026-10-12).
 
-The original CREDENTIALS/TARGETS below deliberately reuse the administrator
-SSH keys already trusted by the lab -- a pragmatic first pass that makes no
-account, SSH, sudo, or authorized_keys changes on any target. Those private
-keys are provided as read-only, short-lived bind mounts by
-deploy-greenbone-stack.yml, one file + one env var per credential -- fine
-for 4 credentials, unworkable for ~36.
+Every scan host in a zone shares that zone's "gvm-scan" SSH keypair
+(OpenBao services/greenbone/scan-zones/<zone>), so each zone needs exactly
+one credential, one multi-host Target and one Task:
 
-The fleet-wide gvm-scan targets (added 2026-09-29) use a different,
-scalable delivery shape instead: a single bind-mounted directory
-(GVM_FLEET_DIR, default /tmp/fleet) containing one targets.json manifest
-(list of {"name": str, "host": str, "zone": str} -- no secret content,
-safe to write without no_log) plus one "<name>.key" (SSH private key) and
-one "<name>.sudopass" (plaintext sudo password) file per fleet stack. Each
-fleet stack gets its own "usk" login credential (login="gvm-scan") AND its
-own "up" elevate-privileges credential (same login, the sudo password) --
-GVM's ssh_elevate_credential_id lets Local Security Checks run `sudo`
-through a real password, not passwordless/no-creds, per the operator's
-2026-09-29 "sudo with credentials" design decision.
+  credential  zone-<zone>-login
+  target/task Credentialed scan: <zone>
+  schedule    Weekly VLAN scan: <zone>   (ZONE_WEEKLY_SLOT)
 
-The existing CIDR scan program remains anonymous.  Credentialed Targets are
-explicit host lists so a root credential can never be applied accidentally to
-an arbitrary host discovered on a subnet.
+A GVM Target carries one SSH credential for all of its hosts, which is why
+grouping by VLAN requires a shared key per VLAN. Each zone Task caps
+concurrently scanned hosts at MAX_HOSTS_PER_TASK, because greenbone-stack
+(2 cores, memory-gated scan queue) could not keep up with 8 simultaneous
+hosts.
 
-VLAN-organized scheduling (added 2026-09-29, gvm-08): a GVM Target can only
-carry one ssh_credential_id for every host it contains -- confirmed against
-upstream python-gvm, no version supports per-host credentials within a
-multi-host Target -- so grouping "by VLAN" can't mean one shared Target per
-zone without abandoning the unique-credential-per-host design above.
-Instead each fleet host's existing per-host Target/Task keeps its own
-credential, and gets a per-zone Schedule (ZONE_SCHEDULE_TIMES -- daily,
-staggered ~45min apart overnight UTC so the fleet doesn't scan all at once)
-and a per-zone Tag (zone:<name>, e.g. zone:infra_seg) for GSA-side grouping
-and filtering.
+Scan hosts and keys come from scripts/gvm_fleet_targets_generate.py,
+delivered as one bind-mounted directory (GVM_FLEET_DIR, default
+/tmp/fleet): targets.json ([{"zone", "hosts": [ip...], "names": [...]}])
+plus one <zone>.key per zone.
+
+The account is unprivileged and there is NO elevate credential: GVM's
+elevate-privileges feature is su-based, not sudo (confirmed live
+2026-10-11 -- every scan ran `su -l gvm-scan` and reported "SSH Login
+Failed For Authenticated Checks").
+
+The MikroTik router keeps its own RouterOS gvm-scan user/key and its own
+target and task (GREENBONE_MIKROTIK_KEY_PATH).
+
+Reconciliation: each zone Target's comment carries "managed-fp:<hash>" of
+(hosts, key, port list, alive test, max hosts, RECONCILE_VERSION). If it is
+missing or differs (a new host in the zone, a rotated key, a changed
+setting), the zone's Task, Target and credential are deleted and recreated.
+Delete-and-recreate rather than modify_target, because gvmd refuses to change
+hosts/credentials on a Target that is in use by a Task. This deletes that
+zone's report history in GVM; findings already ingested into OpenSearch
+are unaffected. Running Tasks are left alone with a WARN.
+
+Cleanup: every object left over from earlier designs (the per-host
+"fleet/<host>" tasks/targets/credentials, their per-zone schedules and
+zone:<name> tags, and the original root-key targets) is deleted. Errors on
+any single object are logged as WARN, and the run continues but exits 1.
 """
 import datetime
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
 
 from gvm.connections import UnixSocketConnection
+from gvm.errors import GvmError
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeCheckCommandTransform
 
-# Operator-confirmed 2026-09-29 (docs/lxc-scan-and-monitoring-rollout/
-# plan.md, gvm-08): fleet credentialed scans run daily, staggered ~45min
-# apart overnight in the operator's own local time (Pacific/Auckland) so
-# the ~25-host fleet doesn't all hit at once. CORRECTED 2026-09-30: the
-# first version of this used a fixed "UTC" timezone with times chosen to
-# look like "overnight," but the operator is in NZT (UTC+12/+13 -- NZ
-# observes DST), so 01:00-07:45 UTC actually landed in their afternoon/
-# evening, not overnight -- caught live by checking real report
-# timestamps against the operator's own clock, not assumed correct just
-# because the schedules were confirmed "wired" the day before. Using a
-# real IANA zone name (not a fixed offset) here so this stays correct
-# across NZ's DST transitions instead of drifting wrong twice a year --
-# gvmd/libical resolve the named zone's DST rules themselves, same as
-# their own create_schedule() docs' "Europe/Berlin" example.
-#
-# A GVM Target can only carry ONE ssh_credential_id for every host in it
-# (confirmed against upstream python-gvm's request builders -- no
-# per-host-within-target credential exists in any shipped GMP version),
-# which is incompatible with this fleet's unique-keypair-per-LXC design,
-# so "divided by VLAN" is implemented as one Schedule + one Tag per zone
-# applied across the existing 25 per-host Targets/Tasks, not one shared
-# multi-host Target per zone.
-ZONE_SCHEDULE_TIMES = {
-    "mgmt_seg": "01:00",
-    "infra_seg": "01:45",
-    "ai_seg": "02:30",
-    "media_seg": "03:15",
-    "game_seg": "04:00",
-    "edge_seg": "04:45",
-    "pentest_seg": "05:30",
-    "connector_seg": "06:15",
-    "build_seg": "07:00",
-    "apps_seg": "07:45",
+# One weekly start per zone, Pacific/Auckland wall clock (a real IANA zone,
+# so NZ DST transitions resolve correctly). Monday and Thursday mornings are
+# left free for the weekly CIDR full-vuln program (Sunday 22:00-Monday 04:00
+# and Wednesday 22:00-Thursday 02:00, setup_schedules.py).
+ZONE_WEEKLY_SLOT = {
+    "lan": ("TU", "00:30"),
+    "mgmt_seg": ("WE", "00:30"),
+    "infra_seg": ("FR", "00:30"),
+    "pentest_seg": ("FR", "05:00"),
+    "connector_seg": ("FR", "06:00"),
+    "ai_seg": ("SA", "00:30"),
+    "game_seg": ("SA", "03:00"),
+    "edge_seg": ("SA", "05:00"),
+    "media_seg": ("SU", "00:30"),
+    "cse_seg": ("SU", "03:00"),
+    "build_seg": ("SU", "05:00"),
+    "apps_seg": ("SU", "06:00"),
 }
+MIKROTIK_SLOT = ("WE", "05:00")
+WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 SCHEDULE_TIMEZONE = "Pacific/Auckland"
+MAX_HOSTS_PER_TASK = 4
 
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
@@ -89,13 +84,7 @@ GVM_PASSWORD = os.environ["GVM_PASSWORD"]
 START_TASK_NAME = os.environ.get("GREENBONE_START_TASK_NAME", "")
 STATUS_TASK_NAME = os.environ.get("GREENBONE_STATUS_TASK_NAME", "")
 
-# Fleet-wide gvm-scan targets (gvm-07) -- see module docstring for the
-# directory shape. Empty/absent GVM_FLEET_DIR (or a missing targets.json
-# inside it) means "no fleet targets this run" -- degrades gracefully, same
-# philosophy as known_production_images.json's classify_artifact() and
-# harbor_live_usage's None-on-failure semantics: an incomplete rollout
-# should never crash the whole program, only skip what isn't ready yet.
-GVM_FLEET_DIR = os.environ.get("GVM_FLEET_DIR", "/tmp/fleet")  # nosonar: python:S5443 -- container-internal /tmp inside an isolated `docker compose run --rm` gvm-tools container, not a shared host path; same accepted pattern as this file's existing /tmp/steve.key etc. bind mounts
+GVM_FLEET_DIR = os.environ.get("GVM_FLEET_DIR", "/tmp/fleet")  # nosonar: python:S5443 -- container-internal /tmp inside an isolated `docker compose run --rm` gvm-tools container, not a shared host path
 GVM_FLEET_LOGIN = "gvm-scan"
 
 FULL_CONFIG_NAME = "Full and fast"
@@ -103,82 +92,50 @@ SCANNER_NAME = "OpenVAS Default"
 PORT_LIST_NAME = "All TCP and Nmap top 100 UDP"
 ALIVE_TESTS = "ICMP, TCP-ACK Service & ARP Ping"
 
-# `usk` is Greenbone's GMP credential type for "Username + SSH Key".
-# Keep credentials per trust boundary even though the Pi account currently
-# shares Steve's key material: their GVM login names and privilege models are
-# different and must not be confused.
-CREDENTIALS = {
-    "lab-root": {
-        "name": "Lab root SSH key (Steve)",
-        "login": "root",
-        "key_path": os.environ["GREENBONE_STEVE_KEY_PATH"],
-    },
-    "workstation-openvas": {
-        "name": "Workstation openvas SSH key",
-        "login": "openvas",
-        "key_path": os.environ["GREENBONE_OPENVAS_WORKSTATION_KEY_PATH"],
-    },
-    "raspberry-pi-ansible": {
-        "name": "Raspberry Pi ansible SSH key (Steve)",
-        "login": "ansible",
-        "key_path": os.environ["GREENBONE_STEVE_KEY_PATH"],
-    },
-    "mikrotik-gvm-scan": {
-        "name": "MikroTik gvm-scan SSH key",
-        "login": "gvm-scan",
-        "key_path": os.environ["GREENBONE_MIKROTIK_KEY_PATH"],
-    },
-}
+# Bump to force every zone's GVM objects to be rebuilt on the next run.
+# "3" = per-zone shared key (2026-10-12).
+RECONCILE_VERSION = "3"
+FP_MARKER = "managed-fp:"
+ACTIVE_TASK_STATUSES = {"Running", "Requested", "Queued", "Stop Requested", "Delete Requested"}
 
-# Only managed, known hosts belong here.  Do not replace these with CIDRs:
-# Greenbone attaches an SSH credential to an entire Target.  Test fixtures,
-# pve-test-vm, and deliberately vulnerable targets are intentionally absent.
-TARGETS = [
-    {
-        "name": "Credentialed scan: managed Debian services",
-        "credential": "lab-root",
-        "hosts": [
-            "192.168.10.163",  # ci-runner-01
-            "192.168.20.110",  # authentik-stack
-            "192.168.20.111",  # step-ca-stack
-            "192.168.20.112",  # monitoring-stack
-            "192.168.20.113",  # dns-stack
-            "192.168.20.114",  # graylog-stack
-            "192.168.20.120",  # portainer-stack
-            "192.168.30.10",   # proxy-stack / Traefik (Tier A)
-            "192.168.40.62",   # net-service-01
-            "192.168.40.110",  # harbor-stack
-            "192.168.40.111",  # apt-cacher-stack
-            "192.168.40.112",  # netbox-stack
-        ],
-    },
-    {
-        "name": "Credentialed scan: pve hypervisor",
-        "credential": "lab-root",
-        "hosts": ["192.168.1.2"],
-    },
-    {
-        "name": "Credentialed scan: Linux workstation",
-        "credential": "workstation-openvas",
-        "hosts": ["192.168.1.104"],
-    },
-    {
-        "name": "Credentialed scan: Raspberry Pis",
-        "credential": "raspberry-pi-ansible",
-        "hosts": ["192.168.1.22", "192.168.1.23"],
-    },
-    {
-        "name": "Credentialed scan: MikroTik router",
-        "credential": "mikrotik-gvm-scan",
-        "hosts": ["192.168.1.1"],
-    },
+MIKROTIK_CREDENTIAL = {
+    "name": "MikroTik gvm-scan SSH key",
+    "login": "gvm-scan",
+    "key_path": os.environ["GREENBONE_MIKROTIK_KEY_PATH"],
+}
+MIKROTIK_TARGET = {"name": "Credentialed scan: MikroTik router", "hosts": ["192.168.1.1"]}  # nosonar: python:S1313 -- the lab router's fixed management IP
+
+# Leftovers from earlier designs, deleted if present (a no-op once gone).
+LEGACY_TASKS_AND_TARGETS = [
+    "Credentialed scan: managed Debian services",
+    "Credentialed scan: pve hypervisor",
+    "Credentialed scan: Linux workstation",
+    "Credentialed scan: Raspberry Pis",
 ]
+LEGACY_CREDENTIALS = [
+    "Lab root SSH key (Steve)",
+    "Workstation openvas SSH key",
+    "Raspberry Pi ansible SSH key (Steve)",
+]
+# Name prefixes of the per-host design (2026-09-29..2026-10-12).
+LEGACY_TASK_TARGET_PREFIX = "Credentialed scan: fleet/"
+LEGACY_CREDENTIAL_PREFIX = "fleet-"
+LEGACY_SCHEDULE_PREFIXES = ["Daily fleet scan: ", "Weekly credentialed scan: "]
+LEGACY_TAG_PREFIX = "zone:"
 
 
 def find_by_name(gmp, getter, tag, name):
     response = getter(filter_string=f'name="{name}"')
     element = response.find(tag)
     return element.get("id") if element is not None else None
+
+
+def names_with_prefix(getter, tag, prefix):
+    response = getter(filter_string=f'name~"{prefix}" rows=-1')
+    return sorted({
+        el.findtext("name") for el in response.findall(tag)
+        if (el.findtext("name") or "").startswith(prefix)
+    })
 
 
 def resolve_id(gmp, getter, name, tag):
@@ -188,18 +145,110 @@ def resolve_id(gmp, getter, name, tag):
     return object_id
 
 
+def fingerprint(*parts):
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def task_status(gmp, task_id):
+    return gmp.get_task(task_id).findtext("task/status", default="unknown")
+
+
+def tasks_using_target(gmp, target_id):
+    """{task_id: name} for every task that references target_id, including
+    trashcan tasks (found live 2026-10-12: a target can stay "in use" after
+    its same-named task is deleted)."""
+    users = {}
+    target = gmp.get_target(target_id, tasks=True)
+    for task in target.findall("target/tasks/task"):
+        users[task.get("id")] = task.findtext("name") or "?"
+    trash = gmp.get_tasks(trash=True, filter_string="rows=-1")
+    for task in trash.findall("task"):
+        target_el = task.find("target")
+        if target_el is not None and target_el.get("id") == target_id:
+            users[task.get("id")] = f"{task.findtext('name') or '?'} [trashcan]"
+    return users
+
+
+def delete_target_users(gmp, target_id, target_name):
+    """Deletes every task still using a target. False if one is active."""
+    for task_id, task_name in tasks_using_target(gmp, target_id).items():
+        if not task_name.endswith("[trashcan]") and task_status(gmp, task_id) in ACTIVE_TASK_STATUSES:
+            print(f"WARN: task {task_name!r} using target {target_name!r} is active, leaving both alone this run")
+            return False
+        gmp.delete_task(task_id, ultimate=True)
+        print(f"deleted task {task_name!r} ({task_id}) -- it still used target {target_name!r}")
+    return True
+
+
+def delete_if_present(gmp, kind, name):
+    """kind: task, target, credential, schedule or tag. Deletes every object
+    of that kind with that exact name (duplicates included); for a target,
+    first deletes every task still using it. Returns False only when an
+    active task was left alone; GMP errors propagate to the caller."""
+    getter = {
+        "task": gmp.get_tasks, "target": gmp.get_targets, "credential": gmp.get_credentials,
+        "schedule": gmp.get_schedules, "tag": gmp.get_tags,
+    }[kind]
+    deleter = {
+        "task": gmp.delete_task, "target": gmp.delete_target, "credential": gmp.delete_credential,
+        "schedule": gmp.delete_schedule, "tag": gmp.delete_tag,
+    }[kind]
+    for _ in range(10):
+        object_id = find_by_name(gmp, getter, kind, name)
+        if not object_id:
+            return True
+        if kind == "task" and task_status(gmp, object_id) in ACTIVE_TASK_STATUSES:
+            print(f"WARN: task {name!r} is active, leaving it alone this run")
+            return False
+        if kind == "target" and not delete_target_users(gmp, object_id, name):
+            return False
+        deleter(object_id, ultimate=True)
+        print(f"deleted {kind} {name!r} ({object_id})")
+    raise RuntimeError(f"{kind} {name!r} still present after 10 deletions")
+
+
+def best_effort_delete(gmp, kind, name, failures):
+    try:
+        if not delete_if_present(gmp, kind, name):
+            failures.append(f"{kind} {name!r} (active)")
+    except GvmError as exc:
+        print(f"WARN: could not delete {kind} {name!r}: {exc}")
+        failures.append(f"{kind} {name!r}")
+
+
+def cleanup_legacy(gmp, failures):
+    """Tasks first, then targets, then credentials, so nothing is in use."""
+    tasks = LEGACY_TASKS_AND_TARGETS + names_with_prefix(gmp.get_tasks, "task", LEGACY_TASK_TARGET_PREFIX)
+    targets = LEGACY_TASKS_AND_TARGETS + names_with_prefix(gmp.get_targets, "target", LEGACY_TASK_TARGET_PREFIX)
+    credentials = LEGACY_CREDENTIALS + names_with_prefix(gmp.get_credentials, "credential", LEGACY_CREDENTIAL_PREFIX)
+    for kind, names in (("task", tasks), ("target", targets), ("credential", credentials)):
+        for name in names:
+            best_effort_delete(gmp, kind, name, failures)
+
+
+def cleanup_legacy_schedules_and_tags(gmp, failures):
+    """Run after every task points at its new schedule."""
+    for prefix in LEGACY_SCHEDULE_PREFIXES:
+        for name in names_with_prefix(gmp.get_schedules, "schedule", prefix):
+            best_effort_delete(gmp, "schedule", name, failures)
+    for name in names_with_prefix(gmp.get_tags, "tag", LEGACY_TAG_PREFIX):
+        best_effort_delete(gmp, "tag", name, failures)
+
+
 def ensure_credential(gmp, name, login, key_path):
     existing = find_by_name(gmp, gmp.get_credentials, "credential", name)
     if existing:
         print(f"credential {name!r} already exists ({existing}), skipping")
         return existing
-
-    private_key = Path(key_path).read_text(encoding="utf-8")
     response = gmp.create_credential(
         name=name,
         credential_type="usk",
         login=login,
-        private_key=private_key,
+        private_key=Path(key_path).read_text(encoding="utf-8"),
         comment="Managed by setup_credentials.py; do not edit manually in GSA.",
     )
     credential_id = response.get("id")
@@ -207,229 +256,126 @@ def ensure_credential(gmp, name, login, key_path):
     return credential_id
 
 
-def ensure_elevate_credential(gmp, name, login, password):
-    """The "up" (username+password) credential GVM uses for `sudo`
-    privilege escalation during a Local Security Check -- separate from
-    the "usk" credential used to log in over SSH. See ensure_credential()
-    for the login-credential counterpart."""
-    existing = find_by_name(gmp, gmp.get_credentials, "credential", name)
-    if existing:
-        print(f"credential {name!r} already exists ({existing}), skipping")
-        return existing
-
-    response = gmp.create_credential(
-        name=name,
-        credential_type="up",
-        login=login,
-        password=password,
-        comment="Managed by setup_credentials.py; sudo elevate-privileges credential for gvm-scan.",
-    )
-    credential_id = response.get("id")
-    print(f"created elevate credential {name!r} ({credential_id})")
-    return credential_id
-
-
-def ensure_target(gmp, name, hosts, credential_id, port_list_id, elevate_credential_id=None):
+def ensure_target(gmp, name, hosts, credential_id, port_list_id, comment):
     existing = find_by_name(gmp, gmp.get_targets, "target", name)
     if existing:
         print(f"target {name!r} already exists ({existing}), skipping")
         return existing
-
-    if elevate_credential_id is None:
-        response = gmp.create_target(
-            name=name,
-            hosts=hosts,
-            ssh_credential_id=credential_id,
-            alive_test=ALIVE_TESTS,
-            port_list_id=port_list_id,
-            comment="Managed authenticated target; intentionally explicit hosts only.",
-        )
-        target_id = response.get("id")
-        print(f"created target {name!r} ({target_id})")
-        return target_id
-
-    # CONFIRMED 2026-09-29 against a live GVM redeploy: the installed
-    # python-gvm's Gmp.create_target() (a GMPv224 instance, and this holds
-    # across every shipped version through v227/next -- checked the
-    # upstream source directly) has NO parameter for an SSH elevate
-    # credential at all, under any name. But GMP's own raw protocol does
-    # support it: <create_target><ssh_credential id="..."><...
-    # <ssh_elevate_credential id="..."/> is documented in the GMP schema
-    # (see docs.greenbone.net/API/GMP) and is exactly what the GSA web UI
-    # sends when you set an elevate credential on a target there. So this
-    # builds the request the same way Gmp.create_target() does internally
-    # (via the Targets request-builder, which returns the XML command
-    # object *before* sending it), appends that one extra element by hand,
-    # and sends it through the same internal transport the typed wrapper
-    # uses. This is intentionally not silent: if either internal API
-    # (Targets.create_target's import path, or _send_request_and_transform_
-    # response) has moved in whatever python-gvm version is actually
-    # installed, this raises loudly instead of quietly dropping privilege
-    # escalation for this target.
-    try:
-        from gvm.protocols.gmp.requests.v224 import Targets
-
-        request = Targets.create_target(
-            name=name,
-            hosts=hosts,
-            ssh_credential_id=credential_id,
-            alive_test=ALIVE_TESTS,
-            port_list_id=port_list_id,
-            comment="Managed authenticated target; intentionally explicit hosts only.",
-        )
-        request.add_element(
-            "ssh_elevate_credential", attrs={"id": str(elevate_credential_id)}
-        )
-        response = gmp._send_request_and_transform_response(request)
-    except (ImportError, AttributeError, TypeError) as exc:
-        raise RuntimeError(
-            f"Could not hand-build a create_target request with an "
-            f"ssh_elevate_credential element for the installed python-gvm "
-            f"version. Check gvm.protocols.gmp.requests.v224.Targets and "
-            f"Gmp._send_request_and_transform_response still exist with "
-            f"the expected shape (python3 -c \"import gvm.protocols.gmp."
-            f"requests.v224 as m; print(m.Targets.create_target)\") and "
-            f"fix ensure_target() accordingly before re-running. Original "
-            f"error: {exc}"
-        ) from exc
+    response = gmp.create_target(
+        name=name,
+        hosts=hosts,
+        ssh_credential_id=credential_id,
+        alive_test=ALIVE_TESTS,
+        port_list_id=port_list_id,
+        comment=comment,
+    )
     target_id = response.get("id")
-    print(f"created target {name!r} ({target_id}) with elevate credential {elevate_credential_id!r}")
+    print(f"created target {name!r} ({target_id}) with {len(hosts)} host(s)")
     return target_id
 
 
-def load_fleet_targets(fleet_dir):
-    """Returns a list of {"name", "host", "zone", "key_path", "sudo_password"}
-    dicts for the fleet-wide gvm-scan targets, or [] if GVM_FLEET_DIR
-    doesn't exist / has no targets.json yet (e.g. before gvm-04's
-    bootstrap has run for any stack) -- degrades gracefully, matching this
-    program's existing "skip what isn't ready" philosophy rather than
-    crashing the whole run over an incomplete rollout. "zone" is missing
-    (None) for a manifest written before the 2026-09-29 VLAN-organization
-    pass -- callers must handle that, not assume it's always present."""
-    manifest_path = Path(fleet_dir) / "targets.json"
-    if not manifest_path.exists():
-        print(f"no fleet targets manifest at {manifest_path}, skipping fleet targets")
-        return []
-    entries = json.loads(manifest_path.read_text(encoding="utf-8"))
-    fleet = []
-    for entry in entries:
-        name, host = entry["name"], entry["host"]
-        key_path = Path(fleet_dir) / f"{name}.key"
-        sudopass_path = Path(fleet_dir) / f"{name}.sudopass"
-        if not key_path.exists() or not sudopass_path.exists():
-            print(f"WARN: fleet target {name!r} missing key/sudopass file, skipping")
-            continue
-        fleet.append({
-            "name": name,
-            "host": host,
-            "zone": entry.get("zone"),
-            "key_path": str(key_path),
-            "sudo_password": sudopass_path.read_text(encoding="utf-8").strip(),
-        })
-    return fleet
-
-
-def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id=None):
+def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id):
     existing = find_by_name(gmp, gmp.get_tasks, "task", name)
     if existing:
-        if schedule_id is not None:
-            gmp.modify_task(existing, schedule_id=schedule_id)
-            print(f"task {name!r} already exists ({existing}), ensured schedule {schedule_id!r}")
-        else:
-            print(f"task {name!r} already exists ({existing}), skipping")
+        gmp.modify_task(existing, schedule_id=schedule_id)
+        print(f"task {name!r} already exists ({existing}), ensured schedule {schedule_id!r}")
         return existing
-    comment = (
-        "Managed authenticated task; part of the daily per-zone fleet rollout."
-        if schedule_id is not None
-        else "Managed authenticated task; intentionally unscheduled for first-pass validation."
-    )
     response = gmp.create_task(
         name=name,
         config_id=config_id,
         target_id=target_id,
         scanner_id=scanner_id,
         schedule_id=schedule_id,
-        comment=comment,
+        preferences={"max_hosts": str(MAX_HOSTS_PER_TASK)},
+        comment="Managed credentialed task; weekly, one per VLAN.",
     )
     task_id = response.get("id")
-    print(f"created task {name!r} ({task_id})" + (f" scheduled via {schedule_id!r}" if schedule_id else ""))
+    print(f"created task {name!r} ({task_id}) scheduled via {schedule_id!r}")
     return task_id
 
 
-def ensure_schedule(gmp, zone):
-    """One recurring daily GVM Schedule per network zone (docs/lxc-scan-
-    and-monitoring-rollout/plan.md gvm-08) -- start time is looked up from
-    ZONE_SCHEDULE_TIMES, staggered per-zone so the fleet doesn't all scan
-    at once. Hand-builds the iCalendar text rather than depending on the
-    `icalendar` PyPI package, which isn't a guaranteed dependency of the
-    upstream gvm-tools image this runs inside."""
-    hhmm = ZONE_SCHEDULE_TIMES.get(zone)
-    if hhmm is None:
-        raise RuntimeError(
-            f"no schedule start time configured for zone {zone!r} -- add it to "
-            f"ZONE_SCHEDULE_TIMES in this file before this zone can be scheduled"
-        )
-    name = f"Daily fleet scan: {zone}"
+def ensure_weekly_schedule(gmp, name, day, hhmm):
+    """Re-applies icalendar/timezone every run so a corrected slot lands on
+    an existing schedule too. DTSTART is the next calendar date on the
+    slot's weekday (a date's weekday doesn't depend on timezone); gvmd
+    applies SCHEDULE_TIMEZONE to the naive time. Hand-built iCalendar --
+    the `icalendar` package isn't guaranteed in the gvm-tools image."""
     hour, minute = hhmm.split(":")
     now = datetime.datetime.now(datetime.timezone.utc)
-    dtstamp = now.strftime("%Y%m%dT%H%M%SZ")
-    # DTSTART only anchors the first occurrence's date; RRULE:FREQ=DAILY
-    # repeats it at this time-of-day forever after, so "today" is fine.
-    dtstart_date = now.strftime("%Y%m%d")
+    first = now.date() + datetime.timedelta(days=(WEEKDAY_INDEX[day] - now.weekday()) % 7)
+    uid = name.lower().replace(" ", "-").replace(":", "")
     icalendar = (
         "BEGIN:VCALENDAR\r\n"
         "VERSION:2.0\r\n"
-        "PRODID:-//proxmox-homelab//gvm-fleet-schedule//EN\r\n"
+        "PRODID:-//proxmox-homelab//gvm-vlan-schedule//EN\r\n"
         "BEGIN:VEVENT\r\n"
-        f"UID:gvm-fleet-schedule-{zone}@proxmox-homelab\r\n"
-        f"DTSTAMP:{dtstamp}\r\n"
-        f"DTSTART:{dtstart_date}T{hour}{minute}00\r\n"
-        "RRULE:FREQ=DAILY\r\n"
+        f"UID:{uid}@proxmox-homelab\r\n"
+        f"DTSTAMP:{now.strftime('%Y%m%dT%H%M%SZ')}\r\n"
+        f"DTSTART:{first.strftime('%Y%m%d')}T{hour}{minute}00\r\n"
+        "RRULE:FREQ=WEEKLY\r\n"
         "END:VEVENT\r\n"
         "END:VCALENDAR\r\n"
     )
-    comment = f"Fleet credentialed scans for zone {zone!r}, daily at {hhmm} {SCHEDULE_TIMEZONE}."
+    comment = f"Weekly {day} {hhmm} {SCHEDULE_TIMEZONE}."
     existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
     if existing:
-        # Not just a dedup skip -- re-apply icalendar/timezone every run so
-        # a corrected ZONE_SCHEDULE_TIMES/SCHEDULE_TIMEZONE value (as
-        # happened 2026-09-30, UTC -> Pacific/Auckland) actually lands on
-        # an already-created schedule, not just on schedules created fresh.
         gmp.modify_schedule(existing, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
-        print(f"schedule {name!r} ({existing}) already existed, updated to daily at {hhmm} {SCHEDULE_TIMEZONE}")
+        print(f"schedule {name!r} ({existing}) set to weekly {day} {hhmm}")
         return existing
-    response = gmp.create_schedule(
-        name=name,
-        icalendar=icalendar,
-        timezone=SCHEDULE_TIMEZONE,
-        comment=comment,
-    )
+    response = gmp.create_schedule(name=name, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
     schedule_id = response.get("id")
-    print(f"created schedule {name!r} ({schedule_id}) daily at {hhmm} {SCHEDULE_TIMEZONE}")
+    print(f"created schedule {name!r} ({schedule_id}) weekly {day} {hhmm}")
     return schedule_id
 
 
-def ensure_zone_tag(gmp, zone, task_ids):
-    """One Tag per zone (zone:<name>), attached to every in-zone fleet
-    task -- lets the GSA UI/reports filter and group by VLAN even though
-    each host still has its own separate Target/credential."""
-    if not task_ids:
-        return None
-    name = f"zone:{zone}"
-    existing = find_by_name(gmp, gmp.get_tags, "tag", name)
-    if existing:
-        gmp.modify_tag(existing, resource_action="add", resource_type="task", resource_ids=task_ids)
-        print(f"tag {name!r} ({existing}) -- ensured {len(task_ids)} task(s) attached")
-        return existing
-    response = gmp.create_tag(
-        name=name,
-        resource_type="task",
-        resource_ids=task_ids,
-        comment=f"Fleet hosts in network zone {zone!r}.",
-    )
-    tag_id = response.get("id")
-    print(f"created tag {name!r} ({tag_id}) attached to {len(task_ids)} task(s)")
-    return tag_id
+def load_zone_targets(fleet_dir):
+    """[{"zone", "hosts", "names", "key_path"}], or [] if GVM_FLEET_DIR has
+    no targets.json -- degrades gracefully rather than crashing the run."""
+    manifest_path = Path(fleet_dir) / "targets.json"
+    if not manifest_path.exists():
+        print(f"no zone targets manifest at {manifest_path}, skipping zone targets")
+        return []
+    zones = []
+    for entry in json.loads(manifest_path.read_text(encoding="utf-8")):
+        key_path = Path(fleet_dir) / f"{entry['zone']}.key"
+        if not key_path.exists():
+            print(f"WARN: zone {entry['zone']!r} missing key file, skipping")
+            continue
+        zones.append({**entry, "key_path": str(key_path)})
+    return zones
+
+
+def reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedule_id):
+    """Returns the zone's task id, or None if it was left alone this run."""
+    zone = zone_target["zone"]
+    object_name = f"Credentialed scan: {zone}"
+    credential_name = f"zone-{zone}-login"
+    hosts = sorted(zone_target["hosts"])
+    private_key = Path(zone_target["key_path"]).read_text(encoding="utf-8")
+    fp = fingerprint(",".join(hosts), private_key, PORT_LIST_NAME, ALIVE_TESTS,
+                     str(MAX_HOSTS_PER_TASK), RECONCILE_VERSION)
+    marker = f"{FP_MARKER}{fp}"
+
+    target_id = find_by_name(gmp, gmp.get_targets, "target", object_name)
+    current_comment = ""
+    if target_id:
+        current_comment = gmp.get_target(target_id).findtext("target/comment", default="")
+    if target_id and marker in current_comment:
+        print(f"zone {zone!r} up to date ({len(hosts)} hosts, {marker})")
+    else:
+        reason = "new" if not target_id else "changed hosts/key/settings"
+        print(f"zone {zone!r}: rebuilding GVM objects ({reason}, {len(hosts)} hosts)")
+        if not delete_if_present(gmp, "task", object_name):
+            return None
+        if not delete_if_present(gmp, "target", object_name):
+            return None
+        delete_if_present(gmp, "credential", credential_name)
+        credential_id = ensure_credential(gmp, credential_name, GVM_FLEET_LOGIN, zone_target["key_path"])
+        target_id = ensure_target(
+            gmp, object_name, hosts, credential_id, port_list_id,
+            comment=f"Managed by setup_credentials.py; VLAN {zone}: {', '.join(zone_target['names'])}. {marker}",
+        )
+    return ensure_task(gmp, object_name, config_id, target_id, scanner_id, schedule_id)
 
 
 def main():
@@ -437,69 +383,40 @@ def main():
     with Gmp(connection, transform=EtreeCheckCommandTransform()) as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
 
-        credential_ids = {
-            key: ensure_credential(gmp, value["name"], value["login"], value["key_path"])
-            for key, value in CREDENTIALS.items()
-        }
         config_id = resolve_id(gmp, gmp.get_scan_configs, FULL_CONFIG_NAME, "config")
         scanner_id = resolve_id(gmp, gmp.get_scanners, SCANNER_NAME, "scanner")
         port_list_id = resolve_id(gmp, gmp.get_port_lists, PORT_LIST_NAME, "port_list")
 
-        for target in TARGETS:
-            target_id = ensure_target(
-                gmp,
-                target["name"],
-                target["hosts"],
-                credential_ids[target["credential"]],
-                port_list_id,
-            )
-            ensure_task(
-                gmp,
-                target["name"],
-                config_id,
-                target_id,
-                scanner_id,
-            )
+        failures = []
+        cleanup_legacy(gmp, failures)
 
-        schedule_ids_by_zone = {}
-        task_ids_by_zone = {}
-        for fleet_target in load_fleet_targets(GVM_FLEET_DIR):
-            fleet_name = fleet_target["name"]
-            zone = fleet_target["zone"]
-            login_credential_id = ensure_credential(
-                gmp, f"fleet-{fleet_name}-login", GVM_FLEET_LOGIN, fleet_target["key_path"],
-            )
-            elevate_credential_id = ensure_elevate_credential(
-                gmp, f"fleet-{fleet_name}-sudo", GVM_FLEET_LOGIN, fleet_target["sudo_password"],
-            )
-            target_id = ensure_target(
-                gmp,
-                f"Credentialed scan: fleet/{fleet_name}",
-                [fleet_target["host"]],
-                login_credential_id,
-                port_list_id,
-                elevate_credential_id=elevate_credential_id,
-            )
-            schedule_id = None
-            if zone is not None:
-                if zone not in schedule_ids_by_zone:
-                    schedule_ids_by_zone[zone] = ensure_schedule(gmp, zone)
-                schedule_id = schedule_ids_by_zone[zone]
-            else:
-                print(f"WARN: fleet target {fleet_name!r} has no zone, leaving its task unscheduled")
-            task_id = ensure_task(
-                gmp,
-                f"Credentialed scan: fleet/{fleet_name}",
-                config_id,
-                target_id,
-                scanner_id,
-                schedule_id=schedule_id,
-            )
-            if zone is not None:
-                task_ids_by_zone.setdefault(zone, []).append(task_id)
+        mikrotik_credential_id = ensure_credential(
+            gmp, MIKROTIK_CREDENTIAL["name"], MIKROTIK_CREDENTIAL["login"], MIKROTIK_CREDENTIAL["key_path"],
+        )
+        mikrotik_target_id = ensure_target(
+            gmp, MIKROTIK_TARGET["name"], MIKROTIK_TARGET["hosts"], mikrotik_credential_id, port_list_id,
+            comment="Managed by setup_credentials.py; MikroTik RouterOS gvm-scan user.",
+        )
+        ensure_task(
+            gmp, MIKROTIK_TARGET["name"], config_id, mikrotik_target_id, scanner_id,
+            ensure_weekly_schedule(gmp, "Weekly VLAN scan: MikroTik router", *MIKROTIK_SLOT),
+        )
 
-        for zone, task_ids in task_ids_by_zone.items():
-            ensure_zone_tag(gmp, zone, task_ids)
+        for zone_target in load_zone_targets(GVM_FLEET_DIR):
+            zone = zone_target["zone"]
+            if zone not in ZONE_WEEKLY_SLOT:
+                print(f"WARN: zone {zone!r} has no ZONE_WEEKLY_SLOT entry, skipping")
+                failures.append(f"zone {zone!r} (no slot)")
+                continue
+            try:
+                schedule_id = ensure_weekly_schedule(gmp, f"Weekly VLAN scan: {zone}", *ZONE_WEEKLY_SLOT[zone])
+                if reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedule_id) is None:
+                    failures.append(f"zone {zone!r} (task active)")
+            except GvmError as exc:
+                print(f"WARN: zone {zone!r} failed: {exc}")
+                failures.append(f"zone {zone!r}")
+
+        cleanup_legacy_schedules_and_tags(gmp, failures)
 
         if START_TASK_NAME:
             task_id = find_by_name(gmp, gmp.get_tasks, "task", START_TASK_NAME)
@@ -517,7 +434,12 @@ def main():
             progress = task.findtext("task/progress", default="unknown")
             print(f"status {STATUS_TASK_NAME!r}: {status}, progress={progress}")
 
+        if failures:
+            print(f"FAILED: {len(failures)} item(s): {', '.join(failures)}")
+            return 1
+
     print("done")
+    return 0
 
 
 if __name__ == "__main__":

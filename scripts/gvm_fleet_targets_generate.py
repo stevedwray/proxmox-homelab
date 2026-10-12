@@ -1,32 +1,44 @@
 #!/usr/bin/env python3
 """Generate the GVM fleet-targets bind-mount directory for
-setup_credentials.py's load_fleet_targets() (docs/lxc-scan-and-monitoring-
-rollout/plan.md, gvm-07).
+setup_credentials.py's load_fleet_targets(), and (optionally) the Ansible
+inventory deploy-gvm-scan-accounts.yml runs against
+(docs/gvm-coverage-cleanup/plan.md; originally
+docs/lxc-scan-and-monitoring-rollout/plan.md gvm-07).
 
   gvm_fleet_targets_generate.py --out-dir /path/to/tempdir/fleet
+  gvm_fleet_targets_generate.py --emit-inventory /path/to/inventory.json
 
-For each in-scope stack (see IN_SCOPE_STACKS below -- the operator-
-confirmed 2026-09-29 list, corrected during execution to also exclude
-pentagi-stack [CTs confirmed destroyed on pve 2026-09-28] and
-pentagi-upstream-control [a vanilla-upstream comparison baseline, not a
-real production workload, same spirit as the cse-*/harness-target
-exclusions]): resolves its static IP from its own stack.yaml (some stacks
-hardcode a literal ip_address, others template it as "${lab_ip_X}/24" and
-need the matching LAB_IP_X env var -- both forms are real and in use,
-confirmed live 2026-09-29 by reading stack.yaml files directly, not
-assumed), reads that stack's GVM scan credentials via
-gvm_scan_host_secret.py (skipping with a warning, not failing the whole
-run, if that stack's OpenBao entry doesn't exist yet -- e.g. gvm-04's
-bootstrap hasn't been run for it), and writes:
-  <out-dir>/targets.json           -- [{"name": str, "host": str, "zone": str}, ...]
-  <out-dir>/<name>.key              -- SSH private key
-  <out-dir>/<name>.sudopass         -- plaintext sudo password
+Two sources of scan hosts, one canonical list each:
+  IN_SCOPE_STACKS -- stacks whose IP/zone resolve from their own
+    terraform/lxc/stacks/<stack>/stack.yaml (literal "IP/prefix", or
+    "${lab_ip_X}/prefix" resolved via env var LAB_IP_X).
+  EXTRA_HOSTS -- scan hosts with no usable stack.yaml: the Proxmox nodes,
+    framework, the operator workstation, the Raspberry Pis, and the
+    flat-LAN LXCs on pve that have no deploy-*.yml playbook
+    (management-stack, media-stack, proxmox-backup-server,
+    omada-controller). IPs confirmed live 2026-10-11 via the Proxmox API
+    / DNS, not assumed.
 
-Run from deploy-greenbone-stack.yml via delegate_to: localhost, same
-process-boundary shape as gvm_scan_host_secret.py itself; requires the
-same OPENBAO_ADDR/OPENBAO_CACERT/OPENBAO_CRED_DIR/LAB_IP_OPENBAO env vars
-(the with-secrets-prod wrapper already exports LAB_IP_OPENBAO; the others
-have working defaults, see gvm_scan_host_secret.py).
+Credentials are per VLAN/zone, not per host (operator decision
+2026-10-12): every host in a zone shares one gvm-scan keypair, stored at
+services/greenbone/scan-zones/<zone>. With --out-dir it reads each zone's
+key via gvm_scan_host_secret.py --zone (skipping a zone with a warning,
+not failing the whole run, if its OpenBao entry doesn't exist yet) and
+writes:
+  <out-dir>/targets.json   -- [{"zone": str, "hosts": [ip, ...], "names": [str, ...]}, ...]
+  <out-dir>/<zone>.key     -- that zone's SSH private key
+
+No sudo password is written any more: GVM's "elevate privileges" feature
+is su-based, not sudo-based (confirmed live 2026-10-11 from target sshd
+logs -- every fleet scan ran `su -l gvm-scan`, switching to itself), so
+credentialed scans now run as the unprivileged gvm-scan account with no
+elevate credential at all (operator decision 2026-10-11).
+
+Run from deploy-greenbone-stack.yml via delegate_to: localhost, or by
+hand under ./with-secrets-prod for --emit-inventory; requires the same
+OPENBAO_ADDR/OPENBAO_CACERT/OPENBAO_CRED_DIR/LAB_IP_OPENBAO env vars as
+gvm_scan_host_secret.py (the with-secrets-prod wrapper already exports
+LAB_IP_OPENBAO and every LAB_IP_* this file resolves).
 """
 
 from __future__ import annotations
@@ -41,43 +53,24 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Operator-confirmed scope (2026-09-29): the real production stacks on
-# pve, corrected twice during execution:
-#   1. Dropped pentagi-stack (CTs confirmed destroyed) and
-#      pentagi-upstream-control (comparison baseline, not real
-#      production) -- both were only in the plan's original "~36"
-#      estimate because that estimate came from a directory listing
-#      (terraform/lxc/environments/pve/), not live reality.
-#   2. That same directory turned out to be an UNRELIABLE enumeration --
-#      confirmed live via a read-only Proxmox API call (GET
-#      /nodes/pve/lxc) that newt-connector, nextcloud-stack,
-#      pterodactyl-lab, media-stack-lab, torrent-stack-lab, and
-#      openbao-stack are all real, running production LXCs on pve that
-#      simply don't have a terraform/lxc/environments/pve/<name>/
-#      directory (nextcloud-stack, for one, has its terragrunt.hcl
-#      directly under terraform/lxc/stacks/nextcloud-stack/ instead --
-#      apparently a newer, different layout convention than the older
-#      stacks use). Added below once each was confirmed to have both a
-#      real deploy-*.yml playbook AND a resolvable stack.yaml IP.
-#
-# Known, deliberately NOT included despite being live on pve: media-stack
-# (legacy, being replaced by media-stack-lab -- same "-legacy" rollback
-# pattern as gaming-stack-legacy), management-stack, omada-controller,
-# and proxmox-backup-server (confirmed live via the same Proxmox API
-# call, but none of the three has ANY deploy-*.yml playbook in this repo
-# to hook the gvm_scan_account/wazuh_agent rollout into -- not
-# Ansible-managed here at all, a real gap that needs its own playbook
-# work before it can join this list, not something this rollout can
-# silently paper over).
+# Operator-confirmed scope. History: 2026-09-29 first pass (25 stacks,
+# see docs/lxc-scan-and-monitoring-rollout/plan.md); 2026-10-11 added the
+# pve-tiny stacks that were missing (cse-code-eval, cse-controller,
+# cse-panel-stack, technitium-tiny-stack -- cse_seg scanning explicitly
+# approved by the operator). pentagi-stack/pentagi-upstream-control,
+# harness-target*, cse-kali and other test/red-team fixtures stay out.
 #
 # This list is data, not a mechanical filter -- re-verify it by hand if
-# the fleet changes, same as gvm_scan_credentials_bootstrap.py's own
-# exclusion list (which imports this list directly, not a separate copy).
+# the fleet changes. gvm_scan_credentials_bootstrap.py imports it (and
+# EXTRA_HOSTS) directly, not a separate copy.
 IN_SCOPE_STACKS = [
     "ai-services-stack",
     "apt-cacher-stack",
     "authentik-stack",
     "ci-runner-01",
+    "cse-code-eval",
+    "cse-controller",
+    "cse-panel-stack",
     "gaming-stack-lab",
     "graylog-stack",
     "greenbone-stack",
@@ -97,19 +90,36 @@ IN_SCOPE_STACKS = [
     "secpipe-stack",
     "step-ca-stack",
     "technitium-stack",
+    "technitium-tiny-stack",
     "torrent-stack-lab",
     "wazuh-stack",
 ]
+
+# Hosts with no usable stack.yaml. "ansible_user" is how
+# deploy-gvm-scan-accounts.yml connects (become: true is applied on top);
+# "ansible_connection": "local" marks the operator workstation itself.
+EXTRA_HOSTS = {
+    "host-pve": {"host": "192.168.1.2", "zone": "lan", "ansible_user": "root"},
+    "host-pve-tiny": {"host": "192.168.1.250", "zone": "lan", "ansible_user": "root"},
+    "host-framework": {"host": "192.168.1.18", "zone": "lan", "ansible_user": "steve"},
+    "host-workstation": {"host": "192.168.1.104", "zone": "lan", "ansible_connection": "local"},
+    "host-pi-22": {"host": "192.168.1.22", "zone": "lan", "ansible_user": "ansible"},
+    "host-pi-23": {"host": "192.168.1.23", "zone": "lan", "ansible_user": "ansible"},
+    "management-stack": {"host": "192.168.1.4", "zone": "lan", "ansible_user": "root"},
+    "media-stack": {"host": "192.168.1.6", "zone": "lan", "ansible_user": "root"},
+    "proxmox-backup-server": {"host": "192.168.1.12", "zone": "lan", "ansible_user": "root"},
+    "omada-controller": {"host": "192.168.1.252", "zone": "lan", "ansible_user": "root"},
+}
+
+ALL_SCAN_HOST_NAMES = IN_SCOPE_STACKS + sorted(EXTRA_HOSTS)
 
 _TEMPLATE_RE = re.compile(r"^\$\{lab_ip_([a-z0-9_]+)\}/\d+$")
 _LITERAL_RE = re.compile(r"^(\d+\.\d+\.\d+\.\d+)/\d+$")
 
 
 def resolve_stack_zone(stack: str) -> str | None:
-    """Reads terraform/lxc/stacks/<stack>/stack.yaml's zone field (used by
-    setup_credentials.py to group fleet scan tasks by VLAN via a per-zone
-    GVM Schedule + Tag -- see docs/lxc-scan-and-monitoring-rollout/plan.md).
-    Handles both the plain "zone: <name>" form and the nested
+    """Reads terraform/lxc/stacks/<stack>/stack.yaml's zone field. Handles
+    both the plain "zone: <name>" form and the nested
     "network: { zone: <name> }" form seen live (nextcloud-stack). Returns
     None, not a guess, if neither form matches -- callers must skip."""
     stack_yaml = REPO_ROOT / "terraform" / "lxc" / "stacks" / stack / "stack.yaml"
@@ -150,26 +160,29 @@ def resolve_stack_ip(stack: str) -> str | None:
     return None
 
 
-def fetch_secret(stack: str) -> dict | None:
-    result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "gvm_scan_host_secret.py"), "--stack", stack],
-        capture_output=True, text=True, check=False,
-    )
-    if result.returncode != 0:
-        print(f"WARN: no GVM scan credentials for {stack!r} yet ({result.stderr.strip()}), skipping", file=sys.stderr)
-        return None
-    return json.loads(result.stdout)
+def zone_for_name(name: str) -> str | None:
+    """The VLAN/zone a scan host belongs to -- EXTRA_HOSTS' zone, or the
+    stack's stack.yaml zone. Credentials are per zone (one shared gvm-scan
+    keypair per VLAN, operator decision 2026-10-12), so this is how a host
+    finds its key."""
+    if name in EXTRA_HOSTS:
+        return EXTRA_HOSTS[name]["zone"]
+    if name in IN_SCOPE_STACKS:
+        return resolve_stack_zone(name)
+    return None
 
 
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out-dir", required=True)
-    args = parser.parse_args(argv)
+def all_scan_zones() -> list[str]:
+    """Every zone that has at least one scan host, sorted. Needs no env
+    vars (zones come from stack.yaml / EXTRA_HOSTS, not from IPs)."""
+    return sorted({z for z in (zone_for_name(n) for n in ALL_SCAN_HOST_NAMES) if z})
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    manifest: list[dict[str, str]] = []
+def resolve_all_hosts() -> list[dict]:
+    """Every scan host as {"name", "host", "zone", plus EXTRA_HOSTS'
+    connection keys}. Skips (with a warning) any stack whose IP or zone
+    can't be resolved."""
+    hosts: list[dict] = []
     for stack in IN_SCOPE_STACKS:
         host = resolve_stack_ip(stack)
         if host is None:
@@ -179,17 +192,83 @@ def main(argv: list[str]) -> int:
         if zone is None:
             print(f"WARN: could not resolve a zone for {stack!r}, skipping", file=sys.stderr)
             continue
-        secret = fetch_secret(stack)
+        hosts.append({"name": stack, "host": host, "zone": zone, "ansible_user": "root"})
+    for name in sorted(EXTRA_HOSTS):
+        hosts.append({"name": name, **EXTRA_HOSTS[name]})
+    return hosts
+
+
+def fetch_zone_secret(zone: str) -> dict | None:
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "gvm_scan_host_secret.py"), "--zone", zone],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        print(f"WARN: no GVM scan credentials for zone {zone!r} yet ({result.stderr.strip()}), skipping", file=sys.stderr)
+        return None
+    return json.loads(result.stdout)
+
+
+def write_fleet_dir(out_dir: Path, hosts: list[dict]) -> int:
+    """One entry per zone: {"zone", "hosts": [ip, ...], "names": [...]}
+    plus one <zone>.key -- every host in a zone shares that zone's key."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_zone: dict[str, list[dict]] = {}
+    for entry in hosts:
+        by_zone.setdefault(entry["zone"], []).append(entry)
+    manifest: list[dict] = []
+    for zone in sorted(by_zone):
+        secret = fetch_zone_secret(zone)
         if secret is None:
             continue
-        (out_dir / f"{stack}.key").write_text(secret["GVM_SCAN_SSH_PRIVATE_KEY"], encoding="utf-8")
-        (out_dir / f"{stack}.key").chmod(0o644)
-        (out_dir / f"{stack}.sudopass").write_text(secret["GVM_SCAN_SUDO_PASSWORD"], encoding="utf-8")
-        (out_dir / f"{stack}.sudopass").chmod(0o644)
-        manifest.append({"name": stack, "host": host, "zone": zone})
-
+        key_path = out_dir / f"{zone}.key"
+        key_path.write_text(secret["GVM_SCAN_SSH_PRIVATE_KEY"], encoding="utf-8")
+        key_path.chmod(0o644)
+        members = sorted(by_zone[zone], key=lambda e: e["name"])
+        manifest.append({
+            "zone": zone,
+            "hosts": [e["host"] for e in members],
+            "names": [e["name"] for e in members],
+        })
     (out_dir / "targets.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"wrote {len(manifest)}/{len(IN_SCOPE_STACKS)} fleet targets to {out_dir}")
+    covered = sum(len(z["hosts"]) for z in manifest)
+    print(f"wrote {len(manifest)} zones covering {covered}/{len(ALL_SCAN_HOST_NAMES)} hosts to {out_dir}")
+    return 0
+
+
+def write_inventory(path: Path, hosts: list[dict]) -> int:
+    """JSON is valid YAML, so Ansible's yaml inventory plugin reads this
+    directly (it accepts the .json extension). gvm_scan_name is the
+    OpenBao entry name deploy-gvm-scan-accounts.yml reads."""
+    inventory_hosts = {}
+    for entry in hosts:
+        host_vars = {"ansible_host": entry["host"], "gvm_scan_name": entry["name"]}
+        if entry.get("ansible_connection") == "local":
+            host_vars["ansible_connection"] = "local"
+        else:
+            host_vars["ansible_user"] = entry["ansible_user"]
+            host_vars["ansible_ssh_common_args"] = "-o StrictHostKeyChecking=accept-new"
+        inventory_hosts[entry["name"]] = host_vars
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"all": {"hosts": inventory_hosts}}, indent=2), encoding="utf-8")
+    print(f"wrote inventory with {len(inventory_hosts)} hosts to {path}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out-dir", help="Write targets.json + <name>.key files here")
+    parser.add_argument("--emit-inventory", help="Write an Ansible inventory (JSON) for deploy-gvm-scan-accounts.yml here")
+    args = parser.parse_args(argv)
+    if not args.out_dir and not args.emit_inventory:
+        parser.print_help()
+        return 2
+
+    hosts = resolve_all_hosts()
+    if args.emit_inventory:
+        write_inventory(Path(args.emit_inventory), hosts)
+    if args.out_dir:
+        write_fleet_dir(Path(args.out_dir), hosts)
     return 0
 
 

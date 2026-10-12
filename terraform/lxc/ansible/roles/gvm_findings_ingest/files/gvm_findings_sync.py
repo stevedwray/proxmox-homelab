@@ -55,11 +55,17 @@ ZONES = [
     {"key": "infra_seg", "cidr": "192.168.40.0/24"},
     {"key": "ai_seg", "cidr": "192.168.50.0/24"},
     {"key": "game_seg", "cidr": "192.168.60.0/24"},
+    {"key": "pentest_seg", "cidr": "192.168.70.0/24"},
+    {"key": "media_seg", "cidr": "192.168.80.0/24"},
+    {"key": "cse_seg", "cidr": "192.168.100.0/24"},
+    {"key": "connector_seg", "cidr": "192.168.110.0/24"},
+    {"key": "apps_seg", "cidr": "192.168.120.0/24"},
     {"key": "lan", "cidr": "192.168.1.0/24"},
 ]
 _ZONE_NETWORKS = [(z["key"], ipaddress.ip_network(z["cidr"])) for z in ZONES]
 
-REDTEAM_EXCLUDE = ["192.168.1.113", "192.168.1.55"]
+# Every FIXTURE_EXCLUDE address from setup_scan_program.py, flattened.
+REDTEAM_EXCLUDE = ["192.168.1.113", "192.168.1.55", "192.168.70.12", "192.168.70.13", "192.168.70.210"]
 
 # Reverse IP->stack registry (Phase 9, docs/threat-vuln-platform/plan.md,
 # 2026-09-01) -- same graceful-degrade-to-empty-dict pattern as
@@ -273,6 +279,127 @@ def update_sync_state(
         print(f"WARN: failed to update sync state: {exc}", file=sys.stderr)
 
 
+# --- Credentialed-scan coverage check (docs/gvm-coverage-cleanup/plan.md) ---
+# Found 2026-10-11: every scheduled fleet credentialed scan since
+# 2026-09-30 had silently failed authentication ("SSH Login Failed For
+# Authenticated Checks", zero Local Security Check results) for 11 days
+# with nothing noticing. This check runs after every ingest and makes that
+# failure loud: one summary document in es-findings-sync-state
+# (_id greenbone-coverage) plus a non-zero exit, which fails the
+# gvm-findings-ingest systemd unit.
+AUTH_OK_NAME = "SSH Login Successful For Authenticated Checks"
+AUTH_FAIL_NAME = "SSH Login Failed For Authenticated Checks"
+# Unscheduled by design (docs/greenbone-stack/README.md) -- never "stale".
+COVERAGE_IGNORE_TASKS = {"Credentialed scan: OCI Pangolin public edge"}
+# Weekly schedules (setup_credentials.py ZONE_WEEKLY_SLOT); 8 days
+# tolerates a run that starts late or spans midnight before alerting.
+COVERAGE_MAX_AGE_HOURS = 8 * 24
+COVERAGE_ACTIVE_STATUSES = {"Running", "Requested", "Queued"}
+COVERAGE_FAILING = {"never_run", "auth_failed", "no_auth_evidence", "no_results", "stale", "unscheduled"}
+
+
+def fetch_credentialed_tasks(bridge_url: str, *, timeout: int = 60) -> list[dict]:
+    req = urllib.request.Request(f"{bridge_url.rstrip('/')}/tasks/credentialed", method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
+        body = json.loads(resp.read())
+    return body.get("tasks", [])
+
+
+def _parse_gmp_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def evaluate_coverage(tasks: list[dict], raw_results: list[dict], *, now: datetime) -> list[dict]:
+    """One row per (credentialed Task, target host): {"task", "host",
+    "status", "coverage", "last_scan_start", "results_in_last_run"}.
+    Per host, not per task, because one Task covers a whole VLAN
+    (setup_credentials.py) and a single host can fail to authenticate --
+    or be unreachable -- while the rest succeed. coverage is "ok",
+    "running", or one of COVERAGE_FAILING ("no_results" = the host
+    produced nothing at all in the last run: down, or filtered)."""
+    results_by_task: dict[str, list[dict]] = {}
+    for r in raw_results:
+        results_by_task.setdefault(r.get("task_name") or "", []).append(r)
+
+    rows = []
+    for task in tasks:
+        name = task.get("name") or ""
+        if name in COVERAGE_IGNORE_TASKS:
+            continue
+        started = _parse_gmp_time(task.get("last_report_scan_start"))
+        run_results = []
+        if started is not None:
+            for r in results_by_task.get(name, []):
+                created = _parse_gmp_time(r.get("creation_time"))
+                if created is not None and created >= started:
+                    run_results.append(r)
+        by_host: dict[str, set] = {}
+        for r in run_results:
+            by_host.setdefault(r.get("host") or "", set()).add(r.get("name"))
+        hosts = task.get("target_hosts") or sorted(by_host) or ["?"]
+
+        for host in hosts:
+            names = by_host.get(host, set())
+            if task.get("status") in COVERAGE_ACTIVE_STATUSES:
+                coverage = "running"
+            elif not task.get("schedule"):
+                coverage = "unscheduled"
+            elif started is None:
+                coverage = "never_run"
+            elif not names:
+                coverage = "no_results"
+            elif AUTH_FAIL_NAME in names:
+                coverage = "auth_failed"
+            elif AUTH_OK_NAME not in names:
+                coverage = "no_auth_evidence"
+            elif (now - started).total_seconds() > COVERAGE_MAX_AGE_HOURS * 3600:
+                coverage = "stale"
+            else:
+                coverage = "ok"
+            rows.append(
+                {
+                    "task": name,
+                    "host": host,
+                    "status": task.get("status"),
+                    "coverage": coverage,
+                    "last_scan_start": task.get("last_report_scan_start"),
+                    "results_in_last_run": sum(1 for r in run_results if (r.get("host") or "") == host),
+                }
+            )
+    return rows
+
+
+def put_coverage_state(base_url: str, rows: list[dict], *, auth_header: str, verify_tls: bool, checked_at: str) -> None:
+    failing = [row for row in rows if row["coverage"] in COVERAGE_FAILING]
+    doc = {
+        "source": "greenbone-coverage",
+        "checked_at": checked_at,
+        "status": "ok" if not failing else "failing",
+        "hosts_total": len(rows),
+        "hosts_failing": len(failing),
+        "failing": failing,
+        "tasks": rows,
+    }
+    url = f"{base_url}/es-findings-sync-state/_doc/greenbone-coverage"
+    req = urllib.request.Request(url, data=json.dumps(doc).encode("utf-8"), method="PUT")
+    req.add_header("Authorization", auth_header)
+    req.add_header("Content-Type", "application/json")
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=15):  # nosec B310 -- internal operator-configured API endpoint (Harbor/GVM/ES/Wazuh/Ollama/MikroTik), never user-supplied; scheme is always http(s)
+            pass
+    except urllib.error.HTTPError as exc:
+        print(f"WARN: failed to write coverage state: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gvm-bridge-url", default=os.environ.get("GVM_BRIDGE_URL", "http://127.0.0.1:8010"))
@@ -329,8 +456,35 @@ def main() -> int:
             errors=errors,
         )
 
-    print(f"Done — raw={len(raw_results)} findings_indexed={indexed} errors={errors} dry_run={args.dry_run}")
-    return 1 if errors > 0 else 0
+    coverage_failing = 0
+    try:
+        credentialed_tasks = fetch_credentialed_tasks(args.gvm_bridge_url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"ERROR: failed to fetch credentialed tasks from gvm-bridge: {exc}", file=sys.stderr)
+        credentialed_tasks = None
+    if credentialed_tasks is not None:
+        rows = evaluate_coverage(credentialed_tasks, raw_results, now=datetime.now(timezone.utc))
+        for row in rows:
+            print(
+                f"COVERAGE {row['coverage'].upper()}: {row['task']} {row['host']} (status={row['status']}, "
+                f"last_scan_start={row['last_scan_start']}, results={row['results_in_last_run']})"
+            )
+        coverage_failing = sum(1 for row in rows if row["coverage"] in COVERAGE_FAILING)
+        if not args.dry_run:
+            put_coverage_state(
+                es_base, rows, auth_header=es_auth, verify_tls=not args.no_verify_tls, checked_at=_now_iso()
+            )
+
+    print(
+        f"Done — raw={len(raw_results)} findings_indexed={indexed} errors={errors} "
+        f"coverage_failing={coverage_failing} dry_run={args.dry_run}"
+    )
+    if errors > 0 or credentialed_tasks is None:
+        return 1
+    # 3 = ingest succeeded but credentialed-scan coverage is failing; fails
+    # the gvm-findings-ingest systemd unit so it shows up in
+    # `systemctl --failed` (docs/gvm-coverage-cleanup/plan.md).
+    return 3 if coverage_failing else 0
 
 
 if __name__ == "__main__":
