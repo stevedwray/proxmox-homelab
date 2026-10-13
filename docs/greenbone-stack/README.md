@@ -411,3 +411,16 @@ that surfaced it.
 - `CLAUDE.md` — branch model, validation tiers, and production credential
   controls this plan follows (`pve-test-vm` is not production-gated;
   promotion past `stable` would be).
+
+## Per-zone host concurrency (`ZONE_MAX_HOSTS`)
+
+Each credentialed VLAN task scans at most `MAX_HOSTS_PER_TASK` (4) hosts at once.
+`mgmt_seg` overrides this to 2 (`ZONE_MAX_HOSTS` in `setup_credentials.py`).
+Found 2026-10-13: with 4 hosts at once, mgmt_seg's web UIs (authentik, portainer;
+several ports and hostnames each) made the web-app probe NVTs cache tens of
+thousands of responses per hostname and port in Redis. Redis reached ~7GB and
+the kernel OOM-killed it, interrupting the scan (container ceiling was 8GB, then
+12GB). At 2 hosts the same scan held steady near 2.5GB container memory.
+Changing a zone's value changes its fingerprint, so only that zone's target and
+task are rebuilt on the next apply. A heavier alternative, not done: a scan config
+without the web-app probe families (loses remote web checks on every zone).

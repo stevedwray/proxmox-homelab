@@ -12,7 +12,8 @@ one credential, one multi-host Target and one Task:
 
 A GVM Target carries one SSH credential for all of its hosts, which is why
 grouping by VLAN requires a shared key per VLAN. Each zone Task caps
-concurrently scanned hosts at MAX_HOSTS_PER_TASK, because greenbone-stack
+concurrently scanned hosts at MAX_HOSTS_PER_TASK (ZONE_MAX_HOSTS overrides it
+per zone), because greenbone-stack
 (2 cores, memory-gated scan queue) could not keep up with 8 simultaneous
 hosts.
 
@@ -77,6 +78,12 @@ MIKROTIK_SLOT = ("WE", "05:00")
 WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
 SCHEDULE_TIMEZONE = "Pacific/Auckland"
 MAX_HOSTS_PER_TASK = 4
+# mgmt_seg's web UIs (authentik, portainer) sit behind several ports and
+# hostnames; the web-app probes cache every response in Redis per hostname and
+# port, which filled 7GB of an 8GB container with 4 hosts at once (2026-10-13).
+# At 2 hosts the same scan held steady near 2.5GB. Changing a zone's value
+# changes its fingerprint, so only that zone's target/task is rebuilt.
+ZONE_MAX_HOSTS = {"mgmt_seg": 2}
 
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
@@ -274,7 +281,12 @@ def ensure_target(gmp, name, hosts, credential_id, port_list_id, comment):
     return target_id
 
 
-def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id):
+def max_hosts_for(zone):
+    return ZONE_MAX_HOSTS.get(zone, MAX_HOSTS_PER_TASK)
+
+
+def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id,
+                max_hosts=MAX_HOSTS_PER_TASK):
     existing = find_by_name(gmp, gmp.get_tasks, "task", name)
     if existing:
         gmp.modify_task(existing, schedule_id=schedule_id)
@@ -286,7 +298,7 @@ def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id):
         target_id=target_id,
         scanner_id=scanner_id,
         schedule_id=schedule_id,
-        preferences={"max_hosts": str(MAX_HOSTS_PER_TASK)},
+        preferences={"max_hosts": str(max_hosts)},
         comment="Managed credentialed task; weekly, one per VLAN.",
     )
     task_id = response.get("id")
@@ -353,7 +365,7 @@ def reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedu
     hosts = sorted(zone_target["hosts"])
     private_key = Path(zone_target["key_path"]).read_text(encoding="utf-8")
     fp = fingerprint(",".join(hosts), private_key, PORT_LIST_NAME, ALIVE_TESTS,
-                     str(MAX_HOSTS_PER_TASK), RECONCILE_VERSION)
+                     str(max_hosts_for(zone)), RECONCILE_VERSION)
     marker = f"{FP_MARKER}{fp}"
 
     target_id = find_by_name(gmp, gmp.get_targets, "target", object_name)
@@ -375,7 +387,8 @@ def reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedu
             gmp, object_name, hosts, credential_id, port_list_id,
             comment=f"Managed by setup_credentials.py; VLAN {zone}: {', '.join(zone_target['names'])}. {marker}",
         )
-    return ensure_task(gmp, object_name, config_id, target_id, scanner_id, schedule_id)
+    return ensure_task(gmp, object_name, config_id, target_id, scanner_id, schedule_id,
+                       max_hosts=max_hosts_for(zone))
 
 
 def main():
