@@ -73,13 +73,33 @@ reuses the saved bytes and verifies the token count again.
 These commands document later phases; they require the repository's production
 preflight and approval flow. They were not executed during phase 2.
 
-Phase 1 must record exact build expectations in an operator-owned JSON file:
+Phase 1 saves complete real `/props` replies as `~/props-fork.json` and
+`~/props-upstream.json`. Once the harness is installed in ctx-07, generate
+the expectations file from those snapshots and the local current-build
+records using the helper:
 
-```json
-{
-  "nathanw": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>", "props": {}},
-  "upstream": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>", "props": {}}
-}
+```bash
+python3 ~/framework-ctx-bugs/write_build_expectations.py \
+  --props nathanw=$HOME/props-fork.json \
+  --props upstream=$HOME/props-upstream.json \
+  --builds-root /storage/llama-builds \
+  --out /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json
+```
+
+The helper writes `{label: {name, sha, build_info, props}}`, retaining each
+complete `/props` reply. It reads names and full SHAs from each backend's
+`current/build.json` and requires the saved `build_info` SHA suffix to match
+the current SHA. It requires `model_alias`, `total_slots`, and either `n_ctx`
+or `default_generation_settings.n_ctx`, plus a string `build_info`. Any
+validation failure returns exit 1 with a message and no output file. An
+existing output path is never overwritten; publishing a complete new file
+also refuses an output created concurrently. If current moved since the
+snapshots were taken, stop and redo the operator-approved build check.
+
+Success prints exactly one line, in label order:
+
+```text
+nathanw b10814-9e21f2e53 upstream b11514-de7fa0a3c
 ```
 
 Read-only commands on Framework for that later inspection include
@@ -92,15 +112,11 @@ requires an explicit expected `build_info` rather than guessing from it.
 It checks names and SHAs against local build JSON before taking the shared
 lock and checks alias, context, build identity and slots after every load.
 
-Before the pilot, save one complete real `/props` response from each build
-under that build's `props` key in this builds JSON (replace the empty objects
-above). Confirm that the responses contain the fields read by `check_props()`:
-`model_alias`, `n_ctx` or `default_generation_settings.n_ctx`, `total_slots`,
-and `build_info`. Check that aliases/context values are in the expected
-locations, that there is one slot, and that the top-level expected
-`build_info` exactly matches the response's value and JSON type. Retain the
-raw responses in the builds JSON, which is copied into `run.json`. If the
-real schema differs, resolve that mismatch before starting the pilot.
+Before the pilot, confirm the saved replies' field names against
+`check_props()` and resolve any schema mismatch. The helper accepts the
+embeddings server's own context/slots and the normal chat entry's four slots;
+the loaded context-test entries themselves must have one slot and the
+requested context. The generated builds JSON is copied into `run.json`.
 
 After catalogue deployment and production approval, the detached pilot is:
 
