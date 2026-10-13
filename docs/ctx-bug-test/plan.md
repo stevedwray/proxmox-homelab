@@ -314,7 +314,9 @@ prompt each time is:
    commit, and push to `origin claude/qwen-laguna-model-testing-v42x6x`.
    Put large outputs (reports, logs) under `docs/ctx-bug-test/artifacts/`
    (ignored by git), not in tracked files.
-7. **Never:** skip, weaken or delete a gate or test; run a full teardown;
+7. **A failed gate ends the step.** Do not run any later command of the
+   step, even one that looks harmless; report and stop.
+8. **Never:** skip, weaken or delete a gate or test; run a full teardown;
    change any model, build, or llama-swap entry except as a step says;
    promote or roll back a llama.cpp build.
 
@@ -329,7 +331,7 @@ prompt each time is:
 | ctx-05-expectations-helper | local | — | done 2026-10-14 (expectations helper; 54 tests pass) |
 | ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
-| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo |
+| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | blocked 2026-10-14: OpenBao `services/greenbone` missing 2 fields (operator fix; see step) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
@@ -600,6 +602,35 @@ undeployed; ctx-08 requires its own approval.
 
 #### ctx-08-catalogue-deploy
 
+**Blocked (2026-10-14): OpenBao entry `services/greenbone` is missing two
+fields.** See "First attempt" below. Before re-running this step, the
+operator fixes OpenBao (agents never write secrets):
+
+1. Look at the entry's history, without values (OIDC login, as in
+   `docs/reference/secrets-management.md`):
+   ```bash
+   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+   bao kv metadata get -mount=kv services/greenbone
+   bao kv get -mount=kv -field=GREENBONE_ADMIN_PASSWORD services/greenbone >/dev/null && echo entry-readable
+   ```
+2. Then either:
+   - **a recent version dropped the fields** (the llama-builds playbook
+     loaded this profile fine on 2026-10-09, so the fields existed then):
+     `bao kv rollback -mount=kv -version=<last good n> services/greenbone`,
+     after checking that version has all six fields listed for
+     `services/greenbone` in `secrets/manifest.json`; or
+   - **they were never set or are lost:** write them with
+     `LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/greenbone GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY GREENBONE_STEVE_SSH_PRIVATE_KEY`
+     (it keeps the entry's other fields).
+3. `unset BAO_TOKEN`.
+
+Every production profile (`pve`, `pve-tiny`, `pve-framework`) lists
+`services/greenbone`, so until this is fixed **every** `with-secrets-prod*`
+command fails closed, not only this step. Removing the fields from the
+manifest is not an option while
+`terraform/lxc/ansible/playbooks/deploy-greenbone-stack.yml` requires them.
+
 ```yaml
 id: ctx-08-catalogue-deploy
 title: Deploy the catalogue and write llama-swap's config
@@ -607,34 +638,56 @@ depends_on: [ctx-07-install-harness]
 runs_on: framework
 approval: ctx-bug-catalogue
 preflight: >
-  Target: Framework (production). Mutating: installs the edited
-  models.json as /etc/llama-builds/models.json (the playbook), then
-  `llama-builds swap-config` rewrites llama-swap's config. That reload stops
-  whatever model is loaded for about 1-2 minutes and loads it again. Adds
-  the ctx test entries (16 used, plus unused HIP ones) and
-  laguna-s-2.1-nathanw. Out of scope: builds, promotion, the default model,
-  other models' settings. Must not run while framework:run-lock is held
-  (swap-config refuses on its own; never pass --force).
+  Target: Framework (production). Command 1 is read-only (secrets load).
+  Command 2 installs the edited models.json as /etc/llama-builds/models.json
+  and re-applies the rest of framework-desktop-llama-builds.yml (tool,
+  config, timer; no reload). Command 3 is read-only (what the earlier
+  unintended rewrite changed). Command 4 runs guarded_swap_config.sh: a
+  dry run, then the config rewrite only if all 16 ctx-test ids are listed.
+  The rewrite stops the loaded model for about 1-2 minutes and loads it
+  again. Out of scope: builds, promotion, the default model, other models'
+  settings, any OpenBao change. Never pass --force.
 commands:
+  - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --list >/dev/null && echo SECRETS-OK"
   - "TASK_APPROVAL=ctx-bug-catalogue ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
-  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config --dry-run'"
-  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'diff -u ~/llama-swap/config.yaml.prev ~/llama-swap/config.yaml; true'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'bash -s' < scripts/framework-ctx-bugs/guarded_swap_config.sh"
 gates:
+  - id: secrets
+    cmd: "(command 1)"
+    expect: "SECRETS-OK. If not, stop: OpenBao is still missing fields; do not run commands 2-4"
+    critical: true
   - id: playbook
-    cmd: "(first command)"
-    expect: "PLAY RECAP with failed=0"
+    cmd: "(command 2)"
+    expect: "PLAY RECAP with failed=0; its swap-config --dry-run task lists the 16 ctx ids. If not, stop; do not run commands 3-4"
     critical: true
-  - id: dry-run-entries
-    cmd: "(second command's output)"
+  - id: guarded-write
+    cmd: "(command 4)"
     expect: >
-      lists all 16 ids {qwen3.8-flash-next-q4,laguna-s-2.1}-{nathanw,upstream}-ctx{32k,64k,96k,131k};
-      stop before the third command if any is missing
-    critical: true
-  - id: reloaded
-    cmd: "(third command's output)"
-    expect: "'llama-swap config written: N entries' and either '<model> loaded again' or no model was loaded; anything else, stop and report"
+      'GATE OK', then 'llama-swap config written: N entries' and '<model> loaded again'
+      (or no model was loaded). 'GATE FAILED' means nothing was written: stop and report.
     critical: true
 ```
+
+**Every command runs only if the gate before it passed.** If one fails,
+stop the step there and report; do not run the commands after it.
+
+Command 3's diff goes in the Result, so the operator can see what the
+2026-10-14 unintended rewrite changed.
+
+First attempt (2026-10-14, failed):
+- The secret loader stopped before Ansible ran: `services/greenbone` fields
+  `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY` and
+  `GREENBONE_STEVE_SSH_PRIVATE_KEY` are missing or empty in OpenBao. So the
+  new models.json was not installed.
+- The dry run then listed 27 existing entries and none of the 16 test ids,
+  but the write was run anyway, against the gate. It rewrote llama-swap's
+  config from the old catalogue and reloaded `qwen3-coder-next-upstream`.
+  What changed is not yet known (command 3 shows it). The previous config
+  is `~/llama-swap/config.yaml.prev` on Framework (path from
+  `framework-desktop-llama-builds.yml`, `swap.config`).
+- Fix: the dry-run check is now inside `guarded_swap_config.sh`, so the
+  write cannot run without it, and each command waits for the previous gate.
 
 Result: —
 
