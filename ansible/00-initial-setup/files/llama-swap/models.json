@@ -65,7 +65,40 @@
       "settings": {
         "ctx_size": 131072
       },
-      "variants": [],
+      "variants": [
+        {
+          "suffix": "ctx32k",
+          "label": "ctx test 32k",
+          "settings": {
+            "ctx_size": 32768,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx64k",
+          "label": "ctx test 64k",
+          "settings": {
+            "ctx_size": 65536,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx96k",
+          "label": "ctx test 96k",
+          "settings": {
+            "ctx_size": 98304,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx131k",
+          "label": "ctx test 131k",
+          "settings": {
+            "ctx_size": 131072,
+            "parallel": 1
+          }
+        }
+      ],
       "tags": [
         "thinking"
       ],
@@ -99,6 +132,7 @@
       "name": "Laguna-S-2.1 UD-Q4_K_M",
       "gguf": "/storage/models/llm/Laguna-S-2.1-UD-Q4_K_M-merged.gguf",
       "backends": [
+        "fork",
         "upstream",
         "upstream-hip"
       ],
@@ -108,7 +142,40 @@
         "jinja": true,
         "reasoning_format": "deepseek"
       },
-      "variants": [],
+      "variants": [
+        {
+          "suffix": "ctx32k",
+          "label": "ctx test 32k",
+          "settings": {
+            "ctx_size": 32768,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx64k",
+          "label": "ctx test 64k",
+          "settings": {
+            "ctx_size": 65536,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx96k",
+          "label": "ctx test 96k",
+          "settings": {
+            "ctx_size": 98304,
+            "parallel": 1
+          }
+        },
+        {
+          "suffix": "ctx131k",
+          "label": "ctx test 131k",
+          "settings": {
+            "ctx_size": 131072,
+            "parallel": 1
+          }
+        }
+      ],
       "tags": [
         "thinking"
       ],
@@ -116,6 +183,11 @@
         "upstream": {
           "status": "works",
           "reason": "",
+          "checked": "2026-10-09"
+        },
+        "nathanw": {
+          "status": "broken",
+          "reason": "control token 14 flood on b10814; under test (docs/ctx-bug-test)",
           "checked": "2026-10-09"
         }
       }

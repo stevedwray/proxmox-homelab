@@ -327,7 +327,7 @@ prompt each time is:
 | ctx-03-restore-model | local | — | done 2026-10-14 (saved initial model restored; 36 tests pass) |
 | ctx-04-stdlib-redis | local | — | done 2026-10-14 (stdlib RESP client; 43 tests pass) |
 | ctx-05-expectations-helper | local | — | done 2026-10-14 (expectations helper; 54 tests pass) |
-| ctx-06-catalogue-edit | local | — | todo |
+| ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | todo |
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
@@ -543,7 +543,14 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. Both Qwen Q4 and Laguna have the prescribed
+ctx32k/ctx64k/ctx96k/ctx131k variants with `parallel: 1`. Laguna's backends
+are fork/upstream/upstream-hip, with the prescribed broken nathanw status.
+An exact JSON comparison confirms no other catalogue changes, including
+the default. All four gates pass: JSON assertions print `ok`, the Ansible
+diff contains one file, all 42 llama-builds tests pass, and the playbook's
+syntax check exits 0. This is a repository-only edit; nothing was deployed
+and no Framework access occurred.
 
 #### ctx-07-install-harness
 
