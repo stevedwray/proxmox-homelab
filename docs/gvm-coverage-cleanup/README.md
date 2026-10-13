@@ -118,6 +118,15 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    history to compare against. Wanted: add greenbone-stack to the node_exporter
    scrape list, run cAdvisor on it, and add panels for container memory, load,
    Redis memory and scans running. Not started.
+9. **Shift steady load from pve to pve-tiny; keep Greenbone on pve inside a
+   night window** (surveyed 2026-10-14, not started). Greenbone is bursty: 3.6 of
+   its 4 allowed cores only while scanning, 3.3 GB resident. The steady consumers
+   are graylog-stack (9.2 GB resident, Docker data on the gaming ZFS pool) and
+   wazuh-stack (6.8 GB); both zones already exist on pve-tiny and their IPs would
+   be kept, but tiny (22 GB available) cannot take both. Greenbone's own move
+   would need a VLAN 70 zone and a switch trunk. To make "scans only 22:00-07:00"
+   a guarantee, give each weekly schedule a hard `DURATION` (untested in gvmd).
+   Full numbers in the project memory `project_pve_tiny_load_shifting`.
 
 ## Hand-backs
 
