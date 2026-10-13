@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "content": "Write a safe synthetic service restart procedure. Follow these eight constraints: (1) the body parses as JSON; (2) it is an object; (3) exactly the keys title, steps, risk; (4) steps is a list; (5) exactly five steps; (6) each step has at most 12 words; (7) no word very anywhere and risk is low, medium or high; (8) append a final line END after the JSON body. No fences or explanations. Use plain strings for the title and each step. Context for the procedure: the made-up service is a queue worker called Maple. It consumes synthetic inventory events on an isolated host and stores an audit trail locally. Operators normally inspect its status, tell their colleagues about the maintenance window, stop the worker, start it again, and inspect its status afterwards. No customers, credentials, external dependencies or real systems are involved. The service has an ordinary stop and start interface; there is no special recovery mechanism. The procedure should describe this ordinary sequence in the requested compact format. This background is simply task context; the eight response constraints above determine whether the response passes.",
+      "role": "user"
+    }
+  ]
+}
