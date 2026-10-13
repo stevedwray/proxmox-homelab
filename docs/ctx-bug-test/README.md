@@ -9,7 +9,7 @@ build or from the context size. See [plan.md](plan.md).
 
 Status: **phase 2 built, not run** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
-are incorporated in plan.md. No Framework or production run has occurred.
+are incorporated in plan.md. No model test has run on Framework.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -22,6 +22,16 @@ stand-in run (288 requests plus four saved triggering probes). All six canned
 bug types were flagged in their expected cells; all 259 clean responses had
 no flags. The local ignored report is
 `scripts/framework-ctx-bugs/results/phase2-validation/report.md`.
+
+Session exception: the existing Git post-commit hook automatically attempted
+`./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`
+after the documentation commit, contrary to this session's local-only rule.
+Its `/tmp/docs-rag-reindex-20261014-111050.log` remained empty, and a local
+host-process check found no matching reindex process still running. Those
+observations do not establish whether production was contacted or changed;
+no production inspection was performed to verify effects. The closeout note
+was committed using a temporary hooks directory that retained pre-commit
+checks and excluded this production post-commit hook.
 
 Remaining work:
 
