@@ -106,6 +106,18 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    is down to 4 fields, and version 1 (with the root key) is destroyed.
 7. The old `openvas` account on the workstation (garuda) is unused after
    this plan.
+8. **greenbone-stack is not monitored in Grafana, so there are no
+   performance metrics for it** (found 2026-10-13 while sizing the scanner).
+   The container runs `prometheus-node-exporter` (TLS on :9100, installed by
+   the shared `lxc_base` role), but nothing scrapes it: the monitoring stack's
+   `node_exporter` and `cadvisor` scrape lists in `deploy-monitoring-stack.yml`
+   are hand-maintained per stack and omit greenbone-stack. cAdvisor is not
+   running on it at all, so there are no per-container figures (Redis, ospd,
+   gvmd). Consequence: the mgmt_seg OOM, the 8GB peak and the CPU saturation
+   (load ~20 on 2-4 cores) were only visible through ad hoc sampling, with no
+   history to compare against. Wanted: add greenbone-stack to the node_exporter
+   scrape list, run cAdvisor on it, and add panels for container memory, load,
+   Redis memory and scans running. Not started.
 
 ## Hand-backs
 
