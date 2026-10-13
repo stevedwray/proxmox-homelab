@@ -435,3 +435,13 @@ the container OOM-killed it. Redis had no `maxmemory` (policy `noeviction`), so
 nothing bounded it. The compose now starts redis-server with `--maxmemory 6gb`;
 a runaway host then fails on write errors instead of taking every scan down.
 The culprit host is being isolated with single-host test tasks.
+
+## Web UI session timeout
+
+gsad expires an idle web UI session after `--timeout` minutes (default 15). The
+image's `start-gsad` runs `gsad $GSAD_ARGS` and defaults to `-f --http-only`
+when unset, so the compose sets `GSAD_ARGS: "-f --http-only --timeout=1440"`
+(24h; gsad has no "never"). Setting `GSAD_ARGS` replaces the default, so both
+flags must stay. The UI also sits behind Authentik forwardAuth, whose session
+length is separate. Apply with a targeted `docker compose up -d gsad` on the
+host: a full stack redeploy interrupts running scans.
