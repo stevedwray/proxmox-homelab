@@ -85,6 +85,22 @@ MAX_HOSTS_PER_TASK = 4
 # changes its fingerprint, so only that zone's target/task is rebuilt.
 ZONE_MAX_HOSTS = {"mgmt_seg": 2}
 
+# Hosts scanned as their own task instead of with their zone, with some ports
+# left out of the scan. Each gets its own target, its own credential (a copy of
+# the zone key), a port list built from PORT_LIST_NAME minus exclude_ports, and
+# its own weekly slot.
+# 192.168.20.16 (openbao): the OpenBao UI on 8200 answers EVERY /ui/<anything>
+# path with the same ~1MB page and HTTP 200. The web-app probe NVTs request
+# thousands of invented paths and the scanner caches each response in Redis,
+# which grew Redis from 0.5GB to 12GB in minutes on 2026-10-13 and got the
+# scanner OOM-killed three times. Scanned alone without 8200 it takes 21
+# minutes, Redis peaks at 351MB and the LSC results are complete.
+SPLIT_HOSTS = {
+    "mgmt_seg": [
+        {"host": "192.168.20.16", "label": "openbao", "exclude_ports": [8200], "slot": ("TH", "02:30")},
+    ],
+}
+
 GVM_SOCKET_PATH = os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock")
 GVM_USERNAME = os.environ["GVM_USERNAME"]
 GVM_PASSWORD = os.environ["GVM_PASSWORD"]
@@ -340,6 +356,60 @@ def ensure_weekly_schedule(gmp, name, day, hhmm):
     return schedule_id
 
 
+def subtract_ports(ranges, excluded):
+    """ranges: [(start, end)]; returns them with every port in excluded removed."""
+    for port in excluded:
+        remaining = []
+        for start, end in ranges:
+            if port < start or port > end:
+                remaining.append((start, end))
+                continue
+            if start < port:
+                remaining.append((start, port - 1))
+            if port < end:
+                remaining.append((port + 1, end))
+        ranges = remaining
+    return ranges
+
+
+def format_ranges(ranges):
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in sorted(ranges))
+
+
+def ensure_port_list_without(gmp, base_name, excluded):
+    """A port list equal to base_name minus the excluded ports (TCP and UDP)."""
+    name = f"{base_name} minus {','.join(str(p) for p in excluded)}"
+    existing = find_by_name(gmp, gmp.get_port_lists, "port_list", name)
+    if existing:
+        return existing
+    base_id = resolve_id(gmp, gmp.get_port_lists, base_name, "port_list")
+    by_type = {"tcp": [], "udp": []}
+    for pr in gmp.get_port_list(base_id).iter("port_range"):
+        by_type[(pr.findtext("type") or "").lower()].append((int(pr.findtext("start")), int(pr.findtext("end"))))
+    parts = [f"{prefix}:{format_ranges(subtract_ports(by_type[kind], excluded))}"
+             for kind, prefix in (("tcp", "T"), ("udp", "U")) if by_type[kind]]
+    response = gmp.create_port_list(name=name, port_range=",".join(parts))
+    print(f"created port list {name!r} ({response.get('id')})")
+    return response.get("id")
+
+
+def expand_split_hosts(zone_targets):
+    """Move SPLIT_HOSTS out of their zone target into targets of their own."""
+    expanded = []
+    for zone_target in zone_targets:
+        remaining = list(zone_target["hosts"])
+        extra = []
+        for split in SPLIT_HOSTS.get(zone_target["zone"], []):
+            if split["host"] in remaining:
+                remaining.remove(split["host"])
+                extra.append({**zone_target, "hosts": [split["host"]], "names": [split["label"]],
+                              "label": split["label"], "exclude_ports": split["exclude_ports"],
+                              "slot": split["slot"]})
+        expanded.append({**zone_target, "hosts": remaining})
+        expanded.extend(extra)
+    return expanded
+
+
 def load_zone_targets(fleet_dir):
     """[{"zone", "hosts", "names", "key_path"}], or [] if GVM_FLEET_DIR has
     no targets.json -- degrades gracefully rather than crashing the run."""
@@ -360,12 +430,19 @@ def load_zone_targets(fleet_dir):
 def reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedule_id):
     """Returns the zone's task id, or None if it was left alone this run."""
     zone = zone_target["zone"]
-    object_name = f"Credentialed scan: {zone}"
-    credential_name = f"zone-{zone}-login"
+    label = zone_target.get("label")
+    excluded = zone_target.get("exclude_ports", [])
+    object_name = f"Credentialed scan: {zone}" + (f" ({label})" if label else "")
+    credential_name = f"zone-{zone}-{label}-login" if label else f"zone-{zone}-login"
     hosts = sorted(zone_target["hosts"])
     private_key = Path(zone_target["key_path"]).read_text(encoding="utf-8")
-    fp = fingerprint(",".join(hosts), private_key, PORT_LIST_NAME, ALIVE_TESTS,
-                     str(max_hosts_for(zone)), RECONCILE_VERSION)
+    parts = [",".join(hosts), private_key, PORT_LIST_NAME, ALIVE_TESTS,
+             str(max_hosts_for(zone)), RECONCILE_VERSION]
+    if excluded:
+        # Only added when set, so zones without exclusions keep their fingerprint.
+        parts.append("exclude:" + ",".join(str(p) for p in excluded))
+        port_list_id = ensure_port_list_without(gmp, PORT_LIST_NAME, excluded)
+    fp = fingerprint(*parts)
     marker = f"{FP_MARKER}{fp}"
 
     target_id = find_by_name(gmp, gmp.get_targets, "target", object_name)
@@ -415,14 +492,17 @@ def main():
             ensure_weekly_schedule(gmp, "Weekly VLAN scan: MikroTik router", *MIKROTIK_SLOT),
         )
 
-        for zone_target in load_zone_targets(GVM_FLEET_DIR):
+        for zone_target in expand_split_hosts(load_zone_targets(GVM_FLEET_DIR)):
             zone = zone_target["zone"]
-            if zone not in ZONE_WEEKLY_SLOT:
+            label = zone_target.get("label")
+            slot = zone_target.get("slot") or ZONE_WEEKLY_SLOT.get(zone)
+            if not slot:
                 print(f"WARN: zone {zone!r} has no ZONE_WEEKLY_SLOT entry, skipping")
                 failures.append(f"zone {zone!r} (no slot)")
                 continue
             try:
-                schedule_id = ensure_weekly_schedule(gmp, f"Weekly VLAN scan: {zone}", *ZONE_WEEKLY_SLOT[zone])
+                schedule_id = ensure_weekly_schedule(
+                    gmp, f"Weekly VLAN scan: {zone}" + (f" ({label})" if label else ""), *slot)
                 if reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedule_id) is None:
                     failures.append(f"zone {zone!r} (task active)")
             except GvmError as exc:

@@ -434,7 +434,12 @@ response bodies, from one or two of the hosts that had not yet logged in), and
 the container OOM-killed it. Redis had no `maxmemory` (policy `noeviction`), so
 nothing bounded it. The compose now starts redis-server with `--maxmemory 6gb`;
 a runaway host then fails on write errors instead of taking every scan down.
-The culprit host is being isolated with single-host test tasks.
+Root cause found 2026-10-14: 192.168.20.16 (openbao). The OpenBao UI on 8200
+answers every `/ui/<anything>` with the same ~1MB page and HTTP 200, so the
+web-app probe NVTs cached ~14,600 one-megabyte responses in Redis. Scanned alone
+with 8200 left out, .16 takes 21 minutes, Redis peaks at 351MB and the LSC
+results appear (they were missing in the full-zone run, where Redis writes failed
+while pinned at the cap). That host is now scanned as its own task, see below.
 
 ## Web UI session timeout
 
@@ -445,3 +450,20 @@ when unset, so the compose sets `GSAD_ARGS: "-f --http-only --timeout=1440"`
 flags must stay. The UI also sits behind Authentik forwardAuth, whose session
 length is separate. Apply with a targeted `docker compose up -d gsad` on the
 host: a full stack redeploy interrupts running scans.
+
+### Hosts split out of their zone (`SPLIT_HOSTS`)
+
+`setup_credentials.py` can scan a host as its own task with some ports excluded.
+Each entry in `SPLIT_HOSTS` gets: its own target, its own credential (a copy of
+the zone key, `zone-<zone>-<label>-login`), a port list equal to
+`All TCP and Nmap top 100 UDP` minus the excluded ports, and its own weekly slot.
+The zone's task then covers the remaining hosts. Currently:
+
+| Zone | Host | Task | Excluded | Slot |
+|---|---|---|---|---|
+| mgmt_seg | 192.168.20.16 (openbao) | `Credentialed scan: mgmt_seg (openbao)` | tcp 8200 | Thursday 02:30 NZ |
+
+Only zones with a split change their fingerprint, so only mgmt_seg is rebuilt.
+The daily coverage check and gvm-bridge work from task names and target hosts, so
+they pick the new task up without changes. Add a host here when its web UI
+returns a large page for any path.

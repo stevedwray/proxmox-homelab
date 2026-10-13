@@ -217,7 +217,11 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   paused, the daily coverage check reports every credentialed host as
   `unscheduled` and exits 3; that is expected. Restore once tuning is done with
   the full greenbone-stack deploy (or `--tags credential-program,schedule-program`),
-  and check with a task listing that schedules are back. Tuning findings so far:
+  and check with a task listing that schedules are back. mgmt_seg runaway root cause (2026-10-14): the OpenBao UI (192.168.20.16:8200)
+  returns the same ~1MB page for any `/ui/` path; the web-app probes cached
+  thousands of copies in Redis. Fixed by scanning .16 as its own task without 8200
+  (`SPLIT_HOSTS` in setup_credentials.py; docs/greenbone-stack/README.md). Tuning
+  findings earlier:
   Redis (no memory cap) ran away on mgmt_seg at 4 and at 2 hosts and OOM-killed
   the 8GB/12GB container; each mgmt host scans cleanly alone (29-31 min); Redis is
   now capped at 6GB (`--maxmemory 6gb`), container is 4 cores / 12GB.
