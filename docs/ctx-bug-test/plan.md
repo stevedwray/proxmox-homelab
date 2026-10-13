@@ -324,7 +324,7 @@ prompt each time is:
 |---|---|---|---|
 | ctx-01-build-check | Framework (read-only) | — | done 2026-10-14 (results below) |
 | ctx-02-harness | local | — | done 2026-10-14 (33 tests, 288-request stub run) |
-| ctx-03-restore-model | local | — | todo |
+| ctx-03-restore-model | local | — | done 2026-10-14 (saved initial model restored; 36 tests pass) |
 | ctx-04-stdlib-redis | local | — | todo |
 | ctx-05-expectations-helper | local | — | todo |
 | ctx-06-catalogue-edit | local | — | todo |
@@ -395,7 +395,13 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. `prepare()` captures `model_alias` before the lock,
+stores `restore_model` in `run.json`, and keeps it on resume. Exit restores
+that alias, with GLM fallback when the initial server did not answer or the
+saved alias is a ctx test entry; `restored_model` records the actual target.
+The stub starts with `qwen3-coder-next-upstream`; the full and interrupted/
+resumed runs restore it. All 36 tests and the `restore_model` source gate
+pass. Only loopback stand-ins were contacted; no Framework access.
 
 #### ctx-04-stdlib-redis
 

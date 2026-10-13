@@ -176,7 +176,12 @@ limit. The optional cloud judge is outside this harness.
 
 The shared Redis lock is acquired before any model load, renewed during the
 run, checked before requests, and released on exit. Success, failure and
-handled interruption reload `glm-5.3-flash-upstream` before releasing the lock.
+handled interruption reload the model captured from `/props` before the run
+(`restore_model` in `run.json`) before releasing the lock. Resume preserves
+that saved model. If :8080 did not answer, or the saved model is a context-test
+entry ending in `-ctx32k`, `-ctx64k`, `-ctx96k` or `-ctx131k`, restoration uses
+`glm-5.3-flash-upstream`. `restored_model` records the alias actually restored;
+the existing `restored_default` boolean indicates successful restoration.
 If restoration fails, the run is marked failed with the restore error. A lost
 lock stops further model changes. An uncatchable kill cannot run cleanup;
-the lock TTL expires and a later approved resume restores the default on exit.
+the lock TTL expires and a later approved resume restores the saved model on exit.

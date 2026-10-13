@@ -15,6 +15,7 @@ import gen_prompts as gp
 
 BUILDS = {'nathanw': dict(name='stub-fork', sha='stubfork', build_info='b10814-9e21f2e53'),
           'upstream': dict(name='stub-upstream', sha='stubupstream', build_info='b11514-de7fa0a3c')}
+INITIAL_MODEL = 'qwen3-coder-next-upstream'
 
 
 def render(messages):
@@ -75,7 +76,7 @@ class StubServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.clean = clean
         self.delay_request, self.delay_seconds = delay_request, delay_seconds
-        self.entry = 'glm-5.3-flash-upstream'
+        self.entry = INITIAL_MODEL
         self.instance = 0
         self.requests = []
         self.loads = []

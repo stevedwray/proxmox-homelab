@@ -210,6 +210,55 @@ class DetectorTests(unittest.TestCase):
 
 
 class HarnessTests(unittest.TestCase):
+    def test_prepare_falls_back_if_props_does_not_answer(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            call = run.client.call
+            def no_props(path, *args, **kwargs):
+                if path == '/props':
+                    raise ConnectionRefusedError('server not loaded')
+                return call(path, *args, **kwargs)
+            with mock.patch.object(run.client, 'call', side_effect=no_props):
+                run.prepare()
+            saved = json.loads(run.manifest_path.read_text())
+            self.assertEqual(saved['restore_model'], cb.DEFAULT_MODEL)
+            self.assertEqual(saved['restore_model_note'], 'nothing answered on :8080')
+            # The server subsequently answers, but resume keeps the original fallback.
+            run.prepare()
+            self.assertEqual(run.manifest['restore_model'], cb.DEFAULT_MODEL)
+            with mock.patch.object(run, 'matrix'):
+                self.assertEqual(run.execute_locked(), 0)
+            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+
+    def test_live_prepare_records_alias_before_lock_and_preserves_it_on_resume(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            root = Path(tmp)
+            for label, backend in (('nathanw', 'fork'), ('upstream', 'upstream')):
+                cb.write_json(root/backend/'current'/'build.json', stub.BUILDS[label])
+            cb.write_json(root/'builds.json', stub.BUILDS)
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', str(root/'run'),
+                '--builds-json', str(root/'builds.json'), '--builds-root', str(root)]))
+            run.args.dry_run = False  # Production preparation, against loopback only.
+            with mock.patch.object(run, 'lock', side_effect=AssertionError('prepare must not take the lock')):
+                run.prepare()
+                self.assertEqual(run.manifest['restore_model'], stub.INITIAL_MODEL)
+                s.entry = cb.entry_id(cb.MODELS[0], 'nathanw', 32768)
+                with mock.patch.object(run.client, 'call', side_effect=AssertionError('resume must not recapture props')):
+                    run.prepare()
+            self.assertEqual(run.manifest['restore_model'], stub.INITIAL_MODEL)
+
+    def test_saved_test_entry_restores_default_for_every_context_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            run.prepare()
+            for size in cb.SIZES:
+                with self.subTest(size=size):
+                    run.manifest['restore_model'] = cb.entry_id(cb.MODELS[0], 'nathanw', size)
+                    with mock.patch.object(run, 'matrix'):
+                        self.assertEqual(run.execute_locked(), 0)
+                    self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+                    self.assertEqual(run.manifest['restored_model'], cb.DEFAULT_MODEL)
+
     def test_report_tables_match_header_separator_and_data_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
             records = []
@@ -326,7 +375,7 @@ class HarnessTests(unittest.TestCase):
             self.assertTrue(all(r['error'] is None and not r['flags'] for r in records))
             self.assertEqual(len(s.kernel_windows), 22)
             self.assertTrue(all(since <= until for since, until in s.kernel_windows))
-            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
 
     def test_matrix_and_short_form(self):
         self.assertEqual(len(cb.runs()), 22)
@@ -346,7 +395,7 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cb.check_props(dict(good, **{key: value}), 'entry', 32768, 'expected')
 
-    def test_refused_cell_sends_no_requests_and_restores_default(self):
+    def test_refused_cell_sends_no_requests_and_restores_initial_model(self):
         with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
             args = cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
                                   '--models', cb.MODELS[0], '--builds', 'upstream', '--sizes', '32768'])
@@ -354,7 +403,7 @@ class HarnessTests(unittest.TestCase):
             with mock.patch.object(run.client, 'prompt_tokens', return_value=14337):
                 self.assertEqual(run.execute(), 1)
             self.assertEqual(s.requests, [])
-            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
             self.assertEqual(run.manifest['status'], 'failed')
 
     def test_divergences_are_persisted_in_checkpoint_and_raw(self):
@@ -433,6 +482,9 @@ class HarnessTests(unittest.TestCase):
                 s.release_delay.set()
             partial = cb.read_results(directory/'results.jsonl')
             self.assertEqual(len(partial), 1)
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
+            self.assertEqual(json.loads((directory/'run.json').read_text())['restore_model'], stub.INITIAL_MODEL)
+            s.entry = cb.entry_id(cb.MODELS[0], 'upstream', 32768)
             resumed = subprocess.run(args, capture_output=True, text=True, timeout=60)
             self.assertEqual(resumed.returncode, 0, resumed.stdout+resumed.stderr)
             records = cb.read_results(directory/'results.jsonl')
@@ -440,7 +492,10 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(len({r['key'] for r in records}), 22)
             self.assertEqual(len(s.requests), 23)  # interrupted request was sent again
             self.assertEqual(s.requests[1]['seed'], s.requests[2]['seed'])
-            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
+            saved = json.loads((directory/'run.json').read_text())
+            self.assertEqual(saved['restore_model'], stub.INITIAL_MODEL)
+            self.assertEqual(saved['restored_model'], stub.INITIAL_MODEL)
             self.assertTrue(all(not r['flags'] for r in records))
             self.assertTrue((directory/'report.md').is_file())
             before = len(s.requests)
@@ -477,6 +532,8 @@ class HarnessTests(unittest.TestCase):
                     self.assertEqual(r['prompt_tokens'], r['size']-cb.BUDGET-cb.MARGIN)
             self.assertEqual(observed, set(expected))
             manifest = json.loads((directory/'run.json').read_text())
+            self.assertEqual(manifest['restore_model'], stub.INITIAL_MODEL)
+            self.assertEqual(manifest['restored_model'], stub.INITIAL_MODEL)
             self.assertEqual(len(manifest['cells']), 16)
             self.assertEqual(len(manifest['fill_prompts']), 8)
             for cell, data in manifest['cells'].items():
@@ -489,7 +546,7 @@ class HarnessTests(unittest.TestCase):
                 for size in cb.SIZES:
                     hashes = {r['prompt_sha256'] for r in records if r['model']==model and r['size']==size and r['prompt']=='F'}
                     self.assertEqual(len(hashes), 1)
-            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
 
 
 if __name__ == '__main__':

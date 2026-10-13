@@ -6,6 +6,7 @@ import datetime as dt
 import fcntl
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -399,6 +400,13 @@ class Run:
                 started=now(), job_id='ctx-bugs-' + self.directory.name, status='running',
                 sampling_sources=SAMPLING_SOURCES, cells={}, fill_prompts={},
                 harness_sha256=gp.sha(Path(__file__).read_bytes()))
+            try:
+                self.manifest['restore_model'] = self.client.call('/props')['model_alias']
+            except (OSError, ValueError):
+                self.manifest['restore_model'] = DEFAULT_MODEL
+                self.manifest['restore_model_note'] = 'nothing answered on :8080'
+            if not isinstance(self.manifest['restore_model'], str) or not self.manifest['restore_model']:
+                raise ValueError('/props model_alias must be a non-empty string')
         self.manifest.update(status='running', resumed=now())
         for name, item in hashes['prompts'].items():
             (self.directory / 'prompts' / item['file']).write_bytes((PROMPT_DIR / item['file']).read_bytes())
@@ -626,7 +634,11 @@ class Run:
             finally:
                 try:
                     self.check_lock()
-                    self.client.load(DEFAULT_MODEL)
+                    restore_model = self.manifest.get('restore_model', DEFAULT_MODEL)
+                    if re.search(r'-ctx(?:32k|64k|96k|131k)$', restore_model):
+                        restore_model = DEFAULT_MODEL
+                    self.client.load(restore_model)
+                    self.manifest['restored_model'] = restore_model
                     self.manifest['restored_default'] = True
                 except Exception as exc:
                     self.manifest.update(restored_default=False, restore_error=str(exc), status='failed')
