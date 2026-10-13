@@ -1,6 +1,6 @@
 # Context-size bug test: Qwen3.8-Flash-Next and Laguna-S-2.1, Nathanw fork vs upstream llama.cpp
 
-Planned 2026-10-11. Nothing here has run yet.
+Planned 2026-10-11; decisions settled 2026-10-13. Nothing here has run yet.
 
 ## Goal
 
@@ -159,7 +159,7 @@ generation ~25 tok/s on Qwen, ~80 s per model load):
 | **Full** (12 full + 4 short cells) | ~17–20 h: one overnight plus a day, or two nights |
 
 Framework serves nothing else while this runs: clients on :8080 get
-whichever test entry is loaded. Pick a quiet window (D6).
+whichever test entry is loaded. Pilot first, in a quiet slot (D6).
 
 ## How it runs
 
@@ -213,10 +213,11 @@ The id is the server's `--alias`, so every raw response records its cell.
 ## Phases
 
 1. **Check the builds (read-only).** `llama-builds status` on Framework:
-   what `current` is for `fork` and `upstream`, and how far behind. Decide
-   D1. If new candidates are wanted, build and smoke-test them the usual
-   way (docs/llama-swap/README.md, "first update cycle") and promote before
-   the test, not during it.
+   what `current` is for `fork` and `upstream`, and how far behind. Record
+   both in `run.json`. Per D1 the test uses these current builds; a fresh
+   fork candidate is built (the usual way, docs/llama-swap/README.md,
+   "first update cycle") only for the one extra Laguna short-form cell, and
+   not promoted for the test.
 2. **Build the harness** on a `task/` branch: the generator, `prompts/`
    with the manifest, `ctx_bugs.py`, the tests. Gate:
    `python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'`.
@@ -246,19 +247,19 @@ The id is the server's `--alias`, so every raw response records its cell.
    - a bug report upstream or to the fork where a finding is a clear build
      bug (a minimal repro from the raw files), if the operator wants one.
 
-## Decisions for the operator
+## Decisions (operator, 2026-10-13)
 
-Recommended answers first; the plan above assumes them.
+The plan above already follows these.
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
-| D1 | Test the builds that are `current` now, or update both first? | Current builds (what clients actually use). If Laguna × nathanw still floods, add one extra short-form cell on a fresh fork candidate to see if a newer fork fixed it |
-| D2 | Which Qwen GGUF? | `qwen3.8-flash-next-q4` (UD-Q4_K_XL, marked works, the one used in production and CSE). The Q2 copy would add a quantization variable |
-| D3 | Sampled runs' settings | Each model's published recommended thinking-mode sampling (Qwen: temperature 0.6, top_p 0.95, top_k 20, min_p 0; Laguna: from its model card, checked in phase 2 and written into `run.json`) |
-| D4 | Qwen's reasoning effort (template default `xhigh`) | Leave the template default and cap with `max_tokens 16384`; a run that hits the cap is itself a `runaway` finding. Alternative: send `chat_template_kwargs {"reasoning_effort":"high"}` to match GLM, at the cost of not testing the default |
-| D5 | Vulkan batch sizes | Keep defaults (production). If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
-| D6 | When | A window where nobody needs GLM on :8080 for ~20 h; pilot first on its own (~2.5 h) |
-| D7 | Part B (context fill) | Include it. Part A alone ("same prompt") can't show long-context hallucination or instruction loss; it shows only size-dependent bugs on a ≤ 24k prompt |
+| D1 | Which builds | The `current` builds clients use (fork and upstream). If Laguna × nathanw still shows the token flood, add one extra short-form cell on a freshly built fork candidate to see whether a newer fork fixes it |
+| D2 | Which Qwen GGUF | `qwen3.8-flash-next-q4` (UD-Q4_K_XL). Not the Q2 copy |
+| D3 | Sampled runs' settings | Each model's published thinking-mode sampling (Qwen: temperature 0.6, top_p 0.95, top_k 20, min_p 0; Laguna: from its model card, looked up when the harness is built and written into `run.json`) |
+| D4 | Qwen's reasoning effort | The template default (`xhigh`), capped with `max_tokens 16384`. A run that hits the cap is a `runaway` finding |
+| D5 | Vulkan batch sizes | Defaults. If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
+| D6 | When | The pilot (~2.5 h) first, in a quiet slot, and its results checked; then the full run over one night plus a day, or two nights |
+| D7 | Part B (context fill) | Included |
 
 ## Out of scope
 

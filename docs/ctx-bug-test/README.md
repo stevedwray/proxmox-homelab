@@ -7,8 +7,8 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **planned 2026-10-11, not started.** Decisions D1–D7 in plan.md
-are waiting on the operator.
+Status: **planned 2026-10-11, not started.** The operator settled
+decisions D1–D7 on 2026-10-13 (all as recommended; see plan.md).
 
 Related: [docs/llama-swap](../llama-swap/README.md) (the catalogue, builds
 and entries this uses), [docs/model-params](../model-params/README.md)
