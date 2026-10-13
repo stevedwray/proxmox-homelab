@@ -6,7 +6,8 @@ Planned 2026-10-11; decisions settled 2026-10-13. Nothing here has run yet.
 version sized S3 at ~24k and S5 at ~18k tokens and Part B at 85% fill,
 which with the 16,384-token answer budget doesn't fit 32k (or, for Part B,
 32k–96k). The budget stays (D4); the prompts were shortened and Part B now
-fills to `--ctx-size` − 16,384 − 2,048. See the fit rule under "The prompts".
+fills to `--ctx-size` − 16,384 − 2,048 with its own log, needles moved to
+the same relative depths. See the fit rule under "The prompts" and Part B.
 
 ## Goal
 
@@ -93,14 +94,26 @@ cell runs, the harness checks every prompt with the loaded server's
 
 ### Part B: context fill (F)
 
-S3's template with the log extended until the prompt is as long as the
-fit rule allows: `--ctx-size` − 16,384 − 2,048, in the loaded model's own
-tokens. That is 14,336 / 47,104 / 79,872 / 112,640 tokens (about 44%, 72%,
-81% and 86% of 32k / 64k / 96k / 131k). The first 200 records are S3's, so
-the 32k prompt is S3 plus a little. Needles at
-the same five relative depths, same questions. The two models' prompts
-differ in length (different tokenizers); the two builds of one model get
-the same bytes.
+S3's template (same system rule, same 8 questions, same answer format)
+over its own log, as long as the fit rule allows: `--ctx-size` − 16,384 −
+2,048, in the loaded model's own tokens. That is 14,336 / 47,104 / 79,872 /
+112,640 tokens (about 44%, 72%, 81% and 86% of 32k / 64k / 96k / 131k).
+
+- **The log:** filler records from one fixed seed, generated until the
+  target length. F does **not** reuse S3's records; F is about depth and
+  length, and the context-size comparison on identical bytes is Part A's
+  job.
+- **Needles:** the same five needle records as S3 (same ids and values, so
+  the expected answers don't change), placed at 5/25/50/75/95% of F's own
+  log, i.e. their positions move with the length. Their filler must not
+  contain anything that answers the two absent-fact questions.
+- **Count question:** its expected answer is computed from the generated F
+  log and stored with the prompt.
+- **Same bytes per model:** the two builds of one model get identical F
+  prompts at each size (one tokenizer); the two models' prompts differ in
+  length. Each generated F prompt, its SHA-256, needle positions, expected
+  answers and token count are written to the run's `prompts/` and
+  `run.json`.
 
 ## Runs per cell
 
