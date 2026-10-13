@@ -1,6 +1,7 @@
 # Context-size bug test: Qwen3.8-Flash-Next and Laguna-S-2.1, Nathanw fork vs upstream llama.cpp
 
-Planned 2026-10-11; decisions settled 2026-10-13. Nothing here has run yet.
+Planned 2026-10-11; decisions settled 2026-10-13. Phase 2 built locally
+2026-10-14; nothing has run on Framework yet.
 
 2026-10-13 correction (found while building the harness): the first
 version sized S3 at ~24k and S5 at ~18k tokens and Part B at 85% fill,
@@ -234,6 +235,36 @@ The id is the server's `--alias`, so every raw response records its cell.
 (The HIP backend gets the same variants as a side effect; they aren't used.)
 
 ## Phases
+
+### Phase 2 implementation notes (2026-10-14)
+
+Local validation passed: 26 unittest tests (including interrupted-request
+resume), identical prompt regeneration, and the complete 16-cell stand-in
+matrix. Its 288 completed requests flag every canned bug in its expected
+cell and leave all 259 clean responses unflagged. This is harness validation,
+not evidence about the real models or Framework.
+
+- Prompt counts include the chat template: `/apply-template` renders the
+  messages before `/tokenize` counts them. The fit gate keeps the full
+  16,384-token reserve even when running a short-form cell.
+- Laguna's published recommendation was confirmed from Poolside's
+  [pinned sampling guidance](https://huggingface.co/poolside/Laguna-S-2.1-FP8/blob/2bea609ec5cc284a99471d3eba1e33fa9cede712/README.md):
+  temperature 0.7 and top_p 0.95. top_k 20 and min_p 0 come from the
+  [base checkpoint's shipped config](https://huggingface.co/poolside/Laguna-S-2.1/blob/main/generation_config.json).
+  Sources and settings are recorded in `run.json`.
+- A normal-budget Laguna fork S1 greedy request that triggers short form
+  is saved separately as `S1-probe.json`; the six short-form requests then
+  all use 2,048 tokens. If the probe is clean, it counts as the ordinary
+  S1 greedy request. This preserves the 22/6-request cell layouts.
+- Phase 1 must supply explicit build expectations (`name`, full `sha`,
+  expected `/props` `build_info`) to `--builds-json`. The harness checks
+  local `current/build.json` names/SHAs and every loaded server's props;
+  it does not guess a server identity from compiler-version text.
+- F uses deterministic complete records plus short inert padding to reach
+  its exact rendered token target. Saved F bytes are reused across builds;
+  a changed hash or tokenizer count refuses the cell.
+
+### Execution phases
 
 1. **Check the builds (read-only).** `llama-builds status` on Framework:
    what `current` is for `fork` and `upstream`, and how far behind. Record
