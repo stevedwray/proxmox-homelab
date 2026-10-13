@@ -1,7 +1,8 @@
 # Context-size bug test: Qwen3.8-Flash-Next and Laguna-S-2.1, Nathanw fork vs upstream llama.cpp
 
 Planned 2026-10-11; decisions settled 2026-10-13. Phase 2 built locally
-2026-10-14; nothing has run on Framework yet.
+2026-10-14; phase 1 (read-only build check) done 2026-10-14. No model test
+has run on Framework yet.
 
 2026-10-13 correction (found while building the harness): the first
 version sized S3 at ~24k and S5 at ~18k tokens and Part B at 85% fill,
@@ -282,6 +283,30 @@ not evidence about the real models or Framework.
    fork candidate is built (the usual way, docs/llama-swap/README.md,
    "first update cycle") only for the one extra Laguna short-form cell, and
    not promoted for the test.
+
+   **Done 2026-10-14** (operator, read-only, as `steve` on Framework):
+
+   | Backend | `current` | Full SHA | Behind | `/props` `build_info` |
+   |---|---|---|---:|---|
+   | fork (nathanw) | 20261008-9e21f2e53 | 9e21f2e5329c697a46fd790c0eb172d1ee2f0923 | 5 | `b10814-9e21f2e53` |
+   | upstream | 20261008-de7fa0a3c | de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b | 92 | `b11514-de7fa0a3c` |
+
+   - The upstream `/props` came from :8080, which was serving
+     `qwen3-coder-next-upstream` (131072 ctx, **4 slots**), not GLM. The fork
+     `/props` came from the embeddings server on :8085 (`nomic-embed-text`,
+     fork/current). No model was switched.
+   - Both replies have the fields `check_props()` reads: `model_alias`,
+     `default_generation_settings.n_ctx`, `total_slots` and a string
+     `build_info`. The 4 slots on the live entry confirm the test entries
+     need `parallel: 1`.
+   - `sudo -n journalctl -k` and `sudo -n journalctl -u llama-swap.service`
+     both work as `steve`, so GPU-error and llama-server log capture will
+     work.
+   - Builds JSON for `--builds-json`:
+     `/storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
+     (operator-owned, not in git), with both raw `/props` replies.
+   - Since the fork is 5 commits behind, the D1 extra Laguna cell on a
+     fresh fork candidate stays optional; decide after the pilot.
 2. **Build the harness** on a `task/` branch: the generator, `prompts/`
    with the manifest, `ctx_bugs.py`, the tests. Gate:
    `python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'`.

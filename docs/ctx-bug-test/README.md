@@ -38,8 +38,8 @@ checks and excluded this production post-commit hook.
 
 Remaining work:
 
-- **Phase 1:** inspect and record Framework's current builds and explicit
-  expected server build identities.
+- **Phase 1:** done 2026-10-14 (see plan.md phase 1): fork b10814-9e21f2e53,
+  upstream b11514-de7fa0a3c; `/props` fields and journal access confirmed.
 - **Phase 3:** add and deploy catalogue variants under production approval.
 - **Phase 4:** run and inspect the approved 131k greedy pilot.
 - **Phase 5:** run the approved full matrix.
