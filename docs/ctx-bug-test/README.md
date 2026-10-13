@@ -36,17 +36,14 @@ no production inspection was performed to verify effects. The closeout note
 was committed using a temporary hooks directory that retained pre-commit
 checks and excluded this production post-commit hook.
 
-Remaining work:
+Remaining work is written as steps ctx-03 to ctx-14 in
+[plan.md](plan.md#execution-steps), with a status table. To continue, open
+the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
-- **Phase 1:** done 2026-10-14 (see plan.md phase 1): fork b10814-9e21f2e53,
-  upstream b11514-de7fa0a3c; `/props` fields and journal access confirmed.
-- **Phase 3:** add and deploy catalogue variants under production approval.
-- **Phase 4:** run and inspect the approved 131k greedy pilot.
-- **Phase 5:** run the approved full matrix.
-- **Phase 6:** reproduce candidate findings with three more seeds;
-  optionally run the cloud judge.
-- **Phase 7:** write findings, remove temporary catalogue entries and
-  update model status under cleanup approval.
+> Run the next step of docs/ctx-bug-test/plan.md.
+
+Local steps run straight through. Steps on Framework post a preflight and
+wait for "proceed" before running anything.
 
 Related: [docs/llama-swap](../llama-swap/README.md) (the catalogue, builds
 and entries this uses), [docs/model-params](../model-params/README.md)

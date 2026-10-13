@@ -202,7 +202,8 @@ detached systemd user unit, the same way as `scripts/framework-ai-benchmark`
    expected build; it stops if any differ;
 3. runs the prompts in a fixed order, checkpointing after every request
    (a restart resumes at the next request);
-4. at the end reloads `glm-5.3-flash-upstream` (the boot default) and
+4. at the end reloads the model that was loaded when the run started
+   (`glm-5.3-flash-upstream`, the boot default, if none was; ctx-03) and
    releases the lock, also on failure.
 
 Results: `/storage/artifacts/framework-ctx-bugs/<timestamp>/` with
@@ -255,9 +256,8 @@ not evidence about the real models or Framework.
   `evidence_error` and do not abort completions. Cell logs use the system
   `llama-swap.service` journal via `sudo -n journalctl`; capture errors are
   written to the cell log without aborting the run.
-- Before the pilot, save one real `/props` response from each build in its
-  builds JSON entry and confirm `check_props()`'s field names and value types
-  against those responses (see the harness README's phase-1 check).
+- The real `/props` field names were confirmed in ctx-01; ctx-07 writes
+  them into the builds JSON.
 - Laguna's published recommendation was confirmed from Poolside's
   [pinned sampling guidance](https://huggingface.co/poolside/Laguna-S-2.1-FP8/blob/2bea609ec5cc284a99471d3eba1e33fa9cede712/README.md):
   temperature 0.7 and top_p 0.95. top_k 20 and min_p 0 come from the
@@ -275,66 +275,432 @@ not evidence about the real models or Framework.
   its exact rendered token target. Saved F bytes are reused across builds;
   a changed hash or tokenizer count refuses the cell.
 
-### Execution phases
+### Execution steps
 
-1. **Check the builds (read-only).** `llama-builds status` on Framework:
-   what `current` is for `fork` and `upstream`, and how far behind. Record
-   both in `run.json`. Per D1 the test uses these current builds; a fresh
-   fork candidate is built (the usual way, docs/llama-swap/README.md,
-   "first update cycle") only for the one extra Laguna short-form cell, and
-   not promoted for the test.
+The rest of the work is written as steps (format:
+`docs/agent-design/step-packet-schema.md`) for the Codex session in the
+`~/git/proxmox-homelab-ctx-bug-test` worktree to run. The operator's whole
+prompt each time is:
 
-   **Done 2026-10-14** (operator, read-only, as `steve` on Framework):
+> Run the next step of docs/ctx-bug-test/plan.md.
 
-   | Backend | `current` | Full SHA | Behind | `/props` `build_info` |
-   |---|---|---|---:|---|
-   | fork (nathanw) | 20261008-9e21f2e53 | 9e21f2e5329c697a46fd790c0eb172d1ee2f0923 | 5 | `b10814-9e21f2e53` |
-   | upstream | 20261008-de7fa0a3c | de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b | 92 | `b11514-de7fa0a3c` |
+#### Rules for the agent running these steps
 
-   - The upstream `/props` came from :8080, which was serving
-     `qwen3-coder-next-upstream` (131072 ctx, **4 slots**), not GLM. The fork
-     `/props` came from the embeddings server on :8085 (`nomic-embed-text`,
-     fork/current). No model was switched.
-   - Both replies have the fields `check_props()` reads: `model_alias`,
-     `default_generation_settings.n_ctx`, `total_slots` and a string
-     `build_info`. The 4 slots on the live entry confirm the test entries
-     need `parallel: 1`.
-   - `sudo -n journalctl -k` and `sudo -n journalctl -u llama-swap.service`
-     both work as `steve`, so GPU-error and llama-server log capture will
-     work.
-   - Builds JSON for `--builds-json`:
-     `/storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
-     (operator-owned, not in git), with both raw `/props` replies.
-   - Since the fork is 5 commits behind, the D1 extra Laguna cell on a
-     fresh fork candidate stays optional; decide after the pilot.
-2. **Build the harness** on a `task/` branch: the generator, `prompts/`
-   with the manifest, `ctx_bugs.py`, the tests. Gate:
-   `python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'`.
-   A dry run against a stand-in server (a stub that replays recorded
-   responses) proves the checkpoint/resume and the report.
-3. **Catalogue change** (production, approval `ctx-bug-catalogue`): the
-   `models.json` edit above; `framework-desktop-llama-builds.yml` through
-   `./with-secrets-prod-tiny` (the playbook's Redis password comes from
-   OpenBao `services/cse-panel`), then `llama-builds swap-config`. Gate: the
-   dry run lists the 16 test entries; after the reload, `/running` shows
-   the default model again.
-4. **Pilot** (approval `ctx-bug-run`): the 4 cells at 131072, greedy only.
-   Checks that every detector fires sensibly on real output, the timings
-   match the estimate, and nothing crashes. Fix and repeat before going on.
-5. **Full run** (same approval if the window agreed in D6 still holds;
-   otherwise a new one): all 16 cells.
-6. **Reproduce** each candidate finding (three more seeds on that cell) and
-   optionally run the cloud judge pass.
-7. **Write up and clean up** (approval `ctx-bug-cleanup`):
-   - `docs/ctx-bug-test/README.md`: findings per bug type, each with the
-     cell, the flag, a short excerpt and the raw file path;
-   - `models.json`: drop the variants; set each tested entry's `status`
-     from the results (e.g. Laguna × nathanw stays `broken` or becomes
-     `works` with the build that fixed it); remove `fork` from Laguna again
-     if still broken;
-   - re-run the llama-builds playbook and `swap-config`;
-   - a bug report upstream or to the fork where a finding is a clear build
-     bug (a minimal repro from the raw files), if the operator wants one.
+1. **Find the next step:** the first row in the status table below that
+   isn't `done`. Do only that step, then stop and report.
+2. **Read first:** this plan, `AGENTS.md`, and every file the step names.
+   If anything in the step is wrong, ambiguous or doesn't match the repo,
+   stop and ask. Don't choose for the operator.
+3. **Local steps** (`runs_on: local`): edit only `scope.allowed_paths`,
+   run every gate, and fix until all `critical: true` gates pass.
+4. **Framework or production steps** (`approval:` set): first post the
+   step's preflight to the operator: target, mutating or read-only, exact
+   objects, exact commands, out of scope. Run nothing on Framework or
+   through a `with-secrets*` wrapper until the operator answers "proceed"
+   (or similar) in chat. Then run exactly the step's `commands`, using the
+   step's `TASK_APPROVAL` value for wrapper commands. Afterwards report what
+   changed, success or failure, and follow-ups. Framework is reached as
+   `ssh steve@framework.gibbsgreatly.xyz`.
+5. **Commit without the production hook.** The main checkout's
+   post-commit hook reindexes docs on `pve` for every docs commit. Make a
+   hooks copy without it once, then commit through it every time:
+   ```bash
+   H="$(git rev-parse --git-common-dir)/hooks-ctx"
+   [ -d "$H" ] || { mkdir -p "$H" && cp -a "$(git rev-parse --git-common-dir)/hooks/." "$H/" && rm -f "$H/post-commit"; }
+   git -c core.hooksPath="$H" commit -m "<message>"
+   ```
+6. **When the step is done:** set its row to `done` with the date and a
+   one-line result, add any facts learned to the step's "Result" line,
+   commit, and push to `origin claude/qwen-laguna-model-testing-v42x6x`.
+   Put large outputs (reports, logs) under `docs/ctx-bug-test/artifacts/`
+   (ignored by git), not in tracked files.
+7. **Never:** skip, weaken or delete a gate or test; run a full teardown;
+   change any model, build, or llama-swap entry except as a step says;
+   promote or roll back a llama.cpp build.
+
+#### Status
+
+| Step | Runs on | Approval | Status |
+|---|---|---|---|
+| ctx-01-build-check | Framework (read-only) | — | done 2026-10-14 (results below) |
+| ctx-02-harness | local | — | done 2026-10-14 (33 tests, 288-request stub run) |
+| ctx-03-restore-model | local | — | todo |
+| ctx-04-stdlib-redis | local | — | todo |
+| ctx-05-expectations-helper | local | — | todo |
+| ctx-06-catalogue-edit | local | — | todo |
+| ctx-07-install-harness | Framework | `ctx-bug-harness-install` | todo |
+| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo |
+| ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
+| ctx-10-pilot-review | local + Framework (read-only) | — | todo |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
+| ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
+| ctx-13-writeup | local | — | todo |
+| ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
+
+#### ctx-01-build-check (done)
+
+Read-only check on Framework, by the operator, 2026-10-14:
+
+| Backend | `current` | Full SHA | Behind | `/props` `build_info` |
+|---|---|---|---:|---|
+| fork (nathanw) | 20261008-9e21f2e53 | 9e21f2e5329c697a46fd790c0eb172d1ee2f0923 | 5 | `b10814-9e21f2e53` |
+| upstream | 20261008-de7fa0a3c | de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b | 92 | `b11514-de7fa0a3c` |
+
+- The upstream `/props` came from :8080, which was serving
+  `qwen3-coder-next-upstream` (131072 ctx, **4 slots**), not GLM. The fork
+  `/props` came from the embeddings server on :8085 (`nomic-embed-text`,
+  fork/current). No model was switched.
+- Both replies have the fields `check_props()` reads: `model_alias`,
+  `default_generation_settings.n_ctx`, `total_slots` and a string
+  `build_info`. The 4 slots on the live entry confirm the test entries need
+  `parallel: 1`.
+- `sudo -n journalctl -k` and `sudo -n journalctl -u llama-swap.service`
+  both work as `steve`.
+- The raw replies are on Framework at `~/props-fork.json` and
+  `~/props-upstream.json`; ctx-07 turns them into the builds JSON.
+- The fork is 5 commits behind, so D1's extra Laguna cell on a fresh fork
+  candidate stays optional; decide in ctx-10.
+
+#### ctx-03-restore-model
+
+```yaml
+id: ctx-03-restore-model
+title: Restore the model that was loaded before the run, not always GLM
+depends_on: []
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/ctx_bugs.py, prepare() (live mode, before
+  the lock) reads :8080/props model_alias and stores it in run.json as
+  restore_model; if :8080 doesn't answer, store DEFAULT_MODEL and
+  restore_model_note "nothing answered on :8080". On resume keep the stored
+  value (by then a test entry is loaded). The finally block in
+  execute_locked() loads restore_model, or DEFAULT_MODEL if restore_model
+  ends with -ctx32k, -ctx64k, -ctx96k or -ctx131k. stub_server.py starts
+  with alias "qwen3-coder-next-upstream" and test_ctx_bugs.py proves that
+  alias, not GLM, is loaded at the end of a dry run and after a resumed one.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+  forbidden_actions:
+    - "Any network call outside 127.0.0.1"
+    - "Any ssh, with-secrets*, ansible-playbook"
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+  - id: no-hardcoded-final-glm
+    cmd: "grep -n 'restore_model' scripts/framework-ctx-bugs/ctx_bugs.py"
+    expect: "at least one match in prepare() and one in execute_locked()"
+    critical: true
+```
+
+Result: —
+
+#### ctx-04-stdlib-redis
+
+The harness imports the `redis` package for the run lock, and nothing
+checks that Framework's system Python has it. `llama-builds` already talks
+to the same Redis over a raw socket, so do the same and drop the
+dependency rather than installing a package on Framework.
+
+```yaml
+id: ctx-04-stdlib-redis
+title: Talk to cse-panel's Redis with the standard library
+depends_on: [ctx-03-restore-model]
+runs_on: local
+change: >
+  Add scripts/framework-ctx-bugs/resp_client.py with class
+  RespRedis(host, port, db, password, timeout=10) implementing exactly the
+  methods framework_lock.py calls: get(key) -> bytes|None,
+  set(key, value, nx=False, ex=None) -> bool, expire(key, seconds) -> bool,
+  delete(key) -> int. Each call opens a socket, sends AUTH and SELECT, then
+  the command in RESP (copy the encoder `resp()` from
+  ansible/00-initial-setup/files/llama-builds/llama-builds), parses the
+  reply, and raises RuntimeError on a "-" error reply. In ctx_bugs.py
+  lock(), replace `import redis` / redis.Redis(...) with RespRedis using the
+  same config keys. framework_lock.py stays unchanged. Remove the "redis
+  must be available" sentence from scripts/framework-ctx-bugs/README.md.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+  forbidden_actions:
+    - "Changing framework_lock.py's behaviour"
+    - "Any network call outside 127.0.0.1"
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0, including new tests that run RespRedis and framework_lock.acquire/held/release against an in-process fake RESP server on 127.0.0.1 (AUTH, SELECT, GET, SET NX EX, EXPIRE, DEL)"
+    critical: true
+  - id: no-redis-import
+    cmd: "grep -rn 'import redis' scripts/framework-ctx-bugs/*.py"
+    expect: "no output"
+    critical: true
+```
+
+Result: —
+
+#### ctx-05-expectations-helper
+
+```yaml
+id: ctx-05-expectations-helper
+title: Script that writes the builds JSON from saved /props replies
+depends_on: [ctx-04-stdlib-redis]
+runs_on: local
+change: >
+  Add scripts/framework-ctx-bugs/write_build_expectations.py:
+  `--props nathanw=PATH --props upstream=PATH --builds-root
+  /storage/llama-builds --out PATH`. For each label it reads the /props
+  JSON and <builds-root>/<fork|upstream>/current/build.json and writes
+  {label: {name, sha, build_info, props}} with name and sha from build.json
+  and build_info from props. It refuses (exit 1, message, nothing written)
+  unless: build_info is a string; props has model_alias, total_slots and
+  n_ctx or default_generation_settings.n_ctx; build_info's suffix after
+  "-" is a prefix of build.json's sha. It never overwrites an existing
+  --out file. On success it prints exactly one line:
+  `nathanw <build_info> upstream <build_info>`. Add tests with temporary
+  dirs for success and each refusal.
+  Document it in the harness README's phase-1 section, replacing the
+  hand-written JSON instructions.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
+#### ctx-06-catalogue-edit
+
+```yaml
+id: ctx-06-catalogue-edit
+title: Add the 16 test entries to the model catalogue (repo only)
+depends_on: [ctx-05-expectations-helper]
+runs_on: local
+change: >
+  In ansible/00-initial-setup/files/llama-swap/models.json:
+  (1) set "variants" of both qwen3.8-flash-next-q4 and laguna-s-2.1 to
+  exactly the four-entry list under "Catalogue entries" in this plan's
+  "How it runs" section (suffixes ctx32k, ctx64k, ctx96k, ctx131k;
+  settings ctx_size and parallel 1);
+  (2) set laguna-s-2.1 "backends" to ["fork", "upstream", "upstream-hip"];
+  (3) add to laguna-s-2.1 "status" the key "nathanw":
+  {"status": "broken", "reason": "control token 14 flood on b10814; under test (docs/ctx-bug-test)", "checked": "2026-10-09"};
+  (4) change nothing else, including "default".
+  Keep the file's existing 2-space formatting.
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/files/llama-swap/models.json
+  forbidden_actions:
+    - "Running any playbook or llama-builds command"
+gates:
+  - id: json-and-entries
+    cmd: >
+      python3 -c "import json;m={x['id']:x for x in json.load(open('ansible/00-initial-setup/files/llama-swap/models.json'))['models']};
+      s=['ctx32k','ctx64k','ctx96k','ctx131k'];
+      assert all([v['suffix'] for v in m[k]['variants']]==s and all(v['settings']['parallel']==1 for v in m[k]['variants']) for k in ('qwen3.8-flash-next-q4','laguna-s-2.1'));
+      assert 'fork' in m['laguna-s-2.1']['backends'] and m['laguna-s-2.1']['status']['nathanw']['status']=='broken';
+      assert sum(bool(x.get('variants')) for x in m.values())==2; print('ok')"
+    expect: "ok"
+    critical: true
+  - id: diff-scope
+    cmd: "git diff --stat -- ansible/ | tail -1"
+    expect: "1 file changed"
+    critical: true
+  - id: llama-builds-tests
+    cmd: "python3 -m unittest discover -s ansible/00-initial-setup/files/llama-builds -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+  - id: syntax
+    cmd: "ansible-playbook --syntax-check -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
+#### ctx-07-install-harness
+
+```yaml
+id: ctx-07-install-harness
+title: Copy the harness to Framework and write the builds JSON
+depends_on: [ctx-06-catalogue-edit]
+runs_on: framework
+approval: ctx-bug-harness-install
+preflight: >
+  Target: Framework (steve's home and /storage/artifacts only). Mutating:
+  creates ~/framework-ctx-bugs/ (a copy of scripts/framework-ctx-bugs/
+  without results/ and __pycache__/) and
+  /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json.
+  No model load, no llama-swap or llama-builds change, no lock taken.
+  Out of scope: everything else.
+commands:
+  - "rsync -a --delete --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/"
+  - "ssh steve@framework.gibbsgreatly.xyz 'mkdir -p /storage/artifacts/framework-ctx-bugs && python3 ~/framework-ctx-bugs/write_build_expectations.py --props nathanw=$HOME/props-fork.json --props upstream=$HOME/props-upstream.json --builds-root /storage/llama-builds --out /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'cd ~/framework-ctx-bugs && python3 -m unittest discover -s . -p \"test_*.py\" && python3 ctx_bugs.py --help >/dev/null && echo HARNESS-OK'"
+gates:
+  - id: expectations
+    cmd: "(second command's output)"
+    expect: "nathanw b10814-9e21f2e53 upstream b11514-de7fa0a3c"
+    critical: true
+  - id: harness-ok
+    cmd: "(third command's output)"
+    expect: "HARNESS-OK"
+    critical: true
+```
+
+If `write_build_expectations.py` refuses because `current` moved since
+ctx-01, stop: the builds changed, and the operator decides whether to
+redo ctx-01 against the new builds.
+
+Result: —
+
+#### ctx-08-catalogue-deploy
+
+```yaml
+id: ctx-08-catalogue-deploy
+title: Deploy the catalogue and write llama-swap's config
+depends_on: [ctx-07-install-harness]
+runs_on: framework
+approval: ctx-bug-catalogue
+preflight: >
+  Target: Framework (production). Mutating: installs the edited
+  models.json as /etc/llama-builds/models.json (the playbook), then
+  `llama-builds swap-config` rewrites llama-swap's config. That reload stops
+  whatever model is loaded for about 1-2 minutes and loads it again. Adds
+  the ctx test entries (16 used, plus unused HIP ones) and
+  laguna-s-2.1-nathanw. Out of scope: builds, promotion, the default model,
+  other models' settings. Must not run while framework:run-lock is held
+  (swap-config refuses on its own; never pass --force).
+commands:
+  - "TASK_APPROVAL=ctx-bug-catalogue ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
+  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config --dry-run'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config'"
+gates:
+  - id: playbook
+    cmd: "(first command)"
+    expect: "PLAY RECAP with failed=0"
+    critical: true
+  - id: dry-run-entries
+    cmd: "(second command's output)"
+    expect: >
+      lists all 16 ids {qwen3.8-flash-next-q4,laguna-s-2.1}-{nathanw,upstream}-ctx{32k,64k,96k,131k};
+      stop before the third command if any is missing
+    critical: true
+  - id: reloaded
+    cmd: "(third command's output)"
+    expect: "'llama-swap config written: N entries' and either '<model> loaded again' or no model was loaded; anything else, stop and report"
+    critical: true
+```
+
+Result: —
+
+#### ctx-09-pilot
+
+```yaml
+id: ctx-09-pilot
+title: Pilot - the 4 cells at 131072, greedy only (~2.5 h)
+depends_on: [ctx-08-catalogue-deploy]
+runs_on: framework
+approval: ctx-bug-run
+preflight: >
+  Target: Framework (production). Mutating: takes framework:run-lock (eval
+  battery and CyberSecEval wait), loads the 4 *-ctx131k entries in turn
+  through llama-swap, so :8080 serves only test entries for ~2.5 h; at the
+  end reloads the model that was loaded before. Writes results under
+  /storage/artifacts/framework-ctx-bugs/<timestamp>/. Out of scope: other
+  sizes, sampled runs, any catalogue or build change.
+commands:
+  - "ssh steve@framework.gibbsgreatly.xyz '~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json --sizes 131072 --greedy-only'"
+gates:
+  - id: started
+    cmd: "ssh steve@framework.gibbsgreatly.xyz '~/framework-ctx-bugs/run.sh --status'"
+    expect: "status running, and the run directory path"
+    critical: true
+```
+
+After the start gate passes, record the run directory in "Result" and stop.
+The run is detached. The operator says when to check (ctx-10).
+
+Result: —
+
+#### ctx-10-pilot-review
+
+```yaml
+id: ctx-10-pilot-review
+title: Review the pilot and decide on the full run
+depends_on: [ctx-09-pilot]
+runs_on: local
+change: >
+  Read-only on Framework: `run.sh --status` must show complete. Copy the
+  run's report.md, findings.json, run.json and run.log into
+  docs/ctx-bug-test/artifacts/pilot/ with rsync. Check: every cell ran or
+  was refused for a stated reason; restored_default/restore_model in
+  run.json is the model loaded before; no request has evidence_error;
+  timings vs the plan's "Time" table; for each flag, whether it is real
+  (read the raw answer) or a detector mistake. Write a "Pilot (date)"
+  section into docs/ctx-bug-test/README.md: per cell flags, timings,
+  detector mistakes found, and a recommendation (go to ctx-11 / fix the
+  harness first / D1 extra candidate cell yes or no). Fixing a detector is
+  a new local step added to this plan, not done here.
+scope:
+  allowed_paths:
+    - docs/ctx-bug-test/
+gates:
+  - id: complete
+    cmd: "ssh steve@framework.gibbsgreatly.xyz '~/framework-ctx-bugs/run.sh --status'"
+    expect: "status complete"
+    critical: true
+```
+
+Stop after writing the section. The operator decides the next step.
+
+Result: —
+
+#### ctx-11-full-run
+
+Same shape as ctx-09: command
+`~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
+(all 16 cells, ~17–20 h, D6 window), approval `ctx-bug-run-full`. Review
+it like ctx-10 into `docs/ctx-bug-test/artifacts/full/` and a "Full run"
+section in the README listing every candidate finding from findings.json.
+
+Result: —
+
+#### ctx-12-reproduce
+
+For each candidate finding marked "needs three more seeds", one run per
+cell: `run.sh --models <m> --builds <b> --sizes <n> --extra-seeds 4 5 6
+--builds-json <same>`; approval `ctx-bug-reproduce`, listing every cell in
+the preflight. Record which findings reproduced.
+
+Result: —
+
+#### ctx-13-writeup
+
+Local. `docs/ctx-bug-test/README.md`: findings per bug type
+(hallucination, repetition, looping, instruction loss), each with model,
+build, size, prompt, flag, a short excerpt and the raw file path on
+Framework; build bugs and context-size bugs separately; Part B fill
+accuracy per model and build. Draft `models.json` status changes for
+ctx-14 as a table, without editing models.json yet.
+
+Result: —
+
+#### ctx-14-cleanup
+
+Approval `ctx-bug-cleanup`. In models.json: set both models' `variants`
+back to `[]`; set the tested statuses from ctx-13's table; if Laguna on
+nathanw is still broken, remove `fork` from its `backends` again. Run
+ctx-06's json/tests/syntax gates (with the expected values inverted), then
+ctx-08's three commands. Gate: the swap-config dry run lists no `-ctx`
+ids. Then the README status becomes "complete".
+
+Result: —
 
 ## Decisions (operator, 2026-10-13)
 
