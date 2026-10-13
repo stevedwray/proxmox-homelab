@@ -19,6 +19,12 @@
 #     (report finalization against the very large CVE/CPE feed tables)
 #     that blow past available memory momentarily, not a slow fill to the
 #     ceiling, so 6GB's steady-state headroom wasn't the relevant margin.
+#   2 cores/8192MB -> 4 cores/12288MB live (`pct set 70011 --cores 4 --memory
+#     12288`), 2026-10-13: a mgmt_seg scan at 8GB was OOM-killed, and the 2-vCPU
+#     scanner ran at load ~20. Memory is not the real fix there: Redis growth is
+#     now capped separately (--maxmemory 6gb in deploy-greenbone-stack.yml) and
+#     mgmt_seg runs 2 hosts at a time. Right-size again once the per-host Redis
+#     peaks are known. Recorded here so Terraform sees no drift.
 # `pve` itself has zero configured swap devices (confirmed live), so the
 # swap: value below is illustrative only, not a real cushion -- set to 0
 # to stop implying one exists.
@@ -29,8 +35,8 @@ dns_server: "${lab_gw_pentest}"
 network:
   zone: pentest_seg
 vmid: 70011
-cores: 2
-memory: 8192
+cores: 4
+memory: 12288
 swap: 0
 rootfs_size: 20
 storage_profile: platform-security-zfs
