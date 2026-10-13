@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checkpointed Framework context bug hunt. Stdlib except Redis for the shared lock."""
+"""Checkpointed Framework context bug hunt. Standard-library only."""
 import argparse
 import contextlib
 import datetime as dt
@@ -18,6 +18,7 @@ from pathlib import Path
 import detectors
 import framework_lock
 import gen_prompts as gp
+from resp_client import RespRedis
 
 MODELS = ('qwen3.8-flash-next-q4', 'laguna-s-2.1')
 BUILDS = ('nathanw', 'upstream')
@@ -421,10 +422,9 @@ class Run:
             if self.args.dry_run:
                 yield
                 return
-            import redis  # only live use needs the one permitted dependency
             cfg = json.loads(Path(self.args.redis_config).read_text())['publish']
-            client = redis.Redis(host=cfg['host'], port=cfg.get('port', 6379), db=cfg.get('db', 1),
-                                 password=Path(cfg['password_file']).read_text().strip(), socket_timeout=10)
+            client = RespRedis(host=cfg['host'], port=cfg.get('port', 6379), db=cfg.get('db', 1),
+                               password=Path(cfg['password_file']).read_text().strip(), timeout=10)
             if not framework_lock.acquire(client, self.manifest['job_id'], 'ctx-bugs', 'ctx-bugs',
                     on_wait=lambda holder: self.log(f'Waiting for Framework lock: {holder}')):
                 raise RuntimeError('could not acquire Framework lock')

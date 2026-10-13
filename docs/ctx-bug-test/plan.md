@@ -325,7 +325,7 @@ prompt each time is:
 | ctx-01-build-check | Framework (read-only) | — | done 2026-10-14 (results below) |
 | ctx-02-harness | local | — | done 2026-10-14 (33 tests, 288-request stub run) |
 | ctx-03-restore-model | local | — | done 2026-10-14 (saved initial model restored; 36 tests pass) |
-| ctx-04-stdlib-redis | local | — | todo |
+| ctx-04-stdlib-redis | local | — | done 2026-10-14 (stdlib RESP client; 43 tests pass) |
 | ctx-05-expectations-helper | local | — | todo |
 | ctx-06-catalogue-edit | local | — | todo |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | todo |
@@ -444,7 +444,15 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. `RespRedis` uses the llama-builds RESP encoder and
+opens a fresh socket for each operation, sending AUTH and SELECT before
+GET, SET (including NX/EX), EXPIRE or DEL. The harness uses the same Redis
+configuration and no longer needs the redis package. `framework_lock.py`
+is unchanged. All 43 tests pass, including real loopback RESP traffic,
+database isolation, expiry, binary values, error replies, the shared lock's
+acquire/held/renew/release lifecycle and harness lock integration. The
+`no-redis-import` gate produces no output. No Framework or production Redis
+access occurred.
 
 #### ctx-05-expectations-helper
 

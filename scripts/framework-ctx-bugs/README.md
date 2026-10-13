@@ -4,9 +4,11 @@ Phase 2 is local code and synthetic validation only. The real Framework test
 has **not run**. See [the plan](../../docs/ctx-bug-test/plan.md) for D1–D7,
 production approvals, and the remaining phases.
 
-The Python harness is stdlib only except `redis` for the production run lock.
+The Python harness is standard-library only. `resp_client.py` provides the
+small RESP client for the production run lock; each operation opens a socket,
+authenticates, selects the configured database and sends its command.
 `framework_lock.py` is an unchanged copy of the shared Framework lock. Dry runs
-use a local file lock and do not import Redis, inspect host processes/kernel
+use a local file lock and do not connect to Redis, inspect host processes/kernel
 logs, or read production credentials. The stub binds only to loopback; dry
 runs refuse remote URLs and servers without its explicit marker.
 
@@ -110,8 +112,7 @@ After catalogue deployment and production approval, the detached pilot is:
 Omit `--sizes` and `--greedy-only` for the full matrix. Live defaults are
 llama-server `http://127.0.0.1:8080`, llama-swap `http://127.0.0.1:8099`, API
 key file `/etc/llamacpp/api-key`, Redis config `/etc/llama-builds/backends.json`,
-and results root `/storage/artifacts/framework-ctx-bugs`. `redis` must already
-be available in the Python environment used by the service. Live evidence
+and results root `/storage/artifacts/framework-ctx-bugs`. Live evidence
 uses `/proc` for server identity and `sudo -n journalctl` for kernel and
 llama-swap system-unit logs. Kernel capture is bounded from just before each
 completion request to just after it (`-k --since @<epoch> --until @<epoch>
