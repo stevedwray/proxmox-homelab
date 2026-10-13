@@ -8,6 +8,7 @@ import random
 import re
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import gen_prompts as gp
@@ -69,7 +70,8 @@ def clean_answer(prompt, messages):
 
 class StubServer(ThreadingHTTPServer):
     daemon_threads = True
-    def __init__(self, address=('127.0.0.1', 0), *, clean=False, delay_request=None, delay_seconds=10):
+    def __init__(self, address=('127.0.0.1', 0), *, clean=False, delay_request=None, delay_seconds=10,
+                 kernel_log_error=False):
         super().__init__(address, Handler)
         self.clean = clean
         self.delay_request, self.delay_seconds = delay_request, delay_seconds
@@ -80,6 +82,9 @@ class StubServer(ThreadingHTTPServer):
         self.mutex = threading.Lock()
         self.delayed = threading.Event()
         self.release_delay = threading.Event()
+        self.kernel_log_error = kernel_log_error
+        self.kernel_windows = []
+        self.kernel_events = []
 
     @property
     def url(self):
@@ -111,7 +116,15 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(dict(status='ok'))
         elif self.path == '/health':
             self.reply(dict(status='ok', ctx_bugs_stub=True, builds=BUILDS,
-                            server_instance=s.instance, dmesg=''))
+                            server_instance=s.instance))
+        elif self.path.startswith('/kernel-logs?'):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            since, until = float(query['since'][0]), float(query['until'][0])
+            s.kernel_windows.append((since, until))
+            if s.kernel_log_error:
+                self.reply(dict(error='sudo -n journalctl: simulated kernel log permission failure'))
+            else:
+                self.reply(dict(text='\n'.join(line for epoch, line in s.kernel_events if since <= epoch <= until)))
         elif self.path == '/props':
             match = re.search(r'-ctx(32k|64k|96k|131k)$', s.entry)
             size = {'32k': 32768, '64k': 65536, '96k': 98304, '131k': 131072}.get(match[1] if match else '', 131072)
@@ -182,9 +195,11 @@ if __name__ == '__main__':
     parser.add_argument('--clean', action='store_true')
     parser.add_argument('--delay-request', type=int)
     parser.add_argument('--delay-seconds', type=float, default=10)
+    parser.add_argument('--kernel-log-error', action='store_true', help='simulate a failed kernel journal command')
     args = parser.parse_args()
     server = StubServer(('127.0.0.1', args.port), clean=args.clean,
-                        delay_request=args.delay_request, delay_seconds=args.delay_seconds)
+                        delay_request=args.delay_request, delay_seconds=args.delay_seconds,
+                        kernel_log_error=args.kernel_log_error)
     print(server.url, flush=True)
     try:
         server.serve_forever()

@@ -39,6 +39,8 @@ S3 seed 1 absent-fact hallucination, greedy S4 runaway, and sampled S5 seed 2
 template leak. All four Laguna fork cells replay the hidden token flood.
 `--clean` on the stub disables all injections. It also supports
 `--delay-request N --delay-seconds S` for interruption experiments.
+`--kernel-log-error` simulates a failed kernel journal command: completions
+continue, with the failure recorded in every affected `evidence_error`.
 
 ## Prompts and fit
 
@@ -73,8 +75,8 @@ Phase 1 must record exact build expectations in an operator-owned JSON file:
 
 ```json
 {
-  "nathanw": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>"},
-  "upstream": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>"}
+  "nathanw": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>", "props": {}},
+  "upstream": {"name": "<current build directory>", "sha": "<full commit SHA>", "build_info": "<expected /props value>", "props": {}}
 }
 ```
 
@@ -88,6 +90,16 @@ requires an explicit expected `build_info` rather than guessing from it.
 It checks names and SHAs against local build JSON before taking the shared
 lock and checks alias, context, build identity and slots after every load.
 
+Before the pilot, save one complete real `/props` response from each build
+under that build's `props` key in this builds JSON (replace the empty objects
+above). Confirm that the responses contain the fields read by `check_props()`:
+`model_alias`, `n_ctx` or `default_generation_settings.n_ctx`, `total_slots`,
+and `build_info`. Check that aliases/context values are in the expected
+locations, that there is one slot, and that the top-level expected
+`build_info` exactly matches the response's value and JSON type. Retain the
+raw responses in the builds JSON, which is copied into `run.json`. If the
+real schema differs, resolve that mismatch before starting the pilot.
+
 After catalogue deployment and production approval, the detached pilot is:
 
 ```bash
@@ -100,8 +112,14 @@ llama-server `http://127.0.0.1:8080`, llama-swap `http://127.0.0.1:8099`, API
 key file `/etc/llamacpp/api-key`, Redis config `/etc/llama-builds/backends.json`,
 and results root `/storage/artifacts/framework-ctx-bugs`. `redis` must already
 be available in the Python environment used by the service. Live evidence
-requires readable `dmesg`, `/proc` and llama-swap's user journal; failures stop
-the run. The launcher follows the existing benchmark's `systemd-run --user`
+uses `/proc` for server identity and `sudo -n journalctl` for kernel and
+llama-swap system-unit logs. Kernel capture is bounded from just before each
+completion request to just after it (`-k --since @<epoch> --until @<epoch>
+--no-pager -o short-iso`); only that window is appended once to `dmesg.txt`.
+Capture or identity failures are recorded in `evidence_error` without aborting
+completions. Cell logs use `-u llama-swap.service --since <cell start>
+--no-pager`; a failed capture is written into the cell log and the run continues.
+The launcher follows the existing benchmark's `systemd-run --user`
 pattern and enables user lingering if needed. Use `--foreground` when desired.
 
 Sampled runs send the values in the single `SAMPLING` constant in

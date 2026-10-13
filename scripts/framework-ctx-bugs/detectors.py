@@ -30,15 +30,9 @@ def first_difference(left, right):
     return min(len(left), len(right)) if len(left) != len(right) else None
 
 
-def gpu_errors(before, after):
-    remaining = Counter(before.splitlines())
-    new = []
-    for line in after.splitlines():
-        if remaining[line]:
-            remaining[line] -= 1
-        elif 'amdgpu' in line.lower() and re.search(r'ring .* timeout|wedged|reset', line, re.I):
-            new.append(line)
-    return new
+def gpu_errors(window):
+    return [line for line in window.splitlines()
+            if 'amdgpu' in line.lower() and re.search(r'ring .* timeout|wedged|reset', line, re.I)]
 
 
 def instruction_checks(prompt_id, answer, fixture):
@@ -113,7 +107,7 @@ def instruction_checks(prompt_id, answer, fixture):
 
 
 def detect(prompt_id, response, fixture, visible_tokens, *, error=None, healthy=True,
-           restarted=False, dmesg_before='', dmesg_after='', ctx_baseline=None, build_baseline=None):
+           restarted=False, dmesg_window='', ctx_baseline=None, build_baseline=None):
     flags, details = [], {}
     choice = response.get('choices', [{}])[0]
     message = choice.get('message', {})
@@ -147,7 +141,7 @@ def detect(prompt_id, response, fixture, visible_tokens, *, error=None, healthy=
     if error or not healthy or restarted:
         flags.append('crash')
         details['crash'] = dict(error=error, healthy=healthy, restarted=restarted)
-    gpu = gpu_errors(dmesg_before, dmesg_after)
+    gpu = gpu_errors(dmesg_window)
     if gpu:
         flags.append('gpu-error')
         details['gpu-error'] = gpu

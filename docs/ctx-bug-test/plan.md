@@ -238,8 +238,9 @@ The id is the server's `--alias`, so every raw response records its cell.
 
 ### Phase 2 implementation notes (2026-10-14)
 
-Local validation passed: 26 unittest tests (including interrupted-request
-resume), identical prompt regeneration, and the complete 16-cell stand-in
+Local validation passed after review fixes: 33 unittest tests (including
+interrupted-request resume, journal failures and report-table column counts),
+identical prompt regeneration, and the complete 16-cell stand-in
 matrix. Its 288 completed requests flag every canned bug in its expected
 cell and leave all 259 clean responses unflagged. This is harness validation,
 not evidence about the real models or Framework.
@@ -247,6 +248,15 @@ not evidence about the real models or Framework.
 - Prompt counts include the chat template: `/apply-template` renders the
   messages before `/tokenize` counts them. The fit gate keeps the full
   16,384-token reserve even when running a short-form cell.
+- Kernel logs use `sudo -n journalctl -k` bounded to each request's start
+  and end epochs; only that window is appended once to `dmesg.txt`. GPU
+  detection reads the window directly. Capture failures are retained in
+  `evidence_error` and do not abort completions. Cell logs use the system
+  `llama-swap.service` journal via `sudo -n journalctl`; capture errors are
+  written to the cell log without aborting the run.
+- Before the pilot, save one real `/props` response from each build in its
+  builds JSON entry and confirm `check_props()`'s field names and value types
+  against those responses (see the harness README's phase-1 check).
 - Laguna's published recommendation was confirmed from Poolside's
   [pinned sampling guidance](https://huggingface.co/poolside/Laguna-S-2.1-FP8/blob/2bea609ec5cc284a99471d3eba1e33fa9cede712/README.md):
   temperature 0.7 and top_p 0.95. top_k 20 and min_p 0 come from the

@@ -288,7 +288,7 @@ def report(directory, records, manifest):
     add_divergences(records)
     lines = ['# Context bug test', '', f"Status: {manifest.get('status', 'running')}. Dry run: {manifest['dry_run']}.", '',
              '| Cell | Prompt / run | Flags | Prompt tokens | Generated tokens | Prompt tok/s | Gen tok/s | Wall seconds |',
-             '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+             '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |']
     for r in records:
         timing = r.get('response', {}).get('timings', {})
         lines.append(f"| {r['cell']} | {r['prompt']}/{r['run']} | {', '.join(r['flags']) or 'clean'} | "
@@ -465,11 +465,29 @@ class Run:
         self.save()
         return entry, fixtures, counts
 
-    def evidence(self, entry):
+    def server_identity(self, entry):
         if self.args.dry_run:
-            health = self.client.call('/health')
-            return health.get('dmesg', ''), health.get('server_instance')
-        return command(['dmesg', '--color=never']), server_pid(entry)
+            return self.client.call('/health').get('server_instance')
+        return server_pid(entry)
+
+    def kernel_window(self, since, until):
+        if self.args.dry_run:
+            query = urllib.parse.urlencode(dict(since=since, until=until))
+            result = self.client.call('/kernel-logs?' + query)
+            if result.get('error'):
+                raise RuntimeError(result['error'])
+            return result['text']
+        return command(['sudo', '-n', 'journalctl', '-k', '--since', f'@{since:.6f}',
+                        '--until', f'@{until:.6f}', '--no-pager', '-o', 'short-iso'])
+
+    def cell_logs(self, cell_start):
+        try:
+            if self.args.dry_run:
+                return json.dumps(self.client.call('/logs', swap=True), indent=2)
+            return command(['sudo', '-n', 'journalctl', '-u', 'llama-swap.service',
+                            '--since', cell_start, '--no-pager'])
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            return f'ERROR capturing llama-swap system journal: {type(exc).__name__}: {exc}'
 
     def request(self, model, build, size, entry, fixture, count, prompt, run, seed, greedy, short):
         self.check_lock()
@@ -477,7 +495,13 @@ class Run:
                         max_tokens=2048 if short else BUDGET, cache_prompt=False, stream=False)
         payload = dict(settings, model=entry, messages=fixture['messages'])
         key = f'{entry}/{prompt}/{run}'
-        before, pid = self.evidence(entry)
+        evidence_errors = []
+        pid = after_pid = None
+        try:
+            pid = self.server_identity(entry)
+        except (OSError, ValueError, RuntimeError) as exc:
+            evidence_errors.append(f'before server identity: {type(exc).__name__}: {exc}')
+        since = time.time()
         started = time.monotonic()
         response, error = {}, None
         try:
@@ -486,14 +510,24 @@ class Run:
                 raise ValueError('invalid completion response')
         except (OSError, ValueError) as exc:
             error = f'{type(exc).__name__}: {exc}'
+        until = time.time()
         elapsed = time.monotonic() - started
-        healthy, evidence_error = True, None
+        healthy = True
         try:
             self.client.call('/health')
-            after, after_pid = self.evidence(entry)
+        except (OSError, ValueError) as exc:
+            healthy = False
+            evidence_errors.append(f'after health: {type(exc).__name__}: {exc}')
+        try:
+            after_pid = self.server_identity(entry)
         except (OSError, ValueError, RuntimeError) as exc:
-            healthy, after, after_pid = False, before, None
-            evidence_error = str(exc)
+            evidence_errors.append(f'after server identity: {type(exc).__name__}: {exc}')
+        window = ''
+        try:
+            window = self.kernel_window(since, until)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            evidence_errors.append(f'kernel window capture: {type(exc).__name__}: {exc}')
+        evidence_error = '; '.join(evidence_errors) or None
         choice = response.get('choices', [{}])[0]
         message = choice.get('message', {})
         visible = (message.get('reasoning_content') or '') + (message.get('content') or '')
@@ -504,15 +538,17 @@ class Run:
             except (OSError, ValueError) as exc:
                 error = f'visible token count failed: {exc}'
         grade = detectors.detect(prompt, response, fixture, visible_count, error=error, healthy=healthy,
-                                 restarted=after_pid != pid, dmesg_before=before, dmesg_after=after)
+                                 restarted=pid is not None and after_pid is not None and after_pid != pid,
+                                 dmesg_window=window)
         record = dict(key=key, cell=entry, model=model, build=build, size=size, prompt=prompt, run=run, seed=seed,
                       settings=settings, prompt_sha256=gp.sha(gp.json_bytes(fixture)), prompt_tokens=count,
                       server_prompt_tokens=response.get('usage', {}).get('prompt_tokens'),
                       generated_tokens=response.get('usage', {}).get('completion_tokens', 0),
                       response=response, error=error, evidence_error=evidence_error,
+                      kernel_window=dict(since=since, until=until),
                       wall_seconds=elapsed, recorded=now(), server_before=pid, server_after=after_pid, **grade)
         with (self.directory / 'dmesg.txt').open('a') as output:
-            output.write(f'\n## {key} before\n{before}\n## after\n{after}\n')
+            output.write(f'\n## {key} kernel window @{since:.6f} to @{until:.6f}\n{window}\n')
         return record
 
     def checkpoint(self, record):
@@ -561,10 +597,7 @@ class Run:
                                                   prompt, run, seed, greedy, short)
                             self.checkpoint(record)
                     finally:
-                        if self.args.dry_run:
-                            logs = json.dumps(self.client.call('/logs', swap=True), indent=2)
-                        else:
-                            logs = command(['journalctl', '--user', '-u', 'llama-swap.service', '--since', cell_start, '--no-pager'])
+                        logs = self.cell_logs(cell_start)
                         with (self.directory / 'logs' / f'{entry}.log').open('a') as output:
                             output.write(f'\n## Invocation {cell_start}\n{logs}\n')
 

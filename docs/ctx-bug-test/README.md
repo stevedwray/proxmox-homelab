@@ -16,12 +16,15 @@ deterministic prompts, tokenizer fit checks, saved context-fill prompts,
 all detectors, checkpoint/resume, a loopback stand-in, reports and a detached
 systemd user launcher with `--status`.
 
-Local gates passed: 26 unittest tests, including interruption/resume;
+Local gates passed after review fixes: 33 unittest tests, including
+interruption/resume, journal-capture failures and report-table column counts;
 two prompt generations with a clean second-run diff; and a complete 16-cell
 stand-in run (288 requests plus four saved triggering probes). All six canned
 bug types were flagged in their expected cells; all 259 clean responses had
 no flags. The local ignored report is
-`scripts/framework-ctx-bugs/results/phase2-validation/report.md`.
+`scripts/framework-ctx-bugs/results/phase2-review-validation/report.md`.
+This full run also simulated kernel-log permission failures: all 288 requests
+completed and recorded `evidence_error` without adding flags to clean answers.
 
 Session exception: the existing Git post-commit hook automatically attempted
 `./with-secrets-prod-tiny scripts/provision.sh --stack mcp-utility-stack`

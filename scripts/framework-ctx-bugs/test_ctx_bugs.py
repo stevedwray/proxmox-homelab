@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import json
+import re
 import signal
 import subprocess
 import sys
@@ -203,12 +204,130 @@ class DetectorTests(unittest.TestCase):
 
     def test_gpu_error_positive_negative(self):
         for text in ('amdgpu ring gfx timeout', 'amdgpu device wedged', 'amdgpu GPU reset'):
-            self.assertIn('gpu-error', self.flags(dmesg_after=text))
-            self.assertNotIn('gpu-error', self.flags(dmesg_before=text, dmesg_after=text))
-        self.assertNotIn('gpu-error', self.flags(dmesg_after='unrelated reset'))
+            self.assertIn('gpu-error', self.flags(dmesg_window=text))
+        self.assertNotIn('gpu-error', self.flags(dmesg_window='unrelated reset'))
+        self.assertNotIn('gpu-error', self.flags(dmesg_window=''))
 
 
 class HarnessTests(unittest.TestCase):
+    def test_report_tables_match_header_separator_and_data_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records = []
+            for build, size, answer in (('nathanw', 32768, 'base'), ('nathanw', 65536, 'changed'),
+                                         ('upstream', 65536, 'another')):
+                cell = cb.entry_id(cb.MODELS[0], build, size)
+                for prompt in ('S1', 'F'):
+                    records.append(dict(key=f'{cell}/{prompt}/greedy', cell=cell, model=cb.MODELS[0],
+                        build=build, size=size, prompt=prompt, run='greedy', seed=1, answer=answer,
+                        flags=[], details={}, prompt_tokens=100, response={}, wall_seconds=1))
+            cb.report(Path(tmp), records, dict(dry_run=True, status='complete'))
+            lines = (Path(tmp)/'report.md').read_text().splitlines()
+            separators = 0
+            for i, line in enumerate(lines):
+                if not re.fullmatch(r'\|(?:\s*:?-+:?\s*\|)+', line):
+                    continue
+                separators += 1
+                columns = line.count('|') - 1
+                self.assertEqual(lines[i-1].count('|') - 1, columns, lines[i-1])
+                for row in lines[i+1:]:
+                    if not row.startswith('|'):
+                        break
+                    self.assertEqual(row.count('|') - 1, columns, row)
+            self.assertEqual(separators, 3)
+
+    def test_kernel_capture_uses_bounded_system_journal_and_appends_once(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            fixture = gp.build_prompts()['S1']
+            entry = cb.entry_id(cb.MODELS[0], 'upstream', 32768)
+            run.args.dry_run = False
+            line = '2026-10-14T01:00:00+00:00 kernel: amdgpu ring gfx timeout\n'
+            with mock.patch.object(run, 'check_lock'), mock.patch.object(cb, 'server_pid', return_value=[123, '456']), \
+                 mock.patch.object(cb, 'command', return_value=line) as capture:
+                record = run.request(cb.MODELS[0], 'upstream', 32768, entry, fixture, 100,
+                                     'S1', 'greedy', 1, True, False)
+            window = record['kernel_window']
+            self.assertLessEqual(window['since'], window['until'])
+            capture.assert_called_once_with(['sudo', '-n', 'journalctl', '-k', '--since', f"@{window['since']:.6f}",
+                '--until', f"@{window['until']:.6f}", '--no-pager', '-o', 'short-iso'])
+            self.assertIn('gpu-error', record['flags'])
+            self.assertIsNone(record['evidence_error'])
+            saved = (run.directory/'dmesg.txt').read_text()
+            self.assertEqual(saved.count(line), 1)
+            self.assertNotIn('## after', saved)
+
+    def test_before_identity_failure_does_not_abort_request(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            with mock.patch.object(run, 'server_identity', side_effect=[RuntimeError('identity unavailable'), 123]):
+                record = run.request(cb.MODELS[0], 'upstream', 32768, cb.entry_id(cb.MODELS[0], 'upstream', 32768),
+                    gp.build_prompts()['S1'], 100, 'S1', 'greedy', 1, True, False)
+            self.assertEqual(len(s.requests), 1)
+            self.assertIn('before server identity', record['evidence_error'])
+            self.assertIsNone(record['error'])
+            self.assertNotIn('crash', record['flags'])
+
+    def test_system_cell_journal_failure_is_written_without_aborting(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                '--models', cb.MODELS[0], '--builds', 'nathanw', '--sizes', '32768', '--greedy-only']))
+            def logs(start):
+                # Exercise the actual production command path while all requests
+                # and lock operations continue to use the local stand-in.
+                run.args.dry_run = False
+                try:
+                    return cb.Run.cell_logs(run, start)
+                finally:
+                    run.args.dry_run = True
+            with mock.patch.object(run, 'cell_logs', side_effect=logs), \
+                 mock.patch.object(cb, 'command', side_effect=RuntimeError('journal access denied')) as capture:
+                self.assertEqual(run.execute(), 0)
+            self.assertEqual(len(run.records), 6)
+            capture.assert_called_once()
+            argv = capture.call_args.args[0]
+            self.assertEqual(argv[:6], ['sudo', '-n', 'journalctl', '-u', 'llama-swap.service', '--since'])
+            self.assertEqual(argv[-1], '--no-pager')
+            self.assertNotIn('--user', argv)
+            log = (run.directory/'logs'/f'{cb.entry_id(cb.MODELS[0], "nathanw", 32768)}.log').read_text()
+            self.assertIn('journal access denied', log)
+
+    def test_kernel_command_exceptions_do_not_abort_completion(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            run.args.dry_run = False
+            for failure in (RuntimeError('permission denied'), subprocess.TimeoutExpired('journalctl', 30)):
+                with self.subTest(failure=type(failure).__name__), mock.patch.object(run, 'check_lock'), \
+                     mock.patch.object(cb, 'server_pid', return_value=[123, '456']), \
+                     mock.patch.object(cb, 'command', side_effect=failure):
+                    record = run.request(cb.MODELS[0], 'upstream', 32768, cb.entry_id(cb.MODELS[0], 'upstream', 32768),
+                        gp.build_prompts()['S1'], 100, 'S1', 'greedy', 1, True, False)
+                    self.assertIn('kernel window capture', record['evidence_error'])
+                    self.assertIsNone(record['error'])
+                    self.assertEqual(record['flags'], [])
+            self.assertEqual(len(s.requests), 2)
+
+    def test_stub_kernel_window_excludes_historical_and_future_lines(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))
+            s.kernel_events = [(99, 'amdgpu historical reset'), (100.5, 'kernel normal event'),
+                               (101, 'amdgpu ring gfx timeout'), (102, 'amdgpu future reset')]
+            window = run.kernel_window(100.25, 101.75)
+            self.assertEqual(window, 'kernel normal event\namdgpu ring gfx timeout')
+            self.assertEqual(d.gpu_errors(window), ['amdgpu ring gfx timeout'])
+
+    def test_stub_kernel_command_failure_records_evidence_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True, kernel_log_error=True) as s:
+            directory = Path(tmp)/'kernel-failure'
+            result = subprocess.run(self.command(s, directory), capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+            records = cb.read_results(directory/'results.jsonl')
+            self.assertEqual(len(records), 22)
+            self.assertTrue(all('simulated kernel log permission failure' in r['evidence_error'] for r in records))
+            self.assertTrue(all(r['error'] is None and not r['flags'] for r in records))
+            self.assertEqual(len(s.kernel_windows), 22)
+            self.assertTrue(all(since <= until for since, until in s.kernel_windows))
+            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+
     def test_matrix_and_short_form(self):
         self.assertEqual(len(cb.runs()), 22)
         self.assertEqual(len(cb.runs(short=True)), 6)
