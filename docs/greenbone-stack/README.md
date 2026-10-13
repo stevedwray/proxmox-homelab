@@ -424,3 +424,14 @@ the kernel OOM-killed it, interrupting the scan (container ceiling was 8GB, then
 Changing a zone's value changes its fingerprint, so only that zone's target and
 task are rebuilt on the next apply. A heavier alternative, not done: a scan config
 without the web-app probe families (loses remote web checks on every zone).
+
+### Redis memory cap
+
+The `max_hosts=2` change alone was not enough: a second mgmt_seg run (2026-10-13)
+held at ~2.5GB for 111 minutes, then Redis went from 0.5GB to 12GB in about six
+minutes with only ~27k keys per active knowledge base (so very large cached
+response bodies, from one or two of the hosts that had not yet logged in), and
+the container OOM-killed it. Redis had no `maxmemory` (policy `noeviction`), so
+nothing bounded it. The compose now starts redis-server with `--maxmemory 6gb`;
+a runaway host then fails on write errors instead of taking every scan down.
+The culprit host is being isolated with single-host test tasks.

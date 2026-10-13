@@ -237,6 +237,17 @@
 
             redis-server:
               image: {{ greenbone_registry_host }}/greenbone/community/redis-server
+              # Cap Redis (default is unlimited, policy noeviction). Scan
+              # knowledge bases live here, and a host returning huge web
+              # responses grew it from 0.5GB to 12GB in 6 minutes on
+              # 2026-10-13, got the container OOM-killed, and interrupted the
+              # whole scan. Capped, that host's scan fails on write errors
+              # instead. The image's own command is kept; the flag overrides
+              # the config file.
+              command:
+                - /bin/sh
+                - -c
+                - rm -f /run/redis/redis.sock && redis-server /etc/redis/redis.conf --maxmemory 6gb
               deploy:
                 restart_policy:
                   condition: any
