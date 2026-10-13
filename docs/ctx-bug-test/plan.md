@@ -328,7 +328,7 @@ prompt each time is:
 | ctx-04-stdlib-redis | local | — | done 2026-10-14 (stdlib RESP client; 43 tests pass) |
 | ctx-05-expectations-helper | local | — | done 2026-10-14 (expectations helper; 54 tests pass) |
 | ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
-| ctx-07-install-harness | Framework | `ctx-bug-harness-install` | todo |
+| ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
@@ -565,11 +565,13 @@ preflight: >
   creates ~/framework-ctx-bugs/ (a copy of scripts/framework-ctx-bugs/
   without results/ and __pycache__/) and
   /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json.
+  Uses sudo install to create the dedicated artifacts directory with
+  owner/group steve and mode 0750; no ownership change to its parent.
   No model load, no llama-swap or llama-builds change, no lock taken.
   Out of scope: everything else.
 commands:
   - "rsync -a --delete --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/"
-  - "ssh steve@framework.gibbsgreatly.xyz 'mkdir -p /storage/artifacts/framework-ctx-bugs && python3 ~/framework-ctx-bugs/write_build_expectations.py --props nathanw=$HOME/props-fork.json --props upstream=$HOME/props-upstream.json --builds-root /storage/llama-builds --out /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'sudo -n install -d -m 0750 -o steve -g steve /storage/artifacts/framework-ctx-bugs && python3 ~/framework-ctx-bugs/write_build_expectations.py --props nathanw=$HOME/props-fork.json --props upstream=$HOME/props-upstream.json --builds-root /storage/llama-builds --out /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json'"
   - "ssh steve@framework.gibbsgreatly.xyz 'cd ~/framework-ctx-bugs && python3 -m unittest discover -s . -p \"test_*.py\" && python3 ctx_bugs.py --help >/dev/null && echo HARNESS-OK'"
 gates:
   - id: expectations
@@ -586,7 +588,15 @@ If `write_build_expectations.py` refuses because `current` moved since
 ctx-01, stop: the builds changed, and the operator decides whether to
 redo ctx-01 against the new builds.
 
-Result: —
+Result: done by the operator, 2026-10-14. The Framework test command passed
+all 54 tests and printed `HARNESS-OK`. The expectations helper printed
+exactly `nathanw b10814-9e21f2e53 upstream b11514-de7fa0a3c`, confirming the
+saved props match the current build records. The initial unprivileged
+`mkdir` failed with Permission denied before the helper ran; the command
+above now provisions only the dedicated directory via sudo install. Results
+are recorded from the operator's chat output; no additional Framework
+commands were run by the agent during closeout. The catalogue remains
+undeployed; ctx-08 requires its own approval.
 
 #### ctx-08-catalogue-deploy
 
