@@ -793,3 +793,27 @@
         # folder, they need to be able to delete old/test runs from
         # Nextcloud's own UI, not just view them. No re-share bit (16).
         nextcloud_folder_share_permissions: 15
+
+- name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
+  hosts: all
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Read this stack's GVM scan credentials from OpenBao
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_scan_host_secret.py"
+          - --stack
+          - cse-controller
+      register: gvm_scan_secret_raw
+      delegate_to: localhost
+      become: false
+      changed_when: false
+    - name: Parse the credentials JSON
+      ansible.builtin.set_fact:
+        gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
+  vars:
+    gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
+  roles:
+    - gvm_scan_account

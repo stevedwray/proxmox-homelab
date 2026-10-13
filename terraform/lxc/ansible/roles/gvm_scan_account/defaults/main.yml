@@ -1,17 +1,16 @@
 ---
-# Defaults for gvm_scan_account -- see docs/lxc-scan-and-monitoring-rollout/
-# plan.md (gvm-01). Creates the dedicated "gvm-scan" local account GVM's
-# credentialed (LSC) scans authenticate as: SSH key for login, full sudo
-# gated behind a separate password credential (GVM's "elevate privileges"
-# model), replacing the old setup_credentials.py's reuse of the operator's
-# own root admin key.
+# Defaults for gvm_scan_account -- see docs/gvm-coverage-cleanup/plan.md.
+# Creates the dedicated "gvm-scan" local account GVM's credentialed (LSC)
+# scans log in as: SSH key only, no usable password, no sudo.
+#
+# GVM's "elevate privileges" feature is su-based, not sudo-based --
+# confirmed live 2026-10-11 from target sshd logs (every fleet scan ran
+# `su -l gvm-scan`, switching to itself), so the original password-gated
+# sudo grant was never used and made every scheduled scan report "SSH Login
+# Failed For Authenticated Checks". Operator decision 2026-10-11: scan
+# unprivileged. This role now removes the old sudoers drop-in.
 
-# Both of these are deliberately given no real default -- they are
-# security-relevant, per-host, unique values (one SSH keypair + one sudo
-# password per LXC, operator-confirmed 2026-09-29) that must come from
-# that specific stack's own OpenBao entry via gvm_scan_host_secret.py
-# (see gvm-02/gvm-05), never guessed or shared across hosts. Same "never
-# guessed, exact match or fail" philosophy as
-# known_production_images.json's classify_artifact().
+# Deliberately no real default -- a security-relevant value, shared per
+# VLAN/zone (2026-10-12), that must come from that zone's OpenBao entry via
+# scripts/gvm_scan_host_secret.py, never guessed or shared across hosts.
 gvm_scan_account_public_key: ""
-gvm_scan_account_sudo_password_hash: ""

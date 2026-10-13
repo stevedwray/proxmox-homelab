@@ -80,8 +80,6 @@
 
     # Secrets -- OpenBao kv/services/greenbone (secrets/manifest.json).
     greenbone_admin_password: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory('GREENBONE_ADMIN_PASSWORD env var is required') }}"
-    greenbone_steve_ssh_private_key: "{{ lookup('env', 'GREENBONE_STEVE_SSH_PRIVATE_KEY') | mandatory('GREENBONE_STEVE_SSH_PRIVATE_KEY env var is required') }}"
-    greenbone_openvas_workstation_ssh_private_key: "{{ lookup('env', 'GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY') | mandatory('GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_mikrotik_ssh_private_key: "{{ lookup('env', 'GREENBONE_MIKROTIK_SSH_PRIVATE_KEY') | mandatory('GREENBONE_MIKROTIK_SSH_PRIVATE_KEY env var is required') }}"
     greenbone_start_task_name: "{{ lookup('env', 'GREENBONE_START_TASK_NAME') | default('', true) }}"
     greenbone_status_task_name: "{{ lookup('env', 'GREENBONE_STATUS_TASK_NAME') | default('', true) }}"
@@ -525,8 +523,15 @@
                 # off that identity.
                 GVM_BRIDGE_USERNAME: "admin"
                 GVM_BRIDGE_PASSWORD: "{{ greenbone_admin_password }}"
+              # Loopback only (2026-10-12, docs/gvm-coverage-cleanup): the
+              # bridge has no authentication and acts as GVM admin, so on
+              # 0.0.0.0 anyone on the LAN could read every finding
+              # (/findings/all) or make greenbone scan any IP
+              # (/scan/start). Its only remaining client is
+              # gvm_findings_ingest on this same host (PentAGI, the
+              # original network client, was destroyed 2026-09-28).
               ports:
-                - 0.0.0.0:8010:8010
+                - 127.0.0.1:8010:8010
               volumes:
                 - gvmd_socket_vol:/run/gvmd
               depends_on:
@@ -970,8 +975,8 @@
       register: greenbone_schedule_setup
       tags: [schedule-program]
 
-    # First-pass credentialed scanning deliberately reuses SSH access that
-    # already exists on managed targets.  This tag only touches
+    # Credentialed scanning (docs/gvm-coverage-cleanup/): one shared gvm-scan
+    # key per VLAN/zone from OpenBao plus the MikroTik key.  This tag only touches
     # greenbone-stack: it does not deploy accounts, SSH keys, or sudo policy
     # to any scanned host.  Stage the private keys as root-only files rather
     # than command-line environment values, then remove them after GMP has
@@ -994,27 +999,13 @@
             dest: "{{ greenbone_credential_program_tempdir.path }}/setup_credentials.py"
             mode: "0644"
 
-        - name: Write Steve SSH private key for credential-program
-          ansible.builtin.copy:
-            content: "{{ greenbone_steve_ssh_private_key }}"
-            dest: "{{ greenbone_credential_program_tempdir.path }}/steve.key"
-            # gvm-tools runs as an unprivileged container UID. The parent
-            # tempfile directory is mode 0700 and root-owned on the host, so
-            # 0644 lets only the bind-mounted container process read it.
-            mode: "0644"
-          no_log: true
-
-        - name: Write workstation OpenVAS SSH private key for credential-program
-          ansible.builtin.copy:
-            content: "{{ greenbone_openvas_workstation_ssh_private_key }}"
-            dest: "{{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key"
-            mode: "0644"
-          no_log: true
-
         - name: Write MikroTik gvm-scan SSH private key for credential-program
           ansible.builtin.copy:
             content: "{{ greenbone_mikrotik_ssh_private_key }}"
             dest: "{{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key"
+            # gvm-tools runs as an unprivileged container UID. The parent
+            # tempfile directory is mode 0700 and root-owned on the host, so
+            # 0644 lets only the bind-mounted container process read it.
             mode: "0644"
           no_log: true
 
@@ -1034,7 +1025,7 @@
           become: false
           no_log: true
 
-        - name: Generate the fleet-targets directory (targets.json + per-stack key/sudopass)
+        - name: Generate the fleet-targets directory (targets.json + per-zone key)
           ansible.builtin.command:
             argv:
               - python3
@@ -1061,14 +1052,10 @@
             cmd: >-
               docker compose run --rm --no-deps
               -v {{ greenbone_credential_program_tempdir.path }}/setup_credentials.py:/tmp/setup_credentials.py:ro
-              -v {{ greenbone_credential_program_tempdir.path }}/steve.key:/tmp/steve.key:ro
-              -v {{ greenbone_credential_program_tempdir.path }}/openvas-workstation.key:/tmp/openvas-workstation.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/mikrotik-gvm-scan.key:/tmp/mikrotik-gvm-scan.key:ro
               -v {{ greenbone_credential_program_tempdir.path }}/fleet:/tmp/fleet:ro
               -e GVM_USERNAME
               -e GVM_PASSWORD
-              -e GREENBONE_STEVE_KEY_PATH
-              -e GREENBONE_OPENVAS_WORKSTATION_KEY_PATH
               -e GREENBONE_MIKROTIK_KEY_PATH
               -e GREENBONE_START_TASK_NAME
               -e GREENBONE_STATUS_TASK_NAME
@@ -1078,14 +1065,13 @@
           environment:
             GVM_USERNAME: admin
             GVM_PASSWORD: "{{ greenbone_admin_password }}"
-            GREENBONE_STEVE_KEY_PATH: /tmp/steve.key
-            GREENBONE_OPENVAS_WORKSTATION_KEY_PATH: /tmp/openvas-workstation.key
             GREENBONE_MIKROTIK_KEY_PATH: /tmp/mikrotik-gvm-scan.key
             GREENBONE_START_TASK_NAME: "{{ greenbone_start_task_name }}"
             GREENBONE_STATUS_TASK_NAME: "{{ greenbone_status_task_name }}"
           register: greenbone_credential_program_setup
           changed_when: >-
             'created credential' in greenbone_credential_program_setup.stdout
+            or 'deleted ' in greenbone_credential_program_setup.stdout
             or 'created target' in greenbone_credential_program_setup.stdout
             or 'created task' in greenbone_credential_program_setup.stdout
             or 'started task' in greenbone_credential_program_setup.stdout
@@ -1171,7 +1157,6 @@
         gvm_scan_secret: "{{ gvm_scan_secret_raw.stdout | from_json }}"
   vars:
     gvm_scan_account_public_key: "{{ gvm_scan_secret.GVM_SCAN_SSH_PUBLIC_KEY }}"
-    gvm_scan_account_sudo_password_hash: "{{ gvm_scan_secret.GVM_SCAN_SUDO_PASSWORD | password_hash('sha512') }}"
   roles:
     - gvm_scan_account
 

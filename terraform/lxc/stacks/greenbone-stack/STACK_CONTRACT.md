@@ -48,6 +48,7 @@ would need to change for PentAGI (or anything else) to call in.
 |-------------|------|----------|-------|
 | `gvm-https` | 443  | tcp      | GSA UI over nginx's self-signed TLS — in-zone/direct access only, not the Traefik route |
 | `gvm-http`  | 8080 | tcp      | Custom plain-HTTP nginx server block added by `deploy-greenbone-stack.yml` (not part of upstream's compose) — this is what Traefik's `edge.yaml` route targets. Port 9392 exists but is NOT usable for this: upstream's own generated nginx config redirects it straight to 443/self-signed-TLS (see "What Must Not Be Edited Casually") |
+| `gvm-bridge` | 8010 | tcp     | First-party Flask GMP bridge (`terraform/lxc/ansible/files/gvm-bridge/app.py`): `/scan/*` (PentAGI-era), `/findings/all` and `/tasks/credentialed` for `gvm_findings_ingest`. It has no authentication and acts as GVM admin, so it's published on **127.0.0.1 only** (2026-10-12); before that it was reachable from the whole LAN. Reach it from elsewhere with an SSH tunnel |
 
 ## Dependencies
 
