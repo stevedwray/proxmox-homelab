@@ -2,6 +2,12 @@
 
 Planned 2026-10-11; decisions settled 2026-10-13. Nothing here has run yet.
 
+2026-10-13 correction (found while building the harness): the first
+version sized S3 at ~24k and S5 at ~18k tokens and Part B at 85% fill,
+which with the 16,384-token answer budget doesn't fit 32k (or, for Part B,
+32k–96k). The budget stays (D4); the prompts were shortened and Part B now
+fills to `--ctx-size` − 16,384 − 2,048. See the fit rule under "The prompts".
+
 ## Goal
 
 Find **build bugs** and **context-size bugs**, not rank the models. We're
@@ -70,24 +76,28 @@ training data and every answer is checkable by script. No downloads.
 
 ### Part A: identical prompts in every cell (S1–S5)
 
-The same bytes are sent to all 16 cells. Each fits in 32k for both
-models' tokenizers (checked with each loaded server's `/tokenize` before the
-run; the harness refuses to run a cell where it doesn't fit with the
-answer budget).
+The same bytes are sent to all 16 cells. **Fit rule:** prompt tokens +
+16,384 (the answer budget) + 2,048 (margin) ≤ `--ctx-size`, in the loaded
+model's own tokens. At 32k that leaves at most 14,336 prompt tokens, so
+S1–S5 are written to stay at or below ~12k in both tokenizers. Before a
+cell runs, the harness checks every prompt with the loaded server's
+`/tokenize` and refuses the cell if any prompt breaks the rule.
 
 | Id | Size | What it is | Checked by script |
 |---|---|---|---|
 | S1 sanity | ~100 tokens | Three arithmetic/lookup questions, "answer with only the numbers, comma-separated" | exact answer; nothing but the answer |
 | S2 instructions | ~400 tokens | One task with 8 verifiable constraints: a JSON object with exactly the keys `title`, `steps`, `risk`; `steps` has exactly 5 items of ≤ 12 words; no word "very"; `risk` one of `low/medium/high`; last line of the reply is `END` | each constraint pass/fail |
-| S3 long-doc QA | ~24k tokens | System rule: "Start every answer with `[LOG-QA]`. Answer only from the log. If the log doesn't say, answer `NOT IN LOG`." A synthetic ops log of ~400 records (id, host, severity, ticket, value). 8 questions: 5 needles at 5/25/50/75/95% depth, 2 about things not in the log, 1 count (critical records for one host). Answer as a JSON list | prefix; each needle exact; absents must be `NOT IN LOG`; count exact; every record id cited exists |
+| S3 long-doc QA | ~12k tokens | System rule: "Start every answer with `[LOG-QA]`. Answer only from the log. If the log doesn't say, answer `NOT IN LOG`." A synthetic ops log of ~200 records (id, host, severity, ticket, value). 8 questions: 5 needles at 5/25/50/75/95% depth, 2 about things not in the log, 1 count (critical records for one host). Answer as a JSON list | prefix; each needle exact; absents must be `NOT IN LOG`; count exact; every record id cited exists |
 | S4 long output | ~300 tokens in, up to ~6k out | "Write a runbook with exactly 12 numbered sections, each with a different title, 150–250 words each, no sentence repeated, end with `-- END OF RUNBOOK --`" | 12 sections in order; distinct titles; word counts; repeated sentences; end marker |
-| S5 multi-turn | ~18k tokens | A scripted 8-turn conversation (fixed assistant turns). Turn 1 sets two rules: "never use bullet points" and "end every reply with `ref: TCK-4471`". The last user turn asks a question about turn 3's content | both rules on the final reply; the answer matches turn 3 |
+| S5 multi-turn | ~12k tokens | A scripted 8-turn conversation (fixed assistant turns). Turn 1 sets two rules: "never use bullet points" and "end every reply with `ref: TCK-4471`". The last user turn asks a question about turn 3's content | both rules on the final reply; the answer matches turn 3 |
 
 ### Part B: context fill (F)
 
-S3's template with the log extended until the prompt is ~85% of the cell's
-`--ctx-size` in the loaded model's own tokens (about 27k, 55k, 83k, 111k).
-The first 400 records are S3's, so the 32k prompt is close to S3. Needles at
+S3's template with the log extended until the prompt is as long as the
+fit rule allows: `--ctx-size` − 16,384 − 2,048, in the loaded model's own
+tokens. That is 14,336 / 47,104 / 79,872 / 112,640 tokens (about 44%, 72%,
+81% and 86% of 32k / 64k / 96k / 131k). The first 200 records are S3's, so
+the 32k prompt is S3 plus a little. Needles at
 the same five relative depths, same questions. The two models' prompts
 differ in length (different tokenizers); the two builds of one model get
 the same bytes.
