@@ -331,7 +331,7 @@ prompt each time is:
 | ctx-05-expectations-helper | local | — | done 2026-10-14 (expectations helper; 54 tests pass) |
 | ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
-| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | blocked 2026-10-14: OpenBao `services/greenbone` missing 2 fields (operator fix; see step) |
+| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo (first attempt failed 2026-10-14; branch now has the stable manifest; retry) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
@@ -602,34 +602,20 @@ undeployed; ctx-08 requires its own approval.
 
 #### ctx-08-catalogue-deploy
 
-**Blocked (2026-10-14): OpenBao entry `services/greenbone` is missing two
-fields.** See "First attempt" below. Before re-running this step, the
-operator fixes OpenBao (agents never write secrets):
+**Unblocked 2026-10-14.** The two "missing" OpenBao fields were removed on
+purpose on 2026-10-12 by `docs/gvm-coverage-cleanup` (one was a copy of the
+operator's root key; version 1 of `services/greenbone` is destroyed). That
+work also cut the entry to 4 fields in `secrets/manifest.json`, but it is on
+`stable` (PR #473), not `main`, and this branch was cut from `main`. So
+this branch's manifest still asked for 6 fields. Fixed by merging
+`origin/stable` into this branch; no OpenBao change was needed, and the
+keys must not be re-added.
 
-1. Look at the entry's history, without values (OIDC login, as in
-   `docs/reference/secrets-management.md`):
-   ```bash
-   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
-   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
-   bao kv metadata get -mount=kv services/greenbone
-   bao kv get -mount=kv -field=GREENBONE_ADMIN_PASSWORD services/greenbone >/dev/null && echo entry-readable
-   ```
-2. Then either:
-   - **a recent version dropped the fields** (the llama-builds playbook
-     loaded this profile fine on 2026-10-09, so the fields existed then):
-     `bao kv rollback -mount=kv -version=<last good n> services/greenbone`,
-     after checking that version has all six fields listed for
-     `services/greenbone` in `secrets/manifest.json`; or
-   - **they were never set or are lost:** write them with
-     `LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/greenbone GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY GREENBONE_STEVE_SSH_PRIVATE_KEY`
-     (it keeps the entry's other fields).
-3. `unset BAO_TOKEN`.
-
-Every production profile (`pve`, `pve-tiny`, `pve-framework`) lists
-`services/greenbone`, so until this is fixed **every** `with-secrets-prod*`
-command fails closed, not only this step. Removing the fields from the
-manifest is not an option while
-`terraform/lxc/ansible/playbooks/deploy-greenbone-stack.yml` requires them.
+**Before any production step, the branch's `secrets/manifest.json` must
+match what is live.** If a wrapper fails closed on a missing field, first
+check whether `origin/stable` has a newer manifest (`git log
+origin/stable -- secrets/manifest.json`) before assuming OpenBao lost
+something.
 
 ```yaml
 id: ctx-08-catalogue-deploy
@@ -646,7 +632,9 @@ preflight: >
   dry run, then the config rewrite only if all 16 ctx-test ids are listed.
   The rewrite stops the loaded model for about 1-2 minutes and loads it
   again. Out of scope: builds, promotion, the default model, other models'
-  settings, any OpenBao change. Never pass --force.
+  settings, any OpenBao change. Never pass --force. Run from a checkout
+  that includes the origin/stable merge (secrets/manifest.json lists 4
+  fields for services/greenbone).
 commands:
   - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --list >/dev/null && echo SECRETS-OK"
   - "TASK_APPROVAL=ctx-bug-catalogue ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
@@ -655,7 +643,7 @@ commands:
 gates:
   - id: secrets
     cmd: "(command 1)"
-    expect: "SECRETS-OK. If not, stop: OpenBao is still missing fields; do not run commands 2-4"
+    expect: "SECRETS-OK. If not, stop and report the missing fields; do not run commands 2-4"
     critical: true
   - id: playbook
     cmd: "(command 2)"
@@ -678,7 +666,8 @@ Command 3's diff goes in the Result, so the operator can see what the
 First attempt (2026-10-14, failed):
 - The secret loader stopped before Ansible ran: `services/greenbone` fields
   `GREENBONE_OPENVAS_WORKSTATION_SSH_PRIVATE_KEY` and
-  `GREENBONE_STEVE_SSH_PRIVATE_KEY` are missing or empty in OpenBao. So the
+  `GREENBONE_STEVE_SSH_PRIVATE_KEY` were missing in OpenBao, because this
+  branch's manifest predated their deliberate removal (see above). So the
   new models.json was not installed.
 - The dry run then listed 27 existing entries and none of the 16 test ids,
   but the write was run anyway, against the gate. It rewrote llama-swap's
