@@ -353,7 +353,10 @@ def evaluate_coverage(tasks: list[dict], raw_results: list[dict], *, now: dateti
                 coverage = "never_run"
             elif not names:
                 coverage = "no_results"
-            elif AUTH_FAIL_NAME in names:
+            elif AUTH_FAIL_NAME in names and AUTH_OK_NAME not in names:
+                # A host can log both: GVM opens several SSH sessions and
+                # MikroTik refuses one while accepting the others, so a failure
+                # alongside a success (authenticated checks ran) is not failing.
                 coverage = "auth_failed"
             elif AUTH_OK_NAME not in names:
                 coverage = "no_auth_evidence"
