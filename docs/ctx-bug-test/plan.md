@@ -1486,7 +1486,14 @@ change: >
   "independent_samples" = number of distinct seeds/runs, not runs x sizes.
   report.md's candidate list shows both numbers.
   (3) `dense-reasoning`, `build-divergence` stay information only.
-  Tests: a short-form vs full-budget pair is "not attributable"; an
+  (4) Include each short-form cell's saved full-budget S1 probe
+  (raw/<cell>/S1-probe.json, also in run.json cells[...]['probe']) in the
+  comparison as an extra greedy S1 record for that cell. It ran with the
+  same settings as the other build's S1 greedy (max_tokens 16,384,
+  temperature 0, seed 1), so it is a valid matched comparison. Probes are
+  evidence for attribution only; they are not added to results.jsonl.
+  Tests: a probe-backed S1 is "build bug" while the same cell's short S2 is
+  "not attributable"; a short-form vs full-budget pair is "not attributable"; an
   equal-settings pair still yields "build bug"; four identical sizes give
   one finding with 4 sizes and the right sample count.
   Then copy the harness to Framework and regrade the full run in place
@@ -1508,7 +1515,7 @@ gates:
     critical: true
   - id: no-confounded-build-bugs
     cmd: "python3 -c \"import json;f=json.load(open('docs/ctx-bug-test/artifacts/full/findings.json'));b=[x for x in f if x['kind']=='build bug'];print(len(b), sorted({(x['model'],x['build'],x['prompt']) for x in b}))\""
-    expect: "only laguna-s-2.1 nathanw S1/S2 entries; no S4"
+    expect: "only laguna-s-2.1 nathanw S1 entries (from the matched full-budget probes); S2 and S4 are 'not attributable (different budgets)'"
     critical: true
 ```
 
