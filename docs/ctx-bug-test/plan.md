@@ -333,7 +333,7 @@ prompt each time is:
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | done 2026-10-14 (operator: SECRETS-OK, failed=0, guarded write of 52 entries; initial model reloaded) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
-| ctx-10-pilot-review | local + Framework (read-only) | — | todo |
+| ctx-10-pilot-review | local + Framework (read-only) | — | done 2026-10-14 (24 requests reviewed; restore/evidence verified; fixes recommended) |
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | todo |
 | ctx-10b-variant-option | local | — | todo |
 | ctx-10c-batch-variant | local | — | todo |
@@ -772,7 +772,18 @@ gates:
 
 Stop after writing the section. The operator decides the next step.
 
-Result: —
+Result: done 2026-10-14. Completion gate passed; copied report, findings,
+run metadata/log, results JSONL, raw answers/probe, prompts and kernel windows
+into ignored `artifacts/pilot/`. All 24 requests and the probe have no evidence
+errors; all four cells ran, and the saved initial model was restored. Raw
+records match JSONL. The README's Pilot section records per-cell timings,
+confirmed failures, detector mistakes and recommendations. Recommend ctx-10a
+before the full run, then D5 confirmation and D1's fresh fork candidate cell.
+No production mutation or harness change was made during review.
+
+D8 option c is unresolved: both saved Qwen templates map `high` to `xhigh`.
+The claimed effort reduction needs an operator correction before use; the
+review selected no replacement. D8/D9 remain operator decisions.
 
 #### Early pilot observations (operator, 2026-10-14, Qwen × nathanw at 131k)
 
