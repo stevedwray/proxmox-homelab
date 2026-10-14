@@ -1255,9 +1255,10 @@
     # paths that rewrite themselves constantly. One agent.conf per agent group, scoped inside by agent
     # name. Same safety pattern as local_rules.xml: back up, docker cp, verify-agent-conf, restore on
     # failure. No manager restart is needed -- the manager pushes the change to the agents.
+    # -e '{"wazuh_agent_conf_groups":["game_seg"]}' limits a run to one group (canary).
     - name: Deliver shared agent.conf files to the manager
       ansible.builtin.include_tasks: wazuh-agent-conf-item.yml
-      loop: "{{ ['default', 'build_seg', 'pentest_seg'] }}"
+      loop: "{{ wazuh_agent_conf_groups | default(['default', 'ai_seg', 'apps_seg', 'build_seg', 'connector_seg', 'edge_seg', 'game_seg', 'infra_seg', 'media_seg', 'mgmt_seg', 'pentest_seg']) }}"
       loop_control:
         loop_var: wazuh_group
       tags: [wazuh_agent_conf]

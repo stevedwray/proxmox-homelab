@@ -300,6 +300,55 @@ def mode_vulncves(_args):
                       for b in r["aggregations"]["p"]["buckets"] for c in b["c"]["buckets"]]}
 
 
+def mode_indices(_args):
+    """Every non-alert index: documents and size, biggest first (what is stored besides alerts)."""
+    rows = indexer("_cat/indices?format=json&bytes=kb&h=index,docs.count,store.size,pri&s=store.size:desc")
+    skip = ("wazuh-alerts-4.x-",)
+    return {"indices": [(r["index"], int(r["docs.count"] or 0), round(int(r["store.size"] or 0) / 1024, 1), r["pri"])
+                        for r in rows if not r["index"].startswith(skip)][:40]}
+
+
+def mode_sca(_args):
+    """SCA per agent: which policy runs and its pass/fail/invalid counts (one API call per agent)."""
+    out = []
+    for a in api("/agents?limit=500&select=id,name&status=active")["affected_items"]:
+        if a["id"] == "000":
+            continue
+        try:
+            for pol in api(f"/sca/{a['id']}?limit=10")["affected_items"]:
+                out.append((a["name"], pol["policy_id"], pol["name"][:48], pol["pass"], pol["fail"], pol["invalid"], pol["score"]))
+        except Exception as exc:  # noqa: BLE001
+            out.append((a["name"], "error", str(exc)[:60], 0, 0, 0, 0))
+    return {"policies": out, "alerts_24h": total(search(ALERTS, {"bool": {"filter": [day(24), {"term": {"rule.groups": "sca"}}]}}))}
+
+
+def mode_fimdiff(_args):
+    """Do FIM alerts carry file diffs, and do any diffs look like they contain secrets? Counts and paths only, never content."""
+    base = [day(24 * 14), {"terms": {"rule.id": FIM_RULES}}, {"exists": {"field": "syscheck.diff"}}]
+    r = search(ALERTS, {"bool": {"filter": base}}, {"p": terms("syscheck.path", 25, a=terms("agent.name", 2))})
+    words = "password OR passwd OR secret OR token OR apikey OR api_key OR private OR credential OR pass"
+    sus = search(ALERTS, {"bool": {"filter": base + [{"query_string": {"query": words, "fields": ["syscheck.diff"]}}]}},
+                 {"p": terms("syscheck.path", 25, a=terms("agent.name", 2))})
+    return {"alerts_with_diff_14d": total(r), "paths_with_diff": [(b["key"], b["doc_count"], [x["key"] for x in b["a"]["buckets"]]) for b in r["aggregations"]["p"]["buckets"]],
+            "diffs_mentioning_secret_words": total(sus),
+            "secret_word_paths": [(b["key"], b["doc_count"], [x["key"] for x in b["a"]["buckets"]]) for b in sus["aggregations"]["p"]["buckets"]]}
+
+
+SENSITIVE_PATH_RE = ".*(shadow|gshadow|\\.env|secret|\\.key|\\.pem|token|cred|\\.pass|id_rsa|id_ed25519|authorized_keys|sudoers|\\.htpasswd|\\.netrc).*"
+
+
+def mode_fimsensitive(_args):
+    """FIM alerts that carry a stored diff on a sensitive-looking path (counts per path and agent; never the content)."""
+    base = [day(24 * 14), {"terms": {"rule.id": FIM_RULES}}, {"exists": {"field": "syscheck.diff"}},
+            {"regexp": {"syscheck.path": SENSITIVE_PATH_RE}}]
+    r = search(ALERTS, {"bool": {"filter": base}}, {"p": terms("syscheck.path", 60, a=terms("agent.name", 4))})
+    ps = search(ALERTS, {"bool": {"filter": [day(24 * 14), {"term": {"agent.name": "mcp-utility-stack"}}, {"term": {"syscheck.path": "/etc/passwd"}}]}},
+                {"h": {"date_histogram": {"field": "@timestamp", "fixed_interval": "1d"}}})
+    return {"sensitive_with_diff": total(r),
+            "paths": [(b["key"], b["doc_count"], [x["key"] for x in b["a"]["buckets"]]) for b in r["aggregations"]["p"]["buckets"]],
+            "mcp_passwd_per_day": [(b["key_as_string"][5:10], b["doc_count"]) for b in ps["aggregations"]["h"]["buckets"] if b["doc_count"]]}
+
+
 def mode_vulnhosts(args):
     """Which agents carry findings for the given packages (for the single-host oddities)."""
     q = {"bool": {"filter": [{"terms": {"package.name": args}}]}}
@@ -372,7 +421,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "vulndetail": mode_vulndetail, "vulnpkg": mode_vulnpkg, "vulncves": mode_vulncves, "vulnhosts": mode_vulnhosts, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "vulndetail": mode_vulndetail, "vulnpkg": mode_vulnpkg, "indices": mode_indices, "sca": mode_sca, "fimdiff": mode_fimdiff, "fimsensitive": mode_fimsensitive, "vulncves": mode_vulncves, "vulnhosts": mode_vulnhosts, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 

@@ -1,0 +1,22 @@
+<agent_config>
+
+  <!-- Shared agent configuration here -->
+
+</agent_config>
+
+<!-- Phase 3 (docs/wazuh-tuning), applied to every agent in the group.
+     1. FIM stores the CONTENT of a changed text file in the alert (report_changes). For secrets that puts them in the
+        indexer: password hashes, Proxmox private keys and tokens, TLS keys, .env files were all found there. <nodiff>
+        keeps the change alert (detection is unchanged) and drops only the stored content. Over-matching is harmless:
+        the worst case is a missing diff, never a missing alert.
+     2. rootcheck's rootkit-file and trojan checks were silently off ("No rootcheck_files file configured"): the rule
+        files are already delivered to every agent in etc/shared/, only the two paths were missing. -->
+<agent_config>
+  <syscheck>
+    <nodiff type="sregex">^/etc/shadow|^/etc/gshadow|^/etc/pve/priv/|.key$|.pem$|.env$|.pass$|.token$|.pfx$|.p12$|id_rsa$|id_ed25519$|authorized_keys$</nodiff>
+  </syscheck>
+  <rootcheck>
+    <rootkit_files>etc/shared/rootkit_files.txt</rootkit_files>
+    <rootkit_trojans>etc/shared/rootkit_trojans.txt</rootkit_trojans>
+  </rootcheck>
+</agent_config>

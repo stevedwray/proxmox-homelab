@@ -1,9 +1,3 @@
-<agent_config>
-
-  <!-- Shared agent configuration here -->
-
-</agent_config>
-
 <!-- Phase 2a (docs/wazuh-tuning): the Proxmox host's lrm_status is a pmxcfs status file rewritten every few
      seconds (57% of all FIM alerts). Plain <ignore> is a path prefix, so this also covers lrm_status.tmp.*.
      Scoped to this one agent by name; the other agents in the default group are unaffected. -->

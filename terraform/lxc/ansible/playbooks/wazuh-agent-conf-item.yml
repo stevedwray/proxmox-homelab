@@ -1,7 +1,10 @@
 # Included by deploy-wazuh-stack.yml (tag wazuh_agent_conf): deliver one group's agent.conf.
+# Content = the common block (every group) + that group's own agent-scoped blocks, if it has a file.
 - name: "Stage {{ wazuh_group }} agent.conf on the host"
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../files/wazuh-stack/agent_conf/{{ wazuh_group }}.xml"
+    content: >-
+      {{ lookup('file', playbook_dir ~ '/../files/wazuh-stack/agent_conf/common.xml') }}{{
+         lookup('file', playbook_dir ~ '/../files/wazuh-stack/agent_conf/' ~ wazuh_group ~ '.xml', errors='ignore') | default('', true) }}
     dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml"
     mode: "0640"
   tags: [wazuh_agent_conf]

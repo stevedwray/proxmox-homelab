@@ -169,7 +169,7 @@
             <port>1514</port>
             <protocol>tcp</protocol>
           </server>
-          <config-profile>ubuntu, ubuntu24, ubuntu24.04</config-profile>
+          <config-profile>debian, debian13</config-profile>
           <notify_time>10</notify_time>
           <time-reconnect>60</time-reconnect>
           <auto_restart>yes</auto_restart>
@@ -196,6 +196,8 @@
           <check_if>yes</check_if>
           <frequency>43200</frequency>
           <skip_nfs>yes</skip_nfs>
+          <rootkit_files>etc/shared/rootkit_files.txt</rootkit_files>
+          <rootkit_trojans>etc/shared/rootkit_trojans.txt</rootkit_trojans>
         </rootcheck>
 
         <wodle name="syscollector">
@@ -232,6 +234,7 @@
           {% for path in wazuh_agent_fim_paths %}
           <directories check_all="yes" report_changes="yes" realtime="yes">{{ path }}</directories>
           {% endfor %}
+          <nodiff type="sregex">^/etc/shadow|^/etc/gshadow|^/etc/pve/priv/|.key$|.pem$|.env$|.pass$|.token$|.pfx$|.p12$|id_rsa$|id_ed25519$|authorized_keys$</nodiff>
           <ignore>/etc/mtab</ignore>
           <ignore>/etc/hosts.deny</ignore>
           <ignore>/etc/mail/statistics</ignore>
