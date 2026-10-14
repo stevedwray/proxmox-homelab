@@ -158,7 +158,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
-| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | todo |
+| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | stopped 2026-10-15; watcher launch race; cleanup verified |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
@@ -1066,7 +1066,7 @@ review finds a measuring problem. Approval `loop-hunt-pilot`.
 
 Result: —
 
-Pilot preflight (prepared 2026-10-15; **not approved or started**):
+Pilot preflight (approved 2026-10-15; launched below):
 
 - Target: Framework through the pve-tiny production wrapper; task
   `loop-hunt-pilot`. Mutating: temporarily pause the upgrade timer, start
@@ -1106,6 +1106,48 @@ Pilot preflight (prepared 2026-10-15; **not approved or started**):
   warm/cold pair before requesting the matrix approval.
 - Out of scope: matrix, private-chat replay, proxy capture, other models,
   package upgrades, compilation, promotion and unrelated production work.
+
+Pilot launch (2026-10-15): operator approved loop-hunt-pilot. Host,
+all three pinned build links, free run lock, journal permissions, inactive
+upgrade service and active timer passed preflight. Timer paused, detached
+run `loop-hunt-20261014t233240z.service` launched; artifacts on Framework:
+`/storage/artifacts/loop-hunt/20261014T233240Z-pilot`. Detached watcher
+`loop-hunt-pilot-watch-20261014t233240z.service` initially appeared active
+but exited immediately; see the failed launch gate below. Slot-layout and
+measuring review did not run; do not claim pilot passed.
+
+Operator conditional approvals (2026-10-15): loop-hunt-matrix covers lh-06
+both nights, and loop-hunt-replay covers lh-07 V1 on its four recorded
+targets and V9 on Qwen's three llama.cpp builds. These become executable
+only if pilot review finds no measuring problem and no harness fix is
+needed. If the pilot needs a harness fix or slot layout differs, stop and
+ask. Every run retains D10 timer pause/restore, bounded watcher and model
+restoration. Approval does not extend to unrelated deployments or fixes.
+
+Pilot startup failed gate (2026-10-15): the detached watcher exited with
+FileNotFoundError opening the run directory's `.watcher-lock`. The launch
+command started it before the harness created that directory; a momentary
+systemd active state was insufficient proof of successful attachment. This
+was the agent's launch-order error, not a model failure. No harness source
+was changed. Conditional matrix/replay execution is held pending a successful
+pilot and measuring review.
+
+Mandatory cleanup: upgrade timer was immediately started and verified active;
+SIGINT was sent only to this pilot's main process. The harness logged the
+interruption before inference/slot-layout capture and began restoring
+`qwen3-coder-next-upstream`. Final checks passed: status interrupted, zero completed requests, no slot
+layout recorded, restored_default true, `/props` confirms
+`qwen3-coder-next-upstream` / `b11514-de7fa0a3c`, Redis run lock free,
+upgrade timer active. No matrix/replay run started.
+
+Proposed launch correction for operator review: exclusively pre-create the
+private run directory (0700), launch the harness with that exact --run-dir,
+wait for its run.json/progress.json while verifying the run unit is active,
+then attach the watcher. Verify watcher.json exists and reports its first
+successful poll, in addition to checking the watcher unit stays active.
+If any gate fails, restore the timer and gracefully interrupt this run for
+model restoration. Do not resume the failed launch or start another run
+until the operator resolves this stop point (reused rule 7).
 
 #### lh-06-matrix
 

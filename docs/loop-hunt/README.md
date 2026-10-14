@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 pilot awaiting approval**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 stopped at watcher startup gate; cleanup verified**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -404,5 +404,20 @@ compilation, promotion or timer operation ran during deployment.
 
 Next is [lh-05's pilot preflight](plan.md#lh-05-pilot): one C1 session,
 seed 1, Qwen fork current at 131k, with the slot-layout gate, D10 timer
-cleanup, model restoration and bounded watcher. It requires separate
-`loop-hunt-pilot` approval under the production controls; it has not started.
+cleanup, model restoration and bounded watcher. The operator approved
+`loop-hunt-pilot`; its launch artifacts are at
+`/storage/artifacts/loop-hunt/20261014T233240Z-pilot`. Matrix (both nights)
+and V1/V9 replays are conditionally approved only after a successful
+measuring review. A harness fix or different slot layout stops execution
+for operator input.
+
+Pilot startup stopped: the watcher raced the harness's creation of the run
+directory and exited before attaching. The initial active check missed this
+immediate exit. The timer was restored active and the pilot was interrupted
+gracefully for model restoration. No measuring review or slot-layout check
+completed. Matrix/replay remain held. The plan records a launch correction
+for operator review; no harness code was changed.
+
+Cleanup verified: pilot status interrupted, zero requests completed,
+original `qwen3-coder-next-upstream` / `b11514-de7fa0a3c` confirmed by
+/props, run lock free, upgrade timer active. No matrix/replay was started.
