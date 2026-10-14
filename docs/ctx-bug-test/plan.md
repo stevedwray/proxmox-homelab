@@ -335,7 +335,10 @@ prompt each time is:
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | todo |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (waits for D8) |
+| ctx-10b-variant-option | local | — | todo |
+| ctx-10c-batch-variant | local | — | todo |
+| ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (waits for D8 and D9) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -791,6 +794,24 @@ Read from the raw files while the pilot was still running:
   repetition. This makes F's needle questions (q1–q7) unmeasured for Qwen.
 - S2, S3 and S5 were clean on the fork at 131k.
 
+Pilot complete (operator, 2026-10-14; 24 requests in ~1 h 39 min):
+
+- **Laguna × upstream × F (112,640-token prompt): GPU hang.** `Fence
+  fallback timer expired on ring comp_1.3.0` at 01:34:29, then at 01:46:34
+  `ring comp_1.3.0 timeout`, compute-queue reset, `device wedged, but
+  recovered through reset`; the request returned HTTP 500 after 899 s; the
+  server stayed up (not restarted). This matches the known Vulkan
+  long-context issue (ggml-org/llama.cpp#21724, D5). Laguna × nathanw F at
+  the same length did not hang. Confirm per D5 in ctx-10d.
+- Framework recovered: the run restored `qwen3-coder-next-upstream`, which
+  answered a test request normally afterwards.
+- Qwen S4/F runaway on **both** builds (not fork-specific).
+- Laguna × nathanw: hidden-token flags on S1/S2 (the known token-14 bug, on
+  the build under test). ctx-10 checks why S3–F were not flagged.
+- Laguna S3 q8 (the count) wrong on both builds: a model counting error,
+  not a build or context-size bug.
+- S5 clean in all four cells.
+
 #### ctx-10a-detector-fixes
 
 ```yaml
@@ -816,6 +837,8 @@ change: >
   and findings.json. It makes no HTTP call, takes no lock, and refuses a
   run whose status is "running". Keep the old results.jsonl as
   results.pre-regrade.jsonl.
+  (4) gpu_errors(): also match `Fence fallback timer expired` (the first
+  sign of the 2026-10-14 hang, 12 minutes before the ring timeout).
   Add tests: S1 '391, 12, 708' passes and '391, 12, 708.' / 'The answer is
   391,12,708' fail; a log-like reasoning text gives dense-reasoning, not
   repetition; a sentence repeated 5 times gives repetition; regrade of a
@@ -848,6 +871,138 @@ over ssh. Then update the README's "Pilot" section with the regraded flags.
 | a. Keep everything (D4 as is) | Qwen's S4 and F will keep exhausting 16k; each such request costs 11–16 min, so the full run grows by roughly 1 h per Qwen cell (~8 h in total). F tells us little about Qwen. |
 | b. Drop the count question from F only (keep it in S3, where enumerating ~200 records fits) | F measures the needles at depth for both models; fewer runaways. Needs a small generator change and new F prompts (the pilot's F results are then not comparable). |
 | c. (b) plus send `chat_template_kwargs {"reasoning_effort": "high"}` for Qwen | Shorter Qwen runs; S4 likely answers. Changes D4 (no longer testing the template default). |
+
+#### ctx-10b-variant-option
+
+```yaml
+id: ctx-10b-variant-option
+title: Let the harness run one extra catalogue variant and a subset of prompts
+depends_on: [ctx-10a-detector-fixes]
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/ctx_bugs.py add
+  `--entry-suffix SUFFIX` (lowercase letters/digits, e.g. b512): entry ids
+  become <model>-<build>[-candidate]-ctx<size>-<SUFFIX>; check_props expects
+  that alias. Add `--prompts P [P ...]` (choices S1 S2 S3 S4 S5 F, default
+  all) which limits runs() to those prompts, in the usual order. Both go
+  into run.json's identity, so a resume with different values is refused.
+  The restore rule in execute_locked() treats ids matching
+  -ctx(32k|64k|96k|131k)(-[a-z0-9]+)?$ as test entries.
+  Tests: entry ids with and without the suffix; --prompts F runs only F
+  (greedy plus seed1, or greedy only with --greedy-only); a stub dry run
+  with --entry-suffix b512 --prompts F --greedy-only completes; restore
+  skips a -ctx131k-b512 id.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
+#### ctx-10c-batch-variant
+
+```yaml
+id: ctx-10c-batch-variant
+title: Add the small-batch 131k variant for Laguna (repo only)
+depends_on: [ctx-10b-variant-option]
+runs_on: local
+change: >
+  In ansible/00-initial-setup/files/llama-swap/models.json, append to
+  laguna-s-2.1's "variants" (after ctx131k), and change nothing else:
+  {"suffix": "ctx131k-b512", "label": "ctx test 131k batch 512/128",
+   "settings": {"ctx_size": 131072, "parallel": 1,
+                "extra_args": ["--batch-size", "512", "--ubatch-size", "128"]}}
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/files/llama-swap/models.json
+gates:
+  - id: json
+    cmd: >
+      python3 -c "import json;m={x['id']:x for x in json.load(open('ansible/00-initial-setup/files/llama-swap/models.json'))['models']};
+      v=m['laguna-s-2.1']['variants'];assert [x['suffix'] for x in v]==['ctx32k','ctx64k','ctx96k','ctx131k','ctx131k-b512'];
+      assert v[4]['settings']=={'ctx_size':131072,'parallel':1,'extra_args':['--batch-size','512','--ubatch-size','128']};
+      assert len(m['qwen3.8-flash-next-q4']['variants'])==4;print('ok')"
+    expect: "ok"
+    critical: true
+  - id: diff-scope
+    cmd: "git diff --stat -- ansible/ | tail -1"
+    expect: "1 file changed"
+    critical: true
+  - id: llama-builds-tests
+    cmd: "python3 -m unittest discover -s ansible/00-initial-setup/files/llama-builds -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
+#### ctx-10d-batch-confirm
+
+```yaml
+id: ctx-10d-batch-confirm
+title: Confirm the GPU hang goes away with batch 512 / ubatch 128 (D5)
+depends_on: [ctx-10c-batch-variant]
+runs_on: framework
+approval: ctx-bug-batch-confirm
+preflight: >
+  Target: Framework (production). Command 1 read-only (secrets load).
+  Command 2 installs the edited models.json (playbook; no reload).
+  Command 3 copies the updated harness to ~/framework-ctx-bugs/.
+  Command 4 rewrites llama-swap's config only if the 16 ctx ids and
+  laguna-s-2.1-upstream-ctx131k-b512 are listed (stops the loaded model for
+  1-2 minutes, then reloads it). Command 5 runs F, greedy only, on
+  laguna-s-2.1-upstream-ctx131k-b512 (~20-30 min; holds the Framework lock;
+  :8080 serves that entry meanwhile; restores the model loaded before).
+  The run may hang the GPU again (it recovered by itself on 2026-10-14).
+  Out of scope: any other cell, builds, the default model.
+commands:
+  - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --list >/dev/null && echo SECRETS-OK"
+  - "TASK_APPROVAL=ctx-bug-batch-confirm ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
+  - "rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/"
+  - "ssh steve@framework.gibbsgreatly.xyz 'bash -s -- laguna-s-2.1-upstream-ctx131k-b512' < scripts/framework-ctx-bugs/guarded_swap_config.sh"
+  - "ssh steve@framework.gibbsgreatly.xyz '~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json --models laguna-s-2.1 --builds upstream --sizes 131072 --entry-suffix b512 --prompts F --greedy-only'"
+gates:
+  - id: secrets
+    cmd: "(command 1)"
+    expect: "SECRETS-OK"
+    critical: true
+  - id: playbook
+    cmd: "(command 2)"
+    expect: "PLAY RECAP with failed=0"
+    critical: true
+  - id: guarded-write
+    cmd: "(command 4)"
+    expect: "'GATE OK: all 16 ctx-test entries and 1 extra present', 'llama-swap config written', '<model> loaded again'"
+    critical: true
+  - id: started
+    cmd: "ssh steve@framework.gibbsgreatly.xyz '~/framework-ctx-bugs/run.sh --status'"
+    expect: "status running; record the run directory"
+    critical: true
+```
+
+When the run is complete (operator says when), read-only: copy its
+report.md and F raw record into `docs/ctx-bug-test/artifacts/batch-confirm/`
+and record in Result: crash/gpu-error yes or no, wall time, prompt tok/s
+compared with the pilot's Laguna × upstream F, and the F accuracy (x/8).
+
+Result: —
+
+**D9 (operator decision before ctx-11, after ctx-10d).** Write the options
+into the README and stop:
+
+| Option | Effect |
+|---|---|
+| a. Keep defaults (D5 as is) | Production's settings are what gets tested. Expect Laguna × upstream F (and maybe S-prompts) to hang at 96k/131k in the full run: ~15 min lost and a GPU reset per hang. |
+| b. Small batches for every cell | Add `extra_args` batch 512/128 to all 16 test variants (both builds, both models), so cells stay comparable. Tests a non-production setting; prompt reading may be slower. |
+| c. Defaults, but skip F on Laguna × upstream at 96k/131k | Avoids the known hang; leaves a gap in Part B for that build. |
+
+If ctx-10d shows the small batches remove the hang, also consider a separate
+change (outside this test) adding them to the production catalogue.
 
 #### ctx-11-full-run
 
