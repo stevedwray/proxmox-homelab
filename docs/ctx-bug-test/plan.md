@@ -334,7 +334,8 @@ prompt each time is:
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | done 2026-10-14 (operator: SECRETS-OK, failed=0, guarded write of 52 entries; initial model reloaded) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
+| ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | todo |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (waits for D8) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -769,6 +770,84 @@ gates:
 Stop after writing the section. The operator decides the next step.
 
 Result: —
+
+#### Early pilot observations (operator, 2026-10-14, Qwen × nathanw at 131k)
+
+Read from the raw files while the pilot was still running:
+
+- **S1 `if-fail:only-numbers` + `wrong:sanity` is a detector mistake.** The
+  answer was `391, 12, 708`: correct, numbers only, with a space after each
+  comma. Same flags on upstream S1. Fixed in ctx-10a.
+- **S4 `runaway` + `no-answer` is real but not a loop.** Qwen (template
+  default `xhigh`) drafts the whole runbook inside its reasoning, numbering
+  every word to check the 150–250 limit (`that72 the73 maintenance74 …`),
+  and is still making progress at the 16,384 cap. Classify as "reasoning
+  budget exhausted", not "looping".
+- **F `runaway` + `no-answer` comes from the count question.** Q8 ("how
+  many critical records for host-03") makes Qwen enumerate the whole
+  ~110k-token log line by line in its reasoning (`F001202 host-03 critical
+  => count 48`), which cannot fit in 16,384 tokens. Its `repetition` flag is
+  most likely the zlib-ratio check firing on log-shaped text, not real
+  repetition. This makes F's needle questions (q1–q7) unmeasured for Qwen.
+- S2, S3 and S5 were clean on the fork at 131k.
+
+#### ctx-10a-detector-fixes
+
+```yaml
+id: ctx-10a-detector-fixes
+title: Fix the two detector mistakes the pilot showed, and regrade saved runs
+depends_on: [ctx-10-pilot-review]
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/detectors.py:
+  (1) S1: compare after removing whitespace around commas and stripping
+  the answer (re.sub(r'\s*,\s*', ',', answer.strip())); `only-numbers` and
+  `wrong:sanity` use that normalized string. Nothing else is accepted
+  (no prose, no trailing full stop).
+  (2) repetition(): return which check fired, and record it in
+  details['repetition'] as e.g. {"reasoning": ["zlib"]} or ["shingle"].
+  A zlib-only hit on reasoning becomes the separate informational flag
+  `dense-reasoning`, not `repetition`; shingle hits, and any hit on the
+  answer, stay `repetition`. findings() treats `dense-reasoning` like
+  `build-divergence` (information only).
+  (3) Add `ctx_bugs.py --regrade RUN_DIR`: re-runs detect() on every saved
+  record in RUN_DIR/results.jsonl using the saved responses, prompts and
+  visible token counts, then rewrites results.jsonl, raw/ records, report.md
+  and findings.json. It makes no HTTP call, takes no lock, and refuses a
+  run whose status is "running". Keep the old results.jsonl as
+  results.pre-regrade.jsonl.
+  Add tests: S1 '391, 12, 708' passes and '391, 12, 708.' / 'The answer is
+  391,12,708' fail; a log-like reasoning text gives dense-reasoning, not
+  repetition; a sentence repeated 5 times gives repetition; regrade of a
+  stub run directory is idempotent.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+    - docs/ctx-bug-test/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+After the gate passes, copy the updated harness to Framework and regrade the
+pilot. Read-only for production (writes only inside the pilot's own
+results directory; no model load, no lock):
+`rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/`
+then
+`ssh steve@framework.gibbsgreatly.xyz 'python3 ~/framework-ctx-bugs/ctx_bugs.py --regrade /storage/artifacts/framework-ctx-bugs/20261014T000806Z'`.
+Post this as a preflight and wait for "proceed" (rule 4) because it runs
+over ssh. Then update the README's "Pilot" section with the regraded flags.
+
+**D8 (operator decision before ctx-11).** Write the options into the README
+"Pilot" section and stop; the operator chooses:
+
+| Option | Effect |
+|---|---|
+| a. Keep everything (D4 as is) | Qwen's S4 and F will keep exhausting 16k; each such request costs 11–16 min, so the full run grows by roughly 1 h per Qwen cell (~8 h in total). F tells us little about Qwen. |
+| b. Drop the count question from F only (keep it in S3, where enumerating ~200 records fits) | F measures the needles at depth for both models; fewer runaways. Needs a small generator change and new F prompts (the pilot's F results are then not comparable). |
+| c. (b) plus send `chat_template_kwargs {"reasoning_effort": "high"}` for Qwen | Shorter Qwen runs; S4 likely answers. Changes D4 (no longer testing the template default). |
 
 #### ctx-11-full-run
 
