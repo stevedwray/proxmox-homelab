@@ -1,7 +1,9 @@
 # Wazuh tuning runbook
 
-Read-only survey tooling used for the 2026-10-15 baseline. Phase 0 of plan.md replaces
-these three scripts with one helper and a playbook (`gvm_tuning.py` is the model).
+Tooling (Phase 0): `files/wazuh-tuning/wazuh_tuning.py` (measurement modes),
+`must_fire.py` + `must_fire_cases.json` (detection regression suite) and the playbook
+`playbooks/wazuh-tuning.yml`. The helper runs on the wazuh-stack host, so no SSH tunnel
+is needed.
 
 ## Where things are
 
@@ -11,28 +13,30 @@ these three scripts with one helper and a playbook (`gvm_tuning.py` is the model
 | Indexer API | 127.0.0.1:9200 on the host (HTTPS, user `admin`, secret `WAZUH_INDEXER_ADMIN_PASSWORD`) |
 | Manager API | 127.0.0.1:55000 on the host (HTTPS, user `wazuh-wui`, secret `WAZUH_API_PASSWORD`) |
 | Manager config | `ossec.conf` staged from the playbook into the `wazuh_etc` volume; rules in `/var/ossec/etc/rules/local_rules.xml` (volume, currently the stock 19 lines); agent groups in `/var/ossec/etc/shared/<segment>/` |
-| Survey scripts | `terraform/lxc/ansible/files/wazuh-tuning/survey_alerts.py`, `survey_agents.py`, `survey_noise.py` |
+| Tooling | `terraform/lxc/ansible/files/wazuh-tuning/` (helper, suite, unit tests), `playbooks/wazuh-tuning.yml` |
 
-## Running a survey (read-only)
+## Running it (read-only)
 
-The scripts expect the APIs on the local machine, reached through an SSH tunnel, and
-read the secrets from the environment, so they run under the production wrapper:
+Work from a worktree of the branch you want shipped. The wrapper needs a named
+`TASK_APPROVAL` even for read-only runs (ansible-playbook counts as mutating).
 
 ```bash
-export TASK_APPROVAL=wazuh-tuning-survey-readonly
-./with-secrets-prod bash -c '
-  ssh -o BatchMode=yes -o ExitOnForwardFailure=yes \
-      -L 19200:127.0.0.1:9200 -L 55000:127.0.0.1:55000 \
-      root@192.168.40.15 "timeout 120 tail -f /dev/null" & TP=$!
-  for i in 1 2 3 4 5 6 7 8; do (echo > /dev/tcp/127.0.0.1/19200) 2>/dev/null && break; timeout 1 tail -f /dev/null; done
-  python3 terraform/lxc/ansible/files/wazuh-tuning/survey_alerts.py
-  kill $TP'
+export TASK_APPROVAL=wazuh-tuning-phase0-baseline ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles
+INV=~/git/proxmox-homelab/terraform/lxc/environments/pve/wazuh-stack/inventory.yml
+T() { ./with-secrets-prod ansible-playbook -i $INV -u root \
+      terraform/lxc/ansible/playbooks/wazuh-tuning.yml </dev/null "$@"; }
+
+T -e tune_mode=health -e tune_tag=baseline     # containers, heap, queues, versions
+T -e tune_mode=alerts -e tune_tag=baseline     # 24 h by rule/agent/level/group
+T -e tune_mode=noise  -e tune_args=87907 -e tune_tag=baseline
+T -e tune_mode=mustfire                        # detection regression suite (logtest only)
+T -e tune_mode=sample_start                    # 30 s sampler; sample_log / sample_stop
 ```
 
-`survey_alerts.py` and `survey_noise.py` use the indexer (port 19200); `survey_agents.py`
-uses both. All three only issue GET requests and search queries. `survey_noise.py` has the
-rule ids it breaks down (87907, 550, 2501, 510, 5710) at the top of its body: change them
-to look at another rule.
+JSON results land in `docs/wazuh-tuning/artifacts/<tag>-<mode>.json` (ignored); compare two
+with `wazuh_tuning.diff_json`. `stop_conditions()` encodes the plan's stop list.
+The must-fire suite only uses logtest (no alerts written); live actions on a test agent
+(apt-cacher-stack) are a separate, separately approved tier.
 
 ## Gotchas learned
 
