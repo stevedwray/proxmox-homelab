@@ -1,5 +1,11 @@
 # Terraform Environment Runtime Isolation
 
+> **Status checked 2026-10-10.** The per-environment layout itself is live:
+> stacks are under `terraform/lxc/environments/<node>/` for `pve` and `pve-tiny`
+> (plus the retired `pve-test-vm` and `pve-test`). The parts about running `pve-test-vm` alongside `pve` are
+> historical: `pve-test-vm` is retired. Secrets now come from OpenBao, not SOPS
+> ([secrets-management.md](../reference/secrets-management.md)).
+
 **Status as of June 29, 2026:** Merged to `main` and `stable` as
 `fe05636` (`feat(infra): per-environment Terragrunt layout for runtime
 isolation (#386)`). Steps 1–5 and 8 are complete. Step 9 (pve state

@@ -1,5 +1,11 @@
 # Sprint: Environment Isolation (pve-test-vm)
 
+> **Historical — status checked 2026-10-10.** Written when `pve-test-vm` was
+> the staging environment and secrets lived in SOPS files. `pve-test-vm` is now
+> retired (stopped, not a validation target) and secrets live in OpenBao
+> ([secrets-management.md](../reference/secrets-management.md)). For the
+> current model see `CLAUDE.md` and [branch-model.md](branch-model.md).
+
 **Scope:** Give pve-test-vm its own non-overlapping IP ranges and DNS subzone so
 it can run alongside pve as a persistent staging environment.
 

@@ -1,5 +1,11 @@
 # Sprint: Provisioning Harness Improvements
 
+> **Historical — status checked 2026-10-10.** Written when `pve-test-vm` was
+> the staging environment and secrets lived in SOPS files. `pve-test-vm` is now
+> retired (stopped, not a validation target) and secrets live in OpenBao
+> ([secrets-management.md](../reference/secrets-management.md)). For the
+> current model see `CLAUDE.md` and [branch-model.md](branch-model.md).
+
 **Scope:** Four improvements to `scripts/provision.sh` and per-stack smoke tests
 for all platform-tier stacks. No changes to stack Terraform or Ansible.
 

@@ -10,9 +10,10 @@ stable                              ← validated per its tier, ready for pve
 main                                ← current production state
 ```
 
-All active validation runs directly against `pve` through the production
-approval flow in `AGENTS.md`. `pve-test-vm` is retired and is not a validation
-target. Match validation depth to risk: structural changes require a specific
+All active validation runs directly against the owning production node
+(`pve`, `pve-tiny`, or the Framework host) through the production approval flow
+in `CLAUDE.md` (mirrored in `AGENTS.md` and `.github/copilot-instructions.md`).
+`pve-test-vm` is retired (2026-09-26) and is not a validation target. Match validation depth to risk: structural changes require a specific
 production preflight, rollback plan, and targeted regression checks.
 
 ---
@@ -88,22 +89,29 @@ explicitly accepts the risk in the issue and in the promotion notes.
 
 This branch is frozen as a historical marker: the last state of the repo that was
 validated via a full teardown + redeploy cycle. Do not use it as a base for new
-development. It will eventually be archived.
+development, and do not commit to it.
 
 The intent it encoded — "known-good, tested" — is now represented by `stable`,
 with a gate that matches what is actually being validated.
 
-### Migration requirements
+The migration from `baseline/teardown-validated` to `stable` as the promotion
+target was completed on 2026-06-23.
 
-Before `stable` becomes the active promotion target:
+---
 
-- Create and push the `stable` branch from the agreed current integration point.
-- Update `AGENTS.md`, `.github/copilot-instructions.md`, and active workflow
-  triggers from `baseline/teardown-validated` to `stable`.
-- Update any active planning docs that still instruct operators to branch from
-  or merge to `baseline/teardown-validated`.
-- Keep `baseline/teardown-validated` read-only as a historical marker until it
-  can be archived.
+## Long-lived branches kept on purpose
+
+Besides `stable` and `main`, these stay and must not be deleted:
+
+| Branch | Why |
+|---|---|
+| `baseline/teardown-validated` | Frozen historical marker (above). |
+| `dev/pve-test` | Retired pve-test-vm integration branch; archival only, never a PR target. |
+| `archive/*` | Snapshots (`archive/dev-pve-test`, `archive/main-snapshot`, `archive/teardown-validated`). |
+| `prod/pve-infra` | Pre-`stable` promotion record from 2026-05; kept by operator decision (2026-10-10). |
+
+Everything else is a short-lived branch. Unmerged ones, and what each still
+needs, are listed in [open-branches.md](open-branches.md).
 
 ---
 
@@ -120,7 +128,8 @@ separate branch per session:
 - Delete the sprint branch immediately after it merges to `stable`
 
 Short-lived task branches (`fix/*`, `feat/*`, etc.) follow the normal model and
-are deleted on merge. Do not let stale branches accumulate.
+are deleted on merge (local and remote). Do not let stale branches accumulate;
+when one is merged or dropped, update [open-branches.md](open-branches.md).
 
 ---
 
