@@ -2,6 +2,10 @@
 
 ## Status
 
+> **2026-10-15:** this status block is the August pilot (6 agents). The fleet is now
+> 28 agents, and a baseline survey plus a tuning plan live in
+> [docs/wazuh-tuning/](../wazuh-tuning/README.md) (branch `work/wazuh-tuning`).
+
 **LIVE in production on `pve`, agent pilot rollout complete as of
 2026-08-29.** Manager + indexer + dashboard up and healthy at vmid
 `40015` (`192.168.40.15`, `infra_seg`). Real Authentik OIDC login

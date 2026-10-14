@@ -1,0 +1,96 @@
+# wazuh-tuning
+
+Test and tune the Wazuh SIEM stack with the same method used for Greenbone
+(docs/gvm-scan-redesign/): baseline first, one supervised change at a time, numeric
+decision gates, tooling and config in the repo, docs and memory kept current.
+
+Status: **design and plan only** (written 2026-10-15). Nothing has been changed on the
+live stack. Branch `work/wazuh-tuning`; execution happens in a separate session, one
+phase at a time, each with its own approval. See [plan.md](plan.md) for phases and
+gates and [runbook.md](runbook.md) for how to run the read-only survey tooling.
+
+## Why now
+
+`docs/wazuh-stack/README.md` still describes the August pilot (6 agents). The fleet is
+now 28 agents and the stack has never been measured or tuned. A read-only survey on
+2026-10-15 found problems that are cheap to fix and one that matters for capacity.
+
+## Baseline (read-only survey, 2026-10-15)
+
+All numbers are from the live stack and are the "before" values every later change is
+compared against.
+
+| Area | Measured |
+|---|---|
+| Host | wazuh-stack LXC 40015 on pve, 4 cores, 8GB RAM, 2GB swap; load average 3.3; RAM 6.4GB used, 1.7GB available; no OOM kills |
+| Containers (8 days up) | indexer 4.9GB RSS, JVM heap 69% of 4GB; manager 1.1GB; dashboard 0.2GB |
+| Disk | docker volume 12G of 20G (58%); indexer volume 8.5G of 50G |
+| Agents | 28, all `active`; 27 on 4.14.8, 1 on 4.14.7; **manager is 4.14.7**, so 27 agents are newer than their manager (unsupported combination) |
+| Manager pipeline | 12.2M events received, 0 dropped, 3.77M alerts written; all queues at 0% |
+| Alert volume | **about 500,000 alerts per day, about 410-470MB per day** of indexer storage |
+| Retention | **no ISM policy**: daily alert indices are never deleted (15 days kept so far, 175 shards in a single-node cluster) |
+| Dashboard | container `unhealthy` for 8 days (69,187 failed checks) |
+| Vulnerability detector | 3,957 open findings, 148 per agent; vim packages are 3,000 of them |
+
+### Where the noise is (24 h, 500,346 alerts)
+
+| Share | Rule | Cause |
+|---|---|---|
+| **90.4% (452,193)** | 87907 "Docker: Command launched in container" | Docker health checks being logged as security events: netbox-redis and netbox-redis-cache `valkey-cli ping` (81k each per day, about one per second), cadvisor, docs-rag-pgvector, gluetun, greenbone pg-gvm |
+| 5.9% (29,618) | 550 FIM "Integrity checksum changed" | `/etc/pve/nodes/pve/lrm_status` alone is 17,275 (a pmxcfs status file that changes every few seconds); `/opt/greenbone-stack/mem.log` and `tuning.log` (our own sampler and runner) another 2,877; `/opt/actions-runner/_diag` logs; routine package updates (curl, ld.so.cache) |
+| 0.5% | 2501 syslog auth failure | all 2,754 on `graylog-stack`, no source IP: something retries a bad login there |
+| 0.5% | 510 rootcheck | 2,408 per day from 26 agents, the same anomaly repeating every scan |
+| 0.4% | 5710 sshd non-existent user | all 215 from 192.168.70.11, the Greenbone scanner itself (expected, but it hides real attempts) |
+
+The 87907 rule alone means that fixing one rule removes about 90% of alert volume,
+storage growth and indexing load. The real security signal (logins, sudo, FIM on
+sensitive paths, vulnerability changes) is in the remaining 10% and is currently hard to
+see.
+
+### Health findings that are not noise
+
+1. **Dashboard healthcheck is wrong.** It curls `/api/status` and expects 200 or 302, but
+   the OIDC-protected dashboard answers 401, so Docker marks it unhealthy forever. The
+   dashboard itself works. It also blocks any "wait until healthy" logic.
+2. **Version skew.** Manager 4.14.7, 27 agents 4.14.8. Wazuh requires the manager to be
+   at least as new as the agents. The deploy playbook pins 4.14.7 while the agent role
+   installs the latest.
+3. **No retention.** Indices grow about 0.4GB per day with no deletion. 42GB free is
+   about 100 days at today's volume, but the alert stream is currently inflated 10x.
+4. **Heap at 69% of 4GB** with 175 shards on one node. Fine today, no headroom for
+   tuning mistakes or growth.
+5. **Our own monitoring tools trip FIM.** The Greenbone sampler (`mem.log`) is still
+   running after tuning ended and should be stopped (GVM housekeeping, not Wazuh).
+
+## What good looks like (targets)
+
+| Metric | Now | Target |
+|---|---|---|
+| Alerts per day | 500k | under 50k |
+| Share of alerts from one rule | 90% | no rule over 10% |
+| Indexer growth | 0.4GB/day | under 0.05GB/day |
+| Retention | none | defined and enforced (operator choice, see decisions) |
+| Dashboard container | unhealthy | healthy |
+| Manager vs agent versions | skewed | manager >= every agent |
+| Detection regression | not tested | every must-fire test passes before and after each change |
+
+## Decisions needed from the operator
+
+1. **Retention period** for alert indices (suggest 30 days hot, then delete; or 14 if
+   disk matters more than history).
+2. **Docker health-check events**: drop silently (level 0 rule, recommended) or keep a
+   count-only metric. Container start, stop and exec of anything that is not a health
+   check stay alerting either way.
+3. **Manager upgrade** to 4.14.8 or later, or pin agents to 4.14.7. Recommended:
+   upgrade the manager, then pin both.
+4. **Scanner exclusions**: treat 192.168.70.11 as a known scanner for sshd alerts
+   (recommended, narrowly: only rules 5710, 5712, 5740 and only from that address).
+5. **Scope** of agent coverage work: which hosts are still unenrolled (framework,
+   pve-tiny, others) is Phase 5 and optional.
+
+## Out of scope (separate plans)
+
+- Discord or other alert delivery (separate plan, same as Greenbone).
+- Moving the Wazuh stack to pve-tiny (see memory `project_pve_tiny_load_shifting`;
+  tuning first makes that move cheaper: much less data and indexing load).
+- Feeding Wazuh findings into secpipe (already tracked in docs/wazuh-stack/).
