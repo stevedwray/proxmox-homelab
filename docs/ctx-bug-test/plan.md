@@ -334,7 +334,7 @@ prompt each time is:
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | done 2026-10-14 (operator: SECRETS-OK, failed=0, guarded write of 52 entries; initial model reloaded) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
 | ctx-10-pilot-review | local + Framework (read-only) | — | done 2026-10-14 (24 requests reviewed; restore/evidence verified; fixes recommended) |
-| ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | todo |
+| ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | in progress 2026-10-14 (58 tests pass; local pilot regrade verified; remote copy/regrade awaits approval) |
 | ctx-10b-variant-option | local | — | todo |
 | ctx-10c-batch-variant | local | — | todo |
 | ctx-10e-drop-f-count | local | — | todo |
@@ -885,6 +885,17 @@ over ssh. Then update the README's "Pilot" section with the regraded flags.
 | c. (b) plus send `chat_template_kwargs {"reasoning_effort": "medium"}` (or `low`) for Qwen; its template maps `high` to `xhigh` | Shorter Qwen runs; S4 likely answers. Changes D4 (no longer testing the template default). |
 
 **Decided 2026-10-14: b** (see the Decisions table).
+
+Result (local work, 2026-10-14): S1 comma whitespace normalized, repetition
+check provenance recorded with informational dense-reasoning, early fence
+expiry detected, and offline `--regrade` implemented. All 58 tests pass,
+including the full 288-request canned matrix, no-call/no-lock regrade,
+running-run/hash refusal, backup preservation and byte-idempotence. Prompt
+regeneration twice leaves a clean diff. Regrading the ignored local pilot
+copy removes both Qwen S1 false positives, changes both Qwen F repetition
+flags to dense-reasoning, retains S4 shingle hits, and adds the early fence
+expiry to Laguna upstream F's GPU evidence. The Framework harness and pilot
+have not been modified; the prescribed copy/regrade awaits approval.
 
 #### ctx-10b-variant-option
 

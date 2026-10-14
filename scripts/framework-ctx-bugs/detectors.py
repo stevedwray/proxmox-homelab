@@ -20,7 +20,7 @@ def repetition(text, runbook=False):
     shingles = Counter(tuple(tokens[i:i+8]) for i in range(len(tokens)-7))
     tail = text[-4000:].encode()
     ratio = len(zlib.compress(tail)) / len(tail) if tail else 1
-    return any(n >= 4 for n in shingles.values()) or ratio < .20
+    return (["shingle"] if any(n >= 4 for n in shingles.values()) else []) + (["zlib"] if ratio < .20 else [])
 
 
 def first_difference(left, right):
@@ -32,15 +32,16 @@ def first_difference(left, right):
 
 def gpu_errors(window):
     return [line for line in window.splitlines()
-            if 'amdgpu' in line.lower() and re.search(r'ring .* timeout|wedged|reset', line, re.I)]
+            if 'amdgpu' in line.lower() and re.search(r'ring .* timeout|wedged|reset|Fence fallback timer expired', line, re.I)]
 
 
 def instruction_checks(prompt_id, answer, fixture):
     """Named boolean checks and literal QA failures; no semantic cloud judge."""
     checks, wrong, hallucinations = {}, [], []
     if prompt_id == 'S1':
-        checks['only-numbers'] = bool(re.fullmatch(r'\d+,\d+,\d+', answer))
-        if answer != fixture['expected']:
+        normalized = re.sub(r'\s*,\s*', ',', answer.strip())
+        checks['only-numbers'] = bool(re.fullmatch(r'\d+,\d+,\d+', normalized))
+        if normalized != fixture['expected']:
             wrong.append('sanity')
     elif prompt_id == 'S2':
         lines = answer.rstrip().splitlines()
@@ -116,11 +117,13 @@ def detect(prompt_id, response, fixture, visible_tokens, *, error=None, healthy=
     if choice.get('finish_reason') == 'length':
         flags.append('runaway')
     for name, text in (('answer', answer), ('reasoning', reasoning)):
-        for flag, passed in (('loop', loop(text)), ('repetition', repetition(text, prompt_id == 'S4' and name == 'answer'))):
-            if passed:
-                if flag not in flags:
-                    flags.append(flag)
-                details.setdefault(flag, []).append(name)
+        if loop(text):
+            flags.append('loop')
+            details.setdefault('loop', []).append(name)
+        checks_fired = repetition(text, prompt_id == 'S4' and name == 'answer')
+        if checks_fired:
+            details.setdefault('repetition', {})[name] = checks_fired
+            flags.append('dense-reasoning' if name == 'reasoning' and checks_fired == ['zlib'] else 'repetition')
     completion_tokens = response.get('usage', {}).get('completion_tokens', 0)
     if visible_tokens is not None and completion_tokens > 1.5 * visible_tokens and completion_tokens - visible_tokens > 100:
         flags.append('hidden-tokens')

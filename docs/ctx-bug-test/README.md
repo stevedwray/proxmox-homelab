@@ -111,11 +111,17 @@ The operator must choose the full-run settings:
 | D8: Qwen/count task | a: retain prompts/default effort; b: remove F's count only; c: b plus reduced reasoning effort, subject to the correction below. |
 | D9: Vulkan batches | a: defaults; b: batch 512/ubatch 128 for every cell; c: defaults but skip Laguna upstream F at 96k/131k. |
 
-**D8 option c needs correction before use.** Both saved Qwen templates map
-`reasoning_effort: high` to `xhigh`, so the proposed `high` does not reduce
-effort. They accept `medium` and `low` as distinct settings. The operator
-must resolve the choice; this review does not select one. Changing F or
-effort affects comparability with this pilot.
+**D8 decided 2026-10-14: b.** Remove F's count question in a later prompt
+change; keep S3's count and Qwen's default effort. The plan corrected option
+c to medium/low because the saved templates map high to xhigh. No prompt or
+reasoning-effort change was made in ctx-10a.
+
+ctx-10a's local fixes pass 58 tests. Regrading the local evidence copy clears
+both Qwen S1 false positives, changes both Qwen F repetition flags to
+informational dense-reasoning, preserves S4 shingle repetition and adds the
+early fence expiry to the GPU evidence. The original checkpoint is retained
+as `results.pre-regrade.jsonl`. Framework installation/regrade still awaits
+approval; the original remote pilot has not been changed.
 
 Remaining work is written as steps ctx-10a to ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open

@@ -259,7 +259,7 @@ def findings(records):
     groups = {}
     for r in records:
         groups.setdefault((r['model'], r['size'], r['prompt']), {}).setdefault(r['build'], []).append(r)
-    info_flags = {'build-divergence'}
+    info_flags = {'build-divergence', 'dense-reasoning'}
     for (model, size, prompt), builds in groups.items():
         for build, own in builds.items():
             other = builds.get('upstream' if build == 'nathanw' else 'nathanw', [])
@@ -302,7 +302,7 @@ def report(directory, records, manifest):
             if flag in r['flags']:
                 lines.append(f"| {r['key']} | {flag} | {r['details'][flag]['first_differing_character']} |")
     conclusions = findings(records)
-    lines.extend(['', '## Candidate findings', '', 'Build divergence is information only. Unpaired/incomplete comparisons do not establish build bugs.', ''])
+    lines.extend(['', '## Candidate findings', '', 'Build divergence and dense reasoning are information only. Unpaired/incomplete comparisons do not establish build bugs.', ''])
     for finding in conclusions:
         lines.append('- ' + json.dumps(finding, sort_keys=True))
     fill = [r for r in records if r['prompt'] == 'F' and r['run'] == 'greedy']
@@ -314,6 +314,91 @@ def report(directory, records, manifest):
                   'Raw responses, settings and hashes are in results.jsonl, raw/, prompts/ and run.json.', ''])
     (directory / 'report.md').write_text('\n'.join(lines))
     write_json(directory / 'findings.json', conclusions)
+
+
+def regrade(directory):
+    """Grade saved evidence offline; preserve the first pre-regrade checkpoint."""
+    directory = Path(directory)
+    manifest = json.loads((directory / 'run.json').read_text())
+    progress_path = directory / 'progress.json'
+    progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+    if manifest.get('status') == 'running' or progress.get('status') == 'running':
+        raise ValueError('cannot regrade a running run')
+    results_path = directory / 'results.jsonl'
+    original = results_path.read_bytes()
+    if original and not original.endswith(b'\n'):
+        raise ValueError('cannot regrade an incomplete checkpoint append')
+    records = [json.loads(line) for line in original.splitlines() if line]
+    if len({r['key'] for r in records}) != len(records):
+        raise ValueError('duplicate checkpoint request keys')
+
+    # Each journal block belongs to one request window, including the separate
+    # S1 probe whose request key matches the later short-form S1.
+    journal = (directory / 'dmesg.txt').read_text()
+    windows = {}
+    pattern = r'^## (.+) kernel window @([\d.]+) to @([\d.]+)\n'
+    headers = list(re.finditer(pattern, journal, re.M))
+    for i, header in enumerate(headers):
+        windows[header.group(1, 2, 3)] = journal[header.end():headers[i+1].start() if i+1 < len(headers) else len(journal)]
+
+    def grade(record):
+        if record['prompt'] == 'F':
+            cell = manifest['cells'][record['cell']]
+            item = manifest['fill_prompts'][cell['fill_key']]
+        else:
+            item = manifest['identity']['prompt_manifest']['prompts'][record['prompt']]
+        path = directory / 'prompts' / item['file']
+        # F paths already include the prompts/ prefix in run.json.
+        if record['prompt'] == 'F':
+            path = directory / item['file']
+        data = path.read_bytes()
+        if gp.sha(data) != item['sha256'] or gp.sha(data) != record['prompt_sha256']:
+            raise ValueError(f"saved prompt hash mismatch: {record['key']}")
+        fixture = json.loads(data)
+        window = record['kernel_window']
+        window_key = (record['key'], f"{window['since']:.6f}", f"{window['until']:.6f}")
+        if window_key not in windows:
+            raise ValueError(f"missing saved kernel window: {record['key']}")
+        crash = record.get('details', {}).get('crash', {})
+        before, after = record.get('server_before'), record.get('server_after')
+        record.update(detectors.detect(record['prompt'], record['response'], fixture,
+                      record['visible_tokens'], error=record.get('error'),
+                      healthy=crash.get('healthy', True),
+                      restarted=crash.get('restarted', before is not None and after is not None and before != after),
+                      dmesg_window=windows[window_key]))
+
+    for record in records:
+        grade(record)
+    probes = []
+    for cell, metadata in manifest['cells'].items():
+        if 'probe' in metadata:
+            grade(metadata['probe'])
+            probes.append((directory / 'raw' / cell / 'S1-probe.json', metadata['probe']))
+    add_divergences(records)
+    # Validate all evidence before changing any output. Never replace the backup
+    # on subsequent regrades, even when detector code has changed again.
+    backup = directory / 'results.pre-regrade.jsonl'
+    if not backup.exists():
+        with backup.open('xb') as output:
+            output.write(original)
+            output.flush()
+            os.fsync(output.fileno())
+    temporary = results_path.with_suffix('.jsonl.tmp')
+    with temporary.open('w', encoding='utf-8') as output:
+        for record in records:
+            output.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + '\n')
+        output.flush()
+        os.fsync(output.fileno())
+    temporary.replace(results_path)
+    for record in records:
+        write_json(directory / 'raw' / record['cell'] / f"{record['prompt']}-{record['run']}.json", record)
+    for path, probe in probes:
+        write_json(path, probe)
+    if probes:
+        write_json(directory / 'run.json', manifest)
+    report(directory, records, manifest)
+    print(f'Regraded {len(records)} requests and {len(probes)} probes: {directory}')
+    return 0
 
 
 class Run:
@@ -648,6 +733,7 @@ class Run:
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--regrade', metavar='RUN_DIR', help='offline regrade of saved evidence; refuses running runs')
     parser.add_argument('--dry-run', action='store_true', help='loopback marked stand-in only; no Redis or host commands')
     parser.add_argument('--base-url', default='http://127.0.0.1:8080')
     parser.add_argument('--swap-url', help='default :8099 live; same as base URL in dry run')
@@ -681,7 +767,8 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
     try:
-        return Run(parse_args(argv)).execute()
+        args = parse_args(argv)
+        return regrade(args.regrade) if args.regrade else Run(args).execute()
     except (OSError, ValueError, RuntimeError) as exc:
         print(f'ctx-bugs: {exc}', file=sys.stderr)
         return 1

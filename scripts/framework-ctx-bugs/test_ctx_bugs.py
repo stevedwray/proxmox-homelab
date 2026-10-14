@@ -100,6 +100,34 @@ class DetectorTests(unittest.TestCase):
         self.assertIn('runaway', self.flags(response(finish='length')))
         self.assertNotIn('runaway', self.flags())
 
+    def test_s1_comma_whitespace_only(self):
+        for answer in ('391, 12, 708', ' 391 ,\t12,708\n'):
+            self.assertEqual(self.flags(response(answer=answer)), [])
+        for answer in ('391, 12, 708.', 'The answer is 391,12,708', '391,1 2,708'):
+            self.assertIn('if-fail:only-numbers', self.flags(response(answer=answer)))
+            self.assertIn('wrong:sanity', self.flags(response(answer=answer)))
+
+    def test_dense_reasoning_is_information_only(self):
+        log = '\n'.join(f'F{i:06d} host-{i%10:02d} info' for i in range(500))
+        result = d.detect('S1', response(reasoning=log), self.fixtures['S1'], 10)
+        self.assertIn('dense-reasoning', result['flags'])
+        self.assertNotIn('repetition', result['flags'])
+        self.assertEqual(result['details']['repetition'], {'reasoning': ['zlib']})
+        record = dict(model=cb.MODELS[0], size=32768, prompt='S1', build='nathanw',
+                      run='greedy', seed=1, **result)
+        self.assertEqual(cb.findings([record]), [])
+        result = d.detect('S1', response(answer=log), self.fixtures['S1'], 10)
+        self.assertIn('repetition', result['flags'])
+        self.assertNotIn('dense-reasoning', result['flags'])
+        self.assertEqual(result['details']['repetition'], {'answer': ['zlib']})
+
+    def test_repeated_sentence_remains_repetition(self):
+        text = 'This sentence has enough distinct words to create a shingle. ' * 5
+        result = d.detect('S1', response(reasoning=text), self.fixtures['S1'], 10)
+        self.assertIn('repetition', result['flags'])
+        self.assertNotIn('dense-reasoning', result['flags'])
+        self.assertIn('shingle', result['details']['repetition']['reasoning'])
+
     def test_loop_positive_negative_and_boundaries(self):
         self.assertTrue(d.loop(('abcdefghijklmnopqrstuvwxzy' * 2) * 3))
         self.assertFalse(d.loop('a' * 49 * 3))
@@ -203,13 +231,65 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn('crash', self.flags())
 
     def test_gpu_error_positive_negative(self):
-        for text in ('amdgpu ring gfx timeout', 'amdgpu device wedged', 'amdgpu GPU reset'):
+        for text in ('amdgpu ring gfx timeout', 'amdgpu device wedged', 'amdgpu GPU reset',
+                     'amdgpu Fence fallback timer expired on ring comp_1.3.0'):
             self.assertIn('gpu-error', self.flags(dmesg_window=text))
         self.assertNotIn('gpu-error', self.flags(dmesg_window='unrelated reset'))
         self.assertNotIn('gpu-error', self.flags(dmesg_window=''))
 
 
 class HarnessTests(unittest.TestCase):
+    def test_regrade_stub_run_is_offline_idempotent_and_preserves_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp, server() as s:
+            directory = Path(tmp)
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                      '--models', cb.MODELS[1], '--sizes', '32768', '--greedy-only']))
+            self.assertEqual(run.execute(), 0)
+            records = cb.read_results(directory/'results.jsonl')
+            # Reproduce the pilot's spacing/compression mistakes in saved evidence.
+            first = next(r for r in records if r['build']=='upstream' and r['prompt']=='S1')
+            first['response'] = response(answer='391, 12, 708', reasoning='\n'.join(
+                f'F{i:06d} host-{i%10:02d} info' for i in range(500)))
+            first['flags'] = ['if-fail:only-numbers', 'wrong:sanity', 'repetition']
+            (directory/'results.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records))
+            original = (directory/'results.jsonl').read_bytes()
+            evidence_keys = ('response', 'settings', 'error', 'evidence_error', 'kernel_window',
+                             'visible_tokens', 'prompt_sha256', 'server_before', 'server_after')
+            with mock.patch.object(cb.Client, 'call', side_effect=AssertionError('HTTP forbidden')), \
+                 mock.patch.object(cb.Run, 'lock', side_effect=AssertionError('lock forbidden')), \
+                 mock.patch.object(cb.fcntl, 'flock', side_effect=AssertionError('lock forbidden')):
+                self.assertEqual(cb.main(['--regrade', tmp]), 0)
+                updated = cb.read_results(directory/'results.jsonl')
+                fixed = next(r for r in updated if r['key']==first['key'])
+                self.assertIn('dense-reasoning', fixed['flags'])
+                for flag in ('wrong:sanity', 'if-fail:only-numbers', 'repetition'):
+                    self.assertNotIn(flag, fixed['flags'])
+                for old, new in zip(records, updated):
+                    self.assertEqual({k: old[k] for k in evidence_keys}, {k: new[k] for k in evidence_keys})
+                    self.assertEqual(json.loads((directory/'raw'/new['cell']/f"{new['prompt']}-{new['run']}.json").read_text()), new)
+                backup = directory/'results.pre-regrade.jsonl'
+                self.assertEqual(backup.read_bytes(), original)
+                before = {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+                self.assertEqual(cb.main(['--regrade', tmp]), 0)
+                after = {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+                self.assertEqual(before, after)
+                manifest = json.loads((directory/'run.json').read_text())
+                probe = manifest['cells'][cb.entry_id(cb.MODELS[1], 'nathanw', 32768)]['probe']
+                self.assertEqual(json.loads((directory/'raw'/probe['cell']/'S1-probe.json').read_text()), probe)
+                manifest['status'] = 'running'
+                cb.write_json(directory/'run.json', manifest)
+                with self.assertRaisesRegex(ValueError, 'running'):
+                    cb.regrade(directory)
+                self.assertEqual(backup.read_bytes(), original)
+                self.assertEqual((directory/'results.jsonl').read_bytes(), before['results.jsonl'])
+                manifest['status'] = 'complete'
+                cb.write_json(directory/'run.json', manifest)
+                prompt = directory/'prompts/S1.json'
+                prompt.write_bytes(prompt.read_bytes()+b' ')
+                with self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                    cb.regrade(directory)
+                self.assertEqual((directory/'results.jsonl').read_bytes(), before['results.jsonl'])
+
     def test_prepare_falls_back_if_props_does_not_answer(self):
         with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
             run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp]))

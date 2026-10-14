@@ -167,6 +167,22 @@ new sampled seeds, use a new run directory and select that cell:
 
 ## Checkpoints and outputs
 
+To regrade saved evidence after detector fixes:
+
+```bash
+python3 ctx_bugs.py --regrade /path/to/completed-run
+```
+
+This mode reads saved responses, prompt fixtures, visible token counts and
+request-specific kernel windows. It makes no HTTP calls, reads no credentials
+and takes no lock. It refuses a running run, incomplete checkpoint or changed
+prompt bytes before writing. It preserves the first checkpoint in
+`results.pre-regrade.jsonl`, then updates JSONL, raw records (including probes),
+report and findings. Repeating it with the same detector code is idempotent.
+S1 permits whitespace around commas. Repetition details identify `shingle`
+and/or `zlib` checks by answer/reasoning; a compression-only reasoning hit is
+informational `dense-reasoning` and is excluded from candidate findings.
+
 Each completed request is fsynced to `results.jsonl` and saved under
 `raw/<cell>/<prompt>-<run>.json`. Errors are completed attempts with `crash`
 flags; a process interrupted during a request leaves that request pending.
