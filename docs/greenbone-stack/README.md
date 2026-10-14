@@ -502,8 +502,16 @@ Metrics: `gvm_tasks{kind,status}`, `gvm_task_running`, `gvm_task_progress_percen
 `gvm_metrics_last_run_timestamp_seconds`. `kind` is credentialed, discovery, full_vuln
 or other (task-name based).
 
-Applying (each step separately approved): rebuild only the `gvm-bridge` service (new
-endpoint), re-run the `node_exporter` role with `node_exporter_textfile_dir` set, run the
-greenbone playbook with `--tags monitoring-integration`, then `provision.sh --stack
-monitoring-stack` (scrape targets, dashboard, VictoriaMetrics restart). Alerts are not
+**Applied live 2026-10-15** (branch `work/gvm-grafana`, not merged): gvm-bridge rebuilt
+alone with the new endpoint; `node_exporter` role re-run with the textfile directory;
+greenbone playbook run with `--tags monitoring-integration`; monitoring-stack playbook
+run (scrape targets, dashboard, VictoriaMetrics restart). Verified: both scanner targets
+`up`, 19 of 20 dashboard queries returned data at once and the last (container CPU, a
+5m `rate`) filled in a few minutes later, the cAdvisor port (8082) is open from the
+monitoring host. **Until the branch is merged, a deploy from `stable` rebuilds gvm-bridge
+without `/tasks/summary`**, so the task panels would go empty (`gvm_metrics_source_up
+{source="bridge"}` drops to 0). Steps used, for a rebuild: rebuild only the `gvm-bridge`
+service (`docker compose up -d --build --no-deps gvm-bridge`), re-run the `node_exporter`
+role with `node_exporter_textfile_dir` set, run the greenbone playbook with
+`--tags monitoring-integration`, then the monitoring-stack playbook. Alerts are not
 configured yet (Discord is a separate plan).
