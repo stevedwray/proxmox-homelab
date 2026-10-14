@@ -33,10 +33,11 @@
         argv: [docker, exec, wazuh-stack-manager, sh, -c, "chown 999:999 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf && chmod 660 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
       changed_when: true
     - name: Validate every group's agent.conf
-      ansible.builtin.shell: >-
-        docker exec wazuh-stack-manager /var/ossec/bin/verify-agent-conf 2>&1 | tee /dev/stderr | grep -qiE 'error|invalid|fail' && exit 1 || exit 0
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/verify-agent-conf]
       register: wazuh_agent_conf_check
       changed_when: false
+      failed_when: wazuh_agent_conf_check.rc != 0 or 'ERROR' in (wazuh_agent_conf_check.stdout ~ wazuh_agent_conf_check.stderr)
   rescue:
     - name: Validation failed -- restore the previous agent.conf
       ansible.builtin.command:
