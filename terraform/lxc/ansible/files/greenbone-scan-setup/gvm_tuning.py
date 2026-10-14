@@ -346,6 +346,21 @@ def main():
             for fam, n in sorted(log_by_fam.items(), key=lambda kv: -kv[1])[:8]:
                 print(f"  {n:5}  {fam}")
             return
+        if mode == "famhosts":
+            # famhosts <name-prefix> <family>: which hosts have non-Log findings in one family
+            fam_want = " ".join(sys.argv[3:])  # the playbook splits tune_args on spaces
+            for t in gmp.get_tasks(filter_string=f'name~"{sys.argv[2]}" rows=-1').findall("task"):
+                if t.findtext("status") not in ("Done", "Stopped"):
+                    continue
+                for res in gmp.get_results(filter_string=f"task_id={t.get('id')} rows=-1").findall("result"):
+                    nvt = res.find("nvt")
+                    if nvt is None or nvt.findtext("family") != fam_want:
+                        continue
+                    if (res.findtext("threat") or "") in ("Log", ""):
+                        continue
+                    host = (res.findtext("host") or "").strip().split("\n")[0].strip()
+                    print(f"  {host:16} {t.findtext('name')[:34]:34} {res.findtext('threat')} | {(res.findtext('name') or '')[:60]}")
+            return
         if mode == "vulns":
             t = find(gmp, sys.argv[2])
             per = {}

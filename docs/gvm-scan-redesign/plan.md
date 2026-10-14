@@ -73,6 +73,26 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
    `modify_task` for the zone tasks; unmanaged full-vuln keeps "Full and fast"
    (web probing is useful on unknown devices).
 
+### Phase 2 result (2026-10-15): lean config NOT adopted
+
+Config "Full and fast (lean)" (59 families, 176,778 tests, "Web application
+abuses" off) was run against "Full and fast", one host at a time, same credentialed
+target:
+
+| Host | Baseline | Lean | Findings lost |
+|---|---|---|---|
+| 192.168.20.10 (authentik) | 99 min, 216 results | 43 min, 197 | none |
+| 192.168.120.10 (apps_seg) | 34 min, 60 | 21 min, 57 | none |
+| 192.168.60.20 (game_seg) | 30 min, 61 | 22 min, 57 | Medium: Missing 'HttpOnly' Cookie Attribute (HTTP) |
+
+Redis stayed about 350-520MB in every run. Lean loses real web findings (the
+fleet-wide web-abuse tally is cleartext HTTP on infra/media/mgmt, Express NODE_ENV
+development on ai, HttpOnly on game) and saves little on hosts that serve web
+content. Decision: keep "Full and fast" for credentialed tasks. The OOM risk is
+already covered by the Redis cap, `max_hosts` and SPLIT_HOSTS. The config still
+exists on the scanner; `gvm_tuning.py mklean` recreates it and `famhosts` lists
+hosts by family.
+
 ## Phase 3 - guaranteed night window
 
 1. After one full weekly cycle, record every task's duration.
@@ -87,7 +107,7 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
 1. (done) Phase 0 baseline recorded; lan task re-applied.
 2. `provision.sh --stack greenbone-stack` (findings-ingest) to ship the coverage fix,
    then the real `terragrunt plan` drift check from the main checkout.
-3. Phase 2: lean config experiment on 192.168.20.10.
+3. (done, not adopted) Phase 2 lean config experiment.
 4. After one full weekly cycle, Phase 3 (durations, `DURATION` test, slot recompute).
 
 ## Later (recorded, not scheduled)

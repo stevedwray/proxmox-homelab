@@ -33,7 +33,8 @@ schedule (14 credentialed, 12 full-vuln, 12 discovery).
   Network gear belongs on a discovery-only tier.
 - The `lan` full-vuln task now has the narrow excludes (12), `max_hosts=6` and its
   schedule (re-applied after the baseline). All 38 schedules are live.
-- Phases 2 (lean config) and 3 (night-window `DURATION`) are not started. Next work
+- Phase 2 (lean config) is DONE and NOT adopted (2026-10-15): see plan.md Phase 2 result.
+  Phase 3 (night-window `DURATION`) is not started. Next work
   branches from `stable` (worktree `work/gvm-redesign-phase2`).
 - Tooling for supervised runs is in the repo (`gvm_tuning.py`,
   `playbooks/gvm-scan-tuning.yml`).
@@ -64,7 +65,7 @@ Found while tuning (2026-10-13/14):
 
 | Question | Decision |
 |---|---|
-| Lean config (no web-app probing) on managed hosts | **Yes**, after the experiment in Phase 2 shows what it costs |
+| Lean config (no web-app probing) on managed hosts | **No** (decided 2026-10-15 after the experiment: it drops real web findings and saves little where web services exist) |
 | Unmanaged-device vulnerability scanning cadence | **Weekly** |
 | NetBox auto-push of discovered devices | **Later** (deferred, not in this plan) |
 | Grafana metrics for the scan host | **Later** (deferred; follow-up 8 in docs/gvm-coverage-cleanup/README.md) |
@@ -74,7 +75,7 @@ Found while tuning (2026-10-13/14):
 
 | Scan | Targets | Config | Cadence |
 |---|---|---|---|
-| Credentialed (14 tasks, unchanged) | managed hosts | lean (after Phase 2) | weekly, VLAN slots |
+| Credentialed (14 tasks, unchanged) | managed hosts | Full and fast (lean rejected) | weekly, VLAN slots |
 | Discovery (12 tasks, now scheduled) | whole zone | Discovery | weekly |
 | Full-vuln (12 tasks, narrowed) | **unmanaged addresses only** (zone CIDR minus managed hosts minus fixtures) | Full and fast | weekly, about 6 hosts at once |
 
