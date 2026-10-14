@@ -137,3 +137,50 @@ in `deep-research-complete/` on ai-services-stack. CSE's original detector
 report remains in `cse/`; `metadata-audit.json` and `hits-metadata.jsonl`
 correct dates/provenance without rerunning detectors or changing their
 original flags/excerpts. All these files stay on their source hosts.
+
+## Local VS Code Copilot sessions (lh-01c)
+
+```bash
+python3 scripts/loop-hunt/scan_openwebui.py --format copilot \
+  --root "$HOME/.config/Code/User" \
+  --out docs/loop-hunt/artifacts/vscode-scan-YYYYMMDD
+```
+
+This local-only adapter reads workspace and empty-window chat sessions. It
+supports JSON snapshots and the installed VS Code ObjectMutationLog JSONL
+format: snapshot, set, array truncate/append and unset. Journals are replayed
+into one final state; streaming mutations are not separate responses. If
+both formats exist for one session, the journal supersedes its old snapshot.
+A partial final journal line is ignored and counted; other unreadable files
+are listed by hashed pointer in `unreadable.jsonl` as coverage gaps. Live
+journals can change during the scan; this is not an atomic global snapshot.
+
+`hits.jsonl` records per-response model provenance, timestamp, hashed workspace
+and source pointers, session/request index, request count, approximate saved
+user/answer history size, recorded token counts where available, flags and
+one excerpt capped at 400 characters. Current selected-model metadata never
+replaces an absent historical request model. System prompts and tool schemas
+are not reconstructed. Answer and separately saved reasoning are checked
+separately; compression-only reasoning is informational, not a replay hit.
+Literal think markers or an explicit analysis/reasoning label in answer text
+flag possible template leaks. Cut-off requires recorded cancellation, length
+termination or an incomplete-response error; these do not prove cap exhaustion.
+
+Tool-repeat requires the same tool with identical parseable saved arguments
+three consecutive times. Display messages are not arguments. Missing arguments
+are counted as a coverage limitation; invalid stored JSON arguments and
+unparseable explicit `<tool_call>` envelopes flag tool-malformed. Arbitrary
+JSON examples in prose are not treated as tool calls.
+
+`client-limits.json` includes only Framework model IDs, sanitized URLs, integer
+input/output limits and allowlisted tool/thinking flags. Credentials, URL
+userinfo and query strings are excluded; known client credentials and common
+key/bearer strings are redacted from excerpts. FND-client-limits is a candidate
+when a reasoning entry's output budget is below the earlier test's 16,384;
+it does not establish that the client sent that budget on a historical turn.
+
+Outputs are confined to the ignored local artifact directory (0700), files
+are 0600, existing outputs are refused, and stdout contains only counts.
+`summary.json` and `summary.md` contain model/month/flag totals. No source
+files are modified or copied. Keep excerpts and source identifiers out of git;
+return at most ten bounded excerpts for the operator's replay selection.

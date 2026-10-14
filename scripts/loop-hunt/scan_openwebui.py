@@ -235,7 +235,7 @@ def scan(database, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--format', choices=('openwebui', 'lm-eval', 'cse', 'deep-research'), default='openwebui')
+    parser.add_argument('--format', choices=('openwebui', 'lm-eval', 'cse', 'deep-research', 'copilot'), default='openwebui')
     parser.add_argument('--db', type=Path, help='read-only Open WebUI snapshot')
     parser.add_argument('--root', type=Path, help='discovered transcript directory for the selected adapter')
     parser.add_argument('--out', required=True, type=Path)
@@ -247,13 +247,18 @@ def main(argv=None):
     try:
         if args.format == 'openwebui':
             counts = scan(args.db, args.out)
+        elif args.format == 'copilot':
+            from copilot_scan import scan_copilot
+            counts = scan_copilot(args.root, args.out)
         else:
             from transcript_scan import scan_transcripts
             counts = scan_transcripts(args.root, args.out, args.format)
     except (OSError, ValueError, sqlite3.Error):
-        parser.exit(1, 'Scan failed; no new report retained (check input schema, JSON and output permissions).\n')
+        parser.exit(1, 'Scan failed (check input schema, JSON and output permissions); discard any incomplete output directory.\n')
     if args.format == 'openwebui':
         print(f"SCAN-OK: {counts['chats']} chats; {counts['assistant_messages']} assistant messages; {counts['hits']} hits. Excerpts remain in hits.jsonl.")
+    elif args.format == 'copilot':
+        print(f"COPILOT-SCAN-OK: {counts['sessions']} sessions; {counts['responses']} responses; {counts['candidates']} candidates. Excerpts remain private.")
     else:
         print(f"SCAN-OK: {counts['files']} files; {counts['responses']} responses; {counts['hits']} hits; "
               f"{counts['cap_exhausted']} cap-exhausted (separate). Excerpts remain in hits.jsonl.")
