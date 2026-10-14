@@ -192,6 +192,19 @@ new sampled seeds, use a new run directory and select that cell:
 
 ## Checkpoints and outputs
 
+`watch_run` provides independent overnight supervision for an explicitly
+approved full run. It polls every 10 minutes and writes `watcher.json` and
+`watcher.log` inside that run. It never edits checkpoints or restarts services.
+It restores D10's daily upgrade timer when the run unit exits, before reviewing
+results. At most one automatic resume is allowed, and only for a recorded
+llama-swap infrastructure failure after successful model restoration and a
+stable, reachable swap identity. Resume refuses an active upgrade service;
+the original harness still validates code/build/prompt identity and takes
+its normal run lock. Model failures, interrupted runs, failed restoration
+and repeated outages stop automatic recovery. A file lock prevents duplicate
+watchers. The filename intentionally has no `.py` extension so adding it
+does not change the already-running harness's Python resume hash set.
+
 To regrade saved evidence after detector fixes:
 
 ```bash

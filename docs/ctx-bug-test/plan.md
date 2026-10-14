@@ -1503,3 +1503,26 @@ The plan above already follows these.
 - Tuning anything for speed.
 - Changing the default model or the production catalogue settings beyond
   the temporary variants.
+
+## Overnight supervision (operator, 2026-10-14)
+
+The operator explicitly asked to leave run `20261014T071722Z` under agent
+supervision overnight, monitor progress/problems and keep it running within
+reason without breaking anything. Added a separate stdlib `watch_run`
+supervisor (not part of the harness's Python resume hashes), with 7 safety
+tests. All 82 harness/watcher tests pass. Scope: one user watcher unit,
+read-only run/process/swap checks, run-local watcher logs, D10 timer start/
+stop, and at most one checkpointed resume of this approved full matrix.
+No service restart, host reboot, build/catalogue change, checkpoint rewrite,
+forced lock or retry of model failures is authorized by this watcher.
+
+Recovery requires a recorded swap infrastructure failure, successful prior
+model restoration and stable reachable swap; an active upgrade service,
+missing restoration or a repeated failure prevents automatic resume. Timer
+restoration precedes recovery/result handling when the run unit stops.
+Transient watcher read/command failures are logged and retried without
+restarting services. Polling is every 600 seconds; evidence and GPU/crash
+flag counts and a 45-minute progress warning are recorded. Warnings are
+observations, not reasons to rewrite completed requests or kill the run.
+Framework's sudo authorization for starting the upgrade timer was checked
+read-only and passed. Installation/start verification follows below.
