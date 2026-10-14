@@ -144,6 +144,16 @@ still recreates all three containers whenever the compose file changes, hence th
   single-node compose, so the transcribed configs stay valid. Backup: PBS nightly (11:00, snapshot,
   `pbs-iscsi`), operator confirms a fresh backup of CT 40015 before the upgrade.
 
+## Phase 1c done (2026-10-15)
+
+ISM policy `wazuh-alerts-retention` (hot, then delete at 90 days) exists, is attached to all 47
+existing alert indices (its `ism_template` attaches it to new daily indices automatically), and a host
+cron (`/etc/cron.d/wazuh-log-retention`, 03:30 daily) prunes the manager's raw alert/archive logs to the
+same 90 days. Delivered by `deploy-wazuh-stack.yml --tags wazuh_retention`; a second run changed nothing.
+Nothing was deleted (oldest index is from 2026-08-29, so the first deletions fall on 2026-11-27).
+**Gate follow-up:** tomorrow's new daily index must show the policy attached (`retention` mode,
+`ism_managed_alert_indices` = indices). The one-shard index template is a separate follow-up step.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
@@ -151,7 +161,7 @@ still recreates all three containers whenever the compose file changes, hence th
 | Alerts per day | 500k | under 50k |
 | Share of alerts from one rule | 90% | no rule over 10% |
 | Indexer growth | 0.4GB/day | under 0.05GB/day |
-| Retention | none | defined and enforced (operator choice, see decisions) |
+| Retention | none | 90 days, enforced (**done 1c, 2026-10-15**) |
 | Dashboard container | unhealthy | healthy (**done 1a, 2026-10-15**) |
 | Manager vs agent versions | skewed | manager >= every agent |
 | Detection regression | not tested | every must-fire test passes before and after each change |

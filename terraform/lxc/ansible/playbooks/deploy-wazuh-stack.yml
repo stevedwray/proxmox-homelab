@@ -1154,6 +1154,7 @@
         url_username: admin
         url_password: "{{ wazuh_indexer_admin_password }}"
         force_basic_auth: true
+        status_code: [200, 201]
         body_format: json
         body:
           policy:
