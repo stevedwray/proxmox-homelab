@@ -56,7 +56,10 @@ ZONES = [
     {
         "key": "mgmt_seg",
         "cidr": "192.168.20.0/24",
-        "tier_a_exclude": ["192.168.20.10", "192.168.20.11"],  # Authentik, step-ca
+        # Authentik, step-ca, openbao. openbao's UI (8200) answers any /ui/ path
+        # with a ~1MB page and the web-app probes cache each reply in Redis; it
+        # is scanned by "Credentialed scan: mgmt_seg (openbao)" without port 8200.
+        "tier_a_exclude": ["192.168.20.10", "192.168.20.11", "192.168.20.16"],
     },
     {"key": "edge_seg", "cidr": "192.168.30.0/24", "tier_a_exclude": ["192.168.30.10"]},  # Traefik
     {"key": "infra_seg", "cidr": "192.168.40.0/24", "tier_a_exclude": ["192.168.40.10"]},  # Harbor
