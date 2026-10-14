@@ -44,6 +44,9 @@ their zone" below. Measured durations are in the runbook.
 - The coverage-check fix (a login failure beside a success is not `auth_failed`,
   needed for MikroTik) is on `stable` but reaches the host only with the next
   `provision.sh --stack greenbone-stack` (findings-ingest tag).
+- `FRAGILE_HOSTS` (setup_scan_program.py) keeps devices that stop answering under
+  scanning out of discovery and full-vuln: 192.168.1.253, the TP-Link Omada switch
+  that dropped offline during the 2026-10-14 baseline.
 - Every scan authenticated on all 39 managed hosts except the workstation
   (192.168.1.104; sshd is off), which therefore stays in the unauthenticated scan.
 

@@ -22,6 +22,13 @@ schedule (14 credentialed, 12 full-vuln, 12 discovery).
   network mid-scan**: the scanner waited out about 100 s per web-detection plugin and
   would have run for hours. A vanished host can therefore stall a task past the
   night window; the `DURATION` hard stop (Phase 3) is the guard.
+- **.253 is the TP-Link Omada switch ES206X-M2** (MAC A8:29:48:D7:33:BB, firmware 1.0.1
+  Build 20251128; not in NetBox). It was still offline in Omada more than an hour after
+  the scan stopped, and the baseline was the first time anything probed it with web
+  plugins (the 29 August Discovery scan reached it fine). So the scan probably knocked
+  it over; the Omada event log time of disconnect would confirm it. It is now in
+  `FRAGILE_HOSTS` (setup_scan_program.py), left out of both discovery and full-vuln.
+  Network gear belongs on a discovery-only tier.
 - The `lan` full-vuln task now has the narrow excludes (12), `max_hosts=6` and its
   schedule (re-applied after the baseline). All 38 schedules are live.
 - Phases 2 (lean config) and 3 (night-window `DURATION`) are not started. Next work

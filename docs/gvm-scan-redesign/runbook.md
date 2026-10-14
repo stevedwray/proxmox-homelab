@@ -87,6 +87,10 @@ the task and loses its report history.
   `ping` and a port test from the scanner host, then `stop <task>`. (192.168.1.253 did
   this on 2026-10-14.) The schedule `DURATION` hard stop is meant to make this safe
   unattended.
+- Cheap embedded gear (switches, access points) can hang under the web plugins'
+  request volume. 192.168.1.253 (TP-Link ES206X-M2) went offline during the 2026-10-14
+  full-vuln baseline and needed a power cycle. Such devices go in `FRAGILE_HOSTS`
+  (setup_scan_program.py); anything plugged into a hung switch goes offline with it.
 - Wait for a task to be Done before comparing runs: `last_report/scan_start` is only
   filled in after a run completes.
 
