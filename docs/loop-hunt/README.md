@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01, lh-01b and lh-01c complete; operator replay selection pending**
+Status: **lh-01, lh-01b and lh-01c complete; V1/V9 selected; lh-02 next**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -285,7 +285,40 @@ Private results remain only in the ignored
 `artifacts/vscode-scan-20261015/`: summaries, client limits, hits, unreadable
 audit and nine-example review selection. The directory is 0700 and files
 0600; no excerpts, session identifiers, workspace names or source chats
-enter git. The operator must pick sessions for lh-07; recommend the
-Flash-Next exact-loop example V1 first. A fresh lh-01d capture is optional
-if exact wire-level replay is wanted. lh-02 and production tests have not
-started; no production access occurred during lh-01c.
+enter git. The operator selected V1 and V9 for lh-07, as recorded below. A fresh lh-01d
+capture remains optional for exact wire-level replay. Production tests have
+not started; no production access occurred during lh-01c.
+
+### Operator replay selection and endpoint provenance (2026-10-15)
+
+| Example | Response date (UTC) | Endpoint port | Engine | Selection |
+| --- | --- | --- | --- | --- |
+| V1, Flash-Next reasoning loop | 2026-10-07 00:33:05.746 | 8080 | llama-swap; served entry/build unrecorded | retain |
+| V9, Qwen3-Coder-Next tool repeat | 2026-09-16 00:20:10.762 | 11434 | Ollama | retain |
+| V4, Qwen3.6 malformed tool envelope | 2026-09-15 22:06:56.378 | 11434 | Ollama | exclude: not llama.cpp |
+| V7, Qwen3.6 template loop | 2026-09-09 03:52:33.723 | unknown for this exact model; provider history 11434 | unverified, likely Ollama | exclude: llama.cpp not established |
+
+The operator supplied the engine map: :8080 before 2026-10-07 is the
+hand-run Nathanw fork; from that date it is llama-swap and the served
+entry determines the build; :11434 is Ollama; :1234 is LM Studio.
+Endpoint evidence comes from local VS Code configuration history, not wire
+captures. V1's provider/model maps to :8080 in a preceding October 7 config.
+Its saved name has no build suffix, and direct :8080 requests do not prove
+which entry llama-swap had loaded. No build SHA is inferred. V4 and V9
+have exact provider/model matches in September 15/16 configurations on
+:11434. V7's exact model is absent from saved configs; its named provider
+uses :11434 in bracketing August 23/September 15 snapshots. This is
+provider-level evidence, not proof of that response's port or engine.
+
+V2, V3, V5, V6 and V8 are dropped from the replay selection. The private
+review-selection file now retains V1/V9 only; the original scan hit file
+is preserved. No new excerpts were fetched. Copilot saves neither the
+system prompt nor full tool schemas, so these lh-07 replays will be
+**reconstructions**, not exact historical requests. Keep lh-01d available
+for a future exact capture; do not change the VS Code URL automatically.
+
+The requested lh-01b CSE scan and deep-research recovery already completed
+in commits 23bce712/2a06001b. Their results above remain authoritative:
+CSE 827 responses/18 candidates; deep 10919 segments/502 candidates, with
+two invalid source files explicitly excluded. Eval outputs remain preserved.
+No repeat production scan is needed to finish that work.

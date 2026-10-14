@@ -153,7 +153,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
 | lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (all sources reported; eval preserved; 2 unreadable deep files; replay choices pending) |
-| lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; operator replay selection pending) |
+| lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; V1/V9 selected; lh-02 next) |
 | lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
@@ -559,7 +559,7 @@ and up to 10 excerpts; the operator picks sessions to replay in lh-07.
 If maxOutputTokens for a reasoning model is far below what its
 reasoning needs, record that as finding candidate FND-client-limits.
 
-Result (2026-10-15): **complete; operator replay selection pending**.
+Result (2026-10-15): **complete; V1/V9 selected; lh-02 next**.
 Actual layout: workspace `chatSessions/*.jsonl` mutation journals plus
 JSON/JSONL empty-window sessions. The tested adapter replays kinds 0–3
 (snapshot, set, array truncate/append, unset), following the installed
@@ -592,8 +592,24 @@ All model/month/flag counts and aggregate conclusions are in
 remain only in ignored `artifacts/vscode-scan-20261015/` (0700 directory,
 0600 files); no keys, excerpts or source identifiers enter git. No source
 writes, configuration changes, inference or production access occurred.
-Operator replay selection remains pending for lh-07. The next step, lh-01d,
-is optional if exact wire capture is wanted; lh-02 has not started.
+Operator selection (2026-10-15): retain V1 (2026-10-07 00:33 UTC, :8080,
+llama-swap; served entry/build unknown) and V9 (2026-09-16 00:20 UTC,
+:11434, Ollama). Historical client configuration supplies the ports; these
+are not wire captures. V4 (2026-09-15 22:06 UTC) used :11434/Ollama and
+fails the llama.cpp-only condition. V7 (2026-09-09 03:52 UTC) has no exact
+model/port record; its provider's bracketing configs use :11434, so llama.cpp
+is not established and it is excluded. No build inferred from a provider
+label or unsuffixed model name. Drop V2/V3/V5/V6/V8. Private replay selection
+now contains V1/V9 only. See README for provenance and precise timestamps.
+
+Operator engine map: :8080 before 2026-10-07 = hand-run Nathanw fork;
+from 2026-10-07 = llama-swap, build determined by the served entry;
+:11434 = Ollama; :1234 = LM Studio. Missing served entry/build stays unknown.
+Copilot replay is a reconstruction: the system prompt and tool schemas are
+absent. Keep optional lh-01d available for exact capture; defer it now and
+continue lh-02 without modifying the client. The requested lh-01b CSE scan
+and deep-research fix/retry already completed (23bce712/2a06001b); preserve
+those reports and do not rerun eval or the completed scans.
 
 
 #### lh-01d-capture-proxy
