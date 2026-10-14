@@ -89,6 +89,45 @@
       ],
       "phrase": "lxc",
       "absent": true
+    },
+    {
+      "name": "rootcheck: a known rootkit file signature is detected",
+      "needs": [
+        "rootcheck"
+      ],
+      "ids": [
+        "510"
+      ],
+      "min_level": 7,
+      "phrase": "mcliZokhb"
+    },
+    {
+      "name": "FIM: a changed key file still alerts",
+      "needs": [],
+      "ids": [
+        "550"
+      ],
+      "min_level": 7,
+      "keyfile": true
+    },
+    {
+      "name": "FIM: the key file's content is NOT stored in the alert",
+      "needs": [],
+      "ids": [
+        "550"
+      ],
+      "min_level": 7,
+      "keyfile": true,
+      "no_diff": true
+    },
+    {
+      "name": "FIM: an ordinary changed file still stores its diff",
+      "needs": [],
+      "ids": [
+        "550"
+      ],
+      "min_level": 7,
+      "diff": true
     }
   ]
 }

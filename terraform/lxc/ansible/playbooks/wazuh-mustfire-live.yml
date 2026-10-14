@@ -46,9 +46,18 @@
 
         - name: Add, change and remove a marked file under /etc (FIM add, modify, delete)
           ansible.builtin.shell: |
-            f=/etc/{{ marker }}.test
-            echo one > $f; sleep 8; echo two >> $f; sleep 8; rm -f $f; sleep 8
+            f=/etc/{{ marker }}.test; k=/etc/{{ marker }}.key
+            echo one > $f; echo dummy-key-material-one > $k; sleep 8
+            echo two >> $f; echo dummy-key-material-two >> $k; sleep 8
+            rm -f $f $k; sleep 8
           changed_when: true
+
+        - name: Create a known rootkit signature file in /tmp (rootkit_files.txt 'Bash door'; removed at the end)
+          when: live_rootcheck | default(false) | bool
+          ansible.builtin.file:
+            path: /tmp/mcliZokhb
+            state: touch
+            mode: "0600"
 
         - name: Create a hidden marker file under /dev (rootcheck alert; /dev is a tmpfs, removed in cleanup)
           when: live_rootcheck | default(false) | bool
@@ -74,7 +83,7 @@
         - name: Cleanup - user, file and container
           ansible.builtin.shell: |
             id {{ marker }} >/dev/null 2>&1 && userdel {{ marker }}
-            rm -f /etc/{{ marker }}.test
+            rm -f /etc/{{ marker }}.test /etc/{{ marker }}.key
             {{ '' if live_rootcheck | default(false) | bool else 'rm -f /dev/.' ~ marker }}
             command -v docker >/dev/null 2>&1 && docker rm -f {{ marker }}c >/dev/null 2>&1
             true
@@ -129,11 +138,12 @@
         var: live.stdout_lines
 
     # The hidden /dev marker must still exist while the rootcheck scan runs, so it is removed here, last.
-    - name: Remove the hidden /dev marker from the agent
+    - name: Remove the hidden /dev marker and the signature file from the agent
       when: live_rootcheck | default(false) | bool
       ansible.builtin.file:
-        path: "/dev/.{{ marker }}"
+        path: "{{ item }}"
         state: absent
+      loop: ["/dev/.{{ marker }}", /tmp/mcliZokhb]
       delegate_to: "{{ agent_host }}"
 
     - name: Fail if any live check failed

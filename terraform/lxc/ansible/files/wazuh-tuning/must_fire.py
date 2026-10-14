@@ -201,9 +201,15 @@ def live(agent, marker, minutes=30, capabilities=()):
             failures += not ok
             print(f"{'PASS' if ok else 'FAIL'}  {case['name']}: {n} alert(s), want none of {case['ids']} mentioning {case['phrase']!r}")
             continue
+        match = {"match_phrase": {"full_log": case["phrase"]}} if case.get("phrase") else where   # a fixed-name signature file
+        if case.get("keyfile"):
+            match = {"wildcard": {"syscheck.path": f"*{marker}.key"}}
+        elif case.get("diff"):
+            match = {"wildcard": {"syscheck.path": f"*{marker}.test"}}
         q = {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}}, {"term": {"agent.name": agent}},
                                  {"terms": {"rule.id": case["ids"]}}, {"range": {"rule.level": {"gte": case["min_level"]}}},
-                                 where]}}
+                                 match] + ([{"exists": {"field": "syscheck.diff"}}] if case.get("diff") else []),
+                      "must_not": [{"exists": {"field": "syscheck.diff"}}] if case.get("no_diff") else []}}
         n = wt.total(wt.search(wt.ALERTS, q))
         ok = n > 0
         failures += not ok

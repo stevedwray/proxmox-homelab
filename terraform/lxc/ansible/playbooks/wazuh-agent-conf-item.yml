@@ -62,3 +62,31 @@
     - name: Fail the play
       ansible.builtin.fail:
         msg: "{{ wazuh_group }} agent.conf failed verify-agent-conf; the previous copy was restored."
+
+# The rootkit rule files exist only in the default group dir, and an agent receives only the files of the groups it
+# is in, so the 18 agents without the default group would never get them. Copy them into each other group the same
+# safe way (staging dir, chown, atomic rename), only when missing or different.
+- name: "Make the rootkit rule files available in {{ wazuh_group }}"
+  when: wazuh_group != 'default'
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - wazuh-stack-manager
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /var/ossec/etc/agent-conf-backup && chown 999:999 /var/ossec/etc/agent-conf-backup && chmod 700 /var/ossec/etc/agent-conf-backup
+        for f in rootkit_files.txt rootkit_trojans.txt; do
+          if ! cmp -s /var/ossec/etc/shared/default/$f /var/ossec/etc/shared/{{ wazuh_group }}/$f; then
+            cp /var/ossec/etc/shared/default/$f /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            chown 999:999 /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            chmod 660 /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            mv /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new /var/ossec/etc/shared/{{ wazuh_group }}/$f
+            echo copied $f
+          fi
+        done
+  register: wazuh_rootkit_files
+  changed_when: "'copied' in wazuh_rootkit_files.stdout"
+  tags: [wazuh_agent_conf]
