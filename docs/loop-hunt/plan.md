@@ -1,6 +1,7 @@
 # Loop hunt: reproduce real-use looping on Framework
 
-Planned 2026-10-15. Nothing here has run yet.
+Planned 2026-10-15. lh-01 local tools are built and tested; no Framework
+chat scan or model test has run yet.
 
 ## Why
 
@@ -112,7 +113,7 @@ one C1 session on fork `current`, about 1.5 h.
 | # | Question | Decision |
 |---|---|---|
 | D-L1 | Scan Open WebUI's chat history on Framework for real loops? It reads private chats; only flagged excerpts are shown to you, nothing leaves Framework until you approve | **Yes.** Real examples are the most direct evidence |
-| D-L2 | Server settings | **Production-like** (default batches, parallel 4, cache on). Risk: a long first prefill can hit the known Vulkan hang; recorded as a finding, the run continues |
+| D-L2 | Server settings | **Production-like** (default batches, parallel unset: default 4 slots with a unified KV pool, cache on). Risk: a long first prefill can hit the known Vulkan hang; recorded as a finding, the run continues |
 | D-L3 | Sampling | **What real clients send**, taken from the Open WebUI history in lh-01 if present; otherwise llama-server's defaults for that entry (no sampling in the request). Recorded per run |
 | D-L4 | Include GLM-5.3 (upstream only) | **Yes, C1 and C2.** It was part of the original complaint; it can only be compared with itself (warm vs cold, short vs long), not with the fork |
 | D-L5 | Include the Q2 Qwen | **Only if lh-01 finds real loops on it** |
@@ -130,7 +131,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | Step | Runs on | Approval | Status |
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
-| lh-01-chat-scan | local, then Framework (read-only) | `loop-hunt-chat-scan` | todo |
+| lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | local tools built; scan approval pending |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
@@ -180,9 +181,41 @@ scope:
   allowed_paths:
     - scripts/loop-hunt/
     - docs/loop-hunt/
+preflight: >
+  Target: steve@framework.gibbsgreatly.xyz, Open WebUI history. Read-only
+  access to the live chat database via SQLite backup, then a scan of the
+  snapshot only. Mutating only the installed scanner files in ~/loop-hunt/
+  and the dedicated /storage/artifacts/loop-hunt/ directory (0700, steve),
+  with mode-0600 outputs in chat-scan-<Framework date>/. The full snapshot
+  is deleted by an EXIT trap on success or failure. Return summary counts
+  and at most ten flagged 400-character excerpts with chat/message IDs;
+  do not return stored parameters or full chats. Keep hits.jsonl on Framework.
+  Out of scope: model loads/inference, service changes, live DB writes,
+  other artifact directories, full-chat exports and cloud uploads.
 commands:
   - "rsync -a --exclude __pycache__/ scripts/loop-hunt/ scripts/framework-ctx-bugs/detectors.py steve@framework.gibbsgreatly.xyz:loop-hunt/"
-  - "ssh steve@framework.gibbsgreatly.xyz 'D=/storage/artifacts/loop-hunt/chat-scan-$(date +%Y%m%d); install -d -m 0700 $D && sudo -n python3 ~/loop-hunt/snapshot_sqlite.py /mnt/container-storage/openwebui-data/webui.db $D/webui.db.copy && sudo -n chown steve: $D/webui.db.copy && python3 ~/loop-hunt/scan_openwebui.py --db $D/webui.db.copy --out $D && cat $D/summary.md'"
+  - |
+    ssh steve@framework.gibbsgreatly.xyz 'bash -se' <<'REMOTE'
+    D=/storage/artifacts/loop-hunt/chat-scan-$(date +%Y%m%d)
+    sudo -n install -d -m 0700 -o steve -g steve /storage/artifacts/loop-hunt
+    install -d -m 0700 "$D"
+    trap 'rm -f "$D/webui.db.copy" "$D/webui.db.copy-wal" "$D/webui.db.copy-shm" "$D/webui.db.copy-journal"' EXIT
+    sudo -n python3 ~/loop-hunt/snapshot_sqlite.py /mnt/container-storage/openwebui-data/webui.db "$D/webui.db.copy"
+    sudo -n chown steve: "$D/webui.db.copy"
+    python3 ~/loop-hunt/scan_openwebui.py --db "$D/webui.db.copy" --out "$D"
+    cat "$D/summary.md"
+    python3 - "$D/hits.jsonl" <<'PYTHON'
+    import itertools
+    import json
+    import sys
+    fields = ('chat_id', 'message_index', 'message_id', 'model_id', 'estimated_history_tokens', 'flags', 'excerpt')
+    with open(sys.argv[1]) as source:
+        for line in itertools.islice(source, 10):
+            hit = json.loads(line)
+            print(json.dumps({field: hit[field] for field in fields}, ensure_ascii=False))
+    PYTHON
+    REMOTE
+
 gates:
   - id: tests
     cmd: "python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py'"
@@ -199,7 +232,22 @@ operator picks which chats (if any) to replay in lh-07 and whether D-L3/D-L5
 change. Record the answer. Delete `webui.db.copy` after the scan; keep
 hits.jsonl. Nothing from the scan goes into git except counts.
 
-Result: —
+Result: local preparation done 2026-10-15; `loop-hunt-chat-scan` approval
+pending before any Framework access. All 17 tests pass, including committed
+WAL-only rows, integrity checks, read-only connections, failure cleanup,
+exclusive/private output files, clean and looping chats, alternate branches,
+broken links, literal markers and a 400-character excerpt limit. Both CLI
+help commands pass. The source is not checkpointed or written. The new snapshot uses DELETE
+journaling so it is self-contained; stale snapshot sidecars are refused. The scanner
+uses saved history parent links and does not double count Open WebUI's flat
+active-path copy. Literal hidden-token strings are distinguished from
+invisible token floods, which chat text cannot prove. Stored parameters
+retain chat/message provenance instead of inferred sampling defaults.
+The production command prepares only its dedicated artifact directory and
+uses an EXIT trap to delete the full snapshot even if scanning fails;
+summary and up to ten excerpts are returned only after explicit approval.
+No real chat data has been read or copied, and no production access occurred.
+
 
 #### lh-02-session-harness
 
@@ -343,7 +391,10 @@ Result: —
 
 One C1 session (seed 1) on `qwen3.8-flash-next-q4-nathanw-sess131k`, with
 the D10 timer pause and restore, detached like ctx-bug-test's runs. Then
-review: per-turn flags, cached-token counts (proves the cache is used),
+first confirm the slot layout from real `/props` and `/slots`: the expected
+default is four slots, each reporting the full variant context, with a shared
+KV pool. Record the responses; if the layout differs, stop and report before
+continuing the pilot. Then review: per-turn flags, cached-token counts (proves the cache is used),
 timing against the plan's estimate, warm/cold CK pairs, and whether any
 turn degenerates. Fix the harness (new local step) before lh-06 if the
 review finds a measuring problem. Approval `loop-hunt-pilot`.
