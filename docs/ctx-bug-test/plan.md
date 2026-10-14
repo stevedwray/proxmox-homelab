@@ -341,7 +341,7 @@ prompt each time is:
 | ctx-10b-variant-option | local | — | done 2026-10-14 (suffix/prompt options, resume identity and restoration; 62 tests pass) |
 | ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
 | ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
-| ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | in progress 2026-10-14 (operator started 20261014T041054Z; running gate passed; result review pending) |
+| ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | done 2026-10-14 (batch run complete; no crash/GPU error; 7/7; restored initial model; D9 pending) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
@@ -1106,8 +1106,28 @@ loads/checks `laguna-s-2.1-upstream-ctx131k-b512`. The start gate passes.
 The supplied excerpt omits command 1's `SECRETS-OK`; the operator instructed
 the agent to assume it passed (2026-10-14), rather than requesting more
 output. This is an operator-directed assumption, not independently observed
-output. No commands were rerun by the agent. Completion, restored model,
-GPU evidence, timings and x/7 accuracy remain to be reviewed when requested.
+output. No start/deployment commands were rerun by the agent.
+
+Result (review, 2026-10-14): the read-only completion check shows one request
+complete; report, raw record, run metadata, saved prompts and kernel windows
+are copied under ignored `artifacts/batch-confirm/`. The request has no
+crash, GPU error, other flag, request error or evidence error. The kernel
+window says `-- No entries --`; server PID/start identity is unchanged.
+The seven raw answers exactly match the saved expected list (7/7). The F
+prompt hash matches run.json; /tokenize count is 112640 and server timing
+reports prompt_n=112641, a one-token count discrepancy retained in evidence.
+The loaded alias/build/context/slots match the requested entry. Restoration
+records `qwen3-coder-next-upstream` with `restored_default: true`.
+
+Request wall time is 782.128 s (13 min 02 s), versus the pilot's failed
+Laguna upstream F request at 899.192 s (14 min 59 s). Total run duration is
+about 15 min 08 s, below the 20–30 min estimate. Prompt throughput is
+144.576 tok/s and generation throughput 17.188 tok/s. The failed pilot
+request saved no timing response, so its F prompt throughput is unavailable;
+there is no numeric throughput comparison or accuracy comparison. This
+single revised-prompt/small-batch run succeeded without a hang; it does not
+isolate the batch change as the cause. D9 options and the comparison are in
+the README. Stop here for the operator's D9 decision; no full run started.
 
 **D9 (operator decision before ctx-11, after ctx-10d).** Write the options
 into the README and stop:

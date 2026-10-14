@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **pilot regraded; batch confirmation pending** (2026-10-14). The operator settled
+Status: **batch confirmation reviewed; D9 pending** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -15,11 +15,9 @@ is `/storage/artifacts/framework-ctx-bugs/20261014T000806Z` on Framework.
 
 The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
-were written, and `qwen3-coder-next-upstream` was reloaded. The next step
-is ctx-10e, local removal of F's count question. ctx-10c added the Laguna
-small-batch variant locally; all 42 llama-builds tests pass. ctx-10b added suffix
-and prompt-selection support with 62 tests passing. D8 is decided; the full
-run still waits for the remaining preparation and D9 decision.
+were written, and `qwen3-coder-next-upstream` was reloaded. Local preparation
+ctx-10b/ctx-10c/ctx-10e and the ctx-10d confirmation are complete. The full
+run waits for the operator's D9 batch-setting decision.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -114,8 +112,8 @@ The operator must choose the full-run settings:
 | D8: Qwen/count task | a: retain prompts/default effort; b: remove F's count only; c: b plus reduced reasoning effort, subject to the correction below. |
 | D9: Vulkan batches | a: defaults; b: batch 512/ubatch 128 for every cell; c: defaults but skip Laguna upstream F at 96k/131k. |
 
-**D8 decided 2026-10-14: b.** Remove F's count question in a later prompt
-change; keep S3's count and Qwen's default effort. The plan corrected option
+**D8 decided and implemented 2026-10-14: b.** F now has seven questions;
+S3 keeps its count and Qwen keeps its default effort. The plan corrected option
 c to medium/low because the saved templates map high to xhigh. No prompt or
 reasoning-effort change was made in ctx-10a.
 
@@ -127,7 +125,43 @@ as `results.pre-regrade.jsonl`. The operator confirmed successful Framework
 regrade of all 24 requests and one probe on 2026-10-14. The table above
 reflects the corrected classifications; timings and responses are unchanged.
 
-Remaining work starts with ctx-10e, then ctx-10d through ctx-14 in
+## Small-batch confirmation (2026-10-14)
+
+ctx-10d run `20261014T041054Z` completed its one greedy F request on
+`laguna-s-2.1-upstream-ctx131k-b512` (batch 512/ubatch 128). Its raw answer
+matches all seven expected answers. There are no flags, request errors or
+evidence errors; the captured kernel window has no entries and the server
+identity is unchanged. The run restored `qwen3-coder-next-upstream`.
+Saved prompt hash and alias/build/context/slot checks pass. The tokenizer
+count is 112,640; server timing reports 112,641 prompt tokens, a one-token
+discrepancy retained in the raw evidence. Local evidence is in ignored
+`artifacts/batch-confirm/`.
+
+| Measurement | Original pilot Laguna upstream F | ctx-10d |
+| --- | --- | --- |
+| Hang/request outcome | GPU timeout/reset; HTTP 500 | No hang or request error observed |
+| Request wall time | 899.192 s | 782.128 s |
+| Prompt throughput | Unavailable: failed response has no timings | 144.576 tok/s |
+
+The full confirmation run took about 15 min 08 s. Its accuracy is 7/7;
+the pilot had eight questions, so accuracy is not compared. Removing the
+count question also changed the prompt, which prevents attributing success
+solely to smaller batches. This is one successful run, not a guarantee for
+other sizes, models or seeds. A production-catalogue change remains a
+separate task.
+
+D9 remains the operator's decision before ctx-11:
+
+| Option | Effect |
+| --- | --- |
+| a. Keep defaults | Tests production settings; another long-context GPU hang remains possible. |
+| b. Batch 512/ubatch 128 for every test cell | Keeps paired cells comparable using the setting that succeeded here; may slow prompt processing and requires a new local catalogue change plus approved deployment. |
+| c. Defaults, skip Laguna upstream F at 96k/131k | Avoids those known-risk requests but leaves a context-fill coverage gap. |
+
+Recommendation: b, with the stated evidence limits. No D9 option was
+selected and no full run was started during this review.
+
+Remaining work is ctx-11 through ctx-14, after resolving D9, in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
