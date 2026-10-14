@@ -12,6 +12,8 @@ mode logic), so docker events are tested with the exact shape the agents send. A
 case may also rewrite the command, to prove a non-health-check exec still alerts
 after the 87907 suppression.
 
+`must_fire.py live <agent> <marker> [docker]` is Tier 2 (see must_fire_live_cases.json).
+
 Exit status 0 only if every case passes. Prints PASS/FAIL per case.
 """
 import json
@@ -83,5 +85,30 @@ def run(cases_path=os.path.join(HERE, "must_fire_cases.json")):
     return failures
 
 
+def live(agent, marker, minutes=30, capabilities=()):
+    """Tier 2: did the marked live actions on `agent` produce the expected alerts?"""
+    spec = json.load(open(os.path.join(HERE, "must_fire_live_cases.json")))
+    where = {"bool": {"should": [
+        {"multi_match": {"query": marker, "type": "phrase",
+                         "fields": ["full_log", "data.srcuser", "data.dstuser", "data.docker.Actor.Attributes.name"]}},
+        {"wildcard": {"syscheck.path": f"*{marker}*"}}], "minimum_should_match": 1}}
+    failures = 0
+    for case in spec["cases"]:
+        if not set(case["needs"]) <= set(capabilities):
+            print(f"SKIP  {case['name']} (needs {case['needs']})")
+            continue
+        q = {"bool": {"filter": [wt.day(minutes / 60), {"term": {"agent.name": agent}},
+                                 {"terms": {"rule.id": case["ids"]}}, {"range": {"rule.level": {"gte": case["min_level"]}}},
+                                 where]}}
+        n = wt.total(wt.search(wt.ALERTS, q))
+        ok = n > 0
+        failures += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  {case['name']}: {n} alert(s), want {case['ids']} >=L{case['min_level']}")
+    print(f"\n{'ALL PASS' if not failures else str(failures) + ' FAILED'}")
+    return failures
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["live"]:
+        sys.exit(1 if live(sys.argv[2], sys.argv[3], capabilities=sys.argv[4:]) else 0)
     sys.exit(1 if run(*sys.argv[1:2]) else 0)

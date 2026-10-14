@@ -42,7 +42,7 @@
         src: "{{ playbook_dir }}/../files/wazuh-tuning/{{ item }}"
         dest: "{{ dir }}/{{ item }}"
         mode: "0644"
-      loop: [wazuh_tuning.py, must_fire.py, must_fire_cases.json]
+      loop: [wazuh_tuning.py, must_fire.py, must_fire_cases.json, must_fire_live_cases.json]
 
     - name: Run a helper mode (JSON kept on the host)
       when: tune_mode in helper_modes
