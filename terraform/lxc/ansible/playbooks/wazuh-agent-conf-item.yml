@@ -1,0 +1,47 @@
+# Included by deploy-wazuh-stack.yml (tag wazuh_agent_conf): deliver one group's agent.conf.
+- name: "Stage {{ wazuh_group }} agent.conf on the host"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../files/wazuh-stack/agent_conf/{{ wazuh_group }}.xml"
+    dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml"
+    mode: "0640"
+  tags: [wazuh_agent_conf]
+
+- name: "Compare {{ wazuh_group }} with the manager's live copy"
+  ansible.builtin.shell: |
+    h=$(sha256sum < {{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml)
+    c=$(docker exec wazuh-stack-manager sh -c 'sha256sum < /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf')
+    test "$h" = "$c"
+  register: wazuh_agent_conf_same
+  changed_when: false
+  failed_when: false
+  tags: [wazuh_agent_conf]
+
+- name: "Deliver and validate {{ wazuh_group }} agent.conf"
+  when: wazuh_agent_conf_same.rc != 0
+  tags: [wazuh_agent_conf]
+  block:
+    - name: Back up the live agent.conf
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, cp, -p, "/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf", "/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak"]
+      changed_when: true
+    - name: Copy the new agent.conf into the manager container
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml", "wazuh-stack-manager:/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+      changed_when: true
+    - name: Set ownership and permissions
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "chown 999:999 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf && chmod 660 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+      changed_when: true
+    - name: Validate every group's agent.conf
+      ansible.builtin.shell: >-
+        docker exec wazuh-stack-manager /var/ossec/bin/verify-agent-conf 2>&1 | tee /dev/stderr | grep -qiE 'error|invalid|fail' && exit 1 || exit 0
+      register: wazuh_agent_conf_check
+      changed_when: false
+  rescue:
+    - name: Validation failed -- restore the previous agent.conf
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "test -f /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak && cp -p /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+      changed_when: true
+    - name: Fail the play
+      ansible.builtin.fail:
+        msg: "{{ wazuh_group }} agent.conf failed verify-agent-conf; the previous copy was restored."

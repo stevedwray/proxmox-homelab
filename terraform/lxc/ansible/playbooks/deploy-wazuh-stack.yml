@@ -1251,6 +1251,17 @@
           30 3 * * * root docker exec wazuh-stack-manager find /var/ossec/logs/alerts /var/ossec/logs/archives -type f -mtime +{{ wazuh_alert_retention_days }} -delete
       tags: [wazuh_retention]
 
+    # Shared agent configuration (docs/wazuh-tuning/plan.md Phase 2a): FIM ignore lists for the few
+    # paths that rewrite themselves constantly. One agent.conf per agent group, scoped inside by agent
+    # name. Same safety pattern as local_rules.xml: back up, docker cp, verify-agent-conf, restore on
+    # failure. No manager restart is needed -- the manager pushes the change to the agents.
+    - name: Deliver shared agent.conf files to the manager
+      ansible.builtin.include_tasks: wazuh-agent-conf-item.yml
+      loop: "{{ ['default', 'build_seg', 'pentest_seg'] }}"
+      loop_control:
+        loop_var: wazuh_group
+      tags: [wazuh_agent_conf]
+
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
         host: 127.0.0.1

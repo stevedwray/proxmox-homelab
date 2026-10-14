@@ -12,6 +12,7 @@ Modes:
   alerts [hours]          alerts by rule, agent, level and group (default 24 h)
   noise <rule> [hours]    one rule broken down by agent and its most useful fields
   commands [hours]        every distinct docker exec command behind rule 87907 (1d pattern list)
+  fimpaths [hours]        fleet-wide FIM events by path (Phase 2a review list)
   sample <rule> [n]       n real documents of a rule (full_log) -- logtest inputs
   agents                  agent status, versions, groups, manager daemons, config validation
   vulns                   open vulnerability findings by severity, agent, package, CVE
@@ -218,6 +219,16 @@ def mode_commands(args):
                          for b in r["aggregations"]["c"]["buckets"]]}
 
 
+def mode_fimpaths(args):
+    """Fleet-wide FIM events (rules 550-554) by path, with the agents and rule ids behind each."""
+    hours = window(args[0]) if args else 24
+    q = {"bool": {"filter": [day(hours), {"terms": {"rule.id": FIM_RULES}}]}}
+    r = search(ALERTS, q, {"p": terms("syscheck.path", int(args[1]) if len(args) > 1 else 150, a=terms("agent.name", 4), r=terms("rule.id", 3))})
+    return {"hours": hours, "total": total(r), "other": r["aggregations"]["p"]["sum_other_doc_count"],
+            "paths": [(b["key"], b["doc_count"], [x["key"] for x in b["a"]["buckets"]], [x["key"] for x in b["r"]["buckets"]])
+                      for b in r["aggregations"]["p"]["buckets"]]}
+
+
 def mode_sample(args):
     rid, n = args[0], int(args[1]) if len(args) > 1 else 5
     r = search(ALERTS, rule_q(rid, 24), size=n)
@@ -232,6 +243,7 @@ def mode_agents(_args):
     return {"manager_version": mgr["version"], "count": len(ag),
             "status": Counter(a["status"] for a in ag), "version": Counter(a.get("version") for a in ag),
             "group": Counter(",".join(a.get("group", [])) for a in ag),
+            "agent_groups": sorted((a["name"], a["id"], ",".join(a.get("group", []))) for a in ag),
             "not_active": [(a["name"], a["status"], a.get("lastKeepAlive")) for a in ag if a["status"] != "active"],
             "daemons_not_running": [k for k, v in st.items() if v != "running"],
             "config_validation": api("/manager/configuration/validation")["affected_items"][0]}
@@ -279,7 +291,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 

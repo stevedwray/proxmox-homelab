@@ -172,6 +172,16 @@ Caveat noticed: docker volume went from 57% to 73% (both image generations are o
 with a replica a single node cannot place. Fix: set replicas to 0 on them and add a template for
 `.opendistro-*`; the alert indices themselves are fine.
 
+## Phase 2d done (2026-10-15)
+
+Local rules 100200 (5710), 100201 (5712 brute force, was level 10) and 100202 (5760) lower sshd events
+from the Greenbone scanner 192.168.70.11 to level 3, for that address only (parent rules keep stock levels
+for everything else). Test `must_fire.py scanner` (6 checks incl. a 12-event burst): before the change the
+three scanner checks failed; after, 6/6. 5740 (connection reset, about 800/day) has no source address, so it
+is not scoped and stays as is. Also done 2026-10-15: GVM sampler stopped (operator), 87915/87916 volume
+mount/unmount (238/day each, container lifecycle audit records) deliberately left alerting, ISM system-index
+replicas set to 0 (cluster green), old 4.14.7 images pruned.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
