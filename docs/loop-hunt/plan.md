@@ -19,9 +19,13 @@ and tool schemas every turn, tool calls parsed by llama.cpp's
 chat-template/tool parser, which differs between the fork b10814 and
 upstream b11514), and Copilot's own client limits
 (`~/.config/Code/User/chatLanguageModels.json`; last recorded at 6144
-input / 2048 output tokens, docs/framework-ip-and-port/README.md). A
-reasoning model capped at 2048 output tokens is cut off mid-thought and
-Copilot retries the step, which looks like a loop. The 84-tool
+input / 2048 output tokens, docs/framework-ip-and-port/README.md). The
+lh-01c local check on 2026-10-15 instead found **120000 input / 8192 output**
+for `qwen3.8-flash-next`, with tool calling enabled and no explicit thinking
+flag. C5 must compare that current 8192 output limit against 16384. A small
+output cap could cut off reasoning and trigger client retries; the current
+configuration alone does not establish any historical request budget or
+prove that this caused a loop. The 84-tool
 tool-calling sweep only ever ran on LM Studio
 (docs/framework-ubuntu/local-ai-development.md), never llama.cpp.
 
@@ -149,7 +153,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
 | lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (all sources reported; eval preserved; 2 unreadable deep files; replay choices pending) |
-| lh-01c-vscode-transcripts | local (operator's workstation) | — | todo |
+| lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; operator replay selection pending) |
 | lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
@@ -555,7 +559,42 @@ and up to 10 excerpts; the operator picks sessions to replay in lh-07.
 If maxOutputTokens for a reasoning model is far below what its
 reasoning needs, record that as finding candidate FND-client-limits.
 
-Result: —
+Result (2026-10-15): **complete; operator replay selection pending**.
+Actual layout: workspace `chatSessions/*.jsonl` mutation journals plus
+JSON/JSONL empty-window sessions. The tested adapter replays kinds 0–3
+(snapshot, set, array truncate/append, unset), following the installed
+VS Code workbench implementation. Final session states are scanned once;
+streaming deltas and superseded JSON snapshots are not extra responses.
+All **48 tests pass**. Local read-only scan: **5002 sessions, 24366 requests,
+24067 responses, 1465 candidates; zero unreadable files/partial tails**.
+Flags: 36 loop, 859 repetition, 2 template-leak, 559 cut-off, 64 tool-repeat,
+1 tool-malformed, 1 tool-call-in-content; 331 dense-reasoning informational.
+Flags overlap. Missing saved arguments on 215534 of 366403 tool invocations
+limit exact tool-repeat detection.
+
+The current Framework client entry is `qwen3.8-flash-next`, URL
+`http://framework.gibbsgreatly.xyz:8080/v1/chat/completions`, input **120000**,
+output **8192**, toolCalling true, no explicit thinking flag. C5 compares
+**8192 versus 16384**, not the older documented 2048 cap. FND-client-limits
+remains a candidate, not a historical-cap or causal finding.
+
+Flash-Next has 10 saved responses / 7 candidates across its two Nathanw-labelled
+endpoint names: one exact reasoning loop, two other shingle candidates and
+four cut-offs. GLM has 2 cut-off responses and no loop flag. No served build
+SHA is recorded; saved endpoint labels do not prove engine identity. Nine
+bounded examples were reviewed; recommend the Flash-Next exact-loop V1 for
+lh-07. Other shingle/tool-repeat flags still need semantic review. Cut-off
+flags include cancellations/errors, not proven budget exhaustion. Full
+system/tool schemas and historical wire requests cannot be reconstructed.
+
+All model/month/flag counts and aggregate conclusions are in
+[README.md](README.md#local-copilot-scan-lh-01c-2026-10-15). Private artifacts
+remain only in ignored `artifacts/vscode-scan-20261015/` (0700 directory,
+0600 files); no keys, excerpts or source identifiers enter git. No source
+writes, configuration changes, inference or production access occurred.
+Operator replay selection remains pending for lh-07. The next step, lh-01d,
+is optional if exact wire capture is wanted; lh-02 has not started.
+
 
 #### lh-01d-capture-proxy
 

@@ -10,12 +10,12 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01 and lh-01b complete; replay choices pending before lh-01c**
+Status: **lh-01, lh-01b and lh-01c complete; operator replay selection pending**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 34 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 48 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -160,9 +160,132 @@ Exactly ten bounded excerpts were returned to the operator: seven from eval,
 one CSE and two deep-research. No further excerpts were fetched. No excerpts,
 source-file/message identifiers, settings or full transcripts enter git;
 only counts and aggregate conclusions are recorded here. Replay selection
-is pending; lh-01c is the next investigation, before model/session tests.
+was pending before lh-01c; its local results follow below.
 
-To run it, open the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS
-Code, `git pull --ff-only`, and tell Codex:
+## Local Copilot scan (lh-01c, 2026-10-15)
 
-> Continue docs/loop-hunt/plan.md.
+The actual local layout uses workspace `chatSessions/*.jsonl` journals,
+plus JSON/JSONL empty-window sessions. The adapter replays VS Code's
+ObjectMutationLog operations into final session states; it does not count
+streaming updates as separate responses. The protocol was checked against
+the installed VS Code workbench source. All 48 synthetic-fixture tests pass,
+including journal replay, partial tails, credential redaction, detector
+positives/negatives and exact tool-argument matching. No production access,
+model inference, client configuration changes or source-session writes occurred.
+
+### Current Framework client limits
+
+| Model ID | URL | maxInputTokens | maxOutputTokens | Tool calling | Thinking flag |
+| --- | --- | ---: | ---: | --- | --- |
+| qwen3.8-flash-next | http://framework.gibbsgreatly.xyz:8080/v1/chat/completions | 120000 | 8192 | true | absent |
+
+This is the current allowlisted client configuration, not historical request
+parameters. It supersedes the old 6144/2048 reference for planning C5's
+client-limit comparison: **8192 versus 16384** output tokens. Record
+**FND-client-limits as a candidate**, since 8192 is below the earlier test's
+16384-token budget; it is not proof of cap exhaustion or a loop's cause.
+No credential fields or values are exported.
+
+### Coverage and counts
+
+Read **5002 files/sessions, 24366 requests and 24067 responses**. All files
+were readable; no partial journal tails were encountered. There were
+**1465 mechanical candidates**. Flags overlap. Compression-only reasoning
+adds 331 informational flags and does not by itself make a candidate.
+Of 366403 recorded tool invocations, 215534 lack parseable saved arguments
+(58.8%); exact tool-repeat coverage is therefore incomplete.
+
+| Recorded request model ID | Responses | Candidates |
+| --- | ---: | ---: |
+| anthropic/Anthropic/claude-opus-4-6 | 84 | 0 |
+| anthropic/Anthropic/claude-sonnet-4-6 | 66 | 0 |
+| copilot/auto | 15265 | 1005 |
+| copilot/claude-opus-4.6 | 432 | 0 |
+| copilot/claude-sonnet-4.6 | 2771 | 138 |
+| copilot/gpt-5-mini | 3555 | 125 |
+| copilot/gpt-5.1-codex | 6 | 0 |
+| copilot/gpt-5.3-codex | 308 | 5 |
+| copilot/gpt-5.4 | 1292 | 84 |
+| customendpoint/Framework Ollama/eval-gemma4-26b:q4-ctx128k | 8 | 7 |
+| customendpoint/Framework Ollama/eval-gemma4-26b:q4-ctx32k | 2 | 2 |
+| customendpoint/Framework Ollama/eval-qwen3-coder-next:q4_k_m-ctx256k | 6 | 0 |
+| customendpoint/Framework Ollama/eval-qwen3.8-27b:ud-q4kxl-ctx128k | 2 | 0 |
+| customendpoint/Framework Ollama/eval-qwen36-35b-a3b:q4_k_m-ctx128k | 6 | 1 |
+| customendpoint/Framework Ollama/eval-qwen36-35b-a3b:q4_k_m-ctx32k | 1 | 1 |
+| customendpoint/Framework Ollama/laguna-s-2.1:q4_k_m-ctx131k | 86 | 9 |
+| customendpoint/Framework Ollama/laguna-s2.1-q8-ctx131k | 11 | 2 |
+| customendpoint/Framework Ollama/qwen3-coder-next-q4km-ctx256k | 11 | 1 |
+| customendpoint/Framework Ollama/qwen3.6-35b-a3b-q4km-ctx128k | 7 | 4 |
+| customendpoint/Framework Ollama/qwen3.8-27b-q4kxl-ctx128k | 17 | 6 |
+| customendpoint/Framework llama.cpp/Laguna-S-2.1-UD-Q4_K_M-00001-of-00003 | 12 | 4 |
+| customendpoint/Framework/Llama-3.3-70B-Instruct-Q4_K_M | 4 | 2 |
+| customendpoint/Framework/Qwen3 Coder 30B (Q4_K_M) | 1 | 1 |
+| customendpoint/Framework/Qwen3.6-35B-A3B-UD-Q4_K_M | 5 | 3 |
+| customendpoint/Framework/qwen3-coder-30b-phase6 | 28 | 13 |
+| customendpoint/Nathanw strix-halo-llamacpp/glm-5.3-flash | 2 | 2 |
+| customendpoint/Nathanw strix-halo-llamacpp/qwen3.8-flash-next | 9 | 6 |
+| customendpoint/Nathanw strix-halo-llamacpp/qwen3.8-flash-next-q4 | 1 | 1 |
+| customendpoint/Ollama (Framework)/eval-qwen3-coder-30b-a3b:q4_k_m | 3 | 1 |
+| deepseek/deepseek-v4-flash | 6 | 6 |
+| deepseek/deepseek-v4-pro | 12 | 12 |
+| oaicopilot/deepseek-v4-flash::deepseek-v4-flash-anthropic | 6 | 6 |
+| oaicopilot/deepseek-v4-pro | 12 | 12 |
+| ollama/Ollama/deepseek-v3.1:671b-cloud | 6 | 6 |
+| ollama/Ollama/qwen2.5-coder:14b | 24 | 0 |
+
+| Month (UTC) | Responses | Candidates |
+| --- | ---: | ---: |
+| 2026-03 | 150 | 5 |
+| 2026-04 | 9103 | 421 |
+| 2026-05 | 13194 | 896 |
+| 2026-06 | 1196 | 67 |
+| 2026-07 | 53 | 24 |
+| 2026-08 | 291 | 19 |
+| 2026-09 | 72 | 28 |
+| 2026-10 | 8 | 5 |
+
+| Flag | Responses |
+| --- | ---: |
+| cut-off | 559 |
+| dense-reasoning | 331 |
+| loop | 36 |
+| repetition | 859 |
+| template-leak | 2 |
+| tool-call-in-content | 1 |
+| tool-malformed | 1 |
+| tool-repeat | 64 |
+
+### Review and replay decision
+
+The saved Nathanw-labelled Flash-Next endpoints account for **10 responses,
+7 candidates**: one exact reasoning loop, two other repetition candidates
+and four cut-off responses. The exact-loop excerpt visibly repeats a short
+self-referential reasoning phrase. The other two excerpts discuss alternative
+Ansible backup strategies; repeated shingles alone do not confirm that those
+responses degenerated. GLM has **2 responses, both cut off**, with no loop
+flag. Saved provider labels are not verified served build identities: these
+files establish neither a build SHA nor an engine-specific cause.
+
+Nine bounded examples were reviewed: three Flash-Next reasoning candidates,
+a malformed Qwen3.6 tool envelope, a Llama3 answer loop, a Qwen3.8-27B
+reasoning loop, a Qwen3.6 literal-think/template loop, and two exact terminal
+tool-repeat candidates (Laguna and Qwen3-Coder-Next). The latter have streaks
+of 26 and 155 identical saved command arguments; repeated tool execution
+can still be legitimate polling/retries, so these are not engine diagnoses.
+No additional excerpts were fetched. The 559 cut-off flags include recorded
+cancellations/incomplete responses and are not a count of exhausted budgets.
+
+Full Copilot system prompts, tool schemas, wire requests and historical caps
+are not reconstructed from these journals. Current client limits cannot be
+attributed retrospectively. `copilot/auto` does not identify its underlying
+model. History estimates count saved user/answer text only. The scan read
+live journals, not an atomic snapshot of all sessions.
+
+Private results remain only in the ignored
+`artifacts/vscode-scan-20261015/`: summaries, client limits, hits, unreadable
+audit and nine-example review selection. The directory is 0700 and files
+0600; no excerpts, session identifiers, workspace names or source chats
+enter git. The operator must pick sessions for lh-07; recommend the
+Flash-Next exact-loop example V1 first. A fresh lh-01d capture is optional
+if exact wire-level replay is wanted. lh-02 and production tests have not
+started; no production access occurred during lh-01c.
