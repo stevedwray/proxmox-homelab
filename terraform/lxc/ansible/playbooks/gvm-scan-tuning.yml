@@ -1,0 +1,113 @@
+# Supervise and tune GVM scans on greenbone-stack -- docs/gvm-scan-redesign/runbook.md.
+#
+# Not part of provisioning. Run by hand through the production wrapper, from a
+# checkout of the branch you want (the helper is copied from there):
+#
+#   export TASK_APPROVAL=<task-name>
+#   ./with-secrets-prod ansible-playbook -i <greenbone inventory.yml> \
+#     terraform/lxc/ansible/playbooks/gvm-scan-tuning.yml </dev/null \
+#     -e tune_mode=report
+#
+# Variables (use JSON for -e when a value contains spaces: -e '{"tune_task":"LAN scan: lan full-vuln"}'):
+#   tune_mode   a helper mode (see files/greenbone-scan-setup/gvm_tuning.py) or one of:
+#               runhosts, seq        start in the background, log to /opt/greenbone-stack/tuning.log
+#               log                  tail that log
+#               sample_start|sample_stop|sample_log   30 s memory/Redis sampler -> mem.log
+#               stoprun              kill the background runner
+#               redis_guard          CONFIG SET maxmemory 6gb (runtime only)
+#   tune_task   one task name        tune_args  extra words    tune_zones  words for runhosts/seq
+- name: GVM scan tuning helper
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    dir: /opt/greenbone-stack
+    background_modes: [runhosts, seq]
+    plain_modes: [log, sample_start, sample_stop, sample_log, stoprun, redis_guard]
+    redis_cli: docker exec greenbone-community-edition-redis-server-1 redis-cli -s /run/redis/redis.sock
+  tasks:
+    - name: Copy the helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/gvm_tuning.py"
+        dest: "{{ dir }}/gvm_tuning.py"
+        mode: "0644"
+
+    - name: Run a helper mode in the gvm-tools container
+      when: tune_mode not in background_modes + plain_modes
+      ansible.builtin.command:
+        argv: >-
+          {{ ['docker','compose','run','--rm','--no-deps','-v', dir ~ '/gvm_tuning.py:/tmp/gvm_tuning.py:ro',
+              '-e','GVM_USERNAME=admin','-e','GVM_PASSWORD','gvm-tools','python3','/tmp/gvm_tuning.py', tune_mode]
+             + ([tune_task] if tune_task is defined else [])
+             + (tune_args.split() if tune_args is defined else []) }}
+        chdir: "{{ dir }}"
+      environment:
+        GVM_PASSWORD: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory }}"
+      register: out
+      changed_when: tune_mode in ['start', 'setprefs', 'unschedule', 'unschedule_all', 'cleanup']
+    - ansible.builtin.debug:
+        var: out.stdout_lines
+      when: tune_mode not in background_modes + plain_modes
+
+    - name: Start a runner in the background (output -> tuning.log)
+      when: tune_mode in background_modes
+      ansible.builtin.shell: >-
+        nohup docker compose run --rm --no-deps -T
+        -v {{ dir }}/gvm_tuning.py:/tmp/gvm_tuning.py:ro
+        -e GVM_USERNAME=admin -e GVM_PASSWORD
+        gvm-tools python3 -u /tmp/gvm_tuning.py {{ tune_mode }} {{ tune_zones }}
+        > {{ dir }}/tuning.log 2>&1 &
+      args:
+        chdir: "{{ dir }}"
+      environment:
+        GVM_PASSWORD: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory }}"
+
+    - name: Show the runner log
+      when: tune_mode in background_modes + ['log']
+      ansible.builtin.command: tail -n 60 {{ dir }}/tuning.log
+      register: runlog
+      changed_when: false
+    - ansible.builtin.debug:
+        var: runlog.stdout_lines
+      when: tune_mode in background_modes + ['log']
+
+    - name: Kill the background runner
+      when: tune_mode == 'stoprun'
+      ansible.builtin.shell: 'docker ps -q --filter "name=gvm-tools-run" | xargs -r docker kill'
+      register: killed
+      changed_when: killed.stdout | length > 0
+
+    - name: Stop any existing sampler
+      when: tune_mode in ['sample_start', 'sample_stop']
+      ansible.builtin.shell: 'test -f /run/gvm-sampler.pid && kill $(cat /run/gvm-sampler.pid) 2>/dev/null; rm -f /run/gvm-sampler.pid; true'
+      changed_when: true
+
+    - name: Start the sampler (every 30 s -> mem.log)
+      when: tune_mode == 'sample_start'
+      ansible.builtin.shell: |
+        nohup sh -c '
+          echo $$ > /run/gvm-sampler.pid
+          R="{{ redis_cli }}"
+          while true; do
+            kb=""
+            for db in $($R info keyspace | sed -n "s/^db\([0-9]*\):keys=\([0-9]*\).*/\1:\2/p"); do
+              n=${db%%:*}; k=${db##*:}
+              [ "$n" -ge 3 ] && kb="$kb db$n=$k"
+            done
+            echo "$(date -u +%H:%M:%S) mem_mb=$(( $(cat /sys/fs/cgroup/memory.current) / 1048576 )) peak_mb=$(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 )) load=$(cut -d" " -f1 /proc/loadavg) openvas_procs=$(pgrep -c openvas) oom_kill=$(awk "/^oom_kill /{print \$2}" /sys/fs/cgroup/memory.events) redis=$($R info memory | sed -n "s/^used_memory_human://p" | tr -d "\r") kb:$kb"
+            sleep 30
+          done' >> {{ dir }}/mem.log 2>&1 &
+
+    - name: Show the sampler log
+      when: tune_mode in ['sample_start', 'sample_log']
+      ansible.builtin.command: tail -n 40 {{ dir }}/mem.log
+      register: memlog
+      changed_when: false
+    - ansible.builtin.debug:
+        var: memlog.stdout_lines
+      when: tune_mode in ['sample_start', 'sample_log']
+
+    - name: Cap Redis memory at runtime (the compose --maxmemory makes it permanent)
+      when: tune_mode == 'redis_guard'
+      ansible.builtin.command: "{{ redis_cli }} config set maxmemory 6gb"
+      changed_when: true
