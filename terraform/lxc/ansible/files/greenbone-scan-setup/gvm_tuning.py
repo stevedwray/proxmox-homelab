@@ -203,7 +203,7 @@ def main():
                 nvt = res.find("nvt")
                 print(f"{res.findtext('threat') or '':8} {res.findtext('port') or '':14} {res.findtext('name')[:70]} [{nvt.get('oid') if nvt is not None else ''}]")
                 nm = res.findtext("name") or ""
-                if any(k in nm for k in ("Authenticated", "Local Security", "OS Detection", "Determine OS", "LSC", "SSH Authorization")):
+                if any(k in nm for k in ("Authenticated", "Local Security", "OS Detection", "Determine OS", "LSC", "SSH Authorization", "Hostname", "Detection (HTTP)")):
                     for line in (res.findtext("description") or "").splitlines()[:14]:
                         print("      | " + line[:150])
             return
