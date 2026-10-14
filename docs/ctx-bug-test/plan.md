@@ -365,7 +365,8 @@ stops only at one of the stop points in rule 1.
 | ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | in progress 2026-10-14 (20261014T045019Z; start gate passed; D8=b/D9=b) |
+| ctx-10h-harness-resilience | local | — | todo (after attempt 1 of ctx-11 failed) |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo: retry as a fresh run after ctx-10h (attempt 1, 20261014T045019Z, failed at 06:32:33 UTC: needrestart restarted llama-swap) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -1320,12 +1321,79 @@ reload was needed; the playbook's status check fetched refs and published
 status. No build or default-model change, and no full run was started.
 Next: ctx-11 under a separate preflight and ctx-bug-run-full approval.
 
+#### ctx-11 attempt 1 (2026-10-14, failed)
+
+Run `20261014T045019Z`, 44 requests recorded, then:
+
+- 06:31:59 UTC `apt-daily-upgrade.service` started (daily timer);
+  06:32:32 dpkg upgraded `libx11-6`, `libx11-xcb1`, `libx11-data`;
+  06:32:33 llama-swap got SIGTERM and systemd started it again at 06:32:34.
+  needrestart restarts services whose processes map an upgraded library;
+  llama-server maps libx11 through the Vulkan loader. Stopping llama-swap
+  killed the Qwen × upstream × 32k llama-server during S4 seed2 (it was at
+  15,800 generated tokens, heading for the 16k cap).
+- Kernel log clean (no OOM, no GPU fault). Memory and GTT free afterwards.
+- The harness then recorded the next three requests (S5 seed3, F greedy,
+  F seed1) as completed `crash` results within the same second (connection
+  refused): **those three records are infrastructure failures, not model
+  behaviour.** The next load and the model restore also hit the one-second
+  window before the new llama-swap listened, so nothing was reloaded. The
+  operator reloaded `qwen3-coder-next-upstream` by hand.
+- Kept as partial evidence only; the retry is a fresh run (ctx-10h changes
+  the harness, so a resume is refused by design).
+
+#### ctx-10h-harness-resilience
+
+```yaml
+id: ctx-10h-harness-resilience
+title: Tell infrastructure failures from model crashes; wait for llama-swap
+depends_on: []
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/ctx_bugs.py:
+  (1) Record llama-swap's identity (live: `systemctl show -p MainPID
+  -p ActiveEnterTimestampMonotonic --value llama-swap.service`; dry run: a
+  new stub field) before and after every request. If it changed, or :8099
+  does not answer, the request is an infrastructure failure: do NOT
+  checkpoint it, set run status "failed" with failure "llama-swap
+  restarted or unreachable during <key>", and stop the matrix (so a resume
+  retries that request). Only when llama-swap is unchanged and reachable
+  is a dead/changed llama-server recorded as a `crash` finding (as now).
+  (2) Before every load and before the final restore, wait for llama-swap
+  (GET :8099/running answers) for up to 300 s, polling every 5 s; retry the
+  restore load up to 3 times. Log each wait.
+  (3) Stub: an option to simulate a llama-swap restart mid-request (new
+  identity, :8099 refusing for 2 s).
+  Tests: a simulated llama-swap restart leaves the in-flight request and
+  every later request unrecorded, sets status failed, and a resume reruns
+  them; a llama-server-only death with llama-swap unchanged is still
+  recorded as crash; restore succeeds after a 2-second refusal window.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
 #### ctx-11-full-run
 
 Same shape as ctx-09. First copy the harness so Framework runs exactly
 the repo's version
 (`rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/`),
-check D9 is deployed (ctx-10g done), then run
+check D9 is deployed (ctx-10g done). **D10 (b):** before starting, pause
+the daily upgrade and check none is running:
+`ssh steve@framework.gibbsgreatly.xyz 'sudo -n systemctl stop apt-daily-upgrade.timer && systemctl is-active apt-daily-upgrade.service apt-daily-upgrade.timer; true'`
+(expect `inactive` twice; if sudo is refused, stop and ask the operator to
+run it). **When the run ends, however it ends** (complete, failed or
+interrupted), start the timer again before anything else:
+`ssh steve@framework.gibbsgreatly.xyz 'sudo -n systemctl start apt-daily-upgrade.timer && systemctl is-active apt-daily-upgrade.timer'`
+(expect `active`), and say so in the Result. Same for every later run
+(ctx-12). Then run
 `~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
 (all 16 cells, ~20–24 h with D9's small batches, D6 window: start it in
 the evening so it runs overnight and through the next day), approval
@@ -1395,6 +1463,7 @@ The plan above already follows these.
 | D5 | Vulkan batch sizes | Defaults. If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
 | D6 | When | The pilot (~2.5 h) first, in a quiet slot, and its results checked; then the full run over one night plus a day, or two nights |
 | D7 | Part B (context fill) | Included |
+| D10 (2026-10-14, after ctx-11 attempt 1) | Ubuntu's daily `apt-daily-upgrade` + needrestart restarted `llama-swap.service` (and killed the loaded model) after upgrading libx11 | **b**: pause `apt-daily-upgrade.timer` only while a test run is going, and start it again when the run ends. Production keeps the exposure (any library upgrade that llama-server uses restarts llama-swap and leaves nothing loaded); recorded as a known issue, not fixed here |
 | D9 (2026-10-14, after ctx-10d) | Vulkan batch sizes for the full run | **b**: `--batch-size 512 --ubatch-size 128` in all 16 test cells (both models, both builds, every size), so build and context-size comparisons keep identical settings. ctx-10d ran clean (7/7, no GPU error) but read the prompt at 144.6 tok/s, about 4x slower than the pilot's defaults; full run estimate rises to ~20–24 h. Supersedes D5's "defaults" for the test |
 | D8 (2026-10-14, after the pilot) | Qwen budget exhaustion on S4/F; F's count question | **b**: remove the count question from F only (it stays in S3). Qwen keeps the template default effort (D4 unchanged); S4 exhausting 16k stays a finding. Note: Qwen's template maps `reasoning_effort: high` to `xhigh`, so a lower effort would have meant `medium` or `low` |
 

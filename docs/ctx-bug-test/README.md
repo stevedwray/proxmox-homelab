@@ -178,6 +178,13 @@ finished run. Consecutive Framework steps get one combined preflight.
 Local steps run straight through. Steps on Framework post a preflight and
 wait for "proceed" before running anything.
 
+Known production issue found by this test (not fixed here, D10): Ubuntu's
+daily `apt-daily-upgrade` runs needrestart, which restarts
+`llama-swap.service` when a library that llama-server maps is upgraded
+(2026-10-14 06:32 UTC: libx11). That kills the loaded model and nothing
+reloads it (the preload runs only at boot). Fix later, for example a
+needrestart exclusion for llama-swap in `framework-desktop-llama-swap.yml`.
+
 Related: [docs/llama-swap](../llama-swap/README.md) (the catalogue, builds
 and entries this uses), [docs/model-params](../model-params/README.md)
 (variants; the Laguna-on-fork token-14 finding; RULER),
