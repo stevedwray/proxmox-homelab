@@ -298,9 +298,12 @@ change: >
   per adapter.
   Discovery first, read-only, and stop if a location differs:
   ai-services-stack `/srv/eval-runner/results/` (docs/eval-runner/README.md);
-  cse-controller `results/` (terraform/lxc/stacks/cse-controller/STACK_CONTRACT.md);
+  cse-controller `/srv/cyberseceval/runs/<run>/responses.json` (written by
+  terraform/lxc/stacks/cse-controller/cyberseceval-config/cse_tasks.py);
   deep-research sessions (terraform/lxc/ansible/files/deep-research-agent/README.md,
-  `--list-sessions`). Reach each host the way its existing docs do;
+  `--list-sessions`). Where the repo's code and its docs disagree on a
+  path, the code wins: use the code's path and note it in the Result,
+  no need to stop. Reach each host the way its existing docs do;
   write nothing outside a new `loop-hunt-scan-<date>/` directory there.
 scope:
   allowed_paths:
