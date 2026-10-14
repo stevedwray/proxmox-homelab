@@ -283,14 +283,26 @@ not evidence about the real models or Framework.
 The rest of the work is written as steps (format:
 `docs/agent-design/step-packet-schema.md`) for the Codex session in the
 `~/git/proxmox-homelab-ctx-bug-test` worktree to run. The operator's whole
-prompt each time is:
+prompt is:
 
-> Run the next step of docs/ctx-bug-test/plan.md.
+> Continue docs/ctx-bug-test/plan.md.
+
+(The older "Run the next step of docs/ctx-bug-test/plan.md." means the
+same thing.) The agent then works through as many steps as it can and
+stops only at one of the stop points in rule 1.
 
 #### Rules for the agent running these steps
 
-1. **Find the next step:** the first row in the status table below that
-   isn't `done`. Do only that step, then stop and report.
+1. **Keep going until you need the operator.** Take the first row in the
+   status table that isn't `done`, do it, record it (rule 6), then take
+   the next one, and so on. Stop and report only when:
+   - the next step has `approval:` set and the operator hasn't approved it
+     yet in this conversation (post the preflight, rule 4);
+   - the next step needs an operator decision (D-numbered) or waits for a
+     detached run that isn't finished;
+   - a gate failed (rule 7), or something is wrong or ambiguous (rule 2).
+   When you stop, say in one or two lines what you did since the last
+   stop and what you need now.
 2. **Read first:** this plan, `AGENTS.md`, and every file the step names.
    If anything in the step is wrong, ambiguous or doesn't match the repo,
    stop and ask. Don't choose for the operator.
@@ -298,9 +310,16 @@ prompt each time is:
    run every gate, and fix until all `critical: true` gates pass.
 4. **Framework or production steps** (`approval:` set): first post the
    step's preflight to the operator: target, mutating or read-only, exact
-   objects, exact commands, out of scope. Run nothing on Framework or
+   objects, exact commands, out of scope. **If the next several steps are
+   all approval steps with nothing local or no decision between them
+   (e.g. ctx-10g then ctx-11), post one combined preflight covering all
+   of them, in order, with each step's approval name;** one "proceed"
+   then approves exactly those steps. Run nothing on Framework or
    through a `with-secrets*` wrapper until the operator answers "proceed"
-   (or similar) in chat. Then run exactly the step's `commands`, using the
+   (or similar) in chat. Read-only `run.sh --status` checks of a run the
+   operator already approved need no new approval; if the operator says
+   to wait for a run, poll it every 10 minutes until it is complete,
+   then carry on. Then run exactly the step's `commands`, using the
    step's `TASK_APPROVAL` value for wrapper commands. Afterwards report what
    changed, success or failure, and follow-ups. Framework is reached as
    `ssh steve@framework.gibbsgreatly.xyz`.
@@ -317,8 +336,9 @@ prompt each time is:
    commit, and push to `origin claude/qwen-laguna-model-testing-v42x6x`.
    Put large outputs (reports, logs) under `docs/ctx-bug-test/artifacts/`
    (ignored by git), not in tracked files.
-7. **A failed gate ends the step.** Do not run any later command of the
-   step, even one that looks harmless; report and stop.
+7. **A failed gate ends the step and the run of steps.** Do not run any
+   later command of the step, or any later step, even one that looks
+   harmless; report and stop.
 8. **Never:** skip, weaken or delete a gate or test; run a full teardown;
    change any model, build, or llama-swap entry except as a step says;
    promote or roll back a llama.cpp build.

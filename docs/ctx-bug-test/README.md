@@ -165,7 +165,10 @@ Remaining work is ctx-11 through ctx-14, after resolving D9, in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
-> Run the next step of docs/ctx-bug-test/plan.md.
+> Continue docs/ctx-bug-test/plan.md.
+
+Codex works through steps until it needs an approval, a decision or a
+finished run. Consecutive Framework steps get one combined preflight.
 
 Local steps run straight through. Steps on Framework post a preflight and
 wait for "proceed" before running anything.
