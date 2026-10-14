@@ -341,7 +341,7 @@ prompt each time is:
 | ctx-10b-variant-option | local | — | done 2026-10-14 (suffix/prompt options, resume identity and restoration; 62 tests pass) |
 | ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
 | ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
-| ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
+| ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | in progress 2026-10-14 (operator started 20261014T041054Z; running gate passed; result review pending) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
@@ -1092,7 +1092,20 @@ pilot only on the hang, wall time and prompt tok/s, not accuracy (operator
 clarification, 2026-10-14). The prompt change prevents attributing a different
 outcome solely to the batch-size change.
 
-Result: —
+Result (start, operator, 2026-10-14): playbook recap
+`ok=15 changed=1 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0`.
+The guarded dry run lists all 16 test IDs and the requested batch variant,
+prints `GATE OK: all 16 ctx-test entries and 1 extra present`, writes 55
+entries and reloads `qwen3-coder-next-upstream`. The additional 3 entries
+are the new Laguna b512 variant for Nathanw, upstream and HIP.
+The detached unit `framework-ctx-bugs-20261014t041054z.service` is active
+and running (invocation `5ccd292285924b9ab179103e3c2ba8df`). Its progress
+shows `status: running`, `completed: 0`, and run directory
+`/storage/artifacts/framework-ctx-bugs/20261014T041054Z`; the first log line
+loads/checks `laguna-s-2.1-upstream-ctx131k-b512`. The start gate passes.
+The supplied excerpt omits command 1's `SECRETS-OK`; confirmation remains
+pending. No commands were rerun by the agent. Completion, restored model,
+GPU evidence, timings and x/7 accuracy remain to be reviewed when requested.
 
 **D9 (operator decision before ctx-11, after ctx-10d).** Write the options
 into the README and stop:
