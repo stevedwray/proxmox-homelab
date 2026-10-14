@@ -50,6 +50,24 @@ class HealthcheckRules(unittest.TestCase):
             self.assertEqual(r.find("srcip").text, g.SCANNER_IP)         # one address only
             self.assertEqual(r.find("if_sid").text, str(parent))
 
+    def test_lxc_pattern_matches_real_names_only(self):
+        rx = re.compile(g.LXC_DEV_PATTERN.replace(r"\z", r"\Z"))
+        msg = "File '{}' present on /dev. Possible hidden file."
+        for good in ["/dev/.lxc-boot-id", "/dev/.lxc/proc/keys", "/dev/.lxc/proc/key-users", "/dev/.lxc/proc/latency_stats"]:
+            self.assertTrue(rx.match(msg.format(good)), good)
+        for bad in ["/dev/.evil", "/dev/.lxcx/proc/keys", "/dev/.lxc/proc/keys/../../.evil", "/dev/.lxc/sys/x", "/dev/.lxc/proc/"]:
+            self.assertFalse(rx.match(msg.format(bad)), bad)
+        self.assertFalse(rx.match(msg.format("/dev/.lxc-boot-id") + " extra"))
+
+    def test_hap_pattern_is_scanner_ssh_only(self):
+        rx = re.compile(g.HAP_PATTERN.replace(r"\z", r"\Z"))
+        line = "2026-10-15T02:05:18.151+13:00 hAP login failure for user karaf from {} via {}"
+        self.assertTrue(rx.search(line.format("192.168.70.11", "ssh")))
+        self.assertFalse(rx.search(line.format("203.0.113.5", "ssh")))
+        self.assertFalse(rx.search(line.format("1192.168.70.11", "ssh")))
+        self.assertFalse(rx.search(line.format("192.168.70.11", "winbox")))
+        self.assertFalse(rx.search(line.format("192.168.70.111", "ssh")))
+
     def test_no_xml_special_chars_in_patterns(self):
         for line in open(os.path.join(g.HERE, "local_rules.xml")):
             if 'type="pcre2"' in line:

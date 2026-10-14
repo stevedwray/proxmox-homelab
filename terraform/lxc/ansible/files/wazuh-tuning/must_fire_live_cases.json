@@ -1,13 +1,94 @@
 {
   "_comment": "Live detection cases (Tier 2): the playbook wazuh-mustfire-live.yml performs real, marked, self-cleaning actions on one test agent, then 'must_fire.py live' asks the indexer whether each produced an alert. Cases are matched on the unique marker (user name, file name or container name), the rule ids and the level floor. 'needs' lists capabilities the test host must have: none for a plain LXC, 'docker' for a Docker host. Ids were calibrated against live alerts on 2026-10-15 (apt-cacher-stack); the docker ids are from the Tier 1 samples and still need their first live run.",
   "cases": [
-    {"name": "new user added", "needs": [], "ids": ["5902"], "min_level": 8},
-    {"name": "user deleted", "needs": [], "ids": ["5903"], "min_level": 3},
-    {"name": "ssh login as a non-existent user", "needs": [], "ids": ["5710"], "min_level": 5},
-    {"name": "FIM file added under /etc", "needs": [], "ids": ["554"], "min_level": 5},
-    {"name": "FIM file modified under /etc", "needs": [], "ids": ["550"], "min_level": 7},
-    {"name": "FIM file deleted under /etc", "needs": [], "ids": ["553"], "min_level": 7},
-    {"name": "docker container start", "needs": ["docker"], "ids": ["87903"], "min_level": 3},
-    {"name": "docker exec of a non-health-check command", "needs": ["docker"], "ids": ["87907"], "min_level": 3}
+    {
+      "name": "new user added",
+      "needs": [],
+      "ids": [
+        "5902"
+      ],
+      "min_level": 8
+    },
+    {
+      "name": "user deleted",
+      "needs": [],
+      "ids": [
+        "5903"
+      ],
+      "min_level": 3
+    },
+    {
+      "name": "ssh login as a non-existent user",
+      "needs": [],
+      "ids": [
+        "5710"
+      ],
+      "min_level": 5
+    },
+    {
+      "name": "FIM file added under /etc",
+      "needs": [],
+      "ids": [
+        "554"
+      ],
+      "min_level": 5
+    },
+    {
+      "name": "FIM file modified under /etc",
+      "needs": [],
+      "ids": [
+        "550"
+      ],
+      "min_level": 7
+    },
+    {
+      "name": "FIM file deleted under /etc",
+      "needs": [],
+      "ids": [
+        "553"
+      ],
+      "min_level": 7
+    },
+    {
+      "name": "docker container start",
+      "needs": [
+        "docker"
+      ],
+      "ids": [
+        "87903"
+      ],
+      "min_level": 3
+    },
+    {
+      "name": "docker exec of a non-health-check command",
+      "needs": [
+        "docker"
+      ],
+      "ids": [
+        "87907"
+      ],
+      "min_level": 3
+    },
+    {
+      "name": "rootcheck: a hidden file under /dev still alerts",
+      "needs": [
+        "rootcheck"
+      ],
+      "ids": [
+        "510"
+      ],
+      "min_level": 7
+    },
+    {
+      "name": "rootcheck: LXC's own /dev files no longer alert",
+      "needs": [
+        "rootcheck"
+      ],
+      "ids": [
+        "510"
+      ],
+      "phrase": "lxc",
+      "absent": true
+    }
   ]
 }

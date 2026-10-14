@@ -13,6 +13,7 @@
 #   live_group    inventory group of the test agent (default apt_cacher_stack)
 #   live_docker   true on a Docker host: also start a throwaway container and exec in it
 #   live_docker_image   image for that container (required with live_docker)
+#   live_rootcheck true: also drop a hidden /dev marker file and trigger a rootcheck scan (waits longer)
 #
 # Everything created is removed in an always: block. The agent's name in Wazuh must equal
 # its inventory hostname (true for the stacks).
@@ -49,6 +50,13 @@
             echo one > $f; sleep 8; echo two >> $f; sleep 8; rm -f $f; sleep 8
           changed_when: true
 
+        - name: Create a hidden marker file under /dev (rootcheck alert; /dev is a tmpfs, removed in cleanup)
+          when: live_rootcheck | default(false) | bool
+          ansible.builtin.file:
+            path: "/dev/.{{ marker }}"
+            state: touch
+            mode: "0600"
+
         - name: Delete the throwaway user (user-deleted alert)
           ansible.builtin.command: userdel {{ marker }}
           changed_when: true
@@ -66,7 +74,7 @@
         - name: Cleanup - user, file and container
           ansible.builtin.shell: |
             id {{ marker }} >/dev/null 2>&1 && userdel {{ marker }}
-            rm -f /etc/{{ marker }}.test
+            rm -f /etc/{{ marker }}.test /dev/.{{ marker }}
             command -v docker >/dev/null 2>&1 && docker rm -f {{ marker }}c >/dev/null 2>&1
             true
           changed_when: false
@@ -81,7 +89,21 @@
   tasks:
     - name: Wait for the agent -> manager -> indexer path
       ansible.builtin.pause:
-        seconds: 75
+        seconds: "{{ 150 if live_rootcheck | default(false) | bool else 75 }}"
+
+    - name: Run a rootcheck scan on the agent now (Wazuh API, only with live_rootcheck=true)
+      when: live_rootcheck | default(false) | bool
+      ansible.builtin.shell: |
+        tok=$(curl -sk -u wazuh-wui:"$WAZUH_API_PASSWORD" -X POST "https://127.0.0.1:55000/security/user/authenticate?raw=true")
+        id=$(curl -sk -H "Authorization: Bearer $tok" "https://127.0.0.1:55000/agents?name={{ agent_host }}&select=id" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["affected_items"][0]["id"])')
+        curl -sk -H "Authorization: Bearer $tok" -X PUT "https://127.0.0.1:55000/rootcheck?agents_list=$id"
+      environment:
+        WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
+      register: wazuh_rootcheck_run
+      changed_when: true
+    - ansible.builtin.debug:
+        var: wazuh_rootcheck_run.stdout
+      when: wazuh_rootcheck_run is not skipped
 
     - name: Copy the suite
       ansible.builtin.copy:
@@ -94,7 +116,7 @@
       ansible.builtin.command:
         argv: >-
           {{ ['python3', '/opt/wazuh-stack/tuning/must_fire.py', 'live', agent_host, marker]
-             + (['docker'] if live_docker | default(false) | bool else []) }}
+             + (['docker'] if live_docker | default(false) | bool else []) + (['rootcheck'] if live_rootcheck | default(false) | bool else []) }}
         chdir: /opt/wazuh-stack/tuning
       environment:
         WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"

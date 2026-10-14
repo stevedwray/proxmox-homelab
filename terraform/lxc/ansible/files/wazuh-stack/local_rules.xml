@@ -253,3 +253,17 @@ sys\.exit\(0\)\z</field>
     <description>sshd: authentication failed from the Greenbone scanner 192.168.70.11 (lowered)</description>
   </rule>
 </group>
+
+<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->
+<group name="local,rootcheck,syslog,">
+  <rule id="100210" level="0">
+    <if_sid>510</if_sid>
+    <regex type="pcre2">^File '/dev/\.lxc(?:-boot-id|/proc/[a-z0-9_-]+)' present on /dev\. Possible hidden file\.\z</regex>
+    <description>rootcheck: LXC's own bookkeeping file under /dev (suppressed); any other hidden /dev file still alerts</description>
+  </rule>
+  <rule id="100211" level="3">
+    <if_sid>2501</if_sid>
+    <regex type="pcre2">\shAP login failure for user \S+ from 192\.168\.70\.11 via ssh\z</regex>
+    <description>MikroTik hAP ssh login failure from the Greenbone scanner 192.168.70.11 (lowered)</description>
+  </rule>
+</group>

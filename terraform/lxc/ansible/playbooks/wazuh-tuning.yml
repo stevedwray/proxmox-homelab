@@ -27,7 +27,7 @@
     dir: /opt/wazuh-stack/tuning
     run_dir: /run/wazuh-tuning
     tune_tag: run
-    helper_modes: [health, alerts, noise, sample, commands, fimpaths, agents, vulns, retention, fim]
+    helper_modes: [health, alerts, noise, sample, commands, fimpaths, hist, agents, vulns, retention, fim]
     secrets_env:
       WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"
       WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
@@ -74,9 +74,9 @@
         flat: true
 
     - name: Run the must-fire detection suite
-      when: tune_mode in ['mustfire', 'suppression', 'scanner']
+      when: tune_mode in ['mustfire', 'suppression', 'scanner', 'hap']
       ansible.builtin.command:
-        argv: "{{ ['python3', dir ~ '/must_fire.py'] + ([tune_mode] if tune_mode in ['suppression', 'scanner'] else []) }}"
+        argv: "{{ ['python3', dir ~ '/must_fire.py'] + ([tune_mode] if tune_mode in ['suppression', 'scanner', 'hap'] else []) }}"
         chdir: "{{ dir }}"
       environment: "{{ secrets_env }}"
       register: mf
@@ -84,7 +84,7 @@
       failed_when: mf.rc != 0
     - ansible.builtin.debug:
         var: mf.stdout_lines
-      when: tune_mode in ['mustfire', 'suppression', 'scanner']
+      when: tune_mode in ['mustfire', 'suppression', 'scanner', 'hap']
 
     - name: Stop any existing sampler
       when: tune_mode in ['sample_start', 'sample_stop']

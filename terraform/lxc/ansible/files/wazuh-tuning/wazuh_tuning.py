@@ -185,7 +185,7 @@ NOISE_FIELDS = {
     "87907": ["data.docker.Actor.Attributes.name", "data.docker.Action"],
     "550": ["syscheck.path"],
     "2501": ["data.srcip", "data.srcuser"],
-    "510": ["rule.description"],
+    "510": ["data.title", "data.file"],
     "5710": ["data.srcip", "data.srcuser"],
     "5712": ["data.srcip", "data.srcuser"],
     "5716": ["data.srcip", "data.srcuser"],
@@ -199,7 +199,7 @@ def mode_noise(args):
     aggs = {"agent": terms("agent.name", 15)}
     fields = NOISE_FIELDS.get(rid, ["rule.description", "location"])
     for i, f in enumerate(fields):
-        aggs[f"f{i}"] = terms(f, 15, a=terms("agent.name", 3))
+        aggs[f"f{i}"] = terms(f, 80, a=terms("agent.name", 3))
     r = search(ALERTS, rule_q(rid, hours), aggs)
     out = {"rule": rid, "hours": hours, "total": total(r), "agent": buckets(r, "agent")}
     for i, f in enumerate(fields):
@@ -227,6 +227,19 @@ def mode_fimpaths(args):
     return {"hours": hours, "total": total(r), "other": r["aggregations"]["p"]["sum_other_doc_count"],
             "paths": [(b["key"], b["doc_count"], [x["key"] for x in b["a"]["buckets"]], [x["key"] for x in b["r"]["buckets"]])
                       for b in r["aggregations"]["p"]["buckets"]]}
+
+
+def mode_hist(args):
+    """Hourly histogram of one rule, plus how many events do / do not contain a phrase in full_log."""
+    rid, hours = args[0], window(args[1]) if len(args) > 1 else 24
+    phrase = args[2] if len(args) > 2 else None
+    r = search(ALERTS, rule_q(rid, hours), {"h": {"date_histogram": {"field": "@timestamp", "fixed_interval": "1h"}}})
+    out = {"rule": rid, "total": total(r), "hourly": [(b["key_as_string"][5:13], b["doc_count"]) for b in r["aggregations"]["h"]["buckets"] if b["doc_count"]]}
+    if phrase:
+        q = {"bool": {"filter": [day(hours), {"term": {"rule.id": rid}}, {"match_phrase": {"full_log": phrase}}]}}
+        out["with_phrase"] = total(search(ALERTS, q))
+        out["without_phrase"] = out["total"] - out["with_phrase"]
+    return out
 
 
 def mode_sample(args):
@@ -291,7 +304,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "fimpaths": mode_fimpaths,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 
