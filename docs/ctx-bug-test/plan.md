@@ -336,7 +336,7 @@ prompt each time is:
 | ctx-10-pilot-review | local + Framework (read-only) | — | done 2026-10-14 (24 requests reviewed; restore/evidence verified; fixes recommended) |
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | done 2026-10-14 (58 tests pass; operator regraded 24 pilot requests and 1 probe) |
 | ctx-10b-variant-option | local | — | done 2026-10-14 (suffix/prompt options, resume identity and restoration; 62 tests pass) |
-| ctx-10c-batch-variant | local | — | todo |
+| ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
 | ctx-10e-drop-f-count | local | — | todo |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
@@ -975,7 +975,12 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. Appended only Laguna's `ctx131k-b512` variant:
+131072 context, one slot, batch 512 and ubatch 128. The JSON gate prints
+`ok`, the Ansible diff contains one file, and all 42 llama-builds tests pass.
+An exact comparison with HEAD confirms the rest of the catalogue is
+unchanged. No Framework access, deployment or model load occurred.
+Next: ctx-10e, the local D8 F-count removal, before ctx-10d deployment.
 
 #### ctx-10e-drop-f-count
 

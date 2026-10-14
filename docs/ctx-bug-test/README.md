@@ -16,7 +16,8 @@ is `/storage/artifacts/framework-ctx-bugs/20261014T000806Z` on Framework.
 The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
 were written, and `qwen3-coder-next-upstream` was reloaded. The next step
-is ctx-10c, the local small-batch catalogue variant. ctx-10b added suffix
+is ctx-10e, local removal of F's count question. ctx-10c added the Laguna
+small-batch variant locally; all 42 llama-builds tests pass. ctx-10b added suffix
 and prompt-selection support with 62 tests passing. D8 is decided; the full
 run still waits for the remaining preparation and D9 decision.
 
@@ -126,7 +127,7 @@ as `results.pre-regrade.jsonl`. The operator confirmed successful Framework
 regrade of all 24 requests and one probe on 2026-10-14. The table above
 reflects the corrected classifications; timings and responses are unchanged.
 
-Remaining work is written as steps ctx-10c to ctx-14 in
+Remaining work starts with ctx-10e, then ctx-10d through ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
