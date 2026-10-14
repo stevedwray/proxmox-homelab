@@ -32,9 +32,12 @@ Changing modes (the playbook asks for TASK_APPROVAL on production):
                           schedule-program tags re-attaches them)
   runhosts <zone> <ip[:skipPORT]>...
                           one temporary single-host task per ip, cloned from the zone task,
-                          run one after another; ":skip8200" scans without that port; each
-                          temporary task, target and port list is deleted afterwards
+                          run one after another; ":skip8200" scans without that port, ":cfg=lean"
+                          uses the lean scan config; each temporary task, target and port list is
+                          deleted afterwards, after its non-Log findings are printed
   seq <zone>...           run whole zone tasks one after another and print per-host results
+  mklean                  create the scan config "Full and fast (lean)": a clone of "Full and fast"
+                          with the "Web application abuses" family deselected (idempotent)
   cleanup                 stop and delete every "TEMP calibrate " task and target
                           (kill the background runner first, or it starts the next host)
 
@@ -128,8 +131,19 @@ def run_hosts(gmp, zone, ips):
     tg = gmp.get_target(t.find("target").get("id")).find("target")
     port_list = tg.find("port_list").get("id")
     ssh = tg.find("ssh_credential").get("id")
+    base_config = config
     for spec in ips:
-        ip, _, skip = spec.partition(":skip")
+        ip, *opts = spec.split(":")
+        skip = next((o[len("skip"):] for o in opts if o.startswith("skip")), "")
+        cfg_opt = next((o[len("cfg="):] for o in opts if o.startswith("cfg=")), "")
+        config = base_config
+        if cfg_opt:
+            cfg_name = "Full and fast (lean)" if cfg_opt == "lean" else cfg_opt
+            found = gmp.get_scan_configs(filter_string=f'name="{cfg_name}"').find("config")
+            if found is None:
+                print(f"{time.strftime('%H:%M:%S')} {ip}: ERROR no scan config {cfg_name!r}", flush=True)
+                continue
+            config = found.get("id")
         name = f"TEMP calibrate {ip}"
         target_id = task_id = temp_pl = None
         try:
@@ -149,9 +163,19 @@ def run_hosts(gmp, zone, ips):
             while gmp.get_task(task_id).findtext("task/status") in BUSY:
                 time.sleep(60)
             status = gmp.get_task(task_id).findtext("task/status")
-            print(f"{time.strftime('%H:%M:%S')} {ip}: {status} in {(time.time() - t0) / 60:.0f} min", flush=True)
+            label = f" [config {cfg_opt}]" if cfg_opt else ""
+            print(f"{time.strftime('%H:%M:%S')} {ip}: {status} in {(time.time() - t0) / 60:.0f} min{label}", flush=True)
             for h, d in sorted(auth_counts(gmp, task_id).items()):
                 print(f"      {h:16} {d}", flush=True)
+            findings = []
+            for res in gmp.get_results(filter_string=f"task_id={task_id} rows=-1").findall("result"):
+                if (res.findtext("threat") or "") in ("Log", ""):
+                    continue
+                nvt = res.find("nvt")
+                findings.append(f"{res.findtext('threat')} | {(nvt.findtext('family') if nvt is not None else '?')} | {(res.findtext('name') or '')[:90]}")
+            print(f"      FINDINGS{label} ({len(findings)} non-Log):", flush=True)
+            for line in sorted(findings):
+                print(f"        {line}", flush=True)
         except Exception as exc:  # keep going with the remaining hosts
             print(f"{time.strftime('%H:%M:%S')} {ip}: ERROR {type(exc).__name__}: {exc}", flush=True)
         finally:
@@ -341,6 +365,25 @@ def main():
                     counts[threat] = counts.get(threat, 0) + 1
                 worst = sorted(per[host], key=lambda x: order.get(x[0], 9))[:2]
                 print(f"  {host:16} {dict(sorted(counts.items(), key=lambda kv: order.get(kv[0], 9)))}  e.g. {'; '.join(w[1] for w in worst)}")
+            return
+        if mode == "mklean":
+            lean = "Full and fast (lean)"
+            drop = "Web application abuses"
+            found = gmp.get_scan_configs(filter_string=f'name="{lean}"').find("config")
+            if found is None:
+                base = gmp.get_scan_configs(filter_string='name="Full and fast"').find("config")
+                base_cfg = gmp.get_scan_config(base.get("id"), tasks=False).find("config")
+                families = [(f.findtext("name"), True, True) for f in base_cfg.findall("families/family")
+                            if f.findtext("name") != drop]
+                new_id = gmp.clone_scan_config(base.get("id")).get("id")
+                gmp.modify_scan_config_set_name(new_id, lean)
+                gmp.modify_scan_config_set_family_selection(new_id, families, auto_add_new_families=True)
+                print(f"created {lean!r} ({new_id}) with {len(families)} families")
+                found = gmp.get_scan_configs(filter_string=f'name="{lean}"').find("config")
+            cfg = gmp.get_scan_config(found.get("id"), tasks=False).find("config")
+            fams = {f.findtext("name"): int(f.findtext("nvt_count") or 0) for f in cfg.findall("families/family")}
+            print(f"{lean!r}: {len(fams)} families, {cfg.findtext('nvt_count')} tests selected; "
+                  f"{drop!r} selected tests = {fams.get(drop, 'not selected')}")
             return
         if mode == "cleanup":
             root = gmp.get_tasks(filter_string='name~"TEMP calibrate " rows=-1')
