@@ -154,6 +154,24 @@ Nothing was deleted (oldest index is from 2026-08-29, so the first deletions fal
 **Gate follow-up:** tomorrow's new daily index must show the policy attached (`retention` mode,
 `ism_managed_alert_indices` = indices). The one-shard index template is a separate follow-up step.
 
+## Phase 1b done (2026-10-15)
+
+Manager, indexer and dashboard upgraded 4.14.7 -> 4.14.8 (matches the 27 agents; the manager's own
+agent 000 is now 4.14.8 too, so all 28 are 4.14.8). Backup was the nightly PBS snapshot (operator
+confirmed). Method: image tags edited in the live `docker-compose.yml` (backup
+`docker-compose.yml.bak-1b`), `docker compose pull`, one `docker compose up -d` (all three recreated,
+volumes kept, about 1 minute of downtime). Verified: 28/28 agents active, `events_dropped` 0,
+vulnerability findings unchanged (3,957), ISM 47/47 managed, suppression 48/48, Tier 1 11/11, dashboard
+healthy. The agent role is pinned to the same version (`wazuh_agent_version`), tested equal.
+Rollback would have been: tag back to 4.14.7 in the compose file and `up -d`, or PBS restore.
+Caveat noticed: docker volume went from 57% to 73% (both image generations are on disk);
+`docker image prune` for the old 4.14.7 images is a follow-up (reclaims about 4.4GB).
+
+**Open from 1c:** the cluster is `yellow` since the ISM plugin created three system indices
+(`.opendistro-ism-config`, `.opendistro-ism-managed-index-history-*`, `.opendistro-job-scheduler-lock`)
+with a replica a single node cannot place. Fix: set replicas to 0 on them and add a template for
+`.opendistro-*`; the alert indices themselves are fine.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
@@ -163,7 +181,7 @@ Nothing was deleted (oldest index is from 2026-08-29, so the first deletions fal
 | Indexer growth | 0.4GB/day | under 0.05GB/day |
 | Retention | none | 90 days, enforced (**done 1c, 2026-10-15**) |
 | Dashboard container | unhealthy | healthy (**done 1a, 2026-10-15**) |
-| Manager vs agent versions | skewed | manager >= every agent |
+| Manager vs agent versions | skewed | manager >= every agent (**done 1b, 2026-10-15**: all 4.14.8) |
 | Detection regression | not tested | every must-fire test passes before and after each change |
 
 ## Decisions needed from the operator
