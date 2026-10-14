@@ -10,7 +10,15 @@ from pathlib import Path
 BACKENDS = {'nathanw': 'fork', 'upstream': 'upstream'}
 
 
-def build_expectations(props_args, builds_root):
+def build_expectations(props_args, builds_root, link_args=()):
+    links = {}
+    for assignment in link_args:
+        label, separator, link = assignment.partition("=")
+        if not separator or label not in BACKENDS or link not in ("current", "candidate"):
+            raise ValueError("--link must be nathanw=current|candidate or upstream=current|candidate")
+        if label in links:
+            raise ValueError(f"duplicate --link label: {label}")
+        links[label] = link
     paths = {}
     for assignment in props_args:
         label, separator, path = assignment.partition('=')
@@ -24,7 +32,8 @@ def build_expectations(props_args, builds_root):
     result = {}
     for label, backend in BACKENDS.items():
         props = json.loads(paths[label].read_text())
-        build_path = Path(builds_root) / backend / 'current' / 'build.json'
+        link = links.get(label, 'current')
+        build_path = Path(builds_root) / backend / link / 'build.json'
         build = json.loads(build_path.read_text())
         if not isinstance(props, dict) or not isinstance(build, dict):
             raise ValueError(f'{label}: props and build record must be JSON objects')
@@ -42,7 +51,7 @@ def build_expectations(props_args, builds_root):
                 raise ValueError(f'{label}: build record needs a non-empty {field} string')
         suffix = build_info.rsplit('-', 1)[-1]
         if '-' not in build_info or not suffix or not build['sha'].startswith(suffix):
-            raise ValueError(f'{label}: build_info SHA does not match current build sha; redo the build check')
+            raise ValueError(f'{label}: build_info SHA does not match {link} build sha; redo the build check')
         result[label] = dict(name=build['name'], sha=build['sha'], build_info=build_info, props=props)
     return result
 
@@ -72,10 +81,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--props', action='append', required=True, metavar='LABEL=PATH')
     parser.add_argument('--builds-root', type=Path, default=Path('/storage/llama-builds'))
+    parser.add_argument('--link', action='append', default=[], metavar='LABEL=current|candidate',
+                        help='choose a build link per props label; unspecified labels use current')
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        result = build_expectations(args.props, args.builds_root)
+        result = build_expectations(args.props, args.builds_root, args.link)
         write_new(args.out, result)
     except (OSError, ValueError) as exc:
         print(f'write-build-expectations: {exc}', file=sys.stderr)

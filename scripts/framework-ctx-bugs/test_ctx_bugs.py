@@ -776,6 +776,17 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'hash mismatch'):
                 run.preflight_cell(cb.MODELS[0], 'upstream', 32768)
 
+    def test_qwen_candidate_keeps_full_budget(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as instance:
+            args=cb.parse_args(['--dry-run','--base-url',instance.url,'--run-dir',tmp,
+                               '--candidate','--models',cb.MODELS[0],'--builds','upstream',
+                               '--sizes','32768','--prompts','S1','--greedy-only'])
+            run=cb.Run(args)
+            self.assertEqual(run.execute(),0)
+            self.assertEqual(len(run.records),1)
+            self.assertIn('-upstream-candidate-',run.records[0]['cell'])
+            self.assertEqual(run.records[0]['settings']['max_tokens'],16384)
+
     def test_candidate_short_form(self):
         with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
             args = cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp, '--candidate',

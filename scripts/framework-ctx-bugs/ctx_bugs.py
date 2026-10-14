@@ -784,7 +784,7 @@ class Run:
                 for build in self.args.builds:
                     entry = entry_id(model, build, size, self.args.candidate, self.args.entry_suffix)
                     existing = self.manifest['cells'].get(entry, {})
-                    short = existing.get('short', self.args.candidate)
+                    short = existing.get('short', self.args.candidate and model == MODELS[1] and build == 'nathanw')
                     pending = [r for r in runs(short, self.args.greedy_only, self.args.extra_seeds, self.args.prompts)
                                if f'{entry}/{r[0]}/{r[1]}' not in self.done]
                     if not pending:
@@ -886,7 +886,7 @@ def parse_args(argv=None):
     parser.add_argument('--extra-seeds', nargs=3, type=int, help='reproduction: three additional seeds, e.g. 4 5 6')
     parser.add_argument('--builds-root', default='/storage/llama-builds')
     parser.add_argument('--builds-json', help='explicit {nathanw,upstream: {name,sha,build_info}} expectations')
-    parser.add_argument('--candidate', action='store_true', help='D1: one Laguna/nathanw candidate short-form cell; specify its size')
+    parser.add_argument('--candidate', action='store_true', help='use candidate build links; Laguna/nathanw retains its D1 short form')
     parser.add_argument('--entry-suffix', help='extra catalogue variant suffix, lowercase letters/digits, e.g. b512')
     parser.add_argument('--prompts', nargs='+', choices=PROMPTS, default=list(PROMPTS),
                         help='selected prompts, always executed in S1–S5/F order')
@@ -900,8 +900,6 @@ def parse_args(argv=None):
         args.api_key_file = args.api_key_file or '/etc/llamacpp/api-key'
     if args.extra_seeds and (len(set(args.extra_seeds)) != 3 or any(s <= 3 for s in args.extra_seeds)):
         parser.error('reproduction needs three distinct seeds greater than 3')
-    if args.candidate and (args.models != [MODELS[1]] or args.builds != ['nathanw'] or len(args.sizes) != 1):
-        parser.error('--candidate requires --models laguna-s-2.1 --builds nathanw and exactly one --sizes value')
     return args
 
 

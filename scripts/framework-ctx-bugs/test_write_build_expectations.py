@@ -63,6 +63,25 @@ class ExpectationsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.out.read_text()), expected)
         self.assertFalse(list(self.root.glob('.expectations.json.*')))
 
+    def test_candidate_link_reads_matching_props_not_current(self):
+        record=dict(name='previous-fork',sha='b02cb35f2abcdef')
+        path=self.builds/'fork'/'candidate'/'build.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(record))
+        self.props['nathanw']['build_info']='b10000-b02cb35f2'
+        self.save_props('nathanw')
+        code,_,error=self.invoke(self.args+['--link','nathanw=candidate'])
+        self.assertEqual(code,0,error)
+        self.assertEqual(json.loads(self.out.read_text())['nathanw']['sha'],record['sha'])
+        self.out.unlink()
+        self.assert_refused('SHA does not match')
+
+    def test_invalid_or_duplicate_links_refuse_output(self):
+        for links in (['fork=current'],['nathanw=previous'],['nathanw'],['nathanw=current','nathanw=candidate']):
+            args=self.args[:]
+            for link in links:args+=['--link',link]
+            self.assert_refused('--link',args)
+
     def test_cli_success_with_reversed_props_argument_order(self):
         result = subprocess.run([sys.executable, str(Path(helper.__file__)), *self.args[:4],
                                  *self.args[6:8], *self.args[4:6]], capture_output=True, text=True)
