@@ -366,7 +366,7 @@ stops only at one of the stop points in rule 1.
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
 | ctx-10h-harness-resilience | local | — | done 2026-10-14 (swap identity/reachability, pending infrastructure requests, restore waits/retries; 75 tests pass) |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo: retry as a fresh run after ctx-10h (attempt 1, 20261014T045019Z, failed at 06:32:33 UTC: needrestart restarted llama-swap) |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | in progress 2026-10-14 (fresh retry 20261014T071722Z; running; upgrade timer paused, restore on exit) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -1428,6 +1428,23 @@ input". Preserve this instruction on continuation: do not repeat routine
 approval prompts for work already authorized in this session; continue
 within the plan's scope, reporting production preflights and stopping for
 errors or unresolved decisions requiring operator input.
+
+Result (fresh retry, 2026-10-14): ctx-10h completed and its tested harness
+was copied to Framework. D10's exact pause/check command returned `inactive`
+for both apt-daily-upgrade.service and apt-daily-upgrade.timer. The fresh
+unit `framework-ctx-bugs-20261014t071722z.service` started at 07:17:22 UTC,
+invocation `935ca41be01e4b20856b71fb8eb97d25`. Status is active/running,
+completed=0, with run directory
+`/storage/artifacts/framework-ctx-bugs/20261014T071722Z`; first log loads
+Qwen Nathanw ctx32k and records the swap readiness wait. Start gate passed.
+The failed first run remains separate partial evidence, not resumed.
+
+**Pending D10 cleanup:** apt-daily-upgrade.timer is currently paused.
+When this run is terminal (complete, failed or interrupted), execute the
+specified timer-start command and verify `active` before any other result
+review or later step. Timer restoration has not yet occurred. Full evidence
+review and reproduction remain pending. No additional approval was requested,
+following the operator's autonomous continuation instruction.
 
 #### ctx-12-reproduce
 
