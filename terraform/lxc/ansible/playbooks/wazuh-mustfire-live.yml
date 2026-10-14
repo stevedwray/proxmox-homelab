@@ -57,7 +57,7 @@
           when: live_docker | default(false) | bool
           block:
             - name: Start a throwaway container named for the marker
-              ansible.builtin.command: docker run -d --name {{ marker }}c {{ live_docker_image | mandatory }} sleep 120
+              ansible.builtin.command: docker run -d --name {{ marker }}c --entrypoint sleep {{ live_docker_image | mandatory }} 120
               changed_when: true
             - name: Exec a non-health-check command in it
               ansible.builtin.command: docker exec {{ marker }}c sh -c "id; ls /"

@@ -90,8 +90,9 @@ def live(agent, marker, minutes=30, capabilities=()):
     spec = json.load(open(os.path.join(HERE, "must_fire_live_cases.json")))
     where = {"bool": {"should": [
         {"multi_match": {"query": marker, "type": "phrase",
-                         "fields": ["full_log", "data.srcuser", "data.dstuser", "data.docker.Actor.Attributes.name"]}},
-        {"wildcard": {"syscheck.path": f"*{marker}*"}}], "minimum_should_match": 1}}
+                         "fields": ["full_log", "data.srcuser", "data.dstuser"]}},
+        {"wildcard": {"syscheck.path": f"*{marker}*"}},
+        {"wildcard": {"data.docker.Actor.Attributes.name": f"*{marker}*"}}], "minimum_should_match": 1}}
     failures = 0
     for case in spec["cases"]:
         if not set(case["needs"]) <= set(capabilities):
