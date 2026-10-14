@@ -10,6 +10,7 @@
 # Variables:
 #   tune_mode   a wazuh_tuning.py mode (health alerts noise sample agents vulns retention fim),
 #               or: mustfire              the detection regression suite (logtest, writes no alerts)
+#                   suppression           Phase 1d: health checks suppressed, look-alikes still alert
 #                   sample_start|sample_stop|sample_log   30 s resource sampler
 #   tune_args   extra words for the mode, e.g. -e tune_args=87907
 #   tune_tag    label for the saved JSON, e.g. baseline  (saved to docs/wazuh-tuning/artifacts/, ignored)
@@ -25,7 +26,7 @@
     dir: /opt/wazuh-stack/tuning
     run_dir: /run/wazuh-tuning
     tune_tag: run
-    helper_modes: [health, alerts, noise, sample, agents, vulns, retention, fim]
+    helper_modes: [health, alerts, noise, sample, commands, agents, vulns, retention, fim]
     secrets_env:
       WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"
       WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
@@ -43,6 +44,12 @@
         dest: "{{ dir }}/{{ item }}"
         mode: "0644"
       loop: [wazuh_tuning.py, must_fire.py, must_fire_cases.json, must_fire_live_cases.json]
+
+    - name: Copy the health-check list (suppression test input)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/docker_healthchecks.json"
+        dest: "{{ dir }}/docker_healthchecks.json"
+        mode: "0644"
 
     - name: Run a helper mode (JSON kept on the host)
       when: tune_mode in helper_modes
@@ -66,9 +73,9 @@
         flat: true
 
     - name: Run the must-fire detection suite
-      when: tune_mode == 'mustfire'
+      when: tune_mode in ['mustfire', 'suppression']
       ansible.builtin.command:
-        argv: [python3, "{{ dir }}/must_fire.py"]
+        argv: "{{ ['python3', dir ~ '/must_fire.py'] + (['suppression'] if tune_mode == 'suppression' else []) }}"
         chdir: "{{ dir }}"
       environment: "{{ secrets_env }}"
       register: mf
@@ -76,7 +83,7 @@
       failed_when: mf.rc != 0
     - ansible.builtin.debug:
         var: mf.stdout_lines
-      when: tune_mode == 'mustfire'
+      when: tune_mode in ['mustfire', 'suppression']
 
     - name: Stop any existing sampler
       when: tune_mode in ['sample_start', 'sample_stop']

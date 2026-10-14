@@ -1053,6 +1053,76 @@
         timeout: 300
       when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
 
+    # Repo-managed local rules (docs/wazuh-tuning/plan.md Phase 1d): level-0 children of rule
+    # 87907 for the exact health-check commands of our containers. local_rules.xml lives in
+    # the wazuh_etc named volume, so it is delivered with docker cp like authd.pass, and
+    # validated with wazuh-analysisd -t BEFORE the manager is restarted: a bad file is rolled
+    # back to the previous copy and fails the play, never loaded. Source of truth:
+    # files/wazuh-stack/docker_healthchecks.json -> gen_local_rules.py -> local_rules.xml.
+    - name: Stage local_rules.xml on the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/local_rules.xml"
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml"
+        mode: "0640"
+      register: wazuh_local_rules_staged
+      tags: [wazuh_local_rules]
+
+    - name: Compare the staged rules with the manager's live copy
+      ansible.builtin.shell: |
+        h=$(sha256sum < {{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml)
+        c=$(docker exec wazuh-stack-manager sh -c 'sha256sum < /var/ossec/etc/rules/local_rules.xml')
+        test "$h" = "$c"
+      register: wazuh_local_rules_same
+      changed_when: false
+      failed_when: false
+      tags: [wazuh_local_rules]
+
+    - name: Deliver, validate and load local_rules.xml
+      when: wazuh_local_rules_same.rc != 0
+      tags: [wazuh_local_rules]
+      block:
+        - name: Back up the live local_rules.xml inside the volume
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, cp, -p, /var/ossec/etc/rules/local_rules.xml, /var/ossec/etc/rules/local_rules.xml.bak]
+          changed_when: true
+
+        - name: Copy the new local_rules.xml into the manager container
+          ansible.builtin.command:
+            argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml",
+                   "wazuh-stack-manager:/var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+
+        - name: Set ownership and permissions on the in-container local_rules.xml
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, sh, -c,
+                   "chown 999:999 /var/ossec/etc/rules/local_rules.xml && chmod 660 /var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+
+        - name: Validate the ruleset (wazuh-analysisd -t) before anything is restarted
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-analysisd, -t]
+          changed_when: false
+
+        - name: Restart the manager so analysisd loads the new rules
+          ansible.builtin.command:
+            argv: [docker, restart, wazuh-stack-manager]
+          changed_when: true
+
+        - name: Wait for manager API port to accept connections after the rules restart
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: 55000
+            timeout: 300
+      rescue:
+        - name: Validation or load failed -- restore the previous local_rules.xml
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, sh, -c,
+                   "test -f /var/ossec/etc/rules/local_rules.xml.bak && cp -p /var/ossec/etc/rules/local_rules.xml.bak /var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+        - name: Fail the play (the new rules were not loaded)
+          ansible.builtin.fail:
+            msg: local_rules.xml failed validation; the previous copy was restored and no restart was done.
+
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
         host: 127.0.0.1

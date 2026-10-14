@@ -98,6 +98,25 @@ not restarted; must-fire green; `events_dropped` 0, queues 0. The playbook-rende
 file now matches the live one, so a later full deploy is a no-op for this line. (A full deploy
 still recreates all three containers whenever the compose file changes, hence the targeted path.)
 
+## Phase 1d design (2026-10-15, not yet applied)
+
+- 75 distinct commands sit behind rule 87907 (452,146 events/24 h). 40 are container
+  health checks (listed in `files/wazuh-stack/docker_healthchecks.json`); each gets a level-0
+  child rule (ids 100101+) matching the **whole** Action string, anchored `^exec_start: <cmd>\z`,
+  so an exec that merely contains a health-check string still alerts. The rest keep alerting:
+  Greenbone's own `redis-cli info/type/config get` (about 11k/day, our sampler and exporter;
+  goes away when the sampler stops) and one-off operator commands.
+- `local_rules.xml` is generated (`gen_local_rules.py`), delivered into the `wazuh_etc` volume
+  by `deploy-wazuh-stack.yml` (tag `wazuh_local_rules`): backup, `docker cp`, `wazuh-analysisd -t`,
+  restart only on success, restore on failure.
+- Suppression test (`must_fire.py suppression`, 48 checks): before = 40 health checks FAIL
+  (still 87907) and 8 look-alikes/attacks PASS; after = all 48 must pass.
+- **Security finding:** the nextcloud-stack-redis healthcheck passes its Redis password on the
+  command line (`redis-cli -a <pw> ping`), so it is visible in `ps`, in Docker events and in about
+  8.6k indexed alerts per day. The rule matches `\S+` so the repo never holds it. Recommended
+  follow-up (not in this plan's scope): switch that healthcheck to `REDISCLI_AUTH` and rotate the
+  password; the old alerts age out under the retention policy (1c).
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |

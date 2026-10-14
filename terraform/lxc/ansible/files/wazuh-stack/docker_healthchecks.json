@@ -1,0 +1,162 @@
+[
+ {
+  "container": "netbox-redis-1",
+  "command": "/bin/sh -c [ $(valkey-cli --pass \"${REDIS_PASSWORD}\" ping) = 'PONG' ]"
+ },
+ {
+  "container": "cadvisor",
+  "command": "/bin/sh -c /usr/bin/healthcheck.sh"
+ },
+ {
+  "container": "greenbone-community-edition-cert-bund-data-1",
+  "command": "/bin/sh -c test -e $STATE_FILE"
+ },
+ {
+  "container": "opensearch-stack-opensearch",
+  "command": "/bin/sh -c curl -sk https://localhost:9200 | grep -q 'Unauthorized'"
+ },
+ {
+  "container": "opensearch-stack-dashboards",
+  "command": "/bin/sh -c curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302'"
+ },
+ {
+  "container": "docs-rag-pgvector",
+  "command": "/bin/sh -c pg_isready -U docs_rag"
+ },
+ {
+  "container": "torrent-stack-lab-gluetun",
+  "command": "/bin/sh -c /gluetun-entrypoint healthcheck"
+ },
+ {
+  "container": "greenbone-community-edition-pg-gvm-1",
+  "command": "pg_isready -U gvmd -d gvmd"
+ },
+ {
+  "container": "authentik-stack-ldap-1",
+  "command": "/ldap healthcheck"
+ },
+ {
+  "container": "nextcloud-stack-redis",
+  "command": "redis-cli -a <REDISPW> ping"
+ },
+ {
+  "container": "nextcloud-stack-db",
+  "command": "/bin/sh -c pg_isready -U nextcloud"
+ },
+ {
+  "container": "netbox-postgres-1",
+  "command": "/bin/sh -c pg_isready -q -t 2 -d $POSTGRES_DB -U $POSTGRES_USER"
+ },
+ {
+  "container": "graylog-stack-graylog-1",
+  "command": "/bin/sh -c /health_check.sh"
+ },
+ {
+  "container": "netbox-netbox-worker-1",
+  "command": "/bin/sh -c ps -aux | grep -v grep | grep -q rqworker || exit 1"
+ },
+ {
+  "container": "netbox-netbox-1",
+  "command": "/bin/sh -c curl -f http://localhost:8080/login/ || exit 1"
+ },
+ {
+  "container": "nextcloud-stack-app",
+  "command": "curl -f http://localhost/status.php"
+ },
+ {
+  "container": "deep-research-files",
+  "command": "python3 -c import urllib.error, urllib.request, sys\ntry:\n    urllib.request.urlopen('http://127.0.0.1:8091/', timeout=10)\nexcept urllib.error.HTTPError as e:\n    sys.exit(0 if e.code == 404 else 1)"
+ },
+ {
+  "container": "web-search-mcp",
+  "command": "python3 -c import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=10)"
+ },
+ {
+  "container": "deep-research",
+  "command": "python3 -c import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/', timeout=10)"
+ },
+ {
+  "container": "authentik-stack-worker-1",
+  "command": "ak healthcheck"
+ },
+ {
+  "container": "harbor-portal",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080 || curl -k --fail -s https://localhost:8443 || exit 1"
+ },
+ {
+  "container": "harbor-log",
+  "command": "/bin/sh -c netstat -ltun|grep 10514"
+ },
+ {
+  "container": "registry",
+  "command": "/bin/sh -c curl --fail -s http://localhost:5000 || curl -k --fail -s https://localhost:5443 || exit 1"
+ },
+ {
+  "container": "nginx",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080 || exit 1"
+ },
+ {
+  "container": "registryctl",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080/api/health || curl -sk --fail --key /etc/harbor/ssl/registryctl.key --cert /etc/harbor/ssl/registryctl.crt https://localhost:8443/api/health || exit 1"
+ },
+ {
+  "container": "harbor-jobservice",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080/api/v1/stats || curl -sk --fail --key /etc/harbor/ssl/job_service.key --cert /etc/harbor/ssl/job_service.crt https://localhost:8443/api/v1/stats || exit 1"
+ },
+ {
+  "container": "harbor-core",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080/api/v2.0/ping || curl -k --fail -s https://localhost:8443/api/v2.0/ping || exit 1"
+ },
+ {
+  "container": "trivy-adapter",
+  "command": "/bin/sh -c curl --fail -s http://localhost:8080/probe/healthy || curl -k --fail -s https://localhost:8443/probe/healthy || exit 1"
+ },
+ {
+  "container": "openwebui",
+  "command": "/bin/sh -c curl --silent --fail http://localhost:${PORT:-8080}/health | jq -ne 'input.status == true' || exit 1"
+ },
+ {
+  "container": "media-stack-lab-immich-server",
+  "command": "/bin/sh -c immich-healthcheck"
+ },
+ {
+  "container": "greenbone-community-edition-gsa-1",
+  "command": "/bin/sh -c test -e /run/gsa/copying.done"
+ },
+ {
+  "container": "harbor-db",
+  "command": "/docker-healthcheck.sh "
+ },
+ {
+  "container": "redis",
+  "command": "docker-healthcheck "
+ },
+ {
+  "container": "greenbone-community-edition-gvmd-1",
+  "command": "/bin/sh -c echo \"<get_version/>\" | socat - UNIX-CONNECT:/run/gvmd/gvmd.sock"
+ },
+ {
+  "container": "cve-mcp-server",
+  "command": "python -c import sys, urllib.request, urllib.error\ntry:\n    urllib.request.urlopen('http://localhost:8000/mcp', timeout=4)\nexcept urllib.error.HTTPError:\n    sys.exit(0)\nexcept Exception:\n    sys.exit(1)\nsys.exit(0)"
+ },
+ {
+  "container": "media-stack-lab-immich-machine-learning",
+  "command": "/bin/sh -c python3 healthcheck.py"
+ },
+ {
+  "container": "searxng",
+  "command": "wget -q --spider http://localhost:8080/search?q=test&format=json"
+ },
+ {
+  "container": "graylog-stack-mongodb-1",
+  "command": "mongosh --quiet --eval db.runCommand('ping').ok"
+ },
+ {
+  "container": "media-stack-lab-database",
+  "command": "/bin/sh -c /usr/local/bin/healthcheck.sh"
+ },
+ {
+  "container": "wazuh-stack-dashboard",
+  "command": "/bin/sh -c curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302|401'"
+ }
+]
