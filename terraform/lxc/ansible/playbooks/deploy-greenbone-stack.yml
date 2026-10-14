@@ -237,6 +237,17 @@
 
             redis-server:
               image: {{ greenbone_registry_host }}/greenbone/community/redis-server
+              # Cap Redis (default is unlimited, policy noeviction). Scan
+              # knowledge bases live here, and a host returning huge web
+              # responses grew it from 0.5GB to 12GB in 6 minutes on
+              # 2026-10-13, got the container OOM-killed, and interrupted the
+              # whole scan. Capped, that host's scan fails on write errors
+              # instead. The image's own command is kept; the flag overrides
+              # the config file.
+              command:
+                - /bin/sh
+                - -c
+                - rm -f /run/redis/redis.sock && redis-server /etc/redis/redis.conf --maxmemory 6gb
               deploy:
                 restart_policy:
                   condition: any
@@ -325,6 +336,13 @@
                 GSAD_HTTP_ONLY: "true"
                 GSAD_API_ONLY: "true"
                 GSAD_FOREGROUND: "true"
+                # The image's start-gsad runs `gsad $GSAD_ARGS` and falls back to
+                # "-f --http-only" when unset, so the GSAD_* flags above are not
+                # what configures it. Setting GSAD_ARGS replaces that default, so
+                # it must keep both flags. --timeout is idle minutes before the
+                # web UI session expires (default 15); there is no "never", so
+                # 1440 (24h).
+                GSAD_ARGS: "-f --http-only --timeout=1440"
               volumes:
                 - gvmd_socket_vol:/run/gvmd
               depends_on:
@@ -851,16 +869,59 @@
     # already passes this through to `ansible-playbook --tags`) rather
     # than the whole playbook, so a routine scan-program update never
     # re-triggers the earlier `--pull always` compose-up task above.
+    # The full-vuln tasks scan unmanaged addresses only, so setup_scan_program.py
+    # needs the managed-host list (docs/gvm-scan-redesign/). Generated on the
+    # control host, like the credential-program's fleet targets, but with
+    # --managed-hosts-out: IPs only, no keys, no OpenBao access.
+    - name: Create local temporary file for the managed-hosts list
+      ansible.builtin.tempfile:
+        state: file
+        prefix: gvm-managed-hosts-
+        suffix: .json
+      register: greenbone_managed_hosts_local
+      delegate_to: localhost
+      become: false
+      tags: [scan-program]
+
+    - name: Generate the managed-hosts list (secret-free)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../../../scripts/gvm_fleet_targets_generate.py"
+          - --managed-hosts-out
+          - "{{ greenbone_managed_hosts_local.path }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      tags: [scan-program]
+
+    - name: Copy the managed-hosts list onto greenbone-stack
+      ansible.builtin.copy:
+        src: "{{ greenbone_managed_hosts_local.path }}"
+        dest: "{{ greenbone_compose_dir }}/managed-hosts.json"
+        # 0644: read through a bind mount by gvm-tools' unprivileged user; IPs only.
+        mode: "0644"
+      tags: [scan-program]
+
+    - name: Remove the local managed-hosts temporary file
+      ansible.builtin.file:
+        path: "{{ greenbone_managed_hosts_local.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      tags: [scan-program]
+
     - name: Create/verify the LAN/VLAN scan program's Targets and Tasks (idempotent)
       ansible.builtin.command:
         cmd: >-
           docker compose run --rm --no-deps
           -v {{ greenbone_compose_dir }}/setup_scan_program.py:/tmp/setup_scan_program.py:ro
+          -v {{ greenbone_compose_dir }}/managed-hosts.json:/tmp/managed-hosts.json:ro
           -e GVM_USERNAME=admin
           -e GVM_PASSWORD={{ greenbone_admin_password }}
           gvm-tools python3 /tmp/setup_scan_program.py
         chdir: "{{ greenbone_compose_dir }}"
-      changed_when: "'created target' in greenbone_scan_program_setup.stdout or 'created task' in greenbone_scan_program_setup.stdout"
+      changed_when: "'created target' in greenbone_scan_program_setup.stdout or 'created task' in greenbone_scan_program_setup.stdout or 'set max_hosts' in greenbone_scan_program_setup.stdout or 'deleted target' in greenbone_scan_program_setup.stdout"
       no_log: true
       register: greenbone_scan_program_setup
       tags: [scan-program]

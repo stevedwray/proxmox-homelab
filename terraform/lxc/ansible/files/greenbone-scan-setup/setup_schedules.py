@@ -10,6 +10,11 @@ last, first occurrence 22:00 local time, recurring weekly. The five zones
 added 2026-10-11 run on a separate night (Wednesday) with the same
 one-hour stagger, so the Sunday night batch doesn't grow.
 
+2026-10-14 (docs/gvm-scan-redesign/): the per-zone Discovery Tasks are now
+scheduled weekly too, Thursday night 22:00 onward, 30 minutes apart (measured
+discovery runs took 6-41 minutes), so new devices are noticed without the
+full-vuln scans doing double duty.
+
 Idempotent: looks up an existing Schedule by exact name first and reuses
 it (does not update its icalendar/timezone if already present -- delete
 the stale Schedule first if a time ever needs to change).
@@ -51,6 +56,23 @@ ZONE_FIRST_RUN_LOCAL = {
     "cse_seg": datetime(2026, 10, 15, 0, 0, 0),
     "connector_seg": datetime(2026, 10, 15, 1, 0, 0),
     "apps_seg": datetime(2026, 10, 15, 2, 0, 0),
+}
+
+# Weekly Discovery runs: Thursday 2026-10-15 22:00 NZ, then every 30 minutes, so
+# the last (lan, the longest at about 41 minutes) ends by about 04:15 Friday.
+DISCOVERY_FIRST_RUN_LOCAL = {
+    "build_seg": datetime(2026, 10, 15, 22, 0, 0),
+    "edge_seg": datetime(2026, 10, 15, 22, 30, 0),
+    "mgmt_seg": datetime(2026, 10, 15, 23, 0, 0),
+    "infra_seg": datetime(2026, 10, 15, 23, 30, 0),
+    "ai_seg": datetime(2026, 10, 16, 0, 0, 0),
+    "game_seg": datetime(2026, 10, 16, 0, 30, 0),
+    "pentest_seg": datetime(2026, 10, 16, 1, 0, 0),
+    "media_seg": datetime(2026, 10, 16, 1, 30, 0),
+    "cse_seg": datetime(2026, 10, 16, 2, 0, 0),
+    "connector_seg": datetime(2026, 10, 16, 2, 30, 0),
+    "apps_seg": datetime(2026, 10, 16, 3, 0, 0),
+    "lan": datetime(2026, 10, 16, 3, 30, 0),
 }
 
 
@@ -95,6 +117,18 @@ def main():
         for key, dtstart_local in ZONE_FIRST_RUN_LOCAL.items():
             task_name = f"LAN scan: {key} full-vuln"
             schedule_name = f"LAN scan: {key} full-vuln weekly"
+
+            task_id = find_by_name(gmp, gmp.get_tasks, "task", task_name)
+            if not task_id:
+                raise RuntimeError(f"task {task_name!r} not found -- run setup_scan_program.py first")
+
+            schedule_id = ensure_schedule(gmp, schedule_name, dtstart_local)
+            gmp.modify_task(task_id, schedule_id=schedule_id)
+            print(f"attached schedule {schedule_name!r} to task {task_name!r}")
+
+        for key, dtstart_local in DISCOVERY_FIRST_RUN_LOCAL.items():
+            task_name = f"LAN scan: {key} discovery"
+            schedule_name = f"LAN scan: {key} discovery weekly"
 
             task_id = find_by_name(gmp, gmp.get_tasks, "task", task_name)
             if not task_id:

@@ -28,6 +28,10 @@ writes:
   <out-dir>/targets.json   -- [{"zone": str, "hosts": [ip, ...], "names": [str, ...]}, ...]
   <out-dir>/<zone>.key     -- that zone's SSH private key
 
+With --managed-hosts-out FILE it writes {zone: [ip, ...]} for every managed
+host and nothing else (no keys, no OpenBao calls): the scan-program step uses it
+to leave managed hosts out of the unauthenticated full-vuln targets.
+
 No sudo password is written any more: GVM's "elevate privileges" feature
 is su-based, not sudo-based (confirmed live 2026-10-11 from target sshd
 logs -- every fleet scan ran `su -l gvm-scan`, switching to itself), so
@@ -236,6 +240,20 @@ def write_fleet_dir(out_dir: Path, hosts: list[dict]) -> int:
     return 0
 
 
+def write_managed_hosts(path: Path, hosts: list[dict]) -> int:
+    """{zone: [ip, ...]} for every managed host, sorted. Secret-free on
+    purpose: no key material and no OpenBao access, so it is safe to copy
+    to the scanner host and mount into the scan-program container."""
+    by_zone: dict[str, list[str]] = {}
+    for entry in hosts:
+        by_zone.setdefault(entry["zone"], []).append(entry["host"])
+    managed = {zone: sorted(set(ips)) for zone, ips in sorted(by_zone.items())}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(managed, indent=2), encoding="utf-8")
+    print(f"wrote managed hosts for {len(managed)} zones ({sum(len(v) for v in managed.values())} hosts) to {path}")
+    return 0
+
+
 def write_inventory(path: Path, hosts: list[dict]) -> int:
     """JSON is valid YAML, so Ansible's yaml inventory plugin reads this
     directly (it accepts the .json extension). gvm_scan_name is the
@@ -259,12 +277,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", help="Write targets.json + <name>.key files here")
     parser.add_argument("--emit-inventory", help="Write an Ansible inventory (JSON) for deploy-gvm-scan-accounts.yml here")
+    parser.add_argument("--managed-hosts-out", help="Write a secret-free {zone: [ip, ...]} JSON of managed hosts here")
     args = parser.parse_args(argv)
-    if not args.out_dir and not args.emit_inventory:
+    if not args.out_dir and not args.emit_inventory and not args.managed_hosts_out:
         parser.print_help()
         return 2
 
     hosts = resolve_all_hosts()
+    if args.managed_hosts_out:
+        write_managed_hosts(Path(args.managed_hosts_out), hosts)
     if args.emit_inventory:
         write_inventory(Path(args.emit_inventory), hosts)
     if args.out_dir:

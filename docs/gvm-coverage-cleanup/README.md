@@ -106,6 +106,27 @@ Update them when the plan is executed (plan.md OP-5 step 5).
    is down to 4 fields, and version 1 (with the root key) is destroyed.
 7. The old `openvas` account on the workstation (garuda) is unused after
    this plan.
+8. **greenbone-stack is not monitored in Grafana, so there are no
+   performance metrics for it** (found 2026-10-13 while sizing the scanner).
+   The container runs `prometheus-node-exporter` (TLS on :9100, installed by
+   the shared `lxc_base` role), but nothing scrapes it: the monitoring stack's
+   `node_exporter` and `cadvisor` scrape lists in `deploy-monitoring-stack.yml`
+   are hand-maintained per stack and omit greenbone-stack. cAdvisor is not
+   running on it at all, so there are no per-container figures (Redis, ospd,
+   gvmd). Consequence: the mgmt_seg OOM, the 8GB peak and the CPU saturation
+   (load ~20 on 2-4 cores) were only visible through ad hoc sampling, with no
+   history to compare against. Wanted: add greenbone-stack to the node_exporter
+   scrape list, run cAdvisor on it, and add panels for container memory, load,
+   Redis memory and scans running. Not started.
+9. **Shift steady load from pve to pve-tiny; keep Greenbone on pve inside a
+   night window** (surveyed 2026-10-14, not started). Greenbone is bursty: 3.6 of
+   its 4 allowed cores only while scanning, 3.3 GB resident. The steady consumers
+   are graylog-stack (9.2 GB resident, Docker data on the gaming ZFS pool) and
+   wazuh-stack (6.8 GB); both zones already exist on pve-tiny and their IPs would
+   be kept, but tiny (22 GB available) cannot take both. Greenbone's own move
+   would need a VLAN 70 zone and a switch trunk. To make "scans only 22:00-07:00"
+   a guarantee, give each weekly schedule a hard `DURATION` (untested in gvmd).
+   Full numbers in the project memory `project_pve_tiny_load_shifting`.
 
 ## Hand-backs
 
@@ -197,3 +218,17 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   edge_seg was re-run; Wazuh had already shown ~225 successful shared-key
   `gvm-scan` logins on each edge host with zero `su` sessions.
 - **2026-10-12, close-out:** docs merged to `stable`.
+- **2026-10-14, schedules RESTORED after the supervised checks passed.** All
+  scheduled scans were paused 2026-10-13 during capacity tuning and re-attached
+  2026-10-14 with `--tags credential-program,schedule-program` from
+  `work/gvm-zone-max-hosts` (26 scheduled tasks: 14 credentialed, 12 LAN
+  full-vuln). Passing criteria met: mgmt_seg 8 hosts in 3 h 12 min, all
+  authenticated, peak container memory 3.6 GB, peak Redis 538 MB, no OOM;
+  mgmt_seg (openbao) 24 min, `lsc=1`, Redis 351 MB; MikroTik 71 min, `ok=3` with one
+  `SSH Login Failed` alongside the successes. Root cause of the earlier runaway:
+  OpenBao's UI (192.168.20.16:8200) returns a ~1MB page for any `/ui/` path and
+  the web-app probes cached thousands of copies in Redis; .16 is now its own task
+  without port 8200 (`SPLIT_HOSTS`). The container is 4 cores / 12GB and Redis is
+  capped at 6GB (`--maxmemory 6gb`). Open: `LAN scan: mgmt_seg full-vuln` ran for 24
+  seconds on 2026-10-11 and found nothing; the five newest zones' LAN full-vuln
+  scans (pentest, media, cse, connector, apps) first run 2026-10-14 22:00 NZ.

@@ -411,3 +411,59 @@ that surfaced it.
 - `CLAUDE.md` — branch model, validation tiers, and production credential
   controls this plan follows (`pve-test-vm` is not production-gated;
   promotion past `stable` would be).
+
+## Per-zone host concurrency (`ZONE_MAX_HOSTS`)
+
+Each credentialed VLAN task scans at most `MAX_HOSTS_PER_TASK` (4) hosts at once.
+`mgmt_seg` overrides this to 2 (`ZONE_MAX_HOSTS` in `setup_credentials.py`).
+Found 2026-10-13: with 4 hosts at once, mgmt_seg's web UIs (authentik, portainer;
+several ports and hostnames each) made the web-app probe NVTs cache tens of
+thousands of responses per hostname and port in Redis. Redis reached ~7GB and
+the kernel OOM-killed it, interrupting the scan (container ceiling was 8GB, then
+12GB). At 2 hosts the same scan held steady near 2.5GB container memory.
+Changing a zone's value changes its fingerprint, so only that zone's target and
+task are rebuilt on the next apply. A heavier alternative, not done: a scan config
+without the web-app probe families (loses remote web checks on every zone).
+
+### Redis memory cap
+
+The `max_hosts=2` change alone was not enough: a second mgmt_seg run (2026-10-13)
+held at ~2.5GB for 111 minutes, then Redis went from 0.5GB to 12GB in about six
+minutes with only ~27k keys per active knowledge base (so very large cached
+response bodies, from one or two of the hosts that had not yet logged in), and
+the container OOM-killed it. Redis had no `maxmemory` (policy `noeviction`), so
+nothing bounded it. The compose now starts redis-server with `--maxmemory 6gb`;
+a runaway host then fails on write errors instead of taking every scan down.
+Root cause found 2026-10-14: 192.168.20.16 (openbao). The OpenBao UI on 8200
+answers every `/ui/<anything>` with the same ~1MB page and HTTP 200, so the
+web-app probe NVTs cached ~14,600 one-megabyte responses in Redis. Scanned alone
+with 8200 left out, .16 takes 21 minutes, Redis peaks at 351MB and the LSC
+results appear (they were missing in the full-zone run, where Redis writes failed
+while pinned at the cap). That host is now scanned as its own task, see below.
+
+## Web UI session timeout
+
+gsad expires an idle web UI session after `--timeout` minutes (default 15). The
+image's `start-gsad` runs `gsad $GSAD_ARGS` and defaults to `-f --http-only`
+when unset, so the compose sets `GSAD_ARGS: "-f --http-only --timeout=1440"`
+(24h; gsad has no "never"). Setting `GSAD_ARGS` replaces the default, so both
+flags must stay. The UI also sits behind Authentik forwardAuth, whose session
+length is separate. Apply with a targeted `docker compose up -d gsad` on the
+host: a full stack redeploy interrupts running scans.
+
+### Hosts split out of their zone (`SPLIT_HOSTS`)
+
+`setup_credentials.py` can scan a host as its own task with some ports excluded.
+Each entry in `SPLIT_HOSTS` gets: its own target, its own credential (a copy of
+the zone key, `zone-<zone>-<label>-login`), a port list equal to
+`All TCP and Nmap top 100 UDP` minus the excluded ports, and its own weekly slot.
+The zone's task then covers the remaining hosts. Currently:
+
+| Zone | Host | Task | Excluded | Slot |
+|---|---|---|---|---|
+| mgmt_seg | 192.168.20.16 (openbao) | `Credentialed scan: mgmt_seg (openbao)` | tcp 8200 | Thursday 02:30 NZ |
+
+Only zones with a split change their fingerprint, so only mgmt_seg is rebuilt.
+The daily coverage check and gvm-bridge work from task names and target hosts, so
+they pick the new task up without changes. Add a host here when its web UI
+returns a large page for any path.
