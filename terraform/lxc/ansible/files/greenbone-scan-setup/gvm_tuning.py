@@ -21,6 +21,11 @@ Read-only modes:
   byfamily <name-prefix>  non-Log findings of every task with that name prefix, tallied by scan-config family
   compare <zone>...       non-Log findings of "Credentialed scan: <zone>" vs "LAN scan: <zone> full-vuln"
   families                the scan-config families and test counts of "Full and fast"
+  famhosts <prefix> <family>  which hosts have non-Log findings in one scan-config family
+  mklean                  create "Full and fast (lean)" (no "Web application abuses"); experiment only, NOT adopted
+  inventory               read-only: scan configs, targets, port lists, credentials, schedules and trashed tasks, with in_use
+  rmunused <config|target|port_list> <name>   purge one object, refused if in use
+  rmtrash <task name>     purge one already-trashed task
   portlist                shape of the "All TCP and Nmap top 100 UDP" port list
 
 Changing modes (the playbook asks for TASK_APPROVAL on production):
@@ -345,6 +350,52 @@ def main():
             print("Log-level results by family (top 8):")
             for fam, n in sorted(log_by_fam.items(), key=lambda kv: -kv[1])[:8]:
                 print(f"  {n:5}  {fam}")
+            return
+        if mode == "inventory":
+            # Read-only: every scan object that can accumulate, with whether anything uses it.
+            def listing(title, resp, tag, usage=None):
+                print(f"{title}:")
+                for el in resp.findall(tag):
+                    used = el.findtext("in_use")
+                    extra = usage(el) if usage else ""
+                    print(f"  {el.findtext('name')[:58]:58} in_use={used} {extra}")
+            listing("scan configs", gmp.get_scan_configs(filter_string="rows=-1"), "config",
+                    lambda e: f"families={e.findtext('family_count/count')} nvts={e.findtext('nvt_count/count')}")
+            listing("targets", gmp.get_targets(filter_string="rows=-1"), "target",
+                    lambda e: "tasks=" + ",".join(t.findtext("name") for t in e.findall("tasks/task"))[:50])
+            listing("port lists", gmp.get_port_lists(filter_string="rows=-1"), "port_list")
+            listing("credentials", gmp.get_credentials(filter_string="rows=-1"), "credential")
+            listing("schedules", gmp.get_schedules(filter_string="rows=-1"), "schedule")
+            print("tasks in the trash:")
+            for t in gmp.get_tasks(filter_string="rows=-1", trash=True).findall("task"):
+                print(f"  {t.findtext('name')[:50]:50} status={t.findtext('status')} target={t.findtext('target/name')}")
+            return
+        if mode == "rmunused":
+            # rmunused <config|target|port_list> <name...>: purge ONE object, only if nothing uses it.
+            kind, name = sys.argv[2], " ".join(sys.argv[3:])
+            getters = {"config": (gmp.get_scan_configs, gmp.delete_scan_config),
+                       "target": (gmp.get_targets, gmp.delete_target),
+                       "port_list": (gmp.get_port_lists, gmp.delete_port_list)}
+            get, delete = getters[kind]
+            hits = [e for e in get(filter_string=f'name="{name}" rows=-1').findall(kind) if e.findtext("name") == name]
+            if len(hits) != 1:
+                print(f"REFUSED: {len(hits)} {kind} objects named {name!r}")
+                return
+            if hits[0].findtext("in_use") != "0":
+                print(f"REFUSED: {kind} {name!r} is in use")
+                return
+            delete(hits[0].get("id"), ultimate=True)
+            print(f"deleted {kind} {name!r}")
+            return
+        if mode == "rmtrash":
+            # rmtrash <task name>: permanently purge ONE already-trashed task (frees its target/port list).
+            name = " ".join(sys.argv[2:])
+            hits = [t for t in gmp.get_tasks(filter_string="rows=-1", trash=True).findall("task") if t.findtext("name") == name]
+            if len(hits) != 1:
+                print(f"REFUSED: {len(hits)} trashed tasks named {name!r}")
+                return
+            gmp.delete_task(hits[0].get("id"), ultimate=True)
+            print(f"purged trashed task {name!r}")
             return
         if mode == "famhosts":
             # famhosts <name-prefix> <family>: which hosts have non-Log findings in one family
