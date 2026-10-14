@@ -96,7 +96,8 @@ cell runs, the harness checks every prompt with the loaded server's
 
 ### Part B: context fill (F)
 
-S3's template (same system rule, same 8 questions, same answer format)
+S3's template with the same log-only/prefix rules and the first 7 questions
+(5 needles and 2 absent facts), answered as a seven-item JSON list,
 over its own log, as long as the fit rule allows: `--ctx-size` − 16,384 −
 2,048, in the loaded model's own tokens. That is 14,336 / 47,104 / 79,872 /
 112,640 tokens (about 44%, 72%, 81% and 86% of 32k / 64k / 96k / 131k).
@@ -109,8 +110,10 @@ over its own log, as long as the fit rule allows: `--ctx-size` − 16,384 −
   the expected answers don't change), placed at 5/25/50/75/95% of F's own
   log, i.e. their positions move with the length. Their filler must not
   contain anything that answers the two absent-fact questions.
-- **Count question:** its expected answer is computed from the generated F
-  log and stored with the prompt.
+- **D8 (2026-10-14):** the count question is removed from F only; S3 keeps
+  all 8 questions and its count. The original pilot used 8-question F
+  prompts, so its F results are not comparable with later 7-question F
+  results. Reports use each saved prompt's expected-answer count.
 - **Same bytes per model:** the two builds of one model get identical F
   prompts at each size (one tokenizer); the two models' prompts differ in
   length. Each generated F prompt, its SHA-256, needle positions, expected
@@ -337,7 +340,7 @@ prompt each time is:
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | done 2026-10-14 (58 tests pass; operator regraded 24 pilot requests and 1 probe) |
 | ctx-10b-variant-option | local | — | done 2026-10-14 (suffix/prompt options, resume identity and restoration; 62 tests pass) |
 | ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
-| ctx-10e-drop-f-count | local | — | todo |
+| ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
@@ -1025,7 +1028,16 @@ ctx-10d's rsync then carries this to Framework, so the confirmation run
 already uses the 7-question F. The pilot's F results (8 questions) are not
 comparable with later F results; the report says so.
 
-Result: —
+Result: done 2026-10-14. F template and runtime fill prompts ask 7 questions
+with 7 expected answers; S3 retains its numeric count and 8 answers. Grading
+uses saved fixture length and reports use saved F metadata, retaining support
+for the original pilot's 8-question F. Reports explicitly warn that old/new
+F results are not comparable. All 65 tests pass, including the complete
+288-request stub matrix and exact fit checks for both models at all sizes.
+The unchanged-prompt hash gate prints `ok`; S1–S5 files have no diff; repeated
+generation is deterministic. Only F-template.json and its manifest entry
+changed among generated prompts. No Framework access occurred. ctx-10d's
+approved copy will carry the revised harness/prompts to Framework.
 
 #### ctx-10d-batch-confirm
 

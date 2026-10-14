@@ -60,13 +60,21 @@ must satisfy `prompt_tokens + 16384 + 2048 <= ctx_size`, even in short form.
 No raw-text estimate substitutes for this gate.
 
 F uses its own fixed-seed log. Each candidate length relocates S3's five
-needle records to 5/25/50/75/95% of the log and recomputes the critical-host
-count. No filler contains either absent fact. The harness searches the record
+needle records to 5/25/50/75/95% of the log. D8 removes F's count question:
+F asks seven questions (five needles and two absent facts), with a seven-item
+JSON answer after `[LOG-QA]`. S3 keeps its eight questions and numeric count;
+S1–S5 prompt bytes are unchanged. No filler contains either absent fact.
+The harness searches the record
 count and adds inert audit padding to land exactly on 14,336 / 47,104 / 79,872 /
 112,640 rendered prompt tokens. It refuses a cell if it cannot reach the exact
 target. Saved F bytes, SHA-256, needle positions, expected answers and actual
 token count are stored in the run's `prompts/` and `run.json`. The second build
 reuses the saved bytes and verifies the token count again.
+
+The original pilot used eight-question F prompts. Its F results are not
+comparable with later seven-question F results. Grading and the report's
+`Correct` column use the saved expected-answer count, so original pilot
+regrades keep eight-answer denominators.
 
 ## Later production runs
 

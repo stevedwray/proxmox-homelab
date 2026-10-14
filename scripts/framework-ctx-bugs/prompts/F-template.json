@@ -6,6 +6,15 @@
     75,
     95
   ],
+  "expected": [
+    "amber-914",
+    "amber-915",
+    "amber-916",
+    "amber-917",
+    "amber-918",
+    "NOT IN LOG",
+    "NOT IN LOG"
+  ],
   "needles": [
     {
       "host": "host-needle-1",
@@ -50,10 +59,10 @@
     "What is the value in REC-N4?",
     "What is the value in REC-N5?",
     "What is the recovery password for host-absent?",
-    "What is the value in REC-ABSENT?",
-    "How many critical records are there for host-03?"
+    "What is the value in REC-ABSENT?"
   ],
   "seed": 4473,
-  "system": "Start every answer with [LOG-QA]. Answer only from the log. If the log does not say, answer NOT IN LOG. Return a JSON list of eight answers in question order after the prefix. No other text.",
-  "target": "ctx_size - 16384 - 2048"
+  "system": "Start every answer with [LOG-QA]. Answer only from the log. If the log does not say, answer NOT IN LOG. Return a JSON list of seven answers in question order after the prefix. No other text.",
+  "target": "ctx_size - 16384 - 2048",
+  "with_count": false
 }

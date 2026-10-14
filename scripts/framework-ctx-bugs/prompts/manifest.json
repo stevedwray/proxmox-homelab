@@ -3,7 +3,15 @@
   "prompts": {
     "F-template": {
       "estimated_tokens": null,
-      "expected": null,
+      "expected": [
+        "amber-914",
+        "amber-915",
+        "amber-916",
+        "amber-917",
+        "amber-918",
+        "NOT IN LOG",
+        "NOT IN LOG"
+      ],
       "file": "F-template.json",
       "needles": [
         {
@@ -42,7 +50,7 @@
           "value": "amber-918"
         }
       ],
-      "sha256": "dc52950e2d30cff99b5b502143900079e5618734b11734e79e505cb9a2aafcae"
+      "sha256": "aae35977872ae92e5ad9d4df8a28b532c30395d310624928dfb52c74d472f955"
     },
     "S1": {
       "estimated_tokens": 71,

@@ -66,7 +66,10 @@ def clean_answer(prompt, messages):
     log = messages[-1]['content'].split('END LOG')[0]
     values = [re.search(r'id=' + r['id'] + r' \|[^\n]*value=([^\s|]+)', log)[1] for r in gp.NEEDLES]
     count = len(re.findall(r'host=host-03 \| severity=critical', log))
-    return '[LOG-QA]' + json.dumps(values + ['NOT IN LOG', 'NOT IN LOG', count])
+    expected = values + ['NOT IN LOG', 'NOT IN LOG']
+    if gp.QUESTIONS[-1] in messages[-1]['content'].split('QUESTIONS\n')[-1]:
+        expected.append(count)
+    return '[LOG-QA]' + json.dumps(expected)
 
 
 class StubServer(ThreadingHTTPServer):

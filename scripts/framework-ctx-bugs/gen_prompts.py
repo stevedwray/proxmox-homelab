@@ -56,12 +56,15 @@ def make_log(count=200, seed=SEED):
     return records, positions, expected
 
 
-def qa_prompt(count=200, seed=SEED, padding=''):
+def qa_prompt(count=200, seed=SEED, padding='', with_count=True):
     records, positions, expected = make_log(count, seed)
+    questions = QUESTIONS if with_count else QUESTIONS[:7]
+    system = SYSTEM if with_count else SYSTEM.replace('eight answers', 'seven answers')
+    expected = expected if with_count else expected[:7]
     log = ''.join(record_line(r) for r in records)
     user = 'OPS LOG\n' + log + padding + '\nEND LOG\nQUESTIONS\n' + '\n'.join(
-        f'{i}. {q}' for i, q in enumerate(QUESTIONS, 1))
-    return dict(messages=[dict(role='system', content=SYSTEM), dict(role='user', content=user)],
+        f'{i}. {q}' for i, q in enumerate(questions, 1))
+    return dict(messages=[dict(role='system', content=system), dict(role='user', content=user)],
                 expected=expected, needles=positions, record_ids=[r['id'] for r in records],
                 records=count, log_sha256=sha(log.encode()))
 
@@ -136,7 +139,9 @@ def build_prompts():
             messages.append(dict(role='assistant', content=assistant))
     prompts['S5'] = dict(messages=messages, expected='cedar-582')
     # Template is executable data: runtime generation uses this fixed seed and needles.
-    prompts['F-template'] = dict(seed=SEED + 2, system=SYSTEM, questions=QUESTIONS,
+    prompts['F-template'] = dict(seed=SEED + 2, with_count=False,
+                                system=SYSTEM.replace('eight answers', 'seven answers'), questions=QUESTIONS[:7],
+                                expected=[r['value'] for r in NEEDLES] + ['NOT IN LOG', 'NOT IN LOG'],
                                 needles=NEEDLES, depths_percent=list(DEPTHS),
                                 target='ctx_size - 16384 - 2048')
     return prompts

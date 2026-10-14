@@ -69,7 +69,7 @@ def instruction_checks(prompt_id, answer, fixture):
         body = answer[len('[LOG-QA]'):].strip() if checks['prefix'] else answer
         try:
             values = json.loads(body)
-            checks['json-list'] = isinstance(values, list) and len(values) == 8
+            checks['json-list'] = isinstance(values, list) and len(values) == len(fixture['expected'])
         except ValueError:
             values = []
             checks['json-list'] = False

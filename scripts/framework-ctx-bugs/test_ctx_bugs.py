@@ -73,6 +73,24 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn(fixture['expected'], fixture['messages'][4]['content'])
         self.assertIn('never use bullet points', fixture['messages'][0]['content'])
 
+    def test_f_has_seven_questions_and_s3_keeps_eight(self):
+        prompts = gp.build_prompts()
+        template = prompts['F-template']
+        self.assertFalse(template['with_count'])
+        self.assertEqual(len(template['questions']), 7)
+        self.assertEqual(len(template['expected']), 7)
+        self.assertNotIn(gp.QUESTIONS[-1], template['questions'])
+        self.assertIn('seven answers', template['system'])
+        fill = gp.qa_prompt(200, template['seed'], with_count=False)
+        s3 = prompts['S3']
+        self.assertEqual(fill['expected'], s3['expected'][:7])
+        self.assertNotIn('How many critical records', fill['messages'][-1]['content'])
+        self.assertEqual(len(s3['expected']), 8)
+        self.assertIn('8. How many critical records', s3['messages'][-1]['content'])
+        self.assertIn('eight answers', s3['messages'][0]['content'])
+        # Dropping the question does not change the seeded log itself.
+        self.assertEqual(fill['log_sha256'], gp.qa_prompt(200, template['seed'])['log_sha256'])
+
     def test_fill_exact_and_relocated_for_each_model_and_size(self):
         with server(clean=True) as s:
             client = cb.Client(s.url)
@@ -84,7 +102,10 @@ class GeneratorTests(unittest.TestCase):
                     self.assertEqual(count, client.prompt_tokens(fixture))
                     self.assertEqual(fixture['expected'][:7], gp.qa_prompt()['expected'][:7])
                     log = fixture['messages'][-1]['content'].split('END LOG')[0]
-                    self.assertEqual(fixture['expected'][7], log.count('host=host-03 | severity=critical'))
+                    self.assertEqual(len(fixture['expected']), 7)
+                    self.assertNotIn('How many critical records', fixture['messages'][-1]['content'])
+                    self.assertNotIn('host-absent', log)
+                    self.assertNotIn('REC-ABSENT', log)
                     for needle in fixture['needles']:
                         self.assertLess(abs(needle['record_index']/(fixture['records']-1)*100 - needle['depth_percent']), .5)
                     self.assertEqual(len(set(fixture['record_ids'])), fixture['records'])
@@ -206,6 +227,18 @@ class DetectorTests(unittest.TestCase):
         self.assertNotIn('wrong:q1', self.flags(response(answer='[LOG-QA]'+json.dumps(clean)), 'S3'))
         self.assertIn('wrong:turn3', self.flags(response(answer='cedar-999\nref: TCK-4471'), 'S5'))
         self.assertNotIn('wrong:turn3', self.flags(response(answer=stub.clean_answer('S5', [])), 'S5'))
+
+    def test_qa_list_length_follows_saved_fixture(self):
+        for with_count in (False, True):
+            fixture = gp.qa_prompt(with_count=with_count)
+            answer = '[LOG-QA]' + json.dumps(fixture['expected'])
+            self.assertEqual(d.detect('F', response(answer=answer), fixture, 10)['flags'], [])
+            wrong_length = fixture['expected'] + [0]
+            self.assertIn('if-fail:json-list', d.detect('F', response(answer='[LOG-QA]'+json.dumps(wrong_length)), fixture, 10)['flags'])
+        fixture = gp.qa_prompt(with_count=False)
+        wrong = fixture['expected'][:]
+        wrong[5] = 'invented password'
+        self.assertIn('hallucination:q6', d.detect('F', response(answer='[LOG-QA]'+json.dumps(wrong)), fixture, 10)['flags'])
 
     def test_absent_fact_and_unknown_id_positive_negative(self):
         clean = self.fixtures['S3']['expected'][:]
@@ -350,7 +383,9 @@ class HarnessTests(unittest.TestCase):
                     records.append(dict(key=f'{cell}/{prompt}/greedy', cell=cell, model=cb.MODELS[0],
                         build=build, size=size, prompt=prompt, run='greedy', seed=1, answer=answer,
                         flags=[], details={}, prompt_tokens=100, response={}, wall_seconds=1))
-            cb.report(Path(tmp), records, dict(dry_run=True, status='complete'))
+            cells = {r['cell']: dict(fill_key=r['cell']) for r in records}
+            fills = {cell: dict(expected=gp.qa_prompt(with_count=False)['expected']) for cell in cells}
+            cb.report(Path(tmp), records, dict(dry_run=True, status='complete', cells=cells, fill_prompts=fills))
             lines = (Path(tmp)/'report.md').read_text().splitlines()
             separators = 0
             for i, line in enumerate(lines):
@@ -364,6 +399,25 @@ class HarnessTests(unittest.TestCase):
                         break
                     self.assertEqual(row.count('|') - 1, columns, row)
             self.assertEqual(separators, 3)
+
+    def test_fill_report_uses_saved_expected_count_and_warns_about_comparability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            records, cells, fills = [], {}, {}
+            for build, with_count in (('nathanw', False), ('upstream', True)):
+                cell = cb.entry_id(cb.MODELS[0], build, 131072)
+                fixture = gp.qa_prompt(with_count=with_count)
+                cells[cell] = dict(fill_key=cell)
+                fills[cell] = dict(expected=fixture['expected'])
+                records.append(dict(key=cell+'/F/greedy', cell=cell, model=cb.MODELS[0],
+                    build=build, size=131072, prompt='F', run='greedy', seed=1,
+                    answer='', flags=['wrong:q1'], details={}, prompt_tokens=112640,
+                    response={}, wall_seconds=1))
+            cb.report(Path(tmp), records, dict(dry_run=True, status='complete', cells=cells, fill_prompts=fills))
+            text = (Path(tmp)/'report.md').read_text()
+            self.assertIn('| Correct |', text)
+            self.assertIn('| 6/7 |', text)
+            self.assertIn('| 7/8 |', text)
+            self.assertIn('not comparable with later F results', text)
 
     def test_kernel_capture_uses_bounded_system_journal_and_appends_once(self):
         with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:

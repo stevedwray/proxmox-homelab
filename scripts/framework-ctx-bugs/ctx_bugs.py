@@ -129,38 +129,40 @@ def fit_check(count, size):
 def make_fill(client, size, template):
     """Maximize complete records, then fit inert padding to the exact token target.
 
-    Every candidate relocates the same needles and recomputes the count. Fail
+    Every candidate relocates the same needles. Fail
     closed if this tokenizer cannot reach the exact target with the padding.
     """
     target = size - BUDGET - MARGIN
     seed = template['seed']
+    def prompt(count, padding=''):
+        return gp.qa_prompt(count, seed, padding, with_count=template.get('with_count', True))
     low, high = 20, 200
-    if client.prompt_tokens(gp.qa_prompt(low, seed)) > target:
+    if client.prompt_tokens(prompt(low)) > target:
         raise ValueError('F minimum log cannot fit')
-    while client.prompt_tokens(gp.qa_prompt(high, seed)) <= target:
+    while client.prompt_tokens(prompt(high)) <= target:
         low, high = high, high * 2
         if high > 100000:
             raise ValueError('F record search did not converge')
     while high - low > 1:
         middle = (low + high) // 2
-        if client.prompt_tokens(gp.qa_prompt(middle, seed)) <= target:
+        if client.prompt_tokens(prompt(middle)) <= target:
             low = middle
         else:
             high = middle
-    base = gp.qa_prompt(low, seed)
+    base = prompt(low)
     base_count = client.prompt_tokens(base)
     if base_count == target:
         return base, target
     # Leave room for the padding label itself, even when a record ended one
-    # token below the target. Regenerate so positions/count remain accurate.
+    # token below the target. Regenerate so positions remain accurate.
     low -= 1
-    base_count = client.prompt_tokens(gp.qa_prompt(low, seed))
+    base_count = client.prompt_tokens(prompt(low))
     # Short inert audit padding contains no IDs, host names, facts or answers.
     prefix = '\nAudit padding:'
     left, right = 0, max(256, (target - base_count) * 16)
     def candidate(length):
         pad = prefix + (' x' * ((length + 1) // 2))[:length]
-        return gp.qa_prompt(low, seed, pad)
+        return prompt(low, pad)
     while client.prompt_tokens(candidate(right)) < target:
         right *= 2
         if right > 65536:
@@ -309,11 +311,14 @@ def report(directory, records, manifest):
     for finding in conclusions:
         lines.append('- ' + json.dumps(finding, sort_keys=True))
     fill = [r for r in records if r['prompt'] == 'F' and r['run'] == 'greedy']
-    lines.extend(['', '## Fill accuracy', '', '| Model | Build | Context | Correct / 8 |', '| --- | --- | ---: | ---: |'])
+    lines.extend(['', '## Fill accuracy', '', '| Model | Build | Context | Correct |', '| --- | --- | ---: | ---: |'])
     for r in fill:
+        cell = manifest['cells'][r['cell']]
+        total = len(manifest['fill_prompts'][cell['fill_key']]['expected'])
         bad = {f.split(':', 1)[1] for f in r['flags'] if f.startswith(('wrong:q', 'hallucination:q'))}
-        lines.append(f"| {r['model']} | {r['build']} | {r['size']} | {8-len(bad)}/8 |")
-    lines.extend(['', 'F accuracy falling on both builds is fill degradation, not a context-size bug.',
+        lines.append(f"| {r['model']} | {r['build']} | {r['size']} | {total-len(bad)}/{total} |")
+    lines.extend(['', 'D8 removes the count question from new F prompts (7 answers). Original pilot F prompts (8 answers) are not comparable with later F results.',
+                  'F accuracy falling on both builds is fill degradation, not a context-size bug.',
                   'Raw responses, settings and hashes are in results.jsonl, raw/, prompts/ and run.json.', ''])
     (directory / 'report.md').write_text('\n'.join(lines))
     write_json(directory / 'findings.json', conclusions)
