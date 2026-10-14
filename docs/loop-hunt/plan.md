@@ -148,7 +148,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
-| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | stopped 2026-10-15 (eval completed; deep-research failed; CSE not run) |
+| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (all sources reported; eval preserved; 2 unreadable deep files; replay choices pending) |
 | lh-01c-vscode-transcripts | local (operator's workstation) | — | todo |
 | lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
@@ -349,7 +349,8 @@ pairing, unknown metadata, private output, failure cleanup and escaped
 metadata refusal. No lh-01b production discovery or scan has run.
 
 Preflight for `loop-hunt-transcript-scan` (operator approved 2026-10-15;
-execution stopped at the deep-research failure below):
+initial execution stopped at the deep-research failure; operator-authorized
+recovery completed below):
 
 - Targets: production LXCs `ai-services-stack` (`root@192.168.50.11`)
   and `cse-controller` (`root@192.168.100.70`), both on pve-tiny. Use
@@ -436,7 +437,7 @@ The operator has already identified VS Code Copilot agent mode as the other
 source of loops; do not ask where they were seen again if benchmarks have
 no exact-loop hits. Record that absence and keep lh-01c as the next step.
 
-Result: partial, stopped 2026-10-15 after a failed scan command, under the
+Initial result: partial, stopped 2026-10-15 after a failed scan command, under the
 operator's explicit `loop-hunt-transcript-scan` approval. Both read-only
 discovery gates passed: intended LXC hostnames, 43 eval sample files, 34
 deep-research session files and 78 CSE response files. The deep-research
@@ -466,6 +467,49 @@ the completed eval outputs; do not rerun the directory-creation commands or
 overwrite them. Rerun the failed/remaining scans only after the operator
 resolves this stop. No proposed diagnostic has run yet.
 
+
+Recovery result: done 2026-10-15 under the same task scope, explicitly
+approved by the operator. The operator authorized independent CSE scanning,
+usage.jsonl finish reasons, a schema-only deep diagnostic, a tested adapter
+fix, a deep-only retry and one combined report with at most ten excerpts.
+
+- CSE: 78 files, 827 response segments, 18 candidates (1 loop, 18 repetition).
+  usage.jsonl contains only 18 logged calls across 3 files, all finish_reason
+  `stop`; zero cap-exhausted calls in that logged subset. Usage has no
+  response IDs and includes judges/retries, so no positional response join
+  was made. This does not prove all historical responses avoided the cap.
+- Deep diagnostic: 2 invalid-JSON files; readable files match the expected
+  UI-event schema. Only keys/types, exception classes and file pointers
+  were returned by the diagnostic, never transcript text. The synthetic
+  incomplete-session regression fixture reproduces the failure.
+- Deep retry: 34 files, 32 readable, 10,919 response segments, 502 candidates
+  (501 loop, 502 repetition). Invalid files are explicitly excluded with
+  coverage counts and a private unreadable.jsonl audit. Missing historical
+  model/build identities remain unknown. Session timestamps fill missing
+  event dates. The final dated report is in deep-research-complete/;
+  the first recovered pass is retained separately in deep-research/.
+- Eval was never rerun or rewritten. Both original hits/report hashes match
+  before/after. Its 75 candidates include 70 shingle hits, 1 compression-only
+  hit and 4 template leaks; all 3 exact loops are historical Qwen3-Coder-30B.
+  A further answer on that entry has an eight-word shingle occurring 105 times.
+- Metadata-only CSE audit recovered dates from the producer's meta.json and
+  manifest.json, preserving all 18 original flags/excerpts without detector
+  reruns. Aggregate model/month counts and usage evidence are in README.
+- The large deep group has 500 single-character-only excerpt hits of unknown
+  origin, separate from one clear repeated-question reasoning candidate and
+  one other shingle candidate. Reviewed CSE regex code and some eval maths
+  examples are not sufficient evidence of degeneration. No build attribution
+  is established by these transcripts alone.
+- Recovery code commit: `23bce712`. All 34 local tests pass, including the malformed-session regression,
+  finish-reason aggregation, metadata provenance and session-date fallback.
+  Only approved scan directories were written. Report directory/file
+  permissions were verified private; no inference, services or source
+  transcripts were changed.
+- Exactly 10 excerpts were returned (7 eval, 1 CSE, 2 deep), prioritizing
+  exact loops and repeated shingles. No excerpts or private source pointers
+  enter git. All source transcripts/hit files stay on their source hosts.
+
+Replay selections remain for the operator; lh-01c is the next investigation.
 
 #### lh-01c-vscode-transcripts
 
