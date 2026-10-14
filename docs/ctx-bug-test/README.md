@@ -7,14 +7,16 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **phase 2 built, not run** (2026-10-14). The operator settled
+Status: **pilot started; results pending** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
-are incorporated in plan.md. No model test has run on Framework.
+are incorporated in plan.md. The operator started the detached greedy-only
+131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
+is `/storage/artifacts/framework-ctx-bugs/20261014T000806Z` on Framework.
 
 The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
 were written, and `qwen3-coder-next-upstream` was reloaded. The next step
-is ctx-09, the pilot, with a separate production preflight and approval.
+is ctx-10, review of the pilot, when the operator requests it.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -41,7 +43,7 @@ no production inspection was performed to verify effects. The closeout note
 was committed using a temporary hooks directory that retained pre-commit
 checks and excluded this production post-commit hook.
 
-Remaining work is written as steps ctx-09 to ctx-14 in
+Remaining work is written as steps ctx-10 to ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 

@@ -332,7 +332,7 @@ prompt each time is:
 | ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
 | ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | done 2026-10-14 (operator: SECRETS-OK, failed=0, guarded write of 52 entries; initial model reloaded) |
-| ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
+| ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
@@ -725,7 +725,17 @@ gates:
 After the start gate passes, record the run directory in "Result" and stop.
 The run is detached. The operator says when to check (ctx-10).
 
-Result: —
+Result: started by the operator, 2026-10-14 at 00:08:06 UTC. The detached
+unit is `framework-ctx-bugs-20261014t000806z.service`, invocation ID
+`a8a6989181e24bbb9dd8a6a03b654047`. The supplied status output confirms
+the unit is active/running and `progress.json` reports `status: running`,
+`completed: 0`, with run directory
+`/storage/artifacts/framework-ctx-bugs/20261014T000806Z`.
+The first log line is loading and checking
+`qwen3.8-flash-next-q4-nathanw-ctx131k`. This passes the start gate;
+completion, results and restoration remain to be checked in ctx-10 when
+the operator requests it. No Framework commands were run by the agent
+during closeout.
 
 #### ctx-10-pilot-review
 
