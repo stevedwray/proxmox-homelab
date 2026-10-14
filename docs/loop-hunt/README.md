@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02/03 complete locally; deployment partial; candidate config-rewrite gate stopped**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 pilot awaiting approval**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -357,15 +357,15 @@ build expectations. No promotion, new compilation, unrelated model settings,
 inference or timer changes belong to that deployment. A missing previous
 build or moved current link stops the step.
 
-The plan's candidate-props ordering needs the operator's decision: its next
+The plan's candidate-props ordering was corrected: its next
 pilot only loads current, so it cannot supply candidate props beforehand.
 The operator approved a temporary locked candidate load for /props only,
 followed by restoration of the previous model. The exact command is in
-[lh-04](plan.md#lh-04-deploy); it remains unexecuted after the earlier failed gate.
+[lh-04](plan.md#lh-04-deploy); the approved recovery completed it below.
 Pilot/matrix approvals remain separate; no Framework access occurred during
 the local harness/catalogue work.
 
-## Deployment partial result (lh-04, 2026-10-15)
+## Deployment result (lh-04, 2026-10-15)
 
 The operator approved deployment and locked candidate identity capture.
 The extra V1 journal check returned no matching lines from either the two
@@ -373,6 +373,9 @@ named units or the all-units llama-server fallback in the requested window.
 V1's **actual served model and build remain unknown**. Its saved Flash-Next
 ID is a requested-model label; llama-server serves whichever model was loaded.
 The replay stays a reconstruction and cannot establish original-model blame.
+The operator selected V1 replay against Qwen on fork current, fork previous
+and upstream, plus GLM on upstream. V9 remains selected; lh-01d stays
+available for exact capture.
 
 Inventory/secrets passed. The playbook completed ok=15/changed=1/failed=0,
 installing the catalogue. Current links matched fork 9e21f2e53 and upstream
@@ -383,10 +386,23 @@ was not confirmed. Captured stderr was not forwarded, so its exact message
 was not retained. The agent stopped under plan rule 7 after local source
 inspection, without further production commands. The added lock was released.
 
-**Not yet done:** exact config validation, tool copy, candidate /props capture,
-build expectations or pilot. No explicit model load, inference or upgrade-timer
-operation ran. Config/loaded-model state after candidate selection is unverified.
-The [plan](plan.md#lh-04-deploy) contains a concrete recovery command: normal
-guarded swap-config outside the added Redis lock, never --force; verify bytes
-and prior-model restoration, then resume the approved copy/identity capture.
-Operator instruction to resume the failed gate is required by rule 7.
+The operator then approved resuming the failed gate. Read-only Redis GET
+found the lock free. Normal guarded swap-config, without an external lock
+or --force, wrote 44 entries; all seven required session/candidate entries
+and exact installed config bytes passed validation. Both tool folders were
+copied. Candidate /props capture under the run lock confirmed
+`b10710-b02cb35f2`; the original `qwen3-coder-next-upstream` was restored
+with build_info `b11514-de7fa0a3c`, and the lock was confirmed free.
+
+**lh-04 is complete.** Framework's private
+`/storage/artifacts/loop-hunt/builds-20261015/` directory (0700) contains
+`props-candidate.json`, `current.json` and `candidate.json` (0600).
+Expectations retain full props and validate fork current 9e21f2e53, fork
+previous b02cb35f2 and upstream de7fa0a3c against their build records.
+Full SHAs and the after-action checks are in the plan. No inference,
+compilation, promotion or timer operation ran during deployment.
+
+Next is [lh-05's pilot preflight](plan.md#lh-05-pilot): one C1 session,
+seed 1, Qwen fork current at 131k, with the slot-layout gate, D10 timer
+cleanup, model restoration and bounded watcher. It requires separate
+`loop-hunt-pilot` approval under the production controls; it has not started.

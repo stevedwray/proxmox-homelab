@@ -157,7 +157,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-01d-capture-proxy | local (operator's workstation) | — | deferred, available for exact capture (V1/V9 reconstructions selected) |
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
-| lh-04-deploy | Framework (production) | `loop-hunt-deploy` | partial 2026-10-15; stopped at candidate config-rewrite gate |
+| lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | todo |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
@@ -815,9 +815,9 @@ preflight: >
   model stops 1-2 min and reloads); no promotion; (5) guarded check that
   the session entries exist, including the -nathanw-candidate-sess131k
   ones; (6) copy both harness folders; (7) build expectations for three
-  builds with write_build_expectations.py (props for the candidate taken
-  from the first pilot load). Out of scope: promotion, rollback, other
-  models, OpenBao.
+  builds with write_build_expectations.py (candidate props captured under
+  the run lock without inference, restoring the previous model afterwards).
+  Out of scope: promotion, rollback, other models, OpenBao.
 commands:
   - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --graph framework && echo SECRETS-OK"
   - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
@@ -849,8 +849,8 @@ step (7) needs candidate build expectations, but the pilot below only loads
 fork current; candidate props cannot come from that pilot. Proposed addition
 to `loop-hunt-deploy`: one temporary candidate identity load under the shared
 run lock, capture /props without inference, restore the previously loaded
-model, and generate separate current/candidate expectation files. The operator explicitly approved this identity-capture scope; it has not
-run because deployment stopped at the earlier candidate rewrite gate. The
+model, and generate separate current/candidate expectation files. The operator explicitly approved this identity-capture scope; the first
+attempt stopped before it at the candidate rewrite gate. The
 original phase-1 current-build props are reused only if build links still
 match; helper validation refuses mismatches.
 
@@ -984,7 +984,7 @@ stderr, verify exact installed bytes/required IDs and restored prior model,
 then continue code copy and the already-approved locked identity capture.
 Do not repeat the successful playbook/build-selection steps or compile.
 
-Concrete recovery command for review (not executed):
+Recovery command (operator approved execution on 2026-10-15):
 
 ```bash
 TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'PYTHONDONTWRITEBYTECODE=1 python3 -u -' <<'PYTHON'
@@ -1020,6 +1020,38 @@ PYTHON
 ```
 
 
+Recovery result (2026-10-15): **lh-04 complete** under the operator's
+explicit resume instruction and existing loop-hunt-deploy approval.
+
+- Read-only Redis GET found framework:run-lock free immediately; no key
+  was modified/deleted and no wait was needed.
+- Normal guarded `llama-builds swap-config` ran without an external lock
+  or --force. It wrote 44 entries. All seven required session/candidate IDs
+  exist and installed config bytes exactly match the generator.
+- Both rewrite and identity capture restored `qwen3-coder-next-upstream`,
+  with unchanged build_info `b11514-de7fa0a3c`.
+- Both harness directories were copied successfully. Candidate /props
+  capture ran under the shared run lock without inference, recording
+  `b10710-b02cb35f2`. The lock was confirmed free after release.
+- Private files on Framework: `/storage/artifacts/loop-hunt/builds-20261015/`
+  (0700), containing `props-candidate.json`, `current.json` and
+  `candidate.json` (each 0600). Current expectations validate the saved
+  current-build props against the current links; candidate expectations
+  validate the new candidate props against its candidate link. Both include
+  upstream's saved full props.
+
+| Engine | Build name | Full SHA | build_info |
+| --- | --- | --- | --- |
+| Fork current | 20261008-9e21f2e53 | 9e21f2e5329c697a46fd790c0eb172d1ee2f0923 | b10814-9e21f2e53 |
+| Fork previous | 20261008-b02cb35f2 | b02cb35f20afb6b1a09b059b5e95120684e7a0c8 | b10710-b02cb35f2 |
+| Upstream | 20261008-de7fa0a3c | de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b | b11514-de7fa0a3c |
+
+No compilation, promotion, inference, pilot or timer operation ran. The
+successful playbook/candidate-selection steps were not repeated. V1's
+served identity remains unknown; lh-07 now records the operator's four
+replay targets. Next: separate loop-hunt-pilot approval for lh-05 below.
+
+
 #### lh-05-pilot
 
 One C1 session (seed 1) on `qwen3.8-flash-next-q4-nathanw-sess131k`, with
@@ -1033,6 +1065,47 @@ turn degenerates. Fix the harness (new local step) before lh-06 if the
 review finds a measuring problem. Approval `loop-hunt-pilot`.
 
 Result: —
+
+Pilot preflight (prepared 2026-10-15; **not approved or started**):
+
+- Target: Framework through the pve-tiny production wrapper; task
+  `loop-hunt-pilot`. Mutating: temporarily pause the upgrade timer, start
+  detached harness/watcher units, load/reload the named test entry, and
+  write run artifacts. No catalogue/build/link changes.
+- Scope: C1 only, seed 1, Qwen fork current
+  `qwen3.8-flash-next-q4-nathanw-sess131k`; server-default sampling,
+  8192-token answers, warm/cold checks near 64k/96k/131k. Approximately
+  1.5 hours; actual turn count and prompt lengths are measured.
+- Read-only gates: intended host; current build expectations still match;
+  run lock free; `apt-daily-upgrade.service` inactive. Never stop an active
+  upgrade. The runner takes the run lock and saves `/props` and `/slots`;
+  require four slots each reporting n_ctx 131072 before any inference.
+  A layout mismatch stops and is reported, not adjusted automatically.
+- Under `TASK_APPROVAL=loop-hunt-pilot ./with-secrets-prod-tiny ssh
+  steve@framework.gibbsgreatly.xyz`, pause with
+  `sudo -n systemctl stop apt-daily-upgrade.timer`, verify service/timer
+  both inactive, then launch:
+
+  ```bash
+  ~/loop-hunt/run.sh --condition C1 --sessions 1 \
+    --entry qwen3.8-flash-next-q4-nathanw-sess131k \
+    --builds-json /storage/artifacts/loop-hunt/builds-20261015/current.json
+  ```
+
+- Attach a detached user unit running
+  `python3 ~/loop-hunt/watch_run.py --run-dir RUN_DIR --run-unit RUN_UNIT
+  --builds-json /storage/artifacts/loop-hunt/builds-20261015/current.json`
+  using the exact directory/unit from this launch. The existing watcher
+  permits at most one narrowly defined swap-infrastructure resume; no
+  service restarts, prompt edits or broader retries. If launch/attachment
+  fails, restore the timer immediately and report the failed gate.
+- Cleanup: harness restores the original model; watcher starts
+  `apt-daily-upgrade.timer` on completion/failure and verifies it active.
+  Independently verify model restoration, lock release and timer activity.
+  Review real slot layout, cached-token evidence, timings, flags and every
+  warm/cold pair before requesting the matrix approval.
+- Out of scope: matrix, private-chat replay, proxy capture, other models,
+  package upgrades, compilation, promotion and unrelated production work.
 
 #### lh-06-matrix
 
@@ -1048,6 +1121,13 @@ upstream differences under identical conditions. Approval
 Result: —
 
 #### lh-07-replay-real
+
+V1's actual served model/build are unknown: the journal check in lh-04
+was inconclusive. Operator decision (2026-10-15): replay its reconstruction
+against Qwen on fork current, fork previous and upstream, and GLM on
+upstream. Compare reproduction behaviour without assigning historical
+model/build blame. V9 remains selected; Copilot system prompts and tool
+schemas are missing, so keep lh-01d available for exact capture.
 
 Only for chats the operator picked in lh-01. Export each chat's messages
 up to the looping turn (on Framework only), then `session_bugs.py
