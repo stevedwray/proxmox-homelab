@@ -34,6 +34,8 @@
     # Graylog volume, measured 2026-10-15); keep MESSAGE/WARNING/ERROR only.
     rsyslog_forward_drop_debug_apps:
       - docker-greenbone-community-edition-openvas-1
+    # Enables node_exporter's textfile collector (gvm_metrics writes gvm.prom here).
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
   roles:
     - lxc_base
     - docker_base
@@ -1185,6 +1187,56 @@
   roles:
     - role: gvm_findings_ingest
       when: gvm_findings_ingest_enabled | default(false) | bool
+
+- name: Grafana integration (cAdvisor + Greenbone metrics for node_exporter's textfile collector)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Additive and independent of the compose stack above: a separate cAdvisor
+  # compose project (like harbor-cadvisor) and a systemd timer. Run alone with
+  # --tags monitoring-integration; it never recreates a Greenbone container.
+  # Needs node_exporter_textfile_dir (set in the first play's vars) applied via
+  # lxc_base, and the gvm-bridge /tasks/summary endpoint (gvm-bridge rebuilt).
+  tags: [monitoring-integration]
+  vars:
+    greenbone_cadvisor_compose_dir: /opt/greenbone-cadvisor
+    greenbone_cadvisor_host_port: 8082
+    greenbone_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    greenbone_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ greenbone_lab_domain, true) }}"
+  roles:
+    - gvm_metrics
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ greenbone_cadvisor_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ greenbone_cadvisor_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cadvisor:
+              image: "{{ greenbone_cadvisor_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "{{ greenbone_cadvisor_host_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: greenbone_cadvisor_compose_definition
+
+    - name: Deploy cAdvisor via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ greenbone_cadvisor_compose_dir }}"
+        state: present
+        recreate: "{{ 'always' if greenbone_cadvisor_compose_definition.changed else 'auto' }}"
 
 - name: Deploy Docker live-usage self-report (Phase 14, Portainer-exempt tier)
   hosts: all

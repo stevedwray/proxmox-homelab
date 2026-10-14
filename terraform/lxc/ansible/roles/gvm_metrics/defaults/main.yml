@@ -1,0 +1,5 @@
+---
+gvm_metrics_dir: /opt/gvm-metrics
+gvm_metrics_textfile_dir: /var/lib/node_exporter/textfile
+gvm_metrics_bridge_url: "http://127.0.0.1:8010"
+gvm_metrics_interval: "1min"
