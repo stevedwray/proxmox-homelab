@@ -242,6 +242,31 @@ kept as a note for whoever owns patching, and `vuln_triage.py` is the repeatable
 work is the detector's own configuration, what the agents feed it (syscollector), SCA, and how findings are
 surfaced (Phase 6); the detector has no per-CVE exclusion, so nothing is hidden in the index.
 
+## Phase 3 done: Wazuh-side configuration (2026-10-15)
+
+Reviewed and left alone (evidence: nothing to gain): vulnerability-detection settings (defaults, sensible), syscollector
+`processes` and `ports all="yes"` (the whole inventory is 1-3MB per index), SCA (the right `cis_debian13` policy runs on 27
+agents, no alert noise, fleet score 43% with about 105 failing and 22 invalid checks per host, a baseline not a fault).
+
+Fixed, as shared agent config (`agent_conf/common.xml`, every group) plus the same settings in the `wazuh_agent` role for
+newly provisioned hosts:
+- **Secrets stored in FIM alerts.** `report_changes` puts the content of a changed text file into the alert. 672 alerts in
+  14 days carried a stored diff of `/etc/shadow(-)`, `/etc/gshadow(-)`, Proxmox keys and tokens (`/etc/pve/priv/*`), a TLS
+  key and an `.env` file. `<nodiff>` now keeps the change alert and replaces the content with Wazuh's placeholder
+  ("Diff truncated due to 'nodiff' configuration detected for this file."). Verified live: a changed `.key` file alerts with
+  the placeholder and none of its content; an ordinary file still stores its diff. Past alerts are not purged (operator:
+  fine while the secrets are not in git); they age out at 90 days.
+- **Rootkit file and trojan checks were silently off** on every agent ("No rootcheck_files file configured"), and the rule
+  files exist only in the `default` group directory, so 18 agents could never have had them. The files are now copied into
+  every group and referenced from the shared config. Verified live: a known signature file (`/tmp/mcliZokhb`, "Bash door")
+  now raises a rootcheck alert.
+- `config-profile` said `ubuntu24.04` on Debian 13 hosts; now `debian, debian13` (role only; it takes effect when a stack is
+  next provisioned).
+
+Rollout: canary on `game_seg` (gaming-stack-lab: config received, agent reloaded, no errors), then all 11 groups. 28 of 28
+agents active, `events_dropped` 0. The vulnerability findings (3,957, 97% open and unassigned in the Debian tracker) are a
+feed property; `vuln_triage.py` is the repeatable report. Patching is out of scope for this plan.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |

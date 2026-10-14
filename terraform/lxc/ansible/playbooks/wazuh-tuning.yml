@@ -27,7 +27,7 @@
     dir: /opt/wazuh-stack/tuning
     run_dir: /run/wazuh-tuning
     tune_tag: run
-    helper_modes: [health, alerts, noise, sample, commands, fimpaths, hist, vulndetail, vulnpkg, indices, sca, fimdiff, fimsensitive, vulncves, vulnhosts, agentrules, agents, vulns, retention, fim]
+    helper_modes: [health, alerts, noise, sample, commands, fimpaths, hist, vulndetail, vulnpkg, indices, sca, agentconf, fimdoc, fimdiff, fimsensitive, vulncves, vulnhosts, agentrules, agents, vulns, retention, fim]
     secrets_env:
       WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"
       WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"

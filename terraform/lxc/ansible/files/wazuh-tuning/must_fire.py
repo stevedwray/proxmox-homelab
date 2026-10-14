@@ -208,8 +208,10 @@ def live(agent, marker, minutes=30, capabilities=()):
             match = {"wildcard": {"syscheck.path": f"*{marker}.test"}}
         q = {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}}, {"term": {"agent.name": agent}},
                                  {"terms": {"rule.id": case["ids"]}}, {"range": {"rule.level": {"gte": case["min_level"]}}},
-                                 match] + ([{"exists": {"field": "syscheck.diff"}}] if case.get("diff") else []),
-                      "must_not": [{"exists": {"field": "syscheck.diff"}}] if case.get("no_diff") else []}}
+                                 match] + ([{"exists": {"field": "syscheck.diff"}}] if case.get("diff") else [])
+                                        # nodiff replaces the content with Wazuh's own placeholder text, it does not drop the field
+                                        + ([{"wildcard": {"syscheck.diff": "*nodiff*"}}] if case.get("no_diff") else []),
+                      "must_not": [{"wildcard": {"syscheck.diff": "*dummy-key-material*"}}] if case.get("no_diff") else []}}
         n = wt.total(wt.search(wt.ALERTS, q))
         ok = n > 0
         failures += not ok

@@ -349,6 +349,28 @@ def mode_fimsensitive(_args):
             "mcp_passwd_per_day": [(b["key_as_string"][5:10], b["doc_count"]) for b in ps["aggregations"]["h"]["buckets"] if b["doc_count"]]}
 
 
+def mode_agentconf(args):
+    """What an agent actually runs for syscheck (the effective config, via the manager): nodiff, ignore, directories."""
+    name = args[0]
+    aid = api(f"/agents?name={name}&select=id")["affected_items"][0]["id"]
+    cfg = api(f"/agents/{aid}/config/syscheck/syscheck")
+    sc = cfg.get("syscheck", cfg)
+    return {"agent": name, "id": aid, "nodiff": sc.get("nodiff"), "ignore": sc.get("ignore"),
+            "directories": [(d.get("dir") if isinstance(d, dict) else d) for d in (sc.get("directories") or [])][:12],
+            "keys": sorted(sc.keys())[:40]}
+
+
+def mode_fimdoc(args):
+    """Recent FIM alerts of one agent whose path contains a fragment: which syscheck fields they carry (diff truncated)."""
+    agent, frag, hours = args[0], args[1], window(args[2]) if len(args) > 2 else "30m"
+    q = {"bool": {"filter": [day(hours), {"term": {"agent.name": agent}}, {"terms": {"rule.id": FIM_RULES}},
+                             {"wildcard": {"syscheck.path": f"*{frag}*"}}]}}
+    r = search(ALERTS, q, size=6)
+    return {"docs": [{"rule": h["_source"]["rule"]["id"], "path": h["_source"]["syscheck"].get("path"),
+                      "fields": sorted(h["_source"]["syscheck"].keys()),
+                      "diff": (h["_source"]["syscheck"].get("diff") or "")[:90]} for h in r["hits"]["hits"]]}
+
+
 def mode_vulnhosts(args):
     """Which agents carry findings for the given packages (for the single-host oddities)."""
     q = {"bool": {"filter": [{"terms": {"package.name": args}}]}}
@@ -421,7 +443,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "vulndetail": mode_vulndetail, "vulnpkg": mode_vulnpkg, "indices": mode_indices, "sca": mode_sca, "fimdiff": mode_fimdiff, "fimsensitive": mode_fimsensitive, "vulncves": mode_vulncves, "vulnhosts": mode_vulnhosts, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "vulndetail": mode_vulndetail, "vulnpkg": mode_vulnpkg, "indices": mode_indices, "sca": mode_sca, "agentconf": mode_agentconf, "fimdoc": mode_fimdoc, "fimdiff": mode_fimdiff, "fimsensitive": mode_fimsensitive, "vulncves": mode_vulncves, "vulnhosts": mode_vulnhosts, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 
