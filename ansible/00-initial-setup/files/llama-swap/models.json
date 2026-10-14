@@ -36,7 +36,15 @@
         "top_p": 0.95,
         "min_p": 0.01
       },
-      "variants": [],
+      "variants": [
+        {
+          "suffix": "sess131k",
+          "label": "loop hunt 131k",
+          "settings": {
+            "ctx_size": 131072
+          }
+        }
+      ],
       "tags": [
         "thinking"
       ],
@@ -65,7 +73,22 @@
       "settings": {
         "ctx_size": 131072
       },
-      "variants": [],
+      "variants": [
+        {
+          "suffix": "sess131k",
+          "label": "loop hunt 131k",
+          "settings": {
+            "ctx_size": 131072
+          }
+        },
+        {
+          "suffix": "sess262k",
+          "label": "loop hunt 262k",
+          "settings": {
+            "ctx_size": 262144
+          }
+        }
+      ],
       "tags": [
         "thinking"
       ],

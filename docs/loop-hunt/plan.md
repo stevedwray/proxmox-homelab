@@ -156,7 +156,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; V1/V9 selected) |
 | lh-01d-capture-proxy | local (operator's workstation) | — | deferred, available for exact capture (V1/V9 reconstructions selected) |
 | lh-02-session-harness | local | — | done 2026-10-15 (68 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
-| lh-03-catalogue | local | — | todo |
+| lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | todo |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
@@ -790,7 +790,13 @@ gates:
     critical: true
 ```
 
-Result: —
+Result (2026-10-15): **repo-only complete, not deployed**. Qwen has
+sess131k/sess262k and GLM sess131k, with ctx_size as the sole variant
+setting. No parallel/batch/sampling/default/status changes. Parsed JSON
+comparison verified the rest of the catalogue is unchanged. Both JSON
+assertions pass; all **42 llama-builds tests pass** (the fake Redis test
+requires local socket permission). Only the two variants arrays changed.
+
 
 #### lh-04-deploy
 
@@ -837,6 +843,97 @@ gates:
     expect: "'fork: b02cb35f2 is already built (20261008-b02cb35f2); candidate -> 20261008-b02cb35f2' (no compile); then llama-swap's config is rewritten and the loaded model comes back. If it starts compiling, the old build dir is gone: stop and report"
     critical: true
 ```
+
+Preflight clarification **pending operator approval** (2026-10-15):
+step (7) needs candidate build expectations, but the pilot below only loads
+fork current; candidate props cannot come from that pilot. Proposed addition
+to `loop-hunt-deploy`: one temporary candidate identity load under the shared
+run lock, capture /props without inference, restore the previously loaded
+model, and generate separate current/candidate expectation files. Do not run
+this until the operator approves the added identity-capture scope. The
+original phase-1 current-build props are reused only if build links still
+match; helper validation refuses mismatches.
+
+Exact proposed identity-capture command (after code copy, before any pilot):
+
+```bash
+TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'python3 -' <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path.home()/'framework-ctx-bugs'))
+from ctx_bugs import Client
+from resp_client import RespRedis
+import framework_lock as lock
+from write_build_expectations import build_expectations, write_new
+
+builds_root = Path('/storage/llama-builds')
+candidate = json.loads((builds_root/'fork/candidate/build.json').read_text())
+assert candidate['name'] == '20261008-b02cb35f2'
+assert candidate['sha'].startswith('b02cb35f2')
+output = Path('/storage/artifacts/loop-hunt/builds-20261015')
+output.mkdir(mode=0o700, parents=True, exist_ok=False)
+cfg = json.loads(Path('/etc/llama-builds/backends.json').read_text())['publish']
+redis = RespRedis(cfg['host'], cfg.get('port',6379), cfg.get('db',1),
+                  Path(cfg['password_file']).read_text().strip())
+job = 'loop-hunt-build-expectations-20261015'
+assert lock.acquire(redis, job, 'loop-hunt', 'build-identities', max_wait=0), 'Framework lock busy'
+with lock.held(redis, job):
+    client = Client('http://127.0.0.1:8080', 'http://127.0.0.1:8099',
+                    api_key=Path('/etc/llamacpp/api-key').read_text().strip())
+    before = client.call('/props')
+    restore = before['model_alias']
+    assert isinstance(restore,str) and restore
+    try:
+        client.load('qwen3.8-flash-next-q4-nathanw-candidate-sess131k')
+        props = client.call('/props')
+        assert props['model_alias'] == 'qwen3.8-flash-next-q4-nathanw-candidate-sess131k'
+        write_new(output/'props-candidate.json', props)
+    finally:
+        client.load(restore)
+        restored = client.call('/props')
+        assert (restored['model_alias'],restored['build_info']) == (restore,before['build_info'])
+    shared = ['upstream='+str(Path.home()/'props-upstream.json')]
+    current = build_expectations(['nathanw='+str(Path.home()/'props-fork.json')]+shared, builds_root)
+    previous = build_expectations(['nathanw='+str(output/'props-candidate.json')]+shared,
+                                  builds_root, ['nathanw=candidate'])
+    write_new(output/'current.json', current)
+    write_new(output/'candidate.json', previous)
+print('BUILD-EXPECTATIONS-OK; previous model restored; no inference')
+PYTHON
+```
+
+The deployment also needs an exact-ID config check, rather than treating
+`grep -c sess` as proof that the required entries exist: require Qwen's
+nathanw/current, nathanw/candidate and upstream entries at both sizes, plus
+GLM upstream sess131k. Use the installed generator's read-only functions,
+as the existing ctx guard does, and compare generated bytes to installed
+config before trusting an unchanged preview. Check the prior build directory
+before `llama-builds build`; a missing build stops before compilation.
+Proposed replacement for count-only command 5, under the same pending
+approval (after the candidate command has regenerated config):
+
+```bash
+TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'python3 -' <<'PYTHON'
+import runpy
+import shutil
+from pathlib import Path
+functions = runpy.run_path(shutil.which('llama-builds'))
+cfg = functions['load_config']()
+entries = functions['swap_entries'](cfg, functions['load_catalog'](cfg))
+required = {f'qwen3.8-flash-next-q4-{build}-sess{size}'
+            for build in ('nathanw','nathanw-candidate','upstream')
+            for size in ('131k','262k')}
+required.add('glm-5.3-flash-upstream-sess131k')
+actual = {entry for entry,_ in entries}
+assert required <= actual, 'missing session entries: '+repr(sorted(required-actual))
+expected = functions['render_swap'](cfg, entries).encode()
+assert Path(functions['swap_cfg'](cfg)['config']).read_bytes() == expected, 'installed config differs'
+print('SESSION-CONFIG-OK: all 7 required entries; installed config matches generator')
+PYTHON
+```
+
+No production command has run. Approval `loop-hunt-deploy` is pending.
 
 Result: —
 

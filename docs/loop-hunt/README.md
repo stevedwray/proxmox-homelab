@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02 built locally; lh-03 next**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02/03 complete locally; deployment approval pending**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -343,3 +343,24 @@ warm-only attribution; refusals and crashes are not model/content findings.
 CK reloads reset all slot caches, including C2's peers; resets and subsequent
 cache counts are recorded for the pilot review. Nominal near-limit CK labels
 always retain actual prompt counts. Production access remains approval-gated.
+
+## Catalogue and deployment boundary (lh-03/04, 2026-10-15)
+
+The repository has Qwen sess131k/sess262k and GLM sess131k variants. Their
+only override is ctx_size; all other catalogue values remain unchanged.
+The JSON gate and **42 llama-builds tests pass**. This is not deployed.
+
+The next step needs **loop-hunt-deploy** approval for Framework through the
+pve-tiny production profile: deploy the catalogue, select the already-built
+fork previous as candidate, validate session entries, copy tools and save
+build expectations. No promotion, new compilation, unrelated model settings,
+inference or timer changes belong to that deployment. A missing previous
+build or moved current link stops the step.
+
+The plan's candidate-props ordering needs the operator's decision: its next
+pilot only loads current, so it cannot supply candidate props beforehand.
+The proposed addition is a temporary locked candidate load for /props only,
+followed by restoration of the previous model. The exact command is in
+[lh-04](plan.md#lh-04-deploy); it remains unapproved and unexecuted.
+Pilot/matrix approvals remain separate; no Framework access occurred during
+the local harness/catalogue work.
