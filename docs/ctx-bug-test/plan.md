@@ -342,7 +342,7 @@ prompt each time is:
 | ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
 | ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | done 2026-10-14 (batch run complete; no crash/GPU error; 7/7; restored initial model; D9 pending) |
-| ctx-10f-batch-all | local | — | todo (D9 = b) |
+| ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b, D9 = b) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
@@ -1179,7 +1179,14 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. Both Qwen Q4 and Laguna's ctx32k/ctx64k/ctx96k/
+ctx131k variants now use batch 512/ubatch 128, with original context sizes
+and one slot unchanged. Removed the now-redundant Laguna ctx131k-b512
+variant. The JSON gate prints `ok`, the Ansible diff is one file, and all
+42 llama-builds tests pass. An inverse JSON comparison with HEAD confirms
+there are no other catalogue changes. No Framework access, model load or
+deployment occurred. Next: ctx-10g, deployment under its own preflight and
+`ctx-bug-batch-all` approval.
 
 #### ctx-10g-batch-deploy
 
