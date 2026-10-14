@@ -8,3 +8,8 @@ rsyslog_forward_disable_imklog: true
 rsyslog_inbound_enabled: false
 rsyslog_inbound_tcp_port: "514"
 rsyslog_inbound_udp_port: "514"
+# Docker container app-names (the syslog tag, e.g. docker-<container>) whose
+# DEBUG-level lines are dropped before forwarding. Empty = forward everything.
+# Greenbone's openvas container logs ~780k DEBUG lines/hour while scanning
+# (99% of that host's Graylog volume); its MESSAGE/WARNING/ERROR lines still go.
+rsyslog_forward_drop_debug_apps: []

@@ -1,0 +1,9 @@
+[Unit]
+Description=Greenbone metrics for node_exporter's textfile collector
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=GVM_BRIDGE_URL={{ gvm_metrics_bridge_url }}
+Environment=GVM_METRICS_OUT={{ gvm_metrics_textfile_dir }}/gvm.prom
+ExecStart=/usr/bin/python3 {{ gvm_metrics_dir }}/gvm_metrics.py

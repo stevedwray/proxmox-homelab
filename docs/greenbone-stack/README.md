@@ -467,3 +467,51 @@ Only zones with a split change their fingerprint, so only mgmt_seg is rebuilt.
 The daily coverage check and gvm-bridge work from task names and target hosts, so
 they pick the new task up without changes. Add a host here when its web UI
 returns a large page for any path.
+
+## Graylog / Wazuh / Grafana coverage (checked 2026-10-15)
+
+- **Wazuh:** agent 028 `greenbone-stack` is active (manager 192.168.40.15).
+- **Graylog:** system logs and container logs (`docker-greenbone-community-edition-<name>`)
+  arrive via rsyslog (`rsyslog_forward` role). The `openvas` container logs about
+  780k DEBUG lines per hour while scanning, 99% of the host's volume (about 20M
+  messages/day), so `deploy-greenbone-stack.yml` sets
+  `rsyslog_forward_drop_debug_apps` to drop only its `:  DEBUG:` lines before
+  forwarding; MESSAGE/WARNING/ERROR still go. Applied live 2026-10-15 by running the
+  role alone (a full playbook run would re-attach schedules and reset the gvmd
+  admin password). Docker's syslog driver reconnected by itself after the rsyslog
+  restart. Note: nginx access lines carry the web UI session token in the URL.
+- **Grafana** (branch `work/gvm-grafana`, status in the section below): node_exporter and
+  cAdvisor on the scanner are scraped by VictoriaMetrics (`stack=greenbone-stack`), and
+  a "Greenbone" dashboard shows only Greenbone metrics.
+
+## Grafana
+
+| Piece | Where |
+|---|---|
+| Host metrics | node_exporter :9100, scrape target in `deploy-monitoring-stack.yml`; use the existing **Node Detail** dashboard, stack `greenbone-stack` |
+| Container metrics | cAdvisor on :8082, separate compose project `/opt/greenbone-cadvisor` (`deploy-greenbone-stack.yml`, tag `monitoring-integration`); never touches Greenbone containers |
+| Greenbone metrics | `gvm_metrics.py` (role `gvm_metrics`), every minute, written to node_exporter's textfile collector (`/var/lib/node_exporter/textfile/gvm.prom`) |
+| Source of task data | gvm-bridge `GET /tasks/summary` (loopback :8010; `get_tasks` only), plus Redis `INFO` and the LXC cgroup `memory.events` |
+| Dashboard | `terraform/lxc/stacks/monitoring-stack/dashboards/greenbone.json` (uid `greenbone`) |
+
+Metrics: `gvm_tasks{kind,status}`, `gvm_task_running`, `gvm_task_progress_percent`,
+`gvm_task_scheduled`, `gvm_task_last_scan_start_timestamp_seconds`,
+`gvm_task_last_scan_duration_seconds`, `gvm_task_last_results{severity}`,
+`gvm_redis_used_memory_bytes`, `gvm_redis_maxmemory_bytes`, `gvm_redis_keys{db}`,
+`gvm_redis_scan_kbs`, `gvm_lxc_oom_kills_total`, `gvm_metrics_source_up{source}`,
+`gvm_metrics_last_run_timestamp_seconds`. `kind` is credentialed, discovery, full_vuln
+or other (task-name based).
+
+**Applied live 2026-10-15** (branch `work/gvm-grafana`, not merged): gvm-bridge rebuilt
+alone with the new endpoint; `node_exporter` role re-run with the textfile directory;
+greenbone playbook run with `--tags monitoring-integration`; monitoring-stack playbook
+run (scrape targets, dashboard, VictoriaMetrics restart). Verified: both scanner targets
+`up`, 19 of 20 dashboard queries returned data at once and the last (container CPU, a
+5m `rate`) filled in a few minutes later, the cAdvisor port (8082) is open from the
+monitoring host. **Until the branch is merged, a deploy from `stable` rebuilds gvm-bridge
+without `/tasks/summary`**, so the task panels would go empty (`gvm_metrics_source_up
+{source="bridge"}` drops to 0). Steps used, for a rebuild: rebuild only the `gvm-bridge`
+service (`docker compose up -d --build --no-deps gvm-bridge`), re-run the `node_exporter`
+role with `node_exporter_textfile_dir` set, run the greenbone playbook with
+`--tags monitoring-integration`, then the monitoring-stack playbook. Alerts are not
+configured yet (Discord is a separate plan).

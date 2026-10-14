@@ -1,0 +1,41 @@
+---
+# Greenbone-specific metrics for Grafana (docs/greenbone-stack/README.md,
+# "Grafana"). Needs node_exporter's textfile collector enabled at
+# gvm_metrics_textfile_dir (node_exporter_textfile_dir in the playbook) and
+# gvm-bridge's /tasks/summary endpoint.
+- name: Create gvm-metrics directory
+  ansible.builtin.file:
+    path: "{{ gvm_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Copy the metrics script
+  ansible.builtin.copy:
+    src: gvm_metrics.py
+    dest: "{{ gvm_metrics_dir }}/gvm_metrics.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write gvm-metrics service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - gvm-metrics.service
+    - gvm-metrics.timer
+  notify: Reload systemd
+
+- name: Flush handlers so systemd sees the units
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the gvm-metrics timer
+  ansible.builtin.systemd:
+    name: gvm-metrics.timer
+    enabled: true
+    state: started

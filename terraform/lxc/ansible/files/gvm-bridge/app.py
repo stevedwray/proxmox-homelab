@@ -277,5 +277,38 @@ def tasks_credentialed():
     return jsonify({"tasks": tasks})
 
 
+@app.get("/tasks/summary")
+def tasks_summary():
+    # Metrics source for gvm_metrics.py (docs/greenbone-stack/README.md,
+    # "Grafana"): every Task of every kind (credentialed, discovery,
+    # full-vuln, OCI), with its status, progress and the last report's start,
+    # end and result counts. get_tasks only -- get_reports is never called
+    # (gvmd #2273, see scan_results()).
+    with _open_gmp() as gmp:
+        gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
+        response = gmp.get_tasks(filter_string="rows=-1")
+
+    tasks = []
+    for t in response.findall("task"):
+        report = t.find("last_report/report")
+        counts = report.find("result_count") if report is not None else None
+        tasks.append(
+            {
+                "name": t.findtext("name"),
+                "status": t.findtext("status"),
+                "progress": t.findtext("progress"),
+                "schedule": t.findtext("schedule/name") or None,
+                "last_scan_start": report.findtext("scan_start") if report is not None else None,
+                "last_scan_end": report.findtext("scan_end") if report is not None else None,
+                "last_counts": (
+                    {k: int(counts.findtext(k) or 0) for k in ("hole", "warning", "info", "log")}
+                    if counts is not None
+                    else None
+                ),
+            }
+        )
+    return jsonify({"tasks": tasks})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8010")))  # nosec B104 — container-internal listener; exposure is controlled by Docker port mapping / Traefik, not this bind address

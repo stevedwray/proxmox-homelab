@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for gvm-metrics.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ gvm_metrics_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
