@@ -214,6 +214,33 @@ modification").
   on one agent); in the live playbook the scan must be triggered before the wait; the manager was restarted five
   times on 2026-10-15 for rule changes, so batch local_rules.xml changes next time.
 
+## Phase 3 analysis (2026-10-15, read-only; actions pending operator decisions)
+
+All 3,957 findings come from the Debian Security Tracker via Wazuh's CTI feed ("Package default status"), so they are
+Debian's own open items for trixie, not Wazuh false positives. `vuln_triage.py` (offline, tested) classifies every
+Debian package/CVE pair by the tracker's status for trixie:
+
+| Class | Findings | What it means |
+|---|---|---|
+| open, urgency not yet assigned | 3,831 (97%) | Debian has not triaged these CVEs yet; nothing to install; accept pending triage, re-check weekly |
+| fix available in trixie | 105 (3%) | `urllib3 1.26.20` (4 CVEs) and `requests 2.32.2` (1 CVE) on the 21 Docker hosts: the **pip pins in our own `wazuh_agent` role** (docker-listener wodle) |
+| open, urgency low | 3 | Debian judges them minor |
+| non-Debian | 18 | Amazon Linux 2023 inside the Wazuh manager container image (vendor image; goes with Wazuh image updates) |
+
+Where the volume is: the **vim family is 3,074 findings (78%)** (`vim`, `vim-runtime`, `vim-tiny`, `vim-common`, 29 CVEs, same
+version `2:9.1.1230-2` on about 27 hosts). Those packages are manually installed in the **base LXC template** (dpkg
+dates 10 May), not by our playbooks, and every host also has `nano`. Next: libxml2 271, urllib3 147, containerd 78 +
+runc 78 (3 High each, CVE-2025-31133/52565/52881 and 2026-46680, real container-runtime items still awaiting Debian
+triage), python3-urllib3 54, requests 42, libexpat1 and zlib1g 27 each (+26 each for their `-dev` packages, pulled in by
+`libpython3.13-dev`). zlib1g's CVE-2026-85091 affects "1.3.1.2 through 1.3.2" while the installed version is 1.3.1: a
+probable false positive that Debian has not yet marked. The pve host carries libthrift (39 CVEs), amd64-microcode (10),
+libcups2t64 (8): hypervisor patching, the operator's call.
+
+Options (nothing applied yet): (1) remove `vim`/`vim-runtime` (1,508 findings) and optionally `vim-tiny`/`vim-common`
+(1,566) in the base role or template; (2) upgrade the pip pins for the docker-listener (105 findings), testing first on
+portainer-stack with the Tier 2 Docker suite; (3) record the accepted classes with a review date and re-run
+`vuln_triage.py` weekly; the detector itself has no per-CVE exclusion, so nothing is hidden in the index.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |

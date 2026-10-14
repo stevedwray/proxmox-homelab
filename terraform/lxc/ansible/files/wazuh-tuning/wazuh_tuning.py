@@ -253,6 +253,60 @@ def mode_agentrules(args):
                        b["d"]["buckets"][0]["key"][:70]) for b in r["aggregations"]["r"]["buckets"]]}
 
 
+def mode_vulndetail(args):
+    """Open vulnerability findings: one raw document, then breakdowns by package, version, OS, CVE and score."""
+    q = {"match_all": {}}
+    raw = search(VULNS, q, size=1)["hits"]["hits"]
+    r = search(VULNS, q, {
+        "pkg": terms("package.name", 40, ver=terms("package.version", 3), cve=terms("vulnerability.id", 1),
+                     ncve={"cardinality": {"field": "vulnerability.id"}}, sev=terms("vulnerability.severity", 4),
+                     nag={"cardinality": {"field": "agent.name"}}),
+        "os": terms("host.os.full", 10), "osname": terms("host.os.name", 10),
+        "sev": terms("vulnerability.severity", 6), "cls": terms("vulnerability.classification", 6),
+        "scanner": terms("vulnerability.scanner.vendor", 6), "cve": terms("vulnerability.id", 25, nag={"cardinality": {"field": "agent.name"}})})
+    return {"total": total(r), "raw_example": raw[0]["_source"] if raw else None,
+            "packages": [(b["key"], b["doc_count"], b["ncve"]["value"], b["nag"]["value"], [x["key"] for x in b["ver"]["buckets"]],
+                          [(x["key"], x["doc_count"]) for x in b["sev"]["buckets"]]) for b in r["aggregations"]["pkg"]["buckets"]],
+            "os": buckets(r, "os"), "osname": buckets(r, "osname"), "severity": buckets(r, "sev"),
+            "classification": buckets(r, "cls"), "scanner": buckets(r, "scanner"),
+            "top_cves": [(b["key"], b["doc_count"], b["nag"]["value"]) for b in r["aggregations"]["cve"]["buckets"]]}
+
+
+def mode_vulnpkg(args):
+    """Distinct CVEs for one or more packages: score, publish date, how many hosts, first words of the description."""
+    out = {}
+    for pkg in args:
+        q = {"bool": {"filter": [{"term": {"package.name": pkg}}]}}
+        r = search(VULNS, q, {"c": terms("vulnerability.id", 60, nag={"cardinality": {"field": "agent.name"}},
+                                          top={"top_hits": {"size": 1, "_source": ["vulnerability.score.base", "vulnerability.severity",
+                                                                                   "vulnerability.published_at", "vulnerability.description",
+                                                                                   "package.version", "vulnerability.scanner.condition"]}})})
+        rows = []
+        for b in r["aggregations"]["c"]["buckets"]:
+            v = b["top"]["hits"]["hits"][0]["_source"]
+            vul = v.get("vulnerability", {})
+            rows.append((b["key"], vul.get("severity"), (vul.get("score") or {}).get("base"), (vul.get("published_at") or "")[:10],
+                         b["nag"]["value"], (vul.get("scanner") or {}).get("condition"), (vul.get("description") or "")[:110]))
+        out[pkg] = rows
+    return out
+
+
+def mode_vulncves(_args):
+    """Every (package, CVE) pair with host count and installed version -- input for the tracker comparison."""
+    r = search(VULNS, {"match_all": {}}, {"p": terms("package.name", 80, c=terms("vulnerability.id", 100, v=terms("package.version", 2),
+                                                                                     os=terms("host.os.name", 2),
+                                                                                     nag={"cardinality": {"field": "agent.name"}}))})
+    return {"pairs": [(b["key"], c["key"], c["nag"]["value"], c["v"]["buckets"][0]["key"], c["os"]["buckets"][0]["key"])
+                      for b in r["aggregations"]["p"]["buckets"] for c in b["c"]["buckets"]]}
+
+
+def mode_vulnhosts(args):
+    """Which agents carry findings for the given packages (for the single-host oddities)."""
+    q = {"bool": {"filter": [{"terms": {"package.name": args}}]}}
+    r = search(VULNS, q, {"p": terms("package.name", 20, a=terms("agent.name", 6))})
+    return {b["key"]: [(x["key"], x["doc_count"]) for x in b["a"]["buckets"]] for b in r["aggregations"]["p"]["buckets"]}
+
+
 def mode_sample(args):
     rid, n = args[0], int(args[1]) if len(args) > 1 else 5
     q = rule_q(rid, window(args[3]) if len(args) > 3 else 24)
@@ -318,7 +372,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "vulndetail": mode_vulndetail, "vulnpkg": mode_vulnpkg, "vulncves": mode_vulncves, "vulnhosts": mode_vulnhosts, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 
