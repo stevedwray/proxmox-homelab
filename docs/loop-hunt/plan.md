@@ -57,7 +57,7 @@ errors.
 |---|---|
 | Builds | fork `current` (20261008-9e21f2e53, b10814), fork `previous` (20261008-b02cb35f2, served as the fork **candidate** for this test), upstream `current` (20261008-de7fa0a3c, b11514). Recheck with `llama-builds status` first; if any link moved, stop and ask |
 | Models | `qwen3.8-flash-next-q4` on all three builds. `glm-5.3-flash` on upstream only (the fork has no glm5next arch), D-L4. Laguna is out (fork broken, upstream clean) |
-| Server settings | Production-like: catalogue settings, **default batch sizes, `--parallel 4`, prompt cache on** (D-L2). Variants `sess131k` (ctx 131072, parallel 4) and `sess262k` (ctx 262144, parallel 1, Qwen only) |
+| Server settings | Production-like: catalogue settings, **default batch sizes, `--parallel` not set, prompt cache on** (D-L2). With `--parallel` unset llama.cpp picks 4 slots sharing **one unified KV pool**, so a single conversation can use the whole context and concurrent ones compete for it. ctx-bug-test phase 1 saw this on the live `qwen3-coder-next-upstream` entry (`total_slots` 4, per-slot `n_ctx` 131072). Variants `sess131k` (ctx 131072) and `sess262k` (ctx 262144, Qwen only), neither setting `parallel` |
 | Sampling | D-L3 |
 | Per-turn cap | `max_tokens 8192` per assistant turn; hitting it is a `runaway` finding |
 
@@ -66,10 +66,10 @@ Conditions per build:
 | Id | What | Why |
 |---|---|---|
 | C1 | One session to ~131k, cache on | Long history + cache reuse |
-| C2 | Four concurrent sessions (different seeds/content) to ~131k on the 4 slots | Slot/KV sharing under load, like deep-research |
+| C2 | Four concurrent sessions (different seeds/content) sharing the 131k pool: each grows to ~32k (pool nearly full), then all keep going for 4 more turns past the point where the pool runs out | Slot/KV sharing and pool exhaustion under load, like deep-research. Records what the server does when the pool is full (errors, cache eviction and recompute, context shift) |
 | C3 | C1's session continued 3 turns past `n_ctx` | Overflow / context-shift behaviour |
 | C4 | One session to ~262k on `sess262k` (Qwen only) | The size Qwen used to serve at |
-| CK | At 64k, 96k and 131k in C1/C2: the warm-vs-cold replay above | Runtime vs model |
+| CK | Warm-vs-cold replay at 64k, 96k and 131k in C1 (and 196k/262k in C4); in C2 at 16k, 32k and at the first turn after the pool runs out | Runtime vs model |
 
 Two seeds for C1, one C2 group, C3 once, C4 once per build.
 
@@ -157,9 +157,15 @@ depends_on: [lh-00-decisions]
 runs_on: framework
 approval: loop-hunt-chat-scan
 change: >
+  Add scripts/loop-hunt/snapshot_sqlite.py: opens the live database
+  read-only (sqlite3 URI file:<path>?mode=ro) and writes a consistent
+  snapshot with SQLite's online backup API (Connection.backup), which
+  includes committed WAL content; then runs PRAGMA integrity_check on the
+  snapshot and exits non-zero unless it says ok. Never `cp` a live
+  SQLite database (it can miss WAL data or copy a torn state).
   Add scripts/loop-hunt/scan_openwebui.py (stdlib only; uses
-  scripts/framework-ctx-bugs/detectors.py). It opens a COPY of Open WebUI's
-  SQLite database read-only, walks every chat's messages, and for each
+  scripts/framework-ctx-bugs/detectors.py). It opens the SNAPSHOT
+  read-only, walks every chat's messages, and for each
   assistant message runs loop(), repetition() and the hidden-token /
   template-leak string checks, and estimates the conversation's token
   length up to that message (chars/3.5). Output, written only on
@@ -176,11 +182,11 @@ scope:
     - docs/loop-hunt/
 commands:
   - "rsync -a --exclude __pycache__/ scripts/loop-hunt/ scripts/framework-ctx-bugs/detectors.py steve@framework.gibbsgreatly.xyz:loop-hunt/"
-  - "ssh steve@framework.gibbsgreatly.xyz 'D=/storage/artifacts/loop-hunt/chat-scan-$(date +%Y%m%d); install -d -m 0700 $D && sudo -n cp /mnt/container-storage/openwebui-data/webui.db $D/webui.db.copy && sudo -n chown steve: $D/webui.db.copy && python3 ~/loop-hunt/scan_openwebui.py --db $D/webui.db.copy --out $D && cat $D/summary.md'"
+  - "ssh steve@framework.gibbsgreatly.xyz 'D=/storage/artifacts/loop-hunt/chat-scan-$(date +%Y%m%d); install -d -m 0700 $D && sudo -n python3 ~/loop-hunt/snapshot_sqlite.py /mnt/container-storage/openwebui-data/webui.db $D/webui.db.copy && sudo -n chown steve: $D/webui.db.copy && python3 ~/loop-hunt/scan_openwebui.py --db $D/webui.db.copy --out $D && cat $D/summary.md'"
 gates:
   - id: tests
     cmd: "python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py'"
-    expect: "exit 0"
+    expect: "exit 0, including a snapshot test against a WAL-mode fixture with uncommitted-to-main-file (WAL-only) rows: the snapshot contains them and integrity_check is ok"
     critical: true
   - id: summary
     cmd: "(second command)"
@@ -215,7 +221,7 @@ change: >
   the model's answers without reasoning) with cache_prompt true and the
   sampling from D-L3; record per-turn metrics listed in the plan;
   checkpoint after each turn. C2 runs its sessions concurrently (one
-  thread each, one slot each, id_slot unset). C3 continues past n_ctx
+  thread each, id_slot unset, all sharing the unified pool). C3 continues past n_ctx
   and records exactly what the server does (HTTP error, truncation or
   context shift: compare prompt_tokens and timings). CK at 64k/96k/131k:
   after the warm turn, reload the entry through llama-swap (unload +
@@ -229,7 +235,12 @@ change: >
   limited to Laguna x nathanw), and give write_build_expectations.py a
   --link current|candidate option per label, so the fork candidate
   (previous build) gets its own expectations.
-  The stub server gains multi-turn, cached_tokens, 4 slots, an n_ctx
+  The harness must not require one slot (ctx-bug-test's check_props did):
+  record total_slots and each slot's n_ctx from /props and /slots, and
+  refuse a cell only if /props shows a context smaller than the variant's
+  ctx_size.
+  The stub server gains multi-turn, cached_tokens, 4 slots sharing one
+  KV pool (with a configurable full-pool behaviour), an n_ctx
   limit with a configurable overflow behaviour, and a mode that starts
   looping only when warm (to prove CK detects it).
 scope:
@@ -259,10 +270,11 @@ runs_on: local
 change: >
   In ansible/00-initial-setup/files/llama-swap/models.json set "variants"
   of qwen3.8-flash-next-q4 to
-  [{"suffix": "sess131k", "label": "loop hunt 131k x4", "settings": {"ctx_size": 131072, "parallel": 4}},
-   {"suffix": "sess262k", "label": "loop hunt 262k x1", "settings": {"ctx_size": 262144, "parallel": 1}}]
+  [{"suffix": "sess131k", "label": "loop hunt 131k", "settings": {"ctx_size": 131072}},
+   {"suffix": "sess262k", "label": "loop hunt 262k", "settings": {"ctx_size": 262144}}]
   and of glm-5.3-flash (only if D-L4 = yes) to the sess131k entry only.
-  No batch overrides (D-L2). Change nothing else.
+  No batch overrides and no `parallel` (D-L2: production leaves both at
+  llama.cpp's defaults). Change nothing else.
 scope:
   allowed_paths:
     - ansible/00-initial-setup/files/llama-swap/models.json
