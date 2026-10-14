@@ -29,6 +29,9 @@ $WorkDirectory /var/spool/rsyslog
 module(load="imtcp")
 
 ruleset(name="docker-tcp" parser="rsyslog.rfc5424") {
+{% for app in rsyslog_forward_drop_debug_apps %}
+    if $programname == '{{ app }}' and $msg contains ':  DEBUG:' then stop
+{% endfor %}
     *.* action(type="omfwd"
                target="{{ rsyslog_forward_target_host }}"
                port="{{ rsyslog_forward_target_port }}"

@@ -30,6 +30,10 @@
     greenbone_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
     greenbone_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ greenbone_lab_domain, true) }}"
     docker_registry_host: "{{ greenbone_registry_host }}"
+    # openvas logs ~780k DEBUG lines/hour while scanning (99% of this host's
+    # Graylog volume, measured 2026-10-15); keep MESSAGE/WARNING/ERROR only.
+    rsyslog_forward_drop_debug_apps:
+      - docker-greenbone-community-edition-openvas-1
   roles:
     - lxc_base
     - docker_base
