@@ -76,6 +76,7 @@ see.
   log rotation is a retention item for 1c.
 - Docker-listener alerts have a null `full_log`; the event lives in `data.docker.*`, so
   the must-fire docker cases rebuild the event from those fields.
+- **Must-fire Tier 1 (logtest + ruleset) is green on the current config, 11/11** (2026-10-15). Calibration: a first-time sudoer fires 5403 (L4), later ones 5402 (L3); the suite accepts both.
 - Live-action test host for the non-docker cases: `apt-cacher-stack` (no Docker). The
   Docker cases need a Docker-running agent; to be chosen before Tier 2 (operator wants the
   suite extensible to a Docker host).

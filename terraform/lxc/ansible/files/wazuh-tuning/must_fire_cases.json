@@ -12,7 +12,7 @@
      "ids": ["5710"], "min_level": 5},
     {"name": "sudo to root", "format": "syslog", "location": "/var/log/auth.log",
      "event": "Oct 15 10:00:00 testhost sudo:   alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/bin/bash",
-     "ids": ["5402"], "min_level": 3},
+     "ids": ["5402", "5403"], "min_level": 3},
     {"name": "new user added", "format": "syslog", "location": "/var/log/auth.log",
      "event": "Oct 15 10:00:00 testhost useradd[1234]: new user: name=mallory, UID=1005, GID=1005, home=/home/mallory, shell=/bin/bash",
      "ids": ["5902"], "min_level": 8},
