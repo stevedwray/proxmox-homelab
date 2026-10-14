@@ -22,7 +22,7 @@ verified. The fresh full-run retry started at 07:17:22 UTC on 2026-10-14 under
 Attempt 1 failed when daily upgrades restarted llama-swap. The completed retry
 restored its previous model, and `apt-daily-upgrade.timer` was restored and
 verified active. No automatic infrastructure recovery was needed. The local
-harness now passes 89 tests, including budget-aware attribution, saved probe
+harness now passes 93 tests, including budget-aware attribution, saved probe
 comparisons and counting identical context outputs once.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
@@ -331,9 +331,10 @@ accuracy; its hang, wall time and prompt tok/s remain useful evidence.
 F totals **196/196**, with no retrieval degradation. Short-mode fork F is
 observational, not a controlled comparison of equal completion budgets.
 
-### Draft catalogue cleanup (ctx-14)
+### Prepared catalogue cleanup (ctx-14)
 
-These are proposed changes only; models.json has not been edited for cleanup.
+These changes are prepared in the local models.json only; production cleanup
+has not run and awaits `ctx-bug-cleanup` approval.
 Both tested models' `variants` return to `[]`, removing all 24 generated
 context-test entries including HIP variants. Remove Laguna's `fork` backend
 again; its two Vulkan/HIP upstream backends remain. Preserve the existing
@@ -351,7 +352,13 @@ These statuses summarize the tested configuration and limitations; the
 ordinary entries keep their existing settings, and HIP was not tested.
 No new build, candidate promotion or production batch/default-model change
 is proposed. D1's candidate follow-up remains outside the completed matrix.
-Only ctx-14 remains and requires its named production cleanup approval.
+Only ctx-14 deployment remains and requires its named production cleanup
+approval. The local JSON/scope gate passes, all 42 llama-builds tests and
+93 harness tests pass, shell syntax and playbook syntax pass. A local render
+with stand-in build links produces 27 entries instead of 52, removes all
+24 context variants plus Laguna fork, and preserves every retained server
+command. The cleanup guard passes ten tests covering changed/unchanged
+configs and refusals. No production cleanup access has occurred.
 
 Known production issue found by this test (not fixed here, D10): Ubuntu's
 daily `apt-daily-upgrade` runs needrestart, which restarts

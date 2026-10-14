@@ -370,7 +370,7 @@ stops only at one of the stop points in rule 1.
 | ctx-11a-attribution-fix | local, then Framework (regrade in the run dir only) | — | done 2026-10-15 |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
 | ctx-13-writeup | local | — | done 2026-10-15 |
-| ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
+| ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | local changes validated; deployment awaiting approval |
 
 #### ctx-01-build-check (done)
 
@@ -1564,14 +1564,59 @@ No models.json cleanup edit or production cleanup deployment has occurred.
 
 #### ctx-14-cleanup
 
-Approval `ctx-bug-cleanup`. In models.json: set both models' `variants`
-back to `[]`; set the tested statuses from ctx-13's table; if Laguna on
-nathanw is still broken, remove `fork` from its `backends` again. Run
-ctx-06's json/tests/syntax gates (with the expected values inverted), then
-ctx-08's three commands. Gate: the swap-config dry run lists no `-ctx`
-ids. Then the README status becomes "complete".
+Approval `ctx-bug-cleanup` is required for deployment. The local change
+sets both models' `variants` to `[]`, records ctx-13's four tested statuses,
+and removes `fork` from Laguna's backends. Ordinary model settings, Qwen's
+wildcard status and untested HIP status are preserved.
 
-Result: —
+The ctx-06 JSON/scope, llama-builds tests and playbook syntax gates are
+inverted for zero variants and no Laguna fork. For deployment, the old
+ctx-08 guard's 16-required-ID check must also be inverted: use its tested
+`--cleanup` mode. It refuses any remaining `-ctx` ID, Laguna fork
+current/candidate, missing ordinary tested entry, unknown preview or
+unverified unchanged configuration. Never use `--force`.
+
+Preflight (prepared 2026-10-15, **not approved or deployed yet**):
+
+- Target: Framework bare metal, `steve@framework.gibbsgreatly.xyz` (inventory
+  host `framework`), using the pve-tiny wrapper for its existing Redis secret
+  profile. Confirm the resolved Ansible target is Framework before deployment.
+- Mutating: install `/etc/llama-builds/models.json` through the existing
+  playbook (which also reapplies tool/config/status timer), then regenerate
+  `~/llama-swap/config.yaml` only after the cleanup guard passes. Expected
+  catalogue: 52 to 27 entries (24 test variants plus Laguna fork removed).
+  The playbook only previews config; the guarded write briefly unloads and
+  reloads the previously loaded model (about 1–2 minutes).
+- Commands, sequential; stop at any failed gate:
+
+```bash
+./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --graph framework && echo SECRETS-OK
+# Require exactly framework.gibbsgreatly.xyz in the framework group; no inventory vars are printed.
+TASK_APPROVAL=ctx-bug-cleanup ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml
+ssh steve@framework.gibbsgreatly.xyz 'bash -s -- --cleanup' < scripts/framework-ctx-bugs/guarded_swap_config.sh
+```
+
+- Gates: wrapper succeeds with the intended host; play recap `failed=0` and
+  dry run has no ctx IDs; guard reports `GATE OK`, followed by 27 entries
+  written and the previous model loaded again, or an exactly verified
+  unchanged config without write/reload. No later command runs after failure.
+- Rollback: restore the pre-cleanup catalogue from `6fed5459`, rerun the
+  same approved playbook and the normal 16-ID guard (without `--cleanup`),
+  and confirm the previous model reloads. Do not roll back any build.
+- Out of scope: model files, build/source updates or promotion, model defaults
+  or batch settings, overrides, other model statuses, OpenBao edits, inference
+  requests, new tests on Framework and unrelated services.
+
+Result: local preparation done 2026-10-15; production approval pending.
+JSON equality against the pre-cleanup catalogue confirms only planned fields
+changed and the default is preserved. Local rendering with stand-in links
+confirms 52 -> 27 IDs, zero ctx IDs/Laguna fork, and identical server commands
+for every retained entry. All 42 llama-builds tests, 93 harness tests, shell
+syntax and playbook syntax pass; ten guard tests cover cleanup failure modes
+and preserve the existing 16-ID gate. The publish test needs local sockets;
+its initial sandbox denial was resolved by running the tests with loopback
+permission. Nothing was deployed for cleanup. Mark README complete only
+after deployment and reload gates pass.
 
 ## Decisions (operator, 2026-10-13)
 

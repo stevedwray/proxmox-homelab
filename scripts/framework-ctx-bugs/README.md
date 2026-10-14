@@ -275,3 +275,10 @@ the existing `restored_default` boolean indicates successful restoration.
 If restoration fails, the run is marked failed with the restore error. A lost
 lock stops further model changes. An uncatchable kill cannot run cleanup;
 the lock TTL expires and a later approved resume restores the saved model on exit.
+
+For approved ctx-14 cleanup, run `guarded_swap_config.sh --cleanup` on
+Framework instead of its normal 16-entry gate. It requires zero context-test
+entries, no Laguna fork current/candidate entry, and all five ordinary
+Qwen/Laguna entries that should remain. Unknown previews or failed unchanged
+config checks refuse writes. A verified unchanged catalogue exits without
+reloading; a changed preview passing the gate writes once without `--force`.
