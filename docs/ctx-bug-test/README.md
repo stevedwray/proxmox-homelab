@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **D9 deployed; full run pending** (2026-10-14). The operator settled
+Status: **full run running** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -17,7 +17,8 @@ The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
 were written, and `qwen3-coder-next-upstream` was reloaded. Local preparation
 ctx-10b/ctx-10c/ctx-10e and the ctx-10d confirmation are complete. D9=b is deployed and
-verified; ctx-11's full run needs its own preflight and approval.
+verified. The full run started at 04:50:19 UTC on 2026-10-14 under
+`/storage/artifacts/framework-ctx-bugs/20261014T045019Z`; its start gate passed.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -163,7 +164,7 @@ ctx-10g on 2026-10-14. All required test entries use batch 512/ubatch 128;
 the final count gate returned 24 flagged entries including HIP variants and
 zero redundant ctx131k-b512 entries. The 52-entry generated config already
 matched exactly; verification needed no write or model reload. The playbook
-passed with failed=0 and changed=0. The full run has not started.
+passed with failed=0 and changed=0. The full run subsequently started at 04:50:19 UTC; results are pending.
 
 Remaining work is ctx-11 through ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open

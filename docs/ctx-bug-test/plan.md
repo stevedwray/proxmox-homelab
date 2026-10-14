@@ -365,7 +365,7 @@ stops only at one of the stop points in rule 1.
 | ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b, D9 = b) |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | in progress 2026-10-14 (20261014T045019Z; start gate passed; D8=b/D9=b) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -1334,7 +1334,22 @@ for the whole run. Review
 it like ctx-10 into `docs/ctx-bug-test/artifacts/full/` and a "Full run"
 section in the README listing every candidate finding from findings.json.
 
-Result: —
+Result (start, 2026-10-14): after full-run preflight and operator approval,
+rsync copied the current harness and the detached unit
+`framework-ctx-bugs-20261014t045019z.service` started (invocation
+`6871fa8226344455ba9f968935a979f2`). Status confirms active/running,
+`completed: 0`, and run directory
+`/storage/artifacts/framework-ctx-bugs/20261014T045019Z`. The first log line
+loads/checks `qwen3.8-flash-next-q4-nathanw-ctx32k`; start gate passed.
+All 16 cells use D8's seven-question F and D9's small batches. Completion,
+restoration and full evidence review remain pending.
+
+Operator steering at launch: "proceed. And stop making me say proceed so
+much, continue autonomously until an error is encountered that requires my
+input". Preserve this instruction on continuation: do not repeat routine
+approval prompts for work already authorized in this session; continue
+within the plan's scope, reporting production preflights and stopping for
+errors or unresolved decisions requiring operator input.
 
 #### ctx-12-reproduce
 
