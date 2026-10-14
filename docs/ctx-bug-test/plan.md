@@ -1086,7 +1086,11 @@ gates:
 When the run is complete (operator says when), read-only: copy its
 report.md and F raw record into `docs/ctx-bug-test/artifacts/batch-confirm/`
 and record in Result: crash/gpu-error yes or no, wall time, prompt tok/s
-compared with the pilot's Laguna × upstream F, and the F accuracy (x/8).
+compared with the pilot's Laguna × upstream F, and the F accuracy (x/7).
+The pilot's F had 8 questions; ctx-10d uses 7. Compare ctx-10d with the
+pilot only on the hang, wall time and prompt tok/s, not accuracy (operator
+clarification, 2026-10-14). The prompt change prevents attributing a different
+outcome solely to the batch-size change.
 
 Result: —
 
