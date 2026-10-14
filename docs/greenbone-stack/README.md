@@ -467,3 +467,18 @@ Only zones with a split change their fingerprint, so only mgmt_seg is rebuilt.
 The daily coverage check and gvm-bridge work from task names and target hosts, so
 they pick the new task up without changes. Add a host here when its web UI
 returns a large page for any path.
+
+## Graylog / Wazuh / Grafana coverage (checked 2026-10-15)
+
+- **Wazuh:** agent 028 `greenbone-stack` is active (manager 192.168.40.15).
+- **Graylog:** system logs and container logs (`docker-greenbone-community-edition-<name>`)
+  arrive via rsyslog (`rsyslog_forward` role). The `openvas` container logs about
+  780k DEBUG lines per hour while scanning, 99% of the host's volume (about 20M
+  messages/day), so `deploy-greenbone-stack.yml` sets
+  `rsyslog_forward_drop_debug_apps` to drop only its `:  DEBUG:` lines before
+  forwarding; MESSAGE/WARNING/ERROR still go. Applied live 2026-10-15 by running the
+  role alone (a full playbook run would re-attach schedules and reset the gvmd
+  admin password). Docker's syslog driver reconnected by itself after the rsyslog
+  restart. Note: nginx access lines carry the web UI session token in the URL.
+- **Grafana:** not wired yet (follow-up 8 in `docs/gvm-coverage-cleanup/`):
+  node_exporter runs on :9100 but is not in the scrape list; no cAdvisor.
