@@ -95,6 +95,16 @@ STILL_UNCOVERED = {
     "192.168.1.104",  # this workstation: sshd is off, so gvm-scan cannot log in
 }
 
+# Devices that stop answering under scanning, left out of BOTH the discovery and
+# the full-vuln targets. Network gear is also the original "discovery-only" tier
+# (docs/greenbone-stack/network-scan-rollout-plan.md), and Omada already monitors it.
+FRAGILE_HOSTS = {
+    # 5-port switch. The first full-vuln scan of the /24 (2026-10-14 baseline) was the
+    # first time it was probed hard; it dropped off the network mid-scan and was still
+    # offline in Omada an hour after the scan stopped.
+    "lan": ["192.168.1.253"],
+}
+
 # Concurrent hosts for the unauthenticated full-vuln tasks. They used to run 20
 # at once (GVM's default for a new task), which drove the 4-core scanner to a
 # load of 33 on 2026-10-14.
@@ -112,7 +122,12 @@ def full_vuln_excludes(zone_key, managed, fixtures):
     """Addresses the unauthenticated full-vuln task leaves out for a zone."""
     covered = set(managed.get(zone_key, [])) - STILL_UNCOVERED
     covered |= set(CREDENTIALED_ELSEWHERE.get(zone_key, []))
-    return sorted(covered | set(fixtures))
+    return sorted(covered | set(fixtures) | set(FRAGILE_HOSTS.get(zone_key, [])))
+
+
+def discovery_excludes(zone_key, fixtures):
+    """Addresses the discovery task leaves out for a zone."""
+    return sorted(set(fixtures) | set(FRAGILE_HOSTS.get(zone_key, [])))
 
 
 def resolve_id(gmp, getter, name, tag):
@@ -205,7 +220,7 @@ def main():
             fixtures = FIXTURE_EXCLUDE.get(key, [])
 
             ensure_target_and_task(
-                gmp, f"LAN scan: {key} discovery", cidr, list(fixtures),
+                gmp, f"LAN scan: {key} discovery", cidr, discovery_excludes(key, fixtures),
                 discovery_config_id, scanner_id, port_list_id,
             )
             ensure_target_and_task(

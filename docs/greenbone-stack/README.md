@@ -6,31 +6,60 @@ joining `pentagi-stack`'s existing `pentest_seg` zone (VLAN 70) and exposing
 its web UI (GSA) through Traefik. Runs on `pve` (production). `pve-test-vm`,
 the original validation environment, is retired.
 
-## Scan program status (2026-10-11)
+## Scan program status (2026-10-14)
 
-- **Uncredentialed CIDR scans:** discovery + weekly full-vuln for
-  build/mgmt/edge/infra/ai/game zones and the flat LAN, live since
-  2026-08-17 ([network-scan-rollout-plan.md](./network-scan-rollout-plan.md)).
-  pentest/media/cse/connector/apps zones have **no** CIDR scans yet.
-- **Credentialed scans: working, grouped by VLAN (2026-10-12).** Each VLAN
-  has one shared, unprivileged, key-only `gvm-scan` key
-  (`services/greenbone/scan-zones/<zone>`) and one weekly task, capped at 4
-  hosts at a time: 12 tasks cover 39 hosts, including the Proxmox nodes,
-  framework, the workstation, the Pis and the non-Ansible LXCs. MikroTik
-  keeps its own task. The su-based elevate credential, which made every
-  earlier scheduled scan fail to authenticate, is gone. A daily per-host
-  coverage check runs in `gvm-findings-ingest` (output in
-  `/var/log/gvm-findings-ingest.log`; the unit exits 3 while any host is
-  failing). See [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md).
-- **gvm-bridge is loopback-only (127.0.0.1:8010) since 2026-10-12.** It has
-  no authentication; use an SSH tunnel to reach it.
-- **A full redeploy of this stack interrupts running scans.** Scheduled scans
-  run overnight (NZT), so do redeploys during the day.
-- **OCI Pangolin public edge:** credentialed audit task exists, unscheduled
-  by design.
-- **Known security gap:** `gvm-bridge` (`:8010`) has no authentication and
-  is reachable from the LAN (`/findings/all`, `/scan/start`). Tracked as a
-  follow-up in docs/gvm-coverage-cleanup/README.md.
+Three kinds of scan, each with one job (design and plan:
+[docs/gvm-scan-redesign/](../gvm-scan-redesign/README.md); how to run and tune them:
+[runbook.md](../gvm-scan-redesign/runbook.md)):
+
+| Scan | Targets | Cadence |
+|---|---|---|
+| **Credentialed** (14 tasks) | the 39 managed hosts, one task per VLAN plus MikroTik and a separate `mgmt_seg (openbao)` task; one shared unprivileged `gvm-scan` key per VLAN (`services/greenbone/scan-zones/<zone>`) | weekly |
+| **Discovery** (12 tasks) | whole zone: finds hosts, ports, services; no vulnerability tests | weekly, Thursday night |
+| **Full-vuln** (12 tasks) | **unmanaged addresses only** (zone range minus managed hosts and fixtures), 6 hosts at a time | weekly |
+
+OCI Pangolin's public edge has a credentialed audit task, unscheduled by design.
+
+**Weekly schedule (NZ time).** Credentialed: Tue 00:30 lan; Wed 00:30 mgmt_seg, 05:00
+MikroTik; Thu 02:30 mgmt_seg (openbao); Fri 00:30 infra, 05:00 pentest, 06:00
+connector; Sat 00:30 ai, 03:00 game, 05:00 edge; Sun 00:30 media, 03:00 cse, 05:00
+build, 06:00 apps. Full-vuln: Sun 22:00 build, 23:00 mgmt; Mon 00:00 edge, 01:00
+infra, 02:00 ai, 03:00 game, 04:00 lan; Wed 22:00 pentest, 23:00 media; Thu 00:00
+cse, 01:00 connector, 02:00 apps. Discovery: Thu 22:00 build, then every 30 minutes
+(edge, mgmt, infra, ai, game, pentest, media, cse, connector, apps), lan last at
+Fri 03:30. Everything is meant to finish inside the 22:00-07:00 window; a hard
+`DURATION` stop that would guarantee it is untested (redesign plan Phase 3).
+
+**Capacity (2026-10-13/14).** The container is 4 cores / 12 GB (`stack.yaml`), Redis
+is capped at 6 GB (`--maxmemory 6gb`), mgmt_seg runs 2 hosts at a time and every
+other credentialed zone 4. A healthy scan uses 2.5-4 GB. The earlier OOM crashes were
+caused by OpenBao's UI (192.168.20.16:8200) answering every `/ui/` path with a ~1 MB
+page; see "Per-zone host concurrency", "Redis memory cap" and "Hosts split out of
+their zone" below. Measured durations are in the runbook.
+
+**State at 2026-10-14:**
+- Phase 1 of the redesign is applied to all 12 full-vuln tasks. The first whole-/24
+  `lan` baseline (old target) ran about 2 h and found nothing High or Critical; a device
+  that dropped offline mid-scan stalled it, so a `DURATION` hard stop is planned.
+- The coverage-check fix (a login failure beside a success is not `auth_failed`,
+  needed for MikroTik) is on `stable` but reaches the host only with the next
+  `provision.sh --stack greenbone-stack` (findings-ingest tag).
+- `FRAGILE_HOSTS` (setup_scan_program.py) keeps devices that stop answering under
+  scanning out of discovery and full-vuln: 192.168.1.253, the TP-Link Omada switch
+  that dropped offline during the 2026-10-14 baseline.
+- Every scan authenticated on all 39 managed hosts except the workstation
+  (192.168.1.104; sshd is off), which therefore stays in the unauthenticated scan.
+
+**Operating rules.**
+- gvm-bridge is loopback-only (127.0.0.1:8010) and has no authentication; use an
+  SSH tunnel.
+- A full redeploy interrupts running scans and re-attaches every schedule. Deploy
+  from a worktree with targeted tags (runbook), during the day.
+- The daily coverage check runs in `gvm-findings-ingest` (19:01 NZ; output in
+  `/var/log/gvm-findings-ingest.log`; the unit exits 3 while any host is failing).
+- Grafana does not scrape this container (follow-up 8 in
+  [docs/gvm-coverage-cleanup/](../gvm-coverage-cleanup/README.md)); use the
+  sampler in the runbook.
 
 Status: **Live in production on `pve`, 2026-08-01.** Full deployment
 (LXC → compose stack → Traefik/Authentik edge route → DNS → per-user LDAP

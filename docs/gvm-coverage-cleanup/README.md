@@ -6,15 +6,16 @@ loudly when it stops working. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-12: DONE. Live on `pve` and merged to `stable` (#472, plus this
-close-out).** Credentialed scans are grouped by VLAN: 12 weekly VLAN tasks
-cover all 39 hosts, plus MikroTik and OCI. gvm-bridge is loopback-only, and
-a daily per-host coverage check runs in the findings ingest. Still open: the
-GVM verdict for the first VLAN scan (edge_seg). It's verified on the target
-side (shared key logins, no `su`), but the scan itself was interrupted once
-by a redeploy and was re-run. Plus the follow-ups below. The first full
-weekly cycle completes by Monday 2026-10-19; after that the coverage check
-should show every host `OK` or a specific failure.
+**2026-10-12: DONE. 2026-10-14: capacity tuning merged (#474).** Credentialed scans
+work and are grouped by VLAN: 13 weekly zone tasks cover all 39 managed hosts, plus
+MikroTik and OCI (the `mgmt_seg (openbao)` task was split out on 2026-10-14). The
+first full supervised cycle has run: every managed host authenticated with local
+checks, and the edge_seg verdict is in (both hosts OK). What came after (OOM
+crashes traced to OpenBao's UI, Redis cap, container 4 cores / 12 GB) is under the
+2026-10-13/14 entries below; the next work is the scan redesign in
+[docs/gvm-scan-redesign/](../gvm-scan-redesign/README.md). Still open:
+follow-ups 8 (Grafana) and 9 (pve-tiny) below, the workstation's sshd, and the first
+full weekly cycle under the new schedules (due by about 2026-10-21).
 
 - **Phase 1 (per-host keys) is live and verified.** OP-1…OP-4 and OP-5.1 are
   done. OP-5.2 passed: `fleet/apt-cacher-stack` logged in

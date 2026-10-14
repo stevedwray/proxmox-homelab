@@ -31,9 +31,9 @@ class FullVulnExcludesTests(unittest.TestCase):
         for f in fixtures:
             self.assertIn(f, out)
 
-    def test_zone_with_no_managed_hosts_only_has_fixtures(self):
+    def test_zone_with_no_managed_hosts_has_fixtures_and_always_excluded(self):
         self.assertEqual(sp.full_vuln_excludes("lan", {}, ["192.168.1.113"]),
-                         sorted(["192.168.1.113", *sp.CREDENTIALED_ELSEWHERE["lan"]]))
+                         sorted(["192.168.1.113", *sp.CREDENTIALED_ELSEWHERE["lan"], *sp.FRAGILE_HOSTS["lan"]]))
 
     def test_mikrotik_stays_excluded_on_lan(self):
         self.assertIn("192.168.1.1", sp.full_vuln_excludes("lan", {"lan": ["192.168.1.2"]}, []))
@@ -56,6 +56,21 @@ class FullVulnExcludesTests(unittest.TestCase):
         for zone in sp.ZONES:
             self.assertIn("cidr", zone)
             self.assertNotIn("tier_a_exclude", zone)
+
+
+class FragileHostsTests(unittest.TestCase):
+    def test_switch_is_left_out_of_full_vuln(self):
+        self.assertIn("192.168.1.253", sp.full_vuln_excludes("lan", {"lan": ["192.168.1.2"]}, []))
+
+    def test_switch_is_left_out_of_discovery(self):
+        self.assertIn("192.168.1.253", sp.discovery_excludes("lan", []))
+
+    def test_discovery_keeps_fixtures_and_other_zones_unchanged(self):
+        self.assertEqual(sp.discovery_excludes("lan", ["192.168.1.113"]), ["192.168.1.113", "192.168.1.253"])
+        self.assertEqual(sp.discovery_excludes("ai_seg", []), [])
+
+    def test_other_zones_not_affected(self):
+        self.assertNotIn("192.168.1.253", sp.full_vuln_excludes("mgmt_seg", {"mgmt_seg": ["192.168.20.10"]}, []))
 
 
 class LoadManagedHostsTests(unittest.TestCase):

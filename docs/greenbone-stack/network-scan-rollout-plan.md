@@ -2,7 +2,8 @@
 
 Status: **Phases 1, 2, and 4 (weekly full-vuln scheduling) done and live in
 production, confirmed by a successful unattended overnight run 2026-08-17.**
-Phase 4's daily-discovery half, Phase 5, and Phase 6 remain open — see each
+Phase 4's daily-discovery half is superseded (weekly, 2026-10-14, see the update
+below); Phase 5 (NetBox push, deferred) and Phase 6 remain open — see each
 phase's own status line below.
 
 **Update 2026-10-11 — Phase 3 and the zone list are superseded by
@@ -15,7 +16,19 @@ stale (pve-test-vm "+100" IPs, the destroyed dns-stack). The per-host
 never authenticated; it's now replaced by VLAN-grouped keys that do. The cleanup plan also adds CIDR scans for
 pentest/media/cse/connector/apps zones and the matching Phase 1 firewall
 reach, and drops the NAS and pve-test-vm from the lan Tier A exclusions. Decisions below were made with the operator 2026-08-16; this file is
-the plan to implement them. Read
+the plan to implement them.
+
+**Update 2026-10-14 — cadence and scope amended by
+[docs/gvm-scan-redesign/](../gvm-scan-redesign/README.md) (operator decisions,
+Phase 1 applied the same day).** Discovery is now **weekly** (Thursday night,
+all 12 zones), not daily, and the Phase 4 "daily-discovery half" is closed by that.
+The weekly full-vuln scans now cover **unmanaged addresses only** (managed hosts
+are excluded automatically from the same inventory that builds the credentialed
+targets, so the hand-kept Tier A lists below are no longer used), at 6 hosts at a
+time. Reason: comparing both scan types showed the full-vuln scans added nothing on
+managed hosts; their unique findings were the VLAN gateways and unmanaged
+addresses. NetBox auto-push of discovered devices (Phase 5) is deferred. The text
+below is the original plan and is kept as history. Read
 [README.md](./README.md) and [pentagi-integration.md](./pentagi-integration.md)
 first — this project extends the same `greenbone-stack`, but is a genuinely
 different mission from both of those: this is *standing, scheduled,

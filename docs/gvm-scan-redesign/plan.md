@@ -5,11 +5,15 @@ config from data, Phase 3 turns the timings into a guaranteed night window.
 Each phase is applied with targeted playbook tags (never a full greenbone-stack
 redeploy while a scan runs) and deployed from a worktree of the branch.
 
-## Phase 0 - baseline (in progress)
+## Phase 0 - baseline (done 2026-10-14)
 
-Supervised run of `LAN scan: lan full-vuln` (never run before; started
-2026-10-14 14:51 NZ). Record: duration, size of the unmanaged set, peak Redis
-and memory, any runaway web UI. This sets the Phase 1 `max_hosts` and slot.
+Supervised run of `LAN scan: lan full-vuln` (never run before; started 2026-10-14
+14:51 NZ). Result: stopped after about 2 h 04 min; 21 hosts with results, 19 with
+non-Log findings, none High or Critical; peak 4.3 GB / Redis 673 MB / load 48; no
+runaway web UI. Unmanaged devices with Medium findings: .128, .177, .251. The scan
+stalled on 192.168.1.253, a device that went offline mid-scan, which is why Phase 3
+needs the `DURATION` hard stop. Next: nothing, the lan task has been re-applied with
+the narrow excludes.
 
 ## Phase 1 - one job per scan
 
@@ -32,8 +36,8 @@ and memory, any runaway web UI. This sets the Phase 1 `max_hosts` and slot.
 Acceptance: no managed host appears in any full-vuln target; every zone has a
 scheduled discovery; the gateway `.1` of each VLAN stays in the unmanaged scan.
 
-Status 2026-10-14: steps 1-5 done (applied and verified; lan full-vuln still to be
-re-run through the setup step once the Phase 0 baseline ends). Steps 1-4 were written with unit tests (generator export,
+Status 2026-10-14: steps 1-5 done (applied and verified, including the lan task after
+the Phase 0 baseline). Steps 1-4 were written with unit tests (generator export,
 exclusion logic, playbook tasks, discovery schedules: Thursday 22:00 NZ, 30 minutes
 apart). Step 5 (apply) waits for Phase 0. Details settled while writing it:
 
@@ -69,6 +73,26 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
    `modify_task` for the zone tasks; unmanaged full-vuln keeps "Full and fast"
    (web probing is useful on unknown devices).
 
+### Phase 2 result (2026-10-15): lean config NOT adopted
+
+Config "Full and fast (lean)" (59 families, 176,778 tests, "Web application
+abuses" off) was run against "Full and fast", one host at a time, same credentialed
+target:
+
+| Host | Baseline | Lean | Findings lost |
+|---|---|---|---|
+| 192.168.20.10 (authentik) | 99 min, 216 results | 43 min, 197 | none |
+| 192.168.120.10 (apps_seg) | 34 min, 60 | 21 min, 57 | none |
+| 192.168.60.20 (game_seg) | 30 min, 61 | 22 min, 57 | Medium: Missing 'HttpOnly' Cookie Attribute (HTTP) |
+
+Redis stayed about 350-520MB in every run. Lean loses real web findings (the
+fleet-wide web-abuse tally is cleartext HTTP on infra/media/mgmt, Express NODE_ENV
+development on ai, HttpOnly on game) and saves little on hosts that serve web
+content. Decision: keep "Full and fast" for credentialed tasks. The OOM risk is
+already covered by the Redis cap, `max_hosts` and SPLIT_HOSTS. The config still
+exists on the scanner; `gvm_tuning.py mklean` recreates it and `famhosts` lists
+hosts by family.
+
 ## Phase 3 - guaranteed night window
 
 1. After one full weekly cycle, record every task's duration.
@@ -77,6 +101,14 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
    every weekly schedule.
 3. Recompute slots from the measured durations so everything ends by 06:45 and
    nothing exceeds the concurrency limit (`--max-scans 3`).
+
+## Next actions (in order)
+
+1. (done) Phase 0 baseline recorded; lan task re-applied.
+2. `provision.sh --stack greenbone-stack` (findings-ingest) to ship the coverage fix,
+   then the real `terragrunt plan` drift check from the main checkout.
+3. (done, not adopted) Phase 2 lean config experiment.
+4. After one full weekly cycle, Phase 3 (durations, `DURATION` test, slot recompute).
 
 ## Later (recorded, not scheduled)
 

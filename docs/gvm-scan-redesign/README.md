@@ -1,21 +1,45 @@
 # gvm-scan-redesign
 
 Reshapes the GVM scan program so each scan has one job, nothing is scanned twice,
-and every scan stays inside the night window. Plan: [plan.md](plan.md).
+and every scan stays inside the night window. Plan: [plan.md](plan.md). How to
+run and tune scans: [runbook.md](runbook.md).
 
 ## Status
 
-**2026-10-14: Phase 1 applied** (`--tags scan-program,schedule-program`, from
-`work/gvm-zone-max-hosts`, verified in GVM). 11 of 12 full-vuln tasks now exclude
-their managed hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all
-12 Discovery tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38
-tasks now carry a schedule (14 credentialed, 12 full-vuln, 12 discovery). The
-`lan` full-vuln task was running (the Phase 0 baseline), so the script left its
-target alone: it still has the old excludes and `max_hosts=20` until the setup
-step is re-run after the baseline finishes. Phases 2-3 not started. Decisions
-below are the operator's.
-This follows docs/gvm-coverage-cleanup/ (credentialed scans now work, 14 tasks,
-weekly, VLAN-grouped) and uses what its tuning found.
+**2026-10-14: Phase 1 applied** (`--tags scan-program,schedule-program`, verified in
+GVM; merged to `stable` as #474). 11 of 12 full-vuln tasks now exclude their managed
+hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all 12 Discovery
+tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38 tasks carry a
+schedule (14 credentialed, 12 full-vuln, 12 discovery).
+
+- **Phase 0 baseline done.** `LAN scan: lan full-vuln` (whole /24, old target, started
+  2026-10-14 14:51 NZ) ran about 2 h 04 min before I stopped it: 21 hosts produced
+  results, 19 had non-Log findings, **none High or Critical**. Unmanaged devices with
+  Medium findings: 192.168.1.128 (weak certificate signature, TLS 1.0/1.1),
+  .177 (TLS 1.0/1.1), .251 (DNS cache snooping, weak SSH). It used up to 20 hosts at
+  once (load 48 on 4 vCPUs, peak 4.3 GB, Redis 673 MB, no OOM), which confirms 20 was
+  too many. The last 15 minutes were spent on **192.168.1.253, which had left the
+  network mid-scan**: the scanner waited out about 100 s per web-detection plugin and
+  would have run for hours. A vanished host can therefore stall a task past the
+  night window; the `DURATION` hard stop (Phase 3) is the guard.
+- **.253 is the TP-Link Omada switch ES206X-M2** (MAC A8:29:48:D7:33:BB, firmware 1.0.1
+  Build 20251128; not in NetBox). It was still offline in Omada more than an hour after
+  the scan stopped, and the baseline was the first time anything probed it with web
+  plugins (the 29 August Discovery scan reached it fine). So the scan probably knocked
+  it over; the Omada event log time of disconnect would confirm it. It is now in
+  `FRAGILE_HOSTS` (setup_scan_program.py), left out of both discovery and full-vuln
+  (applied 2026-10-14; lan discovery now excludes 3 addresses, lan full-vuln 13). Omada
+  showed no event log for the switch, so the cause is unconfirmed; it stays excluded.
+  Network gear belongs on a discovery-only tier.
+- The `lan` full-vuln task now has the narrow excludes (12), `max_hosts=6` and its
+  schedule (re-applied after the baseline). All 38 schedules are live.
+- Phase 2 (lean config) is DONE and NOT adopted (2026-10-15): see plan.md Phase 2 result.
+  Phase 3 (night-window `DURATION`) is not started. Next work
+  branches from `stable` (worktree `work/gvm-redesign-phase2`).
+- Tooling for supervised runs is in the repo (`gvm_tuning.py`,
+  `playbooks/gvm-scan-tuning.yml`).
+
+Decisions below are the operator's.
 
 ## Why
 
@@ -41,7 +65,7 @@ Found while tuning (2026-10-13/14):
 
 | Question | Decision |
 |---|---|
-| Lean config (no web-app probing) on managed hosts | **Yes**, after the experiment in Phase 2 shows what it costs |
+| Lean config (no web-app probing) on managed hosts | **No** (decided 2026-10-15 after the experiment: it drops real web findings and saves little where web services exist) |
 | Unmanaged-device vulnerability scanning cadence | **Weekly** |
 | NetBox auto-push of discovered devices | **Later** (deferred, not in this plan) |
 | Grafana metrics for the scan host | **Later** (deferred; follow-up 8 in docs/gvm-coverage-cleanup/README.md) |
@@ -51,7 +75,7 @@ Found while tuning (2026-10-13/14):
 
 | Scan | Targets | Config | Cadence |
 |---|---|---|---|
-| Credentialed (14 tasks, unchanged) | managed hosts | lean (after Phase 2) | weekly, VLAN slots |
+| Credentialed (14 tasks, unchanged) | managed hosts | Full and fast (lean rejected) | weekly, VLAN slots |
 | Discovery (12 tasks, now scheduled) | whole zone | Discovery | weekly |
 | Full-vuln (12 tasks, narrowed) | **unmanaged addresses only** (zone CIDR minus managed hosts minus fixtures) | Full and fast | weekly, about 6 hosts at once |
 
