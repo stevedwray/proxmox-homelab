@@ -364,7 +364,7 @@ stops only at one of the stop points in rule 1.
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | done 2026-10-14 (batch run complete; no crash/GPU error; 7/7; restored initial model; D9 pending) |
 | ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
-| ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | todo (first retry failed at guard; unchanged-config fix ready) |
+| ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b, D9 = b) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
@@ -1306,6 +1306,19 @@ the status check fetched refs and published status as the playbook specifies.
 The failed guard did not reload a model. ctx-10g0 fixes verification of an
 unchanged config locally; deployment completion still awaits an approved
 retry and the final 24/0 count gate.
+
+Result (successful retry, 2026-10-14): after a revised preflight and explicit
+operator approval, command 1 printed `SECRETS-OK`. The playbook completed
+with `ok=15 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0`.
+The corrected guard reconstructed the installed generator's expected config,
+verified exact bytes and all 16 required IDs, and printed
+`GATE OK: all 16 ctx-test entries and 0 extra present; verified unchanged -- no write or reload`.
+The config contains 52 entries. Command 4 returned 24 small-batch flag
+matches (16 paired test entries plus 8 HIP variants) and 0 ctx131k-b512
+matches. All gates pass: D9=b is verified deployed. No config write or model
+reload was needed; the playbook's status check fetched refs and published
+status. No build or default-model change, and no full run was started.
+Next: ctx-11 under a separate preflight and ctx-bug-run-full approval.
 
 #### ctx-11-full-run
 

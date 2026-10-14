@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **batch confirmation reviewed; D9 pending** (2026-10-14). The operator settled
+Status: **D9 deployed; full run pending** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -16,8 +16,8 @@ is `/storage/artifacts/framework-ctx-bugs/20261014T000806Z` on Framework.
 The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
 were written, and `qwen3-coder-next-upstream` was reloaded. Local preparation
-ctx-10b/ctx-10c/ctx-10e and the ctx-10d confirmation are complete. The full
-run waits for the operator's D9 batch-setting decision.
+ctx-10b/ctx-10c/ctx-10e and the ctx-10d confirmation are complete. D9=b is deployed and
+verified; ctx-11's full run needs its own preflight and approval.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -150,7 +150,7 @@ solely to smaller batches. This is one successful run, not a guarantee for
 other sizes, models or seeds. A production-catalogue change remains a
 separate task.
 
-D9 remains the operator's decision before ctx-11:
+D9 options considered before ctx-11:
 
 | Option | Effect |
 | --- | --- |
@@ -158,10 +158,14 @@ D9 remains the operator's decision before ctx-11:
 | b. Batch 512/ubatch 128 for every test cell | Keeps paired cells comparable using the setting that succeeded here; may slow prompt processing and requires a new local catalogue change plus approved deployment. |
 | c. Defaults, skip Laguna upstream F at 96k/131k | Avoids those known-risk requests but leaves a context-fill coverage gap. |
 
-Recommendation: b, with the stated evidence limits. No D9 option was
-selected and no full run was started during this review.
+D9=b was subsequently selected by the operator and verified deployed in
+ctx-10g on 2026-10-14. All required test entries use batch 512/ubatch 128;
+the final count gate returned 24 flagged entries including HIP variants and
+zero redundant ctx131k-b512 entries. The 52-entry generated config already
+matched exactly; verification needed no write or model reload. The playbook
+passed with failed=0 and changed=0. The full run has not started.
 
-Remaining work is ctx-11 through ctx-14, after resolving D9, in
+Remaining work is ctx-11 through ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
