@@ -337,8 +337,9 @@ prompt each time is:
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | todo |
 | ctx-10b-variant-option | local | — | todo |
 | ctx-10c-batch-variant | local | — | todo |
+| ctx-10e-drop-f-count | local | — | todo |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (waits for D8 and D9) |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -881,7 +882,9 @@ over ssh. Then update the README's "Pilot" section with the regraded flags.
 |---|---|
 | a. Keep everything (D4 as is) | Qwen's S4 and F will keep exhausting 16k; each such request costs 11–16 min, so the full run grows by roughly 1 h per Qwen cell (~8 h in total). F tells us little about Qwen. |
 | b. Drop the count question from F only (keep it in S3, where enumerating ~200 records fits) | F measures the needles at depth for both models; fewer runaways. Needs a small generator change and new F prompts (the pilot's F results are then not comparable). |
-| c. (b) plus send `chat_template_kwargs {"reasoning_effort": "high"}` for Qwen | Shorter Qwen runs; S4 likely answers. Changes D4 (no longer testing the template default). |
+| c. (b) plus send `chat_template_kwargs {"reasoning_effort": "medium"}` (or `low`) for Qwen; its template maps `high` to `xhigh` | Shorter Qwen runs; S4 likely answers. Changes D4 (no longer testing the template default). |
+
+**Decided 2026-10-14: b** (see the Decisions table).
 
 #### ctx-10b-variant-option
 
@@ -952,12 +955,57 @@ gates:
 
 Result: —
 
+#### ctx-10e-drop-f-count
+
+```yaml
+id: ctx-10e-drop-f-count
+title: D8 = b - remove the count question from Part B (F) only
+depends_on: [ctx-10c-batch-variant]
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/gen_prompts.py, give qa_prompt() a flag
+  (e.g. with_count=True) and build the F template with with_count=False:
+  F asks the first 7 questions (5 needles, 2 absent facts), its expected
+  list has 7 items, and the answer format asks for a 7-item JSON list.
+  S3 keeps all 8 questions and must stay byte-identical. In detectors.py
+  the S3/F `json-list` check compares with len(fixture['expected']) instead
+  of 8. In ctx_bugs.py the report's fill table shows correct/len(expected)
+  (header "Correct"). Regenerate prompts/ with gen_prompts.py and record
+  the change in the harness README and in plan.md "Part B".
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+    - docs/ctx-bug-test/plan.md
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0, including new tests: F fixtures have 7 expected answers and no count question; S3 still has 8"
+    critical: true
+  - id: s1-s5-unchanged
+    cmd: >
+      python3 -c "import json,subprocess;old=json.loads(subprocess.check_output(['git','show','HEAD:scripts/framework-ctx-bugs/prompts/manifest.json']));
+      new=json.load(open('scripts/framework-ctx-bugs/prompts/manifest.json'));
+      assert all(old['prompts'][k]['sha256']==new['prompts'][k]['sha256'] for k in ('S1','S2','S3','S4','S5'));print('ok')"
+    expect: "ok"
+    critical: true
+  - id: deterministic
+    cmd: "python3 scripts/framework-ctx-bugs/gen_prompts.py && git diff --exit-code -- scripts/framework-ctx-bugs/prompts/S1.json scripts/framework-ctx-bugs/prompts/S2.json scripts/framework-ctx-bugs/prompts/S3.json scripts/framework-ctx-bugs/prompts/S4.json scripts/framework-ctx-bugs/prompts/S5.json"
+    expect: "exit 0"
+    critical: true
+```
+
+ctx-10d's rsync then carries this to Framework, so the confirmation run
+already uses the 7-question F. The pilot's F results (8 questions) are not
+comparable with later F results; the report says so.
+
+Result: —
+
 #### ctx-10d-batch-confirm
 
 ```yaml
 id: ctx-10d-batch-confirm
 title: Confirm the GPU hang goes away with batch 512 / ubatch 128 (D5)
-depends_on: [ctx-10c-batch-variant]
+depends_on: [ctx-10e-drop-f-count]
 runs_on: framework
 approval: ctx-bug-batch-confirm
 preflight: >
@@ -1017,7 +1065,11 @@ change (outside this test) adding them to the production catalogue.
 
 #### ctx-11-full-run
 
-Same shape as ctx-09: command
+Same shape as ctx-09. First copy the harness so Framework runs exactly
+the repo's version
+(`rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/`),
+apply D9 (if it changes the catalogue, that is a local catalogue step plus
+a ctx-08-style guarded deploy first), then run
 `~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
 (all 16 cells, ~17–20 h, D6 window), approval `ctx-bug-run-full`. Review
 it like ctx-10 into `docs/ctx-bug-test/artifacts/full/` and a "Full run"
@@ -1069,6 +1121,7 @@ The plan above already follows these.
 | D5 | Vulkan batch sizes | Defaults. If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
 | D6 | When | The pilot (~2.5 h) first, in a quiet slot, and its results checked; then the full run over one night plus a day, or two nights |
 | D7 | Part B (context fill) | Included |
+| D8 (2026-10-14, after the pilot) | Qwen budget exhaustion on S4/F; F's count question | **b**: remove the count question from F only (it stays in S3). Qwen keeps the template default effort (D4 unchanged); S4 exhausting 16k stays a finding. Note: Qwen's template maps `reasoning_effort: high` to `xhigh`, so a lower effort would have meant `medium` or `low` |
 
 ## Out of scope
 
