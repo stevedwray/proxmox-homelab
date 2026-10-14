@@ -366,7 +366,7 @@ stops only at one of the stop points in rule 1.
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
 | ctx-10h-harness-resilience | local | — | done 2026-10-14 (swap identity/reachability, pending infrastructure requests, restore waits/retries; 75 tests pass) |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | in progress 2026-10-14 (fresh retry 20261014T071722Z; running; upgrade timer paused, restore on exit) |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | done 2026-10-15 (288 requests reviewed; no crash/GPU/evidence errors; F all 7/7; timer active) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -1439,12 +1439,31 @@ completed=0, with run directory
 Qwen Nathanw ctx32k and records the swap readiness wait. Start gate passed.
 The failed first run remains separate partial evidence, not resumed.
 
-**Pending D10 cleanup:** apt-daily-upgrade.timer is currently paused.
+**D10 cleanup at launch (subsequently completed below):** apt-daily-upgrade.timer was paused.
 When this run is terminal (complete, failed or interrupted), execute the
 specified timer-start command and verify `active` before any other result
 review or later step. Timer restoration has not yet occurred. Full evidence
 review and reproduction remain pending. No additional approval was requested,
 following the operator's autonomous continuation instruction.
+
+Result (review, 2026-10-15): all 288 requests and four probes reviewed;
+16 cells complete in 11 h 00 min. No crash/GPU/evidence errors or recovery
+attempt. Initial model restored. D10 timer start was executed immediately
+on observing completion and returned `active`; a subsequent read confirms
+active. Evidence copied under ignored artifacts/full/. Raw/checkpoint
+records, prompt hashes, fit gates and build/slot/swap identities match.
+All fixed-prompt answers AND reasoning are byte-identical across context
+sizes for every seed. F is 7/7 on all 28 responses. The README Full run
+section lists all 124 automated findings grouped without omitting flags.
+
+Review issue before ctx-12: 16 Laguna fork S4 "build bug" entries compare
+2,048-token short mode with upstream's 16,384-token budget and are confounded.
+The 88 "needs three more seeds" entries include strict numeric-string count
+failures and benign instruction/path shingle matches, as documented in the
+README. Recommend a local budget-aware attribution correction and regrade
+before committing to all-16-cell reproduction. No code/evidence changes or
+reproduction/model loads were performed during review. Operator decision
+needed on that new local fix; original findings remain preserved.
 
 #### ctx-12-reproduce
 

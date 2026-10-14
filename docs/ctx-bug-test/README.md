@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **full run running** (2026-10-14). The operator settled
+Status: **full run reviewed; attribution correction pending** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -174,7 +174,130 @@ matched exactly; verification needed no write or model reload. The playbook
 passed with failed=0 and changed=0. The first full run failed after a daily-upgrade service restart; the fresh
 07:17:22 UTC retry is running. Results are pending.
 
-Remaining work is ctx-11 through ctx-14 in
+## Full run (reviewed 2026-10-15)
+
+Run `20261014T071722Z` completed all 16 cells: 288 requests and four saved
+Laguna fork triggering probes. It ran from 20:17 NZDT on 14 October to
+07:17 NZDT on 15 October (11 h 00 min), below the 20–24 h estimate.
+No crash, GPU error, evidence error or infrastructure recovery occurred.
+All raw records match JSONL, all saved prompt hashes/fit checks and
+build/alias/slot identities pass, and request swap identities are unchanged.
+`qwen3-coder-next-upstream` was restored successfully. The agent restored
+`apt-daily-upgrade.timer` and verified it active immediately after observing
+completion; the watcher had not yet reached its next scheduled poll.
+
+Evidence is copied locally to ignored `artifacts/full/`. The original
+Framework run remains unchanged at
+`/storage/artifacts/framework-ctx-bugs/20261014T071722Z/`.
+
+| Cell | Requests | Request minutes | Outcome |
+| --- | ---: | ---: | --- |
+| qwen3.8-flash-next-q4-nathanw-ctx32k | 22 | 60.13 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-upstream-ctx32k | 22 | 54.08 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-nathanw-ctx64k | 22 | 63.02 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-upstream-ctx64k | 22 | 59.62 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-nathanw-ctx96k | 22 | 66.32 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-upstream-ctx96k | 22 | 66.41 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-nathanw-ctx131k | 22 | 69.81 | S3 representation/repetition flags; all S4 capped; F passes |
+| qwen3.8-flash-next-q4-upstream-ctx131k | 22 | 74.07 | S3 representation/repetition flags; all S4 capped; F passes |
+| laguna-s-2.1-nathanw-ctx32k | 6 | 3.50 | S1/S2 hidden tokens; S3 count absent; short S4 capped; F passes |
+| laguna-s-2.1-upstream-ctx32k | 22 | 14.22 | S3 counting/representation errors; S4 short sections/path shingle; F passes |
+| laguna-s-2.1-nathanw-ctx64k | 6 | 5.54 | S1/S2 hidden tokens; S3 count absent; short S4 capped; F passes |
+| laguna-s-2.1-upstream-ctx64k | 22 | 19.77 | S3 counting/representation errors; S4 short sections/path shingle; F passes |
+| laguna-s-2.1-nathanw-ctx96k | 6 | 8.16 | S1/S2 hidden tokens; S3 count absent; short S4 capped; F passes |
+| laguna-s-2.1-upstream-ctx96k | 22 | 27.23 | S3 counting/representation errors; S4 short sections/path shingle; F passes |
+| laguna-s-2.1-nathanw-ctx131k | 6 | 11.36 | S1/S2 hidden tokens; S3 count absent; short S4 capped; F passes |
+| laguna-s-2.1-upstream-ctx131k | 22 | 36.74 | S3 counting/representation errors; S4 short sections/path shingle; F passes |
+
+Request minutes exclude model loads, prompt construction and restoration.
+
+For every S1–S5 prompt/run on each build, **both answer and reasoning are
+byte-identical across all four contexts**, including sampled runs. No
+context-size divergence is observed in this matrix. This does not establish
+behavior for other prompts, quantizations, build versions or context sizes.
+
+All 28 F responses score 7/7 (196/196 answers): five relocated needles and
+both absent facts. F prompts meet each exact tokenizer target and paired
+builds use the same bytes per model/size. There is no observed retrieval
+degradation or absent-fact hallucination. Laguna server usage reports one
+more prompt token than /tokenize at each F size, as in the earlier batch
+confirmation; the recorded fit gate uses /tokenize and this discrepancy
+is retained in evidence. The original eight-question pilot F is not an
+accuracy comparator.
+
+Qwen S4 exhausts 16,384 tokens on all 32 responses: 24 have no final answer
+and eight have a partial runbook. Reasoning drafts/recounts the runbook and
+repeats shingles; no exact-tail loop is flagged. This is a budget/output
+failure on both builds and all sizes. S1/S2/S5 pass on both Qwen builds.
+
+Qwen S3 counts the six matching records correctly, but Nathanw seed 2 and
+upstream seed 3 return the quoted string `"6"`. Their `wrong:q8` flags are
+strict numeric-type failures, not incorrect arithmetic. Nathanw seed 1
+repeats the instruction phrase "JSON list of eight answers in question
+order" four times in reasoning while giving a correct final answer; its
+repetition flag meets the mechanical threshold but does not show a stuck
+model. These outcomes are identical at every context size.
+
+Laguna Nathanw S1 has 758 generated versus 342 visible tokens and exposes
+`</think>` plus reasoning in content; S2 has 289 versus 51 tokens but returns
+valid JSON/END. This is consistent with the known fork hidden-token/parser
+failure; aggregate evidence does not identify hidden token IDs. All four
+saved full-budget S1 probes show the same failure before short mode begins.
+Upstream S1/S2 pass. Laguna S3 answers all needles/absent facts correctly,
+but Nathanw gives `NOT IN LOG` for the count. Upstream gives `"11"` greedily,
+8 on seed 2, and `"6"` on seed 3 (seed 1 gives numeric 6). Some failures
+are counting errors and some representation errors. S5 passes everywhere.
+
+Laguna upstream S4 has 12 sections and its end marker, but at least one
+section is below 150 words on every seed (e.g. greedy section 2: 143).
+Seed 2 repeats the tokenized package path `/opt/maple/packages/maple-release-2.3.0.tar.gz`
+four times. This trips the shingle detector without a repeated sentence or
+stuck generation. Fork S4 is cut off by its 2,048-token short-mode budget.
+
+**Attribution error requiring resolution before ctx-12:** findings.json
+labels 16 fork S4 structural/runaway flags as build bugs while comparing
+2,048-token fork requests with 16,384-token upstream requests. Those labels
+are not supported by a controlled build comparison. The truncation itself
+is real; its attribution is confounded by the deliberately smaller cap.
+No saved results or detector code were changed during this review.
+
+### Candidate inventory
+
+The table expands to every one of the 124 entries in saved findings.json.
+Each listed flag occurs at **all four contexts** (32768, 65536, 98304,
+131072); count is flags × contexts. Labels below are the automated labels,
+not endorsements of their causal attribution.
+
+| Model | Build | Prompt | Automated label | Flags at each context | Count |
+| --- | --- | --- | --- | --- | ---: |
+| qwen3.8-flash-next-q4 | nathanw | S3 | needs three more seeds | repetition, wrong:q8 | 8 |
+| qwen3.8-flash-next-q4 | upstream | S3 | needs three more seeds | wrong:q8 | 4 |
+| qwen3.8-flash-next-q4 | nathanw | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 28 |
+| qwen3.8-flash-next-q4 | upstream | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 28 |
+| laguna-s-2.1 | nathanw | S1 | build bug | hidden-tokens, if-fail:only-numbers, template-leak, wrong:sanity | 16 |
+| laguna-s-2.1 | nathanw | S2 | build bug | hidden-tokens | 4 |
+| laguna-s-2.1 | nathanw | S3 | needs three more seeds | wrong:q8 | 4 |
+| laguna-s-2.1 | upstream | S3 | needs three more seeds | wrong:q8 | 4 |
+| laguna-s-2.1 | nathanw | S4 | build bug | if-fail:end-marker, if-fail:sections, if-fail:titles, runaway | 16 |
+| laguna-s-2.1 | nathanw | S4 | needs three more seeds | if-fail:word-counts | 4 |
+| laguna-s-2.1 | upstream | S4 | needs three more seeds | if-fail:word-counts, repetition | 8 |
+
+Of the 36 automated build-bug entries, 20 are Laguna fork S1/S2 flags
+consistent with its known failure, and 16 are the confounded S4 labels.
+The other 88 candidates say "needs three more seeds" and cover all 16
+cells. Before spending another reproduction run on those cells, resolve
+the budget-aware attribution error and decide how to describe the
+representation-only/path-shingle flags. No reproduction run has started.
+
+Raw paths are `<Framework run>/raw/<cell>/<prompt>-<run>.json`; e.g.
+`raw/laguna-s-2.1-nathanw-ctx32k/S1-greedy.json`,
+`raw/qwen3.8-flash-next-q4-nathanw-ctx32k/S4-greedy.json` and
+`raw/laguna-s-2.1-upstream-ctx32k/S4-seed2.json` under the run above.
+Candidate reproduction must retain the selected build/context and use
+seeds 4/5/6 as ctx-12 specifies. D1's fresh fork candidate cell remains
+a separately scoped follow-up; this review does not build or promote it.
+
+Remaining work is ctx-12 through ctx-14 after resolving the attribution issue in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
