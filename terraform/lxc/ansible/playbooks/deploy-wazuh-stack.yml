@@ -214,7 +214,8 @@
     wazuh_compose_dir: /opt/wazuh-stack
     wazuh_indexer_data_dir: /var/lib/wazuh-indexer-data   # extra_mount path from stack.yaml
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-    wazuh_image_tag: "4.14.7"   # current stable as of 2026-08-29 -- keep in sync, do not use the 5.0 beta line
+    wazuh_image_tag: "4.14.8"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
+    wazuh_alert_retention_days: 90   # ISM delete age for wazuh-alerts-4.x-* and the manager-side raw log cleanup (docs/wazuh-tuning)
     wazuh_indexer_admin_password: >-
       {{
         lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD')
@@ -1122,6 +1123,86 @@
         - name: Fail the play (the new rules were not loaded)
           ansible.builtin.fail:
             msg: local_rules.xml failed validation; the previous copy was restored and no restart was done.
+
+    # Retention (docs/wazuh-tuning/plan.md Phase 1c). Alert indices were never deleted. An ISM
+    # policy deletes wazuh-alerts-4.x-* after wazuh_alert_retention_days; its ism_template attaches
+    # it to every NEW daily index, and the add call below attaches it to the existing ones (a
+    # repeat call is harmless: already-managed indices are reported as failures and ignored).
+    # The manager's own raw logs (/var/ossec/logs/alerts, archives) are not indices and are never
+    # rotated out by Wazuh, so a cron job on the host prunes them to the same age.
+    - name: Read the alert retention ISM policy
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_plugins/_ism/policies/wazuh-alerts-retention"
+        method: GET
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+        return_content: true
+      register: wazuh_ism_policy
+      tags: [wazuh_retention]
+
+    - name: Create or update the alert retention ISM policy
+      ansible.builtin.uri:
+        url: >-
+          https://127.0.0.1:9200/_plugins/_ism/policies/wazuh-alerts-retention{{
+            '' if wazuh_ism_policy.status == 404 else
+            '?if_seq_no=' ~ wazuh_ism_policy.json._seq_no ~ '&if_primary_term=' ~ wazuh_ism_policy.json._primary_term }}
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          policy:
+            description: "Delete wazuh-alerts-4.x-* after {{ wazuh_alert_retention_days }} days (docs/wazuh-tuning)"
+            default_state: hot
+            states:
+              - name: hot
+                actions: []
+                transitions:
+                  - state_name: delete
+                    conditions:
+                      min_index_age: "{{ wazuh_alert_retention_days }}d"
+              - name: delete
+                actions:
+                  - delete: {}
+                transitions: []
+            ism_template:
+              - index_patterns: ["wazuh-alerts-4.x-*"]
+                priority: 100
+      when: >-
+        wazuh_ism_policy.status == 404 or
+        (wazuh_ism_policy.json.policy.states[0].transitions[0].conditions.min_index_age
+         != (wazuh_alert_retention_days | string) ~ 'd')
+      tags: [wazuh_retention]
+
+    - name: Attach the policy to the existing alert indices
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_plugins/_ism/add/wazuh-alerts-4.x-*"
+        method: POST
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          policy_id: wazuh-alerts-retention
+        return_content: true
+      register: wazuh_ism_attach
+      changed_when: (wazuh_ism_attach.json.updated_indices | default(0)) > 0
+      tags: [wazuh_retention]
+
+    - name: Prune the manager's raw alert and archive logs to the same age
+      ansible.builtin.copy:
+        dest: /etc/cron.d/wazuh-log-retention
+        mode: "0644"
+        content: |
+          # managed by deploy-wazuh-stack.yml (docs/wazuh-tuning Phase 1c): Wazuh never deletes these
+          30 3 * * * root docker exec wazuh-stack-manager find /var/ossec/logs/alerts /var/ossec/logs/archives -type f -mtime +{{ wazuh_alert_retention_days }} -delete
+      tags: [wazuh_retention]
 
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:

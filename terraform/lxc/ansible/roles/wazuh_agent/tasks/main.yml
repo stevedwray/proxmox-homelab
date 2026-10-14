@@ -106,15 +106,13 @@
     filename: wazuh
     state: present
 
-# Unversioned install (latest current 4.x stable), not pinned to the
-# manager's exact 4.14.7 patch -- Wazuh's own compatibility guidance is
-# matching MAJOR.MINOR across agent/manager, not exact patch; pinning a
-# specific patch here risks apt install failing outright once
-# packages.wazuh.com's "stable" component moves past it, for a
-# compatibility guarantee it isn't actually buying.
+# Pinned to wazuh_agent_version (docs/wazuh-tuning Phase 1b): the manager must be at least as
+# new as every agent, and an unversioned install pulled 4.14.8 onto agents while the manager was
+# 4.14.7. Keep this equal to the manager's wazuh_image_tag; a test enforces it. state: present
+# leaves an agent that already has this version alone; a newer one fails the task (apt will not downgrade).
 - name: Install the wazuh-agent package
   ansible.builtin.apt:
-    name: wazuh-agent
+    name: "wazuh-agent{{ '=' ~ wazuh_agent_version ~ '-1' if wazuh_agent_version | length > 0 else '' }}"
     state: present
     update_cache: true
   register: wazuh_agent_installed

@@ -246,9 +246,13 @@ def mode_retention(_args):
         pol = [p["_id"] for p in indexer("_plugins/_ism/policies")["policies"]]
     except Exception as exc:  # noqa: BLE001 -- 404 when the ISM plugin has no policies
         pol = [f"none ({exc})"]
+    try:
+        managed = indexer("_plugins/_ism/explain/wazuh-alerts-4.x-*")["total_managed_indices"]
+    except Exception as exc:  # noqa: BLE001
+        managed = f"unknown ({exc})"
     idx = indexer("_cat/indices/wazuh-alerts-4.x-*?format=json&h=index,creation.date,store.size,docs.count&bytes=mb&s=index")
     shards = indexer("_cluster/health")
-    return {"ism_policies": pol, "alert_indices": len(idx), "oldest": idx[0]["index"] if idx else None,
+    return {"ism_policies": pol, "alert_indices": len(idx), "ism_managed_alert_indices": managed, "oldest": idx[0]["index"] if idx else None,
             "newest": idx[-1]["index"] if idx else None, "alert_mb": sum(int(i["store.size"] or 0) for i in idx),
             "shards": shards["active_shards"], "indices": [(i["index"], int(i["docs.count"]), int(i["store.size"] or 0)) for i in idx], "allocation": indexer("_cat/allocation?format=json&bytes=mb")}
 

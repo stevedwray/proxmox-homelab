@@ -132,6 +132,18 @@ still recreates all three containers whenever the compose file changes, hence th
 - Newly visible in the remaining noise: rule 550 FIM (about 26k/day, Phase 2a), and rules 87915/87916
   (Docker volume mounted/unmounted on `/etc/filebeat`, 66 each per 10 min), which need a look in Phase 2.
 
+## Decisions made (2026-10-15)
+
+- Health-check events: drop silently (1d, done).
+- Retention: **90 days** for alert indices and the manager's raw logs (1c). Estimated cost
+  4-6GB indexer and 3.6-5.4GB manager logs; the one-shard-per-index template for new indices is a
+  separate follow-up step (175 shards today, about 330 at 90 days).
+- Manager upgrade: **4.14.8** (the fleet's version, 23 Sep 2026; includes an analysisd deadlock fix),
+  not 4.14.9 (released 14 Oct). Agent role now pins `wazuh_agent_version` to the same value; a unit
+  test keeps the two equal. wazuh-docker v4.14.7 -> v4.14.8 changed only the three image tags in the
+  single-node compose, so the transcribed configs stay valid. Backup: PBS nightly (11:00, snapshot,
+  `pbs-iscsi`), operator confirms a fresh backup of CT 40015 before the upgrade.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
