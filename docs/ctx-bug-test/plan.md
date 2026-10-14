@@ -342,7 +342,9 @@ prompt each time is:
 | ctx-10c-batch-variant | local | — | done 2026-10-14 (exact Laguna b512 variant; JSON/diff gates and 42 llama-builds tests pass) |
 | ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | done 2026-10-14 (batch run complete; no crash/GPU error; 7/7; restored initial model; D9 pending) |
-| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b; waits for D9) |
+| ctx-10f-batch-all | local | — | todo (D9 = b) |
+| ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | todo |
+| ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b, D9 = b) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
@@ -1141,15 +1143,97 @@ into the README and stop:
 If ctx-10d shows the small batches remove the hang, also consider a separate
 change (outside this test) adding them to the production catalogue.
 
+#### ctx-10f-batch-all
+
+```yaml
+id: ctx-10f-batch-all
+title: D9 = b - small batches in every ctx test variant (repo only)
+depends_on: [ctx-10d-batch-confirm]
+runs_on: local
+change: >
+  In ansible/00-initial-setup/files/llama-swap/models.json, for both
+  qwen3.8-flash-next-q4 and laguna-s-2.1: give each of the variants ctx32k,
+  ctx64k, ctx96k and ctx131k the setting
+  "extra_args": ["--batch-size", "512", "--ubatch-size", "128"]
+  (keep ctx_size and parallel), and remove laguna-s-2.1's ctx131k-b512
+  variant (now identical to ctx131k). Change nothing else.
+scope:
+  allowed_paths:
+    - ansible/00-initial-setup/files/llama-swap/models.json
+gates:
+  - id: json
+    cmd: >
+      python3 -c "import json;m={x['id']:x for x in json.load(open('ansible/00-initial-setup/files/llama-swap/models.json'))['models']};
+      e=['--batch-size','512','--ubatch-size','128'];
+      assert all([v['suffix'] for v in m[k]['variants']]==['ctx32k','ctx64k','ctx96k','ctx131k'] and all(v['settings']=={'ctx_size':v['settings']['ctx_size'],'parallel':1,'extra_args':e} for v in m[k]['variants']) for k in ('qwen3.8-flash-next-q4','laguna-s-2.1'));
+      assert sum(bool(x.get('variants')) for x in m.values())==2;print('ok')"
+    expect: "ok"
+    critical: true
+  - id: diff-scope
+    cmd: "git diff --stat -- ansible/ | tail -1"
+    expect: "1 file changed"
+    critical: true
+  - id: llama-builds-tests
+    cmd: "python3 -m unittest discover -s ansible/00-initial-setup/files/llama-builds -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: —
+
+#### ctx-10g-batch-deploy
+
+```yaml
+id: ctx-10g-batch-deploy
+title: Deploy the small-batch test variants
+depends_on: [ctx-10f-batch-all]
+runs_on: framework
+approval: ctx-bug-batch-all
+preflight: >
+  Target: Framework (production). Command 1 read-only (secrets load).
+  Command 2 installs the edited models.json (playbook; no reload).
+  Command 3 rewrites llama-swap's config only if all 16 ctx ids are listed
+  (stops the loaded model for 1-2 minutes, then reloads it); the
+  laguna-s-2.1-upstream-ctx131k-b512 entry disappears. Command 4 is
+  read-only: counts entries carrying the small-batch flags. Out of scope:
+  non-test entries, builds, the default model.
+commands:
+  - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --list >/dev/null && echo SECRETS-OK"
+  - "TASK_APPROVAL=ctx-bug-batch-all ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
+  - "ssh steve@framework.gibbsgreatly.xyz 'bash -s' < scripts/framework-ctx-bugs/guarded_swap_config.sh"
+  - "ssh steve@framework.gibbsgreatly.xyz 'grep -c -- \"--ubatch-size 128\" ~/llama-swap/config.yaml; grep -c ctx131k-b512 ~/llama-swap/config.yaml; true'"
+gates:
+  - id: secrets
+    cmd: "(command 1)"
+    expect: "SECRETS-OK"
+    critical: true
+  - id: playbook
+    cmd: "(command 2)"
+    expect: "PLAY RECAP with failed=0"
+    critical: true
+  - id: guarded-write
+    cmd: "(command 3)"
+    expect: "'GATE OK', 'llama-swap config written', '<model> loaded again'"
+    critical: true
+  - id: flags
+    cmd: "(command 4)"
+    expect: "first count 24 (16 nathanw/upstream test entries plus 8 unused HIP ones), second count 0"
+    critical: true
+```
+
+Result: —
+
 #### ctx-11-full-run
 
 Same shape as ctx-09. First copy the harness so Framework runs exactly
 the repo's version
 (`rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/`),
-apply D9 (if it changes the catalogue, that is a local catalogue step plus
-a ctx-08-style guarded deploy first), then run
+check D9 is deployed (ctx-10g done), then run
 `~/framework-ctx-bugs/run.sh --builds-json /storage/artifacts/framework-ctx-bugs/build-expectations-20261014.json`
-(all 16 cells, ~17–20 h, D6 window), approval `ctx-bug-run-full`. Review
+(all 16 cells, ~20–24 h with D9's small batches, D6 window: start it in
+the evening so it runs overnight and through the next day), approval
+`ctx-bug-run-full`. The preflight must say :8080 serves only test entries
+for the whole run. Review
 it like ctx-10 into `docs/ctx-bug-test/artifacts/full/` and a "Full run"
 section in the README listing every candidate finding from findings.json.
 
@@ -1199,6 +1283,7 @@ The plan above already follows these.
 | D5 | Vulkan batch sizes | Defaults. If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
 | D6 | When | The pilot (~2.5 h) first, in a quiet slot, and its results checked; then the full run over one night plus a day, or two nights |
 | D7 | Part B (context fill) | Included |
+| D9 (2026-10-14, after ctx-10d) | Vulkan batch sizes for the full run | **b**: `--batch-size 512 --ubatch-size 128` in all 16 test cells (both models, both builds, every size), so build and context-size comparisons keep identical settings. ctx-10d ran clean (7/7, no GPU error) but read the prompt at 144.6 tok/s, about 4x slower than the pilot's defaults; full run estimate rises to ~20–24 h. Supersedes D5's "defaults" for the test |
 | D8 (2026-10-14, after the pilot) | Qwen budget exhaustion on S4/F; F's count question | **b**: remove the count question from F only (it stays in S3). Qwen keeps the template default effort (D4 unchanged); S4 exhausting 16k stays a finding. Note: Qwen's template maps `reasoning_effort: high` to `xhigh`, so a lower effort would have meant `medium` or `low` |
 
 ## Out of scope
