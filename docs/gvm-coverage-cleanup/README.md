@@ -218,19 +218,17 @@ Update them when the plan is executed (plan.md OP-5 step 5).
   edge_seg was re-run; Wazuh had already shown ~225 successful shared-key
   `gvm-scan` logins on each edge host with zero `su` sessions.
 - **2026-10-12, close-out:** docs merged to `stable`.
-- **2026-10-13, scheduled scans PAUSED during capacity tuning.** All 25 task
-  schedules were removed in GVM (13 credentialed `Weekly VLAN scan: *` plus the
-  12 uncredentialed `LAN scan: <zone> full-vuln weekly`), verified 0 remaining.
-  The repo still declares them, so a greenbone-stack deploy that runs the
-  `credential-program` or `schedule-program` steps re-attaches them. While
-  paused, the daily coverage check reports every credentialed host as
-  `unscheduled` and exits 3; that is expected. Restore once tuning is done with
-  the full greenbone-stack deploy (or `--tags credential-program,schedule-program`),
-  and check with a task listing that schedules are back. mgmt_seg runaway root cause (2026-10-14): the OpenBao UI (192.168.20.16:8200)
-  returns the same ~1MB page for any `/ui/` path; the web-app probes cached
-  thousands of copies in Redis. Fixed by scanning .16 as its own task without 8200
-  (`SPLIT_HOSTS` in setup_credentials.py; docs/greenbone-stack/README.md). Tuning
-  findings earlier:
-  Redis (no memory cap) ran away on mgmt_seg at 4 and at 2 hosts and OOM-killed
-  the 8GB/12GB container; each mgmt host scans cleanly alone (29-31 min); Redis is
-  now capped at 6GB (`--maxmemory 6gb`), container is 4 cores / 12GB.
+- **2026-10-14, schedules RESTORED after the supervised checks passed.** All
+  scheduled scans were paused 2026-10-13 during capacity tuning and re-attached
+  2026-10-14 with `--tags credential-program,schedule-program` from
+  `work/gvm-zone-max-hosts` (26 scheduled tasks: 14 credentialed, 12 LAN
+  full-vuln). Passing criteria met: mgmt_seg 8 hosts in 3 h 12 min, all
+  authenticated, peak container memory 3.6 GB, peak Redis 538 MB, no OOM;
+  mgmt_seg (openbao) 24 min, `lsc=1`, Redis 351 MB; MikroTik 71 min, `ok=3` with one
+  `SSH Login Failed` alongside the successes. Root cause of the earlier runaway:
+  OpenBao's UI (192.168.20.16:8200) returns a ~1MB page for any `/ui/` path and
+  the web-app probes cached thousands of copies in Redis; .16 is now its own task
+  without port 8200 (`SPLIT_HOSTS`). The container is 4 cores / 12GB and Redis is
+  capped at 6GB (`--maxmemory 6gb`). Open: `LAN scan: mgmt_seg full-vuln` ran for 24
+  seconds on 2026-10-11 and found nothing; the five newest zones' LAN full-vuln
+  scans (pentest, media, cse, connector, apps) first run 2026-10-14 22:00 NZ.
