@@ -1103,8 +1103,10 @@ and running (invocation `5ccd292285924b9ab179103e3c2ba8df`). Its progress
 shows `status: running`, `completed: 0`, and run directory
 `/storage/artifacts/framework-ctx-bugs/20261014T041054Z`; the first log line
 loads/checks `laguna-s-2.1-upstream-ctx131k-b512`. The start gate passes.
-The supplied excerpt omits command 1's `SECRETS-OK`; confirmation remains
-pending. No commands were rerun by the agent. Completion, restored model,
+The supplied excerpt omits command 1's `SECRETS-OK`; the operator instructed
+the agent to assume it passed (2026-10-14), rather than requesting more
+output. This is an operator-directed assumption, not independently observed
+output. No commands were rerun by the agent. Completion, restored model,
 GPU evidence, timings and x/7 accuracy remain to be reviewed when requested.
 
 **D9 (operator decision before ctx-11, after ctx-10d).** Write the options
