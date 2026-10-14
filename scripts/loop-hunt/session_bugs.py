@@ -110,7 +110,8 @@ def classify(warm,cold):
         if not isinstance(warm.get('cached_tokens'),(int,float)) or warm['cached_tokens']<=0:
             return 'not attributable (warm cache unconfirmed)'
         return 'runtime (warm only)'
-    if a and b:return 'model/content'
+    if a and b:
+        return 'model/content' if a & b else 'not attributable (different failure modes)'
     if b:return 'cold only'
     if warm.get('error') or cold.get('error'):return 'not comparable (request refused)'
     return 'clean'

@@ -210,6 +210,10 @@ class AgentChecksTests(unittest.TestCase):
         self.assertIn('reasoning-in-content',tools.checks(self.response(content='<think>reason'))[0])
         self.assertNotIn('reasoning-in-content',tools.checks(self.response(content='Clean answer'))[0])
 
+    def test_different_warm_cold_failures_do_not_establish_shared_cause(self):
+        self.assertEqual(sb.classify(dict(flags=['loop'],cached_tokens=10),dict(flags=['template-leak'])),
+                         'not attributable (different failure modes)')
+
     def test_no_cache_or_crash_does_not_establish_runtime_or_model_cause(self):
         self.assertEqual(sb.classify(dict(flags=['loop'],cached_tokens=0),dict(flags=[])),
                          'not attributable (warm cache unconfirmed)')

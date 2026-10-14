@@ -155,7 +155,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (CSE and deep recovery complete; all sources reported; eval preserved; 2 unreadable deep files) |
 | lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; V1/V9 selected) |
 | lh-01d-capture-proxy | local (operator's workstation) | — | deferred, available for exact capture (V1/V9 reconstructions selected) |
-| lh-02-session-harness | local | — | done 2026-10-15 (68 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
+| lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | todo |
@@ -721,7 +721,7 @@ bounded watcher adapter are built. Candidate expectations support
 `--link nathanw=candidate`; ctx-bugs permits candidates for either supported
 model/build without applying Laguna's short budget to Qwen.
 
-Both test gates pass: **68 loop-hunt tests, 96 ctx-bugs tests**. The sandbox
+Both test gates pass: **69 loop-hunt tests, 96 ctx-bugs tests**. The sandbox
 blocks socket creation, so loopback fixture tests ran with local socket access;
 no production endpoint/credentials were used. Generator ran twice after its
 fixture commit with `git diff --exit-code -- scripts/loop-hunt/sessions` clean.
@@ -821,10 +821,10 @@ preflight: >
 commands:
   - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --graph framework && echo SECRETS-OK"
   - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
-  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds status --no-fetch'"
-  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds build fork b02cb35f2'"
-  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config --dry-run | grep -c sess'"
-  - "rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/ && rsync -a --exclude __pycache__/ scripts/loop-hunt/ steve@framework.gibbsgreatly.xyz:loop-hunt/"
+  - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'llama-builds status --no-fetch'"
+  - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'test -f /storage/llama-builds/fork/20261008-b02cb35f2/build.json && test -x /storage/llama-builds/fork/20261008-b02cb35f2/bin/llama-server && llama-builds build fork b02cb35f2'"
+  - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny ssh steve@framework.gibbsgreatly.xyz 'llama-builds swap-config --dry-run | grep -c sess'"
+  - "TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/ && TASK_APPROVAL=loop-hunt-deploy ./with-secrets-prod-tiny rsync -a --exclude __pycache__/ scripts/loop-hunt/ steve@framework.gibbsgreatly.xyz:loop-hunt/"
 gates:
   - id: secrets
     cmd: "(command 1)"
@@ -933,7 +933,12 @@ print('SESSION-CONFIG-OK: all 7 required entries; installed config matches gener
 PYTHON
 ```
 
-No production command has run. Approval `loop-hunt-deploy` is pending.
+The fork candidate link is global: its generator also exposes candidate menu
+entries for other fork-backed catalogue models. No ordinary model settings
+change and only Qwen's candidate is loaded for the proposed identity capture;
+Q2/HIP/other-model inference remains out of scope. All production commands
+use the pve-tiny wrapper and this task approval. No production command has
+run. Approval `loop-hunt-deploy` is pending.
 
 Result: —
 

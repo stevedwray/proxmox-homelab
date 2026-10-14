@@ -15,7 +15,7 @@ Status: **lh-01–01c complete; V1/V9 selected; lh-02/03 complete locally; deplo
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 68 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 69 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -325,7 +325,7 @@ No repeat production scan is needed to finish that work.
 
 ## Session harness (lh-02, 2026-10-15)
 
-Built locally; **no Framework session test has run**. All **68 loop-hunt and
+Built locally; **no Framework session test has run**. All **69 loop-hunt and
 96 ctx-bugs tests pass**. Deterministic session regeneration ran twice with
 a clean tracked-fixture diff. Full stand-in runs completed C1/C2/C3/C4/C5:
 22/48/28/46/62 saved requests respectively (C3 includes imported C1 records).
