@@ -10,8 +10,8 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **planned 2026-10-15, not started.** Decisions D-L1 to D-L7 in
-plan.md wait on the operator.
+Status: **planned 2026-10-15, not started.** Decisions D-L1 to D-L7 made
+2026-10-15 (all as recommended).
 
 To run it, open the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS
 Code, `git pull --ff-only`, and tell Codex:

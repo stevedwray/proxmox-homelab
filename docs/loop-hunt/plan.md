@@ -107,9 +107,9 @@ C2 ~3 h for the group. Per Qwen build ≈ 7–8 h; three builds ≈ 22 h; GLM
 (slower) ≈ 6 h; total about 28–30 h, run as **two nights**. Pilot first:
 one C1 session on fork `current`, about 1.5 h.
 
-## Decisions (operator; recommended answers first)
+## Decisions (operator, 2026-10-15: all as recommended)
 
-| # | Question | Recommendation |
+| # | Question | Decision |
 |---|---|---|
 | D-L1 | Scan Open WebUI's chat history on Framework for real loops? It reads private chats; only flagged excerpts are shown to you, nothing leaves Framework until you approve | **Yes.** Real examples are the most direct evidence |
 | D-L2 | Server settings | **Production-like** (default batches, parallel 4, cache on). Risk: a long first prefill can hit the known Vulkan hang; recorded as a finding, the run continues |
@@ -129,7 +129,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 
 | Step | Runs on | Approval | Status |
 |---|---|---|---|
-| lh-00-decisions | operator | — | todo |
+| lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only) | `loop-hunt-chat-scan` | todo |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
@@ -143,9 +143,10 @@ Same agent rules as ctx-bug-test. Operator prompt:
 
 #### lh-00-decisions
 
-The operator answers D-L1 to D-L7 (or says "as recommended"). Record the
-answers in the Decisions table with the date. No other step starts before
-this.
+Done 2026-10-15: the operator chose the recommended answer for all seven
+(chat scan yes; production-like settings; client sampling; GLM single +
+concurrent; Q2 only if the scan finds loops on it; blind manual cloud
+judge; 262k one session per Qwen build).
 
 #### lh-01-chat-scan
 
