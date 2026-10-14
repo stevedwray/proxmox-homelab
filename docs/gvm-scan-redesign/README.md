@@ -27,7 +27,9 @@ schedule (14 credentialed, 12 full-vuln, 12 discovery).
   the scan stopped, and the baseline was the first time anything probed it with web
   plugins (the 29 August Discovery scan reached it fine). So the scan probably knocked
   it over; the Omada event log time of disconnect would confirm it. It is now in
-  `FRAGILE_HOSTS` (setup_scan_program.py), left out of both discovery and full-vuln.
+  `FRAGILE_HOSTS` (setup_scan_program.py), left out of both discovery and full-vuln
+  (applied 2026-10-14; lan discovery now excludes 3 addresses, lan full-vuln 13). Omada
+  showed no event log for the switch, so the cause is unconfirmed; it stays excluded.
   Network gear belongs on a discovery-only tier.
 - The `lan` full-vuln task now has the narrow excludes (12), `max_hosts=6` and its
   schedule (re-applied after the baseline). All 38 schedules are live.
