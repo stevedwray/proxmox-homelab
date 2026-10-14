@@ -365,7 +365,7 @@ stops only at one of the stop points in rule 1.
 | ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
 | ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
-| ctx-10h-harness-resilience | local | — | todo (after attempt 1 of ctx-11 failed) |
+| ctx-10h-harness-resilience | local | — | done 2026-10-14 (swap identity/reachability, pending infrastructure requests, restore waits/retries; 75 tests pass) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo: retry as a fresh run after ctx-10h (attempt 1, 20261014T045019Z, failed at 06:32:33 UTC: needrestart restarted llama-swap) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
@@ -1378,7 +1378,17 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. Requests record swap identities before/after and
+verify /running reachability. A swap restart/outage stops the matrix with
+an uncheckpointed pending request and separate infrastructure evidence.
+Server-only failures remain crash findings. Every load waits up to 300 s
+with 5 s polling and bounded HTTP timeouts; final restoration retries up
+to 3 loads. The stub simulates independent swap restarts and server deaths.
+All 75 tests pass, including restart/pending resume, restoration after a
+2-second outage, server-only crashes, the live system-unit identity command,
+restore retries, wait timeout and the full canned matrix. Existing kernel
+permission-failure tests still pass. No Framework access occurred during
+the local fix. Attempt 1 remains partial evidence; retry uses a fresh run.
 
 #### ctx-11-full-run
 

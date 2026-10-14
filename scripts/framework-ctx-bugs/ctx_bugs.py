@@ -27,6 +27,7 @@ PROMPTS = ('S1', 'S2', 'S3', 'S4', 'S5', 'F')
 SUFFIXES = dict(zip(SIZES, ('32k', '64k', '96k', '131k')))
 BUDGET, MARGIN = 16384, 2048
 DEFAULT_MODEL = 'glm-5.3-flash-upstream'
+SWAP_WAIT_SECONDS, SWAP_POLL_SECONDS = 300, 5
 PROMPT_DIR = Path(__file__).parent / 'prompts'
 # D3: Qwen values are the operator's published thinking-mode recipe.
 # Laguna temperature/top_p: Poolside's "Recommended sampling", pinned card:
@@ -44,6 +45,10 @@ SAMPLING_SOURCES = {
         'https://huggingface.co/poolside/Laguna-S-2.1-FP8/blob/2bea609ec5cc284a99471d3eba1e33fa9cede712/README.md',
         'https://huggingface.co/poolside/Laguna-S-2.1/blob/179ee67/generation_config.json'],
 }
+
+
+class InfrastructureFailure(RuntimeError):
+    """An uncheckpointed request interrupted by llama-swap infrastructure."""
 
 
 def now():
@@ -90,13 +95,13 @@ class Client:
             if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
                 raise ValueError('base URLs must be HTTP(S) without embedded credentials')
 
-    def call(self, path, payload=None, swap=False):
+    def call(self, path, payload=None, swap=False, timeout=None):
         headers = {'Content-Type': 'application/json'}
         if not swap and self.api_key:
             headers['Authorization'] = 'Bearer ' + self.api_key
         request = urllib.request.Request((self.swap if swap else self.base) + path,
             data=json.dumps(payload).encode() if payload is not None else None, headers=headers)
-        with self.opener.open(request, timeout=self.timeout) as response:
+        with self.opener.open(request, timeout=self.timeout if timeout is None else timeout) as response:
             return json.load(response)
 
     def load(self, entry):
@@ -533,7 +538,7 @@ class Run:
     def preflight_cell(self, model, build, size):
         entry = entry_id(model, build, size, self.args.candidate, self.args.entry_suffix)
         self.check_lock()
-        self.client.load(entry)
+        self.load_entry(entry)
         props = self.client.call('/props')
         check_props(props, entry, size, self.manifest['identity']['builds'][build]['build_info'])
         counts = {}
@@ -572,6 +577,57 @@ class Run:
             return self.client.call('/health').get('server_instance')
         return server_pid(entry)
 
+    def swap_identity(self):
+        if self.args.dry_run:
+            identity = self.client.call('/swap-identity', swap=True, timeout=5)['swap_instance']
+            if identity is None:
+                raise ValueError('missing stub llama-swap identity')
+            return identity
+        values = command(['systemctl', 'show', '-p', 'MainPID', '-p',
+                          'ActiveEnterTimestampMonotonic', '--value', 'llama-swap.service']).splitlines()
+        if len(values) != 2 or not all(v.isdigit() and int(v) > 0 for v in values):
+            raise RuntimeError('llama-swap has no active process identity')
+        return values
+
+    def wait_for_swap(self, entry):
+        deadline = time.monotonic() + SWAP_WAIT_SECONDS
+        self.log(f'Waiting for llama-swap before loading {entry} (up to {SWAP_WAIT_SECONDS}s)')
+        while True:
+            self.check_lock()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f'llama-swap did not become reachable before loading {entry}')
+            try:
+                self.client.call('/running', swap=True, timeout=min(5, remaining))
+                return
+            except (OSError, ValueError) as exc:
+                self.log(f'Waiting for llama-swap: {type(exc).__name__}: {exc}')
+                time.sleep(min(SWAP_POLL_SECONDS, max(0, deadline-time.monotonic())))
+
+    def load_entry(self, entry):
+        self.wait_for_swap(entry)
+        self.check_lock()
+        return self.client.load(entry)
+
+    def verify_request_swap(self, key, before=None, response=None, error=None, raw_path=None):
+        after, cause = None, None
+        try:
+            after = self.swap_identity()
+            self.client.call('/running', swap=True, timeout=5)
+            if before is not None and after != before:
+                cause = 'identity changed'
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            cause = f'{type(exc).__name__}: {exc}'
+        if cause:
+            evidence = dict(key=key, swap_before=before, swap_after=after,
+                            cause=cause, response=response or {}, error=error, recorded=now())
+            self.manifest['infrastructure_failure'] = dict(key=key, cause=cause,
+                                                         swap_before=before, swap_after=after)
+            if raw_path:
+                write_json(raw_path, evidence)
+            raise InfrastructureFailure(f'llama-swap restarted or unreachable during {key}')
+        return after
+
     def kernel_window(self, since, until):
         if self.args.dry_run:
             query = urllib.parse.urlencode(dict(since=since, until=until))
@@ -597,6 +653,8 @@ class Run:
                         max_tokens=2048 if short else BUDGET, cache_prompt=False, stream=False)
         payload = dict(settings, model=entry, messages=fixture['messages'])
         key = f'{entry}/{prompt}/{run}'
+        infrastructure_path = self.directory / 'raw' / entry / f'{prompt}-{run}-infrastructure.json'
+        swap_before = self.verify_request_swap(key, raw_path=infrastructure_path)
         evidence_errors = []
         pid = after_pid = None
         try:
@@ -639,6 +697,7 @@ class Run:
                 visible_count = self.client.tokenize(visible)
             except (OSError, ValueError) as exc:
                 error = f'visible token count failed: {exc}'
+        swap_after = self.verify_request_swap(key, swap_before, response, error, infrastructure_path)
         grade = detectors.detect(prompt, response, fixture, visible_count, error=error, healthy=healthy,
                                  restarted=pid is not None and after_pid is not None and after_pid != pid,
                                  dmesg_window=window)
@@ -649,6 +708,7 @@ class Run:
                       response=response, error=error, evidence_error=evidence_error,
                       kernel_window=dict(since=since, until=until),
                       wall_seconds=elapsed, recorded=now(), server_before=pid, server_after=after_pid, **grade)
+        record.update(swap_before=swap_before, swap_after=swap_after)
         with (self.directory / 'dmesg.txt').open('a') as output:
             output.write(f'\n## {key} kernel window @{since:.6f} to @{until:.6f}\n{window}\n')
         return record
@@ -720,9 +780,13 @@ class Run:
             try:
                 self.matrix()
                 self.manifest['status'] = 'complete'
+                self.manifest.pop('failure', None)
             except KeyboardInterrupt:
                 self.manifest['status'] = 'interrupted'
                 self.log('Interrupted request remains pending; resume with --run-dir')
+            except InfrastructureFailure as exc:
+                self.manifest.update(status='failed', failure=str(exc))
+                self.log(self.manifest['failure'])
             except Exception as exc:
                 self.manifest.update(status='failed', failure=f'{type(exc).__name__}: {exc}')
                 self.log(self.manifest['failure'])
@@ -732,9 +796,17 @@ class Run:
                     restore_model = self.manifest.get('restore_model', DEFAULT_MODEL)
                     if re.search(r'-ctx(?:32k|64k|96k|131k)(?:-[a-z0-9]+)?$', restore_model):
                         restore_model = DEFAULT_MODEL
-                    self.client.load(restore_model)
+                    for attempt in range(1, 4):
+                        try:
+                            self.load_entry(restore_model)
+                            break
+                        except (OSError, ValueError, RuntimeError) as exc:
+                            self.log(f'Restore load attempt {attempt}/3 failed: {exc}')
+                            if attempt == 3:
+                                raise
                     self.manifest['restored_model'] = restore_model
                     self.manifest['restored_default'] = True
+                    self.manifest.pop('restore_error', None)
                 except Exception as exc:
                     self.manifest.update(restored_default=False, restore_error=str(exc), status='failed')
                 self.save()

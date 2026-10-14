@@ -75,12 +75,17 @@ def clean_answer(prompt, messages):
 class StubServer(ThreadingHTTPServer):
     daemon_threads = True
     def __init__(self, address=('127.0.0.1', 0), *, clean=False, delay_request=None, delay_seconds=10,
-                 kernel_log_error=False):
+                 kernel_log_error=False, swap_restart_request=None, server_death_request=None):
         super().__init__(address, Handler)
         self.clean = clean
         self.delay_request, self.delay_seconds = delay_request, delay_seconds
         self.entry = INITIAL_MODEL
         self.instance = 0
+        self.swap_instance = 1
+        self.swap_unavailable_until = 0
+        self.swap_restart_request = swap_restart_request
+        self.server_death_request = server_death_request
+        self.server_alive = True
         self.requests = []
         self.loads = []
         self.mutex = threading.Lock()
@@ -112,15 +117,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         s = self.server
+        if (self.path == '/running' or self.path.startswith('/upstream/')) and time.monotonic() < s.swap_unavailable_until:
+            self.reply(dict(error='simulated llama-swap refusal'), 503)
+            return
         if self.path.startswith('/upstream/') and self.path.endswith('/health'):
             with s.mutex:
                 s.entry = self.path.split('/')[2]
                 s.loads.append(s.entry)
                 s.instance += 1
+                s.server_alive = True
             self.reply(dict(status='ok'))
         elif self.path == '/health':
+            if not s.server_alive:
+                self.reply(dict(error='simulated llama-server death'), 503)
+                return
             self.reply(dict(status='ok', ctx_bugs_stub=True, builds=BUILDS,
                             server_instance=s.instance))
+        elif self.path == '/swap-identity':
+            self.reply(dict(swap_instance=s.swap_instance))
+        elif self.path == '/running':
+            self.reply(dict(running=[dict(model=s.entry)] if s.server_alive else []))
         elif self.path.startswith('/kernel-logs?'):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             since, until = float(query['since'][0]), float(query['until'][0])
@@ -151,6 +167,16 @@ class Handler(BaseHTTPRequestHandler):
             with s.mutex:
                 s.requests.append(payload)
                 number = len(s.requests)
+            if number == s.swap_restart_request:
+                s.swap_instance += 1
+                s.swap_unavailable_until = time.monotonic() + 2
+                s.server_alive = False
+                self.reply(dict(error='simulated restart during request'), 503)
+                return
+            if number == s.server_death_request or not s.server_alive:
+                s.server_alive = False
+                self.reply(dict(error='simulated llama-server death'), 503)
+                return
             if number == s.delay_request:
                 s.delayed.set()
                 s.release_delay.wait(s.delay_seconds)
@@ -200,10 +226,13 @@ if __name__ == '__main__':
     parser.add_argument('--delay-request', type=int)
     parser.add_argument('--delay-seconds', type=float, default=10)
     parser.add_argument('--kernel-log-error', action='store_true', help='simulate a failed kernel journal command')
+    parser.add_argument('--swap-restart-request', type=int, help='restart swap during request N; refuse swap requests for 2s')
+    parser.add_argument('--server-death-request', type=int, help='kill only llama-server during request N')
     args = parser.parse_args()
     server = StubServer(('127.0.0.1', args.port), clean=args.clean,
                         delay_request=args.delay_request, delay_seconds=args.delay_seconds,
-                        kernel_log_error=args.kernel_log_error)
+                        kernel_log_error=args.kernel_log_error, swap_restart_request=args.swap_restart_request,
+                        server_death_request=args.server_death_request)
     print(server.url, flush=True)
     try:
         server.serve_forever()

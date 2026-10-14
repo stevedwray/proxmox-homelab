@@ -215,6 +215,18 @@ A partial final JSONL append is discarded on resume. A complete malformed
 record or changed settings, code hashes, build expectations or prompt hashes
 refuses resume. A local checkpoint lock prevents concurrent writers.
 
+llama-swap identity and `/running` reachability are checked before and after
+each request. Live identity comes from the system unit's MainPID and active
+timestamp; dry runs use a separate stub identity. A changed/unreachable swap
+stops the matrix without checkpointing the in-flight request or later requests;
+diagnostic evidence is saved separately as `*-infrastructure.json`. Resume
+retries that pending request. A llama-server-only failure with swap unchanged
+and reachable remains a crash finding. Every load waits up to 300 seconds for
+swap, polling at five-second intervals, and final restoration retries up to
+three loads. Waits and retry failures are logged. The stub options
+`--swap-restart-request N` (two-second outage) and `--server-death-request N`
+exercise the two paths separately.
+
 Resume with the same arguments and an explicit directory:
 
 ```bash

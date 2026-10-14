@@ -273,6 +273,74 @@ class DetectorTests(unittest.TestCase):
 
 
 class HarnessTests(unittest.TestCase):
+    def test_swap_restart_stops_checkpointing_restores_and_resume_retries(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True, swap_restart_request=2) as s:
+            argv = ['--dry-run', '--base-url', s.url, '--run-dir', tmp, '--models', cb.MODELS[0],
+                    '--builds', 'upstream', '--sizes', '32768', '--greedy-only']
+            run = cb.Run(cb.parse_args(argv))
+            self.assertEqual(run.execute(), 1)
+            self.assertEqual(len(run.records), 1)
+            self.assertEqual(len(s.requests), 2)
+            key = cb.entry_id(cb.MODELS[0], 'upstream', 32768)+'/S2/greedy'
+            self.assertEqual(run.manifest['failure'], 'llama-swap restarted or unreachable during '+key)
+            self.assertEqual(run.manifest['status'], 'failed')
+            self.assertTrue(run.manifest['restored_default'])
+            self.assertEqual(s.loads[-1], stub.INITIAL_MODEL)
+            directory = Path(tmp)
+            self.assertFalse((directory/'raw'/run.records[0]['cell']/'S2-greedy.json').exists())
+            evidence = json.loads((directory/'raw'/run.records[0]['cell']/'S2-greedy-infrastructure.json').read_text())
+            self.assertNotEqual(evidence['swap_before'], evidence['swap_after'])
+            resumed = cb.Run(cb.parse_args(argv))
+            self.assertEqual(resumed.execute(), 0)
+            self.assertEqual(len(resumed.records), 6)
+            self.assertEqual(len(s.requests), 7)
+            self.assertEqual(s.requests[1], s.requests[2])
+            self.assertTrue(all(not r['flags'] for r in resumed.records))
+            self.assertTrue(all(r['swap_before']==r['swap_after'] for r in resumed.records))
+            self.assertNotIn('failure', resumed.manifest)
+
+    def test_server_death_without_swap_restart_is_still_a_crash(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True, server_death_request=2) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                         '--models', cb.MODELS[0], '--builds', 'upstream', '--sizes', '32768', '--greedy-only']))
+            self.assertEqual(run.execute(), 0)
+            self.assertEqual(len(run.records), 6)
+            self.assertIn('crash', run.records[1]['flags'])
+            self.assertEqual(run.records[1]['swap_before'], run.records[1]['swap_after'])
+            self.assertNotIn('infrastructure_failure', run.manifest)
+            self.assertTrue(run.manifest['restored_default'])
+
+    def test_swap_identity_live_system_unit_and_restore_three_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = cb.Run(cb.parse_args(['--dry-run', '--run-dir', tmp]))
+            run.args.dry_run = False
+            with mock.patch.object(cb, 'command', return_value='12345\n998877\n') as capture:
+                self.assertEqual(run.swap_identity(), ['12345', '998877'])
+                capture.assert_called_once_with(['systemctl', 'show', '-p', 'MainPID', '-p',
+                                                'ActiveEnterTimestampMonotonic', '--value', 'llama-swap.service'])
+            with mock.patch.object(cb, 'command', return_value='0\n0\n'):
+                with self.assertRaises(RuntimeError):
+                    run.swap_identity()
+            run.manifest = dict(restore_model=stub.INITIAL_MODEL)
+            with mock.patch.object(run, 'lock', return_value=contextlib.nullcontext()), \
+                 mock.patch.object(run, 'check_lock'), mock.patch.object(run, 'matrix'), \
+                 mock.patch.object(run, 'save'), \
+                 mock.patch.object(run, 'load_entry', side_effect=[OSError('refused'), OSError('refused'), {}]) as load:
+                self.assertEqual(run.execute_locked(), 0)
+                self.assertEqual(load.call_count, 3)
+                self.assertTrue(run.manifest['restored_default'])
+
+    def test_swap_wait_has_bounded_timeout_and_no_load_when_unreachable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = cb.Run(cb.parse_args(['--dry-run', '--run-dir', tmp]))
+            with mock.patch.object(cb, 'SWAP_WAIT_SECONDS', .01), \
+                 mock.patch.object(run.client, 'call', side_effect=OSError('refused')) as call, \
+                 mock.patch.object(run.client, 'load') as load:
+                with self.assertRaisesRegex(RuntimeError, 'did not become reachable'):
+                    run.load_entry('some-entry')
+                self.assertTrue(all(0 < c.kwargs['timeout'] <= .01 for c in call.call_args_list))
+                load.assert_not_called()
+
     def test_regrade_stub_run_is_offline_idempotent_and_preserves_evidence(self):
         with tempfile.TemporaryDirectory() as tmp, server() as s:
             directory = Path(tmp)
@@ -426,7 +494,8 @@ class HarnessTests(unittest.TestCase):
             entry = cb.entry_id(cb.MODELS[0], 'upstream', 32768)
             run.args.dry_run = False
             line = '2026-10-14T01:00:00+00:00 kernel: amdgpu ring gfx timeout\n'
-            with mock.patch.object(run, 'check_lock'), mock.patch.object(cb, 'server_pid', return_value=[123, '456']), \
+            with mock.patch.object(run, 'check_lock'), mock.patch.object(run, 'swap_identity', return_value=[789, '123']), \
+                 mock.patch.object(cb, 'server_pid', return_value=[123, '456']), \
                  mock.patch.object(cb, 'command', return_value=line) as capture:
                 record = run.request(cb.MODELS[0], 'upstream', 32768, entry, fixture, 100,
                                      'S1', 'greedy', 1, True, False)
@@ -481,6 +550,7 @@ class HarnessTests(unittest.TestCase):
             run.args.dry_run = False
             for failure in (RuntimeError('permission denied'), subprocess.TimeoutExpired('journalctl', 30)):
                 with self.subTest(failure=type(failure).__name__), mock.patch.object(run, 'check_lock'), \
+                     mock.patch.object(run, 'swap_identity', return_value=[789, '123']), \
                      mock.patch.object(cb, 'server_pid', return_value=[123, '456']), \
                      mock.patch.object(cb, 'command', side_effect=failure):
                     record = run.request(cb.MODELS[0], 'upstream', 32768, cb.entry_id(cb.MODELS[0], 'upstream', 32768),
