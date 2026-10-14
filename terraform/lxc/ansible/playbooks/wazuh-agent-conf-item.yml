@@ -16,21 +16,34 @@
   failed_when: false
   tags: [wazuh_agent_conf]
 
+# Delivery order matters (found 2026-10-15): wazuh-remoted reads a group dir continuously. A file
+# docker-cp'd straight into it is briefly root-owned, remoted logged "Permission denied ... Invalid shared
+# file" and left agent.conf out of the merge until it was touched. So the file is copied and chowned in a
+# staging dir inside the same volume (outside shared/), then moved into place with an atomic rename.
+# Backups also live outside shared/, because everything in a group dir is pushed to the agents.
 - name: "Deliver and validate {{ wazuh_group }} agent.conf"
   when: wazuh_agent_conf_same.rc != 0
   tags: [wazuh_agent_conf]
+  vars:
+    shared: /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf
+    stage: /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.agent.conf.new
+    backup: /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.agent.conf.bak
   block:
-    - name: Back up the live agent.conf
+    - name: Make sure the staging and backup directory exists
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-stack-manager, cp, -p, "/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf", "/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak"]
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "mkdir -p /var/ossec/etc/agent-conf-backup && chown 999:999 /var/ossec/etc/agent-conf-backup && chmod 700 /var/ossec/etc/agent-conf-backup"]
+      changed_when: false
+    - name: Back up the live agent.conf (outside the shared dir)
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, cp, -p, "{{ shared }}", "{{ backup }}"]
       changed_when: true
-    - name: Copy the new agent.conf into the manager container
+    - name: Copy the new agent.conf into the staging dir
       ansible.builtin.command:
-        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml", "wazuh-stack-manager:/var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml", "wazuh-stack-manager:{{ stage }}"]
       changed_when: true
-    - name: Set ownership and permissions
+    - name: Set ownership and permissions, then move it into place atomically
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-stack-manager, sh, -c, "chown 999:999 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf && chmod 660 /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "chown 999:999 {{ stage }} && chmod 660 {{ stage }} && mv {{ stage }} {{ shared }}"]
       changed_when: true
     - name: Validate every group's agent.conf
       ansible.builtin.command:
@@ -41,7 +54,7 @@
   rescue:
     - name: Validation failed -- restore the previous agent.conf
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-stack-manager, sh, -c, "test -f /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak && cp -p /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf.bak /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf"]
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "test -f {{ backup }} && cp -p {{ backup }} {{ shared }}"]
       changed_when: true
     - name: Fail the play
       ansible.builtin.fail:
