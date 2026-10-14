@@ -35,10 +35,25 @@ T -e tune_mode=sample_start                    # 30 s sampler; sample_log / samp
 
 JSON results land in `docs/wazuh-tuning/artifacts/<tag>-<mode>.json` (ignored); compare two
 with `wazuh_tuning.diff_json`. `stop_conditions()` encodes the plan's stop list.
-The must-fire suite only uses logtest (no alerts written); live actions on a test agent
+Tier 2 (real marked actions, self-cleaning, ~2 min; needs its own approval name):
+
+```bash
+export TASK_APPROVAL=wazuh-tuning-<task>-live
+E=~/git/proxmox-homelab/terraform/lxc/environments/pve
+./with-secrets-prod ansible-playbook -u root -i $E/apt-cacher-stack/inventory.yml -i $E/wazuh-stack/inventory.yml \
+  terraform/lxc/ansible/playbooks/wazuh-mustfire-live.yml </dev/null     # add -e live_docker=true -e live_docker_image=<img> -e live_group=<group> for a Docker host
+# re-check an earlier run without acting again: --limit wazuh_stack -e live_marker=mfire<epoch>
+```
+
+The Tier 1 suite only uses logtest (no alerts written); live actions on a test agent
 (apt-cacher-stack) are a separate, separately approved tier.
 
 ## Gotchas learned
+
+- Ansible re-evaluates a `lookup('pipe', ...)` in a play var on every use; fix a per-run value
+  with `set_fact` (a marker built that way once left a stray user behind).
+- Docker-listener alerts have a null `full_log`; use `data.docker.*`.
+- A first-time sudoer fires 5403 (L4), later ones 5402 (L3).
 
 - The wrapper treats `bash -c` as mutating, so a named `TASK_APPROVAL` is required even
   for these read-only runs.

@@ -20,9 +20,11 @@
   hosts: "{{ live_group | default('apt_cacher_stack') }}"
   become: true
   gather_facts: false
-  vars:
-    marker: "mfire{{ lookup('pipe', 'date +%s') }}"
   tasks:
+    # set_fact renders once; a play var with the lookup would re-run `date` on every use
+    - name: Fix one marker for this run
+      ansible.builtin.set_fact:
+        marker: "mfire{{ lookup('pipe', 'date +%s') }}"
     - name: Remember the marker for the checking play
       ansible.builtin.set_fact:
         mf_marker: "{{ marker }}"
@@ -75,7 +77,7 @@
   gather_facts: false
   vars:
     agent_host: "{{ groups[live_group | default('apt_cacher_stack')][0] }}"
-    marker: "{{ hostvars[agent_host].mf_marker }}"
+    marker: "{{ live_marker | default(hostvars[agent_host].mf_marker) }}"   # -e live_marker=... to re-check a past run
   tasks:
     - name: Wait for the agent -> manager -> indexer path
       ansible.builtin.pause:

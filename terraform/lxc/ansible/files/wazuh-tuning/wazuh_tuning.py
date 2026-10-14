@@ -27,6 +27,7 @@ import os
 import ssl
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from collections import Counter
 
@@ -53,7 +54,10 @@ def indexer(path, body=None):
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Authorization": _basic("admin", "WAZUH_INDEXER_ADMIN_PASSWORD"),
                  "Content-Type": "application/json"})
-    raw = urllib.request.urlopen(req, context=_ctx, timeout=90).read().decode()
+    try:
+        raw = urllib.request.urlopen(req, context=_ctx, timeout=90).read().decode()
+    except urllib.error.HTTPError as exc:  # keep the indexer's reason, a bare "400" says nothing
+        raise RuntimeError(f"{exc.code} from {path}: {exc.read().decode()[:600]}") from None
     try:
         return json.loads(raw)
     except ValueError:

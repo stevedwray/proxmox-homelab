@@ -97,13 +97,18 @@ def live(agent, marker, minutes=30, capabilities=()):
         if not set(case["needs"]) <= set(capabilities):
             print(f"SKIP  {case['name']} (needs {case['needs']})")
             continue
-        q = {"bool": {"filter": [wt.day(minutes / 60), {"term": {"agent.name": agent}},
+        q = {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}}, {"term": {"agent.name": agent}},
                                  {"terms": {"rule.id": case["ids"]}}, {"range": {"rule.level": {"gte": case["min_level"]}}},
                                  where]}}
         n = wt.total(wt.search(wt.ALERTS, q))
         ok = n > 0
         failures += not ok
         print(f"{'PASS' if ok else 'FAIL'}  {case['name']}: {n} alert(s), want {case['ids']} >=L{case['min_level']}")
+    seen = wt.search(wt.ALERTS, {"bool": {"filter": [{"range": {"@timestamp": {"gte": f"now-{int(minutes)}m"}}},
+                                                     {"term": {"agent.name": agent}}, where]}},
+                     {"r": wt.terms("rule.id", 20, d=wt.terms("rule.description", 1), l=wt.terms("rule.level", 1))})
+    print("observed for this marker:", [(b["key"], "L%s" % b["l"]["buckets"][0]["key"], b["d"]["buckets"][0]["key"][:50])
+                                         for b in seen["aggregations"]["r"]["buckets"]])
     print(f"\n{'ALL PASS' if not failures else str(failures) + ' FAILED'}")
     return failures
 

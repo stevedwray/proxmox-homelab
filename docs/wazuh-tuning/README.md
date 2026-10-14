@@ -4,8 +4,9 @@ Test and tune the Wazuh SIEM stack with the same method used for Greenbone
 (docs/gvm-scan-redesign/): baseline first, one supervised change at a time, numeric
 decision gates, tooling and config in the repo, docs and memory kept current.
 
-Status: **Phase 0 in progress** (2026-10-15). Tooling is built and the baseline is captured
-(read-only, nothing changed on the live stack); the must-fire suite is not yet calibrated.
+Status: **Phase 0 done** (2026-10-15): tooling built, baseline captured and verified, must-fire
+suite green (Tier 1 11/11, Tier 2 6/6 on apt-cacher-stack). Docker live cases are written but
+need a Docker test host (see below). Nothing has been changed on the live Wazuh config yet.
 Branch `work/wazuh-tuning`; execution happens in a separate session, one
 phase at a time, each with its own approval. See [plan.md](plan.md) for phases and
 gates and [runbook.md](runbook.md) for how to run the read-only survey tooling.
@@ -77,6 +78,10 @@ see.
 - Docker-listener alerts have a null `full_log`; the event lives in `data.docker.*`, so
   the must-fire docker cases rebuild the event from those fields.
 - **Must-fire Tier 1 (logtest + ruleset) is green on the current config, 11/11** (2026-10-15). Calibration: a first-time sudoer fires 5403 (L4), later ones 5402 (L3); the suite accepts both.
+- **Must-fire Tier 2 (real agent events) is green 6/6 on apt-cacher-stack**: new user 5902,
+  user deleted 5903 (L3, not 5905), sshd non-existent user 5710, FIM add/modify/delete
+  554/550/553. The Docker live cases (87903 start, 87907 non-health-check exec) are skipped
+  until a Docker test host is chosen: run with `-e live_docker=true -e live_docker_image=...`.
 - Live-action test host for the non-docker cases: `apt-cacher-stack` (no Docker). The
   Docker cases need a Docker-running agent; to be chosen before Tier 2 (operator wants the
   suite extensible to a Docker host).
