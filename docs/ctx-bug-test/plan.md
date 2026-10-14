@@ -1,8 +1,8 @@
 # Context-size bug test: Qwen3.8-Flash-Next and Laguna-S-2.1, Nathanw fork vs upstream llama.cpp
 
 Planned 2026-10-11; decisions settled 2026-10-13. Phase 2 built locally
-2026-10-14; phase 1 (read-only build check) done 2026-10-14. No model test
-has run on Framework yet.
+2026-10-14; phase 1 (read-only build check) done 2026-10-14. The full model test completed on Framework on 2026-10-15; see ctx-11 and
+the README for results.
 
 2026-10-13 correction (found while building the harness): the first
 version sized S3 at ~24k and S5 at ~18k tokens and Part B at 85% fill,
@@ -367,9 +367,9 @@ stops only at one of the stop points in rule 1.
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
 | ctx-10h-harness-resilience | local | — | done 2026-10-14 (swap identity/reachability, pending infrastructure requests, restore waits/retries; 75 tests pass) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | done 2026-10-15 (288 requests reviewed; no crash/GPU/evidence errors; F all 7/7; timer active) |
-| ctx-11a-attribution-fix | local, then Framework (regrade in the run dir only) | — | todo |
+| ctx-11a-attribution-fix | local, then Framework (regrade in the run dir only) | — | done 2026-10-15 |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
-| ctx-13-writeup | local | — | todo |
+| ctx-13-writeup | local | — | done 2026-10-15 |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
 
 #### ctx-01-build-check (done)
@@ -1519,7 +1519,19 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-15. All 89 tests pass, including saved-probe report
+integration and offline regrade idempotence. Prompt regeneration twice leaves
+no diff. Copied the tested harness to Framework and regraded 288 requests plus
+4 saved probes in place with no model load, lock or service change; copied
+the updated evidence to ignored artifacts/full/. The attribution gate passes:
+only four Laguna Nathanw S1 flags are build bugs, all probe-backed; S2/S4
+are not attributable with different budgets. All identical context outputs
+collapse to 31 findings (4 build bug, 10 budget-confounded, 17 suggested
+follow-ups skipped by D11), with sizes and independent seed/run counts.
+A matched failure on another seed of the opposite build prevents greedy-only
+build attribution, preserving the shared Qwen S4 failure classification.
+Probes remain separate from results.jsonl. Fix commit: 6fed5459.
+
 
 #### ctx-12-reproduce
 
@@ -1541,7 +1553,14 @@ Framework; build bugs and context-size bugs separately; Part B fill
 accuracy per model and build. Draft `models.json` status changes for
 ctx-14 as a table, without editing models.json yet.
 
-Result: —
+Result: done 2026-10-15. README now records the corrected inventory, findings
+by bug type with representative excerpts and Framework raw paths, separates
+probe-backed build evidence from budget-confounded failures and reports no
+context-size bugs. F is 196/196 across models/builds/sizes. The draft four-row
+catalogue status table records limitations, retains untested HIP status and
+ordinary settings, and proposes removing Laguna fork plus both variant lists.
+No models.json cleanup edit or production cleanup deployment has occurred.
+
 
 #### ctx-14-cleanup
 

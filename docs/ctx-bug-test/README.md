@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **full run reviewed; attribution correction pending** (2026-10-14). The operator settled
+Status: **full run regraded and written up; cleanup awaiting approval** (2026-10-15). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -19,13 +19,11 @@ were written, and `qwen3-coder-next-upstream` was reloaded. Local preparation
 ctx-10b/ctx-10c/ctx-10e and the ctx-10d confirmation are complete. D9=b is deployed and
 verified. The fresh full-run retry started at 07:17:22 UTC on 2026-10-14 under
 `/storage/artifacts/framework-ctx-bugs/20261014T071722Z`; its start gate passed.
-Attempt 1 failed when daily upgrades restarted llama-swap. The resilience
-fix passes 75 tests. Per D10, the upgrade timer is paused during the retry
-and must be started again as soon as the run ends. A separate overnight
-watcher is active, polling every 10 minutes and restoring the timer when the
-run exits. It allows at most one verified infrastructure resume and never
-restarts services or retries model findings. Its status/log are `watcher.json`
-and `watcher.log` in the run directory.
+Attempt 1 failed when daily upgrades restarted llama-swap. The completed retry
+restored its previous model, and `apt-daily-upgrade.timer` was restored and
+verified active. No automatic infrastructure recovery was needed. The local
+harness now passes 89 tests, including budget-aware attribution, saved probe
+comparisons and counting identical context outputs once.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -186,8 +184,8 @@ build/alias/slot identities pass, and request swap identities are unchanged.
 `apt-daily-upgrade.timer` and verified it active immediately after observing
 completion; the watcher had not yet reached its next scheduled poll.
 
-Evidence is copied locally to ignored `artifacts/full/`. The original
-Framework run remains unchanged at
+Evidence is copied locally to ignored `artifacts/full/`. The completed
+Framework run was regraded offline in place under ctx-11a at
 `/storage/artifacts/framework-ctx-bugs/20261014T071722Z/`.
 
 | Cell | Requests | Request minutes | Outcome |
@@ -254,60 +252,106 @@ Seed 2 repeats the tokenized package path `/opt/maple/packages/maple-release-2.3
 four times. This trips the shingle detector without a repeated sentence or
 stuck generation. Fork S4 is cut off by its 2,048-token short-mode budget.
 
-**Attribution error requiring resolution before ctx-12:** findings.json
-labels 16 fork S4 structural/runaway flags as build bugs while comparing
-2,048-token fork requests with 16,384-token upstream requests. Those labels
-are not supported by a controlled build comparison. The truncation itself
-is real; its attribution is confounded by the deliberately smaller cap.
-No saved results or detector code were changed during this review.
+### Attribution and candidate inventory (ctx-11a)
 
-### Candidate inventory
+The offline regrade compares all six sampling fields, including token budget,
+and includes the saved full-budget S1 probes as attribution evidence only.
+The 288 checkpoint requests remain separate from the four probes. The first
+checkpoint is preserved as `results.pre-regrade.jsonl` on Framework.
 
-The table expands to every one of the 124 entries in saved findings.json.
-Each listed flag occurs at **all four contexts** (32768, 65536, 98304,
-131072); count is flags × contexts. Labels below are the automated labels,
-not endorsements of their causal attribution.
+There are **31 findings**, each covering all four sizes (32768, 65536, 98304,
+131072). Identical answers **and reasoning** across sizes count once. A
+repeated greedy seed/run, including its full-budget probe, is one independent
+sample. Sample counts describe the runs checked, not the number with a flag;
+flags on one response can describe the same failure.
 
-| Model | Build | Prompt | Automated label | Flags at each context | Count |
-| --- | --- | --- | --- | --- | ---: |
-| qwen3.8-flash-next-q4 | nathanw | S3 | needs three more seeds | repetition, wrong:q8 | 8 |
-| qwen3.8-flash-next-q4 | upstream | S3 | needs three more seeds | wrong:q8 | 4 |
-| qwen3.8-flash-next-q4 | nathanw | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 28 |
-| qwen3.8-flash-next-q4 | upstream | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 28 |
-| laguna-s-2.1 | nathanw | S1 | build bug | hidden-tokens, if-fail:only-numbers, template-leak, wrong:sanity | 16 |
-| laguna-s-2.1 | nathanw | S2 | build bug | hidden-tokens | 4 |
-| laguna-s-2.1 | nathanw | S3 | needs three more seeds | wrong:q8 | 4 |
-| laguna-s-2.1 | upstream | S3 | needs three more seeds | wrong:q8 | 4 |
-| laguna-s-2.1 | nathanw | S4 | build bug | if-fail:end-marker, if-fail:sections, if-fail:titles, runaway | 16 |
-| laguna-s-2.1 | nathanw | S4 | needs three more seeds | if-fail:word-counts | 4 |
-| laguna-s-2.1 | upstream | S4 | needs three more seeds | if-fail:word-counts, repetition | 8 |
+| Model | Build | Prompt | Automated label | Flags | Findings | Independent samples per finding |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| qwen3.8-flash-next-q4 | nathanw | S3 | needs three more seeds | repetition, wrong:q8 | 2 | 4 |
+| qwen3.8-flash-next-q4 | upstream | S3 | needs three more seeds | wrong:q8 | 1 | 4 |
+| qwen3.8-flash-next-q4 | nathanw | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 7 | 4 |
+| qwen3.8-flash-next-q4 | upstream | S4 | needs three more seeds | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, no-answer, repetition, runaway | 7 | 4 |
+| laguna-s-2.1 | nathanw | S1 | build bug | hidden-tokens, if-fail:only-numbers, template-leak, wrong:sanity | 4 | 1 |
+| laguna-s-2.1 | nathanw | S2 | not attributable (different budgets) | hidden-tokens | 1 | 1 |
+| laguna-s-2.1 | nathanw | S3 | not attributable (different budgets) | wrong:q8 | 1 | 1 |
+| laguna-s-2.1 | upstream | S3 | not attributable (different budgets) | wrong:q8 | 1 | 4 |
+| laguna-s-2.1 | nathanw | S4 | not attributable (different budgets) | if-fail:end-marker, if-fail:sections, if-fail:titles, if-fail:word-counts, runaway | 5 | 1 |
+| laguna-s-2.1 | upstream | S4 | not attributable (different budgets) | if-fail:word-counts, repetition | 2 | 4 |
 
-Of the 36 automated build-bug entries, 20 are Laguna fork S1/S2 flags
-consistent with its known failure, and 16 are the confounded S4 labels.
-The other 88 candidates say "needs three more seeds" and cover all 16
-cells. Before spending another reproduction run on those cells, resolve
-the budget-aware attribution error and decide how to describe the
-representation-only/path-shingle flags. No reproduction run has started.
+The four build-bug findings are Laguna fork S1, backed by full-budget probes
+matched to upstream greedy settings. S2/S4 remain observed failures, but their
+2,048-versus-16,384 budgets cannot establish build causality. The same caution
+applies to Laguna S3. All ten budget-confounded findings are labelled
+`not attributable (different budgets)`. The seventeen other findings retain
+the automated `needs three more seeds` suggestion; **D11 skips those runs**.
+There are no context-size bug findings. Build divergence and dense reasoning
+remain informational.
 
-Raw paths are `<Framework run>/raw/<cell>/<prompt>-<run>.json`; e.g.
-`raw/laguna-s-2.1-nathanw-ctx32k/S1-greedy.json`,
-`raw/qwen3.8-flash-next-q4-nathanw-ctx32k/S4-greedy.json` and
-`raw/laguna-s-2.1-upstream-ctx32k/S4-seed2.json` under the run above.
-Candidate reproduction must retain the selected build/context and use
-seeds 4/5/6 as ctx-12 specifies. D1's fresh fork candidate cell remains
-a separately scoped follow-up; this review does not build or promote it.
+### Findings by bug type (ctx-13)
 
-Remaining work is ctx-12 through ctx-14 after resolving the attribution issue in
-[plan.md](plan.md#execution-steps), with a status table. To continue, open
-the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
+Every row below applies to all four tested sizes. Raw paths are relative to
+`/storage/artifacts/framework-ctx-bugs/20261014T071722Z/raw/` on Framework;
+`ctx32k` is the representative copy because S1–S5 output bytes match at every
+size. Builds tested: Nathanw b10814-9e21f2e53 and upstream b11514-de7fa0a3c.
 
-> Continue docs/ctx-bug-test/plan.md.
+| Type | Model / build | Prompt and flag | Evidence / excerpt | Raw response |
+| --- | --- | --- | --- | --- |
+| Wrong given fact / count | Laguna / Nathanw | S3 `wrong:q8` | `"NOT IN LOG"` for six matching records; needles and absent facts correct. Budget-confounded build attribution. | `laguna-s-2.1-nathanw-ctx32k/S3-greedy.json` |
+| Wrong given fact / count | Laguna / upstream | S3 `wrong:q8` | Seed 2 returns `8`, expected numeric 6; greedy returns `"11"`. | `laguna-s-2.1-upstream-ctx32k/S3-seed2.json` |
+| Representation failure | Qwen / both | S3 `wrong:q8` | Quoted `"6"` instead of numeric 6 (Nathanw seed 2, upstream seed 3); arithmetic correct. | `qwen3.8-flash-next-q4-nathanw-ctx32k/S3-seed2.json`; `qwen3.8-flash-next-q4-upstream-ctx32k/S3-seed3.json` |
+| Repetition | Qwen / Nathanw | S3 `repetition` | "JSON list of eight answers in question order" occurs four times in reasoning; final answer correct. | `qwen3.8-flash-next-q4-nathanw-ctx32k/S3-seed1.json` |
+| Repetition / budget exhaustion / instruction loss | Qwen / both | S4 `repetition`, `runaway`, `no-answer`, `if-fail:*` | 32/32 hit 16,384; 24 empty final answers, eight partial runbooks. Reasoning drafts and counts section words. | `qwen3.8-flash-next-q4-nathanw-ctx32k/S4-greedy.json`; `qwen3.8-flash-next-q4-upstream-ctx32k/S4-greedy.json` |
+| Hidden-token/parser build bug | Laguna / Nathanw | S1 `hidden-tokens`, `template-leak`, `if-fail:only-numbers`, `wrong:sanity` | Full-budget probe: 758 generated / 342 visible; final content starts "I need to solve this problem step by step" and exposes `</think>`. Upstream matched greedy passes. | `laguna-s-2.1-nathanw-ctx32k/S1-probe.json` |
+| Hidden tokens | Laguna / Nathanw | S2 `hidden-tokens` | 289 generated / 51 visible, valid JSON and END; short/full build attribution unavailable. | `laguna-s-2.1-nathanw-ctx32k/S2-greedy.json` |
+| Instruction loss / budget exhaustion | Laguna / Nathanw | S4 `runaway`, `if-fail:*` | Cut off at the deliberately reduced 2,048-token cap. | `laguna-s-2.1-nathanw-ctx32k/S4-greedy.json` |
+| Instruction loss / path shingle | Laguna / upstream | S4 `if-fail:word-counts`, `repetition` | Greedy section 2 has 143 words, minimum 150; seed 2 repeats `/opt/maple/packages/maple-release-2.3.0.tar.gz` four times. | `laguna-s-2.1-upstream-ctx32k/S4-greedy.json`; `laguna-s-2.1-upstream-ctx32k/S4-seed2.json` |
 
-Codex works through steps until it needs an approval, a decision or a
-finished run. Consecutive Framework steps get one combined preflight.
+No response invents either absent fact, and no exact-tail loop is detected.
+The observed S4 cap exhaustion and S1 hidden tokens are the relevant runaway
+symptoms. Aggregate hidden-token counts do not prove which token IDs occurred.
+The instruction failures above do not grow with context size; all S5
+conversation/reference checks pass. These observations establish neither a
+new context-size bug nor a need to change model context defaults.
 
-Local steps run straight through. Steps on Framework post a preflight and
-wait for "proceed" before running anything.
+### Part B fill accuracy
+
+Each entry is correct answers / questions at that size, aggregating the
+listed runs. All use seven-question F prompts. Paired builds have identical
+prompt bytes, with relocated needles and exact tokenizer targets 14,336 /
+47,104 / 79,872 / 112,640. The eight-question pilot cannot be compared for
+accuracy; its hang, wall time and prompt tok/s remain useful evidence.
+
+| Model | Build | Runs per size | 32768 | 65536 | 98304 | 131072 |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| Qwen | Nathanw | greedy + seed 1 | 14/14 | 14/14 | 14/14 | 14/14 |
+| Qwen | upstream | greedy + seed 1 | 14/14 | 14/14 | 14/14 | 14/14 |
+| Laguna | Nathanw | short greedy | 7/7 | 7/7 | 7/7 | 7/7 |
+| Laguna | upstream | greedy + seed 1 | 14/14 | 14/14 | 14/14 | 14/14 |
+
+F totals **196/196**, with no retrieval degradation. Short-mode fork F is
+observational, not a controlled comparison of equal completion budgets.
+
+### Draft catalogue cleanup (ctx-14)
+
+These are proposed changes only; models.json has not been edited for cleanup.
+Both tested models' `variants` return to `[]`, removing all 24 generated
+context-test entries including HIP variants. Remove Laguna's `fork` backend
+again; its two Vulkan/HIP upstream backends remain. Preserve the existing
+wildcard Qwen status and add explicit statuses for the tested builds. All
+four tested status records get `checked: 2026-10-15`.
+
+| Model | Status key | Proposed status | Reason |
+| --- | --- | --- | --- |
+| qwen3.8-flash-next-q4 | nathanw | works | Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). |
+| qwen3.8-flash-next-q4 | upstream | works | Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). |
+| laguna-s-2.1 | nathanw | broken | Matched full-budget S1 probes expose reasoning/template and hidden tokens on b10814 at all four sizes (docs/ctx-bug-test). |
+| laguna-s-2.1 | upstream | works | F 7/7 through 131k with batch 512/128 and parallel 1; S3 count and S4 length failures; default-batch pilot GPU timeout (docs/ctx-bug-test). |
+
+These statuses summarize the tested configuration and limitations; the
+ordinary entries keep their existing settings, and HIP was not tested.
+No new build, candidate promotion or production batch/default-model change
+is proposed. D1's candidate follow-up remains outside the completed matrix.
+Only ctx-14 remains and requires its named production cleanup approval.
 
 Known production issue found by this test (not fixed here, D10): Ubuntu's
 daily `apt-daily-upgrade` runs needrestart, which restarts
