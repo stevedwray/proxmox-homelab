@@ -335,7 +335,7 @@ prompt each time is:
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | done 2026-10-14 (operator started detached pilot; running gate passed) |
 | ctx-10-pilot-review | local + Framework (read-only) | — | done 2026-10-14 (24 requests reviewed; restore/evidence verified; fixes recommended) |
 | ctx-10a-detector-fixes | local, then Framework (read-only regrade) | — | done 2026-10-14 (58 tests pass; operator regraded 24 pilot requests and 1 probe) |
-| ctx-10b-variant-option | local | — | todo |
+| ctx-10b-variant-option | local | — | done 2026-10-14 (suffix/prompt options, resume identity and restoration; 62 tests pass) |
 | ctx-10c-batch-variant | local | — | todo |
 | ctx-10e-drop-f-count | local | — | todo |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | todo |
@@ -931,7 +931,14 @@ gates:
     critical: true
 ```
 
-Result: —
+Result: done 2026-10-14. Added validated lowercase/digit `--entry-suffix`
+and canonical-order `--prompts` selection, recorded both in run identity,
+and extended test-entry restoration to suffixed aliases. An F-only run
+sends no S1 probe; existing full fit checks remain. The stand-in recognizes
+suffixed contexts. All 62 tests pass, including the full canned matrix,
+F greedy/seed1 scheduling, a clean 131k b512 F-only dry run, changed-option
+resume refusal and restoration from a saved ctx131k-b512 alias. No Framework
+access or catalogue change was made. Next: ctx-10c, the local batch variant.
 
 #### ctx-10c-batch-variant
 

@@ -23,6 +23,7 @@ from resp_client import RespRedis
 MODELS = ('qwen3.8-flash-next-q4', 'laguna-s-2.1')
 BUILDS = ('nathanw', 'upstream')
 SIZES = (32768, 65536, 98304, 131072)
+PROMPTS = ('S1', 'S2', 'S3', 'S4', 'S5', 'F')
 SUFFIXES = dict(zip(SIZES, ('32k', '64k', '96k', '131k')))
 BUDGET, MARGIN = 16384, 2048
 DEFAULT_MODEL = 'glm-5.3-flash-upstream'
@@ -115,8 +116,9 @@ class Client:
         return self.tokenize(rendered['prompt'], special=True)
 
 
-def entry_id(model, build, size, candidate=False):
-    return f'{model}-{build}' + ('-candidate' if candidate else '') + f'-ctx{SUFFIXES[size]}'
+def entry_id(model, build, size, candidate=False, suffix=None):
+    return (f'{model}-{build}' + ('-candidate' if candidate else '') +
+            f'-ctx{SUFFIXES[size]}' + (f'-{suffix}' if suffix else ''))
 
 
 def fit_check(count, size):
@@ -218,11 +220,12 @@ def server_pid(entry):
     return [pid, Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]]
 
 
-def runs(short=False, greedy_only=False, extra_seeds=None):
+def runs(short=False, greedy_only=False, extra_seeds=None, prompts=PROMPTS):
+    selected = [p for p in PROMPTS if p in prompts]
     if extra_seeds:
-        return [(p, f'seed{s}', s, False) for p in ('S1', 'S2', 'S3', 'S4', 'S5', 'F') for s in extra_seeds]
+        return [(p, f'seed{s}', s, False) for p in selected for s in extra_seeds]
     out = []
-    for prompt in ('S1', 'S2', 'S3', 'S4', 'S5', 'F'):
+    for prompt in selected:
         out.append((prompt, 'greedy', 1, True))
         if not short and not greedy_only:
             out.extend((prompt, f'seed{s}', s, False) for s in ((1,) if prompt == 'F' else (1, 2, 3)))
@@ -473,6 +476,7 @@ class Run:
                         builds=builds, prompt_manifest=hashes, sampling=SAMPLING,
                         models=self.args.models, sizes=self.args.sizes, builds_selected=self.args.builds,
                         greedy_only=self.args.greedy_only, extra_seeds=self.args.extra_seeds,
+                        entry_suffix=self.args.entry_suffix, prompts=self.args.prompts,
                         candidate=self.args.candidate,
                         script_hashes={p.name: gp.sha(p.read_bytes()) for p in Path(__file__).parent.glob('*.py')
                                        if not p.name.startswith('test_') and p.name != 'stub_server.py'},
@@ -522,7 +526,7 @@ class Run:
             raise RuntimeError('Framework run lock lost; stopping')
 
     def preflight_cell(self, model, build, size):
-        entry = entry_id(model, build, size, self.args.candidate)
+        entry = entry_id(model, build, size, self.args.candidate, self.args.entry_suffix)
         self.check_lock()
         self.client.load(entry)
         props = self.client.call('/props')
@@ -657,10 +661,10 @@ class Run:
         for model in self.args.models:
             for size in self.args.sizes:
                 for build in self.args.builds:
-                    entry = entry_id(model, build, size, self.args.candidate)
+                    entry = entry_id(model, build, size, self.args.candidate, self.args.entry_suffix)
                     existing = self.manifest['cells'].get(entry, {})
                     short = existing.get('short', self.args.candidate)
-                    pending = [r for r in runs(short, self.args.greedy_only, self.args.extra_seeds)
+                    pending = [r for r in runs(short, self.args.greedy_only, self.args.extra_seeds, self.args.prompts)
                                if f'{entry}/{r[0]}/{r[1]}' not in self.done]
                     if not pending:
                         continue
@@ -672,7 +676,8 @@ class Run:
                         # The normal S1 greedy is a probe only if it triggers short form.
                         # Save that probe separately, then run all six short requests at 2048.
                         probe_key = f'{entry}/S1/greedy'
-                        if model == MODELS[1] and build == 'nathanw' and not short and probe_key not in self.done:
+                        if (model == MODELS[1] and build == 'nathanw' and not short
+                                and 'S1' in self.args.prompts and probe_key not in self.done):
                             probe = self.request(model, build, size, entry, fixtures['S1'], counts['S1'],
                                                  'S1', 'greedy', 1, True, False)
                             short = 'hidden-tokens' in probe['flags']
@@ -683,7 +688,7 @@ class Run:
                                 self.save()
                             else:
                                 self.checkpoint(probe)
-                        for prompt, run, seed, greedy in runs(short, self.args.greedy_only, self.args.extra_seeds):
+                        for prompt, run, seed, greedy in runs(short, self.args.greedy_only, self.args.extra_seeds, self.args.prompts):
                             if f'{entry}/{prompt}/{run}' in self.done:
                                 continue
                             record = self.request(model, build, size, entry, fixtures[prompt], counts[prompt],
@@ -720,7 +725,7 @@ class Run:
                 try:
                     self.check_lock()
                     restore_model = self.manifest.get('restore_model', DEFAULT_MODEL)
-                    if re.search(r'-ctx(?:32k|64k|96k|131k)$', restore_model):
+                    if re.search(r'-ctx(?:32k|64k|96k|131k)(?:-[a-z0-9]+)?$', restore_model):
                         restore_model = DEFAULT_MODEL
                     self.client.load(restore_model)
                     self.manifest['restored_model'] = restore_model
@@ -749,8 +754,14 @@ def parse_args(argv=None):
     parser.add_argument('--builds-root', default='/storage/llama-builds')
     parser.add_argument('--builds-json', help='explicit {nathanw,upstream: {name,sha,build_info}} expectations')
     parser.add_argument('--candidate', action='store_true', help='D1: one Laguna/nathanw candidate short-form cell; specify its size')
+    parser.add_argument('--entry-suffix', help='extra catalogue variant suffix, lowercase letters/digits, e.g. b512')
+    parser.add_argument('--prompts', nargs='+', choices=PROMPTS, default=list(PROMPTS),
+                        help='selected prompts, always executed in S1–S5/F order')
     parser.add_argument('--redis-config', default='/etc/llama-builds/backends.json')
     args = parser.parse_args(argv)
+    if args.entry_suffix is not None and not re.fullmatch(r'[a-z0-9]+', args.entry_suffix):
+        parser.error('--entry-suffix requires lowercase letters/digits')
+    args.prompts = [p for p in PROMPTS if p in args.prompts]
     if not args.dry_run:
         args.swap_url = args.swap_url or 'http://127.0.0.1:8099'
         args.api_key_file = args.api_key_file or '/etc/llamacpp/api-key'

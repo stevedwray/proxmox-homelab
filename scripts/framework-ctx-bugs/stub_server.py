@@ -127,7 +127,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.reply(dict(text='\n'.join(line for epoch, line in s.kernel_events if since <= epoch <= until)))
         elif self.path == '/props':
-            match = re.search(r'-ctx(32k|64k|96k|131k)$', s.entry)
+            match = re.search(r'-ctx(32k|64k|96k|131k)(?:-[a-z0-9]+)?$', s.entry)
             size = {'32k': 32768, '64k': 65536, '96k': 98304, '131k': 131072}.get(match[1] if match else '', 131072)
             build = 'nathanw' if '-nathanw-' in s.entry else 'upstream'
             self.reply(dict(model_alias=s.entry, default_generation_settings=dict(n_ctx=size),

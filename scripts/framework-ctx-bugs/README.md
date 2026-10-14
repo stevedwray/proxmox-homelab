@@ -139,6 +139,15 @@ completions. Cell logs use `-u llama-swap.service --since <cell start>
 The launcher follows the existing benchmark's `systemd-run --user`
 pattern and enables user lingering if needed. Use `--foreground` when desired.
 
+`--entry-suffix b512` selects an existing extra catalogue variant such as
+`laguna-s-2.1-upstream-ctx131k-b512`; it does not create or deploy an entry.
+`--prompts F` limits completion requests to F (greedy plus seed 1, or greedy
+only with `--greedy-only`). Multiple selected prompts run in S1–S5/F order.
+Fit checks still validate every fixed prompt and F. A Laguna S1 probe is sent
+only when S1 is selected. Both options are recorded in resume identity;
+changing either refuses resume. Context-test aliases with an extra suffix
+also restore the normal default instead of leaving a test entry loaded.
+
 Sampled runs send the values in the single `SAMPLING` constant in
 `ctx_bugs.py`; server defaults cannot override them. Qwen uses D3's thinking
 recipe. Laguna uses Poolside's published recommendation (temperature 0.7,

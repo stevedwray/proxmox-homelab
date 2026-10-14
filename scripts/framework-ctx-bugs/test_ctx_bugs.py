@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import io
 import json
 import re
 import signal
@@ -464,6 +465,63 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(len(cb.runs(extra_seeds=[4, 5, 6])), 18)
         for size in cb.SIZES:
             self.assertIn('-ctx', cb.entry_id(cb.MODELS[0], 'upstream', size))
+
+    def test_variant_entry_ids_and_option_validation(self):
+        for candidate in (False, True):
+            base = 'laguna-s-2.1-nathanw' + ('-candidate' if candidate else '') + '-ctx131k'
+            self.assertEqual(cb.entry_id(cb.MODELS[1], 'nathanw', 131072, candidate), base)
+            self.assertEqual(cb.entry_id(cb.MODELS[1], 'nathanw', 131072, candidate, 'b512'), base+'-b512')
+        for invalid in ('', 'B512', 'b-512', '../b512', 'b_512'):
+            with self.subTest(suffix=invalid), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    cb.parse_args(['--entry-suffix', invalid])
+        self.assertEqual(cb.parse_args(['--prompts', 'F', 'S2', 'F']).prompts, ['S2', 'F'])
+
+    def test_selected_prompt_scheduling(self):
+        self.assertEqual(cb.runs(prompts=['F']), [('F', 'greedy', 1, True), ('F', 'seed1', 1, False)])
+        self.assertEqual(cb.runs(greedy_only=True, prompts=['F']), [('F', 'greedy', 1, True)])
+        self.assertEqual(cb.runs(short=True, prompts=['F']), [('F', 'greedy', 1, True)])
+        self.assertEqual(cb.runs(extra_seeds=[4, 5, 6], prompts=['F']),
+                         [('F', f'seed{i}', i, False) for i in (4, 5, 6)])
+        self.assertEqual([r[0] for r in cb.runs(greedy_only=True, prompts=['F', 'S3', 'S1'])],
+                         ['S1', 'S3', 'F'])
+
+    def test_suffix_fill_only_run_restore_and_resume_identity(self):
+        # Nathanw Laguna would normally probe S1; F-only must not send that probe.
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            initial = cb.entry_id(cb.MODELS[1], 'upstream', 131072, suffix='b512')
+            s.entry = initial
+            argv = ['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                    '--models', cb.MODELS[1], '--builds', 'nathanw', '--sizes', '131072',
+                    '--entry-suffix', 'b512', '--prompts', 'F', '--greedy-only']
+            run = cb.Run(cb.parse_args(argv))
+            self.assertEqual(run.execute(), 0)
+            self.assertEqual(len(s.requests), 1)
+            self.assertEqual(len(run.records), 1)
+            self.assertEqual(run.records[0]['prompt'], 'F')
+            entry = cb.entry_id(cb.MODELS[1], 'nathanw', 131072, suffix='b512')
+            self.assertEqual(run.records[0]['cell'], entry)
+            self.assertEqual(run.manifest['cells'][entry]['props']['model_alias'], entry)
+            self.assertEqual(run.manifest['cells'][entry]['props']['default_generation_settings']['n_ctx'], 131072)
+            self.assertNotIn('probe', run.manifest['cells'][entry])
+            self.assertEqual(run.manifest['restore_model'], initial)
+            self.assertEqual(run.manifest['restored_model'], cb.DEFAULT_MODEL)
+            self.assertEqual(s.loads[-1], cb.DEFAULT_MODEL)
+            self.assertEqual(run.manifest['identity']['entry_suffix'], 'b512')
+            self.assertEqual(run.manifest['identity']['prompts'], ['F'])
+            self.assertEqual(cb.Run(cb.parse_args(argv)).execute(), 0)
+            for changed in (['--entry-suffix', 'b256'], ['--prompts', 'S1']):
+                with self.assertRaisesRegex(ValueError, 'resume settings'):
+                    cb.Run(cb.parse_args(argv+changed)).execute()
+            self.assertEqual(len(s.requests), 1)
+
+    def test_fill_only_default_sampling_sends_greedy_and_seed1(self):
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                    '--models', cb.MODELS[0], '--builds', 'upstream', '--sizes', '32768', '--prompts', 'F']))
+            self.assertEqual(run.execute(), 0)
+            self.assertEqual([(r['prompt'], r['run']) for r in run.records], [('F', 'greedy'), ('F', 'seed1')])
+            self.assertEqual(len(s.requests), 2)
 
     def test_fit_and_props_fail_closed(self):
         cb.fit_check(14336, 32768)
