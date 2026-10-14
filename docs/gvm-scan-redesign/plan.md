@@ -5,11 +5,15 @@ config from data, Phase 3 turns the timings into a guaranteed night window.
 Each phase is applied with targeted playbook tags (never a full greenbone-stack
 redeploy while a scan runs) and deployed from a worktree of the branch.
 
-## Phase 0 - baseline (in progress)
+## Phase 0 - baseline (finishing)
 
 Supervised run of `LAN scan: lan full-vuln` (never run before; started
 2026-10-14 14:51 NZ). Record: duration, size of the unmanaged set, peak Redis
-and memory, any runaway web UI. This sets the Phase 1 `max_hosts` and slot.
+and memory, any runaway web UI. Result so far: about 35 live hosts, peak 4.3 GB /
+Redis 673 MB / load 48, no runaway; the three slowest hosts (.18, .252, .253) were
+still running at 99% after 1 h 40 min, so the whole-/24 full-vuln scan needs more than
+100 minutes. When it ends: record the final duration and the unmanaged devices
+found, then re-run the Phase 1 apply so this task picks up its new excludes.
 
 ## Phase 1 - one job per scan
 
@@ -77,6 +81,14 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
    every weekly schedule.
 3. Recompute slots from the measured durations so everything ends by 06:45 and
    nothing exceeds the concurrency limit (`--max-scans 3`).
+
+## Next actions (in order)
+
+1. Phase 0 baseline ends; record it; re-run `--tags scan-program,schedule-program`.
+2. `provision.sh --stack greenbone-stack` (findings-ingest) to ship the coverage fix,
+   then the real `terragrunt plan` drift check from the main checkout.
+3. Phase 2: lean config experiment on 192.168.20.10.
+4. After one full weekly cycle, Phase 3 (durations, `DURATION` test, slot recompute).
 
 ## Later (recorded, not scheduled)
 

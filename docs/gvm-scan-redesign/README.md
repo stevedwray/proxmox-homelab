@@ -1,21 +1,32 @@
 # gvm-scan-redesign
 
 Reshapes the GVM scan program so each scan has one job, nothing is scanned twice,
-and every scan stays inside the night window. Plan: [plan.md](plan.md).
+and every scan stays inside the night window. Plan: [plan.md](plan.md). How to
+run and tune scans: [runbook.md](runbook.md).
 
 ## Status
 
-**2026-10-14: Phase 1 applied** (`--tags scan-program,schedule-program`, from
-`work/gvm-zone-max-hosts`, verified in GVM). 11 of 12 full-vuln tasks now exclude
-their managed hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all
-12 Discovery tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38
-tasks now carry a schedule (14 credentialed, 12 full-vuln, 12 discovery). The
-`lan` full-vuln task was running (the Phase 0 baseline), so the script left its
-target alone: it still has the old excludes and `max_hosts=20` until the setup
-step is re-run after the baseline finishes. Phases 2-3 not started. Decisions
-below are the operator's.
-This follows docs/gvm-coverage-cleanup/ (credentialed scans now work, 14 tasks,
-weekly, VLAN-grouped) and uses what its tuning found.
+**2026-10-14: Phase 1 applied** (`--tags scan-program,schedule-program`, verified in
+GVM; merged to `stable` as #474). 11 of 12 full-vuln tasks now exclude their managed
+hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all 12 Discovery
+tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38 tasks carry a
+schedule (14 credentialed, 12 full-vuln, 12 discovery).
+
+- **Phase 0 baseline** (`LAN scan: lan full-vuln`, whole /24, never run before,
+  started 2026-10-14 14:51 NZ) was still running after 1 h 40 min at 99%: about 35
+  live hosts, peak container memory 4.3 GB, Redis 673 MB, load 48 on 4 vCPUs, no OOM
+  kill. It was the old whole-zone, 20-at-once target, so it also confirms that
+  `max_hosts=20` was too many. Its duration and its list of unmanaged devices are
+  recorded in the plan when it finishes.
+- The `lan` full-vuln task keeps the old excludes and `max_hosts=20` until the
+  scan-program step is re-run after that baseline (the script leaves a running task
+  alone).
+- Phases 2 (lean config) and 3 (night-window `DURATION`) are not started. Next work
+  branches from `stable` (worktree `work/gvm-redesign-phase2`).
+- Tooling for supervised runs is in the repo (`gvm_tuning.py`,
+  `playbooks/gvm-scan-tuning.yml`).
+
+Decisions below are the operator's.
 
 ## Why
 
