@@ -17,12 +17,14 @@ Read-only modes:
   credinfo <task>         task status and whether its target carries an SSH credential
   lancheck                every "LAN scan: " task: status, exclude count, max_hosts, schedule
   hostresults <task> <ip> every recorded result for one host (login/OS/LSC detail)
+  vulns <task>            non-Log findings of a task, grouped by host and severity
   compare <zone>...       non-Log findings of "Credentialed scan: <zone>" vs "LAN scan: <zone> full-vuln"
   families                the scan-config families and test counts of "Full and fast"
   portlist                shape of the "All TCP and Nmap top 100 UDP" port list
 
 Changing modes (the playbook asks for TASK_APPROVAL on production):
   start <task>            start one task
+  stop <task>             stop one task and wait for it to leave Running/Stop Requested
   setprefs <task> k=v...  set task preferences (a live test only: the setup scripts reset them)
   unschedule <task>       remove one task's schedule
   unschedule_all          remove EVERY schedule (a deploy with the credential-program or
@@ -296,6 +298,26 @@ def main():
                 sched = full.find("schedule")
                 print(f"{full.findtext('name'):36} {full.findtext('status'):9} excl={len(excl):2} max_hosts={prefs.get('max_hosts'):>3} sched={sched.findtext('name') if sched is not None and sched.get('id') else None}")
             return
+        if mode == "vulns":
+            t = find(gmp, sys.argv[2])
+            per = {}
+            hosts_seen = set()
+            for res in gmp.get_results(filter_string=f"task_id={t['id']} rows=-1").findall("result"):
+                host = (res.findtext("host") or "").strip().split("\n")[0].strip()
+                hosts_seen.add(host)
+                threat = res.findtext("threat") or ""
+                if threat in ("Log", ""):
+                    continue
+                per.setdefault(host, []).append((threat, (res.findtext("name") or "")[:60]))
+            print(f"{t['name']}: {len(hosts_seen)} hosts with any result, {len(per)} with non-Log findings")
+            order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+            for host in sorted(per, key=lambda h: tuple(int(x) for x in h.split(".")) if h.replace(".", "").isdigit() else (999,)):
+                counts = {}
+                for threat, _ in per[host]:
+                    counts[threat] = counts.get(threat, 0) + 1
+                worst = sorted(per[host], key=lambda x: order.get(x[0], 9))[:2]
+                print(f"  {host:16} {dict(sorted(counts.items(), key=lambda kv: order.get(kv[0], 9)))}  e.g. {'; '.join(w[1] for w in worst)}")
+            return
         if mode == "cleanup":
             root = gmp.get_tasks(filter_string='name~"TEMP calibrate " rows=-1')
             for t in root.findall("task"):
@@ -326,6 +348,18 @@ def main():
             return
         if mode == "seq":
             run_sequence(gmp, sys.argv[2:])
+            return
+        if mode == "stop":
+            t = find(gmp, sys.argv[2])
+            if t is None:
+                sys.exit(f"no task named {sys.argv[2]!r}")
+            gmp.stop_task(t["id"])
+            for _ in range(36):
+                status = gmp.get_task(t["id"]).findtext("task/status")
+                if status not in BUSY:
+                    break
+                time.sleep(5)
+            print(f"stopped {t['name']}: status now {status}")
             return
         if mode == "start":
             t = find(gmp, sys.argv[2])

@@ -12,15 +12,18 @@ hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all 12 Discover
 tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38 tasks carry a
 schedule (14 credentialed, 12 full-vuln, 12 discovery).
 
-- **Phase 0 baseline** (`LAN scan: lan full-vuln`, whole /24, never run before,
-  started 2026-10-14 14:51 NZ) was still running after 1 h 40 min at 99%: about 35
-  live hosts, peak container memory 4.3 GB, Redis 673 MB, load 48 on 4 vCPUs, no OOM
-  kill. It was the old whole-zone, 20-at-once target, so it also confirms that
-  `max_hosts=20` was too many. Its duration and its list of unmanaged devices are
-  recorded in the plan when it finishes.
-- The `lan` full-vuln task keeps the old excludes and `max_hosts=20` until the
-  scan-program step is re-run after that baseline (the script leaves a running task
-  alone).
+- **Phase 0 baseline done.** `LAN scan: lan full-vuln` (whole /24, old target, started
+  2026-10-14 14:51 NZ) ran about 2 h 04 min before I stopped it: 21 hosts produced
+  results, 19 had non-Log findings, **none High or Critical**. Unmanaged devices with
+  Medium findings: 192.168.1.128 (weak certificate signature, TLS 1.0/1.1),
+  .177 (TLS 1.0/1.1), .251 (DNS cache snooping, weak SSH). It used up to 20 hosts at
+  once (load 48 on 4 vCPUs, peak 4.3 GB, Redis 673 MB, no OOM), which confirms 20 was
+  too many. The last 15 minutes were spent on **192.168.1.253, which had left the
+  network mid-scan**: the scanner waited out about 100 s per web-detection plugin and
+  would have run for hours. A vanished host can therefore stall a task past the
+  night window; the `DURATION` hard stop (Phase 3) is the guard.
+- The `lan` full-vuln task now has the narrow excludes (12), `max_hosts=6` and its
+  schedule (re-applied after the baseline). All 38 schedules are live.
 - Phases 2 (lean config) and 3 (night-window `DURATION`) are not started. Next work
   branches from `stable` (worktree `work/gvm-redesign-phase2`).
 - Tooling for supervised runs is in the repo (`gvm_tuning.py`,

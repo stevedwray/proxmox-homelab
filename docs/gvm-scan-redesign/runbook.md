@@ -23,6 +23,8 @@ T -e tune_mode=report                      # every credentialed task, per-host l
 T -e tune_mode=lancheck                    # LAN tasks: excludes, max_hosts, schedule
 T -e tune_mode=listsched                   # what has a schedule
 T -e tune_mode=start -e '{"tune_task":"LAN scan: lan full-vuln"}'
+T -e tune_mode=stop  -e '{"tune_task":"LAN scan: lan full-vuln"}'
+T -e tune_mode=vulns -e '{"tune_task":"LAN scan: lan full-vuln"}'   # non-Log findings by host
 T -e tune_mode=sample_start                # 30 s memory/Redis sampler -> mem.log
 T -e tune_mode=runhosts -e '{"tune_zones":"mgmt_seg 192.168.20.16:skip8200"}'
 ```
@@ -80,6 +82,11 @@ the task and loses its report history.
 - A deploy that runs the credential or schedule tags re-attaches every schedule. To
   pause scans, `unschedule_all` after the deploy and note it (see the memory note
   `project_gvm_schedules_paused`).
+- A host that goes offline mid-scan does not end the task: the scanner waits out each
+  plugin's timeout (about 100 s for the web detections) for thousands of plugins. Check
+  `ping` and a port test from the scanner host, then `stop <task>`. (192.168.1.253 did
+  this on 2026-10-14.) The schedule `DURATION` hard stop is meant to make this safe
+  unattended.
 - Wait for a task to be Done before comparing runs: `last_report/scan_start` is only
   filled in after a run completes.
 
@@ -96,4 +103,4 @@ the task and loses its report history.
 | credentialed: MikroTik | 1 | 71 min | |
 | discovery (2026-08-29) | zone | 6 (build) to 41 (lan) min | |
 | full-vuln, whole zone (before narrowing) | zone | 21 (build) to 66 (infra) min | |
-| full-vuln: lan, whole /24 | about 35 live hosts | over 1 h 40 min | baseline: peak 4.3 GB, Redis 673 MB, load 48 |
+| full-vuln: lan, whole /24 (old target) | 21 hosts with results | stopped at about 2 h 04 min | stalled on an offline host; peak 4.3 GB, Redis 673 MB, load 48 |

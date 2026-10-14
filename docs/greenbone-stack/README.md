@@ -38,8 +38,9 @@ page; see "Per-zone host concurrency", "Redis memory cap" and "Hosts split out o
 their zone" below. Measured durations are in the runbook.
 
 **State at 2026-10-14:**
-- Phase 1 of the redesign is applied. The `lan` full-vuln task was running a
-  supervised baseline, so it still has its old excludes until the setup step is re-run.
+- Phase 1 of the redesign is applied to all 12 full-vuln tasks. The first whole-/24
+  `lan` baseline (old target) ran about 2 h and found nothing High or Critical; a device
+  that dropped offline mid-scan stalled it, so a `DURATION` hard stop is planned.
 - The coverage-check fix (a login failure beside a success is not `auth_failed`,
   needed for MikroTik) is on `stable` but reaches the host only with the next
   `provision.sh --stack greenbone-stack` (findings-ingest tag).

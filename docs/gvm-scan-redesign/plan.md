@@ -5,15 +5,15 @@ config from data, Phase 3 turns the timings into a guaranteed night window.
 Each phase is applied with targeted playbook tags (never a full greenbone-stack
 redeploy while a scan runs) and deployed from a worktree of the branch.
 
-## Phase 0 - baseline (finishing)
+## Phase 0 - baseline (done 2026-10-14)
 
-Supervised run of `LAN scan: lan full-vuln` (never run before; started
-2026-10-14 14:51 NZ). Record: duration, size of the unmanaged set, peak Redis
-and memory, any runaway web UI. Result so far: about 35 live hosts, peak 4.3 GB /
-Redis 673 MB / load 48, no runaway; the three slowest hosts (.18, .252, .253) were
-still running at 99% after 1 h 40 min, so the whole-/24 full-vuln scan needs more than
-100 minutes. When it ends: record the final duration and the unmanaged devices
-found, then re-run the Phase 1 apply so this task picks up its new excludes.
+Supervised run of `LAN scan: lan full-vuln` (never run before; started 2026-10-14
+14:51 NZ). Result: stopped after about 2 h 04 min; 21 hosts with results, 19 with
+non-Log findings, none High or Critical; peak 4.3 GB / Redis 673 MB / load 48; no
+runaway web UI. Unmanaged devices with Medium findings: .128, .177, .251. The scan
+stalled on 192.168.1.253, a device that went offline mid-scan, which is why Phase 3
+needs the `DURATION` hard stop. Next: nothing, the lan task has been re-applied with
+the narrow excludes.
 
 ## Phase 1 - one job per scan
 
@@ -36,8 +36,8 @@ found, then re-run the Phase 1 apply so this task picks up its new excludes.
 Acceptance: no managed host appears in any full-vuln target; every zone has a
 scheduled discovery; the gateway `.1` of each VLAN stays in the unmanaged scan.
 
-Status 2026-10-14: steps 1-5 done (applied and verified; lan full-vuln still to be
-re-run through the setup step once the Phase 0 baseline ends). Steps 1-4 were written with unit tests (generator export,
+Status 2026-10-14: steps 1-5 done (applied and verified, including the lan task after
+the Phase 0 baseline). Steps 1-4 were written with unit tests (generator export,
 exclusion logic, playbook tasks, discovery schedules: Thursday 22:00 NZ, 30 minutes
 apart). Step 5 (apply) waits for Phase 0. Details settled while writing it:
 
@@ -84,7 +84,7 @@ application abuses" is 9,594 of them; "Web Servers" 1,047; "Product detection"
 
 ## Next actions (in order)
 
-1. Phase 0 baseline ends; record it; re-run `--tags scan-program,schedule-program`.
+1. (done) Phase 0 baseline recorded; lan task re-applied.
 2. `provision.sh --stack greenbone-stack` (findings-ingest) to ship the coverage fix,
    then the real `terragrunt plan` drift check from the main checkout.
 3. Phase 2: lean config experiment on 192.168.20.10.

@@ -44,7 +44,7 @@
       environment:
         GVM_PASSWORD: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory }}"
       register: out
-      changed_when: tune_mode in ['start', 'setprefs', 'unschedule', 'unschedule_all', 'cleanup']
+      changed_when: tune_mode in ['start', 'stop', 'setprefs', 'unschedule', 'unschedule_all', 'cleanup']
     - ansible.builtin.debug:
         var: out.stdout_lines
       when: tune_mode not in background_modes + plain_modes
