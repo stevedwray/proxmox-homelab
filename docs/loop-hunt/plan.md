@@ -151,16 +151,16 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | Step | Runs on | Approval | Status |
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
-| lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
-| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (all sources reported; eval preserved; 2 unreadable deep files; replay choices pending) |
-| lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; V1/V9 selected; lh-02 next) |
-| lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
-| lh-02-session-harness | local | — | todo |
+| lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; server-default sampling/Q2 exclusion settled) |
+| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | done 2026-10-15 (CSE and deep recovery complete; all sources reported; eval preserved; 2 unreadable deep files) |
+| lh-01c-vscode-transcripts | local (operator's workstation) | — | done 2026-10-15 (5002 sessions, 24067 responses, 1465 candidates; V1/V9 selected) |
+| lh-01d-capture-proxy | local (operator's workstation) | — | deferred, available for exact capture (V1/V9 reconstructions selected) |
+| lh-02-session-harness | local | — | done 2026-10-15 (68 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | todo |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | todo |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
-| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | todo (only if lh-01 found loops) |
+| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
 | lh-09-writeup | local | — | todo |
 | lh-10-cleanup | Framework (production) | `loop-hunt-cleanup` | todo |
@@ -559,7 +559,7 @@ and up to 10 excerpts; the operator picks sessions to replay in lh-07.
 If maxOutputTokens for a reasoning model is far below what its
 reasoning needs, record that as finding candidate FND-client-limits.
 
-Result (2026-10-15): **complete; V1/V9 selected; lh-02 next**.
+Result (2026-10-15): **complete; V1/V9 selected**.
 Actual layout: workspace `chatSessions/*.jsonl` mutation journals plus
 JSON/JSONL empty-window sessions. The tested adapter replays kinds 0–3
 (snapshot, set, array truncate/append, unset), following the installed
@@ -715,7 +715,51 @@ gates:
     critical: true
 ```
 
-Result: —
+Result (2026-10-15): **built locally, not run on Framework**. Generator,
+checkpointed runner, session-aware stand-in, synthetic tools, launcher and
+bounded watcher adapter are built. Candidate expectations support
+`--link nathanw=candidate`; ctx-bugs permits candidates for either supported
+model/build without applying Laguna's short budget to Qwen.
+
+Both test gates pass: **68 loop-hunt tests, 96 ctx-bugs tests**. The sandbox
+blocks socket creation, so loopback fixture tests ran with local socket access;
+no production endpoint/credentials were used. Generator ran twice after its
+fixture commit with `git diff --exit-code -- scripts/loop-hunt/sessions` clean.
+Six seeds have 64 available deterministic turns (headroom past 262k); the
+runner ends by measured context, not the assumed turn count.
+
+Full CLI stand-in evidence in ignored `artifacts/harness-stub-20261015/`:
+
+| Condition | Saved requests | CK pairs | Evidence |
+| --- | ---: | ---: | --- |
+| C1 | 22 | 3 | warm-only loops classified runtime; one concurrent request |
+| C2 | 48 | 8 | four concurrent workers, shared-pool refusals, four turns after crossing |
+| C3 | 28 including imported C1 | 4 | continued C1 text; three warm overflow refusals and a cold refusal |
+| C4 | 46 | 5 | context up to 252628 rendered tokens; clean responses unflagged |
+| C5 | 62 | — | 30 fake tool calls + final answer per budget; both done checks pass; no flags |
+
+C5 system text measured 12288 tokens. Largest C5 prompts were 120829
+(8192 output budget) and 112635 (16384), with 2048 margin. Tools never
+execute real commands or access real files. Visible tool-call tokens count
+as visible output, avoiding false hidden-token floods. Template rendering
+that ignores tools refuses C5 measurement.
+
+C1/C4 use a final valid near-limit turn for the nominal 131k/262k CK, always
+recording actual tokens (the full C1 stub reached 117164 prompt tokens).
+C3 requires `--continue-from` a completed matching C1 checkpoint; it does
+not claim cache continuity after a reload/resume. In C2 all workers finish
+before CK; reloads discard all slot caches and are explicitly recorded.
+Later cached tokens are measured, not presumed. Warm-only attribution
+requires positive recorded cache reuse; HTTP refusals/crashes are not
+labelled model/content failures. Pilot must review cache-reset effects.
+
+Transport/SSE interruption stays pending; C2 checkpoints completed peers
+before stopping for a failed peer. Offline regrade preserves saved evidence
+and refuses running/locked runs. Reports retain actual/rendered/server tokens,
+cached tokens, timings, rules/recall, similarity, collapse context and CK.
+Launcher/watch adapter are built but no units, timer commands or model loads
+were executed. Production deployment remains behind lh-04 approval.
+
 
 #### lh-03-catalogue
 

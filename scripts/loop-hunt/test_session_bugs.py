@@ -1,0 +1,230 @@
+import contextlib
+import copy
+import io
+import json
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+
+import gen_sessions as gs
+import session_bugs as sb
+from session_stub import SessionStub
+import session_tools as tools
+
+
+@contextlib.contextmanager
+def server(**kwargs):
+    stub=SessionStub(**kwargs)
+    thread=threading.Thread(target=stub.serve_forever,daemon=True)
+    thread.start()
+    try:yield stub
+    finally:
+        stub.shutdown()
+        stub.server_close()
+        thread.join(5)
+
+
+class SessionHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.fixtures=self.root/'fixtures'
+        gs.generate(self.fixtures,turns=6,chars=3500)
+
+    def runner(self,stub,condition='C1',extra=(),name='run'):
+        return sb.SessionRun(sb.parse_args(['--dry-run','--base-url',stub.url,
+            '--entry','qwen3.8-flash-next-q4-nathanw-sess131k',
+            '--condition',condition,'--session-dir',str(self.fixtures),
+            '--run-dir',str(self.root/name),'--max-turns','3',*extra]))
+
+    def execute(self,run):
+        with contextlib.redirect_stdout(io.StringIO()):return run.execute()
+
+    def test_warm_only_loop_classifies_runtime_and_payloads_match(self):
+        with server(loop_mode='warm') as stub:
+            run=self.runner(stub,extra=['--checkpoint-tokens','1800'])
+            self.assertEqual(self.execute(run),0,run.manifest)
+            pairs=list(run.manifest['checkpoints'].values())
+            self.assertEqual(len(pairs),1)
+            self.assertEqual(pairs[0]['classification'],'runtime (warm only)')
+            self.assertTrue(pairs[0]['identical_request_except_cache'])
+            cold=next(r for r in run.records if r['mode']=='cold')
+            self.assertFalse(cold['payload']['cache_prompt'])
+            for request in stub.requests:
+                for key in ('temperature','top_p','top_k','min_p','id_slot'):self.assertNotIn(key,request)
+                self.assertFalse(any('reasoning_content' in m for m in request['messages']))
+            self.assertTrue(run.manifest['restored_default'])
+
+    def test_loop_present_warm_and_cold_classifies_model_content(self):
+        with server(loop_mode='both') as stub:
+            run=self.runner(stub,extra=['--checkpoint-tokens','1800'])
+            self.assertEqual(self.execute(run),0)
+            self.assertEqual(next(iter(run.manifest['checkpoints'].values()))['classification'],'model/content')
+
+    def test_resume_retries_only_interrupted_turn(self):
+        with server(interrupt_request=2) as stub:
+            first=self.runner(stub,extra=['--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(first),1)
+            self.assertEqual([r['turn'] for r in first.records],[1])
+            resumed=self.runner(stub,extra=['--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(resumed),0,resumed.manifest)
+            self.assertEqual([r['turn'] for r in resumed.records],[1,2,3])
+            turns=[int(request['messages'][-1]['content'].split('EVIDENCE TURN ')[1].split()[0]) for request in stub.requests]
+            self.assertEqual(turns,[1,2,2,3])
+            self.assertGreater(len(resumed.records[-1]['payload']['messages']),len(resumed.records[0]['payload']['messages']))
+            self.assertEqual(len({r['key'] for r in resumed.records}),len(resumed.records))
+
+    def test_c2_four_concurrent_requests_shared_pool_eviction(self):
+        with server(capacity=5000,overflow='truncate',pool_full='evict',request_delay=.05) as stub:
+            run=self.runner(stub,'C2',extra=['--sessions','1','2','3','4','--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(run),0,run.manifest)
+            self.assertEqual(stub.max_inflight,4)
+            self.assertEqual(len(run.records),12)
+            self.assertTrue(stub.pool_events)
+            self.assertTrue(all(event['behavior']=='evict' for event in stub.pool_events))
+            self.assertTrue(all('id_slot' not in request for request in stub.requests))
+
+    def test_c2_resume_keeps_other_completed_requests(self):
+        with server(interrupt_request=2,request_delay=.03) as stub:
+            extra=['--sessions','1','2','3','4','--checkpoint-tokens','999999','--max-turns','2']
+            first=self.runner(stub,'C2',extra=extra)
+            self.assertEqual(self.execute(first),1)
+            self.assertEqual(len(first.records),3)
+            complete_keys={r['key'] for r in first.records}
+            resumed=self.runner(stub,'C2',extra=extra)
+            self.assertEqual(self.execute(resumed),0,resumed.manifest)
+            self.assertEqual(len(resumed.records),8)
+            self.assertTrue(complete_keys.issubset(resumed.done))
+            self.assertEqual(len(stub.requests),9)
+
+    def test_kernel_capture_failure_is_nonfatal(self):
+        with server(kernel_log_error=True) as stub:
+            run=self.runner(stub,extra=['--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(run),0)
+            self.assertTrue(all('kernel window' in r['evidence_error'] for r in run.records))
+            self.assertTrue(all(not r['flags'] for r in run.records))
+
+    def test_tool_template_ignoring_tools_refuses_measurement(self):
+        with server() as stub:
+            client=sb.SessionClient(stub.url)
+            original=client.call
+            def ignore(path,payload=None,**kwargs):
+                if path=='/apply-template':payload={k:v for k,v in payload.items() if k!='tools'}
+                return original(path,payload,**kwargs)
+            client.call=ignore
+            with self.assertRaisesRegex(ValueError,'ignored tools'):
+                client.count([dict(role='user',content='fixture')],tools.schemas())
+
+    def test_c3_records_http_overflow_and_truncation_separately(self):
+        with server() as first_stub:
+            first=self.runner(first_stub,name='c1-source',extra=['--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(first),0)
+        for behavior in ('error','truncate'):
+            with self.subTest(behavior=behavior),server(capacity=1000,overflow=behavior) as stub:
+                run=self.runner(stub,'C3',extra=['--checkpoint-tokens','999999','--continue-from',str(self.root/'c1-source'),'--max-turns','6'],name=behavior)
+                self.assertEqual(self.execute(run),0,run.manifest)
+                if behavior=='error':
+                    self.assertTrue(all(r['error'].startswith('HTTP 400') for r in run.records if not r.get('continued_from_c1')))
+                    self.assertTrue(all('http-error' in r['flags'] and 'crash' not in r['flags'] for r in run.records if not r.get('continued_from_c1')))
+                else:
+                    self.assertTrue(any(r['server_prompt_tokens']<r['prompt_tokens'] for r in run.records))
+
+    def test_layout_diff_refuses_before_inference_and_restores(self):
+        with server() as stub:
+            run=self.runner(stub)
+            original=run.client.call
+            def altered(path,*args,**kwargs):
+                result=original(path,*args,**kwargs)
+                if path=='/slots':result[0]['n_ctx']=32768
+                return result
+            run.client.call=altered
+            self.assertEqual(self.execute(run),1)
+            self.assertFalse(stub.requests)
+            self.assertIn('slot layout differs',run.manifest['failure'])
+            self.assertTrue(run.manifest['restored_default'])
+
+    def test_resume_refuses_changed_identity(self):
+        with server() as stub:
+            run=self.runner(stub)
+            self.assertEqual(self.execute(run),0)
+            changed=self.runner(stub,extra=['--max-turns','4'])
+            with self.assertRaisesRegex(ValueError,'identity changed'):changed.execute()
+
+    def test_report_table_columns_match_and_no_clean_flags(self):
+        with server() as stub:
+            run=self.runner(stub,extra=['--checkpoint-tokens','1800'])
+            self.assertEqual(self.execute(run),0)
+            self.assertTrue(all(not r['flags'] for r in run.records))
+            self.assertTrue(any(r['cached_tokens'] for r in run.records))
+            lines=(run.directory/'report.md').read_text().splitlines()
+            for i,line in enumerate(lines):
+                if line.startswith('| ---'):self.assertEqual(line.count('|'),lines[i-1].count('|'))
+
+    def test_c5_streaming_tools_both_budgets_and_no_real_execution(self):
+        with server(request_delay=0) as stub:
+            run=self.runner(stub,'C5',extra=['--max-turns','35'])
+            self.assertEqual(self.execute(run),0,run.manifest)
+            self.assertEqual(len(run.manifest['agent_results']),2)
+            self.assertTrue(all(not r['flags'] for r in run.records))
+            self.assertTrue(all(r['done'] and r['calls']==30 for r in run.manifest['agent_results'].values()))
+            self.assertEqual({r['output_limit'] for r in run.manifest['agent_results'].values()},{8192,16384})
+            self.assertTrue(all(request['stream'] and len(request['tools'])==40 for request in stub.requests))
+            self.assertTrue(all(r['response']['choices'][0]['message']['tool_calls'][0]['function']['name']=='replace_string_in_file' for r in run.records if r['response']['choices'][0]['message'].get('tool_calls')))
+            self.assertTrue(all(12000<=r['system_tokens']<=12300 and r['largest_prompt_tokens']>100000 for r in run.manifest['agent_results'].values()))
+            first=run.records[0]['response']['choices'][0]['message']['tool_calls'][0]
+            self.assertEqual(json.loads(first['function']['arguments'])['path'],'/fixture/module-00.txt')
+
+    def test_replay_has_three_seeds_and_final_cold_pairs(self):
+        fixture=gs.turn_fixture(1,1,chars=400)
+        replay=self.root/'replay.json'
+        replay.write_text(json.dumps(dict(messages=[dict(role='system',content=gs.SYSTEM),dict(role='user',content=fixture['user'])])))
+        with server() as stub:
+            run=self.runner(stub,extra=['--replay',str(replay)])
+            self.assertEqual(self.execute(run),0,run.manifest)
+            self.assertEqual(len(run.records),6)
+            self.assertEqual({r['seed'] for r in run.records},{1,2,3})
+            self.assertEqual(len(run.manifest['checkpoints']),3)
+
+    def test_regrade_uses_saved_fixture_checks(self):
+        with server() as stub:
+            run=self.runner(stub,extra=['--checkpoint-tokens','999999'])
+            self.assertEqual(self.execute(run),0)
+            self.assertEqual(sb.regrade(run.directory),3)
+            rows=json.loads((run.directory/'regraded.json').read_text())
+            self.assertTrue(all(all(q['correct'] for q in r['recall']) for r in rows))
+
+
+class AgentChecksTests(unittest.TestCase):
+    def response(self,name='read_file',arguments='{}',content=''):
+        return dict(choices=[dict(message=dict(content=content,tool_calls=[dict(function=dict(name=name,arguments=arguments))]),finish_reason='tool_calls')])
+
+    def test_tool_repeat_and_malformed_and_reasoning_channels(self):
+        previous,streak=None,0
+        for _ in range(3):flags,previous,streak=tools.checks(self.response(),previous,streak)
+        self.assertIn('tool-repeat',flags)
+        self.assertNotIn('tool-repeat',tools.checks(self.response(arguments='{"path":"changed"}'),previous,streak)[0])
+        self.assertIn('tool-malformed',tools.checks(self.response(arguments='{broken'))[0])
+        self.assertIn('reasoning-in-arguments',tools.checks(self.response(arguments='<think>reason'))[0])
+        self.assertIn('reasoning-in-content',tools.checks(self.response(content='<think>reason'))[0])
+        self.assertNotIn('reasoning-in-content',tools.checks(self.response(content='Clean answer'))[0])
+
+    def test_no_cache_or_crash_does_not_establish_runtime_or_model_cause(self):
+        self.assertEqual(sb.classify(dict(flags=['loop'],cached_tokens=0),dict(flags=[])),
+                         'not attributable (warm cache unconfirmed)')
+        self.assertEqual(sb.classify(dict(flags=['crash']),dict(flags=['crash'])),
+                         'not comparable (server failure)')
+
+    def test_terminal_does_not_run_and_tree_isolated(self):
+        tree=tools.initial_tree()
+        before=copy.deepcopy(tree)
+        result,_=tools.execute(dict(function=dict(name='run_in_terminal',arguments=json.dumps(dict(command='never execute anything')))),tree)
+        self.assertTrue(result['synthetic'])
+        self.assertEqual(tree,before)
+        result,_=tools.execute(dict(function=dict(name='create_file',arguments=json.dumps(dict(path='/outside',content='ignored')))),tree)
+        self.assertIn('error',result)
+        self.assertEqual(tree,before)
+
+
+if __name__=='__main__':unittest.main()

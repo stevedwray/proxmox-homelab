@@ -184,3 +184,91 @@ are 0600, existing outputs are refused, and stdout contains only counts.
 `summary.json` and `summary.md` contain model/month/flag totals. No source
 files are modified or copied. Keep excerpts and source identifiers out of git;
 return at most ten bounded excerpts for the operator's replay selection.
+
+## Multi-turn sessions (lh-02)
+
+`gen_sessions.py` produces six deterministic incident sessions, seeds 1–6,
+with 64 available turns each. A user turn has about 18,000 synthetic log
+characters plus planted facts/questions; chars/3 is only an estimate.
+The runner stops on measured rendered context, not an assumed turn count.
+Each fixture and its expected answers have a manifest SHA-256. There is
+headroom past 262k and for overflow; unconsumed turns are not run.
+
+`session_bugs.py` imports the adjacent ctx-bugs client, run lock, readiness,
+process/swap identity guards, request-window journals and restoration. It
+sends no temperature/top-p/top-k/min-p fields: sampling is server-default,
+with recorded seeds and output budgets. It retains answer text in history,
+never reasoning. Live runs require build expectations, compare current or
+candidate build records, and check alias/build/context plus four full-context
+slots before inference. A layout difference fails before any completion.
+
+Local stand-in examples (no production access):
+
+```bash
+python3 scripts/loop-hunt/session_stub.py --port 18081 --loop-mode warm
+scripts/loop-hunt/run.sh --foreground --dry-run \
+  --base-url http://127.0.0.1:18081 --condition C1 \
+  --entry qwen3.8-flash-next-q4-nathanw-sess131k \
+  --sessions 1 --results-root /tmp/loop-hunt-stub
+```
+
+The launcher uses a detached user systemd unit by default, or `--foreground`.
+`run.sh --status --results-root PATH` reads progress. Resume with the same
+arguments plus `--run-dir PATH`; changes to session hashes, scripts, builds,
+condition or budgets refuse resume. Interrupted transport/SSE requests stay
+pending; completed requests are checkpointed with their exact payloads.
+Resumed text history is reconstructed from completed answers; warm cache
+continuity after restart is not assumed. C2 uses four concurrent workers,
+without `id_slot`, and only the coordinator writes checkpoints.
+
+C1/C4 stop before the next request would exceed context with its 8192-token
+answer allowance. The final valid turn supplies the nominal 131k/262k CK;
+reports retain actual measured tokens, which can be below that nominal size.
+Intermediate CKs occur at the first turn crossing each threshold. C3 takes
+`--continue-from COMPLETED_C1_RUN`, imports that run's answers/checkpoints,
+and sends three turns beyond the measured context boundary. C2 records the
+shared-pool crossing and four further turns. HTTP errors and server-reported
+truncated token counts remain evidence, rather than silently dropping turns.
+
+CK saves a warm request, unloads/reloads the entry and checks that the process
+identity changed, then repeats the exact payload with `cache_prompt: false`.
+Workers finish before a C2 reload. A reload discards all slot caches: every
+reset is recorded and subsequent cached tokens are measured, not assumed.
+Warm-only flags with positive measured cache reuse classify as `runtime (warm
+only)`; otherwise warm cache is unconfirmed. Matching degeneration warm and
+cold classifies as `model/content`; HTTP refusals/crashes are not comparable.
+Dense reasoning alone is informational.
+The unload API follows the [pinned llama-swap v260 documentation](https://github.com/mostlygeek/llama-swap/blob/v260/README.md).
+
+C5 sends 40 synthetic tool schemas with streaming enabled. Its in-memory tree
+has 30 files to update; tools never execute a shell or touch real files.
+Tool evidence grows adaptively with the loaded tokenizer toward the context
+budget. It runs at the measured client's 8192 output limit and 16384, stopping at the
+done check or 60 tool calls. SSE arguments are assembled across fragments;
+tool-repeat, malformed tools, reasoning leaks and cut-off/retry are recorded.
+Tool-bearing prompts must render differently from prompts without tools;
+otherwise context measurement is refused. No fake tool can run arbitrary code.
+
+`--replay FILE` takes an exported reconstruction with `messages` ending at
+the selected user turn and optional `tools`. It regenerates answers from the
+start with seeds 1–3 and compares the final warm/cold turn. Saved Copilot
+sessions lack full system/tool schemas; label them reconstructions. Exact
+historical requests require the still-optional lh-01d capture.
+
+Results contain raw request/response records, actual rendered/server tokens,
+cached tokens, timings, recall/rule checks, text similarity, kernel evidence,
+progress, and `report.md` with per-turn/collapse-context/warm-cold tables.
+`--regrade RUN` regrades saved evidence offline, refusing running/locked runs.
+Keep private replay outputs out of git; the CLI sets umask 077.
+
+`watch_run.py` reuses ctx-bugs' timer restoration and bounded supervision.
+It resumes at most once for the inherited, specific swap-infrastructure
+failure criteria, preserving the session invocation and checked build file.
+A watcher only runs under the later production task approval; no watcher,
+timer command, model load or production operation is run by local tests.
+
+The build-expectations helper now accepts `--link nathanw=candidate`
+(and/or `--link upstream=current`) when validating saved props against a
+particular build link. Unspecified labels still use current. ctx-bugs
+`--candidate` accepts either supported model/build; only Laguna/Nathanw
+keeps its earlier diagnostic 2048-token short form.

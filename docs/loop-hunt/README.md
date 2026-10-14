@@ -10,12 +10,12 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01, lh-01b and lh-01c complete; V1/V9 selected; lh-02 next**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02 built locally; lh-03 next**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 48 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 68 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -322,3 +322,24 @@ in commits 23bce712/2a06001b. Their results above remain authoritative:
 CSE 827 responses/18 candidates; deep 10919 segments/502 candidates, with
 two invalid source files explicitly excluded. Eval outputs remain preserved.
 No repeat production scan is needed to finish that work.
+
+## Session harness (lh-02, 2026-10-15)
+
+Built locally; **no Framework session test has run**. All **68 loop-hunt and
+96 ctx-bugs tests pass**. Deterministic session regeneration ran twice with
+a clean tracked-fixture diff. Full stand-in runs completed C1/C2/C3/C4/C5:
+22/48/28/46/62 saved requests respectively (C3 includes imported C1 records).
+C2 used four concurrent workers; C3 recorded overflow refusals; C1's three
+CK pairs identified warm-only loops; C4's clean answers had no flags.
+C5 completed 30 synthetic tool calls plus a final answer at each output
+budget, with no flags. Its system measured 12288 tokens; largest prompts
+were 120829 at the 8192 budget and 112635 at 16384.
+
+[Tool usage and limits](../../scripts/loop-hunt/README.md#multi-turn-sessions-lh-02)
+describe the launcher, continuation, reconstruction/replay, offline regrade
+and bounded watcher. Private synthetic reports remain under ignored
+`artifacts/harness-stub-20261015/`. Positive cache evidence is required for
+warm-only attribution; refusals and crashes are not model/content findings.
+CK reloads reset all slot caches, including C2's peers; resets and subsequent
+cache counts are recorded for the pilot review. Nominal near-limit CK labels
+always retain actual prompt counts. Production access remains approval-gated.
