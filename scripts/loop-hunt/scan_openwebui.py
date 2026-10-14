@@ -257,6 +257,10 @@ def main(argv=None):
     else:
         print(f"SCAN-OK: {counts['files']} files; {counts['responses']} responses; {counts['hits']} hits; "
               f"{counts['cap_exhausted']} cap-exhausted (separate). Excerpts remain in hits.jsonl.")
+        if counts.get('usage_cap_exhausted') is not None:
+            print(f"CSE-USAGE: {counts['usage_cap_exhausted']} cap-exhausted calls (finish_reason=length; not joined to transcript rows).")
+        if counts.get('unreadable_files'):
+            print(f"COVERAGE-GAP: {counts['unreadable_files']} invalid-JSON session files; see unreadable.jsonl.")
     return 0
 
 

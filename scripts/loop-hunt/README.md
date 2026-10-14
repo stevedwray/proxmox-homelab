@@ -107,3 +107,33 @@ existing empty directory produces an explicit no-evidence summary (zero
 responses evaluated), not evidence that loops never occurred. The production
 preflight in the plan must be approved as `loop-hunt-transcript-scan` before
 any LXC discovery, code copying or scanning.
+
+### Recovery and usage evidence (2026-10-15)
+
+Deep-research may contain incomplete JSON session files. The scanner now
+reports those files as unreadable coverage gaps in private `unreadable.jsonl`
+and continues through readable sessions; it never substitutes empty responses
+for unreadable input. Other unsupported schemas still fail. A synthetic
+incomplete-session fixture reproduces the original failure and verifies that
+valid sessions are retained and source bytes stay unchanged. A session's
+recorded root timestamp supplies the date for older events without timestamps.
+
+For CSE, the producer's `meta.json` and `manifest.json` supplement run dates
+and recorded requested model names; recorded served identities still take
+precedence. Dialogue speaker identities are kept separate rather than
+attributing a victim's output to the attacker's served model.
+
+The CSE report also reads `usage.jsonl` and writes a private aggregate
+`usage-summary.json`. It counts `finish_reason=length` as cap-exhausted
+**calls**, separate from the no-final-answer transcript flag. Usage logs
+include judges/retries and have no response identifier, so they are never
+joined to response rows by position. A partial answer may still terminate
+with length. Missing usage logs are missing evidence, not proof that no
+request exhausted its cap. All 34 local tests pass.
+
+Eval reports from the first successful scan remain unchanged. The recovery
+left a first-pass deep report in `deep-research/` and the complete dated report
+in `deep-research-complete/` on ai-services-stack. CSE's original detector
+report remains in `cse/`; `metadata-audit.json` and `hits-metadata.jsonl`
+correct dates/provenance without rerunning detectors or changing their
+original flags/excerpts. All these files stay on their source hosts.

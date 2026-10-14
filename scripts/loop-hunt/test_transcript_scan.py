@@ -133,6 +133,73 @@ class TranscriptTests(unittest.TestCase):
         self.assertEqual(self.hits()[0]['excerpt_channel'], 'reasoning')
         self.assertEqual(result['cap_exhausted'], 0)
 
+    def test_deep_research_invalid_json_is_coverage_gap_not_loss_of_valid_sessions(self):
+        # Reproduce the production failure: valid session schema alongside an
+        # incomplete persisted JSON file. Use synthetic text only.
+        broken = self.root/'session_broken.json'
+        broken.write_text('{"timestamp":"2026-10-15","ui_events":[')
+        from transcript_scan import deep_research_records
+        with self.assertRaises(json.JSONDecodeError):
+            list(deep_research_records(broken, self.root))
+        self.write('session_good.json', dict(ui_events=[dict(type='text', source='A', data=dict(text=REPEAT*6))]))
+        before = broken.read_bytes()
+        result = scan_transcripts(self.root, self.out, 'deep-research')
+        self.assertEqual(result['files'], 2)
+        self.assertEqual(result['unreadable_files'], 1)
+        self.assertEqual(result['responses'], 1)
+        self.assertEqual(result['hits'], 1)
+        self.assertEqual(broken.read_bytes(), before)
+        self.assertIn('Unreadable session files (invalid JSON at scan time): 1', (self.out/'summary.md').read_text())
+        self.assertEqual(json.loads((self.out/'unreadable.jsonl').read_text()),
+                         dict(source_file='session_broken.json', exception_class='JSONDecodeError'))
+        self.assertEqual((self.out/'unreadable.jsonl').stat().st_mode & 0o077, 0)
+
+    def test_cse_usage_length_calls_are_counted_without_guessing_response_join(self):
+        self.write('run/run.json', dict(started_at='2026-10-01T00:00:00Z'))
+        self.write('run/responses.json', [dict(response=''), dict(response='A final answer.')])
+        self.write('run/usage.jsonl', [dict(model='target', finish_reason='length', completion_tokens=65536),
+                    dict(model='judge', finish_reason='length', completion_tokens=16384),
+                    dict(model='target', finish_reason='stop'), dict(model='target')], True)
+        result = scan_transcripts(self.root, self.out, 'cse')
+        self.assertEqual(result['usage_cap_exhausted'], 2)
+        self.assertEqual(result['cap_exhausted'], 0)  # No per-response IDs to establish a join.
+        self.assertEqual(result['hits'], 0)
+        summary = json.loads((self.out/'usage-summary.json').read_text())
+        self.assertEqual(summary['calls'], 4)
+        self.assertEqual(summary['missing_finish_reason'], 1)
+        self.assertEqual(summary['by_model']['target']['cap_exhausted'], 1)
+        self.assertEqual(summary['by_model']['judge']['cap_exhausted'], 1)
+        self.assertEqual(summary['by_month']['2026-10']['calls'], 4)
+        self.assertIn('No positional join', (self.out/'summary.md').read_text())
+        self.assertEqual((self.out/'usage-summary.json').stat().st_mode & 0o077, 0)
+
+    def test_cse_producer_meta_and_manifest_supply_date_and_requested_identity(self):
+        self.write('run/meta.json', dict(started_at='2026-10-01T00:00:00Z', backend_model='recorded-request'))
+        self.write('run/manifest.json', dict(run_id='recorded-id', started_at='2026-09-01T00:00:00Z'))
+        self.write('run/responses.json', [dict(response=REPEAT*6)])
+        scan_transcripts(self.root, self.out, 'cse')
+        hit = self.hits()[0]
+        self.assertEqual(hit['model_id'], 'recorded-request')
+        self.assertEqual(hit['model_id_source'], 'recorded requested model')
+        self.assertEqual(hit['timestamp'], '2026-10-01T00:00:00Z')
+        self.assertEqual(hit['run_id'], 'recorded-id')
+        self.assertIn('2026-10', (self.out/'summary.md').read_text())
+
+    def test_dialogue_victim_is_not_assigned_attacker_served_identity(self):
+        self.write('run/result.json', dict(served_model=dict(alias='attacker-served', build='build-1')))
+        self.write('run/responses.json', [dict(attacker_model='recorded-attacker',
+                   dialogue_history='Attacker: '+REPEAT*5+'/nVictim: '+REPEAT*5)])
+        scan_transcripts(self.root, self.out, 'cse')
+        self.assertEqual([hit['model_id'] for hit in self.hits()], ['recorded-attacker', 'unknown'])
+        self.assertTrue(all(hit['model_alias'] is None and hit['build_info'] is None for hit in self.hits()))
+
+    def test_deep_session_date_is_fallback_for_events_without_timestamp(self):
+        self.write('session_x.json', dict(timestamp='2026-09-15T12:00:00', ui_events=[
+            dict(type='text', source='A', data=dict(text=REPEAT*6))]))
+        scan_transcripts(self.root, self.out, 'deep-research')
+        self.assertEqual(self.hits()[0]['timestamp'], '2026-09-15T12:00:00')
+        self.assertIn('2026-09', (self.out/'summary.md').read_text())
+
     def test_bad_transcript_does_not_publish_partial_results(self):
         self.write('samples_task_stamp.jsonl', [dict(resps=[[REPEAT*6]]), dict(wrong='unsupported')], True)
         with self.assertRaises(ValueError):

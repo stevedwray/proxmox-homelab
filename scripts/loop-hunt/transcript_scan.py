@@ -42,6 +42,15 @@ def metadata(path, root, kind):
             break
         if folder == root:
             break
+    if kind == 'cse':
+        # CSE's producer uses meta.json (and a later manifest.json), not
+        # eval-runner's run.json. These contain recorded run dates/requests.
+        for name in ('meta.json', 'manifest.json'):
+            candidate = path.parent/name
+            if candidate.is_file():
+                if candidate.is_symlink() or not candidate.resolve().is_relative_to(root):
+                    raise ValueError('CSE metadata escapes approved root')
+                run = {**dictionary(read_json(candidate)), **run}
     result = {}
     if kind == 'lm-eval':
         stamp = path.stem.rsplit('_', 1)[-1]
@@ -76,7 +85,7 @@ def identity(run, result, row):
                   ('result.served_model', served.get('alias') or served.get('id') or served.get('path')),
                   ('response.model', row.get('model_id') or row.get('model')),
                   ('recorded model arguments', args.get('model') or args.get('pretrained')),
-                  ('recorded requested model', run.get('model_id') or run.get('model') or result.get('backend_model'))]
+                  ('recorded requested model', run.get('model_id') or run.get('model') or run.get('backend_model') or result.get('backend_model'))]
     model, provenance = 'unknown', 'not recorded'
     for label, value in candidates:
         if isinstance(value, str) and value:
@@ -209,17 +218,59 @@ def cse_records(path, root):
                 body = parts[i+1] if i+1 < len(parts) else ''
                 # Do not attribute the victim's words to the attacker model.
                 turn = dict(row, model=row.get(parts[i].lower()+'_model', 'unknown'))
-                yield response_record(path, root, 'cse', f'{index}:{parts[i]}:{i}', body, turn, run, result, history)
+                record = response_record(path, root, 'cse', f'{index}:{parts[i]}:{i}', body, turn, run, result, history)
+                record.update(model_id=turn['model'], model_id_source='recorded dialogue speaker model',
+                              model_alias=None, build_info=None)
+                yield record
                 history += body
         else:
             raise ValueError('unsupported CyberSecEval response fields')
 
 
-def deep_research_records(path, root):
-    data = read_json(path)
+def cse_usage_summary(root):
+    """Count authoritative finish reasons; never positionally join model calls.
+
+    The producer records no response IDs and includes judge/retry calls.
+    These counts therefore have a different denominator from responses.json.
+    """
+    by_model, by_month, reasons = {}, {}, Counter()
+    files = calls = length = missing = 0
+    for path in sorted(root.rglob('usage.jsonl')):
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            raise ValueError('usage metadata escapes approved root')
+        files += 1
+        run, result = metadata(path, root, 'cse')
+        stamp = run.get('started_at', result.get('started_at'))
+        with path.open() as source:
+            for line in source:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    raise ValueError('unsupported CSE usage row')
+                calls += 1
+                reason = row.get('finish_reason')
+                exhausted = reason == 'length'
+                length += exhausted
+                missing += reason is None
+                reasons[str(reason) if reason is not None else 'not recorded'] += 1
+                model = row.get('model') if isinstance(row.get('model'), str) else 'unknown'
+                for table, key in ((by_model, model), (by_month, month(row.get('timestamp', stamp)))):
+                    counts = table.setdefault(key, Counter())
+                    counts['calls'] += 1
+                    counts['cap_exhausted'] += exhausted
+    return dict(files=files, calls=calls, cap_exhausted=length, missing_finish_reason=missing,
+                by_model=by_model, by_month=by_month, finish_reasons=reasons)
+
+
+_UNREAD = object()
+
+def deep_research_records(path, root, data=_UNREAD):
+    if data is _UNREAD:
+        data = read_json(path)
     if not isinstance(data, dict) or not isinstance(data.get('ui_events'), list):
         raise ValueError('unsupported deep-research session (expected ui_events)')
-    run = dict(data, run=data.get('session_id', path.stem))
+    run = dict(data, run=data.get('session_id', path.stem), created_utc=data.get('timestamp'))
     events = data['ui_events']
     history, pending = 0, {}
     for index, event in enumerate(events):
@@ -261,9 +312,11 @@ def scan_transcripts(root, output, kind):
     pattern, adapter = ADAPTERS[kind]
     paths = sorted(path for path in root.rglob(pattern) if not path.is_relative_to(output))
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if output.stat().st_mode & 0o077 or any((output/name).exists() for name in ('hits.jsonl', 'summary.md')):
+    if output.stat().st_mode & 0o077 or any((output/name).exists() for name in ('hits.jsonl', 'summary.md', 'unreadable.jsonl', 'usage-summary.json')):
         raise ValueError('output must be private and reports must not exist')
     tables = {'By model': {}, 'By month (UTC)': {}, 'By estimated prompt size': {}}
+    usage_summary = cse_usage_summary(root) if kind == 'cse' else None
+    unreadable = []
     flags_count = Counter()
     total = flagged = degeneration = capped = missing_caps = unknown_models = 0
     published = []
@@ -273,7 +326,16 @@ def scan_transcripts(root, output, kind):
             for path in paths:
                 if path.is_symlink() or not path.resolve().is_relative_to(root):
                     raise ValueError('transcript symlink escapes approved root')
-                for record in adapter(path, root):
+                if kind == 'deep-research':
+                    try:
+                        data = read_json(path)
+                    except json.JSONDecodeError:
+                        unreadable.append(dict(source_file=str(path.relative_to(root)), exception_class='JSONDecodeError'))
+                        continue
+                    records = deep_research_records(path, root, data)
+                else:
+                    records = adapter(path, root)
+                for record in records:
                     total += 1
                     flags, details, excerpts = set(), {}, []
                     for channel in ('answer', 'reasoning'):
@@ -315,7 +377,8 @@ def scan_transcripts(root, output, kind):
         lines = ['# Transcript loop scan', '', f'Source: {kind}. Files: {len(paths)}. Responses: {total}.',
                  f'Flagged responses: {flagged}. Degeneration candidates: {degeneration}. Cap-exhausted (separate): {capped}.',
                  'Coverage: saved transcript files only.' if paths else 'Coverage: no saved transcript files; no responses evaluated. This is not evidence that loops did not occur.',
-                 f'Unknown model identity: {unknown_models}. Responses without cap evidence: {missing_caps}.', '',
+                 f'Unknown model identity: {unknown_models}. Responses without cap evidence: {missing_caps}.',
+                 f'Unreadable session files (invalid JSON at scan time): {len(unreadable)}. Their responses are not evaluated.', '',
                  'Mechanical flags are candidates, not confirmed semantic loops. Cap exhaustion alone is not looping.',
                  'Only recorded identities/settings are used. Missing token/finish metadata cannot establish cap exhaustion.',
                  'Prompt sizes use available prompt text, chars/3.5; deep-research estimates use the UI prefix, not reconstructed per-agent requests.', '']
@@ -326,6 +389,19 @@ def scan_transcripts(root, output, kind):
             lines += ['']
         lines += ['## Flags', '', '| Flag | Responses |', '| --- | ---: |']
         lines += [f'| {flag} | {count} |' for flag, count in sorted(flags_count.items())]
+        if usage_summary is not None:
+            lines += ['', '## CSE usage finish reasons', '',
+                      f"Usage files: {usage_summary['files']}. Logged calls: {usage_summary['calls']}. "
+                      f"Cap-exhausted calls (finish_reason=length): {usage_summary['cap_exhausted']}. "
+                      f"Missing finish_reason: {usage_summary['missing_finish_reason']}.", '',
+                      'Usage includes model/judge/retry calls and has no response ID. No positional join to transcripts is made; length calls may have a partial final answer.', '']
+            for title, table in (('By recorded request model', usage_summary['by_model']),
+                                 ('By usage month (UTC)', usage_summary['by_month'])):
+                lines += [f'### {title}', '', '| Group | Logged calls | Cap-exhausted calls |', '| --- | ---: | ---: |']
+                lines += [f"| {markdown(key)} | {counts['calls']} | {counts['cap_exhausted']} |" for key, counts in sorted(table.items())]
+                lines += ['']
+            lines += ['| finish_reason | Calls |', '| --- | ---: |']
+            lines += [f'| {markdown(key)} | {count} |' for key, count in sorted(usage_summary['finish_reasons'].items())]
         lines += ['', 'hits.jsonl contains bounded excerpts and recorded settings. Keep it on the source host; return only counts and explicitly approved excerpts.', '']
         os.link(temporary, output/'hits.jsonl')
         published.append(output/'hits.jsonl')
@@ -333,10 +409,23 @@ def scan_transcripts(root, output, kind):
         published.append(output/'summary.md')
         with os.fdopen(descriptor, 'w') as summary:
             summary.write('\n'.join(lines))
+        if unreadable:
+            descriptor = os.open(output/'unreadable.jsonl', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            published.append(output/'unreadable.jsonl')
+            with os.fdopen(descriptor, 'w') as audit:
+                for item in unreadable:
+                    audit.write(json.dumps(item, sort_keys=True)+'\n')
+        if usage_summary is not None:
+            descriptor = os.open(output/'usage-summary.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            published.append(output/'usage-summary.json')
+            with os.fdopen(descriptor, 'w') as audit:
+                json.dump(usage_summary, audit, sort_keys=True, indent=2)
+                audit.write('\n')
     except BaseException:
         for path in published:
             path.unlink(missing_ok=True)
         raise
     finally:
         Path(temporary).unlink(missing_ok=True)
-    return dict(files=len(paths), responses=total, hits=flagged, degeneration=degeneration, cap_exhausted=capped)
+    return dict(files=len(paths), responses=total, hits=flagged, degeneration=degeneration, cap_exhausted=capped,
+                unreadable_files=len(unreadable), usage_cap_exhausted=usage_summary['cap_exhausted'] if usage_summary else None)
