@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **pilot reviewed; fix harness before full run** (2026-10-14). The operator settled
+Status: **pilot regraded; batch confirmation pending** (2026-10-14). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -16,7 +16,8 @@ is `/storage/artifacts/framework-ctx-bugs/20261014T000806Z` on Framework.
 The operator completed catalogue deployment (ctx-08) on 2026-10-14:
 all 16 required test IDs passed the guarded check, 52 catalogue entries
 were written, and `qwen3-coder-next-upstream` was reloaded. The next step
-is ctx-10a, detector fixes and regrade. The full run also waits for D8/D9.
+is ctx-10b, variant and prompt-selection options. D8 is decided; the full
+run still waits for the remaining preparation and D9 decision.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
@@ -60,7 +61,7 @@ and the extra 26-second probe.
 
 | Cell | Request time | Reviewed findings |
 | --- | ---: | --- |
-| Qwen Nathanw | 30.50 min | S1 false positive; S2/S3/S5 pass; S4/F exhaust 16,384 tokens without an answer. |
+| Qwen Nathanw | 30.50 min | S1/S2/S3/S5 pass; S4 repetition/runaway; F dense-reasoning/runaway without an answer. |
 | Qwen upstream | 37.28 min | Same S1/S4/F outcome; S2/S3 differ while passing; S5 passes. |
 | Laguna Nathanw | 7.54 min | S1 hidden tokens/template leak; S2 hidden tokens/no answer; S3/F wrong count; S4 truncated at 2,048; S5 passes. |
 | Laguna upstream | 17.62 min | S1/S2/S5 pass; S3 wrong count; S4 section 2 has 144 words; F HTTP 500 after 899 seconds with GPU timeout/reset. |
@@ -98,8 +99,8 @@ JSON spacing while both pass; Laguna S1/S2 differ because of fork failures,
 S3 has different wrong counts, and S4 compares truncated short-form output
 with full output. No absent-fact hallucination was found. S5 passes everywhere.
 
-Recommendation: fix/regrade in ctx-10a before ctx-11, then confirm the GPU
-issue through the planned small-batch run (ctx-10b–ctx-10d). D1's fresh fork
+Recommendation after ctx-10a: confirm the GPU issue through the planned
+small-batch run (ctx-10b–ctx-10d) before ctx-11. D1's fresh fork
 candidate cell is recommended because the fork failure persists; preparation
 and execution need separate approval, without promotion. No detector,
 model or build was changed during review.
@@ -116,14 +117,15 @@ change; keep S3's count and Qwen's default effort. The plan corrected option
 c to medium/low because the saved templates map high to xhigh. No prompt or
 reasoning-effort change was made in ctx-10a.
 
-ctx-10a's local fixes pass 58 tests. Regrading the local evidence copy clears
+ctx-10a's fixes pass 58 tests. Regrading the saved evidence clears
 both Qwen S1 false positives, changes both Qwen F repetition flags to
 informational dense-reasoning, preserves S4 shingle repetition and adds the
 early fence expiry to the GPU evidence. The original checkpoint is retained
-as `results.pre-regrade.jsonl`. Framework installation/regrade still awaits
-approval; the original remote pilot has not been changed.
+as `results.pre-regrade.jsonl`. The operator confirmed successful Framework
+regrade of all 24 requests and one probe on 2026-10-14. The table above
+reflects the corrected classifications; timings and responses are unchanged.
 
-Remaining work is written as steps ctx-10a to ctx-14 in
+Remaining work is written as steps ctx-10b to ctx-14 in
 [plan.md](plan.md#execution-steps), with a status table. To continue, open
 the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS Code and tell Codex:
 
