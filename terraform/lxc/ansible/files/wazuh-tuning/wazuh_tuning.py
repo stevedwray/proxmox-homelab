@@ -84,8 +84,14 @@ def sh(*argv):
     return p.stdout.strip()
 
 
+def window(arg):
+    """'24' -> 24 hours, '10m' -> 10 minutes (kept as given so the output says which)."""
+    return arg if arg.endswith(("m", "h")) else int(arg)
+
+
 def day(hours):
-    return {"range": {"@timestamp": {"gte": f"now-{hours}h"}}}
+    """Range filter for the last `hours` hours, or a string like '10m'."""
+    return {"range": {"@timestamp": {"gte": f"now-{hours}{'' if isinstance(hours, str) else 'h'}"}}}
 
 
 def rule_q(rule_id, hours):
@@ -160,7 +166,7 @@ def mode_health(_args):
 
 
 def mode_alerts(args):
-    hours = int(args[0]) if args else 24
+    hours = window(args[0]) if args else 24
     r = search(ALERTS, day(hours), {
         "rules": terms("rule.id", 15, d=terms("rule.description", 1), lvl=terms("rule.level", 1),
                        agents={"cardinality": {"field": "agent.name"}}),

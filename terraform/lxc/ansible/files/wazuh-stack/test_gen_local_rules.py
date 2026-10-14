@@ -41,6 +41,11 @@ class HealthcheckRules(unittest.TestCase):
         ]:
             self.assertFalse(any(rx(e["command"]).match(evil) for e in g.load()), evil)
 
+    def test_no_xml_special_chars_in_patterns(self):
+        for line in open(os.path.join(g.HERE, "local_rules.xml")):
+            if 'type="pcre2"' in line:
+                self.assertNotIn("&", line.split(">", 1)[1].rsplit("</field", 1)[0])
+
     def test_redis_password_not_in_repo(self):
         self.assertNotIn("sRtj", open(os.path.join(g.HERE, "local_rules.xml")).read())
         self.assertNotIn("sRtj", open(os.path.join(g.HERE, "docker_healthchecks.json")).read())

@@ -98,7 +98,7 @@ not restarted; must-fire green; `events_dropped` 0, queues 0. The playbook-rende
 file now matches the live one, so a later full deploy is a no-op for this line. (A full deploy
 still recreates all three containers whenever the compose file changes, hence the targeted path.)
 
-## Phase 1d design (2026-10-15, not yet applied)
+## Phase 1d (applied live 2026-10-15; 24 h gate pending)
 
 - 75 distinct commands sit behind rule 87907 (452,146 events/24 h). 40 are container
   health checks (listed in `files/wazuh-stack/docker_healthchecks.json`); each gets a level-0
@@ -116,6 +116,21 @@ still recreates all three containers whenever the compose file changes, hence th
   8.6k indexed alerts per day. The rule matches `\S+` so the repo never holds it. Recommended
   follow-up (not in this plan's scope): switch that healthcheck to `REDISCLI_AUTH` and rotate the
   password; the old alerts age out under the retention policy (1c).
+
+### 1d result so far
+
+- Applied with `deploy-wazuh-stack.yml --tags wazuh_local_rules` (no container recreation); the
+  manager restarted twice (second time after a fix: Wazuh does not unescape `& < >` inside a
+  pcre2 field, so those characters match as `.`). Agents: 28 active after each restart,
+  `events_dropped` 0, no stop condition.
+- Suppression suite 48/48; Tier 1 11/11; Tier 2 6/6 (apt-cacher-stack) and 8/8 (portainer-stack,
+  Docker) after the change, so a real non-health-check `exec` and container start still alert.
+- First 10 minutes after the change (includes our own Tier 2 test events): 517 alerts, about
+  74k/day against 500k/day before; 87907 down from 90% to 24% (what is left is mainly Greenbone's
+  sampler/exporter `redis-cli`). **Gate (at least 85% drop over 24 h) is re-measured 24 h later**:
+  run `wazuh-tuning.yml -e tune_mode=alerts -e tune_tag=post-1d-24h` after 2026-10-16 ~22:00 NZDT.
+- Newly visible in the remaining noise: rule 550 FIM (about 26k/day, Phase 2a), and rules 87915/87916
+  (Docker volume mounted/unmounted on `/etc/filebeat`, 66 each per 10 min), which need a look in Phase 2.
 
 ## What good looks like (targets)
 

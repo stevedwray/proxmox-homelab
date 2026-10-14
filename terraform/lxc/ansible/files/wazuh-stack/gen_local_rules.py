@@ -45,7 +45,9 @@ def load():
 
 def pattern(command):
     """PCRE2 for one entry: fully anchored, literal except the password token."""
-    parts = [re.escape(p) for p in command.split("<REDISPW>")]
+    # & < > are XML-special and Wazuh does not unescape them inside a pcre2 field, so those
+    # single characters match as "." (still anchored, same length)
+    parts = [re.escape(re.sub(r"[&<>]", "\x00", p)).replace("\x00", ".") for p in command.split("<REDISPW>")]
     return "^exec_start: " + r"\S+".join(parts) + r"\z"
 
 

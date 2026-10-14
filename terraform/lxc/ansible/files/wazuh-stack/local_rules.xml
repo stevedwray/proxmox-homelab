@@ -192,7 +192,7 @@ except\ urllib\.error\.HTTPError\ as\ e:\
   </rule>
   <rule id="100133" level="0">
     <if_sid>87907</if_sid>
-    <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ echo\ "&lt;get_version/&gt;"\ \|\ socat\ \-\ UNIX\-CONNECT:/run/gvmd/gvmd\.sock\z</field>
+    <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ echo\ ".get_version/."\ \|\ socat\ \-\ UNIX\-CONNECT:/run/gvmd/gvmd\.sock\z</field>
     <description>Docker health check (suppressed): greenbone-community-edition-gvmd-1</description>
   </rule>
   <rule id="100134" level="0">
@@ -214,7 +214,7 @@ sys\.exit\(0\)\z</field>
   </rule>
   <rule id="100136" level="0">
     <if_sid>87907</if_sid>
-    <field name="docker.Action" type="pcre2">^exec_start: wget\ \-q\ \-\-spider\ http://localhost:8080/search\?q=test\&amp;format=json\z</field>
+    <field name="docker.Action" type="pcre2">^exec_start: wget\ \-q\ \-\-spider\ http://localhost:8080/search\?q=test.format=json\z</field>
     <description>Docker health check (suppressed): searxng</description>
   </rule>
   <rule id="100137" level="0">
