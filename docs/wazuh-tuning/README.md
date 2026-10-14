@@ -4,8 +4,9 @@ Test and tune the Wazuh SIEM stack with the same method used for Greenbone
 (docs/gvm-scan-redesign/): baseline first, one supervised change at a time, numeric
 decision gates, tooling and config in the repo, docs and memory kept current.
 
-Status: **design and plan only** (written 2026-10-15). Nothing has been changed on the
-live stack. Branch `work/wazuh-tuning`; execution happens in a separate session, one
+Status: **Phase 0 in progress** (2026-10-15). Tooling is built and the baseline is captured
+(read-only, nothing changed on the live stack); the must-fire suite is not yet calibrated.
+Branch `work/wazuh-tuning`; execution happens in a separate session, one
 phase at a time, each with its own approval. See [plan.md](plan.md) for phases and
 gates and [runbook.md](runbook.md) for how to run the read-only survey tooling.
 
@@ -61,6 +62,23 @@ see.
    tuning mistakes or growth.
 5. **Our own monitoring tools trip FIM.** The Greenbone sampler (`mem.log`) is still
    running after tuning ended and should be stopped (GVM housekeeping, not Wazuh).
+
+### Phase 0 verification (2026-10-15)
+
+- The new helper reproduces the survey: 500,321 alerts/24 h, 90.4% rule 87907, 47 alert
+  indices (10.2GB), 175 shards, no ISM policy, 3,957 findings, 28 agents active.
+- **Second source:** the manager's raw archive for 2026-10-13 has 512,796 alerts against
+  512,802 in the index (0.001% apart), so index counts can be trusted. 87907 was 87.8% of
+  that day (450,465).
+- **New finding:** the manager keeps `alerts.json` and `alerts.log` uncompressed for the
+  current day (0.8GB + 1.6GB on 14 Oct) plus about 330MB/day gzipped, all on the same
+  20GB docker volume (58% used). Cutting alert volume 10x also fixes this; manager-side
+  log rotation is a retention item for 1c.
+- Docker-listener alerts have a null `full_log`; the event lives in `data.docker.*`, so
+  the must-fire docker cases rebuild the event from those fields.
+- Live-action test host for the non-docker cases: `apt-cacher-stack` (no Docker). The
+  Docker cases need a Docker-running agent; to be chosen before Tier 2 (operator wants the
+  suite extensible to a Docker host).
 
 ## What good looks like (targets)
 

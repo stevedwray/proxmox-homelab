@@ -196,7 +196,7 @@ def mode_sample(args):
     rid, n = args[0], int(args[1]) if len(args) > 1 else 5
     r = search(ALERTS, rule_q(rid, 24), size=n)
     return {"rule": rid, "events": [{"agent": h["_source"]["agent"]["name"], "location": h["_source"].get("location"),
-                                      "full_log": h["_source"].get("full_log")} for h in r["hits"]["hits"]]}
+                                      "full_log": h["_source"].get("full_log"), "data": h["_source"].get("data")} for h in r["hits"]["hits"]]}
 
 
 def mode_agents(_args):
@@ -228,7 +228,7 @@ def mode_retention(_args):
     shards = indexer("_cluster/health")
     return {"ism_policies": pol, "alert_indices": len(idx), "oldest": idx[0]["index"] if idx else None,
             "newest": idx[-1]["index"] if idx else None, "alert_mb": sum(int(i["store.size"] or 0) for i in idx),
-            "shards": shards["active_shards"], "allocation": indexer("_cat/allocation?format=json&bytes=mb")}
+            "shards": shards["active_shards"], "indices": [(i["index"], int(i["docs.count"]), int(i["store.size"] or 0)) for i in idx], "allocation": indexer("_cat/allocation?format=json&bytes=mb")}
 
 
 def mode_fim(args):

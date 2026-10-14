@@ -43,13 +43,14 @@ def sample_event(rule_id, replace_cmd=None):
     ev = wt.mode_sample([rule_id, "1"])["events"]
     if not ev:
         raise RuntimeError(f"no recent alert for rule {rule_id} to use as a sample")
-    log = ev[0]["full_log"]
-    if replace_cmd:
-        doc = json.loads(log)
-        doc["docker"]["Actor"]["Attributes"]["execID"] = "mustfire"
-        doc["docker"]["Action"] = f"exec_start: {replace_cmd}"
-        log = json.dumps(doc)
-    return log
+    e = ev[0]
+    if not e["full_log"]:  # docker-listener events are stored only as structured data
+        doc = {"integration": "docker", "docker": e["data"]["docker"]}
+        if replace_cmd:
+            doc["docker"]["Action"] = f"exec_start: {replace_cmd}"
+            doc["docker"]["Actor"]["Attributes"]["execID"] = "mustfire"
+        return json.dumps(doc)
+    return e["full_log"]
 
 
 def check(case, fired_id, fired_level):
