@@ -148,7 +148,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
-| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | local adapters built; discovery/scan approval pending |
+| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | stopped 2026-10-15 (eval completed; deep-research failed; CSE not run) |
 | lh-01c-vscode-transcripts | local (operator's workstation) | — | todo |
 | lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
@@ -348,7 +348,8 @@ actual-vs-requested identity, raw/extracted deduplication, agent-source
 pairing, unknown metadata, private output, failure cleanup and escaped
 metadata refusal. No lh-01b production discovery or scan has run.
 
-Preflight for `loop-hunt-transcript-scan` (**approval pending**):
+Preflight for `loop-hunt-transcript-scan` (operator approved 2026-10-15;
+execution stopped at the deep-research failure below):
 
 - Targets: production LXCs `ai-services-stack` (`root@192.168.50.11`)
   and `cse-controller` (`root@192.168.100.70`), both on pve-tiny. Use
@@ -435,7 +436,35 @@ The operator has already identified VS Code Copilot agent mode as the other
 source of loops; do not ask where they were seen again if benchmarks have
 no exact-loop hits. Record that absence and keep lh-01c as the next step.
 
-Result: local tools built and validated; production discovery/scan approval pending.
+Result: partial, stopped 2026-10-15 after a failed scan command, under the
+operator's explicit `loop-hunt-transcript-scan` approval. Both read-only
+discovery gates passed: intended LXC hostnames, 43 eval sample files, 34
+deep-research session files and 78 CSE response files. The deep-research
+session volume resolves to
+`/var/lib/docker/volumes/ai-services-deep-research-config/_data/sessions`.
+Private scan directories and scanner files were installed on both LXCs,
+strictly inside the two approved loop-hunt-scan-20261015 directories.
+
+The eval adapter completed: **43 files, 5,571 responses, 75 flagged responses,
+0 evidence-backed cap-exhausted flags**. These are mechanical candidates,
+not 75 confirmed loops; the model/month/flag breakdown has not been read.
+Its outputs remain on ai-services-stack in
+`/srv/eval-runner/loop-hunt-scan-20261015/eval/`.
+
+The following deep-research scan exited 1 with the generic input-schema/JSON/
+permissions error before publishing a new report. Its precise cause is not
+yet established. The enclosing `bash -se` stopped immediately, so neither
+summary was printed, no excerpts were returned, and the later CSE scan did
+not run. No post-failure production commands, transcript exports, model
+loads/inference or service changes were performed. Later steps remain pending.
+
+Required next action for operator review: a read-only, schema-only diagnostic
+on the failed deep-research input (failing file pointer, exception class and
+JSON key/type structure only; no prompt/response text or settings), followed
+by a local adapter fix with a synthetic regression fixture if needed. Preserve
+the completed eval outputs; do not rerun the directory-creation commands or
+overwrite them. Rerun the failed/remaining scans only after the operator
+resolves this stop. No proposed diagnostic has run yet.
 
 
 #### lh-01c-vscode-transcripts

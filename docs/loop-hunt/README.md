@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01 complete; lh-01b local adapters built, scan approval pending**
+Status: **lh-01 complete; lh-01b stopped at deep-research scan failure**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -55,12 +55,26 @@ Only source-host hit files contain bounded excerpts and whitelisted settings;
 no full prompts/transcripts or API keys are exported. The code's CSE path
 is `/srv/cyberseceval/runs/<run>/responses.json`.
 
-Next: approve `loop-hunt-transcript-scan` using the concrete preflight and
-commands in [plan.md](plan.md#lh-01b-transcript-scan). No lh-01b production
-discovery or scan has run. New files will stay inside dedicated private
-scan directories on ai-services-stack and cse-controller; inference,
-service changes and transcript writes are out of scope. lh-01c and lh-02
-have not started.
+The operator approved `loop-hunt-transcript-scan` on 2026-10-15. Read-only
+discovery confirmed 43 eval sample files, 34 deep-research session files and
+78 CSE response files on the expected two LXCs. Only the approved private
+scan directories and tool copies were created.
+
+Eval scanning completed: **5,571 responses, 75 flagged responses, zero
+evidence-backed cap-exhausted flags** across 43 files. The flags are
+mechanical candidates, not confirmed loops. Reports remain on ai-services-stack
+under `/srv/eval-runner/loop-hunt-scan-20261015/eval/`.
+The deep-research scan then failed with the scanner's generic input error
+before publishing a report. The command stopped before printing summaries,
+so no model/month/flag breakdown or excerpts have been returned. CSE scanning,
+lh-01c and lh-02 have not run. No production commands followed the failure.
+
+The plan's failed-gate rule requires stopping here. Proposed next action is
+an approved read-only schema diagnostic of the deep-research files, exposing
+only a failing file pointer, exception class and key/type structure; then a
+local tested fix and the remaining scans. Preserve completed eval outputs.
+No raw transcripts, prompts, settings or excerpts have been copied locally;
+only aggregate counts and execution status are recorded in git.
 
 To run it, open the `~/git/proxmox-homelab-ctx-bug-test` worktree in VS
 Code, `git pull --ff-only`, and tell Codex:
