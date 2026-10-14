@@ -367,7 +367,8 @@ stops only at one of the stop points in rule 1.
 | ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | done 2026-10-14 (all gates pass; unchanged 52-entry config verified; counts 24/0; no reload) |
 | ctx-10h-harness-resilience | local | — | done 2026-10-14 (swap identity/reachability, pending infrastructure requests, restore waits/retries; 75 tests pass) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | done 2026-10-15 (288 requests reviewed; no crash/GPU/evidence errors; F all 7/7; timer active) |
-| ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
+| ctx-11a-attribution-fix | local, then Framework (regrade in the run dir only) | — | todo |
+| ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
 | ctx-13-writeup | local | — | todo |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | todo |
 
@@ -1465,7 +1466,57 @@ before committing to all-16-cell reproduction. No code/evidence changes or
 reproduction/model loads were performed during review. Operator decision
 needed on that new local fix; original findings remain preserved.
 
+#### ctx-11a-attribution-fix
+
+```yaml
+id: ctx-11a-attribution-fix
+title: Budget-aware build attribution and honest counts, then regrade the full run
+depends_on: [ctx-11-full-run]
+runs_on: local
+change: >
+  In scripts/framework-ctx-bugs/ctx_bugs.py findings():
+  (1) Only compare two builds' requests when their settings match
+  (max_tokens, temperature, seed, top_p, top_k, min_p). A flag whose only
+  opposite-build comparison has different settings (e.g. Laguna fork
+  short form at 2,048 vs upstream at 16,384) gets kind
+  "not attributable (different budgets)", never "build bug".
+  (2) Collapse context sizes: when a cell's outputs for a prompt/run are
+  byte-identical (answer and reasoning) across all sizes on that build,
+  report the finding once with "sizes": [all identical sizes] and
+  "independent_samples" = number of distinct seeds/runs, not runs x sizes.
+  report.md's candidate list shows both numbers.
+  (3) `dense-reasoning`, `build-divergence` stay information only.
+  Tests: a short-form vs full-budget pair is "not attributable"; an
+  equal-settings pair still yields "build bug"; four identical sizes give
+  one finding with 4 sizes and the right sample count.
+  Then copy the harness to Framework and regrade the full run in place
+  (writes only inside its run dir; no model load, no lock):
+  `rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/`
+  and `ssh steve@framework.gibbsgreatly.xyz 'python3 ~/framework-ctx-bugs/ctx_bugs.py --regrade /storage/artifacts/framework-ctx-bugs/20261014T071722Z'`.
+  This is covered by the operator's standing approval for this test (no
+  new approval needed). Copy the regraded report.md and findings.json into
+  docs/ctx-bug-test/artifacts/full/ and update the README "Full run"
+  section's candidate inventory from them.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+    - docs/ctx-bug-test/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+  - id: no-confounded-build-bugs
+    cmd: "python3 -c \"import json;f=json.load(open('docs/ctx-bug-test/artifacts/full/findings.json'));b=[x for x in f if x['kind']=='build bug'];print(len(b), sorted({(x['model'],x['build'],x['prompt']) for x in b}))\""
+    expect: "only laguna-s-2.1 nathanw S1/S2 entries; no S4"
+    critical: true
+```
+
+Result: —
+
 #### ctx-12-reproduce
+
+**Skipped (D11, 2026-10-15).** Kept for reference only; do not run.
 
 For each candidate finding marked "needs three more seeds", one run per
 cell: `run.sh --models <m> --builds <b> --sizes <n> --extra-seeds 4 5 6
@@ -1509,6 +1560,7 @@ The plan above already follows these.
 | D5 | Vulkan batch sizes | Defaults. If `gpu-error` shows up, re-run that cell with `extra_args ["--batch-size","512","--ubatch-size","128"]` to confirm the known issue |
 | D6 | When | The pilot (~2.5 h) first, in a quiet slot, and its results checked; then the full run over one night plus a day, or two nights |
 | D7 | Part B (context fill) | Included |
+| D11 (2026-10-15, after the full run) | Scope of ctx-12 reproductions | **Skip ctx-12** and go to the write-up. The conclusions do not depend on more seeds: the Laguna fork hidden-token bug reproduced in every cell and probe, Qwen S4 budget exhaustion on 32/32, F 196/196, and S1–S5 outputs are byte-identical across context sizes. Laguna fork S4 stays "not attributable" (short-form 2,048 cap vs upstream 16,384) |
 | D10 (2026-10-14, after ctx-11 attempt 1) | Ubuntu's daily `apt-daily-upgrade` + needrestart restarted `llama-swap.service` (and killed the loaded model) after upgrading libx11 | **b**: pause `apt-daily-upgrade.timer` only while a test run is going, and start it again when the run ends. Production keeps the exposure (any library upgrade that llama-server uses restarts llama-swap and leaves nothing loaded); recorded as a known issue, not fixed here |
 | D9 (2026-10-14, after ctx-10d) | Vulkan batch sizes for the full run | **b**: `--batch-size 512 --ubatch-size 128` in all 16 test cells (both models, both builds, every size), so build and context-size comparisons keep identical settings. ctx-10d ran clean (7/7, no GPU error) but read the prompt at 144.6 tok/s, about 4x slower than the pilot's defaults; full run estimate rises to ~20–24 h. Supersedes D5's "defaults" for the test |
 | D8 (2026-10-14, after the pilot) | Qwen budget exhaustion on S4/F; F's count question | **b**: remove the count question from F only (it stays in S3). Qwen keeps the template default effort (D4 unchanged); S4 exhausting 16k stays a finding. Note: Qwen's template maps `reasoning_effort: high` to `xhigh`, so a lower effort would have meant `medium` or `low` |
