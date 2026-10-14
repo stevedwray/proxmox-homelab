@@ -20,7 +20,7 @@ class HealthcheckRules(unittest.TestCase):
         ids = [r.get("id") for r in root.iter("rule")]
         self.assertEqual(len(ids), len(set(ids)))
         self.assertIn("100001", ids)
-        self.assertTrue(all(r.get("level") == "0" for r in root.iter("rule") if int(r.get("id")) >= g.FIRST_ID))
+        self.assertTrue(all(r.get("level") == "0" for r in root.iter("rule") if g.FIRST_ID <= int(r.get("id")) < g.SCANNER_RULES[0][0]))
 
     def test_every_entry_matches_itself_only_exactly(self):
         for e in g.load():
@@ -40,6 +40,15 @@ class HealthcheckRules(unittest.TestCase):
             "exec_start: pg_isready -U x; id",
         ]:
             self.assertFalse(any(rx(e["command"]).match(evil) for e in g.load()), evil)
+
+    def test_scanner_rules_are_scoped_and_lowered(self):
+        root = ET.fromstring("<r>" + g.render().replace("<!-- Local rules -->", "") + "</r>")
+        rules = {r.get("id"): r for r in root.iter("rule")}
+        for rid, parent, _ in g.SCANNER_RULES:
+            r = rules[str(rid)]
+            self.assertEqual(r.get("level"), "3")                        # lowered, never 0
+            self.assertEqual(r.find("srcip").text, g.SCANNER_IP)         # one address only
+            self.assertEqual(r.find("if_sid").text, str(parent))
 
     def test_no_xml_special_chars_in_patterns(self):
         for line in open(os.path.join(g.HERE, "local_rules.xml")):

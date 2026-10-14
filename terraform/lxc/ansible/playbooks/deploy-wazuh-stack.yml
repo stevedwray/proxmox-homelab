@@ -1196,6 +1196,52 @@
       changed_when: (wazuh_ism_attach.json.updated_indices | default(0)) > 0
       tags: [wazuh_retention]
 
+    # Single node: a replica can never be placed, and the ISM plugin's own system indices default to
+    # one, which made the cluster yellow after the policy was created (found 2026-10-15). Existing
+    # ones are set to 0 replicas and a template gives the daily history indices the same.
+    # Protected system indices reject the basic-auth admin user, so this uses the admin TLS client
+    # certificate that already sits in the indexer container.
+    - name: Set 0 replicas on the ISM and job-scheduler system indices
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - wazuh-stack-indexer
+          - curl
+          - -sk
+          - --fail-with-body
+          - --cert
+          - /usr/share/wazuh-indexer/config/certs/admin.pem
+          - --key
+          - /usr/share/wazuh-indexer/config/certs/admin-key.pem
+          - -X
+          - PUT
+          - -H
+          - "Content-Type: application/json"
+          - "https://localhost:9200/.opendistro-*/_settings?expand_wildcards=all"
+          - -d
+          - '{"index":{"number_of_replicas":0}}'
+      changed_when: false
+      tags: [wazuh_retention]
+
+    - name: Template so new .opendistro-* system indices also get 0 replicas
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_template/wazuh-single-node-system-indices"
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_patterns: [".opendistro-*"]
+          order: 100
+          settings:
+            index:
+              number_of_replicas: 0
+      changed_when: false
+      tags: [wazuh_retention]
+
     - name: Prune the manager's raw alert and archive logs to the same age
       ansible.builtin.copy:
         dest: /etc/cron.d/wazuh-log-retention

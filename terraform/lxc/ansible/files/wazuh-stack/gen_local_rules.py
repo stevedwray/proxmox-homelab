@@ -17,6 +17,12 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIRST_ID = 100100
+SCANNER_IP = "192.168.70.11"   # the Greenbone scanner: its sshd probes are expected, other sources are not
+SCANNER_RULES = [  # (rule id, parent sid, what it lowers); the parent keeps its level for every other address
+    (100200, 5710, "sshd: non-existent user probe"),
+    (100201, 5712, "sshd: brute-force burst"),
+    (100202, 5760, "sshd: authentication failed"),
+]
 STOCK = """<!-- Local rules -->
 
 <!-- Modify it at your will. -->
@@ -59,6 +65,14 @@ def render():
         out.append(f'  <rule id="{FIRST_ID + i}" level="0">\n    <if_sid>87907</if_sid>\n'
                    f'    <field name="docker.Action" type="pcre2">{escape(pattern(e["command"]))}</field>\n'
                    f'    <description>Docker health check (suppressed): {escape(e["container"])}</description>\n  </rule>')
+    out.append("</group>\n")
+    out += ['<!-- Phase 2d: the Greenbone scanner probes ssh on purpose. Its events are lowered to level 3, not removed,',
+            '     and only for this source address; every other source keeps the stock level. -->',
+            '<group name="local,syslog,sshd,scanner,">']
+    for rid, parent, what in SCANNER_RULES:
+        out.append(f'  <rule id="{rid}" level="3">\n    <if_sid>{parent}</if_sid>\n'
+                   f'    <srcip>{SCANNER_IP}</srcip>\n'
+                   f'    <description>{what} from the Greenbone scanner {SCANNER_IP} (lowered)</description>\n  </rule>')
     out.append("</group>\n")
     return "\n".join(out)
 

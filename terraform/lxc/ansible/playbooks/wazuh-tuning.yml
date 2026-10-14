@@ -10,6 +10,7 @@
 # Variables:
 #   tune_mode   a wazuh_tuning.py mode (health alerts noise sample agents vulns retention fim),
 #               or: mustfire              the detection regression suite (logtest, writes no alerts)
+#                   scanner               Phase 2d: scanner sshd events lowered, other sources not
 #                   suppression           Phase 1d: health checks suppressed, look-alikes still alert
 #                   sample_start|sample_stop|sample_log   30 s resource sampler
 #   tune_args   extra words for the mode, e.g. -e tune_args=87907
@@ -73,9 +74,9 @@
         flat: true
 
     - name: Run the must-fire detection suite
-      when: tune_mode in ['mustfire', 'suppression']
+      when: tune_mode in ['mustfire', 'suppression', 'scanner']
       ansible.builtin.command:
-        argv: "{{ ['python3', dir ~ '/must_fire.py'] + (['suppression'] if tune_mode == 'suppression' else []) }}"
+        argv: "{{ ['python3', dir ~ '/must_fire.py'] + ([tune_mode] if tune_mode in ['suppression', 'scanner'] else []) }}"
         chdir: "{{ dir }}"
       environment: "{{ secrets_env }}"
       register: mf
@@ -83,7 +84,7 @@
       failed_when: mf.rc != 0
     - ansible.builtin.debug:
         var: mf.stdout_lines
-      when: tune_mode in ['mustfire', 'suppression']
+      when: tune_mode in ['mustfire', 'suppression', 'scanner']
 
     - name: Stop any existing sampler
       when: tune_mode in ['sample_start', 'sample_stop']

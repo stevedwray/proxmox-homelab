@@ -186,6 +186,10 @@ NOISE_FIELDS = {
     "2501": ["data.srcip", "data.srcuser"],
     "510": ["rule.description"],
     "5710": ["data.srcip", "data.srcuser"],
+    "5712": ["data.srcip", "data.srcuser"],
+    "5716": ["data.srcip", "data.srcuser"],
+    "5740": ["data.srcip", "data.srcuser"],
+    "5760": ["data.srcip", "data.srcuser"],
 }
 
 

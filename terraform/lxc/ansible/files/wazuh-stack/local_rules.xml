@@ -233,3 +233,23 @@ sys\.exit\(0\)\z</field>
     <description>Docker health check (suppressed): wazuh-stack-dashboard</description>
   </rule>
 </group>
+
+<!-- Phase 2d: the Greenbone scanner probes ssh on purpose. Its events are lowered to level 3, not removed,
+     and only for this source address; every other source keeps the stock level. -->
+<group name="local,syslog,sshd,scanner,">
+  <rule id="100200" level="3">
+    <if_sid>5710</if_sid>
+    <srcip>192.168.70.11</srcip>
+    <description>sshd: non-existent user probe from the Greenbone scanner 192.168.70.11 (lowered)</description>
+  </rule>
+  <rule id="100201" level="3">
+    <if_sid>5712</if_sid>
+    <srcip>192.168.70.11</srcip>
+    <description>sshd: brute-force burst from the Greenbone scanner 192.168.70.11 (lowered)</description>
+  </rule>
+  <rule id="100202" level="3">
+    <if_sid>5760</if_sid>
+    <srcip>192.168.70.11</srcip>
+    <description>sshd: authentication failed from the Greenbone scanner 192.168.70.11 (lowered)</description>
+  </rule>
+</group>
