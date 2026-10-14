@@ -32,6 +32,21 @@ and memory, any runaway web UI. This sets the Phase 1 `max_hosts` and slot.
 Acceptance: no managed host appears in any full-vuln target; every zone has a
 scheduled discovery; the gateway `.1` of each VLAN stays in the unmanaged scan.
 
+Status 2026-10-14: steps 1-4 written with unit tests (generator export,
+exclusion logic, playbook tasks, discovery schedules: Thursday 22:00 NZ, 30 minutes
+apart). Step 5 (apply) waits for Phase 0. Details settled while writing it:
+
+- The workstation (192.168.1.104) is on the managed list but has no working
+  credentialed scan (sshd off), so it is deliberately kept in the unmanaged scan
+  (`STILL_UNCOVERED` in setup_scan_program.py) until that is fixed.
+- MikroTik (192.168.1.1) is excluded via `CREDENTIALED_ELSEWHERE`: it has its own
+  credentialed task but is not in the managed list.
+- If the managed-hosts file is missing the script fails; it never falls back to
+  scanning whole zones.
+- Applying rebuilds the full-vuln targets whose excludes changed (history for
+  those tasks is lost, which is acceptable: all but a few have run once).
+
+
 ## Phase 2 - lean config for managed hosts (experiment, then adopt)
 
 Facts: "Full and fast" has 60 families, 186,363 tests, all growing. "Web

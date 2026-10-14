@@ -23,6 +23,7 @@ A Task that is currently running is left alone with a WARN and picked up
 on the next run. setup_schedules.py re-attaches the weekly Schedule to a
 recreated full-vuln Task by name.
 """
+import json
 import os
 import sys
 
@@ -48,33 +49,21 @@ ALIVE_TESTS = "ICMP, TCP-ACK Service & ARP Ping"
 
 ACTIVE_TASK_STATUSES = {"Running", "Requested", "Queued", "Stop Requested", "Delete Requested"}
 
-# Tier A hosts are excluded from the Full-and-fast target only -- still
-# covered by Discovery, and every one of them has its own daily
-# credentialed scan (setup_credentials.py).
+# Managed hosts are left out of the Full-and-fast target only (see
+# full_vuln_excludes below); Discovery still covers the whole zone.
 ZONES = [
-    {"key": "build_seg", "cidr": "192.168.10.0/24", "tier_a_exclude": []},
-    {
-        "key": "mgmt_seg",
-        "cidr": "192.168.20.0/24",
-        # Authentik, step-ca, openbao. openbao's UI (8200) answers any /ui/ path
-        # with a ~1MB page and the web-app probes cache each reply in Redis; it
-        # is scanned by "Credentialed scan: mgmt_seg (openbao)" without port 8200.
-        "tier_a_exclude": ["192.168.20.10", "192.168.20.11", "192.168.20.16"],
-    },
-    {"key": "edge_seg", "cidr": "192.168.30.0/24", "tier_a_exclude": ["192.168.30.10"]},  # Traefik
-    {"key": "infra_seg", "cidr": "192.168.40.0/24", "tier_a_exclude": ["192.168.40.10"]},  # Harbor
-    {"key": "ai_seg", "cidr": "192.168.50.0/24", "tier_a_exclude": []},
-    {"key": "game_seg", "cidr": "192.168.60.0/24", "tier_a_exclude": []},
-    {"key": "pentest_seg", "cidr": "192.168.70.0/24", "tier_a_exclude": []},
-    {"key": "media_seg", "cidr": "192.168.80.0/24", "tier_a_exclude": []},
-    {"key": "cse_seg", "cidr": "192.168.100.0/24", "tier_a_exclude": []},
-    {"key": "connector_seg", "cidr": "192.168.110.0/24", "tier_a_exclude": []},
-    {"key": "apps_seg", "cidr": "192.168.120.0/24", "tier_a_exclude": []},
-    {
-        "key": "lan",
-        "cidr": "192.168.1.0/24",
-        "tier_a_exclude": ["192.168.1.1", "192.168.1.2"],  # MikroTik, pve
-    },
+    {"key": "build_seg", "cidr": "192.168.10.0/24"},
+    {"key": "mgmt_seg", "cidr": "192.168.20.0/24"},
+    {"key": "edge_seg", "cidr": "192.168.30.0/24"},
+    {"key": "infra_seg", "cidr": "192.168.40.0/24"},
+    {"key": "ai_seg", "cidr": "192.168.50.0/24"},
+    {"key": "game_seg", "cidr": "192.168.60.0/24"},
+    {"key": "pentest_seg", "cidr": "192.168.70.0/24"},
+    {"key": "media_seg", "cidr": "192.168.80.0/24"},
+    {"key": "cse_seg", "cidr": "192.168.100.0/24"},
+    {"key": "connector_seg", "cidr": "192.168.110.0/24"},
+    {"key": "apps_seg", "cidr": "192.168.120.0/24"},
+    {"key": "lan", "cidr": "192.168.1.0/24"},
 ]
 
 # Permanent red-team / test fixtures -- excluded from every routine target
@@ -85,6 +74,45 @@ FIXTURE_EXCLUDE = {
     # harness-target-pve, pentagi-upstream-control, cse-kali
     "pentest_seg": ["192.168.70.12", "192.168.70.13", "192.168.70.210"],
 }
+
+# The full-vuln tasks scan UNMANAGED addresses only (docs/gvm-scan-redesign/):
+# a managed host already has a weekly credentialed task, which runs the same
+# network checks plus the local ones, so rescanning it here found nothing extra
+# (compared 2026-10-14). The managed list comes from
+# gvm_fleet_targets_generate.py --managed-hosts-out, copied to the scanner host
+# by the playbook, so there are no hand-maintained lists.
+MANAGED_HOSTS_FILE = os.environ.get("GVM_MANAGED_HOSTS", "/tmp/managed-hosts.json")
+
+# Covered by a credentialed task that is not part of the managed list.
+CREDENTIALED_ELSEWHERE = {
+    "lan": ["192.168.1.1"],  # MikroTik: "Credentialed scan: MikroTik router"
+}
+
+# On the managed list but with no working credentialed scan yet, so they must
+# stay in the unauthenticated scan or nothing scans them. Remove an entry once
+# its credentialed scan is verified.
+STILL_UNCOVERED = {
+    "192.168.1.104",  # this workstation: sshd is off, so gvm-scan cannot log in
+}
+
+# Concurrent hosts for the unauthenticated full-vuln tasks. They used to run 20
+# at once (GVM's default for a new task), which drove the 4-core scanner to a
+# load of 33 on 2026-10-14.
+FULL_VULN_MAX_HOSTS = 6
+
+
+def load_managed_hosts(path=MANAGED_HOSTS_FILE):
+    """{zone: [ip, ...]}. Raises if the file is missing, so a broken deploy
+    cannot silently turn the unmanaged scans back into whole-zone scans."""
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def full_vuln_excludes(zone_key, managed, fixtures):
+    """Addresses the unauthenticated full-vuln task leaves out for a zone."""
+    covered = set(managed.get(zone_key, [])) - STILL_UNCOVERED
+    covered |= set(CREDENTIALED_ELSEWHERE.get(zone_key, []))
+    return sorted(covered | set(fixtures))
 
 
 def resolve_id(gmp, getter, name, tag):
@@ -113,7 +141,7 @@ def target_matches(gmp, target_id, cidr, exclude_hosts):
     )
 
 
-def ensure_target_and_task(gmp, name, cidr, exclude_hosts, config_id, scanner_id, port_list_id):
+def ensure_target_and_task(gmp, name, cidr, exclude_hosts, config_id, scanner_id, port_list_id, max_hosts=None):
     """exclude_hosts is a list[str] of individual addresses -- a pre-joined
     comma string fails live with GvmResponseError 400 "Error in host
     specification" (confirmed 2026-08-16)."""
@@ -147,10 +175,17 @@ def ensure_target_and_task(gmp, name, cidr, exclude_hosts, config_id, scanner_id
         target_id = response.get("id")
         print(f"created target {name!r} ({target_id})")
 
+    prefs = {"preferences": {"max_hosts": str(max_hosts)}} if max_hosts is not None else {}
     if task_id:
         print(f"task {name!r} already exists ({task_id}), skipping")
+        if max_hosts is not None:
+            task = gmp.get_task(task_id).find("task")
+            current = {p.findtext("scanner_name"): p.findtext("value") for p in task.findall("preferences/preference")}
+            if current.get("max_hosts") != str(max_hosts) and task.findtext("status") not in ACTIVE_TASK_STATUSES:
+                gmp.modify_task(task_id, **prefs)
+                print(f"set max_hosts={max_hosts} on task {name!r}")
     else:
-        response = gmp.create_task(name=name, config_id=config_id, target_id=target_id, scanner_id=scanner_id)
+        response = gmp.create_task(name=name, config_id=config_id, target_id=target_id, scanner_id=scanner_id, **prefs)
         print(f"created task {name!r} ({response.get('id')})")
 
 
@@ -164,6 +199,7 @@ def main():
         scanner_id = resolve_id(gmp, gmp.get_scanners, SCANNER_NAME, "scanner")
         port_list_id = resolve_id(gmp, gmp.get_port_lists, PORT_LIST_NAME, "port_list")
 
+        managed = load_managed_hosts()
         for zone in ZONES:
             key, cidr = zone["key"], zone["cidr"]
             fixtures = FIXTURE_EXCLUDE.get(key, [])
@@ -173,8 +209,8 @@ def main():
                 discovery_config_id, scanner_id, port_list_id,
             )
             ensure_target_and_task(
-                gmp, f"LAN scan: {key} full-vuln", cidr, list(zone["tier_a_exclude"]) + list(fixtures),
-                full_config_id, scanner_id, port_list_id,
+                gmp, f"LAN scan: {key} full-vuln", cidr, full_vuln_excludes(key, managed, fixtures),
+                full_config_id, scanner_id, port_list_id, max_hosts=FULL_VULN_MAX_HOSTS,
             )
 
     print("done")

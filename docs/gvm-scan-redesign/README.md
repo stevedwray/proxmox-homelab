@@ -5,7 +5,9 @@ and every scan stays inside the night window. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-14: planned, Phase 1 not started.** Decisions below are the operator's.
+**2026-10-14: planned; Phase 1 code written and tested, not yet applied.** It waits
+for the Phase 0 baseline (`LAN scan: lan full-vuln`) to finish so applying it
+cannot disturb the run. Decisions below are the operator's.
 This follows docs/gvm-coverage-cleanup/ (credentialed scans now work, 14 tasks,
 weekly, VLAN-grouped) and uses what its tuning found.
 
