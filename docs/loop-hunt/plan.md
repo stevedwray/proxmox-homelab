@@ -132,6 +132,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
+| lh-01b-transcript-scan | local, then production LXCs (read-only) | `loop-hunt-transcript-scan` | todo |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
@@ -268,12 +269,65 @@ chat replay, D-L3 server-default sampling (no sampling fields in requests),
 and Q2 excluded under D-L5. Stop and record the answer before lh-02.
 
 
+#### lh-01b-transcript-scan
+
+lh-01 found no Qwen or GLM chats in Open WebUI (12 chats, July, other
+models, zero hits), so the operator's loops happened elsewhere. Operator
+decisions after lh-01 (2026-10-15): sampling = server defaults (D-L3);
+Q2 stays excluded (D-L5); real-chat replay waits for this scan.
+
+```yaml
+id: lh-01b-transcript-scan
+title: Scan benchmark and agent transcripts for real Qwen/GLM loops
+depends_on: [lh-01-chat-scan]
+runs_on: production LXCs (read-only)
+approval: loop-hunt-transcript-scan
+change: >
+  Extend scripts/loop-hunt/scan_openwebui.py into a general scanner
+  (keep the Open WebUI mode) with adapters for: (a) lm_eval
+  samples_*.jsonl (model response = resps/filtered_resps; model id and
+  run settings from the run's results/run.json next to it);
+  (b) CyberSecEval response JSON on cse-controller; (c) deep-research
+  saved sessions (JSON). For each response run loop(), repetition(),
+  the hidden-token/template-leak string checks and a new
+  `cap-exhausted` check (response or reasoning ends at the run's token
+  cap with no final answer), and record model id, build/alias if
+  recorded, date, run id, prompt size estimate and settings. Same
+  privacy rules as lh-01 (outputs 0600 on the host they were read on;
+  only counts and up to 10 excerpts are shown). Tests with one fixture
+  per adapter.
+  Discovery first, read-only, and stop if a location differs:
+  ai-services-stack `/srv/eval-runner/results/` (docs/eval-runner/README.md);
+  cse-controller `results/` (terraform/lxc/stacks/cse-controller/STACK_CONTRACT.md);
+  deep-research sessions (terraform/lxc/ansible/files/deep-research-agent/README.md,
+  `--list-sessions`). Reach each host the way its existing docs do;
+  write nothing outside a new `loop-hunt-scan-<date>/` directory there.
+scope:
+  allowed_paths:
+    - scripts/loop-hunt/
+    - docs/loop-hunt/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Report per source: responses scanned, hits by model and month, and
+separately `cap-exhausted` counts (budget exhaustion, not looping). Show
+up to 10 excerpts and stop: the operator picks replays for lh-07 (or
+none). If there are no loop hits anywhere, ask the operator where the
+loops were seen (e.g. VS Code/Copilot sessions, which keep no server-side
+transcript) before continuing.
+
+Result: —
+
 #### lh-02-session-harness
 
 ```yaml
 id: lh-02-session-harness
 title: Multi-turn session runner with warm/cold replay
-depends_on: [lh-01-chat-scan]
+depends_on: [lh-01b-transcript-scan]
 runs_on: local
 change: >
   Add scripts/loop-hunt/gen_sessions.py (deterministic synthetic sessions
