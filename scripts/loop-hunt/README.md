@@ -1,6 +1,7 @@
 # Loop hunt tools
 
-The local part of lh-01 is built; no production scan has run. See
+lh-01 is built and its approved Framework scan completed: 12 chats,
+14 assistant messages, zero hits; snapshot deletion was verified. See
 [the plan](../../docs/loop-hunt/plan.md) for approvals and later steps.
 Python stdlib only. Synthetic tests:
 

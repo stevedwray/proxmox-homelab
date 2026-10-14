@@ -1,7 +1,7 @@
 # Loop hunt: reproduce real-use looping on Framework
 
-Planned 2026-10-15. lh-01 local tools are built and tested; no Framework
-chat scan or model test has run yet.
+Planned 2026-10-15. lh-01 chat scan completed under approval on 2026-10-15;
+no model test has run. Operator choices are pending before lh-02.
 
 ## Why
 
@@ -131,7 +131,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | Step | Runs on | Approval | Status |
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
-| lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | local tools built; scan approval pending |
+| lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
@@ -232,8 +232,8 @@ operator picks which chats (if any) to replay in lh-07 and whether D-L3/D-L5
 change. Record the answer. Delete `webui.db.copy` after the scan; keep
 hits.jsonl. Nothing from the scan goes into git except counts.
 
-Result: local preparation done 2026-10-15; `loop-hunt-chat-scan` approval
-pending before any Framework access. All 17 tests pass, including committed
+Result: done 2026-10-15 under explicit `loop-hunt-chat-scan` approval.
+Local preparation passed before Framework access. All 17 tests pass, including committed
 WAL-only rows, integrity checks, read-only connections, failure cleanup,
 exclusive/private output files, clean and looping chats, alternate branches,
 broken links, literal markers and a 400-character excerpt limit. Both CLI
@@ -246,7 +246,26 @@ retain chat/message provenance instead of inferred sampling defaults.
 The production command prepares only its dedicated artifact directory and
 uses an EXIT trap to delete the full snapshot even if scanning fails;
 summary and up to ten excerpts are returned only after explicit approval.
-No real chat data has been read or copied, and no production access occurred.
+The approved commands then ran sequentially on Framework. Online backup
+printed `SNAPSHOT-OK` with integrity_check ok. The scanner printed
+`SCAN-OK: 12 chats; 14 assistant messages; 0 hits` and summary.md; no hit
+excerpts exist. All assistant messages are from 2026-07 and estimate <32k
+history tokens, with zero broken/cyclic history links. Counts by stored model
+are in README; there are no target Qwen Q4/Q2 or GLM assistant messages.
+No target-model client sampling can be derived from this history, and zero
+hits do not refute the original looping complaint.
+
+The EXIT trap deleted the full snapshot and sidecars. A subsequent read-only
+check confirmed their absence and private permissions on the retained
+summary.md and empty hits.jsonl in
+`/storage/artifacts/loop-hunt/chat-scan-20261014/` (Framework date).
+No live DB writes, model loads/inference or service changes occurred. No
+chat excerpts or stored parameters were returned or copied locally; only
+aggregate counts are recorded in git. No later step has run.
+
+Operator decision pending as required by lh-01: recommendation is no real
+chat replay, D-L3 server-default sampling (no sampling fields in requests),
+and Q2 excluded under D-L5. Stop and record the answer before lh-02.
 
 
 #### lh-02-session-harness
