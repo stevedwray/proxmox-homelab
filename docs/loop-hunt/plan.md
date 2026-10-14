@@ -12,6 +12,19 @@ context every request, prompts that always fit, outputs up to 16k. The
 looping the operator saw in real use (GLM-5.3-Flash and Qwen3.8-Flash-Next,
 attributed to the Nathanw engine) was **not reproduced**.
 
+**Where the loops were seen (operator, 2026-10-15): VS Code (Copilot
+agent mode against Framework) and the benchmark harnesses.** VS Code adds
+two things nothing here tested yet: tool calling (a large system prompt
+and tool schemas every turn, tool calls parsed by llama.cpp's
+chat-template/tool parser, which differs between the fork b10814 and
+upstream b11514), and Copilot's own client limits
+(`~/.config/Code/User/chatLanguageModels.json`; last recorded at 6144
+input / 2048 output tokens, docs/framework-ip-and-port/README.md). A
+reasoning model capped at 2048 output tokens is cut off mid-thought and
+Copilot retries the step, which looks like a loop. The 84-tool
+tool-calling sweep only ever ran on LM Studio
+(docs/framework-ubuntu/local-ai-development.md), never llama.cpp.
+
 This plan tests the conditions that test left out, which are where real use
 differs:
 
@@ -22,7 +35,9 @@ differs:
 | Parallel slots | 4 slots, 4 concurrent sessions (production default) |
 | Context overflow | Sessions that run past `--ctx-size` |
 | Older fork build | Fork `previous` (`20261008-b02cb35f2`, before the 10-08 Vulkan FA NaN fixes) |
-| Real conversations | Scan Open WebUI history for real loops and replay them |
+| Real conversations | Scan Open WebUI, benchmark and VS Code Copilot transcripts for real loops and replay them |
+| Tool calling (agent mode) | C5: Copilot-style agent sessions with tool schemas; a capture proxy records real VS Code sessions for exact replay |
+| Client limits | VS Code's `maxInputTokens`/`maxOutputTokens` read and tested as a cause |
 | Semantic looping, context echoing | Blind judge pass |
 
 Method follows the operator's "Large-Context Open-Weight Model Evaluation
@@ -70,6 +85,7 @@ Conditions per build:
 | C2 | Four concurrent sessions (different seeds/content) sharing the 131k pool: each grows to ~32k (pool nearly full), then all keep going for 4 more turns past the point where the pool runs out | Slot/KV sharing and pool exhaustion under load, like deep-research. Records what the server does when the pool is full (errors, cache eviction and recompute, context shift) |
 | C3 | C1's session continued 3 turns past `n_ctx` | Overflow / context-shift behaviour |
 | C4 | One session to ~262k on `sess262k` (Qwen only) | The size Qwen used to serve at |
+| C5 | Copilot-style agent session: a ~12k-token system prompt plus 40 tool schemas (the captured real ones from lh-01d if available, else synthetic ones shaped like Copilot's: read_file, grep_search, run_in_terminal, replace_string_in_file, ...); the harness executes fake tools that return synthetic files/output; a coding task that needs ~30 tool calls; streaming on; grows to ~131k. Run twice: with the operator's real VS Code output limit (from lh-01c) and with 16384 | Agent loops: the same tool call repeated, malformed tool calls, reasoning leaking into content or tool arguments, cut-off answers followed by retries |
 | CK | Warm-vs-cold replay at 64k, 96k and 131k in C1 (and 196k/262k in C4); in C2 at 16k, 32k and at the first turn after the pool runs out | Runtime vs model |
 
 Two seeds for C1, one C2 group, C3 once, C4 once per build.
@@ -133,6 +149,8 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
 | lh-01b-transcript-scan | local, then production LXCs (read-only) | `loop-hunt-transcript-scan` | todo |
+| lh-01c-vscode-transcripts | local (operator's workstation) | — | todo |
+| lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
 | lh-03-catalogue | local | — | todo |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | todo |
@@ -325,12 +343,98 @@ transcript) before continuing.
 
 Result: —
 
+#### lh-01c-vscode-transcripts
+
+Runs on the operator's workstation, where this Codex session runs; no
+production access. VS Code keeps Copilot chat sessions locally.
+
+```yaml
+id: lh-01c-vscode-transcripts
+title: Scan VS Code Copilot chat sessions and read the client limits
+depends_on: [lh-01b-transcript-scan]
+runs_on: local
+change: >
+  Add a Copilot adapter to scripts/loop-hunt/scan_openwebui.py for VS
+  Code chat session files: ~/.config/Code/User/workspaceStorage/*/chatSessions/*.json
+  and ~/.config/Code/User/globalStorage/emptyWindowChatSessions/*.json
+  (if the layout differs, use what is there and note it). Per response
+  record: model id, date, workspace (hashed), request count in the
+  session, approximate history size, and flags: loop, repetition,
+  template-leak (including literal <think>, </think> or reasoning text in
+  content), cut-off answers, and `tool-repeat` (the same tool with the
+  same arguments 3 or more times in a row) and `tool-malformed`
+  (unparseable tool-call text in content). Also read
+  ~/.config/Code/User/chatLanguageModels.json and record, per Framework
+  model entry, url, model id, maxInputTokens, maxOutputTokens and any
+  tool/thinking flags (no API keys: never print or store the key field).
+  Outputs only under docs/loop-hunt/artifacts/vscode-scan-<date>/ (git
+  ignored, 0600). Tests with fixture session files.
+scope:
+  allowed_paths:
+    - scripts/loop-hunt/
+    - docs/loop-hunt/
+  forbidden_actions:
+    - "Copying session files anywhere else, or printing API keys"
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Show the operator: the client limits table, counts by model/month/flag,
+and up to 10 excerpts; the operator picks sessions to replay in lh-07.
+If maxOutputTokens for a reasoning model is far below what its
+reasoning needs, record that as finding candidate FND-client-limits.
+
+Result: —
+
+#### lh-01d-capture-proxy
+
+Optional, and only if lh-01c finds too little to replay. A recording
+proxy on the workstation captures the exact requests VS Code sends
+(system prompt, tool schemas, history, sampling, limits) and the
+streamed replies, so a real loop can be replayed byte for byte on each
+build.
+
+```yaml
+id: lh-01d-capture-proxy
+title: Recording proxy for VS Code -> Framework
+depends_on: [lh-01c-vscode-transcripts]
+runs_on: local
+change: >
+  Add scripts/loop-hunt/capture_proxy.py (stdlib): listens on
+  127.0.0.1:8090, forwards /v1/* to the URL VS Code uses today (from
+  chatLanguageModels.json), passes streaming (SSE) through unchanged, and
+  appends each exchange (request JSON with the Authorization header
+  removed, the reassembled response, timings, model, finish_reason) to
+  docs/loop-hunt/artifacts/capture/<date>.jsonl (0600). README section:
+  how the operator points one chatLanguageModels.json entry's url at
+  http://127.0.0.1:8090/v1 for a work session and back afterwards.
+  Tests: a fake upstream with streaming and tool calls; the capture
+  contains no Authorization header.
+scope:
+  allowed_paths:
+    - scripts/loop-hunt/
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+The operator then works normally in VS Code through the proxy until a
+loop happens, and tells Codex the time; that exchange is replayed in
+lh-07 on fork current, fork previous and upstream (warm and cold).
+
+Result: —
+
 #### lh-02-session-harness
 
 ```yaml
 id: lh-02-session-harness
 title: Multi-turn session runner with warm/cold replay
-depends_on: [lh-01b-transcript-scan]
+depends_on: [lh-01c-vscode-transcripts]
 runs_on: local
 change: >
   Add scripts/loop-hunt/gen_sessions.py (deterministic synthetic sessions
@@ -340,7 +444,7 @@ change: >
   framework-ctx-bugs (Client, detectors, framework_lock, readiness waits,
   infrastructure-failure handling, checkpoint/resume, restore, regrade).
   session_bugs.py runs one condition per invocation:
-  --condition C1|C2|C3|C4 --entry <llama-swap id> --sessions <seed ...>
+  --condition C1|C2|C3|C4|C5 --entry <llama-swap id> --sessions <seed ...>
   [--replay <chat.json>]. Turn loop: send the full history (user turns +
   the model's answers without reasoning) with cache_prompt true and the
   sampling from D-L3; record per-turn metrics listed in the plan;
@@ -359,6 +463,12 @@ change: >
   limited to Laguna x nathanw), and give write_build_expectations.py a
   --link current|candidate option per label, so the fork candidate
   (previous build) gets its own expectations.
+  C5 (agent session): send `tools` with the schemas, stream the reply,
+  parse tool calls from the server's response (and also scan content for
+  tool-call text the server failed to parse), execute fake tools from a
+  deterministic file tree, and continue until the task's done-check or
+  60 tool calls. Extra flags: tool-repeat, tool-malformed,
+  reasoning-in-content, reasoning-in-arguments, cut-off-then-retry.
   The harness must not require one slot (ctx-bug-test's check_props did):
   record total_slots and each slot's n_ctx from /props and /slots, and
   refuse a cell only if /props shows a context smaller than the variant's
