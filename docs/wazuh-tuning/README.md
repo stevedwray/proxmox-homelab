@@ -236,10 +236,11 @@ triage), python3-urllib3 54, requests 42, libexpat1 and zlib1g 27 each (+26 each
 probable false positive that Debian has not yet marked. The pve host carries libthrift (39 CVEs), amd64-microcode (10),
 libcups2t64 (8): hypervisor patching, the operator's call.
 
-Options (nothing applied yet): (1) remove `vim`/`vim-runtime` (1,508 findings) and optionally `vim-tiny`/`vim-common`
-(1,566) in the base role or template; (2) upgrade the pip pins for the docker-listener (105 findings), testing first on
-portainer-stack with the Tier 2 Docker suite; (3) record the accepted classes with a review date and re-run
-`vuln_triage.py` weekly; the detector itself has no per-CVE exclusion, so nothing is hidden in the index.
+**Scope note (operator, 2026-10-15):** this session tunes Wazuh and its agents; it does not apply host updates.
+Package removal, pip pin upgrades and pve patching are therefore *not* part of this plan. The analysis above is
+kept as a note for whoever owns patching, and `vuln_triage.py` is the repeatable report. The Wazuh-side Phase 3
+work is the detector's own configuration, what the agents feed it (syscollector), SCA, and how findings are
+surfaced (Phase 6); the detector has no per-CVE exclusion, so nothing is hidden in the index.
 
 ## What good looks like (targets)
 

@@ -100,17 +100,20 @@ Gate: baseline recorded, must-fire suite green on current config.
     still alert.
     Gate for phase: total alerts per day under 50k and no single rule above 10%.
 
-## Phase 3 - vulnerability detector triage
+## Phase 3 - vulnerability detector, SCA and inventory configuration (Wazuh side only)
 
-1. Understand the 3,957 findings: 148 per agent, mostly the same packages (vim family
-   about 3,000, libxml2, urllib3, containerd, runc). Check whether Debian 13 patch levels
-   make these false or accepted, and compare with Greenbone and Harbor findings for the
-   same hosts to see where the three tools agree.
-2. Decide a policy: fix by patching (apt-cacher/unattended upgrades), accept by an
-   exceptions list, or both. Only the detector's own supported exclusion mechanism is
-   used, no index hacking.
-3. Record a "known-accepted" list in the repo so a later deploy keeps it.
-   Gate: findings reduced by action (patched or explicitly accepted), never by hiding.
+Scope: Wazuh's own configuration and what the agents feed it. Applying host updates, removing packages and
+changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
+
+1. Done: read-only analysis of the 3,957 findings against the Debian tracker (`vuln_triage.py`, README).
+   Result: 97% are open/unassigned upstream, so the volume is a feed property, not a Wazuh fault.
+2. Review the detector configuration on the manager (`<vulnerability-detection>`: enabled, index-status,
+   feed update interval, offline vs online feed) and its cost on the indexer; tune only with evidence.
+3. Review syscollector on the agents (package/OS inventory interval, hardware, ports, processes) for what the
+   detector needs versus what is collected for nothing; check every agent reports a package inventory.
+4. Review SCA (policies in use, run interval, result volume, failing checks that are LXC artefacts).
+5. Decide how findings are surfaced (Phase 6 dashboard / weekly `vuln_triage.py` report), not hidden.
+   Gate: documented settings with their reasons; any change has a before/after and keeps detection intact.
 
 ## Phase 4 - capacity and sizing
 
