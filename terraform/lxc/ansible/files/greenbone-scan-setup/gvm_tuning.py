@@ -18,6 +18,7 @@ Read-only modes:
   lancheck                every "LAN scan: " task: status, exclude count, max_hosts, schedule
   hostresults <task> <ip> every recorded result for one host (login/OS/LSC detail)
   vulns <task>            non-Log findings of a task, grouped by host and severity
+  byfamily <name-prefix>  non-Log findings of every task with that name prefix, tallied by scan-config family
   compare <zone>...       non-Log findings of "Credentialed scan: <zone>" vs "LAN scan: <zone> full-vuln"
   families                the scan-config families and test counts of "Full and fast"
   portlist                shape of the "All TCP and Nmap top 100 UDP" port list
@@ -297,6 +298,29 @@ def main():
                 prefs = {p.findtext("scanner_name"): p.findtext("value") for p in full.findall("preferences/preference")}
                 sched = full.find("schedule")
                 print(f"{full.findtext('name'):36} {full.findtext('status'):9} excl={len(excl):2} max_hosts={prefs.get('max_hosts'):>3} sched={sched.findtext('name') if sched is not None and sched.get('id') else None}")
+            return
+        if mode == "byfamily":
+            fam_counts, fam_examples, log_by_fam = {}, {}, {}
+            tasks_seen = 0
+            for t in gmp.get_tasks(filter_string=f'name~"{sys.argv[2]}" rows=-1').findall("task"):
+                if t.findtext("status") not in ("Done", "Stopped"):
+                    continue
+                tasks_seen += 1
+                for res in gmp.get_results(filter_string=f"task_id={t.get('id')} rows=-1").findall("result"):
+                    nvt = res.find("nvt")
+                    fam = (nvt.findtext("family") if nvt is not None else None) or "?"
+                    if (res.findtext("threat") or "") in ("Log", ""):
+                        log_by_fam[fam] = log_by_fam.get(fam, 0) + 1
+                        continue
+                    fam_counts[fam] = fam_counts.get(fam, 0) + 1
+                    fam_examples.setdefault(fam, set()).add((res.findtext("name") or "")[:55])
+            print(f"{tasks_seen} finished tasks matching {sys.argv[2]!r}")
+            print("NON-LOG findings by family:")
+            for fam, n in sorted(fam_counts.items(), key=lambda kv: -kv[1]):
+                print(f"  {n:4}  {fam}   e.g. {'; '.join(sorted(fam_examples[fam])[:3])}")
+            print("Log-level results by family (top 8):")
+            for fam, n in sorted(log_by_fam.items(), key=lambda kv: -kv[1])[:8]:
+                print(f"  {n:5}  {fam}")
             return
         if mode == "vulns":
             t = find(gmp, sys.argv[2])
