@@ -5,9 +5,15 @@ and every scan stays inside the night window. Plan: [plan.md](plan.md).
 
 ## Status
 
-**2026-10-14: planned; Phase 1 code written and tested, not yet applied.** It waits
-for the Phase 0 baseline (`LAN scan: lan full-vuln`) to finish so applying it
-cannot disturb the run. Decisions below are the operator's.
+**2026-10-14: Phase 1 applied** (`--tags scan-program,schedule-program`, from
+`work/gvm-zone-max-hosts`, verified in GVM). 11 of 12 full-vuln tasks now exclude
+their managed hosts (plus fixtures), run 6 hosts at a time, and are scheduled; all
+12 Discovery tasks are scheduled weekly (Thursday 22:00 NZ, 30 minutes apart); 38
+tasks now carry a schedule (14 credentialed, 12 full-vuln, 12 discovery). The
+`lan` full-vuln task was running (the Phase 0 baseline), so the script left its
+target alone: it still has the old excludes and `max_hosts=20` until the setup
+step is re-run after the baseline finishes. Phases 2-3 not started. Decisions
+below are the operator's.
 This follows docs/gvm-coverage-cleanup/ (credentialed scans now work, 14 tasks,
 weekly, VLAN-grouped) and uses what its tuning found.
 

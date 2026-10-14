@@ -32,7 +32,8 @@ and memory, any runaway web UI. This sets the Phase 1 `max_hosts` and slot.
 Acceptance: no managed host appears in any full-vuln target; every zone has a
 scheduled discovery; the gateway `.1` of each VLAN stays in the unmanaged scan.
 
-Status 2026-10-14: steps 1-4 written with unit tests (generator export,
+Status 2026-10-14: steps 1-5 done (applied and verified; lan full-vuln still to be
+re-run through the setup step once the Phase 0 baseline ends). Steps 1-4 were written with unit tests (generator export,
 exclusion logic, playbook tasks, discovery schedules: Thursday 22:00 NZ, 30 minutes
 apart). Step 5 (apply) waits for Phase 0. Details settled while writing it:
 
