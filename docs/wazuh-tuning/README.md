@@ -88,6 +88,16 @@ see.
   Docker cases need a Docker-running agent; to be chosen before Tier 2 (operator wants the
   suite extensible to a Docker host).
 
+## Phase 1a done (2026-10-15)
+
+Dashboard healthcheck now accepts 401 (`deploy-wazuh-stack.yml`). Applied live without a
+stack redeploy: the same two lines were written into `/opt/wazuh-stack/docker-compose.yml`
+(backup `docker-compose.yml.bak-1a` left beside it) and `docker compose up -d --no-deps
+wazuh.dashboard` recreated only the dashboard. Result: dashboard `healthy`; manager and indexer
+not restarted; must-fire green; `events_dropped` 0, queues 0. The playbook-rendered compose
+file now matches the live one, so a later full deploy is a no-op for this line. (A full deploy
+still recreates all three containers whenever the compose file changes, hence the targeted path.)
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
@@ -96,7 +106,7 @@ see.
 | Share of alerts from one rule | 90% | no rule over 10% |
 | Indexer growth | 0.4GB/day | under 0.05GB/day |
 | Retention | none | defined and enforced (operator choice, see decisions) |
-| Dashboard container | unhealthy | healthy |
+| Dashboard container | unhealthy | healthy (**done 1a, 2026-10-15**) |
 | Manager vs agent versions | skewed | manager >= every agent |
 | Detection regression | not tested | every must-fire test passes before and after each change |
 
