@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan an Open WebUI snapshot; print no chats or excerpts to stdout."""
+"""Scan saved chats or transcripts; print no chats or excerpts to stdout."""
 import argparse
 from collections import Counter
 import contextlib
@@ -235,14 +235,28 @@ def scan(database, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--db', required=True, type=Path)
+    parser.add_argument('--format', choices=('openwebui', 'lm-eval', 'cse', 'deep-research'), default='openwebui')
+    parser.add_argument('--db', type=Path, help='read-only Open WebUI snapshot')
+    parser.add_argument('--root', type=Path, help='discovered transcript directory for the selected adapter')
     parser.add_argument('--out', required=True, type=Path)
     args = parser.parse_args(argv)
+    if args.format == 'openwebui' and (args.db is None or args.root is not None):
+        parser.error('Open WebUI mode requires --db and no --root')
+    if args.format != 'openwebui' and (args.root is None or args.db is not None):
+        parser.error('transcript mode requires --root and no --db')
     try:
-        counts = scan(args.db, args.out)
+        if args.format == 'openwebui':
+            counts = scan(args.db, args.out)
+        else:
+            from transcript_scan import scan_transcripts
+            counts = scan_transcripts(args.root, args.out, args.format)
     except (OSError, ValueError, sqlite3.Error):
-        parser.exit(1, 'Scan failed; no new report retained (check snapshot schema, JSON and output permissions).\n')
-    print(f"SCAN-OK: {counts['chats']} chats; {counts['assistant_messages']} assistant messages; {counts['hits']} hits. Excerpts remain in hits.jsonl.")
+        parser.exit(1, 'Scan failed; no new report retained (check input schema, JSON and output permissions).\n')
+    if args.format == 'openwebui':
+        print(f"SCAN-OK: {counts['chats']} chats; {counts['assistant_messages']} assistant messages; {counts['hits']} hits. Excerpts remain in hits.jsonl.")
+    else:
+        print(f"SCAN-OK: {counts['files']} files; {counts['responses']} responses; {counts['hits']} hits; "
+              f"{counts['cap_exhausted']} cap-exhausted (separate). Excerpts remain in hits.jsonl.")
     return 0
 
 

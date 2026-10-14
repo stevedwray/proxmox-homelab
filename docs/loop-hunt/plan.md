@@ -148,7 +148,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 |---|---|---|---|
 | lh-00-decisions | operator | — | done 2026-10-15 (all seven as recommended) |
 | lh-01-chat-scan | local, then Framework (read-only source) | `loop-hunt-chat-scan` | done 2026-10-15 (12 chats, 14 assistant messages, 0 hits; operator choices pending) |
-| lh-01b-transcript-scan | local, then production LXCs (read-only) | `loop-hunt-transcript-scan` | todo |
+| lh-01b-transcript-scan | local, then production LXCs (read-only sources) | `loop-hunt-transcript-scan` | local adapters built; discovery/scan approval pending |
 | lh-01c-vscode-transcripts | local (operator's workstation) | — | todo |
 | lh-01d-capture-proxy | local (operator's workstation) | — | todo (optional; needs the operator to use VS Code through it) |
 | lh-02-session-harness | local | — | todo |
@@ -282,9 +282,9 @@ No live DB writes, model loads/inference or service changes occurred. No
 chat excerpts or stored parameters were returned or copied locally; only
 aggregate counts are recorded in git. No later step has run.
 
-Operator decision pending as required by lh-01: recommendation is no real
-chat replay, D-L3 server-default sampling (no sampling fields in requests),
-and Q2 excluded under D-L5. Stop and record the answer before lh-02.
+Operator decisions (2026-10-15): D-L3 server-default sampling (no sampling
+fields in requests) and Q2 excluded under D-L5 are confirmed. Replay is not
+skipped: complete lh-01b and then the added VS Code investigation first.
 
 
 #### lh-01b-transcript-scan
@@ -337,11 +337,106 @@ gates:
 Report per source: responses scanned, hits by model and month, and
 separately `cap-exhausted` counts (budget exhaustion, not looping). Show
 up to 10 excerpts and stop: the operator picks replays for lh-07 (or
-none). If there are no loop hits anywhere, ask the operator where the
-loops were seen (e.g. VS Code/Copilot sessions, which keep no server-side
-transcript) before continuing.
+none). If benchmark sources have no loop hits, record that absence. The operator
+has already identified VS Code Copilot agent mode as the other source; the
+local client transcripts are covered by lh-01c. Do not ask where again.
 
-Result: —
+Local preparation (2026-10-15): the general entry point and three adapters
+are built. All 29 tests pass, preserving the 17 Open WebUI/snapshot tests
+and adding fixtures for every adapter, clean negatives, cap evidence,
+actual-vs-requested identity, raw/extracted deduplication, agent-source
+pairing, unknown metadata, private output, failure cleanup and escaped
+metadata refusal. No lh-01b production discovery or scan has run.
+
+Preflight for `loop-hunt-transcript-scan` (**approval pending**):
+
+- Targets: production LXCs `ai-services-stack` (`root@192.168.50.11`)
+  and `cse-controller` (`root@192.168.100.70`), both on pve-tiny. Use
+  `with-secrets-prod-tiny` with this task approval, as their existing docs do.
+- Read-only discovery and source reads: eval `samples_*.jsonl` under
+  `/srv/eval-runner/results/`; CSE `responses.json` under
+  `/srv/cyberseceval/runs/`; deep-research sessions from its Docker mount
+  at `/home/app/.deep-research-agent`. Only mount metadata and directory
+  counts are printed during discovery, never Docker environment/config.
+  Use the producer code's paths where old docs differ. A missing/different
+  location stops the step before any scan or source relocation.
+- Writes: only new mode-0700 `/srv/eval-runner/loop-hunt-scan-20261015/`
+  and `/srv/cyberseceval/loop-hunt-scan-20261015/`, with tools in `tools/`
+  and mode-0600 reports in source-specific subdirectories. Existing scan
+  directories/reports are not reused or overwritten.
+- Return counts by source/model/month, separate cap-exhausted counts, and
+  **at most ten excerpts total across all sources**, each <=400 characters.
+  Source transcripts and full hit/settings files stay on their source hosts.
+- Out of scope: inference, model switching, agents/tasks, deployments,
+  service changes, source-transcript writes/copies, Docker config changes,
+  cloud uploads, other directories, VS Code history (lh-01c is later).
+
+Exact commands, sequential with inspection/stop at every failed gate:
+
+```bash
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.50.11 'python3 -' <<'PYTHON'
+import json
+from pathlib import Path
+import subprocess
+print('Host:', Path('/etc/hostname').read_text().strip())
+root = Path('/srv/eval-runner/results')
+assert root.is_dir(), 'eval root differs; stop'
+print('eval root:', root, 'sample files:', sum(1 for _ in root.rglob('samples_*.jsonl')))
+mounts = json.loads(subprocess.check_output(['docker', 'inspect', '--format', '{{json .Mounts}}', 'deep-research'], text=True))
+matches = [m for m in mounts if m.get('Destination') == '/home/app/.deep-research-agent']
+assert len(matches) == 1, 'deep-research mount differs; stop'
+sessions = Path(matches[0]['Source'])/'sessions'
+assert sessions.is_dir(), 'deep-research sessions directory differs; stop'
+print('deep-research sessions:', sessions, 'session files:', sum(1 for _ in sessions.glob('session_*.json')))
+PYTHON
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.100.70 'python3 -' <<'PYTHON'
+from pathlib import Path
+print('Host:', Path('/etc/hostname').read_text().strip())
+root = Path('/srv/cyberseceval/runs')
+assert root.is_dir(), 'CSE runs root differs; stop'
+print('CSE root:', root, 'response files:', sum(1 for _ in root.rglob('responses.json')))
+PYTHON
+```
+
+Inspect both discoveries: the host names must be the intended LXCs and the
+paths must match the producer code. If an existing source directory has no
+files, report it as unavailable response evidence (zero responses evaluated),
+not as proof of no loops. Do not search other paths without review. Missing
+or different source locations stop the step. After discovery passes:
+
+```bash
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.50.11 'umask 077; D=/srv/eval-runner/loop-hunt-scan-20261015; test ! -e "$D" && mkdir "$D" && mkdir "$D/tools"'
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.100.70 'umask 077; D=/srv/cyberseceval/loop-hunt-scan-20261015; test ! -e "$D" && mkdir "$D" && mkdir "$D/tools"'
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny rsync -a scripts/loop-hunt/scan_openwebui.py scripts/loop-hunt/transcript_scan.py scripts/loop-hunt/snapshot_sqlite.py scripts/framework-ctx-bugs/detectors.py root@192.168.50.11:/srv/eval-runner/loop-hunt-scan-20261015/tools/
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny rsync -a scripts/loop-hunt/scan_openwebui.py scripts/loop-hunt/transcript_scan.py scripts/loop-hunt/snapshot_sqlite.py scripts/framework-ctx-bugs/detectors.py root@192.168.100.70:/srv/cyberseceval/loop-hunt-scan-20261015/tools/
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.50.11 'bash -se' <<'REMOTE'
+D=/srv/eval-runner/loop-hunt-scan-20261015
+export PYTHONDONTWRITEBYTECODE=1
+python3 "$D/tools/scan_openwebui.py" --format lm-eval --root /srv/eval-runner/results --out "$D/eval"
+S=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/home/app/.deep-research-agent"}}{{.Source}}{{end}}{{end}}' deep-research)
+test -n "$S" && test -d "$S/sessions"
+python3 "$D/tools/scan_openwebui.py" --format deep-research --root "$S/sessions" --out "$D/deep-research"
+cat "$D/eval/summary.md" "$D/deep-research/summary.md"
+REMOTE
+TASK_APPROVAL=loop-hunt-transcript-scan ./with-secrets-prod-tiny ssh root@192.168.100.70 'bash -se' <<'REMOTE'
+D=/srv/cyberseceval/loop-hunt-scan-20261015
+export PYTHONDONTWRITEBYTECODE=1
+python3 "$D/tools/scan_openwebui.py" --format cse --root /srv/cyberseceval/runs --out "$D/cse"
+cat "$D/cse/summary.md"
+REMOTE
+```
+
+Only after summaries pass, read bounded excerpts from the retained hits on
+the source hosts, with one combined ten-excerpt budget. Print only source,
+file/index/run pointer, model, flags, estimated prompt tokens and excerpt;
+never print prompts or stored settings. Verify output permissions and exact
+source paths without copying full transcripts. Then stop for replay choices.
+The operator has already identified VS Code Copilot agent mode as the other
+source of loops; do not ask where they were seen again if benchmarks have
+no exact-loop hits. Record that absence and keep lh-01c as the next step.
+
+Result: local tools built and validated; production discovery/scan approval pending.
+
 
 #### lh-01c-vscode-transcripts
 
