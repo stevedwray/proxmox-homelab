@@ -6,6 +6,36 @@
 set -euo pipefail
 out="$(llama-builds swap-config --dry-run)"
 printf '%s\n' "$out"
+unchanged=false
+if [[ "$out" =~ ^llama-swap\ config\ unchanged\ \(([0-9]+)\ entries\)$ ]]; then
+  unchanged=true
+  count="${BASH_REMATCH[1]}"
+  # Use the installed generator's read-only functions, including overrides
+  # and current/candidate links. Verify exact bytes before trusting its IDs.
+  # No CLI main, HTTP, Redis, config write or model load is invoked here.
+  if ! out="$(python3 - "$(command -v llama-builds)" "$count" <<'PY'
+import runpy
+import sys
+from pathlib import Path
+
+tool = runpy.run_path(sys.argv[1])
+cfg = tool['load_config']()
+entries = tool['swap_entries'](cfg, tool['load_catalog'](cfg))
+expected = tool['render_swap'](cfg, entries)
+if len(entries) != int(sys.argv[2]):
+    raise SystemExit('unchanged entry count changed during validation')
+if Path(tool['swap_cfg'](cfg)['config']).read_bytes() != expected.encode('utf-8'):
+    raise SystemExit('existing config differs from generated config during validation')
+print('Verified unchanged config entries:')
+for entry, _ in entries:
+    print('  ' + entry)
+PY
+)"; then
+    echo 'GATE FAILED: unchanged config could not be verified -- nothing written'
+    exit 1
+  fi
+  printf '%s\n' "$out"
+fi
 missing=""
 for m in qwen3.8-flash-next-q4 laguna-s-2.1; do
   for b in nathanw upstream; do
@@ -21,6 +51,10 @@ done
 if [ -n "$missing" ]; then
   echo "GATE FAILED: dry run is missing:$missing -- nothing written"
   exit 1
+fi
+if [[ "$unchanged" == true ]]; then
+  echo "GATE OK: all 16 ctx-test entries and $# extra present; verified unchanged -- no write or reload"
+  exit 0
 fi
 echo "GATE OK: all 16 ctx-test entries and $# extra present; writing"
 llama-builds swap-config

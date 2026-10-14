@@ -78,6 +78,14 @@ regrades keep eight-answer denominators.
 
 ## Later production runs
 
+`guarded_swap_config.sh` checks the dry-run entry list before any rewrite.
+When llama-builds reports an unchanged config without a list, the guard uses
+the installed generator's read-only functions to reconstruct entries and
+verify exact existing config bytes and the reported count, then checks all
+16 required IDs and any extra IDs. Success in this case performs no write or
+reload. Missing IDs, mismatches and read failures stop the guard; no force
+option is used. These functions include local overrides and build links.
+
 These commands document later phases; they require the repository's production
 preflight and approval flow. They were not executed during phase 2.
 

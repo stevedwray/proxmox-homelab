@@ -363,7 +363,8 @@ stops only at one of the stop points in rule 1.
 | ctx-10e-drop-f-count | local | — | done 2026-10-14 (7-question F; S1–S5 byte-identical; 65 tests and all gates pass) |
 | ctx-10d-batch-confirm | Framework (production) | `ctx-bug-batch-confirm` | done 2026-10-14 (batch run complete; no crash/GPU error; 7/7; restored initial model; D9 pending) |
 | ctx-10f-batch-all | local | — | done 2026-10-14 (D9 batch 512/128 across test variants; redundant b512 removed; all gates pass) |
-| ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | todo |
+| ctx-10g0-guard-fix | local | — | done 2026-10-14 (unchanged config verified without reload; 71 tests pass) |
+| ctx-10g-batch-deploy | Framework (production) | `ctx-bug-batch-all` | todo (first retry failed at guard; unchanged-config fix ready) |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo (D8 = b, D9 = b) |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | todo |
 | ctx-13-writeup | local | — | todo |
@@ -1208,18 +1209,61 @@ there are no other catalogue changes. No Framework access, model load or
 deployment occurred. Next: ctx-10g, deployment under its own preflight and
 `ctx-bug-batch-all` approval.
 
+#### ctx-10g0-guard-fix
+
+Added after the failed ctx-10g gate, with operator approval on 2026-10-14.
+
+```yaml
+id: ctx-10g0-guard-fix
+title: Verify an unchanged llama-swap configuration without forcing a reload
+depends_on: [ctx-10f-batch-all]
+runs_on: local
+change: >
+  Extend guarded_swap_config.sh to handle the installed generator's
+  unchanged-config message. Use its read-only load_config/load_catalog/
+  swap_entries/render_swap functions to reconstruct entries including
+  overrides and build links; require exact existing/generated config bytes
+  and matching reported entry count, then verify all 16 IDs and extra IDs.
+  On verified unchanged output, exit successfully without a write/reload.
+  Keep the existing guarded write for changed configs; never use --force.
+  Test changed/unchanged success, absent required/extra IDs, mismatched
+  config, unreadable config and entry-count changes; all failures refuse writes.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+    - docs/ctx-bug-test/plan.md
+gates:
+  - id: syntax
+    cmd: "bash -n scripts/framework-ctx-bugs/guarded_swap_config.sh"
+    expect: "exit 0"
+    critical: true
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+```
+
+Result: done 2026-10-14. The unchanged branch imports the installed tool
+without invoking its CLI main or any HTTP/Redis function. It compares the
+rendered config bytes and entry count, then checks every required ID. A
+verified unchanged config causes no write or reload. All 71 tests pass,
+including 6 local shell-guard tests; syntax passes. After tightening the
+comparison to bytes, the 6 guard tests passed again. No production access
+was performed during this fix. ctx-10g needs a new preflight and approval.
+
 #### ctx-10g-batch-deploy
 
 ```yaml
 id: ctx-10g-batch-deploy
 title: Deploy the small-batch test variants
-depends_on: [ctx-10f-batch-all]
+depends_on: [ctx-10g0-guard-fix]
 runs_on: framework
 approval: ctx-bug-batch-all
 preflight: >
   Target: Framework (production). Command 1 read-only (secrets load).
   Command 2 installs the edited models.json (playbook; no reload).
-  Command 3 rewrites llama-swap's config only if all 16 ctx ids are listed
+  Command 3 verifies all 16 ctx ids and either confirms exact unchanged
+  config bytes without a write/reload, or rewrites a changed config
   (stops the loaded model for 1-2 minutes, then reloads it); the
   laguna-s-2.1-upstream-ctx131k-b512 entry disappears. Command 4 is
   read-only: counts entries carrying the small-batch flags. Out of scope:
@@ -1240,7 +1284,10 @@ gates:
     critical: true
   - id: guarded-write
     cmd: "(command 3)"
-    expect: "'GATE OK', 'llama-swap config written', '<model> loaded again'"
+    expect: >
+      'GATE OK', followed by either 'verified unchanged -- no write or reload',
+      or 'llama-swap config written' and '<model> loaded again'. Any missing
+      ID, byte mismatch, count mismatch or read failure stops the step.
     critical: true
   - id: flags
     cmd: "(command 4)"
@@ -1248,7 +1295,17 @@ gates:
     critical: true
 ```
 
-Result: —
+Result (failed attempt, 2026-10-14): the agent ran approved commands in
+order. Command 1 printed `SECRETS-OK`. Command 2 completed with
+`ok=15 changed=0 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0`;
+its dry run said `llama-swap config unchanged (52 entries)`. Command 3's
+original guard interpreted the omitted ID list as missing IDs, printed
+`GATE FAILED` and exited 1 without writing. Command 4 was not run, as
+required by the stop-on-failed-gate rule. Build links were unchanged;
+the status check fetched refs and published status as the playbook specifies.
+The failed guard did not reload a model. ctx-10g0 fixes verification of an
+unchanged config locally; deployment completion still awaits an approved
+retry and the final 24/0 count gate.
 
 #### ctx-11-full-run
 
