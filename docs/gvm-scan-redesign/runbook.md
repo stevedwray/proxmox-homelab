@@ -108,3 +108,14 @@ the task and loses its report history.
 | discovery (2026-08-29) | zone | 6 (build) to 41 (lan) min | |
 | full-vuln, whole zone (before narrowing) | zone | 21 (build) to 66 (infra) min | |
 | full-vuln: lan, whole /24 (old target) | 21 hosts with results | stopped at about 2 h 04 min | stalled on an offline host; peak 4.3 GB, Redis 673 MB, load 48 |
+
+## Housekeeping (2026-10-15)
+
+`gvm_tuning.py inventory` lists every scan object with its `in_use` flag. Last run: all
+38 weekly tasks, the OCI Pangolin ones, their targets, credentials and schedules are
+in use; the only leftovers were the experiment config "Full and fast (lean)" and the
+deprecated PentAGI harness objects (`harness-target`, `harness-target-ports`, and the
+trashed task `harness-target-scan` that pinned them), all purged with `rmunused` /
+`rmtrash`. Greenbone's own defaults (Base, empty, Host Discovery, Log4Shell, System
+Discovery, the IANA port lists) are left alone. A target can show `in_use=0` and still
+refuse deletion while a trashed task references it: check the trash in `inventory`.
