@@ -242,10 +242,24 @@ def mode_hist(args):
     return out
 
 
+def mode_agentrules(args):
+    """Every rule one agent produced in a window, with a sample message each (for 'why did X not alert?')."""
+    agent, hours = args[0], window(args[1]) if len(args) > 1 else 24
+    q = {"bool": {"filter": [day(hours), {"term": {"agent.name": agent}}]}}
+    r = search(ALERTS, q, {"r": terms("rule.id", 40, d=terms("rule.description", 1), l=terms("rule.level", 1),
+                                      loc=terms("location", 1))}, size=0)
+    return {"agent": agent, "hours": hours, "total": total(r),
+            "rules": [(b["key"], b["doc_count"], "L%s" % b["l"]["buckets"][0]["key"], b["loc"]["buckets"][0]["key"],
+                       b["d"]["buckets"][0]["key"][:70]) for b in r["aggregations"]["r"]["buckets"]]}
+
+
 def mode_sample(args):
     rid, n = args[0], int(args[1]) if len(args) > 1 else 5
-    r = search(ALERTS, rule_q(rid, 24), size=n)
-    return {"rule": rid, "events": [{"agent": h["_source"]["agent"]["name"], "location": h["_source"].get("location"),
+    q = rule_q(rid, window(args[3]) if len(args) > 3 else 24)
+    if len(args) > 2 and args[2] != "-":   # optional: only this agent
+        q["bool"]["filter"].append({"term": {"agent.name": args[2]}})
+    r = search(ALERTS, q, size=n)
+    return {"rule": rid, "events": [{"agent": h["_source"]["agent"]["name"], "time": h["_source"].get("@timestamp"), "location": h["_source"].get("location"),
                                       "full_log": h["_source"].get("full_log"), "data": h["_source"].get("data")} for h in r["hits"]["hits"]]}
 
 
@@ -304,7 +318,7 @@ def mode_sampler_line(_args):
             f"max_queue_usage={q:.2f} disk={disk} {rss}")
 
 
-MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "fimpaths": mode_fimpaths,
+MODES = {"health": mode_health, "alerts": mode_alerts, "noise": mode_noise, "sample": mode_sample, "commands": mode_commands, "hist": mode_hist, "agentrules": mode_agentrules, "fimpaths": mode_fimpaths,
          "agents": mode_agents, "vulns": mode_vulns, "retention": mode_retention, "fim": mode_fim,
          "sampler-line": mode_sampler_line}
 

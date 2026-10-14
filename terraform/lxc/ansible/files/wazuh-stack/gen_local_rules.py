@@ -47,7 +47,8 @@ STOCK = """<!-- Local rules -->
 
 # Phase 2b / 2c. PCRE2, anchored on both ends.
 LXC_DEV_PATTERN = r"^File '/dev/\.lxc(?:-boot-id|/proc/[a-z0-9_-]+)' present on /dev\. Possible hidden file\.\z"
-HAP_PATTERN = r"\shAP login failure for user \S+ from " + re.escape(SCANNER_IP) + r" via ssh\z"
+# The pre-decoder strips "<ISO timestamp> hAP " (timestamp and hostname) before a rule's regex sees the line.
+HAP_PATTERN = r"^login failure for user \S+ from " + re.escape(SCANNER_IP) + r" via ssh\z"
 EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description)
     (100210, 510, 0, LXC_DEV_PATTERN, "rootcheck: LXC's own bookkeeping file under /dev (suppressed); any other hidden /dev file still alerts"),
     (100211, 2501, 3, HAP_PATTERN, f"MikroTik hAP ssh login failure from the Greenbone scanner {SCANNER_IP} (lowered)"),

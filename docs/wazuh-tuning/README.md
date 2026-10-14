@@ -197,6 +197,23 @@ atomically; backups live in `/var/ossec/etc/agent-conf-backup/`, never in a grou
 pushed to the agents). Remedy for a stuck group: touch its `agent.conf` (remoted logs "is valid after last
 modification").
 
+## Phase 2b / 2c done (2026-10-15)
+
+- **2b rootcheck 510 (3,320/day):** 3,314 were `File '/dev/.lxc…' present on /dev` (LXC's own `/dev/.lxc-boot-id` and
+  `/dev/.lxc/proc/*`, 48 distinct names, in every container); rule 100210 (level 0) matches that exact anchored shape only.
+  The other 6/day (`Files hidden inside directory '/var/lib/docker/overlay2/…'`, overlayfs link-count quirks) are left alone.
+  Live proof on apt-cacher-stack (`-e live_rootcheck=true`): a hidden `/dev/.mfire<epoch>` marker still alerts 510 L7
+  while no `lxc` file alerts in the same scan.
+- **2c rule 2501 on graylog-stack (2,754/day):** not a graylog problem and not an outside attack. They are MikroTik hAP
+  router log lines (`login failure for user nsroot/karaf/insight … from 192.168.70.11 via ssh`) forwarded into graylog-stack's
+  syslog: 100% (2,754 of 2,754) from the Greenbone scanner, clustered in scan windows, default-credential user names.
+  Rule 100211 lowers exactly that (scanner address, ssh, hAP) to level 3; other sources, other protocols and look-alike
+  addresses keep level 5 (`must_fire.py hap`, 4 checks).
+- **Lessons:** the pre-decoder strips the timestamp and hostname before a rule's regex runs (a pattern that included
+  `hAP` could never match); logtest cannot produce rootcheck events, so that needs a live scan (API `PUT /rootcheck`
+  on one agent); in the live playbook the scan must be triggered before the wait; the manager was restarted five
+  times on 2026-10-15 for rule changes, so batch local_rules.xml changes next time.
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |

@@ -263,7 +263,7 @@ sys\.exit\(0\)\z</field>
   </rule>
   <rule id="100211" level="3">
     <if_sid>2501</if_sid>
-    <regex type="pcre2">\shAP login failure for user \S+ from 192\.168\.70\.11 via ssh\z</regex>
+    <regex type="pcre2">^login failure for user \S+ from 192\.168\.70\.11 via ssh\z</regex>
     <description>MikroTik hAP ssh login failure from the Greenbone scanner 192.168.70.11 (lowered)</description>
   </rule>
 </group>

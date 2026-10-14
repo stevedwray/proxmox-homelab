@@ -61,7 +61,7 @@ class HealthcheckRules(unittest.TestCase):
 
     def test_hap_pattern_is_scanner_ssh_only(self):
         rx = re.compile(g.HAP_PATTERN.replace(r"\z", r"\Z"))
-        line = "2026-10-15T02:05:18.151+13:00 hAP login failure for user karaf from {} via {}"
+        line = "login failure for user karaf from {} via {}"   # what the rule sees after the pre-decoder
         self.assertTrue(rx.search(line.format("192.168.70.11", "ssh")))
         self.assertFalse(rx.search(line.format("203.0.113.5", "ssh")))
         self.assertFalse(rx.search(line.format("1192.168.70.11", "ssh")))
