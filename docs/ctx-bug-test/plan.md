@@ -1526,3 +1526,14 @@ flag counts and a 45-minute progress warning are recorded. Warnings are
 observations, not reasons to rewrite completed requests or kill the run.
 Framework's sudo authorization for starting the upgrade timer was checked
 read-only and passed. Installation/start verification follows below.
+
+Watcher installed and verified active at 07:43:18 UTC on 2026-10-14:
+`framework-ctx-watch-20261014t071722z.service`, invocation
+`71d4f8f82b3845f2b4c94f51f487a591`. Only `watch_run` was copied; the
+installed harness's saved resume hash set was checked and matched exactly
+(`RESUME-HASHES-OK`). First poll reports run running, 13 requests recorded,
+0 crash/GPU/evidence errors, no progress warning and 0 automatic retries.
+The upgrade timer remains paused while the run is active; the watcher
+restores it when the run unit exits, before any recovery/result handling.
+Monitor records are in the run's `watcher.json` and `watcher.log`. The
+watcher needs no active chat session and does not change model findings.

@@ -21,7 +21,11 @@ verified. The fresh full-run retry started at 07:17:22 UTC on 2026-10-14 under
 `/storage/artifacts/framework-ctx-bugs/20261014T071722Z`; its start gate passed.
 Attempt 1 failed when daily upgrades restarted llama-swap. The resilience
 fix passes 75 tests. Per D10, the upgrade timer is paused during the retry
-and must be started again as soon as the run ends.
+and must be started again as soon as the run ends. A separate overnight
+watcher is active, polling every 10 minutes and restoring the timer when the
+run exits. It allows at most one verified infrastructure resume and never
+restarts services or retries model findings. Its status/log are `watcher.json`
+and `watcher.log` in the run directory.
 
 The [local harness](../../scripts/framework-ctx-bugs/README.md) includes
 deterministic prompts, tokenizer fit checks, saved context-fill prompts,
