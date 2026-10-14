@@ -182,6 +182,21 @@ is not scoped and stays as is. Also done 2026-10-15: GVM sampler stopped (operat
 mount/unmount (238/day each, container lifecycle audit records) deliberately left alerting, ISM system-index
 replicas set to 0 (cluster green), old 4.14.7 images pruned.
 
+## Phase 2a done (2026-10-15)
+
+FIM ignore lists are repo-managed shared agent config (`files/wazuh-stack/agent_conf/{default,build_seg,pentest_seg}.xml`,
+each block scoped to one agent by name, delivered by `deploy-wazuh-stack.yml --tags wazuh_agent_conf`): pve host
+`lrm_status` (57% of FIM alerts), ci-runner `_diag` and `_work/_update`, Greenbone `mem.log`/`tuning.log`. Result: FIM
+events 62 per 3 min -> 0 on the first post-reload window; everything under /etc, /usr, /bin, /sbin, /root still
+monitored (Tier 2 live FIM add/modify/delete pass). A unit test refuses any ignore entry on protected paths.
+
+**Lesson (cost one failed rollout):** `docker cp` into a group dir made `agent.conf` briefly root-owned;
+`wazuh-remoted` logged "Permission denied ... Invalid shared file" and left it out of the merge, and the pve agent
+then reported (1207) "remote configuration is corrupted". Fix: stage and chown outside `shared/`, then `mv`
+atomically; backups live in `/var/ossec/etc/agent-conf-backup/`, never in a group dir (everything in a group dir is
+pushed to the agents). Remedy for a stuck group: touch its `agent.conf` (remoted logs "is valid after last
+modification").
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
