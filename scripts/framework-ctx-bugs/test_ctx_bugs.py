@@ -39,6 +39,69 @@ def response(answer='391,12,708', reasoning='', finish='stop', tokens=10):
                 usage=dict(completion_tokens=tokens))
 
 
+class AttributionTests(unittest.TestCase):
+    def record(self, build, prompt='S1', size=32768, budget=16384, flags=(), run='greedy', seed=1):
+        return dict(model=cb.MODELS[1], build=build, prompt=prompt, size=size, run=run, seed=seed,
+                    flags=list(flags), answer='bad' if flags else 'clean', reasoning='reasoning',
+                    settings=dict(max_tokens=budget, temperature=0 if run == 'greedy' else .6,
+                                  seed=seed, top_p=.95, top_k=20, min_p=0))
+
+    def test_different_budgets_are_not_attributable(self):
+        records = [self.record('nathanw', budget=2048, flags=['hidden-tokens']), self.record('upstream')]
+        self.assertEqual(cb.findings(records)[0]['kind'], 'not attributable (different budgets)')
+
+    def test_each_sampling_field_must_match(self):
+        for field in cb.COMPARISON_SETTINGS:
+            with self.subTest(field=field):
+                own = self.record('nathanw', flags=['hidden-tokens'])
+                other = self.record('upstream')
+                other['settings'][field] += 1
+                self.assertEqual(cb.findings([own, other])[0]['kind'], 'not attributable (different budgets)')
+        own.pop('settings')
+        self.assertNotEqual(cb.findings([own, self.record('upstream')])[0]['kind'], 'build bug')
+
+    def test_equal_settings_establish_build_bug(self):
+        records = [self.record('nathanw', flags=['hidden-tokens']), self.record('upstream')]
+        self.assertEqual(cb.findings(records)[0]['kind'], 'build bug')
+
+    def test_shared_failure_on_paired_seeds_is_not_build_bug(self):
+        records = [self.record('upstream', flags=['no-answer']), self.record('nathanw')]
+        for build in cb.BUILDS:
+            records.append(self.record(build, run='seed1', flags=['no-answer']))
+        self.assertFalse(any(f['kind'] == 'build bug' for f in cb.findings(records)))
+
+    def test_probe_supports_s1_but_not_short_s2_or_s4(self):
+        records = [self.record(build, prompt=prompt, budget=2048 if build == 'nathanw' else 16384,
+                               flags=['hidden-tokens'] if build == 'nathanw' else [])
+                   for prompt in ('S1', 'S2', 'S4') for build in cb.BUILDS]
+        probe = self.record('nathanw', flags=['hidden-tokens'])
+        before = json.dumps(records, sort_keys=True)
+        results = {f['prompt']: f for f in cb.findings(records, [probe])}
+        self.assertEqual(results['S1']['kind'], 'build bug')
+        self.assertTrue(results['S1']['probe_backed'])
+        self.assertEqual(results['S1']['independent_samples'], 1)
+        for prompt in ('S2', 'S4'):
+            self.assertEqual(results[prompt]['kind'], 'not attributable (different budgets)')
+        self.assertEqual(json.dumps(records, sort_keys=True), before)
+
+    def test_identical_sizes_count_once_with_distinct_runs(self):
+        records = [self.record(build, size=size, flags=['loop'] if build == 'nathanw' else [],
+                               run=run, seed=seed)
+                   for size in cb.SIZES for build in cb.BUILDS
+                   for run, seed in [('greedy', 1), ('seed1', 1), ('seed2', 2), ('seed3', 3)]]
+        result = cb.findings(records)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['sizes'], list(cb.SIZES))
+        self.assertEqual(result[0]['independent_samples'], 4)
+        self.assertEqual(result[0]['kind'], 'build bug')
+        # Reasoning must match too, even when the final answer is unchanged.
+        records[0]['reasoning'] = 'different reasoning'
+        self.assertEqual(len(cb.findings(records)), 4)
+
+    def test_informational_flags_do_not_become_candidates(self):
+        self.assertEqual(cb.findings([self.record('nathanw', flags=['dense-reasoning', 'build-divergence'])]), [])
+
+
 class GeneratorTests(unittest.TestCase):
     def test_deterministic_bytes_and_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -378,6 +441,12 @@ class HarnessTests(unittest.TestCase):
                 manifest = json.loads((directory/'run.json').read_text())
                 probe = manifest['cells'][cb.entry_id(cb.MODELS[1], 'nathanw', 32768)]['probe']
                 self.assertEqual(json.loads((directory/'raw'/probe['cell']/'S1-probe.json').read_text()), probe)
+                candidates = json.loads((directory/'findings.json').read_text())
+                self.assertTrue(any(f['prompt'] == 'S1' and f['kind'] == 'build bug'
+                                    and f.get('probe_backed') for f in candidates))
+                self.assertTrue(any(f['prompt'] == 'S2' and f['kind'] == 'not attributable (different budgets)'
+                                    for f in candidates))
+                self.assertEqual(len(updated), len(records))  # Probes stay out of JSONL.
                 manifest['status'] = 'running'
                 cb.write_json(directory/'run.json', manifest)
                 with self.assertRaisesRegex(ValueError, 'running'):
@@ -691,7 +760,9 @@ class HarnessTests(unittest.TestCase):
         for build in cb.BUILDS:
             for seed in (1, 2, 3):
                 records.append(dict(model=cb.MODELS[0], size=32768, prompt='S1', build=build,
-                    run=f'seed{seed}', seed=seed, flags=['loop'] if build=='nathanw' and seed<3 else []))
+                    run=f'seed{seed}', seed=seed, settings=dict(max_tokens=16384, temperature=.6,
+                        seed=seed, top_p=.95, top_k=20, min_p=0),
+                    flags=['loop'] if build=='nathanw' and seed<3 else []))
         self.assertTrue(any(f['kind']=='build bug' for f in cb.findings(records)))
         self.assertFalse(any(f['kind']=='build bug' for f in cb.findings(records[:-1])))
 

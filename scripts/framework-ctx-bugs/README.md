@@ -253,9 +253,16 @@ Other outputs are `run.json`, `progress.json`, `run.log`, `prompts/`, `logs/`
 `report.md`. The report lists flags by cell/request, first differing characters
 for divergences, F accuracy, server tok/s and wall time. Comparisons discovered
 later are persisted back to JSONL and raw files. Build divergence is information
-only; incomplete sampled comparisons do not establish build bugs. Unattributed
-flags require three more seeds, and F degradation on both builds is a model
-limit. The optional cloud judge is outside this harness.
+only. Build attribution compares identical max_tokens, temperature, seed,
+top_p, top_k and min_p. Unmatched budgets are labelled
+`not attributable (different budgets)`. Saved full-budget S1 probes participate
+in attribution without being added to results.jsonl. Identical answer and
+reasoning for every run across context sizes produce one finding with `sizes`
+and `independent_samples`; repeated sizes and a probe with the same seed/run
+add no independent samples. Incomplete sampled comparisons do not establish
+build bugs. Unattributed flags retain the suggested three-seed follow-up label;
+the operator may skip those follow-ups (D11 for this experiment). F degradation
+on both builds is a model limit. The optional cloud judge is outside this harness.
 
 The shared Redis lock is acquired before any model load, renewed during the
 run, checked before requests, and released on exit. Success, failure and

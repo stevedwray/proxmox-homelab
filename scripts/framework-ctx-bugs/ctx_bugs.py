@@ -263,37 +263,92 @@ def add_divergences(records):
         r['flags'].sort()
 
 
-def findings(records):
-    """Attribute reproducible flags at the same prompt, model and size."""
-    out = []
-    groups = {}
-    for r in records:
+COMPARISON_SETTINGS = ('max_tokens', 'temperature', 'seed', 'top_p', 'top_k', 'min_p')
+
+
+def comparison_settings(record):
+    settings = record.get('settings', {})
+    if not all(name in settings for name in COMPARISON_SETTINGS):
+        return None
+    return tuple(settings[name] for name in COMPARISON_SETTINGS)
+
+
+def findings(records, probes=()):
+    """Attribute matched requests, then count identical context outputs once.
+
+    Probes are attribution evidence only, never checkpoint requests. Repeating
+    the same seed/run at another context or budget is not an independent sample.
+    """
+    out, groups = [], {}
+    evidence = list(records) + list(probes)
+    probe_ids = {id(r) for r in probes}
+    for r in evidence:
         groups.setdefault((r['model'], r['size'], r['prompt']), {}).setdefault(r['build'], []).append(r)
     info_flags = {'build-divergence', 'dense-reasoning'}
     for (model, size, prompt), builds in groups.items():
         for build, own in builds.items():
             other = builds.get('upstream' if build == 'nathanw' else 'nathanw', [])
+            pairs = [(r, o) for r in own for o in other
+                     if comparison_settings(r) is not None
+                     and comparison_settings(r) == comparison_settings(o)]
             for flag in sorted({f for r in own for f in r['flags']} - info_flags):
-                greedy_flag = any(r['run'] == 'greedy' and flag in r['flags'] for r in own)
-                sampled = [r for r in own if r['run'].startswith('seed') and r['seed'] in (1, 2, 3)]
-                opposite = [r for r in other if r['run'].startswith('seed') and r['seed'] in (1, 2, 3)]
-                reproducible = greedy_flag or sum(flag in r['flags'] for r in sampled) >= 2
-                classified = False
-                if reproducible and len(opposite) == 3 and not any(flag in r['flags'] for r in opposite):
-                    out.append(dict(kind='build bug', model=model, build=build, size=size, prompt=prompt, flag=flag))
-                    classified = True
-                baseline = [r for r in records if r['model'] == model and r['build'] == build
+                matched = [(r, o) for r, o in pairs if flag in r['flags']]
+                greedy = [(r, o) for r, o in matched if r['run'] == o['run'] == 'greedy']
+                sampled = [(r, o) for r, o in pairs if r['run'].startswith('seed')
+                           and o['run'].startswith('seed') and r['seed'] in (1, 2, 3)]
+                complete = {r['seed'] for r, o in sampled} == {1, 2, 3}
+                build_bug = ((any(flag not in o['flags'] for r, o in greedy)
+                              and not any(flag in o['flags'] for r, o in pairs))
+                             or (complete and sum(flag in r['flags'] for r, o in sampled) >= 2
+                                 and not any(flag in o['flags'] for r, o in sampled)))
+                baseline = [r for r in evidence if r['model'] == model and r['build'] == build
                             and r['size'] == 32768 and r['prompt'] == prompt]
-                if prompt != 'F' and (flag == 'ctx-divergence' or
-                    (size > 32768 and baseline and not any(flag in r['flags'] for r in baseline))):
-                    out.append(dict(kind='context-size bug', model=model, build=build, size=size, prompt=prompt, flag=flag))
-                    classified = True
-                if not classified:
+                context_bug = prompt != 'F' and (flag == 'ctx-divergence' or
+                    (size > 32768 and baseline and not any(flag in r['flags'] for r in baseline)))
+                if other and not matched:
+                    kind = 'not attributable (different budgets)'
+                elif build_bug:
+                    kind = 'build bug'
+                elif context_bug:
+                    kind = 'context-size bug'
+                else:
                     repeats = [r for r in own if r['seed'] > 3]
                     reproduced = len(repeats) >= 3 and sum(flag in r['flags'] for r in repeats) >= 2
-                    out.append(dict(kind='reproduced; compare original paired cells' if reproduced else 'needs three more seeds',
-                                    model=model, build=build, size=size, prompt=prompt, flag=flag))
-    return out
+                    kind = 'reproduced; compare original paired cells' if reproduced else 'needs three more seeds'
+                finding = dict(kind=kind, model=model, build=build, sizes=[size], prompt=prompt, flag=flag)
+                if kind == 'build bug' and any(id(r) in probe_ids and flag not in o['flags'] for r, o in matched):
+                    finding['probe_backed'] = True
+                out.append(finding)
+
+    def outputs(rows):
+        # Include both channels, every run, and settings: a coincidentally equal
+        # final answer alone cannot justify collapsing distinct evidence.
+        return sorted(json.dumps([r['run'], r['seed'], comparison_settings(r),
+                                  r.get('answer'), r.get('reasoning')], sort_keys=True) for r in rows)
+
+    identical = {}
+    samples = {}
+    for model, size, prompt in groups:
+        for build, rows in groups[model, size, prompt].items():
+            key = model, build, prompt
+            identical.setdefault(key, {})[size] = outputs(rows)
+            samples[key, size] = {(r['run'], r['seed']) for r in rows}
+    collapsed = {}
+    for finding in out:
+        key = finding['model'], finding['build'], finding['prompt']
+        sizes = identical[key]
+        all_equal = len({tuple(value) for value in sizes.values()}) == 1
+        merge_key = (*key, finding['flag'], finding['kind'], finding.get('probe_backed', False),
+                     None if all_equal else finding['sizes'][0])
+        if merge_key in collapsed:
+            collapsed[merge_key]['sizes'].extend(finding['sizes'])
+        else:
+            collapsed[merge_key] = finding
+    for finding in collapsed.values():
+        finding['sizes'].sort()
+        key = finding['model'], finding['build'], finding['prompt']
+        finding['independent_samples'] = len(set().union(*(samples[key, size] for size in finding['sizes'])))
+    return list(collapsed.values())
 
 
 def report(directory, records, manifest):
@@ -311,8 +366,9 @@ def report(directory, records, manifest):
         for flag in ('ctx-divergence', 'build-divergence'):
             if flag in r['flags']:
                 lines.append(f"| {r['key']} | {flag} | {r['details'][flag]['first_differing_character']} |")
-    conclusions = findings(records)
-    lines.extend(['', '## Candidate findings', '', 'Build divergence and dense reasoning are information only. Unpaired/incomplete comparisons do not establish build bugs.', ''])
+    probes = [cell['probe'] for cell in manifest.get('cells', {}).values() if 'probe' in cell]
+    conclusions = findings(records, probes)
+    lines.extend(['', '## Candidate findings', '', 'Build divergence and dense reasoning are information only. Build attribution requires matching sampling settings and token budgets. Identical answer and reasoning across sizes count once; sizes and independent seed/run samples are shown separately. Saved S1 probes support attribution without being added to results.jsonl.', ''])
     for finding in conclusions:
         lines.append('- ' + json.dumps(finding, sort_keys=True))
     fill = [r for r in records if r['prompt'] == 'F' and r['run'] == 'greedy']
