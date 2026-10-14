@@ -7,7 +7,7 @@ the same GGUF and the same prompts. Looking for hallucination, repetition,
 looping and loss of instruction following, and whether each comes from the
 build or from the context size. See [plan.md](plan.md).
 
-Status: **full run regraded and written up; cleanup awaiting approval** (2026-10-15). The operator settled
+Status: **complete** (2026-10-15). The operator settled
 decisions D1–D7 on 2026-10-13; subsequent prompt-fit and Part B corrections
 are incorporated in plan.md. The operator started the detached greedy-only
 131072-context pilot at 00:08:06 UTC; its start gate passed. The run directory
@@ -331,17 +331,16 @@ accuracy; its hang, wall time and prompt tok/s remain useful evidence.
 F totals **196/196**, with no retrieval degradation. Short-mode fork F is
 observational, not a controlled comparison of equal completion budgets.
 
-### Prepared catalogue cleanup (ctx-14)
+### Catalogue cleanup (ctx-14, complete)
 
-These changes are prepared in the local models.json only; production cleanup
-has not run and awaits `ctx-bug-cleanup` approval.
-Both tested models' `variants` return to `[]`, removing all 24 generated
-context-test entries including HIP variants. Remove Laguna's `fork` backend
-again; its two Vulkan/HIP upstream backends remain. Preserve the existing
-wildcard Qwen status and add explicit statuses for the tested builds. All
-four tested status records get `checked: 2026-10-15`.
+The operator approved `ctx-bug-cleanup` on 2026-10-15, and deployment passed.
+Both tested models' `variants` are `[]`, removing all 24 generated
+context-test entries including HIP variants. Laguna's `fork` backend is
+removed again; its two upstream Vulkan/HIP backends remain. The existing
+wildcard Qwen status is preserved, with explicit statuses for the tested
+builds. All four tested status records have `checked: 2026-10-15`.
 
-| Model | Status key | Proposed status | Reason |
+| Model | Status key | Deployed status | Reason |
 | --- | --- | --- | --- |
 | qwen3.8-flash-next-q4 | nathanw | works | Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). |
 | qwen3.8-flash-next-q4 | upstream | works | Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). |
@@ -350,15 +349,26 @@ four tested status records get `checked: 2026-10-15`.
 
 These statuses summarize the tested configuration and limitations; the
 ordinary entries keep their existing settings, and HIP was not tested.
-No new build, candidate promotion or production batch/default-model change
-is proposed. D1's candidate follow-up remains outside the completed matrix.
-Only ctx-14 deployment remains and requires its named production cleanup
-approval. The local JSON/scope gate passes, all 42 llama-builds tests and
-93 harness tests pass, shell syntax and playbook syntax pass. A local render
-with stand-in build links produces 27 entries instead of 52, removes all
-24 context variants plus Laguna fork, and preserves every retained server
-command. The cleanup guard passes ten tests covering changed/unchanged
-configs and refusals. No production cleanup access has occurred.
+No build, candidate, production batch setting or default model was changed.
+D1's candidate follow-up remains outside the completed matrix; ctx-12 was
+skipped by D11. No execution steps remain.
+
+Cleanup gates passed: the inventory group contained only
+`framework.gibbsgreatly.xyz` and the wrapper printed `SECRETS-OK`;
+the playbook reported `ok=15 changed=1 unreachable=0 failed=0`, changing only
+the catalogue. The guarded preview listed 27 entries with no context variants
+or Laguna fork, then wrote the config and reloaded
+`qwen3-coder-next-upstream` successfully. A subsequent read-only check
+confirmed the generated config exactly matches the installed config, all 27
+IDs meet the cleanup rules, and the installed catalogue SHA-256 matches the
+approved local file (`fa335658de603731bc066798eae4b806142821af943d1fdbe39bf708005b35a6`).
+
+Local preparation gates passed: JSON/scope assertions, all 42 llama-builds
+and 93 harness tests, shell/playbook syntax, and a stand-in render proving
+every retained server command is identical. The cleanup guard passes ten
+tests covering changed/unchanged configs and refusals. Full-run evidence
+and the pre-regrade checkpoint are retained in the Framework run directory
+and ignored local `artifacts/full/`.
 
 Known production issue found by this test (not fixed here, D10): Ubuntu's
 daily `apt-daily-upgrade` runs needrestart, which restarts

@@ -370,7 +370,7 @@ stops only at one of the stop points in rule 1.
 | ctx-11a-attribution-fix | local, then Framework (regrade in the run dir only) | — | done 2026-10-15 |
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
 | ctx-13-writeup | local | — | done 2026-10-15 |
-| ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | local changes validated; deployment awaiting approval |
+| ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | done 2026-10-15 |
 
 #### ctx-01-build-check (done)
 
@@ -1576,7 +1576,8 @@ ctx-08 guard's 16-required-ID check must also be inverted: use its tested
 current/candidate, missing ordinary tested entry, unknown preview or
 unverified unchanged configuration. Never use `--force`.
 
-Preflight (prepared 2026-10-15, **not approved or deployed yet**):
+Preflight (prepared and explicitly approved by the operator on 2026-10-15;
+executed successfully below):
 
 - Target: Framework bare metal, `steve@framework.gibbsgreatly.xyz` (inventory
   host `framework`), using the pve-tiny wrapper for its existing Redis secret
@@ -1607,7 +1608,7 @@ ssh steve@framework.gibbsgreatly.xyz 'bash -s -- --cleanup' < scripts/framework-
   or batch settings, overrides, other model statuses, OpenBao edits, inference
   requests, new tests on Framework and unrelated services.
 
-Result: local preparation done 2026-10-15; production approval pending.
+Result: done 2026-10-15 under the operator's explicit `ctx-bug-cleanup` approval.
 JSON equality against the pre-cleanup catalogue confirms only planned fields
 changed and the default is preserved. Local rendering with stand-in links
 confirms 52 -> 27 IDs, zero ctx IDs/Laguna fork, and identical server commands
@@ -1615,8 +1616,25 @@ for every retained entry. All 42 llama-builds tests, 93 harness tests, shell
 syntax and playbook syntax pass; ten guard tests cover cleanup failure modes
 and preserve the existing 16-ID gate. The publish test needs local sockets;
 its initial sandbox denial was resolved by running the tests with loopback
-permission. Nothing was deployed for cleanup. Mark README complete only
-after deployment and reload gates pass.
+permission.
+
+Deployment gates passed sequentially. Inventory printed only
+`framework.gibbsgreatly.xyz` in the Framework group and `SECRETS-OK`.
+The playbook reported `ok=15 changed=1 unreachable=0 failed=0`, with only
+"Install the model catalogue" changed; its dry run listed 27 ordinary IDs,
+no ctx IDs and no Laguna fork. The guard printed
+`GATE OK: no ctx-test entries or Laguna fork; ordinary tested entries retained; writing`,
+then `llama-swap config written: 27 entries; qwen3-coder-next-upstream loaded again`.
+Read-only verification confirmed 27 generated IDs, zero ctx variants, no
+Laguna fork, exact installed/generated config equality and an installed
+catalogue SHA-256 equal to the approved local file:
+`fa335658de603731bc066798eae4b806142821af943d1fdbe39bf708005b35a6`.
+The first verification helper parsed the catalogue's container incorrectly;
+correcting that read-only helper and repeating verification passed without
+any further production write. Builds/current links, ordinary settings,
+overrides and default model were not changed. No rollback was needed.
+README status is complete. ctx-12 remains skipped by D11; no execution
+steps remain.
 
 ## Decisions (operator, 2026-10-13)
 
