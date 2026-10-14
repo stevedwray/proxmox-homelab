@@ -331,7 +331,7 @@ prompt each time is:
 | ctx-05-expectations-helper | local | — | done 2026-10-14 (expectations helper; 54 tests pass) |
 | ctx-06-catalogue-edit | local | — | done 2026-10-14 (catalogue variants added; all four local gates pass) |
 | ctx-07-install-harness | Framework | `ctx-bug-harness-install` | done 2026-10-14 (operator: expectations match; 54 tests and HARNESS-OK) |
-| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | todo (first attempt failed 2026-10-14; branch now has the stable manifest; retry) |
+| ctx-08-catalogue-deploy | Framework (production) | `ctx-bug-catalogue` | done 2026-10-14 (operator: SECRETS-OK, failed=0, guarded write of 52 entries; initial model reloaded) |
 | ctx-09-pilot | Framework (production) | `ctx-bug-run` | todo |
 | ctx-10-pilot-review | local + Framework (read-only) | — | todo |
 | ctx-11-full-run | Framework (production) | `ctx-bug-run-full` | todo |
@@ -672,13 +672,31 @@ First attempt (2026-10-14, failed):
 - The dry run then listed 27 existing entries and none of the 16 test ids,
   but the write was run anyway, against the gate. It rewrote llama-swap's
   config from the old catalogue and reloaded `qwen3-coder-next-upstream`.
-  What changed is not yet known (command 3 shows it). The previous config
+  The changes are summarized in the retry Result below. The previous config
   is `~/llama-swap/config.yaml.prev` on Framework (path from
   `framework-desktop-llama-builds.yml`, `swap.config`).
 - Fix: the dry-run check is now inside `guarded_swap_config.sh`, so the
   write cannot run without it, and each command waits for the previous gate.
 
-Result: —
+Result: done by the operator, 2026-10-14. The supplied output confirms
+`SECRETS-OK` and approval for `ctx-bug-catalogue`; the playbook recap is
+`ok=15 changed=1 unreachable=0 failed=0 skipped=0 rescued=0 ignored=0`.
+The guarded dry run lists all 16 required Nathanw/upstream ctx-test IDs,
+prints `GATE OK`, and writes 52 entries; `qwen3-coder-next-upstream` is
+loaded again. The 52 entries include the HIP context variants generated
+from the same catalogue variants; the test matrix remains Nathanw/upstream.
+The supplied excerpt does not include the playbook's dry-run task output;
+the guard's dry run directly confirms the required IDs before the write.
+
+Command 3's diff shows the earlier rewrite added model metadata and revised
+descriptions, removed ordinary `laguna-s-2.1-nathanw` and
+`laguna-s-2.1-heretic-nathanw` entries and their group membership, and kept
+the displayed surviving model commands unchanged. This diff describes the
+earlier 27-entry rewrite, before the successful guarded write. Raw operator
+output is saved locally in ignored
+`docs/ctx-bug-test/artifacts/ctx-08-operator-output-20261014.txt`.
+No Framework or wrapper commands were run by the agent during closeout.
+The pilot has not started; ctx-09 requires its own preflight and approval.
 
 #### ctx-09-pilot
 
