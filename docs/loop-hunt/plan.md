@@ -1388,6 +1388,30 @@ are preliminary detector findings, not yet blind-judged or build-specific
 conclusions. C3 imported rows are excluded from these added-request totals.
 Fork-previous C3 is now running; review and supervision continue.
 
+Matrix Result update (2026-10-15, 06:53 UTC): eleven jobs complete.
+Fork-previous C3 added six requests beyond C1: 4/5 accepted-response facts,
+one wrong:q1 and four HTTP 400 context-limit refusals. Fork-previous C5
+completed 27 requests across both budgets, no flags. Upstream C1 seeds 1/2
+each completed 32 requests, 74/74 facts and three clean CK pairs, no flags.
+All eleven jobs have verified cleanup, zero evidence errors and exact
+prompt/server token counts on accepted requests. The two previous-build
+repetition flags are reasoning-channel eight-word shingles repeated four
+and five times; final answers were not flagged. Blind judging is pending.
+
+Launch retry 1 for upstream-C2: restoring the timer between jobs allowed
+apt-daily-upgrade.service to start at 06:47:46. The next job's preflight
+stopped with upgrade active before creating its directory or sending any
+request. The service finished at 06:48:17. Read-only checks confirmed
+qwen3-coder-next-upstream / b11514-de7fa0a3c restored, Redis lock free,
+timer active, upgrade service inactive and preceding watchers complete.
+Under the operator's launch/plumbing retry authorization, preserved
+campaign.before-upgrade-retry-1.json and recorded launch_retries in the
+campaign state, then relaunched the unchanged controller. At 06:53:28,
+upstream-C2 is running as loop-hunt-20261015t065254z.service, watcher
+loop-hunt-20261015t065254z-watch.service attached with successful first
+poll, timer paused and no campaign failure. No harness, build, model,
+prompt or sampling changes. Replays remain gated on the full matrix review.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

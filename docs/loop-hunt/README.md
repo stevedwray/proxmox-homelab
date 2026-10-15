@@ -419,6 +419,9 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen fork current | C5 (both budgets) | — | none | — | complete |
 | Qwen fork previous | C1 seeds 1 and 2 | 128/148 | recall errors; one repetition flag | three clean; two cold only; one model/content | complete |
 | Qwen fork previous | C2 | 75/80 accepted-response facts | recall errors; one repetition flag; 20 capacity refusals | three clean; one cold only; four refused pairs | complete |
+| Qwen fork previous | C3 (new turns only) | 4/5 accepted-response facts | one recall error; four context-limit refusals | one refused pair | complete |
+| Qwen fork previous | C5 (both budgets) | — | none | — | complete |
+| Qwen upstream | C1 seeds 1 and 2 | 148/148 | none | six clean pairs | complete |
 
 C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
 The first format failure was at 45097 tokens; no semantic collapse is
@@ -429,13 +432,20 @@ C2 completed all four planned extra rounds after the shared pool filled.
 Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
 500; matching cold requests succeeded. Their crossing prompt sums were
 131275 (current) and 131287 (previous). These are capacity refusals,
-reported separately from factual accuracy and repetition. All seven
+reported separately from factual accuracy and repetition. All eleven
 completed matrix jobs have zero evidence errors, exact prompt/server token
 agreement on accepted requests, and verified cleanup. C3 imported C1 rows
-are excluded from its new-request totals. The previous build's repetition
-flags still need evidence review and blind judging; they do not yet establish
-a build-specific loop. As of 04:52 UTC, fork-previous C3 is running; seven
-of 20 queued jobs are complete.
+are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
+in reasoning, with no answer repetition; blind judging remains pending.
+They do not yet establish a build-specific loop. As of 06:53 UTC, upstream
+C2 is running; eleven of 20 queued jobs are complete.
+
+Between jobs, the restored upgrade timer triggered its scheduled service.
+The next launch stopped safely at the upgrade-active preflight. After the
+service finished, model restoration, free lock and active timer were verified;
+no upstream C2 request had started. One approved launch retry resumed the
+unchanged campaign, with the new watcher attached and timer paused again.
+The original failure and retry are preserved in campaign.json and its backup.
 
 Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
 job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
