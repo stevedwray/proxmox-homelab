@@ -1555,6 +1555,20 @@ preserved at their original paths. Fourteen matrix jobs now complete;
 GLM upstream C1 seed 1 started as loop-hunt-20261015t174710z.service, with
 its watcher attached. Saved-result regrades remain queued after all twenty.
 
+GLM C1 seed 1 Result (2026-10-16 NZDT, verified 19:18 UTC): 37 requests,
+85/85 recall, question-line formatting failure on every response and no
+other flags, zero evidence errors and exact rendered/server prompt counts.
+Actual CKs 67905 / 100197 / 121731 tokens; cold wall 709.588 / 1170.800 /
+1509.443 seconds, prompt rates 96.563 / 85.978 / 81.024 tok/s, cache zero
+for all cold requests, warm cache 64311 / 96604 / 118138. All three pairs
+have identical payloads except cache_prompt and matching format failures
+(model/content category). Long cold prefills were monitored via the system
+journal and completed within the unchanged 1800-second timeout. Four slots,
+each n_ctx 131072, matched the plan; increasing warm reuse was confirmed.
+Original model restored, lock free, timer active and watcher complete were
+verified before advancing. Fifteen matrix jobs complete; GLM C1 seed 2
+started automatically. No intervention, settings or prompt changes.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

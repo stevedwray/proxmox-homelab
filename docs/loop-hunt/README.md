@@ -425,6 +425,7 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
 | Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
 | Qwen upstream | C5 retry 2 | — | none | — | complete; both synthetic tasks done |
+| GLM upstream | C1 seed 1 | 85/85 | question-line formatting in all 37 responses | three matching format-failure pairs | complete |
 
 Recall correction pending canonical regrade: the previous build sometimes
 prefixes every question/reference line with [TRIAGE]. The extractor attached
@@ -446,12 +447,12 @@ C2 completed all four planned extra rounds after the shared pool filled.
 Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
 500; matching cold requests succeeded. Their crossing prompt sums were
 131275 (current) and 131287 (previous). These are capacity refusals,
-reported separately from factual accuracy and repetition. All fourteen
+reported separately from factual accuracy and repetition. All fifteen
 completed matrix jobs have zero evidence errors, exact prompt/server token
 agreement on accepted requests, and verified cleanup. C3 imported C1 rows
 are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
 in reasoning, with no answer repetition; blind judging remains pending.
-They do not yet establish a build-specific loop. Fourteen of 20 jobs are complete as of 06:47 NZDT on 2026-10-16.
+They do not yet establish a build-specific loop. Fifteen of 20 jobs are complete as of 08:18 NZDT on 2026-10-16.
 The original upstream C5 attempt stopped after one clean saved request: its intermediate token-count
 probe received HTTP 400, Cannot continue an assistant message that contains
 tool calls. Model restoration, free lock and active timer are independently
@@ -482,6 +483,14 @@ service finished, model restoration, free lock and active timer were verified;
 no upstream C2 request had started. One approved launch retry resumed the
 unchanged campaign, with the new watcher attached and timer paused again.
 The original failure and retry are preserved in campaign.json and its backup.
+
+GLM C1 seed 1 completed 37 requests with 85/85 factual answers. Every response
+failed only question-line formatting. The cold checkpoints were 67905,
+100197 and 121731 tokens, taking 709.6 / 1170.8 / 1509.4 seconds respectively;
+all cold cache counts zero, exact warm/cold requests except cache use, and
+exact rendered/server counts. These are matching format failures, not a
+semantic-loop diagnosis. No timeout or other setting changed. Cleanup and
+watcher completion verified; GLM C1 seed 2 started automatically.
 
 Post-matrix analysis is staged as
 `loop-hunt-matrix-analysis-20261015.service`, verified waiting. It requires
