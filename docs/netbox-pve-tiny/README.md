@@ -1,8 +1,11 @@
 # NetBox: include pve-tiny
 
-**Status (2026-10-16): prepared in the repo, not deployed.** Needs a read-only
-token on pve-tiny, which only an operator can store (agents have no OpenBao write
-access); `scripts/pve-tiny-readonly-token.sh` does the create-and-store in one command.
+**Status (2026-10-16): DONE and live.** pve-tiny is part of NetBox populate. Token created and
+stored (`netbox-ro@pve!readonly`, in `services/netbox` and `hosts/pve-tiny`), manifest updated, stack
+deployed, old `@pve` records removed, populate run clean. Result: 40 VMs (31 in `pve-cluster`, 9 in
+`pve-tiny-cluster`), device `pve-tiny` (192.168.1.250), 0 stale managed objects, and a follow-up
+`--plan` with no creates or deletes. The steps below stay as the record and as the template for adding
+another node (e.g. pve-framework).
 
 ## Why
 
@@ -131,6 +134,8 @@ re-deploy. Removed records are archived as JSON by the deletion tool, and
 
 ## Known gaps
 
+- `cse-panel-stack@pve-tiny` has no services in NetBox: neither Portainer nor a docker-socket-proxy
+  reports for it. Not an error; add a probe target if you want its services listed.
 - `pve.yaml` has no `cse_seg` zone (VLAN 100, pve-tiny-only), so NetBox will have no prefix
   for the CSE guests' addresses. IPs are still created; add the prefix separately.
 - `exclude_vmids` is a manual list. If another stack is relocated to pve-tiny and left
