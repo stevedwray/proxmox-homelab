@@ -106,7 +106,7 @@ PY
 fi
 
 cd "$(dirname "$0")/.."
-export TASK_APPROVAL="${TASK_APPROVAL:-pve-tiny-readonly-token}"
+export TASK_APPROVAL="pve-tiny-readonly-token"   # always its own task name, never a stale one from the shell
 
 if [[ "${1:-}" == "--check" ]]; then
   ./with-secrets-prod-tiny "$0" --inner --check
