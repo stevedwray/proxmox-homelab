@@ -1544,6 +1544,17 @@ waiting replay continuation invocation 9f6fbb30b23d4615849cc82485a54316.
 At 17:37 UTC, upstream C5 retry 2 has 22 saved clean requests: 8192-budget
 run complete, 16384-budget in progress. All old attempts remain untouched.
 
+C5 retry 2 Result (2026-10-16 NZDT, verified 17:47 UTC): completed 31
+requests with zero flags/evidence errors and exact rendered/server tokens.
+Both synthetic tasks done; final file-tree SHA matches the full clean stub
+(2b86e828e8aa1270e47134f3a5f2c453fe69bbd2868141e34e97de6f31699643).
+8192 cap: 39 calls, peak prompt 121743; 16384 cap: 38 calls, peak 113406.
+Original model restored, lock free, upgrade timer active and watcher complete
+were verified by the supervisor before advancing. All failed attempts remain
+preserved at their original paths. Fourteen matrix jobs now complete;
+GLM upstream C1 seed 1 started as loop-hunt-20261015t174710z.service, with
+its watcher attached. Saved-result regrades remain queued after all twenty.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

@@ -402,7 +402,7 @@ actual synthetic pilot answers. The interrupted 15-request run regraded to
 preserved byte-for-byte under its regrade-backups. Full history and hashes
 are in [lh-05](plan.md#lh-05-pilot).
 
-## Matrix (lh-06, running; C5 retry)
+## Matrix (lh-06, running)
 
 The successful pilot satisfied the operator's conditional approvals. The
 remaining 20 jobs are running sequentially in two consecutive batches,
@@ -424,7 +424,7 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen upstream | C1 seeds 1 and 2 | 148/148 | none | six clean pairs | complete |
 | Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
 | Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
-| Qwen upstream | C5 retry 2 | — | none so far | — | 8192-budget complete; 16384-budget running |
+| Qwen upstream | C5 retry 2 | — | none | — | complete; both synthetic tasks done |
 
 Recall correction pending canonical regrade: the previous build sometimes
 prefixes every question/reference line with [TRIAGE]. The extractor attached
@@ -446,13 +446,13 @@ C2 completed all four planned extra rounds after the shared pool filled.
 Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
 500; matching cold requests succeeded. Their crossing prompt sums were
 131275 (current) and 131287 (previous). These are capacity refusals,
-reported separately from factual accuracy and repetition. All thirteen
+reported separately from factual accuracy and repetition. All fourteen
 completed matrix jobs have zero evidence errors, exact prompt/server token
 agreement on accepted requests, and verified cleanup. C3 imported C1 rows
 are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
 in reasoning, with no answer repetition; blind judging remains pending.
-They do not yet establish a build-specific loop. As of 2026-10-16 (NZDT), thirteen of 20 jobs are complete. Upstream C5
-stopped after one clean saved request: its intermediate token-count
+They do not yet establish a build-specific loop. Fourteen of 20 jobs are complete as of 06:47 NZDT on 2026-10-16.
+The original upstream C5 attempt stopped after one clean saved request: its intermediate token-count
 probe received HTTP 400, Cannot continue an assistant message that contains
 tool calls. Model restoration, free lock and active timer are independently
 verified. Replays remain waiting.
@@ -466,11 +466,15 @@ complete exchange without mutating inference history. The stand-in enforces
 upstream's rejection for both flag values; all 77 tests pass, plus a full
 62-request C5 stand-in run at both budgets with task completion and no flags.
 
-The second permitted retry launched at 17:17 UTC (06:17 NZDT) in
-upstream-C5-attempt3. Both failed attempts and their saved requests remain
-untouched. Only the source-confirmed counting correction is active; queued
-scoring/metadata corrections remain deferred to the matrix review boundary.
-No models, builds, sampling or answer budgets changed.
+The second permitted retry, upstream-C5-attempt3, completed 31 clean requests.
+Both tasks finished with matching final file-tree hashes: 39 calls / peak
+121743 prompt tokens at the 8192 budget; 38 calls / peak 113406 at the
+16384 budget. Rendered/server token counts agree throughout; zero evidence
+errors and verified model/lock/timer cleanup, watcher complete. GLM C1 seed 1
+started at 17:47 UTC (06:47 NZDT). Both failed attempts remain untouched.
+Only the complete-exchange counting correction is active; scorer corrections
+remain deferred to the matrix review boundary. No models, builds, sampling
+or answer budgets changed.
 
 Between jobs, the restored upgrade timer triggered its scheduled service.
 The next launch stopped safely at the upgrade-active preflight. After the
