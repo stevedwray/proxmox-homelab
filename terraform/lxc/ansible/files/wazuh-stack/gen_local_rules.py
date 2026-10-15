@@ -49,9 +49,18 @@ STOCK = """<!-- Local rules -->
 LXC_DEV_PATTERN = r"^File '/dev/\.lxc(?:-boot-id|/proc/[a-z0-9_-]+)' present on /dev\. Possible hidden file\.\z"
 # The pre-decoder strips "<ISO timestamp> hAP " (timestamp and hostname) before a rule's regex sees the line.
 HAP_PATTERN = r"^login failure for user \S+ from " + re.escape(SCANNER_IP) + r" via ssh\z"
-EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description)
+# Phase 5a. Ubuntu 26.04 ships Rust (uutils) coreutils; their binaries contain strings such as "/dev/" and "file.h", which
+# the generic signatures in rootkit_trojans.txt match, so every rootcheck scan reports ~48 "Trojaned version of file" L7
+# alerts for /bin and /usr/bin tools. Suppressed for that one agent and only for the Generic signatures of a single
+# /bin or /usr/bin file; every other host keeps rule 510 as is, and FIM still watches /bin and /usr/bin on framework.
+FRAMEWORK_AGENT = "framework.gibbsgreatly.xyz"
+TROJAN_GENERIC_PATTERN = r"^Trojaned version of file '/(?:usr/)?bin/[A-Za-z0-9_.+-]+' detected\. Signature used: '[^']+' \(Generic\)\.\z"
+EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description[, agent name the rule is limited to])
     (100210, 510, 0, LXC_DEV_PATTERN, "rootcheck: LXC's own bookkeeping file under /dev (suppressed); any other hidden /dev file still alerts"),
     (100211, 2501, 3, HAP_PATTERN, f"MikroTik hAP ssh login failure from the Greenbone scanner {SCANNER_IP} (lowered)"),
+    (100212, 510, 0, TROJAN_GENERIC_PATTERN,
+     f"rootcheck: generic trojan signature on a /bin or /usr/bin file of {FRAMEWORK_AGENT} (uutils coreutils; suppressed for this agent only)",
+     FRAMEWORK_AGENT),
 ]
 
 
@@ -86,8 +95,9 @@ def render():
     out.append("</group>\n")
     out += ['<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->',
             '<group name="local,rootcheck,syslog,">']
-    for rid, parent, level, pat, desc in EXTRA_RULES:
-        out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n'
+    for rid, parent, level, pat, desc, *agent in EXTRA_RULES:
+        host = f'    <hostname>^{re.escape(agent[0])}$</hostname>\n' if agent else ""
+        out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n{host}'
                    f'    <regex type="pcre2">{escape(pat)}</regex>\n    <description>{escape(desc)}</description>\n  </rule>')
     out.append("</group>\n")
     return "\n".join(out)

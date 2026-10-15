@@ -68,6 +68,28 @@ class HealthcheckRules(unittest.TestCase):
         self.assertFalse(rx.search(line.format("192.168.70.11", "winbox")))
         self.assertFalse(rx.search(line.format("192.168.70.111", "ssh")))
 
+    def test_framework_trojan_pattern_matches_generic_bin_files_only(self):
+        rx = re.compile(g.TROJAN_GENERIC_PATTERN.replace(r"\z", r"\Z"))
+        line = "Trojaned version of file '{}' detected. Signature used: '{}' ({})."
+        sig = "bash|^/bin/sh|file\\.h|proc\\.h|/dev/[^cl]|^/bin/.*sh"
+        for good in ["/bin/ls", "/usr/bin/cat", "/usr/bin/chown", "/bin/env", "/usr/bin/g++"]:
+            self.assertTrue(rx.match(line.format(good, sig, "Generic")), good)
+        for bad in ["/usr/sbin/sshd", "/sbin/init", "/usr/bin/../../tmp/x", "/usr/bin/sub/ls", "/tmp/ls", "/usr/bin/", "/bin/ls' x '"]:
+            self.assertFalse(rx.match(line.format(bad, sig, "Generic")), bad)
+        self.assertFalse(rx.match(line.format("/bin/ls", sig, "Bash")))          # a named rootkit signature still alerts
+        self.assertFalse(rx.match(line.format("/bin/ls", sig, "Generic") + " extra"))
+
+    def test_framework_rule_is_scoped_to_one_agent_and_only_that_rule(self):
+        root = ET.fromstring("<r>" + g.render().replace("<!-- Local rules -->", "") + "</r>")
+        scoped = [r for r in root.iter("rule") if r.find("hostname") is not None]
+        self.assertEqual([r.get("id") for r in scoped], ["100212"])
+        r = scoped[0]
+        self.assertEqual(r.find("if_sid").text, "510")
+        self.assertEqual(r.get("level"), "0")
+        self.assertEqual(r.find("hostname").text, r"^framework\.gibbsgreatly\.xyz$")
+        # every other rootcheck-parent rule must stay unscoped, so nothing else is silenced for one host only by accident
+        self.assertNotIn("framework", "".join(ET.tostring(x, encoding="unicode") for x in root.iter("rule") if x is not r and x.get("id") != "100210" and x.find("if_sid") is not None and x.find("if_sid").text == "510"))
+
     def test_no_xml_special_chars_in_patterns(self):
         for line in open(os.path.join(g.HERE, "local_rules.xml")):
             if 'type="pcre2"' in line:
