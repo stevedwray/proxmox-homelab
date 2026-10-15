@@ -71,6 +71,19 @@ production-hook-free commit and stop points), plus the operator's standing
 instruction to work autonomously and stop only for approvals, decisions and
 errors.
 
+**Current operator override (2026-10-15):** fix local measurement/scoring
+bugs autonomously with regression tests; preserve old evidence before
+regrading and record corrections in Result. Launch/plumbing permits up to
+two retries per run after verified cleanup. Use code when plan paths/fields
+contradict it. Stop for changes to measured models, builds, conditions,
+sizes, sampling, settings or prompts; production changes outside loop-hunt;
+the same failure after two fixes; failed cleanup; or reaching lh-08/lh-10.
+These instructions supersede the earlier blanket failed-gate stop and
+one-retry rules. Matrix (both batches) and the seven selected replay targets
+have separate named approvals; their prerequisite pilot review has passed.
+Production wrappers, named task scopes and per-run timer/model/lock cleanup
+still apply. No broader production approval is implied.
+
 ## The matrix
 
 | | |
@@ -160,7 +173,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | done 2026-10-15; 32 requests, 74/74 recall, three clean CK pairs; cleanup verified |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | running 2026-10-15; 20 remaining jobs queued, two batches |
-| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
+| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | queued 2026-10-15; seven targets, waiting for completed matrix and cleanup |
 | lh-08-judge | local + operator | — | todo |
 | lh-09-writeup | local | — | todo |
 | lh-10-cleanup | Framework (production) | `loop-hunt-cleanup` | todo |
@@ -1365,6 +1378,32 @@ synthetic full-context condition and explains missing historical tool
 execution. Extended end-to-end regression passes in the 74-test suite.
 Deploy it at the replay boundary, after the active matrix version finishes;
 no mid-run harness replacement or prompt/request changes.
+
+Replay continuation preflight/result (2026-10-15): under the separately
+approved loop-hunt-replay task, staged private scripts/config at
+`/storage/artifacts/loop-hunt/replay-campaign-20261015/` and started
+`loop-hunt-replay-after-matrix-20261015.service` (invocation
+`aca946d34f894ded9b0f74f9c4b4cb09`). Verified waiting-for-matrix state;
+no replay inference yet and active matrix harness unchanged.
+
+The continuation requires matrix status complete, exactly 20 completed jobs,
+all cleanup verified, each run complete/restored, free lock and active timer.
+It verifies immutable matrix-job and replay-input hashes. At that boundary
+only, it preserves the existing loop-hunt harness source and atomically
+installs the tested reporting/metadata corrections. No other production
+code/config changes. Replay seed metadata now records the already-used
+seeds 1–3; actual request seeds/budgets unchanged (74 regression tests pass).
+Five additional local boundary tests reject early/partial/unclean matrix
+completion and check the seven targets. Commands are transient orchestration
+in ignored artifacts/replay-campaign-20261015, not model-generated code.
+
+Replay jobs: V1 on Qwen current/previous/upstream plus GLM upstream; V9 on
+Qwen current/previous/upstream, each with seeds 1–3 and warm/cold comparison.
+Each uses the same supervised launcher, build checks, D10 timer pause/restore
+and original-model/lock cleanup. The waiting unit launches them automatically
+after the matrix, then records `lh-08-reached; awaiting operator` and takes
+no judge/writeup/production-cleanup action. continuation.json and campaign.json
+on Framework retain progress. Observe and fix only within operator scope.
 
 #### lh-08-judge
 

@@ -15,7 +15,7 @@ Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; l
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 69 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 74 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -325,8 +325,9 @@ No repeat production scan is needed to finish that work.
 
 ## Session harness (lh-02, 2026-10-15)
 
-Built locally; **no Framework session test has run**. All **69 loop-hunt and
-96 ctx-bugs tests pass**. Deterministic session regeneration ran twice with
+Initial local validation passed **69 loop-hunt and 96 ctx-bugs tests**.
+The current loop-hunt suite passes **74 tests** after the scoring/reporting
+regressions below. Deterministic session regeneration ran twice with
 a clean tracked-fixture diff. Full stand-in runs completed C1/C2/C3/C4/C5:
 22/48/28/46/62 saved requests respectively (C3 includes imported C1 records).
 C2 used four concurrent workers; C3 recorded overflow refusals; C1's three
@@ -344,124 +345,104 @@ CK reloads reset all slot caches, including C2's peers; resets and subsequent
 cache counts are recorded for the pilot review. Nominal near-limit CK labels
 always retain actual prompt counts. Production access remains approval-gated.
 
-## Catalogue and deployment boundary (lh-03/04, 2026-10-15)
+## Catalogue and deployment (lh-03/04, 2026-10-15)
 
-The repository has Qwen sess131k/sess262k and GLM sess131k variants. Their
-only override is ctx_size; all other catalogue values remain unchanged.
-The JSON gate and **42 llama-builds tests pass**. This is not deployed.
+Complete under loop-hunt-deploy approval through the pve-tiny production
+profile. Qwen sess131k/sess262k and GLM sess131k override only ctx_size;
+all other catalogue settings are unchanged. JSON gates and all 42
+llama-builds tests passed. Playbook: ok=15, changed=1, failed=0.
 
-The operator approved **loop-hunt-deploy** for Framework through the
-pve-tiny production profile (partial execution is recorded below): deploy the catalogue, select the already-built
-fork previous as candidate, validate session entries, copy tools and save
-build expectations. No promotion, new compilation, unrelated model settings,
-inference or timer changes belong to that deployment. A missing previous
-build or moved current link stops the step.
+The existing fork previous b02cb35f2 was selected as candidate without
+compilation. Normal guarded swap-config wrote 44 entries; all seven required
+session/candidate IDs and installed config bytes matched the generator.
+Candidate /props capture ran under the shared lock without inference, then
+restored qwen3-coder-next-upstream / b11514-de7fa0a3c and released the lock.
+Both harness folders were copied. The earlier lock/rewrite conflict and
+approved recovery are recorded in [lh-04](plan.md#lh-04-deploy).
 
-The plan's candidate-props ordering was corrected: its next
-pilot only loads current, so it cannot supply candidate props beforehand.
-The operator approved a temporary locked candidate load for /props only,
-followed by restoration of the previous model. The exact command is in
-[lh-04](plan.md#lh-04-deploy); the approved recovery completed it below.
-Pilot/matrix approvals remain separate; no Framework access occurred during
-the local harness/catalogue work.
+Private Framework expectations: `/storage/artifacts/loop-hunt/builds-20261015/`
+(0700), with props-candidate.json, current.json and candidate.json (0600).
+They retain full props and validate fork current 9e21f2e53, fork previous
+b02cb35f2 and upstream de7fa0a3c. Full SHAs are in the plan.
 
-## Deployment result (lh-04, 2026-10-15)
+V1's served model/build remain unknown after the inconclusive journal
+lookup; its saved Flash-Next label identifies only the requested model.
+V1 replay covers Qwen on all three builds and GLM upstream. V9 replay covers
+Qwen on all three builds; its historical endpoint was Ollama. Both are
+reconstructions; optional lh-01d remains available for exact capture.
 
-The operator approved deployment and locked candidate identity capture.
-The extra V1 journal check returned no matching lines from either the two
-named units or the all-units llama-server fallback in the requested window.
-V1's **actual served model and build remain unknown**. Its saved Flash-Next
-ID is a requested-model label; llama-server serves whichever model was loaded.
-The replay stays a reconstruction and cannot establish original-model blame.
-The operator selected V1 replay against Qwen on fork current, fork previous
-and upstream, plus GLM on upstream. V9 remains selected; lh-01d stays
-available for exact capture.
+## Pilot and scoring correction (lh-05, 2026-10-15)
 
-Inventory/secrets passed. The playbook completed ok=15/changed=1/failed=0,
-installing the catalogue. Current links matched fork 9e21f2e53 and upstream
-de7fa0a3c. The existing b02cb35f2 fork was selected as candidate without
-compilation. An added run lock conflicts with llama-builds' own rewrite
-refusal while any benchmark lock exists; the expected config rewrite/reload
-was not confirmed. Captured stderr was not forwarded, so its exact message
-was not retained. The agent stopped under plan rule 7 after local source
-inspection, without further production commands. The added lock was released.
+**Passed:** fresh run `/storage/artifacts/loop-hunt/20261015T010713Z-pilot`,
+32 requests (29 warm turns plus three cold comparisons), 74/74 recall
+answers correct. Four slots each n_ctx 131072 matched the layout gate.
+All measured prompt counts matched server counts; every warm request after
+the first reused cache. No loop, repetition, runaway, GPU or evidence error.
+Warm turns 11/12 failed only the requested question-line formatting.
 
-The operator then approved resuming the failed gate. Read-only Redis GET
-found the lock free. Normal guarded swap-config, without an external lock
-or --force, wrote 44 entries; all seven required session/candidate entries
-and exact installed config bytes passed validation. Both tool folders were
-copied. Candidate /props capture under the run lock confirmed
-`b10710-b02cb35f2`; the original `qwen3-coder-next-upstream` was restored
-with build_info `b11514-de7fa0a3c`, and the lock was confirmed free.
+| Nominal CK | Actual prompt tokens | Warm cached | Cold cached | Cold seconds | Comparison |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 64k | 65673 | 61539 | 0 | 114.9 | clean |
+| 96k | 98431 | 94325 | 0 | 163.2 | clean |
+| 131k | 118897 | 114801 | 0 | 193.8 | clean |
 
-**lh-04 is complete.** Framework's private
-`/storage/artifacts/loop-hunt/builds-20261015/` directory (0700) contains
-`props-candidate.json`, `current.json` and `candidate.json` (0600).
-Expectations retain full props and validate fork current 9e21f2e53, fork
-previous b02cb35f2 and upstream de7fa0a3c against their build records.
-Full SHAs and the after-action checks are in the plan. No inference,
-compilation, promotion or timer operation ran during deployment.
+Each warm/cold payload differed only in cache_prompt. The final valid turn
+represents the nominal 131k checkpoint with the unchanged 8192-token answer
+allowance; the next turn did not fit. The run took roughly 23 minutes.
+Original model/build restored, lock free and upgrade timer active were
+independently verified; watcher terminal poll confirmed completion.
 
-Next is [lh-05's pilot preflight](plan.md#lh-05-pilot): one C1 session,
-seed 1, Qwen fork current at 131k, with the slot-layout gate, D10 timer
-cleanup, model restoration and bounded watcher. The operator approved
-`loop-hunt-pilot`; its launch artifacts are at
-`/storage/artifacts/loop-hunt/20261014T233240Z-pilot`. Matrix (both nights)
-and V1/V9 replays are conditionally approved only after a successful
-measuring review. A harness fix or different slot layout stops execution
-for operator input.
+Earlier attempts exposed a watcher launch race and recall/format conflation.
+The corrected launch creates the directory first, awaits run metadata, then
+verifies the watcher's first successful poll. Recall now extracts exact
+values between Qn/reference markers independently of line layout, which
+receives its own instruction-following flag. Regression tests include the
+actual synthetic pilot answers. The interrupted 15-request run regraded to
+35/35 correct facts; pre-fix results, report, manifest and raw grades were
+preserved byte-for-byte under its regrade-backups. Full history and hashes
+are in [lh-05](plan.md#lh-05-pilot).
 
-Pilot startup stopped: the watcher raced the harness's creation of the run
-directory and exited before attaching. The initial active check missed this
-immediate exit. The timer was restored active and the pilot was interrupted
-gracefully for model restoration. No measuring review or slot-layout check
-completed. Matrix/replay remain held. The plan records a launch correction
-for operator review; no harness code was changed.
+## Matrix (lh-06, running)
 
-Cleanup verified: pilot status interrupted, zero requests completed,
-original `qwen3-coder-next-upstream` / `b11514-de7fa0a3c` confirmed by
-/props, run lock free, upgrade timer active. No matrix/replay was started.
+The successful pilot satisfied the operator's conditional approvals. The
+remaining 20 jobs are running sequentially in two consecutive batches,
+using unchanged prompts, models/builds, sampling and settings. The pilot
+supplies Qwen fork-current C1 seed 1. Every job has a detached watcher and
+original-model, free-lock and D10 timer cleanup gates before the next job.
+C4 runs last. Matrix findings/review remain pending.
 
-Approved corrected launch succeeded at
-`/storage/artifacts/loop-hunt/20261015T003810Z-pilot`: run directory created
-first, run metadata awaited, watcher first successful poll verified. Timer
-is paused under watcher supervision; pilot review is pending. The operator
-also permits one launch-mechanics retry after a zero-request setup failure
-and verified cleanup, as recorded in the plan. Measurement changes, a second
-failure, or failure after completed requests still require operator input.
+Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
+job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
+Current status:
 
-Pilot measuring review found a scoring problem: turns 11/12 contain correct
-facts on one line, violating the requested line layout. The newline-based
-recall parser misgrades those facts as wrong/missing rather than recording
-the formatting failure separately. Slot layout passed (four full-context
-131072 slots), token counts matched and cache reuse was measured. The pilot
-was interrupted; matrix/replay remain held pending operator decision. No
-harness or saved grades changed. The proposed scoring correction is in the
-plan; the zero-request launch-retry exception does not cover this change.
+```bash
+~/loop-hunt/run.sh --status --results-root /storage/artifacts/loop-hunt/campaign-20261015
+```
 
-Cleanup verified after 15 warm requests (turns 1–15; two flagged responses,
-no CK reached): original model/build restored, lock free, upgrade timer
-active. Watcher stopped after independent cleanup verification. Matrix and
-replay have not started; raw responses and grades are preserved.
+campaign.json records every job path, unit, aggregate flags and cleanup.
+The default results root still selects a top-level pilot. The plan records
+exact jobs and the approved autonomy rules: scoring fixes with regression
+and preserved regrades; up to two plumbing retries after verified cleanup;
+explicit stops for measurement changes, failed cleanup and lh-08/lh-10.
 
-Approved scoring correction passed all 74 loop-hunt tests and was copied to
-Framework. The 15 saved requests now grade 35/35 correct facts; turns 11/12
-separately fail question-line formatting. Pre-fix results/report/manifest/raw
-grades were preserved byte-for-byte under the run's regrade-backups. A fresh
-unchanged-settings pilot is running at
-`/storage/artifacts/loop-hunt/20261015T010713Z-pilot`; review is pending.
-Updated autonomy rules and conditional matrix/replay approvals are in the plan.
+## Replay preparation (lh-07, waiting for matrix)
 
-Fresh pilot passed: 32 requests, 74/74 recall, three clean warm/cold pairs
-at 65673/98431/118897 actual prompt tokens; all cold requests cache_n 0.
-Only the two separate line-format failures remain. No further measuring,
-GPU or evidence problem. Four full-context slots, exact token accounting,
-original-model restoration, free lock and active timer verified.
+The separately approved continuation is staged and verified waiting:
+`loop-hunt-replay-after-matrix-20261015.service`. Private state lives at
+`/storage/artifacts/loop-hunt/replay-campaign-20261015/continuation.json`.
+It requires all 20 matrix jobs complete and cleanup verified, then installs
+tested reporting/seed-metadata corrections and runs the seven selected
+targets with seeds 1–3 and warm/cold comparisons. It stops at lh-08.
+The active matrix harness stays fixed until this boundary.
 
-The approved matrix is now running in two consecutive batches (20 remaining
-jobs; pilot counts as current C1 seed 1), supervised by
-`loop-hunt-matrix-campaign-20261015.service`. Framework's private
-`/storage/artifacts/loop-hunt/campaign-20261015/campaign.json` records progress
-and each job's run directory. Every job has its own watcher and timer/model/
-lock cleanup gates. Matrix/replay results remain pending; lh-08/lh-10 are
-explicit operator stop points.
+Private replay inputs are verified at
+`/storage/artifacts/loop-hunt/replay-inputs-20261015/` (0700, files 0600).
+They retain the exact saved first-user prompts, source/date/engine provenance
+and explicit missing-context metadata. No prompts or additional transcript
+excerpts enter git. The exporter needed a tested tool-channel fix for V9.
+
+V9's source has repeated tool invocations. Historical tool schemas and agent
+execution are unavailable, so a clean completion cannot establish absence
+of the original tool loop. Replay reports state this coverage limit and
+avoid claiming a synthetic full-context run. Replay seed metadata records
+the three seeds already used by the runner; requests remain unchanged.
