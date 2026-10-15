@@ -1569,6 +1569,18 @@ Original model restored, lock free, timer active and watcher complete were
 verified before advancing. Fifteen matrix jobs complete; GLM C1 seed 2
 started automatically. No intervention, settings or prompt changes.
 
+GLM C1 seed 2 Result (2026-10-16 NZDT, reviewed 22:05 UTC): 37 requests,
+85/85 factual answers; question-line format flags throughout; zero evidence
+errors and exact rendered/server token counts. Actual CKs 67884 / 100236 /
+121846, cold cache zero, payloads identical except cache use. The final warm
+turn (34) also captured a kernel GPU warning: at 20:18:18 UTC amdgpu reported
+"Fence fallback timer expired on ring comp_1.2.0". That request completed;
+no transport error, GPU reset or production intervention was performed.
+The first status snapshot covered only the current watcher and missed this
+completed-job flag; corrected promptly after reviewing saved evidence.
+Cleanup and watcher completion verified before GLM C2. Sixteen jobs complete;
+GLM C2 had 48 saved requests at 22:05 UTC. Analysis/replays still waiting.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

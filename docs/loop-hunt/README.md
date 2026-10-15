@@ -15,7 +15,7 @@ Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; l
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 75 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 78 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -425,7 +425,7 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
 | Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
 | Qwen upstream | C5 retry 2 | — | none | — | complete; both synthetic tasks done |
-| GLM upstream | C1 seed 1 | 85/85 | question-line formatting in all 37 responses | three matching format-failure pairs | complete |
+| GLM upstream | C1 seeds 1 and 2 | 170/170 | question-line formatting in all 74 responses; one kernel GPU warning in seed 2 | six matching format-failure pairs; GPU warning retained separately | complete |
 
 Recall correction pending canonical regrade: the previous build sometimes
 prefixes every question/reference line with [TRIAGE]. The extractor attached
@@ -447,12 +447,12 @@ C2 completed all four planned extra rounds after the shared pool filled.
 Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
 500; matching cold requests succeeded. Their crossing prompt sums were
 131275 (current) and 131287 (previous). These are capacity refusals,
-reported separately from factual accuracy and repetition. All fifteen
+reported separately from factual accuracy and repetition. All sixteen
 completed matrix jobs have zero evidence errors, exact prompt/server token
 agreement on accepted requests, and verified cleanup. C3 imported C1 rows
 are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
 in reasoning, with no answer repetition; blind judging remains pending.
-They do not yet establish a build-specific loop. Fifteen of 20 jobs are complete as of 08:18 NZDT on 2026-10-16.
+They do not yet establish a build-specific loop. Sixteen of 20 jobs are complete as of 11:05 NZDT on 2026-10-16. GLM C2 is running.
 The original upstream C5 attempt stopped after one clean saved request: its intermediate token-count
 probe received HTTP 400, Cannot continue an assistant message that contains
 tool calls. Model restoration, free lock and active timer are independently
@@ -491,6 +491,17 @@ all cold cache counts zero, exact warm/cold requests except cache use, and
 exact rendered/server counts. These are matching format failures, not a
 semantic-loop diagnosis. No timeout or other setting changed. Cleanup and
 watcher completion verified; GLM C1 seed 2 started automatically.
+
+GLM C1 seed 2 also completed 37 requests with 85/85 factual answers,
+question-line formatting failures throughout and verified cleanup. Actual
+cold checkpoints were 67884 / 100236 / 121846 tokens, with zero cold cache,
+exact warm/cold payloads except cache use and matching rendered/server
+counts. One warm request (turn 34) captured a kernel warning at
+2026-10-15 20:18:18 UTC: `Fence fallback timer expired on ring comp_1.2.0`.
+The request completed without a transport or evidence-capture error. This
+is retained as a GPU finding; no driver or service intervention was made.
+GLM C2 then started and had 48 saved requests at 22:05 UTC. A current-run
+watcher snapshot does not cover GPU flags from earlier completed jobs.
 
 Post-matrix analysis is staged as
 `loop-hunt-matrix-analysis-20261015.service`, verified waiting. It requires
