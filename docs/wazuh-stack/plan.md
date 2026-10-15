@@ -1,3 +1,5 @@
+> **Historical plan (August 2026 pilot).** The stack is live and has since been upgraded to 4.14.8 and tuned; for the current state, where each piece of configuration lives, and the fleet, see [README.md](README.md) and [../wazuh-tuning/](../wazuh-tuning/README.md). Version numbers and the "server only, no agents" scope below are as planned in August.
+
 # Wazuh Stack — Plan
 
 ## Goal

@@ -1,21 +1,75 @@
 # wazuh-tuning
 
-Test and tune the Wazuh SIEM stack with the same method used for Greenbone
-(docs/gvm-scan-redesign/): baseline first, one supervised change at a time, numeric
-decision gates, tooling and config in the repo, docs and memory kept current.
+Test and tune the Wazuh SIEM stack and its agents with the method used for Greenbone
+([docs/gvm-scan-redesign/](../gvm-scan-redesign/)): baseline first, one supervised change at a
+time, numeric decision gates, tooling and config in the repo, docs and memory kept current.
+Scope (operator, 2026-10-15): Wazuh and agent configuration only. Host patching, package removal
+and alert delivery (Discord) are out of scope.
 
-Status: **Phase 0 done** (2026-10-15): tooling built, baseline captured and verified, must-fire
-suite green (Tier 1 11/11, Tier 2 6/6 on apt-cacher-stack). Docker live cases
-also pass (Tier 2 8/8 on portainer-stack). Nothing has been changed on the live Wazuh config yet.
-Branch `work/wazuh-tuning`; execution happens in a separate session, one
-phase at a time, each with its own approval. See [plan.md](plan.md) for phases and
-gates and [runbook.md](runbook.md) for how to run the read-only survey tooling.
+## Status (2026-10-15)
 
-## Why now
+**Executed, merged to `stable` (PR #478) and live on `pve`.** Phases 0, 1a-1d, 2a-2d, 3 and 6 are
+done and verified; the repo reproduces the live state. What is left is waiting on the clock (the 24 h
+gates), Phase 4 (needs a week of data) and the optional Phase 5. See [Open items](#open-items-and-next-steps).
 
-`docs/wazuh-stack/README.md` still describes the August pilot (6 agents). The fleet is
-now 28 agents and the stack has never been measured or tuned. A read-only survey on
-2026-10-15 found problems that are cheap to fix and one that matters for capacity.
+How it is organised: [plan.md](plan.md) (phases, gates, status per phase), [runbook.md](runbook.md)
+(how to measure, test and deploy), and this file (baseline, results, one record per phase, lessons).
+The fleet is 27 enrolled agents in 11 zone groups plus the manager's own local agent (28 entries in
+the API), all on 4.14.8.
+
+## Results at a glance
+
+| Area | Baseline (2026-10-15) | Now | Target / gate |
+|---|---|---|---|
+| Alerts per day | ~500,000 | **1,246 in the last hour (~30k/day)** at the end of the day; the 24 h figure still contains hours from before 1d | under 50k: **24 h re-measure pending** (after 2026-10-16 ~23:00 NZDT) |
+| Share of the noisiest rule | 90% (87907) | 24% in the first 10 min after 1d (mostly the GVM sampler, since stopped); the 24 h stat still carries old hours | no rule over 10%: **pending** |
+| FIM rule 550 (24 h) | 29,715 | 0 in the first 3 min window after 2a | down 80%: met in the first window, 24 h to confirm |
+| Retention | none | 90-day ISM policy on 47/47 indices + host cron for the manager's raw logs | defined and enforced: **done** |
+| Indexer growth | ~0.4GB/day | pending (needs days of data) | under 0.05GB/day: **pending** |
+| Dashboard container | unhealthy 8 days | healthy | **done** |
+| Manager vs agents | 4.14.7 vs 4.14.8 | all 4.14.8; role pinned to the same version | manager >= every agent: **done** |
+| Secrets in FIM alerts | 672 alerts in 14 d carried `/etc/shadow`, PVE keys/tokens, TLS keys, `.env` | `<nodiff>` fleet-wide (past alerts age out at 90 d) | **done** |
+| Rootkit file/trojan checks | silently off on every agent | on, verified with a signature file | **done** |
+| Grafana | no Wazuh data at all | host + container metrics and a Wazuh dashboard (`/d/wazuh`) | **done** |
+| Detection regression | untested | Tier 1 11/11, suppression 48/48, scanner 6/6, hap 4/4, live suites on apt-cacher-stack and (Docker) portainer-stack | all pass before and after each change: **done** |
+| Safety | | 28/28 agents active and `events_dropped` 0 after every change | stop conditions never tripped |
+
+## Open items and next steps
+
+1. **Re-measure the 24 h gates after 2026-10-16 ~23:00 NZDT** (commands in the runbook): alerts per day, noisiest
+   rule share, FIM 550 volume, indexer growth. Also confirm the new daily alert index carries the retention
+   policy and that the new `.opendistro-*` history index has 0 replicas (the cluster should stay green).
+2. **Phase 4, capacity and sizing:** after ~7 days of steady state, from the Wazuh dashboard: heap, RSS, shards, disk,
+   events per second. Decide LXC RAM / heap and the one-shard-per-index template for new alert indices (175 shards
+   today, about 330 at 90 days). The host has ~1.3GB free of 8GB and dipped to 329MB during the 4.14.8 recreate.
+3. **Phase 5, coverage (optional):** known unenrolled: `framework`, `pve-tiny` (hypervisor) and `pentagi-stack`;
+   the authoritative list is the first output of the phase. Per-agent-type test matrix and an agent upgrade procedure.
+4. **Small follow-ups:** Grafana alert rules (the repo has no provisioned alert mechanism; delivery to Discord is a
+   separate plan); put the manager's `ossec.log`/`api.log` into Graylog (host, indexer and dashboard container logs
+   already arrive; the manager writes files, not stdout; an rsyslog `imfile` drop-in was proposed, not yet
+   decided); SCA baseline is 43% with ~105 failing checks per host (a baseline, not noise).
+5. **Leftover backups on hosts** from the supervised changes: `/opt/wazuh-stack/docker-compose.yml.bak-1a` and
+   `.bak-1b`, the monitoring stack's `victoria-metrics/scrape.yml.bak-p6`, and the manager's
+   `/var/ossec/etc/agent-conf-backup/`. Safe to delete once nobody needs a rollback.
+6. **Known and accepted:** the nextcloud Redis health check carries its password on the command line (it showed up in
+   Docker events and indexed alerts; a 4-character prefix of it is in the git history of #478); the operator decided
+   not to purge or rotate. 97% of the 3,957 vulnerability findings are Debian-tracker items with no urgency assigned
+   yet (patching is out of scope; `vuln_triage.py` is the repeatable report).
+
+## Decisions
+
+| Decision | Outcome (2026-10-15) |
+|---|---|
+| Retention for alert indices | **90 days** (and the manager's raw logs pruned to the same age); one-shard template as a separate later step |
+| Docker health-check events | **dropped silently** (level-0 rules for exact, anchored commands; real `exec`s and container lifecycle still alert) |
+| Manager version | **upgrade to 4.14.8** (the fleet's version), pin the agent role to the same; 4.14.9 (released 14 Oct) deliberately not taken |
+| Backup for the upgrade | the nightly PBS snapshot (operator confirmed); no extra backup |
+| Scanner 192.168.70.11 | lowered to level 3 for **5710, 5712, 5760** (and the router's `login failure` lines), that address only; 5740 has no source address, so it is not scoped |
+| Rootcheck 87915/87916 volume mount events | left alone: 238/day each, container-lifecycle audit records |
+| GVM sampler | stopped (it tripped FIM and produced leftover 87907 noise) |
+| Agent coverage (Phase 5) | optional, not started |
+| Patching / package removal / pip pins | out of scope for this plan |
+| Purging already-stored FIM diffs | not done (operator: fine while the secrets are not in git) |
 
 ## Baseline (read-only survey, 2026-10-15)
 
@@ -64,7 +118,12 @@ see.
 5. **Our own monitoring tools trip FIM.** The Greenbone sampler (`mem.log`) is still
    running after tuning ended and should be stopped (GVM housekeeping, not Wazuh).
 
-### Phase 0 verification (2026-10-15)
+## Phase records
+
+One section per phase, in plan order, each with what changed, how it was verified, and the lessons.
+These are the original work records and keep their detail.
+
+### Phase 0 done: tooling, baseline and regression suites (2026-10-15)
 
 - The new helper reproduces the survey: 500,321 alerts/24 h, 90.4% rule 87907, 47 alert
   indices (10.2GB), 175 shards, no ISM policy, 3,957 findings, 28 agents active.
@@ -88,7 +147,8 @@ see.
   Docker cases need a Docker-running agent; to be chosen before Tier 2 (operator wants the
   suite extensible to a Docker host).
 
-## Phase 1a done (2026-10-15)
+
+### Phase 1a done (2026-10-15)
 
 Dashboard healthcheck now accepts 401 (`deploy-wazuh-stack.yml`). Applied live without a
 stack redeploy: the same two lines were written into `/opt/wazuh-stack/docker-compose.yml`
@@ -98,7 +158,35 @@ not restarted; must-fire green; `events_dropped` 0, queues 0. The playbook-rende
 file now matches the live one, so a later full deploy is a no-op for this line. (A full deploy
 still recreates all three containers whenever the compose file changes, hence the targeted path.)
 
-## Phase 1d (applied live 2026-10-15; 24 h gate pending)
+### Phase 1b done (2026-10-15)
+
+Manager, indexer and dashboard upgraded 4.14.7 -> 4.14.8 (matches the 27 agents; the manager's own
+agent 000 is now 4.14.8 too, so all 28 are 4.14.8). Backup was the nightly PBS snapshot (operator
+confirmed). Method: image tags edited in the live `docker-compose.yml` (backup
+`docker-compose.yml.bak-1b`), `docker compose pull`, one `docker compose up -d` (all three recreated,
+volumes kept, about 1 minute of downtime). Verified: 28/28 agents active, `events_dropped` 0,
+vulnerability findings unchanged (3,957), ISM 47/47 managed, suppression 48/48, Tier 1 11/11, dashboard
+healthy. The agent role is pinned to the same version (`wazuh_agent_version`), tested equal.
+Rollback would have been: tag back to 4.14.7 in the compose file and `up -d`, or PBS restore.
+Caveat noticed: docker volume went from 57% to 73% (both image generations are on disk);
+`docker image prune` for the old 4.14.7 images is a follow-up (reclaims about 4.4GB).
+
+**Open from 1c:** the cluster is `yellow` since the ISM plugin created three system indices
+(`.opendistro-ism-config`, `.opendistro-ism-managed-index-history-*`, `.opendistro-job-scheduler-lock`)
+with a replica a single node cannot place. Fix: set replicas to 0 on them and add a template for
+`.opendistro-*`; the alert indices themselves are fine.
+
+### Phase 1c done (2026-10-15)
+
+ISM policy `wazuh-alerts-retention` (hot, then delete at 90 days) exists, is attached to all 47
+existing alert indices (its `ism_template` attaches it to new daily indices automatically), and a host
+cron (`/etc/cron.d/wazuh-log-retention`, 03:30 daily) prunes the manager's raw alert/archive logs to the
+same 90 days. Delivered by `deploy-wazuh-stack.yml --tags wazuh_retention`; a second run changed nothing.
+Nothing was deleted (oldest index is from 2026-08-29, so the first deletions fall on 2026-11-27).
+**Gate follow-up:** tomorrow's new daily index must show the policy attached (`retention` mode,
+`ism_managed_alert_indices` = indices). The one-shard index template is a separate follow-up step.
+
+### Phase 1d done (applied live 2026-10-15; the 24 h gate is re-measured later)
 
 - 75 distinct commands sit behind rule 87907 (452,146 events/24 h). 40 are container
   health checks (listed in `files/wazuh-stack/docker_healthchecks.json`); each gets a level-0
@@ -117,7 +205,7 @@ still recreates all three containers whenever the compose file changes, hence th
   follow-up (not in this plan's scope): switch that healthcheck to `REDISCLI_AUTH` and rotate the
   password; the old alerts age out under the retention policy (1c).
 
-### 1d result so far
+#### 1d result so far
 
 - Applied with `deploy-wazuh-stack.yml --tags wazuh_local_rules` (no container recreation); the
   manager restarted twice (second time after a fix: Wazuh does not unescape `& < >` inside a
@@ -132,57 +220,7 @@ still recreates all three containers whenever the compose file changes, hence th
 - Newly visible in the remaining noise: rule 550 FIM (about 26k/day, Phase 2a), and rules 87915/87916
   (Docker volume mounted/unmounted on `/etc/filebeat`, 66 each per 10 min), which need a look in Phase 2.
 
-## Decisions made (2026-10-15)
-
-- Health-check events: drop silently (1d, done).
-- Retention: **90 days** for alert indices and the manager's raw logs (1c). Estimated cost
-  4-6GB indexer and 3.6-5.4GB manager logs; the one-shard-per-index template for new indices is a
-  separate follow-up step (175 shards today, about 330 at 90 days).
-- Manager upgrade: **4.14.8** (the fleet's version, 23 Sep 2026; includes an analysisd deadlock fix),
-  not 4.14.9 (released 14 Oct). Agent role now pins `wazuh_agent_version` to the same value; a unit
-  test keeps the two equal. wazuh-docker v4.14.7 -> v4.14.8 changed only the three image tags in the
-  single-node compose, so the transcribed configs stay valid. Backup: PBS nightly (11:00, snapshot,
-  `pbs-iscsi`), operator confirms a fresh backup of CT 40015 before the upgrade.
-
-## Phase 1c done (2026-10-15)
-
-ISM policy `wazuh-alerts-retention` (hot, then delete at 90 days) exists, is attached to all 47
-existing alert indices (its `ism_template` attaches it to new daily indices automatically), and a host
-cron (`/etc/cron.d/wazuh-log-retention`, 03:30 daily) prunes the manager's raw alert/archive logs to the
-same 90 days. Delivered by `deploy-wazuh-stack.yml --tags wazuh_retention`; a second run changed nothing.
-Nothing was deleted (oldest index is from 2026-08-29, so the first deletions fall on 2026-11-27).
-**Gate follow-up:** tomorrow's new daily index must show the policy attached (`retention` mode,
-`ism_managed_alert_indices` = indices). The one-shard index template is a separate follow-up step.
-
-## Phase 1b done (2026-10-15)
-
-Manager, indexer and dashboard upgraded 4.14.7 -> 4.14.8 (matches the 27 agents; the manager's own
-agent 000 is now 4.14.8 too, so all 28 are 4.14.8). Backup was the nightly PBS snapshot (operator
-confirmed). Method: image tags edited in the live `docker-compose.yml` (backup
-`docker-compose.yml.bak-1b`), `docker compose pull`, one `docker compose up -d` (all three recreated,
-volumes kept, about 1 minute of downtime). Verified: 28/28 agents active, `events_dropped` 0,
-vulnerability findings unchanged (3,957), ISM 47/47 managed, suppression 48/48, Tier 1 11/11, dashboard
-healthy. The agent role is pinned to the same version (`wazuh_agent_version`), tested equal.
-Rollback would have been: tag back to 4.14.7 in the compose file and `up -d`, or PBS restore.
-Caveat noticed: docker volume went from 57% to 73% (both image generations are on disk);
-`docker image prune` for the old 4.14.7 images is a follow-up (reclaims about 4.4GB).
-
-**Open from 1c:** the cluster is `yellow` since the ISM plugin created three system indices
-(`.opendistro-ism-config`, `.opendistro-ism-managed-index-history-*`, `.opendistro-job-scheduler-lock`)
-with a replica a single node cannot place. Fix: set replicas to 0 on them and add a template for
-`.opendistro-*`; the alert indices themselves are fine.
-
-## Phase 2d done (2026-10-15)
-
-Local rules 100200 (5710), 100201 (5712 brute force, was level 10) and 100202 (5760) lower sshd events
-from the Greenbone scanner 192.168.70.11 to level 3, for that address only (parent rules keep stock levels
-for everything else). Test `must_fire.py scanner` (6 checks incl. a 12-event burst): before the change the
-three scanner checks failed; after, 6/6. 5740 (connection reset, about 800/day) has no source address, so it
-is not scoped and stays as is. Also done 2026-10-15: GVM sampler stopped (operator), 87915/87916 volume
-mount/unmount (238/day each, container lifecycle audit records) deliberately left alerting, ISM system-index
-replicas set to 0 (cluster green), old 4.14.7 images pruned.
-
-## Phase 2a done (2026-10-15)
+### Phase 2a done (2026-10-15)
 
 FIM ignore lists are repo-managed shared agent config (`files/wazuh-stack/agent_conf/{default,build_seg,pentest_seg}.xml`,
 each block scoped to one agent by name, delivered by `deploy-wazuh-stack.yml --tags wazuh_agent_conf`): pve host
@@ -197,7 +235,7 @@ atomically; backups live in `/var/ossec/etc/agent-conf-backup/`, never in a grou
 pushed to the agents). Remedy for a stuck group: touch its `agent.conf` (remoted logs "is valid after last
 modification").
 
-## Phase 2b / 2c done (2026-10-15)
+### Phase 2b / 2c done (2026-10-15)
 
 - **2b rootcheck 510 (3,320/day):** 3,314 were `File '/dev/.lxc…' present on /dev` (LXC's own `/dev/.lxc-boot-id` and
   `/dev/.lxc/proc/*`, 48 distinct names, in every container); rule 100210 (level 0) matches that exact anchored shape only.
@@ -214,7 +252,17 @@ modification").
   on one agent); in the live playbook the scan must be triggered before the wait; the manager was restarted five
   times on 2026-10-15 for rule changes, so batch local_rules.xml changes next time.
 
-## Phase 3 analysis (2026-10-15, read-only; actions pending operator decisions)
+### Phase 2d done (2026-10-15)
+
+Local rules 100200 (5710), 100201 (5712 brute force, was level 10) and 100202 (5760) lower sshd events
+from the Greenbone scanner 192.168.70.11 to level 3, for that address only (parent rules keep stock levels
+for everything else). Test `must_fire.py scanner` (6 checks incl. a 12-event burst): before the change the
+three scanner checks failed; after, 6/6. 5740 (connection reset, about 800/day) has no source address, so it
+is not scoped and stays as is. Also done 2026-10-15: GVM sampler stopped (operator), 87915/87916 volume
+mount/unmount (238/day each, container lifecycle audit records) deliberately left alerting, ISM system-index
+replicas set to 0 (cluster green), old 4.14.7 images pruned.
+
+### Phase 3 analysis: the 3,957 vulnerability findings (read-only, informational)
 
 All 3,957 findings come from the Debian Security Tracker via Wazuh's CTI feed ("Package default status"), so they are
 Debian's own open items for trixie, not Wazuh false positives. `vuln_triage.py` (offline, tested) classifies every
@@ -242,7 +290,7 @@ kept as a note for whoever owns patching, and `vuln_triage.py` is the repeatable
 work is the detector's own configuration, what the agents feed it (syscollector), SCA, and how findings are
 surfaced (Phase 6); the detector has no per-CVE exclusion, so nothing is hidden in the index.
 
-## Phase 3 done: Wazuh-side configuration (2026-10-15)
+### Phase 3 done: Wazuh-side configuration (2026-10-15)
 
 Reviewed and left alone (evidence: nothing to gain): vulnerability-detection settings (defaults, sensible), syscollector
 `processes` and `ports all="yes"` (the whole inventory is 1-3MB per index), SCA (the right `cis_debian13` policy runs on 27
@@ -267,7 +315,7 @@ Rollout: canary on `game_seg` (gaming-stack-lab: config received, agent reloaded
 agents active, `events_dropped` 0. The vulnerability findings (3,957, 97% open and unassigned in the Debian tracker) are a
 feed property; `vuln_triage.py` is the repeatable report. Patching is out of scope for this plan.
 
-## Phase 6 (Grafana) done (2026-10-15)
+### Phase 6 (Grafana) done (2026-10-15)
 
 Before: wazuh-stack was missing from the monitoring stack's `node_exporter` and `cadvisor` target lists (node_exporter ran on
 :9100 but nothing scraped it, no cAdvisor, no textfile collector), so the standard Node Detail, Docker Containers and Lab Overview
@@ -293,32 +341,6 @@ Now:
   the 1d change and fall as those age out.
 - **Not built:** Grafana alert rules (the repo has no provisioned alert mechanism, only a manual coredns example; delivery is a
   separate plan).
-
-## What good looks like (targets)
-
-| Metric | Now | Target |
-|---|---|---|
-| Alerts per day | 500k | under 50k |
-| Share of alerts from one rule | 90% | no rule over 10% |
-| Indexer growth | 0.4GB/day | under 0.05GB/day |
-| Retention | none | 90 days, enforced (**done 1c, 2026-10-15**) |
-| Dashboard container | unhealthy | healthy (**done 1a, 2026-10-15**) |
-| Manager vs agent versions | skewed | manager >= every agent (**done 1b, 2026-10-15**: all 4.14.8) |
-| Detection regression | not tested | every must-fire test passes before and after each change |
-
-## Decisions needed from the operator
-
-1. **Retention period** for alert indices (suggest 30 days hot, then delete; or 14 if
-   disk matters more than history).
-2. **Docker health-check events**: drop silently (level 0 rule, recommended) or keep a
-   count-only metric. Container start, stop and exec of anything that is not a health
-   check stay alerting either way.
-3. **Manager upgrade** to 4.14.8 or later, or pin agents to 4.14.7. Recommended:
-   upgrade the manager, then pin both.
-4. **Scanner exclusions**: treat 192.168.70.11 as a known scanner for sshd alerts
-   (recommended, narrowly: only rules 5710, 5712, 5740 and only from that address).
-5. **Scope** of agent coverage work: which hosts are still unenrolled (framework,
-   pve-tiny, others) is Phase 5 and optional.
 
 ## Out of scope (separate plans)
 
