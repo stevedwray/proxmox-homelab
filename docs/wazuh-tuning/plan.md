@@ -196,6 +196,11 @@ Decisions (operator, 2026-10-16): `pve-test` first as the canary, then `pve-tiny
    `agent_conf/default.xml` now ignores `/etc/pve/nodes/pve-test/lrm_status` for the agent `pve-test.gibbsgreatly.xyz`
    (add `pve-tiny` the same way), delivered before the agent enrols.
 
+Found on enrol (2026-10-16): `pve-test` has journald only (no rsyslog), so the role's fixed `/var/log/syslog` and
+`/var/log/auth.log` localfiles logged error 1103 on every start and SSH/sudo events were invisible. The role now has
+`wazuh_agent_log_source` (`auto` | `files` | `journald`, default `auto` = journald when `/var/log/auth.log` is missing);
+the files layout renders byte-identical to before, pinned by `test_agent_conf.py`, so the LXC fleet is unaffected.
+
 Steps (each its own approval or go-ahead, in order):
 
 1. Done in the repo (branch `work/wazuh-phase5-pve-test`): `proxmox-wazuh-agent.yml` takes `wazuh_agent_target`
