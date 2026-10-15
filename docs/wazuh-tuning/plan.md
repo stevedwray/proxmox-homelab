@@ -182,33 +182,37 @@ template builder; the LXC guests are separate agents and are not covered by enro
 `ansible/inventory/`), and it is the planned target for moving Wazuh/Graylog, so keep the hypervisor agent light. Enrol
 `pve-test` first as the canary, then `pve-tiny` with the same playbook and `proxmox_host` group.
 
-Decisions needed from the operator before running anything:
+Decisions (operator, 2026-10-16): `pve-test` first as the canary, then `pve-tiny`.
 
-1. **Secrets wrapper.** The role needs `WAZUH_AGENT_AUTHD_PASSWORD`, `WAZUH_API_PASSWORD` and `LAB_IP_WAZUH`, which come
-   from the production OpenBao profile. Options: run through `./with-secrets-prod` with a named `TASK_APPROVAL` (the
-   target host is still pve-test), or add a `pve-test` profile to the secrets manifest.
-2. **Group.** Recommended: a new group `proxmox_host` (shared by `pve-test` and later `pve-tiny`) with its own
-   `agent_conf/proxmox_host.xml`, kept out of the LXC zone groups so the hypervisor FIM does not skew the fleet
-   numbers. The pattern in `pve`'s playbook currently sets no group (default).
-3. **FIM scope.** `/etc/pve` is a FUSE cluster filesystem; realtime FIM on it can be noisy (VM config churn, `corosync`
-   state) and `/etc/pve/priv` holds credentials. Start with the `pve` playbook's list (`/etc/pve`, `/etc/network`,
-   `/etc/ssh/sshd_config`, `/root/.ssh`, `/etc/sudoers.d`) but measure FIM volume for an hour before accepting it.
+1. **Secrets wrapper: settled.** `secrets/manifest.json` already has a `pve-test` profile (role `deploy-dev`, includes
+   `services/wazuh`). `PVE_ENV=pve-test ./with-secrets` loads `WAZUH_AGENT_AUTHD_PASSWORD`, `WAZUH_API_PASSWORD` and
+   `LAB_IP_WAZUH` and targets node `pve-test` (verified: all three set). Not production, so no `TASK_APPROVAL`; the
+   operator's "proceed" in chat still gates the run. `pve-tiny` uses `./with-secrets-prod-tiny` with a named approval.
+2. **Group: keep `default` for now.** `pve` already lives in `default` with an agent-name-scoped ignore, so the
+   hypervisors follow that pattern and no new group is created (a new group would also need a manager redeploy of the
+   group list in `deploy-wazuh-stack.yml`). Revisit only if measurement shows hypervisor FIM skewing the fleet numbers.
+3. **FIM scope: the `pve` playbook's list, measured.** `/etc/pve`, `/etc/network`, `/etc/ssh/sshd_config`, `/root/.ssh`,
+   `/etc/sudoers.d`. The pmxcfs `lrm_status` flood that was 57% of FIM alerts on `pve` exists on every node, so
+   `agent_conf/default.xml` now ignores `/etc/pve/nodes/pve-test/lrm_status` for the agent `pve-test.gibbsgreatly.xyz`
+   (add `pve-tiny` the same way), delivered before the agent enrols.
 
-Steps (each its own approval, in order):
+Steps (each its own approval or go-ahead, in order):
 
-1. Playbook: generalise `proxmox-wazuh-agent.yml` to take `hosts` and the group from vars (keep the `pve` default), or
-   add `proxmox-wazuh-agent-pve-test.yml`; syntax-check it; add `agent_conf/proxmox_host.xml` and extend
-   `test_agent_conf.py`. Commit on a `work/*` branch.
-2. Enrol (mutating, one host): `export TASK_APPROVAL=wazuh-agent-pve-test`; run the playbook with `--limit
-   pve-test.gibbsgreatly.xyz`. Out of scope: any change to the node's LXCs/VM, Proxmox config, MikroTik, or other hosts.
-3. Verify: agent `active`, version 4.14.8, in the intended group, `agent.conf` merged (`verify-agent-conf`), syscollector
-   and SCA (`cis_debian13`) results present, vulnerability detection populated.
-4. Measure for one hour then 24 h with `wazuh_tuning.py agents/alerts/noise`: alerts per hour for this agent, top
-   rules, FIM 550/554 share. Gates: agent stays active, no rule above 10% of fleet alerts, no `events_dropped`
-   increase, manager free RAM stays above 800MB.
-5. Add a live case (`live_group: proxmox_host`, `live_docker: false`) so the must-fire suite covers the new host type;
-   record the result in README "Results at a glance" and the open-items list; update `docs/wazuh-stack/README.md`
-   (enrolled count 27 -> 28).
+1. Done in the repo (branch `work/wazuh-phase5-pve-test`): `proxmox-wazuh-agent.yml` takes `wazuh_agent_target`
+   (default `pve.gibbsgreatly.xyz`); `default.xml` ignore for `pve-test`; `test_agent_conf.py` updated; tests and
+   `--syntax-check` pass.
+2. Deliver the shared config (production manager, mutating): `deploy-wazuh-stack.yml --tags wazuh_agent_conf -e
+   '{"wazuh_agent_conf_groups":["default"]}'` through `./with-secrets-prod` with `TASK_APPROVAL=wazuh-agent-conf-pve-test`
+   (the manager is on `pve`). Out of scope: any other group, the manager containers, rules.
+3. Enrol (mutating, one non-production host): `PVE_ENV=pve-test ./with-secrets ansible-playbook -i
+   ansible/inventory/production.yml ansible/00-initial-setup/proxmox-wazuh-agent.yml -e
+   wazuh_agent_target=pve-test.gibbsgreatly.xyz`. Out of scope: the node's LXCs/VM, Proxmox config, MikroTik, other hosts.
+4. Verify: agent `active`, version 4.14.8, `agent.conf` merged (`verify-agent-conf`), syscollector and SCA
+   (`cis_debian13`) results present, vulnerability detection populated, no `lrm_status` FIM alerts.
+5. Measure one hour then 24 h with `wazuh_tuning.py agents/alerts/noise`. Gates: agent stays active, no rule above 10%
+   of fleet alerts, no `events_dropped` increase, manager free RAM stays above 800MB. Then repeat for `pve-tiny`
+   (inventory entry, `./with-secrets-prod-tiny`, its own preflight and approval).
+6. Record results in README "Results at a glance" and open items; `docs/wazuh-stack/README.md` enrolled count 27 -> 28.
 
 Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `pve-test`, and delete the agent on the
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
