@@ -1106,10 +1106,21 @@
             argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-analysisd, -t]
           changed_when: false
 
+        # wazuh_rules_apply: restart (default) restarts the whole container, which also restarts the API and the
+        # indexer connection; on this 8GB LXC a restart once lost wazuh-apid to a SIGKILL during start and left the
+        # manager down for ~10 minutes (2026-10-16). -e wazuh_rules_apply=reload runs wazuh-control reload instead,
+        # which reloads the ruleset in place with no container restart.
         - name: Restart the manager so analysisd loads the new rules
           ansible.builtin.command:
             argv: [docker, restart, wazuh-stack-manager]
           changed_when: true
+          when: (wazuh_rules_apply | default('restart')) == 'restart'
+
+        - name: Reload the ruleset in place (wazuh-control reload)
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-control, reload]
+          changed_when: true
+          when: (wazuh_rules_apply | default('restart')) == 'reload'
 
         - name: Wait for manager API port to accept connections after the rules restart
           ansible.builtin.wait_for:
