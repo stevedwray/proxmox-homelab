@@ -33,7 +33,7 @@ must live in a shared entry (`services/netbox`).
 | `exclude_vmids` support in discovery + test | `integrations/populate.py`, `test_populate_multi_source.py` |
 | `PVE_TINY_READONLY_TOKEN_ID/SECRET` passed into the populate env file when set | `deploy-netbox-stack.yml` |
 | Guarded, archived, dry-run-first deletion tool | `scripts/netbox-delete-managed.py` |
-| Create + verify + store the read-only token without printing it | `scripts/pve-tiny-readonly-token.sh` |
+| Create + verify + store the read-only token without printing it (any node) | `scripts/pve-readonly-token.sh <node>` |
 
 Until the token exists the pve-tiny entry is skipped with a warning, not an error.
 **Do not deploy the NetBox stack with these changes before step 5**: pve would
@@ -47,7 +47,7 @@ under the normal production approval flow.
 
 ### 1-2. Create the token and store it in OpenBao (operator, one command)
 
-`scripts/pve-tiny-readonly-token.sh` uses the pve-tiny deploy token (Administrator, via
+`scripts/pve-readonly-token.sh pve-tiny` (alias: `scripts/pve-tiny-readonly-token.sh`) uses the pve-tiny deploy token (Administrator, via
 `./with-secrets-prod-tiny`) to create `netbox-ro@pve` and the token `netbox-ro@pve!readonly`
 (PVEAuditor on both user and token, privsep), checks that the new token can list guests and is
 **refused a write (403)**, then pipes it straight into `openbao_write.py`. The secret is never
@@ -57,8 +57,8 @@ printed or written to a file; if verification fails the token is deleted again.
 ```bash
 export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
 export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
-scripts/pve-tiny-readonly-token.sh --check              # read-only dry check
-scripts/pve-tiny-readonly-token.sh --also-host-entry    # create + store in services/netbox and hosts/pve-tiny
+scripts/pve-readonly-token.sh pve-tiny --check              # read-only dry check
+scripts/pve-readonly-token.sh pve-tiny --also-host-entry    # create + store in services/netbox and hosts/pve-tiny
 unset BAO_TOKEN
 ```
 
@@ -140,3 +140,20 @@ re-deploy. Removed records are archived as JSON by the deletion tool, and
   for the CSE guests' addresses. IPs are still created; add the prefix separately.
 - `exclude_vmids` is a manual list. If another stack is relocated to pve-tiny and left
   stopped on pve, add its VMID, or destroy the stopped copy.
+
+## pve-test (added 2026-10-16)
+
+`pve-test` is the bare-metal laptop that hosts the isolated CyberSecEval cyber range
+(`cse-kali`, the stopped `metasploitable3-win2k8` target, a template builder). It is **not** a
+production node, so it uses the dev wrapper (`PVE_ENV=pve-test ./with-secrets`). Same mechanism as
+pve-tiny, with its own variables:
+
+- `pve.yaml` third `proxmox_nodes` entry (192.168.1.40, `PVE_TEST_READONLY_TOKEN_ID/SECRET`, no Portainer).
+- Token: `scripts/pve-readonly-token.sh pve-test [--also-host-entry]` -> `services/netbox`
+  (`PVE_TEST_READONLY_TOKEN_*`) and optionally `hosts/pve-test` (`PROXMOX_READONLY_TOKEN_*`).
+- Manifest: add the same fields to `services/netbox` (and `hosts/pve-test`) only after the write.
+- Records appear as `<name>@pve-test` in `pve-test-cluster`, tagged `netbox-env-pve-test`.
+
+Caveats: the laptop is often off, so an unreachable node is skipped with a warning (its records then show
+in the drift report as stale, but nothing is deleted); and range VMs are created per run and destroyed after,
+so their records will come and go. This is a read-only inventory pull, so it does not weaken the range's isolation.
