@@ -48,6 +48,16 @@ E=~/git/proxmox-homelab/terraform/lxc/environments/pve
 The Tier 1 suite only uses logtest (no alerts written); live actions on a test agent
 (apt-cacher-stack) are a separate, separately approved tier.
 
+## Grafana (Phase 6)
+
+- Dashboard: Grafana > Wazuh (`/d/wazuh`). Metrics file on the host: `/var/lib/node_exporter/textfile/wazuh.prom`, written every
+  minute by `wazuh-metrics.timer` (`journalctl -u wazuh-metrics`). `wazuh_collector_ok{collector}` shows which source failed.
+- Redeploy the host side alone: `deploy-wazuh-stack.yml --tags monitoring-integration`. The scoped indexer user is recreated if a
+  security-config reapply (the OIDC play) wipes it.
+- The monitoring-stack playbook has no tags; to add a dashboard or target without a full redeploy, edit the live
+  `victoria-metrics/scrape.yml` in the playbook's exact form, `docker kill -s HUP victoriametrics`, and verify parity with
+  `ansible-playbook ... --check --diff --start-at-task "Write VictoriaMetrics scrape config"`.
+
 ## Gotchas learned
 
 - Ansible re-evaluates a `lookup('pipe', ...)` in a play var on every use; fix a per-run value

@@ -267,6 +267,33 @@ Rollout: canary on `game_seg` (gaming-stack-lab: config received, agent reloaded
 agents active, `events_dropped` 0. The vulnerability findings (3,957, 97% open and unassigned in the Debian tracker) are a
 feed property; `vuln_triage.py` is the repeatable report. Patching is out of scope for this plan.
 
+## Phase 6 (Grafana) done (2026-10-15)
+
+Before: wazuh-stack was missing from the monitoring stack's `node_exporter` and `cadvisor` target lists (node_exporter ran on
+:9100 but nothing scraped it, no cAdvisor, no textfile collector), so the standard Node Detail, Docker Containers and Lab Overview
+dashboards had no Wazuh data, and nothing Wazuh-specific existed in Grafana beyond the vulnerability panels (UVM).
+
+Now:
+- **Standard metrics:** `wazuh-stack` is scraped for host (`:9100`) and containers (cAdvisor `:8080`, its own compose project at
+  `/opt/wazuh-cadvisor`, capped at 256MB because the host has only about 1.3GB free). Both targets `up = 1`; the existing dashboards
+  pick it up through the `stack="wazuh-stack"` label.
+- **Wazuh dashboard** (`dashboards/wazuh.json`, uid `wazuh`, 32 panels): health at a glance (agents not active, events dropped, queue fill,
+  heap, cluster status, container health, 24h alerts, noisiest-rule share, index count and age, metrics age, failing collectors),
+  alerts (per hour, top rules, by level, FIM per hour, vulnerabilities), agents and pipeline (per-agent table, events/s, queues,
+  remoted sessions), indexer and storage (heap, disk, index size, shards, containers). The README targets are drawn as thresholds.
+- **Exporter:** role `wazuh_metrics` (`wazuh_metrics.py`, 1-minute systemd timer, textfile `wazuh.prom`). Six independent collectors
+  (`wazuh_collector_ok{collector}`); reads the indexer with a scoped read-only user (`wazuh_metrics_reader`, cluster monitor plus
+  read on alert and vulnerability-state indices), agent status from `agent_control`, counters from the analysisd and remoted state
+  files; a unit test fails if the dashboard queries a metric the exporter does not emit.
+- **Deployed:** wazuh-stack via `deploy-wazuh-stack.yml --tags monitoring-integration` (re-applies the node_exporter role with the
+  textfile collector on, cAdvisor, the role). monitoring-stack by hand in the playbook's exact rendering (the playbook has no tags and
+  a full run redeploys everything): two scrape targets plus the dashboard file, VictoriaMetrics reloaded with SIGHUP; the playbook's own
+  scrape task in `--check --diff` reports no change, so a later full run will not churn it. All 29 dashboard queries return data.
+- First readings: 1,246 alerts in the last hour (about 30k a day, under the 50k target). The 24h panels still include the hours before
+  the 1d change and fall as those age out.
+- **Not built:** Grafana alert rules (the repo has no provisioned alert mechanism, only a manual coredns example; delivery is a
+  separate plan).
+
 ## What good looks like (targets)
 
 | Metric | Now | Target |
