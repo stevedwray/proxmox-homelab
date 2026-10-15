@@ -14,3 +14,10 @@
     <ignore>/etc/pve/nodes/pve-test/lrm_status</ignore>
   </syscheck>
 </agent_config>
+
+<!-- Phase 5a: same pmxcfs status file on pve-tiny (node name pve-tiny), ignored before its agent enrols. -->
+<agent_config name="pve-tiny.gibbsgreatly.xyz">
+  <syscheck>
+    <ignore>/etc/pve/nodes/pve-tiny/lrm_status</ignore>
+  </syscheck>
+</agent_config>
