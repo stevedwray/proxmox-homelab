@@ -95,6 +95,10 @@ def _resolve_token(value):
     return value
 
 
+def _as_list(value):
+    return value if isinstance(value, list) else [value]
+
+
 def _load_yaml(path):
     """Load a YAML file, returning {} on missing or error."""
     try:
@@ -790,26 +794,30 @@ def derive_zone_policy_flows(network_intent):
     flows = []
     policies = network_intent.get("policies", [])
     for i, policy in enumerate(policies):
-        from_zone = policy.get("from", "unknown")
-        to_zone = policy.get("to", "unknown")
+        # A policy's from/to may be one zone or a list of them; expand a list
+        # into one flow per pair so each gets its own boundary lookup.
+        from_zones = [_resolve_token(z) for z in _as_list(policy.get("from", "unknown"))]
+        to_zones = [_resolve_token(z) for z in _as_list(policy.get("to", "unknown"))]
+        pairs = [(f, t) for f in from_zones for t in to_zones]
         ports = policy.get("ports", [])
         proto = policy.get("protocol", "tcp")
         desc = policy.get("description", "")
 
-        flows.append({
-            "id": f"df-zone-policy-{i:02d}",
-            "name": f"Zone policy: {from_zone} → {to_zone}",
-            "from": f"zone:{from_zone}",
-            "to": f"zone:{to_zone}",
-            "protocol": proto,
-            "ports": ports,
-            "data_classification": "varies",
-            "data": desc,
-            "trigger": "runtime",
-            "trust_boundary_crossing": _zone_boundary(from_zone, to_zone),
-            "inferred_from": "pve.yaml policies section",
-            "flow_type": "zone-policy",
-        })
+        for j, (from_zone, to_zone) in enumerate(pairs):
+            flows.append({
+                "id": f"df-zone-policy-{i:02d}" + (f"-{j:02d}" if len(pairs) > 1 else ""),
+                "name": f"Zone policy: {from_zone} → {to_zone}",
+                "from": f"zone:{from_zone}",
+                "to": f"zone:{to_zone}",
+                "protocol": proto,
+                "ports": ports,
+                "data_classification": "varies",
+                "data": desc,
+                "trigger": "runtime",
+                "trust_boundary_crossing": _zone_boundary(from_zone, to_zone),
+                "inferred_from": "pve.yaml policies section",
+                "flow_type": "zone-policy",
+            })
     return flows
 
 

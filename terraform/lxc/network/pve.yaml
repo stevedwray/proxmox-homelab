@@ -688,7 +688,20 @@ inventory:
       host_ip: "192.168.1.2"
       token_id_env: PROXMOX_READONLY_TOKEN_ID
       token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
-      portainer_url: "https://management-stack.gibbsgreatly.xyz:9443"
+      portainer_url: "https://192.168.20.20:9443"  # live lab Portainer (portainer-stack); management-stack was the legacy one
+      portainer_api_key_env: PORTAINER_TOKEN
+      # Stopped leftovers on pve of stacks that were relocated to pve-tiny under the
+      # same VMID and IP (opensearch, mcp-utility, secpipe, ai-services). pve-tiny is
+      # the source of truth for them; listing them here too would give NetBox two VMs
+      # fighting over one IP. See docs/netbox-pve-tiny/README.md.
+      exclude_vmids: [40014, 50011, 50012, 50013]
+    # pve-tiny: separate standalone production node. Skipped with a warning (not an
+    # error) until PVE_TINY_READONLY_TOKEN_ID/SECRET reach the populate env file.
+    - host: "pve-tiny.gibbsgreatly.xyz"
+      host_ip: "192.168.1.250"
+      token_id_env: PVE_TINY_READONLY_TOKEN_ID
+      token_secret_env: PVE_TINY_READONLY_TOKEN_SECRET
+      portainer_url: "https://192.168.20.20:9443"  # same central Portainer manages pve-tiny guests
       portainer_api_key_env: PORTAINER_TOKEN
   static_hosts:
     - name: pve-test-vm

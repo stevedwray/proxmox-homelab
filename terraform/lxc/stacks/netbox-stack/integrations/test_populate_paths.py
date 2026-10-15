@@ -328,6 +328,19 @@ class TestPopulateIpamPaths(unittest.TestCase):
 
         nb.delete_object.assert_called_once()
 
+    def test_prefix_with_unresolved_placeholder_is_skipped(self):
+        nb = make_nb()
+        intent = {
+            **SAMPLE_POPULATION_INTENT,
+            "prefixes": [
+                {"name": "pentest_seg", "prefix": "${lab_subnet_pentest_cidr}", "description": "x"},
+                {"name": "infra_seg", "prefix": "192.168.40.0/24", "description": "Infrastructure services"},
+            ],
+        }
+        populate.populate_ipam(nb, SITE, [], intent, SAMPLE_INVENTORY)
+        prefix_calls = [c.args[1] for c in nb.ensure.call_args_list if c.args[0] == "/ipam/prefixes/"]
+        self.assertEqual(prefix_calls, [{"prefix": "192.168.40.0/24"}])
+
     def test_no_ip_vm_skipped(self):
         # VM without ip is skipped — no VM IPs or services are created, but the
         # host IP lookup still runs for canonical host reconciliation.

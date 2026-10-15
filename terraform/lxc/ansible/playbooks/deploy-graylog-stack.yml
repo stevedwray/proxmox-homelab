@@ -70,8 +70,8 @@
     graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
     graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
     graylog_mongodb_image_tag: "7"
-    graylog_datanode_image_tag: "7.1.3"
-    graylog_server_image_tag: "7.1.3"
+    graylog_datanode_image_tag: "7.1.9"
+    graylog_server_image_tag: "7.1.9"
     graylog_datanode_heap_gb: >-
       {{
         [

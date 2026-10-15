@@ -75,6 +75,20 @@ class TestBuildTopologyFromNodes(unittest.TestCase):
         self.assertEqual(result["vms"], [])
         mock_disc.assert_not_called()
 
+    def test_exclude_vmids_drops_those_guests_before_building_vms(self):
+        fake = {"nodes": [], "storage": [], "networks": {},
+                "containers": [{"vmid": 50011, "name": "mcp-utility-stack"}, {"vmid": 60010, "name": "gaming-stack-lab"}]}
+        nodes = [{"host": "pve.example.com", "token_id_env": "T1", "token_secret_env": "S1",
+                  "exclude_vmids": [50011, 40014]}]
+        with patch("populate.discover_from_proxmox", return_value=fake), \
+             patch("populate.build_topology", return_value=[]) as mock_build, \
+             patch("populate.build_network_topology", return_value={"router": None}), \
+             patch("populate.build_proxmox_context", return_value={}), \
+             patch.dict(os.environ, {"T1": "a", "S1": "b"}):
+            populate._build_topology_from_nodes(nodes)
+        kept = mock_build.call_args.kwargs["proxmox_data"]["containers"]
+        self.assertEqual([c["vmid"] for c in kept], [60010])
+
     def test_skips_failed_node_and_continues(self):
         fake_proxmox_data = {"nodes": [], "containers": [], "storage": [], "networks": {}}
         nodes = [
