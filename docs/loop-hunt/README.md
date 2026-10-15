@@ -445,15 +445,20 @@ probe received HTTP 400, Cannot continue an assistant message that contains
 tool calls. Model restoration, free lock and active timer are independently
 verified. Replays remain waiting.
 
-The operator explicitly approved the correction and rerun on 2026-10-16.
-Generation continuation is now disabled only when counting a partial history
-ending in an assistant tool call; ordinary inference-count probes still
-enable it. All 76 tests pass. Only this count correction was deployed to the
-active matrix harness. C5 restarted at 17:06 UTC (06:06 NZDT) in
-upstream-C5-attempt2, with its watcher attached. The original failed directory
-and request are untouched. The controller resolves this job to its fresh
-retry directory; five lifecycle tests include preservation of failed evidence.
-The matrix continues after the retry, with settings and budgets unchanged.
+The operator approved the C5 counting correction and rerun on 2026-10-16.
+The first fix changed add_generation_prompt, but upstream still rejected
+its partial assistant history. Its pinned source shows that assistant
+prefill is automatic regardless of this flag. The corrected growth probe
+now includes the real tool result before audit filler, so it measures a
+complete exchange without mutating inference history. The stand-in enforces
+upstream's rejection for both flag values; all 77 tests pass, plus a full
+62-request C5 stand-in run at both budgets with task completion and no flags.
+
+The second permitted retry launched at 17:17 UTC (06:17 NZDT) in
+upstream-C5-attempt3. Both failed attempts and their saved requests remain
+untouched. Only the source-confirmed counting correction is active; queued
+scoring/metadata corrections remain deferred to the matrix review boundary.
+No models, builds, sampling or answer budgets changed.
 
 Between jobs, the restored upgrade timer triggered its scheduled service.
 The next launch stopped safely at the upgrade-active preflight. After the

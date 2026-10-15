@@ -1462,6 +1462,40 @@ SHA-256 81b48cb76cdd1e588870e19cd2f8fc567e50c5b40850141f1e89a7e9d96c35b6.
 No replay inference has started. Continue matrix supervision, then preserved
 regrades/review, seven replay jobs, and stop at lh-08 as already instructed.
 
+C5 retry 1 failed (2026-10-16 NZDT): one clean saved request, then the same
+HTTP 400 in the intermediate probe. The first regression incorrectly assumed
+add_generation_prompt false disables assistant prefill. Read the pinned
+upstream source directly from /storage/llama-builds/src at de7fa0a3c:
+server-common.cpp:1370-1386 automatically enables prefill for a trailing
+assistant regardless of that flag; tool calls then cause the rejection.
+The stricter stand-in reproduces this rule, and the new end-to-end C5
+regression failed before the second correction.
+
+Second correction: restore the ordinary count-method behavior and count the
+actual tool result before audit filler in session_tools.run_agent. This
+avoids unfinished assistant histories and includes result overhead in the
+growth estimate. No placeholder result or changed inference-history payload
+is introduced. Both generation-flag rejection cases have regression coverage;
+77 tests pass. A full local C5 trial completed 62 requests, both budgets,
+30 tool calls each, both synthetic tasks done, zero flags/evidence errors.
+Committed as 5097df97. Operator's explicit C5-fix approval and two-fix rule
+cover this correction; a repeat after this fix requires stopping.
+
+Verified retry-1 model restoration and free lock; restored upgrade timer
+while the stopped harness awaited its watcher's terminal poll. At 17:16:24
+UTC the watcher recorded needs-attention with timer active; the supervisor
+then exited. Rechecked inactive upgrade service, active timer, exact restored
+model/build and free lock before retry 2. Preserved both failed directories
+and source/state snapshots. At 17:17 UTC launched upstream-C5-attempt3;
+retry_directories and launch_retries record the second permitted attempt.
+Active session_bugs.py is restored to the original matrix baseline; only
+session_tools.py carries the growth-probe fix, SHA-256
+782755a71d816514257d7dd002ae50c73a5e18f188869e2ea87bb444f95ce732.
+Queued scorer fixes remain deferred; no other measurement settings change.
+Replay staging refreshed again with the correct active baseline hash and
+latest tested full harness (9813d08ba737f07c395fe9b14ea0ea6ba6f251006d6b20791431317a5a2a023b),
+waiting invocation e43bd4c7011445549ad0921237258f27. Matrix-review gate retained.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
