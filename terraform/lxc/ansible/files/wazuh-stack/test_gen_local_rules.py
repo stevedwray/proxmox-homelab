@@ -86,7 +86,14 @@ class HealthcheckRules(unittest.TestCase):
         r = scoped[0]
         self.assertEqual(r.find("if_sid").text, "510")
         self.assertEqual(r.get("level"), "0")
-        self.assertEqual(r.find("hostname").text, r"^framework\.gibbsgreatly\.xyz$")
+        # what the manager shows for an agent event: "(framework.gibbsgreatly.xyz) any"
+        rx = re.compile(r.find("hostname").text.replace("\\(", "[(]").replace("\\)", "[)]").replace("\\.", "[.]"))
+        self.assertTrue(rx.search("(framework.gibbsgreatly.xyz) any"))
+        self.assertTrue(rx.search("(framework.gibbsgreatly.xyz) 192.168.1.18"))
+        for other in ["(apt-cacher-stack) any", "(xframework.gibbsgreatly.xyz) any", "(pve-framework.gibbsgreatly.xyz) any",
+                      "framework.gibbsgreatly.xyz", "(framework.gibbsgreatly.xyz.evil) any", "(frameworkXgibbsgreatly.xyz) any"]:
+            self.assertFalse(rx.search(other), other)
+        self.assertEqual(r.find("hostname").text, r"^\(framework\.gibbsgreatly\.xyz\) ")
         # every other rootcheck-parent rule must stay unscoped, so nothing else is silenced for one host only by accident
         self.assertNotIn("framework", "".join(ET.tostring(x, encoding="unicode") for x in root.iter("rule") if x is not r and x.get("id") != "100210" and x.find("if_sid") is not None and x.find("if_sid").text == "510"))
 

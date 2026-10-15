@@ -237,7 +237,9 @@ Ubuntu 26.04 findings:
   A custom 26.04 policy belongs to the optional SCA item below.
 - **Rootcheck false positives:** 48 L7 "Trojaned version of file" alerts per scan (every 12 h), on `/bin` and `/usr/bin`
   tools. Ubuntu 26.04 uses Rust uutils coreutils whose binaries contain strings the generic trojan signatures look for.
-  Rule 100212 (level 0) is limited to agent `framework.gibbsgreatly.xyz`, rule 510 parent, Generic signatures and a
+  Rule 100212 (level 0) is limited to agent `framework.gibbsgreatly.xyz` (for agent events the rule's `<hostname>` is
+  `(<agent name>) any`, the alert header form, so the match is `^\(name\) `; the first deploy anchored the bare name, never
+  matched and kept alerting, which is the safe failure), rule 510 parent, Generic signatures and a
   single `/bin` or `/usr/bin` file name; named rootkit signatures, other paths and every other host keep 510 at L7, and
   FIM still watches `/bin` and `/usr/bin`. logtest cannot produce rootcheck events, so the scoping is proven by unit
   tests on the pattern and the generated XML, then live: trigger a rootcheck scan on `framework` and on one LXC agent

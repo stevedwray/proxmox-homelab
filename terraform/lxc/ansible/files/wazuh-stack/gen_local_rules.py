@@ -96,7 +96,9 @@ def render():
     out += ['<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->',
             '<group name="local,rootcheck,syslog,">']
     for rid, parent, level, pat, desc, *agent in EXTRA_RULES:
-        host = f'    <hostname>^{re.escape(agent[0])}$</hostname>\n' if agent else ""
+        # for events from an agent the manager's hostname is "(<agent name>) <ip or any>" (the alert header reads
+        # "(framework.gibbsgreatly.xyz) any->rootcheck"), so anchor on the parenthesised name, not the bare name
+        host = f'    <hostname>^\\({re.escape(agent[0])}\\) </hostname>\n' if agent else ""
         out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n{host}'
                    f'    <regex type="pcre2">{escape(pat)}</regex>\n    <description>{escape(desc)}</description>\n  </rule>')
     out.append("</group>\n")
