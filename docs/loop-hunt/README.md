@@ -414,18 +414,28 @@ C4 runs last. Matrix findings/review remain pending.
 | Model/build | Condition | Recall | Flags | Warm/cold | State |
 | --- | --- | ---: | --- | --- | --- |
 | Qwen fork current | C1 seeds 1 and 2 | 148/148 | two line-format failures in seed 1; seed 2 clean | six clean pairs | complete |
+| Qwen fork current | C2 | 80/80 accepted-response facts | 20 capacity refusals | four clean; four refused pairs | complete |
+| Qwen fork current | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
+| Qwen fork current | C5 (both budgets) | — | none | — | complete |
+| Qwen fork previous | C1 seeds 1 and 2 | 128/148 | recall errors; one repetition flag | three clean; two cold only; one model/content | complete |
+| Qwen fork previous | C2 | 75/80 accepted-response facts | recall errors; one repetition flag; 20 capacity refusals | three clean; one cold only; four refused pairs | complete |
 
 C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
 The first format failure was at 45097 tokens; no semantic collapse is
 established by that formatting flag. Both seeds have exact prompt/server
 token agreement and zero evidence errors. Seed 2's 32-request job restored
 the original model, freed the lock and restored the timer; watcher complete.
-C2 is running; a server snapshot confirmed four simultaneously processing
-slots. At turn 8, summed prompts reached 131275 tokens: four HTTP 500
-context-size refusals, server healthy; a matching cold request succeeded.
-This records shared-pool capacity behaviour, not a looping diagnosis.
-The planned extra turns and remaining comparisons continue. Other rows
-remain queued.
+C2 completed all four planned extra rounds after the shared pool filled.
+Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
+500; matching cold requests succeeded. Their crossing prompt sums were
+131275 (current) and 131287 (previous). These are capacity refusals,
+reported separately from factual accuracy and repetition. All seven
+completed matrix jobs have zero evidence errors, exact prompt/server token
+agreement on accepted requests, and verified cleanup. C3 imported C1 rows
+are excluded from its new-request totals. The previous build's repetition
+flags still need evidence review and blind judging; they do not yet establish
+a build-specific loop. As of 04:52 UTC, fork-previous C3 is running; seven
+of 20 queued jobs are complete.
 
 Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
 job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.

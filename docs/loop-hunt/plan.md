@@ -1369,6 +1369,25 @@ pre-fix results and regrade saved evidence with the corrected classifier,
 then refresh the staged replay version/hashes before releasing the review
 gate. Clean-peer refusal pairs already recorded correctly remain unchanged.
 
+Matrix Result update (2026-10-15, 04:52 UTC): seven queued jobs completed,
+all with verified model/lock/timer cleanup, zero evidence errors and exact
+rendered/server prompt counts on accepted requests. Fork-current C2:
+56 requests, 80/80 accepted-response facts, four clean CK pairs and four
+refused pairs; all 20 warm requests on rounds 8–12 returned HTTP 500 after
+the shared pool filled at 131275 summed prompt tokens. Fork-current C3
+adds six requests beyond the imported pilot: 5/5 accepted-response facts,
+four HTTP 400 context-limit refusals, final prompt 139235 tokens. Its
+refused CK is not comparable. Fork-current C5 completed 20 requests across
+both budgets with no flags. Fork-previous C1 seeds 1/2: recall 55/74 and
+73/74, respectively; seed 1 has one repetition flag and two absent-fact
+hallucination flags. Its six CK pairs are three clean, two cold-only and
+one model/content. Fork-previous C2: 75/80 accepted-response facts, one
+repetition flag, 20 capacity refusals; pool crossing 131287, four concurrent
+request windows, three clean/one cold-only/four refused CK pairs. These
+are preliminary detector findings, not yet blind-judged or build-specific
+conclusions. C3 imported rows are excluded from these added-request totals.
+Fork-previous C3 is now running; review and supervision continue.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
