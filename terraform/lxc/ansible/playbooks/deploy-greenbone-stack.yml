@@ -119,6 +119,28 @@
         state: directory
         mode: "0750"
 
+    # openvas runs at log level 128 (DEBUG) and nothing rotated its file: it reached
+    # 50 GB by 2026-10-16 (~780k lines/hour while scanning). copytruncate because
+    # openvas and the `tail -f` log-shipping container both hold the file open.
+    # Debug lines are already dropped from Graylog (rsyslog_forward_drop_debug_apps);
+    # scan results live in gvmd's database, not in this file.
+    - name: Rotate the openvas log (size-capped, copytruncate)
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/openvas-scan
+        mode: "0644"
+        content: |
+          /var/lib/docker/volumes/{{ greenbone_compose_project | default('greenbone-community-edition') }}_openvas_log_data_vol/_data/openvas.log {
+              daily
+              maxsize 1G
+              rotate 3
+              compress
+              delaycompress
+              copytruncate
+              missingok
+              notifempty
+          }
+      tags: [log-rotation]
+
     - name: Create gvm-bridge build directory
       ansible.builtin.file:
         path: "{{ gvm_bridge_build_dir }}"
@@ -395,7 +417,10 @@
                 - -c
                 - |
                   printf "table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\n" > /mnt/openvas.conf
-                  sed "s/127/128/" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf
+                  # Stock level is 127 (everything except DEBUG). Greenbone's reference compose
+                  # bumps it to 128, which turned DEBUG on and wrote ~780k lines/hour (50 GB
+                  # by 2026-10-16). Keep 127; set 128 here only to debug a specific NVT.
+                  sed 's/gvm/openvas/' /etc/openvas/openvas_log.conf > /mnt/openvas_log.conf
                   chmod 644 /mnt/openvas.conf
                   chmod 644 /mnt/openvas_log.conf
                   touch /var/log/openvas/openvas.log
