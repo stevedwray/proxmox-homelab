@@ -155,6 +155,17 @@
   when: wazuh_agent_docker_monitoring_enabled | bool
   register: wazuh_agent_docker_group
 
+- name: Check whether this host writes /var/log/auth.log (rsyslog)
+  ansible.builtin.stat:
+    path: /var/log/auth.log
+  register: wazuh_agent_auth_log
+
+- name: Choose the system and auth log source
+  ansible.builtin.set_fact:
+    wazuh_agent_use_journald: >-
+      {{ wazuh_agent_log_source == 'journald'
+         or (wazuh_agent_log_source == 'auto' and not wazuh_agent_auth_log.stat.exists) }}
+
 - name: Write this host's ossec.conf
   ansible.builtin.copy:
     dest: /var/ossec/etc/ossec.conf
@@ -243,6 +254,14 @@
           <ignore>/etc/httpd/logs</ignore>
         </syscheck>
 
+        {%- if wazuh_agent_use_journald | bool +%}
+
+        <localfile>
+          <log_format>journald</log_format>
+          <location>journald</location>
+        </localfile>
+        {%- else +%}
+
         <localfile>
           <log_format>syslog</log_format>
           <location>/var/log/syslog</location>
@@ -252,6 +271,7 @@
           <log_format>syslog</log_format>
           <location>/var/log/auth.log</location>
         </localfile>
+        {%- endif +%}
       </ossec_config>
   register: wazuh_agent_ossec_conf
 
