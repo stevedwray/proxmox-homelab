@@ -417,13 +417,24 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen fork current | C2 | 80/80 accepted-response facts | 20 capacity refusals | four clean; four refused pairs | complete |
 | Qwen fork current | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
 | Qwen fork current | C5 (both budgets) | — | none | — | complete |
-| Qwen fork previous | C1 seeds 1 and 2 | 128/148 | recall errors; one repetition flag | three clean; two cold only; one model/content | complete |
-| Qwen fork previous | C2 | 75/80 accepted-response facts | recall errors; one repetition flag; 20 capacity refusals | three clean; one cold only; four refused pairs | complete |
-| Qwen fork previous | C3 (new turns only) | 4/5 accepted-response facts | one recall error; four context-limit refusals | one refused pair | complete |
+| Qwen fork previous | C1 seeds 1 and 2 | preview: 148/148 | one reasoning-repetition flag; old recall flags invalid | pending preserved regrade | complete |
+| Qwen fork previous | C2 | preview: 80/80 accepted-response facts | one reasoning-repetition flag; 20 capacity refusals | pending preserved regrade | complete |
+| Qwen fork previous | C3 (new turns only) | preview: 5/5 accepted-response facts | four context-limit refusals | pending preserved regrade | complete |
 | Qwen fork previous | C5 (both budgets) | — | none | — | complete |
 | Qwen upstream | C1 seeds 1 and 2 | 148/148 | none | six clean pairs | complete |
 | Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
 | Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
+
+Recall correction pending canonical regrade: the previous build sometimes
+prefixes every question/reference line with [TRIAGE]. The extractor attached
+these prefixes to preceding values, falsely flagging correct facts, including
+NOT PROVIDED. Exact saved turns 1/24/27 reproduce it; 78 tests pass with
+prefixes included in the following label/reference boundary. Exact literal
+matching and question-line grading remain independent. A read-only in-memory
+preview yields 148/148 for previous-build C1, 80/80 for C2 and 5/5 new C3
+facts, with no remaining recall flags. These supersede earlier preliminary
+recall/hallucination claims. Canonical results are unchanged; backups and
+regrade will occur after the matrix, including CK reclassification.
 
 C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
 The first format failure was at 45097 tokens; no semantic collapse is

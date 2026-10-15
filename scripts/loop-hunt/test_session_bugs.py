@@ -258,6 +258,24 @@ class RecallGradingTests(unittest.TestCase):
         result=self.grade('[TRIAGE] Q1: route-01-011-375356627d\nQ2: route-01-005-3c7a49ef44\nref: INC-7001')
         self.assertEqual(result['flags'],[])
 
+    def test_real_previous_build_repeated_triage_prefix_is_not_an_answer_suffix(self):
+        # Exact synthetic answer from fork-previous C1 seed 1, turn 1.
+        answer='[TRIAGE] Q1: route-01-001-3a1d47a406\n[TRIAGE] Q2: route-01-001-3a1d47a406\nref: INC-7001'
+        result=self.grade(answer,1)
+        self.assertTrue(all(q['correct'] for q in result['recall']))
+        self.assertEqual(result['flags'],[])
+        wrong=self.grade(answer.replace('Q1: route-01-001-3a1d47a406','Q1: wrong'),1)
+        self.assertIn('wrong:q1',wrong['flags'])
+        self.assertNotIn('wrong:q2',wrong['flags'])
+        # Exact turns 24/27 also repeat the prefix before the final reference;
+        # the old extractor incorrectly called their NOT PROVIDED hallucinated.
+        for turn,answer in ((24,'[TRIAGE] Q1: route-01-024-2a0bc25c73\n[TRIAGE] Q2: route-01-021-d5317f516e\n[TRIAGE] Q3: NOT PROVIDED\n[TRIAGE] ref: INC-7001'),
+                            (27,'[TRIAGE] Q1: route-01-027-b2290fe7f7\n[TRIAGE] Q2: route-01-024-2a0bc25c73\n[TRIAGE] Q3: NOT PROVIDED\n[TRIAGE] ref: INC-7001')):
+            with self.subTest(turn=turn):
+                result=self.grade(answer,turn)
+                self.assertTrue(all(q['correct'] for q in result['recall']))
+                self.assertEqual(result['flags'],[])
+
     def test_wrong_values_remain_wrong_on_single_line(self):
         result=self.grade('[TRIAGE] Q1: wrong Q2: route-01-005-3c7a49ef44 ref: INC-7001')
         self.assertIn('wrong:q1',result['flags'])

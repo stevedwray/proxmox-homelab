@@ -1496,6 +1496,28 @@ Replay staging refreshed again with the correct active baseline hash and
 latest tested full harness (9813d08ba737f07c395fe9b14ea0ea6ba6f251006d6b20791431317a5a2a023b),
 waiting invocation e43bd4c7011445549ad0921237258f27. Matrix-review gate retained.
 
+Queued scoring/report corrections (2026-10-16 NZDT; active run unchanged):
+regrade previously rewrote progress.updated with analysis time, inflating
+elapsed-run summaries. save(update_progress=False) now preserves completion
+progress on regrade, and progress.json joins the automatic pre-regrade
+backup. Regression verifies byte-identical progress before/after repeated
+regrades. Committed 22aeb11f; deferred to the closed-matrix review boundary.
+
+Saved previous-build recall review found another extractor boundary error:
+answers repeat [TRIAGE] before subsequent Qn and ref labels. The prefix was
+included in the preceding answer, falsely marking exact facts wrong and
+NOT PROVIDED hallucinated. Exact saved synthetic turns 1/24/27 regress this;
+markers/reference boundaries now consume the optional prefix. Real wrong
+literals, missing/duplicate labels, extra prose and line-format checks retain
+their existing behavior. All 78 tests pass. Read-only in-memory rescoring of
+the thirteen completed jobs changes previous-build C1 seed 1 from 55/74 to
+74/74, seed 2 from 73/74 to 74/74, C2 from 75/80 to 80/80, and new C3 from
+4/5 to 5/5. No recall flags remain in those jobs. Other jobs unchanged.
+The earlier preliminary recall/hallucination findings are withdrawn; the
+two reasoning-channel repetition flags remain. Canonical results, reports,
+raw files and active source are untouched; preserve/regrade at matrix review
+and recompute affected CK classifications before releasing replays.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
