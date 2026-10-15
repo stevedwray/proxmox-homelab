@@ -158,7 +158,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
-| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | running 2026-10-15; corrected launch and watcher first poll verified |
+| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | stopped 2026-10-15; recall/format scoring problem; cleanup verified |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
@@ -1166,7 +1166,40 @@ poll confirmed running/zero requests and its unit active. Framework run:
 `loop-hunt-20261015t003810z.service`; watcher unit
 `loop-hunt-pilot-watch-20261015t003810z.service`. Upgrade timer paused;
 watcher owns restoration. No harness code or measured settings changed.
-Pilot slot-layout and measuring review remain pending.
+Pilot slot-layout gate passed: total_slots 4, each /slots n_ctx 131072.
+First five requests completed cleanly with matching rendered/server token
+counts, positive cache reuse and no evidence errors. Full measuring review
+and warm/cold checkpoints remain pending.
+
+Pilot measuring review stop (2026-10-15): corrected launch/watcher and
+slot-layout gates passed (four slots each n_ctx 131072). Initial measured
+prompt tokens matched usage.prompt_tokens and warm cache reuse was positive;
+no infrastructure/evidence errors occurred in the reviewed requests.
+However, turns 11 and 12 expose recall/format conflation: the model returned
+all correct route values (and NOT PROVIDED for turn 12) with Q1/Q2/Q3 on
+one line. The prompt asks one line per question, so this is an instruction
+format violation. The grader's newline-bound regex instead absorbs later
+answers/reference into Q1 and reports Q2/Q3 absent, marking correct facts as
+wrong recall. It has no separate one-line-per-question format check.
+Recall and instruction-following measurements therefore need correction;
+no semantic recall loss is established by these two responses.
+
+Per operator instruction, pilot was interrupted and matrix/replay held.
+Timer was immediately restarted active; SIGINT targeted only this pilot.
+No harness code, prompts, settings or saved grades were changed. The setup
+retry exception does not apply: requests completed and the proposed fix
+changes measurement. Proposed for operator decision: bound recall extraction
+by explicit Qn/reference markers even on one line, retain exact expected
+value matching, and grade line layout separately as instruction failure.
+Add regression coverage for the saved synthetic response shapes, then
+regrade existing evidence and rerun the pilot after approval.
+Final cleanup verified: status interrupted, 15 completed warm requests
+(turns 1–15), two flagged responses (11/12), no CK reached. Original
+`qwen3-coder-next-upstream` / `b11514-de7fa0a3c` confirmed by /props,
+restored_default true, lock free and upgrade timer active. The watcher was
+stopped after this independent cleanup verification; pilot units inactive.
+No matrix/replay started. Existing raw responses remain available for
+regression/regrading; no pilot success or recall-collapse claim is made.
 
 #### lh-06-matrix
 

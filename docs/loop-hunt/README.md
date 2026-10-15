@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 resumed; corrected launch and watcher verified, review pending**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 stopped for recall/format scoring problem; cleanup verified**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -429,3 +429,17 @@ is paused under watcher supervision; pilot review is pending. The operator
 also permits one launch-mechanics retry after a zero-request setup failure
 and verified cleanup, as recorded in the plan. Measurement changes, a second
 failure, or failure after completed requests still require operator input.
+
+Pilot measuring review found a scoring problem: turns 11/12 contain correct
+facts on one line, violating the requested line layout. The newline-based
+recall parser misgrades those facts as wrong/missing rather than recording
+the formatting failure separately. Slot layout passed (four full-context
+131072 slots), token counts matched and cache reuse was measured. The pilot
+was interrupted; matrix/replay remain held pending operator decision. No
+harness or saved grades changed. The proposed scoring correction is in the
+plan; the zero-request launch-retry exception does not cover this change.
+
+Cleanup verified after 15 warm requests (turns 1–15; two flagged responses,
+no CK reached): original model/build restored, lock free, upgrade timer
+active. Watcher stopped after independent cleanup verification. Matrix and
+replay have not started; raw responses and grades are preserved.
