@@ -44,7 +44,7 @@ the API), all on 4.14.8.
    today, about 330 at 90 days). The host has ~1.3GB free of 8GB and dipped to 329MB during the 4.14.8 recreate.
 3. **Phase 5, coverage (optional):** known unenrolled: `framework`, `pve-tiny` (hypervisor) and `pentagi-stack`;
    the authoritative list is the first output of the phase. Per-agent-type test matrix and an agent upgrade procedure.
-   `pve-test` (laptop Proxmox node on `lan`, 192.168.1.40) is also unenrolled; its checks are done and the plan is
+   `pve-test` (laptop, 192.168.1.40) and `pve-tiny` (192.168.1.250) are both surveyed: no agent, manager ports open; the plan is
    in plan.md Phase 5a (manager ports already reachable, no firewall change; needs operator decisions).
 4. **Small follow-ups:** Grafana alert rules (the repo has no provisioned alert mechanism; delivery to Discord is a
    separate plan); put the manager's `ossec.log`/`api.log` into Graylog (host, indexer and dashboard container logs

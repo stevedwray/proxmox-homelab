@@ -159,7 +159,7 @@ changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
 4. Optional: a custom SCA policy that skips the CIS checks that cannot apply inside an LXC (baseline 43%, ~105 failing
    and 22 invalid checks per host).
 
-### Phase 5a - `pve-test` (the laptop Proxmox node) - PLANNED, checks done 2026-10-16
+### Phase 5a - `pve-test` (laptop) and `pve-tiny` (hypervisors) - PLANNED, checks done 2026-10-16
 
 Checked read-only, nothing changed. `pve-test` is a non-production Proxmox 9.2 node (Debian 13, kernel 7.0.14-17-pve,
 4 CPU, 16GB RAM with ~11GB free) at `192.168.1.40`, on the default VLAN (`lan`, 192.168.1.0/24). It runs CT 910
@@ -172,6 +172,15 @@ Checked read-only, nothing changed. `pve-test` is a non-production Proxmox 9.2 n
 | Existing pattern | `ansible/00-initial-setup/proxmox-wazuh-agent.yml` enrols the `pve` hypervisor with the `wazuh_agent` role (hosts: `pve.gibbsgreatly.xyz`); `pve-test.gibbsgreatly.xyz` is already in `ansible/inventory/production.yml` and `dev.yml` |
 | Role fit | `wazuh_agent` is a plain apt install on Debian 13, so it fits as is (version pinned 4.14.8, `debian13` config profile, `/etc/pve/priv` already in `<nodiff>`) |
 | Not production | not in `terraform/PRODUCTION_NODES`, so it does **not** go through `with-secrets-prod`; the secrets wrapper to use is still to be settled (see decision 1) |
+
+**`pve-tiny` (production, 192.168.1.250, surveyed read-only under `wazuh-survey-pve-tiny`):** Proxmox 9.2.21 on Debian 13
+(same kernel as `pve-test`), 16 threads, 32GB RAM with ~22GB available, no Docker. No Wazuh agent (no package, no
+`/var/ossec`). Ports 1514, 1515 and 55000 on the manager are open from the node, so no firewall change. It hosts 8 LXCs
+(technitium-tiny, cse-panel, opensearch, cse-controller, mcp-utility, secpipe, ai-services, cse-code-eval) plus a stopped
+template builder; the LXC guests are separate agents and are not covered by enrolling the hypervisor. Differences from
+`pve-test`: it is production (uses `./with-secrets-prod-tiny` with a named `TASK_APPROVAL`; it is not yet in
+`ansible/inventory/`), and it is the planned target for moving Wazuh/Graylog, so keep the hypervisor agent light. Enrol
+`pve-test` first as the canary, then `pve-tiny` with the same playbook and `proxmox_host` group.
 
 Decisions needed from the operator before running anything:
 
