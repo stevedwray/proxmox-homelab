@@ -1,0 +1,112 @@
+# Measure and supervise the Wazuh stack -- docs/wazuh-tuning/runbook.md.
+#
+# Not part of provisioning. Run by hand through the production wrapper, from a
+# checkout of the branch you want (the helper is copied from there):
+#
+#   export TASK_APPROVAL=<task-name> ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles
+#   ./with-secrets-prod ansible-playbook -i <wazuh-stack inventory.yml> -u root \
+#     terraform/lxc/ansible/playbooks/wazuh-tuning.yml </dev/null -e tune_mode=health
+#
+# Variables:
+#   tune_mode   a wazuh_tuning.py mode (health alerts noise sample agents vulns retention fim),
+#               or: mustfire              the detection regression suite (logtest, writes no alerts)
+#                   scanner               Phase 2d: scanner sshd events lowered, other sources not
+#                   suppression           Phase 1d: health checks suppressed, look-alikes still alert
+#                   sample_start|sample_stop|sample_log   30 s resource sampler
+#   tune_args   extra words for the mode, e.g. -e tune_args=87907
+#   tune_tag    label for the saved JSON, e.g. baseline  (saved to docs/wazuh-tuning/artifacts/, ignored)
+#
+# Read-only against the Wazuh APIs. The only things written on the host are the helper
+# files in /opt/wazuh-stack/tuning/ and the sampler log under /run/wazuh-tuning/ (tmpfs,
+# not watched by FIM, so the sampler does not alert on itself).
+- name: Wazuh tuning helper
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    dir: /opt/wazuh-stack/tuning
+    run_dir: /run/wazuh-tuning
+    tune_tag: run
+    helper_modes: [health, alerts, noise, sample, commands, fimpaths, hist, vulndetail, vulnpkg, indices, sca, agentconf, fimdoc, fimdiff, fimsensitive, vulncves, vulnhosts, agentrules, agents, vulns, retention, fim]
+    secrets_env:
+      WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"
+      WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
+  tasks:
+    - name: Create helper and run directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: ["{{ dir }}", "{{ run_dir }}"]
+
+    - name: Copy the helper, the regression suite and its cases
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-tuning/{{ item }}"
+        dest: "{{ dir }}/{{ item }}"
+        mode: "0644"
+      loop: [wazuh_tuning.py, must_fire.py, must_fire_cases.json, must_fire_live_cases.json]
+
+    - name: Copy the health-check list (suppression test input)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/docker_healthchecks.json"
+        dest: "{{ dir }}/docker_healthchecks.json"
+        mode: "0644"
+
+    - name: Run a helper mode (JSON kept on the host)
+      when: tune_mode in helper_modes
+      ansible.builtin.command:
+        argv: >-
+          {{ ['python3', dir ~ '/wazuh_tuning.py', tune_mode]
+             + (tune_args.split() if tune_args is defined else [])
+             + ['--json', run_dir ~ '/' ~ tune_mode ~ '-' ~ tune_tag ~ '.json'] }}
+      environment: "{{ secrets_env }}"
+      register: out
+      changed_when: false
+    - ansible.builtin.debug:
+        var: out.stdout_lines
+      when: tune_mode in helper_modes
+
+    - name: Bring the JSON back to the workstation
+      when: tune_mode in helper_modes
+      ansible.builtin.fetch:
+        src: "{{ run_dir }}/{{ tune_mode }}-{{ tune_tag }}.json"
+        dest: "{{ playbook_dir }}/../../../../docs/wazuh-tuning/artifacts/{{ tune_tag }}-{{ tune_mode }}.json"
+        flat: true
+
+    - name: Run the must-fire detection suite
+      when: tune_mode in ['mustfire', 'suppression', 'scanner', 'hap']
+      ansible.builtin.command:
+        argv: "{{ ['python3', dir ~ '/must_fire.py'] + ([tune_mode] if tune_mode in ['suppression', 'scanner', 'hap'] else []) }}"
+        chdir: "{{ dir }}"
+      environment: "{{ secrets_env }}"
+      register: mf
+      changed_when: false
+      failed_when: mf.rc != 0
+    - ansible.builtin.debug:
+        var: mf.stdout_lines
+      when: tune_mode in ['mustfire', 'suppression', 'scanner', 'hap']
+
+    - name: Stop any existing sampler
+      when: tune_mode in ['sample_start', 'sample_stop']
+      ansible.builtin.shell: 'test -f {{ run_dir }}/sampler.pid && kill $(cat {{ run_dir }}/sampler.pid) 2>/dev/null; rm -f {{ run_dir }}/sampler.pid; true'
+      changed_when: true
+
+    - name: Start the sampler (every 30 s -> sampler.log)
+      when: tune_mode == 'sample_start'
+      ansible.builtin.shell: |
+        nohup sh -c '
+          echo $$ > {{ run_dir }}/sampler.pid
+          while true; do
+            echo "$(date -u +%H:%M:%S) $(python3 {{ dir }}/wazuh_tuning.py sampler-line)"
+            sleep 30
+          done' >> {{ run_dir }}/sampler.log 2>&1 &
+      environment: "{{ secrets_env }}"
+
+    - name: Show the sampler log
+      when: tune_mode in ['sample_start', 'sample_log']
+      ansible.builtin.command: tail -n 40 {{ run_dir }}/sampler.log
+      register: samplelog
+      changed_when: false
+    - ansible.builtin.debug:
+        var: samplelog.stdout_lines
+      when: tune_mode in ['sample_start', 'sample_log']

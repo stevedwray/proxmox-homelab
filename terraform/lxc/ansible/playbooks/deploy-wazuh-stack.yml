@@ -44,6 +44,8 @@
         | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required')
       }}
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    # node_exporter's textfile collector: wazuh_metrics writes wazuh.prom here (docs/wazuh-tuning, Phase 6).
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
   roles:
     - lxc_base
     - docker_base
@@ -214,7 +216,8 @@
     wazuh_compose_dir: /opt/wazuh-stack
     wazuh_indexer_data_dir: /var/lib/wazuh-indexer-data   # extra_mount path from stack.yaml
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-    wazuh_image_tag: "4.14.7"   # current stable as of 2026-08-29 -- keep in sync, do not use the 5.0 beta line
+    wazuh_image_tag: "4.14.8"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
+    wazuh_alert_retention_days: 90   # ISM delete age for wazuh-alerts-4.x-* and the manager-side raw log cleanup (docs/wazuh-tuning)
     wazuh_indexer_admin_password: >-
       {{
         lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD')
@@ -895,7 +898,8 @@
                 wazuh.indexer:
                   condition: service_healthy
               healthcheck:
-                test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302'"]
+                # 401 is healthy: the OIDC-protected dashboard answers /api/status with 401 when it is up
+                test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302|401'"]
                 interval: 10s
                 timeout: 10s
                 retries: 60
@@ -1051,6 +1055,215 @@
         port: 55000
         timeout: 300
       when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
+
+    # Repo-managed local rules (docs/wazuh-tuning/plan.md Phase 1d): level-0 children of rule
+    # 87907 for the exact health-check commands of our containers. local_rules.xml lives in
+    # the wazuh_etc named volume, so it is delivered with docker cp like authd.pass, and
+    # validated with wazuh-analysisd -t BEFORE the manager is restarted: a bad file is rolled
+    # back to the previous copy and fails the play, never loaded. Source of truth:
+    # files/wazuh-stack/docker_healthchecks.json -> gen_local_rules.py -> local_rules.xml.
+    - name: Stage local_rules.xml on the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/local_rules.xml"
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml"
+        mode: "0640"
+      register: wazuh_local_rules_staged
+      tags: [wazuh_local_rules]
+
+    - name: Compare the staged rules with the manager's live copy
+      ansible.builtin.shell: |
+        h=$(sha256sum < {{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml)
+        c=$(docker exec wazuh-stack-manager sh -c 'sha256sum < /var/ossec/etc/rules/local_rules.xml')
+        test "$h" = "$c"
+      register: wazuh_local_rules_same
+      changed_when: false
+      failed_when: false
+      tags: [wazuh_local_rules]
+
+    - name: Deliver, validate and load local_rules.xml
+      when: wazuh_local_rules_same.rc != 0
+      tags: [wazuh_local_rules]
+      block:
+        - name: Back up the live local_rules.xml inside the volume
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, cp, -p, /var/ossec/etc/rules/local_rules.xml, /var/ossec/etc/rules/local_rules.xml.bak]
+          changed_when: true
+
+        - name: Copy the new local_rules.xml into the manager container
+          ansible.builtin.command:
+            argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/local_rules.xml",
+                   "wazuh-stack-manager:/var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+
+        - name: Set ownership and permissions on the in-container local_rules.xml
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, sh, -c,
+                   "chown 999:999 /var/ossec/etc/rules/local_rules.xml && chmod 660 /var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+
+        - name: Validate the ruleset (wazuh-analysisd -t) before anything is restarted
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-analysisd, -t]
+          changed_when: false
+
+        - name: Restart the manager so analysisd loads the new rules
+          ansible.builtin.command:
+            argv: [docker, restart, wazuh-stack-manager]
+          changed_when: true
+
+        - name: Wait for manager API port to accept connections after the rules restart
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: 55000
+            timeout: 300
+      rescue:
+        - name: Validation or load failed -- restore the previous local_rules.xml
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, sh, -c,
+                   "test -f /var/ossec/etc/rules/local_rules.xml.bak && cp -p /var/ossec/etc/rules/local_rules.xml.bak /var/ossec/etc/rules/local_rules.xml"]
+          changed_when: true
+        - name: Fail the play (the new rules were not loaded)
+          ansible.builtin.fail:
+            msg: local_rules.xml failed validation; the previous copy was restored and no restart was done.
+
+    # Retention (docs/wazuh-tuning/plan.md Phase 1c). Alert indices were never deleted. An ISM
+    # policy deletes wazuh-alerts-4.x-* after wazuh_alert_retention_days; its ism_template attaches
+    # it to every NEW daily index, and the add call below attaches it to the existing ones (a
+    # repeat call is harmless: already-managed indices are reported as failures and ignored).
+    # The manager's own raw logs (/var/ossec/logs/alerts, archives) are not indices and are never
+    # rotated out by Wazuh, so a cron job on the host prunes them to the same age.
+    - name: Read the alert retention ISM policy
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_plugins/_ism/policies/wazuh-alerts-retention"
+        method: GET
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+        return_content: true
+      register: wazuh_ism_policy
+      tags: [wazuh_retention]
+
+    - name: Create or update the alert retention ISM policy
+      ansible.builtin.uri:
+        url: >-
+          https://127.0.0.1:9200/_plugins/_ism/policies/wazuh-alerts-retention{{
+            '' if wazuh_ism_policy.status == 404 else
+            '?if_seq_no=' ~ wazuh_ism_policy.json._seq_no ~ '&if_primary_term=' ~ wazuh_ism_policy.json._primary_term }}
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 201]
+        body_format: json
+        body:
+          policy:
+            description: "Delete wazuh-alerts-4.x-* after {{ wazuh_alert_retention_days }} days (docs/wazuh-tuning)"
+            default_state: hot
+            states:
+              - name: hot
+                actions: []
+                transitions:
+                  - state_name: delete
+                    conditions:
+                      min_index_age: "{{ wazuh_alert_retention_days }}d"
+              - name: delete
+                actions:
+                  - delete: {}
+                transitions: []
+            ism_template:
+              - index_patterns: ["wazuh-alerts-4.x-*"]
+                priority: 100
+      when: >-
+        wazuh_ism_policy.status == 404 or
+        (wazuh_ism_policy.json.policy.states[0].transitions[0].conditions.min_index_age
+         != (wazuh_alert_retention_days | string) ~ 'd')
+      tags: [wazuh_retention]
+
+    - name: Attach the policy to the existing alert indices
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_plugins/_ism/add/wazuh-alerts-4.x-*"
+        method: POST
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          policy_id: wazuh-alerts-retention
+        return_content: true
+      register: wazuh_ism_attach
+      changed_when: (wazuh_ism_attach.json.updated_indices | default(0)) > 0
+      tags: [wazuh_retention]
+
+    # Single node: a replica can never be placed, and the ISM plugin's own system indices default to
+    # one, which made the cluster yellow after the policy was created (found 2026-10-15). Existing
+    # ones are set to 0 replicas and a template gives the daily history indices the same.
+    # Protected system indices reject the basic-auth admin user, so this uses the admin TLS client
+    # certificate that already sits in the indexer container.
+    - name: Set 0 replicas on the ISM and job-scheduler system indices
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - wazuh-stack-indexer
+          - curl
+          - -sk
+          - --fail-with-body
+          - --cert
+          - /usr/share/wazuh-indexer/config/certs/admin.pem
+          - --key
+          - /usr/share/wazuh-indexer/config/certs/admin-key.pem
+          - -X
+          - PUT
+          - -H
+          - "Content-Type: application/json"
+          - "https://localhost:9200/.opendistro-*/_settings?expand_wildcards=all"
+          - -d
+          - '{"index":{"number_of_replicas":0}}'
+      changed_when: false
+      tags: [wazuh_retention]
+
+    - name: Template so new .opendistro-* system indices also get 0 replicas
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_template/wazuh-single-node-system-indices"
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_patterns: [".opendistro-*"]
+          order: 100
+          settings:
+            index:
+              number_of_replicas: 0
+      changed_when: false
+      tags: [wazuh_retention]
+
+    - name: Prune the manager's raw alert and archive logs to the same age
+      ansible.builtin.copy:
+        dest: /etc/cron.d/wazuh-log-retention
+        mode: "0644"
+        content: |
+          # managed by deploy-wazuh-stack.yml (docs/wazuh-tuning Phase 1c): Wazuh never deletes these
+          30 3 * * * root docker exec wazuh-stack-manager find /var/ossec/logs/alerts /var/ossec/logs/archives -type f -mtime +{{ wazuh_alert_retention_days }} -delete
+      tags: [wazuh_retention]
+
+    # Shared agent configuration (docs/wazuh-tuning/plan.md Phase 2a): FIM ignore lists for the few
+    # paths that rewrite themselves constantly. One agent.conf per agent group, scoped inside by agent
+    # name. Same safety pattern as local_rules.xml: back up, docker cp, verify-agent-conf, restore on
+    # failure. No manager restart is needed -- the manager pushes the change to the agents.
+    # -e '{"wazuh_agent_conf_groups":["game_seg"]}' limits a run to one group (canary).
+    - name: Deliver shared agent.conf files to the manager
+      ansible.builtin.include_tasks: wazuh-agent-conf-item.yml
+      loop: "{{ wazuh_agent_conf_groups | default(['default', 'ai_seg', 'apps_seg', 'build_seg', 'connector_seg', 'edge_seg', 'game_seg', 'infra_seg', 'media_seg', 'mgmt_seg', 'pentest_seg']) }}"
+      loop_control:
+        loop_var: wazuh_group
+      tags: [wazuh_agent_conf]
 
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
@@ -1375,3 +1588,56 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Grafana integration (cAdvisor + Wazuh metrics for node_exporter's textfile collector)
+  hosts: all
+  become: true
+  gather_facts: true
+  # Additive and independent of the Wazuh compose project: a separate cAdvisor compose project (like
+  # harbor-cadvisor / greenbone-cadvisor) and a systemd timer. Run alone with --tags monitoring-integration;
+  # it never touches a Wazuh container. Needs node_exporter_textfile_dir (first play) applied via lxc_base.
+  tags: [monitoring-integration]
+  vars:
+    # Same value as in the first play: the node_exporter role is re-applied here so that ONE targeted run
+    # (--tags monitoring-integration) turns the textfile collector on and then starts writing to it.
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
+    wazuh_cadvisor_compose_dir: /opt/wazuh-cadvisor
+    wazuh_cadvisor_host_port: 8080
+    wazuh_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+  roles:
+    - node_exporter
+    - wazuh_metrics
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ wazuh_cadvisor_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ wazuh_cadvisor_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cadvisor:
+              image: "{{ wazuh_cadvisor_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+              container_name: cadvisor
+              restart: unless-stopped
+              # This host has about 1.3GB free on 8GB (the indexer takes 5GB): cAdvisor must never compete with it.
+              mem_limit: 256m
+              ports:
+                - "{{ wazuh_cadvisor_host_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: wazuh_cadvisor_compose_definition
+
+    - name: Deploy cAdvisor via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_cadvisor_compose_dir }}"
+        state: present
+        recreate: "{{ 'always' if wazuh_cadvisor_compose_definition.changed else 'auto' }}"

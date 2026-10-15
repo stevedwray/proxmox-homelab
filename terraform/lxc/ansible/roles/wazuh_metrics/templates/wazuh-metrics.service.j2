@@ -1,0 +1,10 @@
+[Unit]
+Description=Wazuh metrics for node_exporter's textfile collector
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=WAZUH_INDEXER_URL={{ wazuh_metrics_indexer_url }}
+Environment=WAZUH_METRICS_OUT={{ wazuh_metrics_textfile_dir }}/wazuh.prom
+EnvironmentFile=-{{ wazuh_metrics_dir }}/wazuh-user.env
+ExecStart=/usr/bin/python3 {{ wazuh_metrics_dir }}/wazuh_metrics.py

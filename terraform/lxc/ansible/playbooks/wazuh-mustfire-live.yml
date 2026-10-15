@@ -1,0 +1,152 @@
+# Tier 2 detection test: real, marked, self-cleaning actions on ONE test agent, then check
+# the alerts arrived -- docs/wazuh-tuning/plan.md Phase 0. Not part of provisioning.
+#
+# Two inventories: the test agent's and the wazuh-stack's (groups apt_cacher_stack and wazuh_stack).
+#
+#   export TASK_APPROVAL=<task-name> ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles
+#   ./with-secrets-prod ansible-playbook -u root \
+#     -i ~/git/proxmox-homelab/terraform/lxc/environments/pve/apt-cacher-stack/inventory.yml \
+#     -i ~/git/proxmox-homelab/terraform/lxc/environments/pve/wazuh-stack/inventory.yml \
+#     terraform/lxc/ansible/playbooks/wazuh-mustfire-live.yml </dev/null
+#
+# Variables:
+#   live_group    inventory group of the test agent (default apt_cacher_stack)
+#   live_docker   true on a Docker host: also start a throwaway container and exec in it
+#   live_docker_image   image for that container (required with live_docker)
+#   live_rootcheck true: also drop a hidden /dev marker file and trigger a rootcheck scan (waits longer)
+#
+# Everything created is removed in an always: block. The agent's name in Wazuh must equal
+# its inventory hostname (true for the stacks).
+- name: Perform marked actions on the test agent
+  hosts: "{{ live_group | default('apt_cacher_stack') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    # set_fact renders once; a play var with the lookup would re-run `date` on every use
+    - name: Fix one marker for this run
+      ansible.builtin.set_fact:
+        marker: "mfire{{ lookup('pipe', 'date +%s') }}"
+    - name: Remember the marker for the checking play
+      ansible.builtin.set_fact:
+        mf_marker: "{{ marker }}"
+
+    - name: Marked actions
+      block:
+        # Before the user exists, so sshd reports "Invalid user <marker>" (non-existent-user alert)
+        - name: Attempt an ssh login as the not-yet-existing marker user
+          ansible.builtin.command: >-
+            ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5
+            {{ marker }}@127.0.0.1 true
+          failed_when: false
+          changed_when: false
+
+        - name: Create a throwaway user (new-user alert)
+          ansible.builtin.command: useradd --no-create-home --shell /usr/sbin/nologin {{ marker }}
+          changed_when: true
+
+        - name: Add, change and remove a marked file under /etc (FIM add, modify, delete)
+          ansible.builtin.shell: |
+            f=/etc/{{ marker }}.test; k=/etc/{{ marker }}.key
+            echo one > $f; echo dummy-key-material-one > $k; sleep 8
+            echo two >> $f; echo dummy-key-material-two >> $k; sleep 8
+            rm -f $f $k; sleep 8
+          changed_when: true
+
+        - name: Create a known rootkit signature file in /tmp (rootkit_files.txt 'Bash door'; removed at the end)
+          when: live_rootcheck | default(false) | bool
+          ansible.builtin.file:
+            path: /tmp/mcliZokhb
+            state: touch
+            mode: "0600"
+
+        - name: Create a hidden marker file under /dev (rootcheck alert; /dev is a tmpfs, removed in cleanup)
+          when: live_rootcheck | default(false) | bool
+          ansible.builtin.file:
+            path: "/dev/.{{ marker }}"
+            state: touch
+            mode: "0600"
+
+        - name: Delete the throwaway user (user-deleted alert)
+          ansible.builtin.command: userdel {{ marker }}
+          changed_when: true
+
+        - name: Docker actions (only on a Docker host)
+          when: live_docker | default(false) | bool
+          block:
+            - name: Start a throwaway container named for the marker
+              ansible.builtin.command: docker run -d --name {{ marker }}c --entrypoint sleep {{ live_docker_image | mandatory }} 120
+              changed_when: true
+            - name: Exec a non-health-check command in it
+              ansible.builtin.command: docker exec {{ marker }}c sh -c "id; ls /"
+              changed_when: true
+      always:
+        - name: Cleanup - user, file and container
+          ansible.builtin.shell: |
+            id {{ marker }} >/dev/null 2>&1 && userdel {{ marker }}
+            rm -f /etc/{{ marker }}.test /etc/{{ marker }}.key
+            {{ '' if live_rootcheck | default(false) | bool else 'rm -f /dev/.' ~ marker }}
+            command -v docker >/dev/null 2>&1 && docker rm -f {{ marker }}c >/dev/null 2>&1
+            true
+          changed_when: false
+
+- name: Check the alerts arrived
+  hosts: wazuh_stack
+  become: true
+  gather_facts: false
+  vars:
+    agent_host: "{{ groups[live_group | default('apt_cacher_stack')][0] }}"
+    marker: "{{ live_marker | default(hostvars[agent_host].mf_marker) }}"   # -e live_marker=... to re-check a past run
+  tasks:
+    - name: Run a rootcheck scan on the agent now (Wazuh API, only with live_rootcheck=true)
+      when: live_rootcheck | default(false) | bool
+      ansible.builtin.shell: |
+        tok=$(curl -sk -u wazuh-wui:"$WAZUH_API_PASSWORD" -X POST "https://127.0.0.1:55000/security/user/authenticate?raw=true")
+        id=$(curl -sk -H "Authorization: Bearer $tok" "https://127.0.0.1:55000/agents?name={{ agent_host }}&select=id" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["affected_items"][0]["id"])')
+        curl -sk -H "Authorization: Bearer $tok" -X PUT "https://127.0.0.1:55000/rootcheck?agents_list=$id"
+      environment:
+        WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
+      register: wazuh_rootcheck_run
+      changed_when: true
+    - ansible.builtin.debug:
+        var: wazuh_rootcheck_run.stdout
+      when: wazuh_rootcheck_run is not skipped
+
+    - name: Wait for the agent -> manager -> indexer path
+      ansible.builtin.pause:
+        seconds: "{{ 150 if live_rootcheck | default(false) | bool else 75 }}"
+
+    - name: Copy the suite
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-tuning/{{ item }}"
+        dest: "/opt/wazuh-stack/tuning/{{ item }}"
+        mode: "0644"
+      loop: [wazuh_tuning.py, must_fire.py, must_fire_live_cases.json]
+
+    - name: Run the live checks
+      ansible.builtin.command:
+        argv: >-
+          {{ ['python3', '/opt/wazuh-stack/tuning/must_fire.py', 'live', agent_host, marker]
+             + (['docker'] if live_docker | default(false) | bool else []) + (['rootcheck'] if live_rootcheck | default(false) | bool else []) }}
+        chdir: /opt/wazuh-stack/tuning
+      environment:
+        WAZUH_INDEXER_ADMIN_PASSWORD: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory }}"
+        WAZUH_API_PASSWORD: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
+      register: live
+      changed_when: false
+      failed_when: false
+    - ansible.builtin.debug:
+        var: live.stdout_lines
+
+    # The hidden /dev marker must still exist while the rootcheck scan runs, so it is removed here, last.
+    - name: Remove the hidden /dev marker and the signature file from the agent
+      when: live_rootcheck | default(false) | bool
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: ["/dev/.{{ marker }}", /tmp/mcliZokhb]
+      delegate_to: "{{ agent_host }}"
+
+    - name: Fail if any live check failed
+      ansible.builtin.fail:
+        msg: the live checks failed -- see the output above
+      when: live.rc != 0

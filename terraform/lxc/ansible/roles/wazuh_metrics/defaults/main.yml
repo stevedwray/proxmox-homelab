@@ -1,0 +1,20 @@
+---
+# Wazuh metrics for Grafana (docs/wazuh-tuning, Phase 6). Runs on the wazuh-stack host, writes wazuh.prom into
+# node_exporter's textfile directory (node_exporter_textfile_dir in the playbook, applied by the node_exporter role).
+wazuh_metrics_dir: /opt/wazuh-metrics
+wazuh_metrics_textfile_dir: /var/lib/node_exporter/textfile
+wazuh_metrics_interval: "1min"
+
+# Indexer the script reads (loopback on the wazuh host) and the address the role uses to provision its user.
+wazuh_metrics_indexer_url: "https://127.0.0.1:9200"
+wazuh_metrics_wazuh_host: "{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}"
+wazuh_metrics_wazuh_url: "https://{{ wazuh_metrics_wazuh_host }}:9200"
+wazuh_metrics_no_verify_tls: true
+
+# Admin superuser: used only here, to bootstrap the scoped read-only user below. The timer never sees it.
+wazuh_metrics_admin_user: admin
+wazuh_metrics_admin_password: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required') }}"
+
+# Scoped, read-only indexer identity: cluster monitoring plus read/monitor on the alert and vulnerability-state indices.
+wazuh_metrics_role_name: wazuh_metrics_reader
+wazuh_metrics_user_name: wazuh_metrics

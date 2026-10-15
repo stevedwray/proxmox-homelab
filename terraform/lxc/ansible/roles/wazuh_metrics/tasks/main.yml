@@ -1,0 +1,136 @@
+---
+# Wazuh-specific metrics for Grafana. Needs node_exporter's textfile collector enabled at
+# wazuh_metrics_textfile_dir (node_exporter_textfile_dir in the playbook). Run alone with
+# --tags monitoring-integration; it never touches a Wazuh container.
+- name: Create wazuh-metrics directory
+  ansible.builtin.file:
+    path: "{{ wazuh_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Copy the metrics script
+  ansible.builtin.copy:
+    src: wazuh_metrics.py
+    dest: "{{ wazuh_metrics_dir }}/wazuh_metrics.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+# ---- scoped read-only indexer user (pattern: roles/wazuh_findings_ingest) --------------------------------------
+# Existence is checked against the live security API, not a local file: a securityadmin.sh reapply (the OIDC play in
+# deploy-wazuh-stack.yml) restores users from internal_users.yml and silently deletes REST-created ones.
+- name: Check if the Wazuh Indexer is reachable
+  ansible.builtin.wait_for:
+    host: "{{ wazuh_metrics_wazuh_host }}"
+    port: 9200
+    timeout: 5
+  register: wazuh_metrics_reachable
+  ignore_errors: true
+
+- name: Warn and skip the indexer user setup when the indexer is not reachable
+  ansible.builtin.debug:
+    msg: "Wazuh Indexer at {{ wazuh_metrics_wazuh_host }}:9200 is not reachable; skipping the wazuh-metrics user setup -- re-run once it is up."
+  when: wazuh_metrics_reachable.failed | default(true)
+
+- name: Ensure the wazuh_metrics_reader role exists (idempotent PUT, picks up permission changes)
+  ansible.builtin.uri:
+    url: "{{ wazuh_metrics_wazuh_url }}/_plugins/_security/api/roles/{{ wazuh_metrics_role_name }}"
+    method: PUT
+    url_username: "{{ wazuh_metrics_admin_user }}"
+    url_password: "{{ wazuh_metrics_admin_password }}"
+    validate_certs: "{{ not wazuh_metrics_no_verify_tls }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      cluster_permissions: ["cluster_monitor"]
+      index_permissions:
+        - index_patterns: ["wazuh-alerts-*", "wazuh-states-vulnerabilities-*"]
+          allowed_actions: ["read", "indices_monitor"]
+    status_code: [200, 201]
+  when: not (wazuh_metrics_reachable.failed | default(true))
+  delegate_to: localhost
+
+- name: Check whether the scoped indexer user exists remotely
+  ansible.builtin.uri:
+    url: "{{ wazuh_metrics_wazuh_url }}/_plugins/_security/api/internalusers/{{ wazuh_metrics_user_name }}"
+    method: GET
+    url_username: "{{ wazuh_metrics_admin_user }}"
+    url_password: "{{ wazuh_metrics_admin_password }}"
+    validate_certs: "{{ not wazuh_metrics_no_verify_tls }}"
+    force_basic_auth: true
+    status_code: [200, 404]
+  register: wazuh_metrics_user_get
+  when: not (wazuh_metrics_reachable.failed | default(true))
+  delegate_to: localhost
+
+- name: Check for the local credential file
+  ansible.builtin.stat:
+    path: "{{ wazuh_metrics_dir }}/wazuh-user.env"
+  register: wazuh_metrics_env_stat
+
+- name: Decide whether a new credential is needed (user missing remotely, or the local file is missing)
+  ansible.builtin.set_fact:
+    wazuh_metrics_need_credential: >-
+      {{ not (wazuh_metrics_reachable.failed | default(true))
+         and (wazuh_metrics_user_get.status == 404 or not wazuh_metrics_env_stat.stat.exists) }}
+
+- name: Generate a random password
+  ansible.builtin.set_fact:
+    wazuh_metrics_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+  when: wazuh_metrics_need_credential | bool
+  no_log: true
+
+- name: Create or reset the scoped indexer user
+  ansible.builtin.uri:
+    url: "{{ wazuh_metrics_wazuh_url }}/_plugins/_security/api/internalusers/{{ wazuh_metrics_user_name }}"
+    method: PUT
+    url_username: "{{ wazuh_metrics_admin_user }}"
+    url_password: "{{ wazuh_metrics_admin_password }}"
+    validate_certs: "{{ not wazuh_metrics_no_verify_tls }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      password: "{{ wazuh_metrics_password }}"
+      opendistro_security_roles: ["{{ wazuh_metrics_role_name }}"]
+      description: "wazuh_metrics service account (wazuh-stack) -- read-only, never the admin superuser"
+    status_code: [200, 201]
+  when: wazuh_metrics_need_credential | bool
+  delegate_to: localhost
+  no_log: true
+
+- name: Write the credential file
+  ansible.builtin.copy:
+    dest: "{{ wazuh_metrics_dir }}/wazuh-user.env"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # wazuh-metrics indexer reader credential - managed by Ansible, do not edit by hand
+      WAZUH_USER={{ wazuh_metrics_user_name }}
+      WAZUH_PASSWORD={{ wazuh_metrics_password }}
+  when: wazuh_metrics_need_credential | bool
+  no_log: true
+
+# ---- the timer -----------------------------------------------------------------------------------------------
+- name: Write wazuh-metrics service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - wazuh-metrics.service
+    - wazuh-metrics.timer
+  notify: Reload systemd
+
+- name: Flush handlers so systemd sees the units
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the wazuh-metrics timer
+  ansible.builtin.systemd:
+    name: wazuh-metrics.timer
+    enabled: true
+    state: started

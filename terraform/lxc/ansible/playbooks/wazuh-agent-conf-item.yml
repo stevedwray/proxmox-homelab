@@ -1,0 +1,92 @@
+# Included by deploy-wazuh-stack.yml (tag wazuh_agent_conf): deliver one group's agent.conf.
+# Content = the common block (every group) + that group's own agent-scoped blocks, if it has a file.
+- name: "Stage {{ wazuh_group }} agent.conf on the host"
+  ansible.builtin.copy:
+    content: >-
+      {{ lookup('file', playbook_dir ~ '/../files/wazuh-stack/agent_conf/common.xml') }}{{
+         lookup('file', playbook_dir ~ '/../files/wazuh-stack/agent_conf/' ~ wazuh_group ~ '.xml', errors='ignore') | default('', true) }}
+    dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml"
+    mode: "0640"
+  tags: [wazuh_agent_conf]
+
+- name: "Compare {{ wazuh_group }} with the manager's live copy"
+  ansible.builtin.shell: |
+    h=$(sha256sum < {{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml)
+    c=$(docker exec wazuh-stack-manager sh -c 'sha256sum < /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf')
+    test "$h" = "$c"
+  register: wazuh_agent_conf_same
+  changed_when: false
+  failed_when: false
+  tags: [wazuh_agent_conf]
+
+# Delivery order matters (found 2026-10-15): wazuh-remoted reads a group dir continuously. A file
+# docker-cp'd straight into it is briefly root-owned, remoted logged "Permission denied ... Invalid shared
+# file" and left agent.conf out of the merge until it was touched. So the file is copied and chowned in a
+# staging dir inside the same volume (outside shared/), then moved into place with an atomic rename.
+# Backups also live outside shared/, because everything in a group dir is pushed to the agents.
+- name: "Deliver and validate {{ wazuh_group }} agent.conf"
+  when: wazuh_agent_conf_same.rc != 0
+  tags: [wazuh_agent_conf]
+  vars:
+    shared: /var/ossec/etc/shared/{{ wazuh_group }}/agent.conf
+    stage: /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.agent.conf.new
+    backup: /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.agent.conf.bak
+  block:
+    - name: Make sure the staging and backup directory exists
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "mkdir -p /var/ossec/etc/agent-conf-backup && chown 999:999 /var/ossec/etc/agent-conf-backup && chmod 700 /var/ossec/etc/agent-conf-backup"]
+      changed_when: false
+    - name: Back up the live agent.conf (outside the shared dir)
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, cp, -p, "{{ shared }}", "{{ backup }}"]
+      changed_when: true
+    - name: Copy the new agent.conf into the staging dir
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/agent-conf-{{ wazuh_group }}.xml", "wazuh-stack-manager:{{ stage }}"]
+      changed_when: true
+    - name: Set ownership and permissions, then move it into place atomically
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "chown 999:999 {{ stage }} && chmod 660 {{ stage }} && mv {{ stage }} {{ shared }}"]
+      changed_when: true
+    - name: Validate every group's agent.conf
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/verify-agent-conf]
+      register: wazuh_agent_conf_check
+      changed_when: false
+      failed_when: wazuh_agent_conf_check.rc != 0 or 'ERROR' in (wazuh_agent_conf_check.stdout ~ wazuh_agent_conf_check.stderr)
+  rescue:
+    - name: Validation failed -- restore the previous agent.conf
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c, "test -f {{ backup }} && cp -p {{ backup }} {{ shared }}"]
+      changed_when: true
+    - name: Fail the play
+      ansible.builtin.fail:
+        msg: "{{ wazuh_group }} agent.conf failed verify-agent-conf; the previous copy was restored."
+
+# The rootkit rule files exist only in the default group dir, and an agent receives only the files of the groups it
+# is in, so the 18 agents without the default group would never get them. Copy them into each other group the same
+# safe way (staging dir, chown, atomic rename), only when missing or different.
+- name: "Make the rootkit rule files available in {{ wazuh_group }}"
+  when: wazuh_group != 'default'
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - wazuh-stack-manager
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /var/ossec/etc/agent-conf-backup && chown 999:999 /var/ossec/etc/agent-conf-backup && chmod 700 /var/ossec/etc/agent-conf-backup
+        for f in rootkit_files.txt rootkit_trojans.txt; do
+          if ! cmp -s /var/ossec/etc/shared/default/$f /var/ossec/etc/shared/{{ wazuh_group }}/$f; then
+            cp /var/ossec/etc/shared/default/$f /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            chown 999:999 /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            chmod 660 /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new
+            mv /var/ossec/etc/agent-conf-backup/{{ wazuh_group }}.$f.new /var/ossec/etc/shared/{{ wazuh_group }}/$f
+            echo copied $f
+          fi
+        done
+  register: wazuh_rootkit_files
+  changed_when: "'copied' in wazuh_rootkit_files.stdout"
+  tags: [wazuh_agent_conf]

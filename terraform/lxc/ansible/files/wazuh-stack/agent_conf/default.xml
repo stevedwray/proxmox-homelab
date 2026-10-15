@@ -1,0 +1,8 @@
+<!-- Phase 2a (docs/wazuh-tuning): the Proxmox host's lrm_status is a pmxcfs status file rewritten every few
+     seconds (57% of all FIM alerts). Plain <ignore> is a path prefix, so this also covers lrm_status.tmp.*.
+     Scoped to this one agent by name; the other agents in the default group are unaffected. -->
+<agent_config name="pve.gibbsgreatly.xyz">
+  <syscheck>
+    <ignore>/etc/pve/nodes/pve/lrm_status</ignore>
+  </syscheck>
+</agent_config>

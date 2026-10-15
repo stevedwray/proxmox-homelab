@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for wazuh-metrics.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ wazuh_metrics_interval }}
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
