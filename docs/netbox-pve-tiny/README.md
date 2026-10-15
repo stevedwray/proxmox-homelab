@@ -1,8 +1,8 @@
 # NetBox: include pve-tiny
 
 **Status (2026-10-16): prepared in the repo, not deployed.** Needs a read-only
-token on pve-tiny, which only an operator can create and store (agents have no
-OpenBao write access).
+token on pve-tiny, which only an operator can store (agents have no OpenBao write
+access); `scripts/pve-tiny-readonly-token.sh` does the create-and-store in one command.
 
 ## Why
 
@@ -30,6 +30,7 @@ must live in a shared entry (`services/netbox`).
 | `exclude_vmids` support in discovery + test | `integrations/populate.py`, `test_populate_multi_source.py` |
 | `PVE_TINY_READONLY_TOKEN_ID/SECRET` passed into the populate env file when set | `deploy-netbox-stack.yml` |
 | Guarded, archived, dry-run-first deletion tool | `scripts/netbox-delete-managed.py` |
+| Create + verify + store the read-only token without printing it | `scripts/pve-tiny-readonly-token.sh` |
 
 Until the token exists the pve-tiny entry is skipped with a warning, not an error.
 **Do not deploy the NetBox stack with these changes before step 5**: pve would
@@ -38,42 +39,40 @@ their `@pve` records would just show as stale.
 
 ## Runbook
 
-Steps 1-3 and 4's commit are the operator's; the rest can be run by an agent
+Steps 1-3 are the operator's; the rest can be run by an agent
 under the normal production approval flow.
 
-### 1. Create the token on pve-tiny (operator)
+### 1-2. Create the token and store it in OpenBao (operator, one command)
 
-One dedicated read-only user; permissions are the intersection of user and
-token ACLs, so grant PVEAuditor to both.
+`scripts/pve-tiny-readonly-token.sh` uses the pve-tiny deploy token (Administrator, via
+`./with-secrets-prod-tiny`) to create `netbox-ro@pve` and the token `netbox-ro@pve!readonly`
+(PVEAuditor on both user and token, privsep), checks that the new token can list guests and is
+**refused a write (403)**, then pipes it straight into `openbao_write.py`. The secret is never
+printed or written to a file; if verification fails the token is deleted again.
+`openbao_write.py` merges into the existing entry, so NetBox's other fields are kept.
 
 ```bash
-ssh root@pve-tiny.gibbsgreatly.xyz
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+scripts/pve-tiny-readonly-token.sh --check              # read-only dry check
+scripts/pve-tiny-readonly-token.sh --also-host-entry    # create + store in services/netbox and hosts/pve-tiny
+unset BAO_TOKEN
+```
+
+Drop `--also-host-entry` to skip `hosts/pve-tiny` (that second copy closes
+`docs/catch-up/13` item 13.7: live checks through `./with-secrets-prod-tiny`). If the token already
+exists its secret is unrecoverable: `ssh root@pve-tiny.gibbsgreatly.xyz pveum user token remove netbox-ro@pve readonly`,
+then re-run.
+
+Manual equivalent, if you prefer to do it by hand on pve-tiny:
+
+```bash
 pveum user add netbox-ro@pve --comment "Read-only discovery (NetBox populate, live checks)"
 pveum acl modify / --users netbox-ro@pve --roles PVEAuditor
 pveum user token add netbox-ro@pve readonly --privsep 1 --output-format json   # secret shown ONCE
 pveum acl modify / --tokens 'netbox-ro@pve!readonly' --roles PVEAuditor
 ```
-
-Check it (should list the 8 guests):
-
-```bash
-curl -sk -H "Authorization: PVEAPIToken=netbox-ro@pve!readonly=<secret>" \
-  "https://pve-tiny.gibbsgreatly.xyz:8006/api2/json/cluster/resources?type=vm" | python3 -m json.tool | grep '"name"'
-```
-
-### 2. Store it in OpenBao (operator)
-
-`openbao_write.py` merges into the existing entry, so NetBox's other fields are kept.
-The token id is `netbox-ro@pve!readonly`.
-
-```bash
-export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
-export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
-LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/netbox PVE_TINY_READONLY_TOKEN_ID PVE_TINY_READONLY_TOKEN_SECRET
-# optional, same token: closes docs/catch-up/13 item 13.7 (live checks via ./with-secrets-prod-tiny)
-LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py hosts/pve-tiny PROXMOX_READONLY_TOKEN_ID PROXMOX_READONLY_TOKEN_SECRET
-unset BAO_TOKEN
-```
+then `scripts/openbao_write.py services/netbox PVE_TINY_READONLY_TOKEN_ID PVE_TINY_READONLY_TOKEN_SECRET`.
 
 ### 3. Add the fields to the manifest, only now (operator)
 
