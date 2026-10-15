@@ -23,11 +23,11 @@ physical pool names directly in `stack.yaml`.
 
 ## Services
 
-Based on [netbox-docker](https://github.com/netbox-community/netbox-docker) release v4.6.10-5.0.2.
+Based on [netbox-docker](https://github.com/netbox-community/netbox-docker) release v4.7.3-5.1.1.
 
 | Service | Image | Role |
 |---------|-------|------|
-| `netbox` | `netboxcommunity/netbox:v4.6.10-5.0.2` | Web UI + API (port 8080) |
+| `netbox` | `netboxcommunity/netbox:v4.7.3-5.1.1` | Web UI + API (port 8080) |
 | `netbox-worker` | same | Background task queue (rqworker) |
 | `postgres` | `postgres:18-alpine` | Database |
 | `redis` | `valkey/valkey:9.0-alpine` | Task queue broker |

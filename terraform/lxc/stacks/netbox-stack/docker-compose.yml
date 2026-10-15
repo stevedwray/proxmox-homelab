@@ -1,4 +1,4 @@
-# NetBox Docker Compose — based on netbox-docker release v4.6.10-5.0.2
+# NetBox Docker Compose — based on netbox-docker release v4.7.3-5.1.1
 # Adapted for Portainer API deployment: env vars inlined, absolute config path.
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is injected by deploy-netbox-stack.yml via Portainer env vars.
@@ -6,7 +6,7 @@
 # Upstream: https://github.com/netbox-community/netbox-docker
 services:
   netbox: &netbox
-    image: ${REGISTRY_HOST}/dockerhub/netboxcommunity/netbox:v4.6.10-5.0.2
+    image: ${REGISTRY_HOST}/dockerhub/netboxcommunity/netbox:v4.7.3-5.1.1
     depends_on:
       postgres:
         condition: service_healthy
