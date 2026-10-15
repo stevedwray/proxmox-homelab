@@ -1518,6 +1518,32 @@ two reasoning-channel repetition flags remain. Canonical results, reports,
 raw files and active source are untouched; preserve/regrade at matrix review
 and recompute affected CK classifications before releasing replays.
 
+Post-matrix analysis staging Result (2026-10-16 NZDT): helper measurement
+checks passed on all thirteen completed jobs: exact approved identity,
+slot layout, request fields/budgets/seeds, cache flags, rendered/server
+tokens, cold-cache isolation, warm/cold payload equality, evidence and
+cleanup. Four fault-injection tests cover acceptance/refusal/semantic flags
+and rejection of measuring faults; two fingerprint tests distinguish grade
+metadata from immutable request/response/token/timing evidence.
+
+Staged private analyze_after_matrix.py, matrix_audit.py and review_matrix.py
+under the existing campaign root, launched as
+loop-hunt-matrix-analysis-20261015.service, invocation
+ac74d2d6b07e470ba001b8831d6313c2. Verified matrix-analysis.json stage
+waiting-for-matrix. It waits for all twenty jobs and inactive supervisor,
+then verifies cleanup/identity/measurements, preserves the active source,
+installs the tested scorer, automatically backs up and regrades each closed
+run, and requires identical request/response/token/timing fingerprints.
+It preserves the original campaign summary, refreshes its aggregate flags
+and writes matrix-review-ready.json. It cannot send inference or create the
+matrix-review.json replay-release marker; that still follows agent review
+and the required docs update. Source/staging remains fixed during live runs.
+Latest staged scorer is be9d79e1, SHA-256
+5c9f65bf551131659fe2202f291108de7d5ac744f94a81bf4484129f3c37fdff;
+waiting replay continuation invocation 9f6fbb30b23d4615849cc82485a54316.
+At 17:37 UTC, upstream C5 retry 2 has 22 saved clean requests: 8192-budget
+run complete, 16384-budget in progress. All old attempts remain untouched.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

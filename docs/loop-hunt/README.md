@@ -424,6 +424,7 @@ C4 runs last. Matrix findings/review remain pending.
 | Qwen upstream | C1 seeds 1 and 2 | 148/148 | none | six clean pairs | complete |
 | Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
 | Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
+| Qwen upstream | C5 retry 2 | — | none so far | — | 8192-budget complete; 16384-budget running |
 
 Recall correction pending canonical regrade: the previous build sometimes
 prefixes every question/reference line with [TRIAGE]. The extractor attached
@@ -477,6 +478,14 @@ service finished, model restoration, free lock and active timer were verified;
 no upstream C2 request had started. One approved launch retry resumed the
 unchanged campaign, with the new watcher attached and timer paused again.
 The original failure and retry are preserved in campaign.json and its backup.
+
+Post-matrix analysis is staged as
+`loop-hunt-matrix-analysis-20261015.service`, verified waiting. It requires
+all 20 jobs and their cleanup to pass measurement checks, then preserves
+pre-fix results/reports/raw data/progress and regrades them with the tested
+scorer. Request/response/token/timing fingerprints must remain identical.
+Regrading preserves completion timestamps. It writes matrix-review-ready.json;
+the separate replay gate remains closed until agent review and docs update.
 
 Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
 job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
