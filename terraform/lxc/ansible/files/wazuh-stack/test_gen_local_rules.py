@@ -74,8 +74,15 @@ class HealthcheckRules(unittest.TestCase):
                 self.assertNotIn("&", line.split(">", 1)[1].rsplit("</field", 1)[0])
 
     def test_redis_password_not_in_repo(self):
-        self.assertNotIn("sRtj", open(os.path.join(g.HERE, "local_rules.xml")).read())
-        self.assertNotIn("sRtj", open(os.path.join(g.HERE, "docker_healthchecks.json")).read())
+        """The nextcloud Redis health check carries its password on the command line; the rule must match it with a
+        wildcard and the repo must hold no literal. Checked without naming any part of the secret: no long unbroken
+        alphanumeric token (a password-shaped string) may appear in the generated rules or the health-check list."""
+        for name in ("local_rules.xml", "docker_healthchecks.json"):
+            with open(os.path.join(g.HERE, name)) as f:
+                text = f.read()
+            self.assertIsNone(re.search(r"(?<![A-Za-z0-9_-])[A-Za-z0-9]{24,}(?![A-Za-z0-9_-])", text), name)
+        with open(os.path.join(g.HERE, "docker_healthchecks.json")) as f:
+            self.assertIn("<REDISPW>", f.read())
 
 
 if __name__ == "__main__":
