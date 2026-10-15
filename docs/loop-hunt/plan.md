@@ -158,7 +158,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
-| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | stopped 2026-10-15; watcher launch race; cleanup verified |
+| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | running 2026-10-15; corrected launch and watcher first poll verified |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
@@ -1148,6 +1148,25 @@ successful poll, in addition to checking the watcher unit stays active.
 If any gate fails, restore the timer and gracefully interrupt this run for
 model restoration. Do not resume the failed launch or start another run
 until the operator resolves this stop point (reused rule 7).
+
+Operator resume and standing exception (2026-10-15): resume lh-05 with
+corrected launch ordering. For the rest of loop-hunt, a launch/setup failure
+before any request completes may receive one autonomous launch-mechanics
+fix/retry only after model restoration, free lock and active upgrade timer
+are verified. Record the failure/retry in the step's Result. Stop and ask if
+the retry also fails, any request completed, or the fix changes measurement.
+This exception overrides the blanket failed-gate stop only within that scope.
+Slot-layout differences and measuring/harness problems still stop for input.
+
+Result update (2026-10-15): approved corrected launch succeeded. New private
+run directory was created 0700 before launching the harness; run.json and
+progress.json appeared before watcher attachment. Watcher first successful
+poll confirmed running/zero requests and its unit active. Framework run:
+`/storage/artifacts/loop-hunt/20261015T003810Z-pilot`; harness unit
+`loop-hunt-20261015t003810z.service`; watcher unit
+`loop-hunt-pilot-watch-20261015t003810z.service`. Upgrade timer paused;
+watcher owns restoration. No harness code or measured settings changed.
+Pilot slot-layout and measuring review remain pending.
 
 #### lh-06-matrix
 
