@@ -75,6 +75,7 @@
     # live-needed consumer so far.
     tpot_extra_host_routes:
       - host: "192.168.50.12"  # secpipe-stack (ai_seg) -- tpot_findings_ingest sync job
+      - host: "192.168.40.15"  # wazuh-stack manager (infra_seg) -- inside T-Pot's Docker 192.168.32.0/20; Wazuh agent 1514/1515
 
   roles:
     - role: unattended_upgrades

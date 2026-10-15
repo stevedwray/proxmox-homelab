@@ -134,6 +134,14 @@
     uvm_dashboard_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
     uvm_dashboard_es_role_name: uvm_dashboard_reader
     uvm_dashboard_es_user_name: uvm_dashboard_exporter
+    # Grafana's native OpenSearch datasource for the T-Pot honeypot event
+    # panels (docs/tpot-honeypot/opensearch-grafana-plan.md). Its own
+    # read-only user, scoped to tpot-events-* only -- never the admin user and
+    # not the uvm reader. Password is generated once, kept in a 0600 file on
+    # this host, and re-read into the Grafana .env on every run.
+    tpot_events_es_role_name: tpot_events_reader
+    tpot_events_es_user_name: grafana_tpot_events
+    tpot_events_es_credential_path: "{{ monitoring_compose_dir }}/grafana/tpot-events-es.env"
 
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
@@ -269,6 +277,8 @@
                   labels: {stack: graylog-stack}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8083"]
                   labels: {stack: framework}
+                - targets: ["tpot.gibbsgreatly.xyz:8083"]
+                  labels: {stack: tpot-honeypot}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
                   labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:8082"]
@@ -440,6 +450,22 @@
                 dataType: json
                 useBackend: false
               editable: true
+            - name: T-Pot Events
+              uid: tpot-events
+              type: grafana-opensearch-datasource
+              access: proxy
+              url: {{ uvm_dashboard_elasticsearch_url }}
+              basicAuth: true
+              basicAuthUser: {{ tpot_events_es_user_name }}
+              jsonData:
+                database: "tpot-events-*"
+                timeField: "@timestamp"
+                flavor: opensearch
+                version: "2.19.0"
+                tlsSkipVerify: {{ 'true' if uvm_dashboard_es_no_verify_tls else 'false' }}
+              secureJsonData:
+                basicAuthPassword: $TPOT_EVENTS_ES_PASSWORD
+              editable: true
 
     - name: Write Grafana dashboard provider config
       ansible.builtin.copy:
@@ -589,6 +615,116 @@
         - not (uvm_dashboard_es_reachable.failed | default(true))
       no_log: true
 
+    # ---------------------------------------------------------------
+    # Scoped, read-only OpenSearch user for Grafana's T-Pot events
+    # datasource -- same shape as the uvm-dashboard user above.
+    # ---------------------------------------------------------------
+    - name: Check for existing OpenSearch tpot-events credential
+      ansible.builtin.stat:
+        path: "{{ tpot_events_es_credential_path }}"
+      register: tpot_events_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning the tpot-events user
+      ansible.builtin.wait_for:
+        host: "{{ uvm_dashboard_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: tpot_events_es_reachable
+      ignore_errors: true
+      when: not tpot_events_es_credential_stat.stat.exists
+      delegate_to: localhost
+
+    - name: Warn and skip tpot-events user provisioning when OpenSearch is not reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ uvm_dashboard_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping the tpot-events Grafana user -- the
+          T-Pot events datasource will not authenticate until a re-run succeeds.
+      when:
+        - not tpot_events_es_credential_stat.stat.exists
+        - tpot_events_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the tpot-events OpenSearch user
+      ansible.builtin.set_fact:
+        tpot_events_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not tpot_events_es_credential_stat.stat.exists
+        - not (tpot_events_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure tpot_events_reader role exists in OpenSearch (read-only, tpot-events-* only)
+      ansible.builtin.uri:
+        url: "{{ uvm_dashboard_elasticsearch_url }}/_plugins/_security/api/roles/{{ tpot_events_es_role_name }}"
+        method: PUT
+        url_username: "{{ uvm_dashboard_elastic_admin_user }}"
+        url_password: "{{ uvm_dashboard_elastic_admin_password }}"
+        validate_certs: "{{ not uvm_dashboard_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          # cluster_composite_ops_ro = msearch/mget reads Grafana needs; no write.
+          cluster_permissions:
+            - "cluster_composite_ops_ro"
+          index_permissions:
+            - index_patterns:
+                - "tpot-events-*"
+              allowed_actions:
+                - "read"
+        status_code: [200, 201]
+      when:
+        - not tpot_events_es_credential_stat.stat.exists
+        - not (tpot_events_es_reachable.failed | default(true))
+      delegate_to: localhost
+
+    - name: Ensure the tpot-events OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ uvm_dashboard_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ tpot_events_es_user_name }}"
+        method: PUT
+        url_username: "{{ uvm_dashboard_elastic_admin_user }}"
+        url_password: "{{ uvm_dashboard_elastic_admin_password }}"
+        validate_certs: "{{ not uvm_dashboard_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ tpot_events_es_password }}"
+          opendistro_security_roles:
+            - "{{ tpot_events_es_role_name }}"
+          description: "Grafana T-Pot events datasource (monitoring-stack) -- read-only, tpot-events-* only"
+        status_code: [200, 201]
+      when:
+        - not tpot_events_es_credential_stat.stat.exists
+        - not (tpot_events_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch tpot-events credential file
+      ansible.builtin.copy:
+        dest: "{{ tpot_events_es_credential_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # Grafana T-Pot events OpenSearch credential - managed by Ansible, do not edit by hand
+          TPOT_EVENTS_ES_PASSWORD={{ tpot_events_es_password }}
+      when:
+        - not tpot_events_es_credential_stat.stat.exists
+        - not (tpot_events_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Read the tpot-events credential file (empty if it was never created)
+      ansible.builtin.slurp:
+        src: "{{ tpot_events_es_credential_path }}"
+      register: tpot_events_es_credential_file
+      failed_when: false
+      no_log: true
+
+    - name: Resolve the tpot-events password for the Grafana env file
+      ansible.builtin.set_fact:
+        tpot_events_es_password_resolved: >-
+          {{ (tpot_events_es_credential_file.content | default('') | b64decode
+              | regex_findall('TPOT_EVENTS_ES_PASSWORD=([A-Za-z0-9]+)') | first | default('')) }}
+      no_log: true
+
     - name: Write monitoring secrets env file
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/.env"
@@ -598,6 +734,7 @@
           GF_AUTH_GENERIC_OAUTH_CLIENT_ID={{ grafana_oauth_client_id }}
           GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET={{ grafana_oauth_client_secret }}
           HARBOR_API_PASSWORD={{ harbor_api_password }}
+          TPOT_EVENTS_ES_PASSWORD={{ tpot_events_es_password_resolved }}
       no_log: true
 
     - name: Write monitoring compose definition
@@ -634,7 +771,7 @@
               environment:
                 GF_SERVER_ROOT_URL: "{{ grafana_public_url }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "{{ 'true' if grafana_oauth_enabled else 'false' }}"
-                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
+                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource,grafana-opensearch-datasource"
                 GF_AUTH_GENERIC_OAUTH_NAME: "{{ grafana_oauth_name }}"
                 GF_AUTH_GENERIC_OAUTH_SCOPES: "{{ grafana_oauth_scopes }}"
                 GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ grafana_oauth_auth_url }}"

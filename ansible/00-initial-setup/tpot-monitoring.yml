@@ -1,0 +1,98 @@
+---
+# Monitoring integration for the T-Pot honeypot host (Graylog logs, cAdvisor
+# metrics for monitoring-stack/Grafana, Wazuh agent), per
+# docs/tpot-honeypot/monitoring-plan.md.
+#
+# HOST LAYER ONLY: this playbook never touches ~/tpotce/, T-Pot's compose
+# project, or the Docker daemon (no install, restart or daemon.json change).
+# cAdvisor runs as its own compose project in /opt/cadvisor-docker.
+#
+# Tags (run one at a time, each is a separate operator action):
+#   logs      rsyslog_forward -> Graylog. MikroTik already allows
+#             192.168.1.0/24 -> Graylog tcp/514 (shared-graylog-ingress).
+#   cadvisor  cAdvisor on tcp/8083 (9100 is held by a T-Pot docker-proxy, so
+#             node_exporter cannot be used). Scraped by monitoring-stack's
+#             `cadvisor` job.
+#   wazuh     wazuh_agent -> manager 1514/1515 (already allowed from
+#             192.168.1.0/24). Needs the host route from
+#             tpot-host-baseline.yml (tpot_extra_host_routes: 192.168.40.15)
+#             applied FIRST -- T-Pot's Docker 192.168.32.0/20 bridge
+#             otherwise swallows traffic to the manager.
+#
+# Run (from repo root; env comes from the prod wrapper):
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook \
+#     -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/tpot-monitoring.yml --tags logs
+# Required env: LAB_IP_GRAYLOG (logs); LAB_IP_WAZUH,
+# WAZUH_AGENT_AUTHD_PASSWORD, WAZUH_API_PASSWORD (wazuh).
+
+- name: Integrate the T-Pot host with lab monitoring
+  hosts: tpot
+  become: true
+  gather_facts: true
+
+  vars:
+    tpot_cadvisor_image: "ghcr.io/google/cadvisor:v0.60.5"
+    tpot_cadvisor_port: 8083
+    tpot_cadvisor_dir: /opt/cadvisor-docker
+
+  tasks:
+    - name: Install rsyslog_forward for Graylog log shipping
+      ansible.builtin.include_role:
+        name: rsyslog_forward
+        apply:
+          tags: [logs]
+      vars:
+        # Real hardware with a real kernel log -- keep imklog enabled, same
+        # as framework-desktop-bootstrap.yml.
+        rsyslog_forward_disable_imklog: false
+      tags: [logs]
+
+    - name: Create cAdvisor docker-compose directory
+      ansible.builtin.file:
+        path: "{{ tpot_cadvisor_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [cadvisor]
+
+    - name: Install cAdvisor docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ tpot_cadvisor_dir }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          services:
+            cadvisor:
+              image: {{ tpot_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "{{ tpot_cadvisor_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: tpot_cadvisor_compose
+      tags: [cadvisor]
+
+    - name: Bring up cAdvisor via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ tpot_cadvisor_dir }}"
+      register: tpot_cadvisor_up
+      changed_when: "'Started' in tpot_cadvisor_up.stderr or 'Created' in tpot_cadvisor_up.stderr"
+      tags: [cadvisor]
+
+    - name: Install the Wazuh agent (docker monitoring deliberately OFF)
+      ansible.builtin.include_role:
+        name: wazuh_agent
+        apply:
+          tags: [wazuh]
+      vars:
+        wazuh_agent_group: "tpot-honeypot"
+        # docker.sock access on a honeypot host is deliberately refused.
+        wazuh_agent_docker_monitoring_enabled: false
+        wazuh_agent_fim_paths: []
+      tags: [wazuh]

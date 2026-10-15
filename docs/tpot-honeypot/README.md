@@ -56,6 +56,13 @@ state for full detail):
   container is actually deployed (LLM honeypots are a T-Pot
   non-standard-edition add-on this instance never enabled).
 
+**Update 2026-10-15**: host apt-upgraded (Docker 29.9.1; 30 containers + ES
+green after). Monitoring integration (Graylog, Grafana via cAdvisor, Wazuh
+agent) is in [monitoring-plan.md](monitoring-plan.md) -- deployed 2026-10-15
+(logs, cAdvisor + Grafana dashboard JSON, Wazuh agent). Event panels from the
+central OpenSearch: [opensearch-grafana-plan.md](opensearch-grafana-plan.md)
+-- planned, not built.
+
 ## What this is
 
 - **Host**: `raspberrypi` / `tpot.gibbsgreatly.xyz`, `192.168.1.28`,
