@@ -30,12 +30,17 @@ import detectors
 
 class SessionClient(cb.Client):
     def count(self,messages,tools=None):
-        payload=dict(messages=messages,add_generation_prompt=True)
+        # C5 also measures partial history before adding tool results. A final
+        # assistant tool call is complete, so it must not be continued by the
+        # template endpoint (upstream rejects that with HTTP 400).
+        generation=not (messages and messages[-1].get('role')=='assistant'
+                        and messages[-1].get('tool_calls'))
+        payload=dict(messages=messages,add_generation_prompt=generation)
         if tools:payload['tools']=tools
         rendered=self.call('/apply-template',payload)
         if not isinstance(rendered.get('prompt'),str):raise ValueError('missing rendered prompt')
         if tools:
-            bare=self.call('/apply-template',dict(messages=messages,add_generation_prompt=True))
+            bare=self.call('/apply-template',dict(messages=messages,add_generation_prompt=generation))
             if bare.get('prompt')==rendered['prompt']:raise ValueError('/apply-template ignored tools; refuse unmeasured C5 prompt')
         return self.tokenize(rendered['prompt'],special=True)
 

@@ -117,6 +117,33 @@ class SessionHarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'ignored tools'):
                 client.count([dict(role='user',content='fixture')],tools.schemas())
 
+    def test_completed_assistant_tool_call_count_does_not_request_continuation(self):
+        client=sb.SessionClient('http://127.0.0.1:8080')
+        probes=[]
+        def render(path,payload=None,**kwargs):
+            self.assertEqual(path,'/apply-template')
+            probes.append(copy.deepcopy(payload))
+            if (payload['messages'][-1].get('tool_calls')
+                    and payload['add_generation_prompt']):
+                raise ValueError('Cannot continue an assistant message that contains tool calls.')
+            return dict(prompt='with tools' if payload.get('tools') else 'without tools')
+        client.call=render
+        client.tokenize=lambda text,**kwargs:len(text)
+        messages=[dict(role='user',content='fixture'),
+                  dict(role='assistant',content='',tool_calls=[dict(id='saved-call',type='function',
+                       function=dict(name='list_dir',arguments='{"path":"/fixture"}'))])]
+        original=copy.deepcopy(messages)
+        with self.assertRaisesRegex(ValueError,'Cannot continue'):
+            render('/apply-template',dict(messages=messages,add_generation_prompt=True))
+        probes.clear()
+        self.assertEqual(client.count(messages,tools.schemas()),len('with tools'))
+        self.assertEqual([p['add_generation_prompt'] for p in probes],[False,False])
+        self.assertEqual(messages,original)
+        probes.clear()
+        messages.append(dict(role='tool',tool_call_id='saved-call',content='{}'))
+        client.count(messages,tools.schemas())
+        self.assertEqual([p['add_generation_prompt'] for p in probes],[True,True])
+
     def test_c3_records_http_overflow_and_truncation_separately(self):
         with server() as first_stub:
             first=self.runner(first_stub,name='c1-source',extra=['--checkpoint-tokens','999999'])

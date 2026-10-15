@@ -1412,6 +1412,34 @@ loop-hunt-20261015t065254z-watch.service attached with successful first
 poll, timer paused and no campaign failure. No harness, build, model,
 prompt or sampling changes. Replays remain gated on the full matrix review.
 
+Matrix Result update (2026-10-16 NZDT; observation 2026-10-15 17:00 UTC):
+thirteen jobs complete. Upstream C2 completed 57 requests, 83/83 accepted
+facts, 20 HTTP 500 capacity refusals, four clean CK pairs and five refused
+pairs (seed 6 crosses its 32768-token checkpoint on turn 9). Upstream C3
+adds six requests beyond imported C1: 5/5 accepted facts and four HTTP 400
+context-limit refusals. Both have zero evidence errors and verified cleanup.
+
+Upstream C5 stopped after one clean saved list_dir request at 08:14 UTC.
+The next intermediate /apply-template token-count probe ended in the
+assistant tool call with add_generation_prompt true. The upstream journal
+records HTTP 400: Cannot continue an assistant message that contains tool
+calls. The failure preceded the next inference request. Independently
+verified restored qwen3-coder-next-upstream / b11514-de7fa0a3c, free Redis
+lock, active upgrade timer, restored_default true. No retry has been made;
+failed run and its saved record remain intact at upstream-C5.
+
+Prepared a local measurement-probe correction: set add_generation_prompt
+false for partial histories ending in assistant tool calls, including the
+bare-template tools-support check. Normal user/tool-ended inference counts
+remain true; messages are not mutated. Regression recreates the observed
+rejection and checks both probes plus normal tool-result continuation.
+All 76 loop-hunt tests pass. Not deployed: changing this count may change
+C5's generated audit-filler lengths. Applying it and restarting upstream C5
+needs operator approval under the explicit prompt-change stop rule. Matrix
+and replay continuation remain paused pending that decision. Existing saved
+evidence and all completed jobs are preserved; no production changes outside
+read-only diagnosis were made during this status check.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
