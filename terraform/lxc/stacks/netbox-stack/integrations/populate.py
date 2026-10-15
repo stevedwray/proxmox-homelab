@@ -1268,6 +1268,11 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
     service_observed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     for prefix in population_intent.get("prefixes", []):
+        if "${" in prefix["prefix"]:
+            # An unresolved network-intent placeholder would be POSTed verbatim;
+            # NetBox answers 500 and the whole run dies before IPAM/services.
+            print(f"  warning: skipping prefix with unresolved placeholder: {prefix['prefix']}")
+            continue
         nb.ensure("/ipam/prefixes/", {"prefix": prefix["prefix"]}, {
             "site": site["id"],
             "description": prefix["description"],
