@@ -62,16 +62,41 @@ Up to ~1 h behind live. Grafana reaches OpenSearch :9200 already (MikroTik rule
 5. Before loading, each panel's query is run against the central index (read
    only) and the result checked, as was done for the cAdvisor dashboard.
 
-## Decisions needed from the operator
+## Operator decisions (2026-10-15)
 
-- **Exposure:** keep T-Pot LAN-only (panels = LAN visibility), or expose it
-  (port-forward/DMZ) for real attack data? Not a code change, and not mine to
-  make.
-- **Noise:** drop `SURICATA Ethertype unknown` at the source (Suricata/Logstash
-  filter on the Pi -- touches `~/tpotce/`, off-limits by the management
-  boundary) or only filter it in Grafana queries (recommended: no host change).
-- **Retention:** ~23 MB/day is small; no ILM exists for `tpot-events-*`.
-  Decide whether to add a retention policy later.
+- **Purpose:** the honeypot is an internal tripwire -- detect someone who has
+  got onto the LAN. It stays LAN-only. The dashboard is therefore built around
+  "anything unexpected touching the Pi", not attack statistics.
+- **Noise:** filter the obvious false positives in the Grafana queries, not on
+  the Pi (no change under `~/tpotce/`). Initial exclusions: `SURICATA
+  Ethertype unknown`, `ET INFO Reserved Internal IP Traffic`, the SURICATA
+  STREAM reassembly/ack/FIN/retransmission decode alerts, DHCP/DHCPv6/NetBIOS.
+- **Retention:** deferred (~23 MB/day).
+
+## Expected sources (baseline, 10-01..10-15, T-Pot ES, dest = the Pi)
+
+| Source | Seen as | Treat as expected |
+|---|---|---|
+| 192.168.1.4 | -> :64297 (T-Pot web UI), 72k events | yes (operator browsing) |
+| 192.168.1.104 (garuda workstation) | -> :64295, :8083 | yes |
+| 192.168.50.12 (secpipe-stack) | -> :64295, ingest SSH tunnel | yes |
+| 192.168.20.12 (monitoring) | -> :8083 cAdvisor scrape | yes |
+| 192.168.20.14 / 192.168.40.15 | replies from Graylog / Wazuh | yes |
+| 192.168.20.15 (Technitium) | DNS replies, ephemeral ports | yes |
+| 192.168.1.251 (router) | DHCP :68 | yes |
+| 192.168.70.11 (Greenbone scanner) | probes :21,22,23,25,53,80... | yes, but it is a scan: a *honeypot* event from it is expected during scan windows |
+| anything else -> a honeypot port | -- | **the tripwire** |
+
+## Finding that must be resolved before the dashboard means anything
+
+In 15 days of data (9.9M events) the only event `type`s are Suricata, P0f and
+NGINX. **No honeypot sensor (Cowrie, Dionaea, Mailoney, Heralding, Tanner,
+...) has ever logged a single event** -- not even when Greenbone probed
+:21/:22/:23/:25/:80 on the Pi. Either those sensors are not reachable on
+those ports, or their logs are not reaching Logstash. Until a deliberate test
+connection to a honeypot port from the LAN produces a sensor event (in T-Pot's
+ES and then in `tpot-events-*`), the tripwire is unproven and a quiet
+dashboard is not evidence of a quiet LAN.
 
 ## Operator actions (agents have no OpenBao/OpenSearch write access)
 
