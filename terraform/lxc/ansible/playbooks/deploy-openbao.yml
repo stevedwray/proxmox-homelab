@@ -347,11 +347,12 @@
         owner: root
         group: root
         mode: "0700"
-      tags: [manifest_sync]
+      tags: [inventory_exporter]
 
-    # Re-sync after ANY secrets/manifest.json change, or the dashboard's drift
-    # panel goes red against a stale copy. Cheap and restart-free:
-    #   ANSIBLE_TAGS=manifest_sync scripts/provision.sh --stack openbao-stack
+    # Fallback only: the exporter normally fetches the manifest from the stable
+    # branch on GitHub each run and uses this copy if that fails. Push exporter
+    # script changes alone (no restarts, nothing else touched) with:
+    #   ANSIBLE_TAGS=inventory_exporter scripts/provision.sh --stack openbao-stack
     - name: Install secrets manifest (names only) for field counts and drift
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../../../../secrets/manifest.json"
@@ -359,7 +360,7 @@
         owner: root
         group: root
         mode: "0600"
-      tags: [manifest_sync]
+      tags: [inventory_exporter]
 
     - name: Install inventory exporter
       ansible.builtin.copy:
@@ -368,6 +369,7 @@
         owner: root
         group: root
         mode: "0750"
+      tags: [inventory_exporter]
 
     - name: Write inventory exporter service and timer
       ansible.builtin.copy:

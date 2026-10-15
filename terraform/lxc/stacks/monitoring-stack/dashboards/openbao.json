@@ -354,7 +354,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 4,
+        "w": 8,
         "x": 16,
         "y": 7
       },
@@ -395,61 +395,6 @@
       }
     },
     {
-      "id": 7,
-      "type": "stat",
-      "title": "Manifest vs OpenBao drift",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "VictoriaMetrics"
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 4,
-        "x": 20,
-        "y": 7
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(openbao_kv_manifest_drift)",
-          "instant": true,
-          "legendFormat": ""
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "none",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "description": "Entries in the manifest but not in OpenBao, plus the reverse. Compared against /etc/openbao-metrics/manifest.json on the OpenBao LXC, a COPY of secrets/manifest.json that only refreshes when it is re-synced. A non-zero value usually means the copy is stale: run ANSIBLE_TAGS=manifest_sync scripts/provision.sh --stack openbao-stack (see docs/reference/secrets-management.md)."
-    },
-    {
       "id": 8,
       "type": "table",
       "title": "Secret entries (metadata only -- values are never read)",
@@ -461,7 +406,7 @@
         "h": 14,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 25
       },
       "targets": [
         {
@@ -553,6 +498,344 @@
           }
         ]
       }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Manifest entries NOT in OpenBao",
+      "description": "Entries listed in the stable manifest that OpenBao does not have. Anything that loads them fails closed. PENDING = seen now, but OpenBao was clean within the last 3h (expected right after merging a manifest change, before the secret is written). DRIFT = present for 3h+, so write the secret or fix the manifest. See the table below for names.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_max(max(openbao_kv_manifest_drift{kind=\"missing_in_openbao\"}), 1) + clamp_max(min_over_time(max(openbao_kv_manifest_drift{kind=\"missing_in_openbao\"})[3h]), 1)",
+          "instant": true,
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "OK",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "PENDING",
+                  "color": "orange"
+                },
+                "2": {
+                  "text": "MISSING",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "OpenBao entries NOT in manifest",
+      "description": "Entries in OpenBao that the stable manifest does not list: written but never declared, or declared and then removed. Nothing is broken, but an unmanaged secret exists. PENDING = new within 6h (written ahead of the manifest merge); ORPHAN = 6h+.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_max(max(openbao_kv_manifest_drift{kind=\"missing_in_manifest\"}), 1) + clamp_max(min_over_time(max(openbao_kv_manifest_drift{kind=\"missing_in_manifest\"})[6h]), 1)",
+          "instant": true,
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "OK",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "PENDING",
+                  "color": "orange"
+                },
+                "2": {
+                  "text": "ORPHAN",
+                  "color": "red"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Manifest compared against",
+      "description": "The inventory exporter reads secrets/manifest.json from the stable branch on GitHub each run. FALLBACK means GitHub could not be reached for the last hour and the (possibly stale) deploy-time copy was used, so the drift tiles may be wrong. Does not mean secrets are broken.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(max(openbao_manifest_source{source=\"remote\"})[1h:])",
+          "instant": true,
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FALLBACK copy",
+                  "color": "orange"
+                },
+                "1": {
+                  "text": "stable (GitHub)",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Inventory exporter age",
+      "description": "Minutes since the inventory exporter last completed (runs every 15 min). If it stops, every tile on this dashboard keeps its last value, so a stale-green drift tile cannot be trusted when this is red.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - max(openbao_inventory_last_success_timestamp_seconds)) / 60",
+          "instant": true,
+          "legendFormat": ""
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Drifting entries",
+      "description": "Which entries are out of step. Empty is good.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "openbao_kv_manifest_drift_entry",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No drifting entries"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "stack": true
+            },
+            "renameByName": {
+              "entry": "Entry",
+              "kind": "Kind"
+            }
+          }
+        }
+      ]
     }
   ]
 }
