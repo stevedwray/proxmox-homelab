@@ -159,6 +159,52 @@ changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
 4. Optional: a custom SCA policy that skips the CIS checks that cannot apply inside an LXC (baseline 43%, ~105 failing
    and 22 invalid checks per host).
 
+### Phase 5a - `pve-test` (the laptop Proxmox node) - PLANNED, checks done 2026-10-16
+
+Checked read-only, nothing changed. `pve-test` is a non-production Proxmox 9.2 node (Debian 13, kernel 7.0.14-17-pve,
+4 CPU, 16GB RAM with ~11GB free) at `192.168.1.40`, on the default VLAN (`lan`, 192.168.1.0/24). It runs CT 910
+(stopped template builder), CT 70010 `cse-kali` (running) and VM 70011 (stopped), no Docker, and has no Wazuh agent
+(`/var/ossec` absent, no package).
+
+| Check | Result |
+|---|---|
+| Manager reachable from `lan` | **yes**: 1514, 1515 and 55000 on 192.168.40.15 are open from both the workstation and `pve-test` itself, so **no MikroTik change is needed** (the same path serves `framework`, 192.168.1.18) |
+| Existing pattern | `ansible/00-initial-setup/proxmox-wazuh-agent.yml` enrols the `pve` hypervisor with the `wazuh_agent` role (hosts: `pve.gibbsgreatly.xyz`); `pve-test.gibbsgreatly.xyz` is already in `ansible/inventory/production.yml` and `dev.yml` |
+| Role fit | `wazuh_agent` is a plain apt install on Debian 13, so it fits as is (version pinned 4.14.8, `debian13` config profile, `/etc/pve/priv` already in `<nodiff>`) |
+| Not production | not in `terraform/PRODUCTION_NODES`, so it does **not** go through `with-secrets-prod`; the secrets wrapper to use is still to be settled (see decision 1) |
+
+Decisions needed from the operator before running anything:
+
+1. **Secrets wrapper.** The role needs `WAZUH_AGENT_AUTHD_PASSWORD`, `WAZUH_API_PASSWORD` and `LAB_IP_WAZUH`, which come
+   from the production OpenBao profile. Options: run through `./with-secrets-prod` with a named `TASK_APPROVAL` (the
+   target host is still pve-test), or add a `pve-test` profile to the secrets manifest.
+2. **Group.** Recommended: a new group `proxmox_host` (shared by `pve-test` and later `pve-tiny`) with its own
+   `agent_conf/proxmox_host.xml`, kept out of the LXC zone groups so the hypervisor FIM does not skew the fleet
+   numbers. The pattern in `pve`'s playbook currently sets no group (default).
+3. **FIM scope.** `/etc/pve` is a FUSE cluster filesystem; realtime FIM on it can be noisy (VM config churn, `corosync`
+   state) and `/etc/pve/priv` holds credentials. Start with the `pve` playbook's list (`/etc/pve`, `/etc/network`,
+   `/etc/ssh/sshd_config`, `/root/.ssh`, `/etc/sudoers.d`) but measure FIM volume for an hour before accepting it.
+
+Steps (each its own approval, in order):
+
+1. Playbook: generalise `proxmox-wazuh-agent.yml` to take `hosts` and the group from vars (keep the `pve` default), or
+   add `proxmox-wazuh-agent-pve-test.yml`; syntax-check it; add `agent_conf/proxmox_host.xml` and extend
+   `test_agent_conf.py`. Commit on a `work/*` branch.
+2. Enrol (mutating, one host): `export TASK_APPROVAL=wazuh-agent-pve-test`; run the playbook with `--limit
+   pve-test.gibbsgreatly.xyz`. Out of scope: any change to the node's LXCs/VM, Proxmox config, MikroTik, or other hosts.
+3. Verify: agent `active`, version 4.14.8, in the intended group, `agent.conf` merged (`verify-agent-conf`), syscollector
+   and SCA (`cis_debian13`) results present, vulnerability detection populated.
+4. Measure for one hour then 24 h with `wazuh_tuning.py agents/alerts/noise`: alerts per hour for this agent, top
+   rules, FIM 550/554 share. Gates: agent stays active, no rule above 10% of fleet alerts, no `events_dropped`
+   increase, manager free RAM stays above 800MB.
+5. Add a live case (`live_group: proxmox_host`, `live_docker: false`) so the must-fire suite covers the new host type;
+   record the result in README "Results at a glance" and the open-items list; update `docs/wazuh-stack/README.md`
+   (enrolled count 27 -> 28).
+
+Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `pve-test`, and delete the agent on the
+manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
+config profile and `cis_debian13` SCA policy need checking against its OS).
+
 ## Phase 6 - steady state - DONE (alert rules and weekly review aside)
 
 1. Done: Grafana via the Greenbone pattern (role `wazuh_metrics`, textfile exporter, dashboard `wazuh.json`, scrape
