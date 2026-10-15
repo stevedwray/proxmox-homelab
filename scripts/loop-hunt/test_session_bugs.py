@@ -191,9 +191,61 @@ class SessionHarnessTests(unittest.TestCase):
         with server() as stub:
             run=self.runner(stub,extra=['--checkpoint-tokens','999999'])
             self.assertEqual(self.execute(run),0)
+            original=(run.directory/'results.jsonl').read_bytes()
+            original_report=(run.directory/'report.md').read_bytes()
             self.assertEqual(sb.regrade(run.directory),3)
             rows=json.loads((run.directory/'regraded.json').read_text())
             self.assertTrue(all(all(q['correct'] for q in r['recall']) for r in rows))
+            backups=list((run.directory/'regrade-backups').iterdir())
+            self.assertEqual(len(backups),1)
+            self.assertEqual((backups[0]/'results.jsonl').read_bytes(),original)
+            self.assertEqual((backups[0]/'report.md').read_bytes(),original_report)
+            self.assertTrue((backups[0]/'raw'/'seed-1-1-warm.json').exists())
+            self.assertEqual(sb.regrade(run.directory),3)
+            self.assertEqual(len(list((run.directory/'regrade-backups').iterdir())),2)
+            self.assertEqual((backups[0]/'results.jsonl').read_bytes(),original)
+
+
+class RecallGradingTests(unittest.TestCase):
+    def grade(self,answer,turn=11):
+        response=dict(choices=[dict(message=dict(content=answer),finish_reason='stop')],
+                      usage=dict(completion_tokens=40))
+        return sb.grade(response,gs.turn_fixture(1,turn),40,[])
+
+    def test_real_pilot_single_line_answers_keep_correct_recall(self):
+        # Exact synthetic answers saved by the live pilot, turns 11 and 12.
+        cases=[(11,'[TRIAGE] Q1: route-01-011-375356627d Q2: route-01-005-3c7a49ef44 ref: INC-7001'),
+               (12,'[TRIAGE] Q1: route-01-012-f514b6847f Q2: route-01-009-eefca04ea9 Q3: NOT PROVIDED ref: INC-7001')]
+        for turn,answer in cases:
+            with self.subTest(turn=turn):
+                result=self.grade(answer,turn)
+                self.assertTrue(all(q['correct'] for q in result['recall']))
+                self.assertEqual(result['flags'],['if-fail:question_lines'])
+
+    def test_multiline_correct_answers_are_clean(self):
+        result=self.grade('[TRIAGE] Q1: route-01-011-375356627d\nQ2: route-01-005-3c7a49ef44\nref: INC-7001')
+        self.assertEqual(result['flags'],[])
+
+    def test_wrong_values_remain_wrong_on_single_line(self):
+        result=self.grade('[TRIAGE] Q1: wrong Q2: route-01-005-3c7a49ef44 ref: INC-7001')
+        self.assertIn('wrong:q1',result['flags'])
+        self.assertNotIn('wrong:q2',result['flags'])
+        self.assertIn('if-fail:question_lines',result['flags'])
+
+    def test_duplicate_missing_and_extra_labels_fail_layout(self):
+        for text in ('Q1: route-01-011-375356627d\nQ1: wrong',
+                     'Q1: route-01-011-375356627d',
+                     'Q1: route-01-011-375356627d\nQ2: route-01-005-3c7a49ef44\nQ3: extra'):
+            with self.subTest(text=text):
+                result=self.grade('[TRIAGE] '+text+'\nref: INC-7001')
+                self.assertIn('if-fail:question_lines',result['flags'])
+        duplicate=self.grade('[TRIAGE] Q1: route-01-011-375356627d\nQ1: wrong\nref: INC-7001')
+        self.assertFalse(duplicate['recall'][0]['correct'])
+
+    def test_exact_matching_does_not_accept_explanations_or_substrings(self):
+        result=self.grade('[TRIAGE] Q1: route-01-011-375356627d extra\nQ2: prefix-route-01-005-3c7a49ef44\nref: INC-7001')
+        self.assertTrue(all(not q['correct'] for q in result['recall']))
+        self.assertNotIn('if-fail:question_lines',result['flags'])
 
 
 class AgentChecksTests(unittest.TestCase):

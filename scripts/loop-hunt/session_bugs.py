@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -117,18 +118,37 @@ def classify(warm,cold):
     return 'clean'
 
 
+def recall_fields(answer, count):
+    """Extract exact values independently of the requested line layout."""
+    markers=list(re.finditer(r'(?<!\S)Q([1-9]\d*):[ \t]*',answer))
+    values={}
+    for offset,marker in enumerate(markers):
+        end=markers[offset+1].start() if offset+1<len(markers) else len(answer)
+        segment=answer[marker.end():end]
+        reference=re.search(r'(?<!\S)ref:[ \t]*',segment)
+        if reference:segment=segment[:reference.start()]
+        values.setdefault(int(marker[1]),[]).append(segment.strip())
+    # Duplicate labels are ambiguous, even if one happens to contain the right value.
+    extracted={number:parts[0] if len(parts)==1 else None for number,parts in values.items()}
+    lines=[answer.count('\n',0,marker.start()) for marker in markers]
+    layout=([int(m[1]) for m in markers]==list(range(1,count+1))
+            and len(set(lines))==count)
+    return extracted,layout
+
+
 def grade(response,fixture,visible,history,**evidence):
     result=detectors.detect('SESSION',response,{},visible,**evidence)
     answer=result['answer']
     if fixture and response:
+        fields,question_lines=recall_fields(answer,len(fixture['expected']))
         checks=dict(prefix=answer.startswith('[TRIAGE]'),reference=answer.rstrip().endswith('ref: '+fixture['reference']),
-                    no_bullets=not bool(re.search(r'^\s*(?:[-*•]|\d+[.)])\s+',answer,re.M)))
+                    no_bullets=not bool(re.search(r'^\s*(?:[-*•]|\d+[.)])\s+',answer,re.M)),
+                    question_lines=question_lines)
         result['checks'].update(checks)
         result['flags']+=['if-fail:'+name for name,passed in checks.items() if not passed]
         recall=[]
         for index,expected in enumerate(fixture['expected'],1):
-            match=re.search(r'(?:^|\n|\[TRIAGE\]\s*)Q'+str(index)+r':\s*([^\n]+)',answer)
-            actual=match[1].strip() if match else None
+            actual=fields.get(index)
             passed=actual==expected
             recall.append(dict(question=index,expected=expected,actual=actual,correct=passed))
             if not passed:result['flags'].append(('hallucination:' if expected=='NOT PROVIDED' and actual else 'wrong:')+f'q{index}')
@@ -506,6 +526,13 @@ def regrade(directory):
         manifest=json.loads((directory/'run.json').read_text())
         if manifest['status']=='running':raise ValueError('refuse to regrade running run')
         records=cb.read_results(directory/'results.jsonl')
+        # Preserve every pre-regrade grade/report before replacing any evidence.
+        backup=directory/'regrade-backups'/str(time.time_ns())
+        backup.mkdir(parents=True,mode=0o700)
+        backup.parent.chmod(0o700)
+        for name in ('results.jsonl','run.json','report.md','regraded.json'):
+            if (directory/name).exists():shutil.copy2(directory/name,backup/name)
+        if (directory/'raw').exists():shutil.copytree(directory/'raw',backup/'raw')
         for record in records:
             result=grade(record['response'],record.get('fixture'),record.get('visible_tokens'),
                          record['payload']['messages'],**record.get('detector_evidence',{}))
@@ -530,6 +557,10 @@ def regrade(directory):
         run=SessionRun.__new__(SessionRun)
         run.directory,run.manifest,run.records=directory,manifest,records
         run.manifest_path=directory/'run.json'
+        run.manifest.setdefault('regrade_history',[]).append(dict(
+            backup=str(backup.relative_to(directory)),recorded=cb.now(),
+            results_sha256=gs.sha((backup/'results.jsonl').read_bytes()),
+            scorer_sha256=gs.sha(Path(__file__).read_bytes())))
         run.save()
         return len(records)
 

@@ -272,3 +272,18 @@ The build-expectations helper now accepts `--link nathanw=candidate`
 particular build link. Unspecified labels still use current. ctx-bugs
 `--candidate` accepts either supported model/build; only Laguna/Nathanw
 keeps its earlier diagnostic 2048-token short form.
+
+### Recall and line formatting
+
+Recall extracts exact values between explicit question/reference markers,
+independently of line breaks. One question per line is graded separately as
+`if-fail:question_lines`; duplicate, missing or extra labels fail that check.
+Duplicate labels are ambiguous and cannot satisfy recall. Extra explanation
+inside a value still fails exact matching. Regression tests include the two
+real synthetic pilot answers that exposed the previous conflation.
+
+Before any offline regrade replaces results, it preserves results.jsonl,
+run.json, report.md, any previous regraded.json and the raw directory under
+`regrade-backups/<timestamp>/`. The manifest records the backup path and
+original-results/scorer hashes. Earlier backups are never overwritten.
+All 74 loop-hunt tests pass after this scoring correction.

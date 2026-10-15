@@ -1201,6 +1201,30 @@ stopped after this independent cleanup verification; pilot units inactive.
 No matrix/replay started. Existing raw responses remain available for
 regression/regrading; no pilot success or recall-collapse claim is made.
 
+Operator correction/standing autonomy (2026-10-15): approved separating
+recall extraction from line-format grading, regression tests from the real
+pilot answers, regrading the 15 saved requests while retaining pre-fix
+results, and rerunning the same pilot. Separate named matrix/replay tasks
+remain conditionally approved after a successful measuring review.
+For the rest of loop-hunt, local measurement/scoring bugs may be fixed with
+a regression test and saved evidence regraded with old results retained;
+record each correction in Result. Launch/plumbing permits up to two retries
+per run with cleanup verified. Where plan paths/fields contradict code,
+use code. This supersedes the earlier one-retry/blanket gate-stop rules.
+Stop only for changes to measured models/builds/conditions/sizes/sampling/
+settings/prompts, production changes outside loop-hunt, the same failure
+persisting after two fixes, failed cleanup checks, or reaching lh-08/lh-10.
+
+Result, scoring correction (2026-10-15): recall extraction now uses explicit
+Qn/reference boundaries independent of line breaks, retains exact expected
+matching and refuses ambiguous duplicate labels. question_lines separately
+flags non-separated/missing/duplicate/extra question labels. Real pilot
+turns 11/12 now pass recall and fail only question_lines in regression tests.
+All 74 loop-hunt tests pass. Every regrade creates an exclusive timestamped
+backup of results/manifest/report/raw grades, with backup/source/scorer hashes
+recorded in run.json. No prompts, model/build settings or sampling changed.
+Framework code update, preserved regrade and pilot rerun follow below.
+
 #### lh-06-matrix
 
 All remaining conditions in "The matrix", ordered fork current, fork
