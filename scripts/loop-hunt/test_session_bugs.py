@@ -117,32 +117,28 @@ class SessionHarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'ignored tools'):
                 client.count([dict(role='user',content='fixture')],tools.schemas())
 
-    def test_completed_assistant_tool_call_count_does_not_request_continuation(self):
-        client=sb.SessionClient('http://127.0.0.1:8080')
-        probes=[]
-        def render(path,payload=None,**kwargs):
-            self.assertEqual(path,'/apply-template')
-            probes.append(copy.deepcopy(payload))
-            if (payload['messages'][-1].get('tool_calls')
-                    and payload['add_generation_prompt']):
-                raise ValueError('Cannot continue an assistant message that contains tool calls.')
-            return dict(prompt='with tools' if payload.get('tools') else 'without tools')
-        client.call=render
-        client.tokenize=lambda text,**kwargs:len(text)
-        messages=[dict(role='user',content='fixture'),
-                  dict(role='assistant',content='',tool_calls=[dict(id='saved-call',type='function',
-                       function=dict(name='list_dir',arguments='{"path":"/fixture"}'))])]
-        original=copy.deepcopy(messages)
-        with self.assertRaisesRegex(ValueError,'Cannot continue'):
-            render('/apply-template',dict(messages=messages,add_generation_prompt=True))
-        probes.clear()
-        self.assertEqual(client.count(messages,tools.schemas()),len('with tools'))
-        self.assertEqual([p['add_generation_prompt'] for p in probes],[False,False])
-        self.assertEqual(messages,original)
-        probes.clear()
-        messages.append(dict(role='tool',tool_call_id='saved-call',content='{}'))
-        client.count(messages,tools.schemas())
-        self.assertEqual([p['add_generation_prompt'] for p in probes],[True,True])
+    def test_c5_counts_complete_tool_exchange_under_upstream_prefill_rules(self):
+        with server() as stub:
+            run=self.runner(stub,'C5',extra=['--max-turns','2'])
+            self.assertEqual(self.execute(run),0,run.manifest)
+            self.assertEqual(len(run.records),4)
+            self.assertTrue(all(p['messages'][-1]['role']!='assistant' for p in stub.template_probes))
+            tool_probes=[p for p in stub.template_probes if p['messages'][-1]['role']=='tool']
+            self.assertTrue(tool_probes)
+            self.assertTrue(any('audit' not in json.loads(p['messages'][-1]['content']) for p in tool_probes))
+            self.assertTrue(all('audit' in json.loads(m['content']) for r in stub.requests for m in r['messages'] if m['role']=='tool'))
+
+    def test_upstream_prefill_rejects_partial_tool_calls_for_both_generation_flags(self):
+        with server() as stub:
+            client=sb.SessionClient(stub.url)
+            messages=[dict(role='assistant',content='',tool_calls=[dict(id='saved-call',type='function',
+                           function=dict(name='list_dir',arguments='{"path":"/fixture"}'))])]
+            for generation in (True,False):
+                with self.subTest(generation=generation),self.assertRaises(sb.urllib.error.HTTPError) as raised:
+                    client.call('/apply-template',dict(messages=messages,tools=tools.schemas(),add_generation_prompt=generation))
+                self.assertEqual(raised.exception.code,400)
+                self.assertIn(b'Cannot continue',raised.exception.read())
+                raised.exception.close()
 
     def test_c3_records_http_overflow_and_truncation_separately(self):
         with server() as first_stub:

@@ -137,7 +137,14 @@ def run_agent(run):
                     result,_=execute(tool,tree)
                     # Spread synthetic tool evidence across ~30 calls up to the
                     # near-full prompt budget. Tokenization, not chars, sets size.
-                    current=run.client.count(messages,schemas())
+                    # Count a complete tool exchange, including the actual
+                    # result before audit filler. Upstream auto-prefills any
+                    # trailing assistant, and rejects one containing tool calls
+                    # even with add_generation_prompt=false (de7fa0a3c,
+                    # tools/server/server-common.cpp:1370-1386).
+                    probe=messages+[dict(role='tool',tool_call_id=tool.get('id',''),
+                                         content=json.dumps(result,sort_keys=True))]
+                    current=run.client.count(probe,schemas())
                     desired=initial_tokens+(target-initial_tokens)*min(calls,30)//30
                     allowance=max(0,desired-current-64)
                     result['audit']=fit_text(run.client,'',filler,allowance)

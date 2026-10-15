@@ -29,6 +29,7 @@ class SessionStub(base.StubServer):
         self.max_inflight=0
         self.pool_events=[]
         self.request_events=[]
+        self.template_probes=[]
 
     def size(self):return 262144 if 'sess262k' in self.entry else 131072
 
@@ -59,6 +60,12 @@ class SessionHandler(base.Handler):
             return
         if self.path=='/apply-template':
             payload=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))))
+            s.template_probes.append(copy.deepcopy(payload))
+            # Pinned upstream server-common.cpp auto-enables assistant prefill
+            # regardless of add_generation_prompt when history ends this way.
+            if payload['messages'][-1].get('role')=='assistant' and payload['messages'][-1].get('tool_calls'):
+                self.reply(dict(error=dict(code=400,message='Cannot continue an assistant message that contains tool calls.')),400)
+                return
             prompt=base.render(payload['messages'])
             if payload.get('tools'):prompt='<tools>'+json.dumps(payload['tools'],sort_keys=True)+'</tools>'+prompt
             self.reply(dict(prompt=prompt))
