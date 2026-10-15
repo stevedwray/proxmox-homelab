@@ -55,7 +55,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 1
       },
@@ -114,8 +114,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 3,
         "y": 1
       },
       "id": 3,
@@ -177,8 +177,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 1
       },
       "id": 4,
@@ -215,7 +215,7 @@
         "type": "prometheus",
         "uid": "VictoriaMetrics"
       },
-      "description": "Kernel OOM kills inside the LXC. Redis dying here is what interrupted the mgmt_seg scan.",
+      "description": "Kernel OOM kills inside the LXC during the dashboard time range (max minus min of the cumulative counter, so the first sample ever recorded is not counted as kills). Redis dying here is what interrupted the mgmt_seg scan.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -240,8 +240,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 9,
         "y": 1
       },
       "id": 5,
@@ -263,14 +263,82 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "increase(gvm_lxc_oom_kills_total[24h])",
+          "expr": "clamp_min(max_over_time(gvm_lxc_oom_kills_total[$__range]) - min_over_time(gvm_lxc_oom_kills_total[$__range]), 0)",
           "legendFormat": "",
           "refId": "A",
           "instant": true,
           "range": false
         }
       ],
-      "title": "Scanner OOM kills (24h)",
+      "title": "Scanner OOM kills (selected range)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "description": "Highest Redis memory in the time range as a share of its maxmemory cap. At the cap, Redis refuses writes: scans lose results (no OOM kill, so the OOM panel stays at 0).",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.95
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max_over_time(gvm_redis_used_memory_bytes[$__range]) / max_over_time(gvm_redis_maxmemory_bytes[$__range])",
+          "legendFormat": "",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Redis peak vs cap (selected range)",
       "type": "stat"
     },
     {
