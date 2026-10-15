@@ -225,6 +225,26 @@ Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
 
+### Phase 5a result: `pve-test`, `pve-tiny` and `framework` enrolled (2026-10-16)
+
+All three agents are 4.14.8 in the `default` group, connected, secrets protected by `nodiff`. The role reads journald
+when the host has no rsyslog (the two Proxmox nodes); `framework` (Ubuntu 26.04.1, rsyslog) reads the log files.
+`framework` was enrolled with `-e '{"wazuh_agent_fim_paths":["/root/.ssh","/home/steve/.ssh"]}'` (the play's default
+paths are hypervisor paths) through `./with-secrets-prod-framework`.
+
+Ubuntu 26.04 findings:
+- **SCA:** the agent ships only `cis_ubuntu22-04`, which skips itself on version check, so `framework` has no CIS score.
+  A custom 26.04 policy belongs to the optional SCA item below.
+- **Rootcheck false positives:** 48 L7 "Trojaned version of file" alerts per scan (every 12 h), on `/bin` and `/usr/bin`
+  tools. Ubuntu 26.04 uses Rust uutils coreutils whose binaries contain strings the generic trojan signatures look for.
+  Rule 100212 (level 0) is limited to agent `framework.gibbsgreatly.xyz`, rule 510 parent, Generic signatures and a
+  single `/bin` or `/usr/bin` file name; named rootkit signatures, other paths and every other host keep 510 at L7, and
+  FIM still watches `/bin` and `/usr/bin`. logtest cannot produce rootcheck events, so the scoping is proven by unit
+  tests on the pattern and the generated XML, then live: trigger a rootcheck scan on `framework` and on one LXC agent
+  after the deploy (`PUT /rootcheck`), expect no new trojan alerts for `framework` and an unchanged picture elsewhere.
+- **FIM:** one benign `fopen` error on a dangling `pollinate.service` symlink; add an agent-scoped ignore only if it repeats.
+- **Vulnerability detection:** not yet checked for Ubuntu 26.04 (the feed may not cover it).
+
 ## Phase 6 - steady state - DONE (alert rules and weekly review aside)
 
 1. Done: Grafana via the Greenbone pattern (role `wazuh_metrics`, textfile exporter, dashboard `wazuh.json`, scrape
