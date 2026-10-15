@@ -45,3 +45,26 @@ class Format(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Dashboard(unittest.TestCase):
+    """Every metric the Wazuh dashboard queries must be one the exporter can emit."""
+
+    def test_dashboard_queries_only_emitted_metrics(self):
+        import json
+        import os
+        import re
+        here = os.path.dirname(os.path.abspath(__file__))
+        dash = json.load(open(os.path.join(here, "..", "..", "..", "..", "stacks", "monitoring-stack", "dashboards", "wazuh.json")))
+        src = open(os.path.join(here, "wazuh_metrics.py")).read()
+        emitted = set(re.findall(r'"(wazuh_[a-z_0-9]+)"', src))
+        # these two families are built as f"wazuh_{name}_state" for name in (analysisd, remoted)
+        self.assertIn('f"wazuh_{name}_state"', src)
+        emitted |= {"wazuh_analysisd_state", "wazuh_remoted_state"}
+        used = set()
+        for p in dash["panels"]:
+            for t in p.get("targets", []):
+                used |= set(re.findall(r"\bwazuh_[a-z_0-9]+", t["expr"]))
+        self.assertTrue(used)
+        self.assertEqual(used - emitted, set(), "dashboard queries metrics the exporter does not emit")
+        self.assertEqual(dash["uid"], "wazuh")

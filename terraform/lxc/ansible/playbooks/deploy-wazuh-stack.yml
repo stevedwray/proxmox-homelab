@@ -44,6 +44,8 @@
         | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required')
       }}
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    # node_exporter's textfile collector: wazuh_metrics writes wazuh.prom here (docs/wazuh-tuning, Phase 6).
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
   roles:
     - lxc_base
     - docker_base
@@ -1586,3 +1588,52 @@
   gather_facts: false
   roles:
     - unattended_upgrades
+
+- name: Grafana integration (cAdvisor + Wazuh metrics for node_exporter's textfile collector)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Additive and independent of the Wazuh compose project: a separate cAdvisor compose project (like
+  # harbor-cadvisor / greenbone-cadvisor) and a systemd timer. Run alone with --tags monitoring-integration;
+  # it never touches a Wazuh container. Needs node_exporter_textfile_dir (first play) applied via lxc_base.
+  tags: [monitoring-integration]
+  vars:
+    wazuh_cadvisor_compose_dir: /opt/wazuh-cadvisor
+    wazuh_cadvisor_host_port: 8080
+    wazuh_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+  roles:
+    - wazuh_metrics
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ wazuh_cadvisor_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ wazuh_cadvisor_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cadvisor:
+              image: "{{ wazuh_cadvisor_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+              container_name: cadvisor
+              restart: unless-stopped
+              # This host has about 1.3GB free on 8GB (the indexer takes 5GB): cAdvisor must never compete with it.
+              mem_limit: 256m
+              ports:
+                - "{{ wazuh_cadvisor_host_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: wazuh_cadvisor_compose_definition
+
+    - name: Deploy cAdvisor via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_cadvisor_compose_dir }}"
+        state: present
+        recreate: "{{ 'always' if wazuh_cadvisor_compose_definition.changed else 'auto' }}"
