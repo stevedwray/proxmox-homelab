@@ -72,6 +72,12 @@ class BuildMetricsTests(unittest.TestCase):
         self.assertIn('openbao_manifest_source{source="local"} 0', remote)
         self.assertIn('openbao_manifest_info{sha="abc123def456"} 1', remote)
 
+    def test_timestamps_keep_full_precision(self):
+        # %g's default 6 significant digits would round a unix time by hours.
+        text = MODULE.build_metrics({"a/b": {"version": 1, "updated": 1792086901.4}}, {}, 1792086999.0)
+        self.assertIn('openbao_kv_entry_updated_timestamp_seconds{entry="a/b",category="a"} 1792086901.4', text)
+        self.assertIn("openbao_inventory_last_success_timestamp_seconds 1792086999", text)
+
     def test_no_values_ever(self):
         # The exporter never receives values; make sure nothing but names/numbers is emitted.
         for line in self.text.splitlines():

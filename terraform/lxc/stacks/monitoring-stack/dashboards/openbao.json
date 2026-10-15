@@ -673,7 +673,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max_over_time(max(openbao_manifest_source{source=\"remote\"})[1h:])",
+          "expr": "max(max_over_time(openbao_manifest_source{source=\"remote\"}[1h]))",
           "instant": true,
           "legendFormat": ""
         }

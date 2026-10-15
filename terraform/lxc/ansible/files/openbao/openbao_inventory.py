@@ -93,7 +93,7 @@ def build_metrics(live: dict[str, dict], manifest_entries: dict[str, dict], now:
         lines.append(f"# TYPE {name} gauge")
         for labels, value in samples:
             lab = ",".join(f'{k}="{_esc(v)}"' for k, v in labels.items())
-            lines.append(f"{name}{{{lab}}} {value:g}" if lab else f"{name} {value:g}")
+            lines.append(f"{name}{{{lab}}} {value:.12g}" if lab else f"{name} {value:.12g}")
 
     cats = sorted({category(e) for e in live} | {category(e) for e in manifest_entries})
     metric("openbao_kv_entries", "KV entries present in OpenBao, by category.",
