@@ -158,8 +158,8 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
-| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | rerunning 2026-10-15 with corrected scoring; prior evidence preserved |
-| lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
+| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | done 2026-10-15; 32 requests, 74/74 recall, three clean CK pairs; cleanup verified |
+| lh-06-matrix | Framework (production) | `loop-hunt-matrix` | running 2026-10-15; 20 remaining jobs queued, two batches |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
 | lh-09-writeup | local | — | todo |
@@ -1236,6 +1236,23 @@ Corrected tools copied only to ~/loop-hunt. Fresh unchanged-settings pilot:
 `loop-hunt-20261015t010713z.service`, watcher
 `loop-hunt-pilot-watch-20261015t010713z.service`. Review pending.
 
+Result, fresh pilot (2026-10-15): **complete; no further measuring problem**.
+32 requests (29 warm turns, three cold CK requests), 74/74 factual answers
+correct. Only warm turns 11/12 fail question_lines; no loop, repetition,
+runaway, GPU or evidence error. All measured prompt counts equal server
+usage; every warm request after the first reuses cache. All three cold
+requests report cache_n 0. Warm/cold payload equality except cache_prompt
+verified and classifications clean at actual 65673 / 98431 / 118897 prompt
+tokens. The final valid turn is the nominal 131k CK under the unchanged
+8192-token answer allowance; the next turn would not fit. Cold wall times:
+114.9 / 163.2 / 193.8 seconds. Four slots each n_ctx 131072 verified.
+The fresh pilot took roughly 23 minutes, below the initial estimate.
+Full review remains on Framework in the run's pilot-review.json; results
+SHA-256 `2a74be1114ff34b1de100ea9784df31ca7834afc1e90fca0f87451fb56d42dfc`.
+Original qwen3-coder-next-upstream / b11514-de7fa0a3c restored, lock free,
+upgrade timer active; watcher terminal poll confirms completion. Conditional
+matrix/replay approvals are now satisfied; continue without another approval.
+
 #### lh-06-matrix
 
 All remaining conditions in "The matrix", ordered fork current, fork
@@ -1248,6 +1265,63 @@ upstream differences under identical conditions. Approval
 `loop-hunt-matrix` (covers both nights).
 
 Result: —
+
+Matrix preflight prepared while pilot runs (2026-10-15; execution remains
+conditional on its measuring review): Framework / pve-tiny production,
+`loop-hunt-matrix`, mutating only loop-hunt artifact files, detached run/
+watcher units, model loads/reloads and D10 timer pause/restore. Pinned
+builds, default server/sampling settings and synthetic prompts unchanged.
+
+Remaining jobs (pilot supplies fork-current C1 seed 1):
+
+| Batch | Model/build | Jobs |
+| --- | --- | --- |
+| 1 | Qwen fork current | C1 seed 2; C2 seeds 3/4/5/6; C3 seed 1 continuing the completed fresh pilot; C5 seed 1, both approved output caps |
+| 1 | Qwen fork previous | C1 seeds 1 and 2 as separate runs; C2 seeds 3/4/5/6; C3 continuing its C1 seed 1; C5 seed 1, both caps |
+| 2 | Qwen upstream | Same C1/C2/C3/C5 jobs as fork previous |
+| 2 | GLM upstream | C1 seeds 1 and 2 separately; C2 seeds 3/4/5/6 |
+| 2, last | Qwen all three builds | C4 seed 1 once per build, sess262k |
+
+Twenty remaining matrix runs, sequential in two consecutive batches; the
+night grouping is organisational, not a pause between jobs. Each gets its own private run
+directory, normal harness invocation and detached watcher. Between every
+run, verify original model/build restored, Redis lock free and upgrade timer
+active before allowing the next one. Never hold the lock in the orchestrator;
+the harness owns it. Recheck all three pinned build links per job. C3 paths
+resolve only to completed matching C1 runs. No unrelated service restart,
+package upgrade, build promotion, private replay or judge work in this task.
+
+The transient command orchestrator and exact job arguments live in ignored
+`artifacts/campaign-20261015/` (matrix-jobs.json, campaign.py). Four local
+fake-command lifecycle tests verify launch order, C1 continuation resolution,
+failed launch cleanup and failed watcher cleanup. It leaves harness payloads
+and grading untouched. After the pilot passes, copy only those two files to
+`/storage/artifacts/loop-hunt/campaign-20261015/` and launch, through
+`TASK_APPROVAL=loop-hunt-matrix ./with-secrets-prod-tiny ssh
+steve@framework.gibbsgreatly.xyz`:
+
+```bash
+systemd-run --user --unit loop-hunt-matrix-campaign-20261015 --collect \
+  python3 -u /storage/artifacts/loop-hunt/campaign-20261015/campaign.py \
+  /storage/artifacts/loop-hunt/campaign-20261015/matrix-jobs.json
+```
+
+Its campaign.json and user journal record each run path, cleanup and flags.
+It cannot grant approvals, change settings, or automatically broaden a failed
+job. Supervise its results and apply only the operator's scoped retry rules.
+
+Result, matrix launch (2026-10-15): approved campaign launched as detached
+`loop-hunt-matrix-campaign-20261015.service`, invocation
+`7b189720a49e4586b377733dbbf409a8`. State/logs and all job directories live
+under `/storage/artifacts/loop-hunt/campaign-20261015/`; campaign.json records
+each job path, unit and cleanup, with immutable job-file hash. It verifies
+the passed pilot review/results hash before execution. Model settings,
+prompts and budgets unchanged; job-level watchers and cleanup remain in force.
+First run (fork-current-C1-seed2) and its watcher first poll verified.
+Status uses `~/loop-hunt/run.sh --status --results-root
+/storage/artifacts/loop-hunt/campaign-20261015`; default root still selects
+a top-level pilot, so use this campaign root. Supervision/review still
+running; do not mark the matrix complete yet.
 
 #### lh-07-replay-real
 
@@ -1265,6 +1339,32 @@ chat was GLM), warm and cold, 3 seeds. This is the framework's
 "save → restart → reload → repeat". Approval `loop-hunt-replay`.
 
 Result: —
+
+Replay preparation result (2026-10-15; inference not started): selected
+V1/V9 both point to the first user request of their saved sessions. Private
+exports preserve the exact saved user text (27 / 310 characters), not the
+historical assistant response. No invented system prompt or tool schemas.
+Local exporter initially checked V9's tool-channel excerpt against answer
+text; fixed channel selection with a synthetic regression test. Source
+pointer, date and selected evidence all verified without returning more
+excerpts. No source file changed. Full export provenance and SHA-256 remain
+in ignored artifacts/replay-exports-20261015-v2; no prompt text enters git.
+Under loop-hunt-replay approval, both inputs were copied to Framework
+`/storage/artifacts/loop-hunt/replay-inputs-20261015/` (0700, files 0600),
+with exact hash/permission checks. Inference waits for the matrix step.
+
+V9's historical hit is repeated tool invocation, from Ollama. Its missing
+tool schemas/execution history are not reconstructed by a prompt-only replay;
+record that coverage limit explicitly. A non-looping completion cannot
+establish absence of the original agent tool loop. V1's served model/build
+remain unknown. Both are reconstructions; lh-01d remains available for exact
+capture. These limitations do not add invented schemas or tool behaviour to the
+saved user messages. Models, sampling and conditions remain as planned.
+A reporting-only correction labels replay coverage separately from the
+synthetic full-context condition and explains missing historical tool
+execution. Extended end-to-end regression passes in the 74-test suite.
+Deploy it at the replay boundary, after the active matrix version finishes;
+no mid-run harness replacement or prompt/request changes.
 
 #### lh-08-judge
 

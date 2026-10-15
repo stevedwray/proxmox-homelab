@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 rerunning with corrected scoring; prior evidence preserved**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 matrix running; prior evidence preserved**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -451,3 +451,17 @@ grades were preserved byte-for-byte under the run's regrade-backups. A fresh
 unchanged-settings pilot is running at
 `/storage/artifacts/loop-hunt/20261015T010713Z-pilot`; review is pending.
 Updated autonomy rules and conditional matrix/replay approvals are in the plan.
+
+Fresh pilot passed: 32 requests, 74/74 recall, three clean warm/cold pairs
+at 65673/98431/118897 actual prompt tokens; all cold requests cache_n 0.
+Only the two separate line-format failures remain. No further measuring,
+GPU or evidence problem. Four full-context slots, exact token accounting,
+original-model restoration, free lock and active timer verified.
+
+The approved matrix is now running in two consecutive batches (20 remaining
+jobs; pilot counts as current C1 seed 1), supervised by
+`loop-hunt-matrix-campaign-20261015.service`. Framework's private
+`/storage/artifacts/loop-hunt/campaign-20261015/campaign.json` records progress
+and each job's run directory. Every job has its own watcher and timer/model/
+lock cleanup gates. Matrix/replay results remain pending; lh-08/lh-10 are
+explicit operator stop points.
