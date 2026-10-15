@@ -6,7 +6,8 @@ import xml.etree.ElementTree as ET
 HERE = os.path.dirname(os.path.abspath(__file__))
 # FIM ignore entries must never reach into the places FIM exists to watch
 PROTECTED = ("/etc/", "/usr/", "/bin/", "/sbin/", "/boot/", "/root/", "/home/", "/var/spool/cron")
-ALLOWED_UNDER_PROTECTED = {"/etc/pve/nodes/pve/lrm_status", "/etc/pve/nodes/pve-test/lrm_status"}
+ALLOWED_UNDER_PROTECTED = {"/etc/pve/nodes/pve/lrm_status", "/etc/pve/nodes/pve-test/lrm_status",
+                             "/etc/pve/nodes/pve-tiny/lrm_status"}
 
 
 class AgentConf(unittest.TestCase):

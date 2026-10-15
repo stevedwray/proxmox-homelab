@@ -216,7 +216,9 @@ Steps (each its own approval or go-ahead, in order):
    (`cis_debian13`) results present, vulnerability detection populated, no `lrm_status` FIM alerts.
 5. Measure one hour then 24 h with `wazuh_tuning.py agents/alerts/noise`. Gates: agent stays active, no rule above 10%
    of fleet alerts, no `events_dropped` increase, manager free RAM stays above 800MB. Then repeat for `pve-tiny`
-   (inventory entry, `./with-secrets-prod-tiny`, its own preflight and approval).
+   (repo side done: inventory group `proxmox_tiny`, deliberately outside `proxmox`/`proxmox_production` so the storage and
+   terraform playbooks cannot target it, and the `lrm_status` ignore in `default.xml`; still to run: shared-config delivery
+   and enrol via `./with-secrets-prod-tiny`, each with its own preflight and approval).
 6. Record results in README "Results at a glance" and open items; `docs/wazuh-stack/README.md` enrolled count 27 -> 28.
 
 Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `pve-test`, and delete the agent on the
