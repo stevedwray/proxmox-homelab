@@ -417,7 +417,10 @@
                 - -c
                 - |
                   printf "table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\n" > /mnt/openvas.conf
-                  sed "s/127/128/" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf
+                  # Stock level is 127 (everything except DEBUG). Greenbone's reference compose
+                  # bumps it to 128, which turned DEBUG on and wrote ~780k lines/hour (50 GB
+                  # by 2026-10-16). Keep 127; set 128 here only to debug a specific NVT.
+                  sed 's/gvm/openvas/' /etc/openvas/openvas_log.conf > /mnt/openvas_log.conf
                   chmod 644 /mnt/openvas.conf
                   chmod 644 /mnt/openvas_log.conf
                   touch /var/log/openvas/openvas.log
