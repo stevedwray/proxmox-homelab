@@ -245,9 +245,10 @@ class SessionRun(cb.Run):
         self.manifest['status']='running'
         self.save()
 
-    def save(self):
+    def save(self,*,update_progress=True):
         cb.write_json(self.manifest_path,self.manifest)
-        cb.write_json(self.directory/'progress.json',dict(status=self.manifest.get('status'),completed=len(self.records),updated=cb.now(),run_dir=str(self.directory)))
+        if update_progress:
+            cb.write_json(self.directory/'progress.json',dict(status=self.manifest.get('status'),completed=len(self.records),updated=cb.now(),run_dir=str(self.directory)))
         lines=['# Loop hunt session report','',f"Status: {self.manifest.get('status')}",
                'Sampling: server defaults (seed and output budget recorded per request).',
                'Coverage: '+('selected user-turn reconstruction; synthetic full-context condition not exercised' if self.manifest.get('replay_kind') else
@@ -543,7 +544,7 @@ def regrade(directory):
         backup=directory/'regrade-backups'/str(time.time_ns())
         backup.mkdir(parents=True,mode=0o700)
         backup.parent.chmod(0o700)
-        for name in ('results.jsonl','run.json','report.md','regraded.json'):
+        for name in ('results.jsonl','run.json','report.md','progress.json','regraded.json'):
             if (directory/name).exists():shutil.copy2(directory/name,backup/name)
         if (directory/'raw').exists():shutil.copytree(directory/'raw',backup/'raw')
         for record in records:
@@ -574,7 +575,9 @@ def regrade(directory):
             backup=str(backup.relative_to(directory)),recorded=cb.now(),
             results_sha256=gs.sha((backup/'results.jsonl').read_bytes()),
             scorer_sha256=gs.sha(Path(__file__).read_bytes())))
-        run.save()
+        # Regrading is analysis of saved evidence, not new run progress. Keep
+        # the completion timestamp so elapsed-run summaries remain meaningful.
+        run.save(update_progress=False)
         return len(records)
 
 

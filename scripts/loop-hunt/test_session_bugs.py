@@ -221,6 +221,7 @@ class SessionHarnessTests(unittest.TestCase):
             self.assertEqual(self.execute(run),0)
             original=(run.directory/'results.jsonl').read_bytes()
             original_report=(run.directory/'report.md').read_bytes()
+            original_progress=(run.directory/'progress.json').read_bytes()
             self.assertEqual(sb.regrade(run.directory),3)
             rows=json.loads((run.directory/'regraded.json').read_text())
             self.assertTrue(all(all(q['correct'] for q in r['recall']) for r in rows))
@@ -228,10 +229,13 @@ class SessionHarnessTests(unittest.TestCase):
             self.assertEqual(len(backups),1)
             self.assertEqual((backups[0]/'results.jsonl').read_bytes(),original)
             self.assertEqual((backups[0]/'report.md').read_bytes(),original_report)
+            self.assertEqual((backups[0]/'progress.json').read_bytes(),original_progress)
+            self.assertEqual((run.directory/'progress.json').read_bytes(),original_progress)
             self.assertTrue((backups[0]/'raw'/'seed-1-1-warm.json').exists())
             self.assertEqual(sb.regrade(run.directory),3)
             self.assertEqual(len(list((run.directory/'regrade-backups').iterdir())),2)
             self.assertEqual((backups[0]/'results.jsonl').read_bytes(),original)
+            self.assertEqual((run.directory/'progress.json').read_bytes(),original_progress)
 
 
 class RecallGradingTests(unittest.TestCase):
