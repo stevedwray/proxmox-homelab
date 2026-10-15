@@ -1592,16 +1592,20 @@
 - name: Grafana integration (cAdvisor + Wazuh metrics for node_exporter's textfile collector)
   hosts: all
   become: true
-  gather_facts: false
+  gather_facts: true
   # Additive and independent of the Wazuh compose project: a separate cAdvisor compose project (like
   # harbor-cadvisor / greenbone-cadvisor) and a systemd timer. Run alone with --tags monitoring-integration;
   # it never touches a Wazuh container. Needs node_exporter_textfile_dir (first play) applied via lxc_base.
   tags: [monitoring-integration]
   vars:
+    # Same value as in the first play: the node_exporter role is re-applied here so that ONE targeted run
+    # (--tags monitoring-integration) turns the textfile collector on and then starts writing to it.
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
     wazuh_cadvisor_compose_dir: /opt/wazuh-cadvisor
     wazuh_cadvisor_host_port: 8080
     wazuh_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
   roles:
+    - node_exporter
     - wazuh_metrics
   tasks:
     - name: Create cAdvisor compose directory
