@@ -504,6 +504,16 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
             print(f"  warning: Proxmox {host} discovery failed: {exc}")
             continue
 
+        # Guests left behind on this node after a relocation (e.g. stopped copies
+        # of stacks that now run on another node under the same VMID/IP) would
+        # otherwise appear twice in NetBox, fighting over the same IP.
+        excluded = {int(v) for v in node_def.get("exclude_vmids", [])}
+        if excluded:
+            proxmox_data = {
+                **proxmox_data,
+                "containers": [c for c in proxmox_data.get("containers", []) if c.get("vmid") not in excluded],
+            }
+
         node_name = _node_name_from_proxmox_data(proxmox_data)
         if node_name:
             discovered_node_names.append(node_name)

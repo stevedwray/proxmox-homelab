@@ -362,6 +362,8 @@
     lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | default('', true) }}"
     pve_readonly_token_id: "{{ lookup('env', 'PVE_READONLY_TOKEN_ID') | default('', true) }}"
     pve_readonly_token_secret: "{{ lookup('env', 'PVE_READONLY_TOKEN_SECRET') | default('', true) }}"
+    pve_tiny_readonly_token_id: "{{ lookup('env', 'PVE_TINY_READONLY_TOKEN_ID') | default('', true) }}"
+    pve_tiny_readonly_token_secret: "{{ lookup('env', 'PVE_TINY_READONLY_TOKEN_SECRET') | default('', true) }}"
     portainer_token: "{{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}"
     netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
 
@@ -493,6 +495,10 @@
           {% if pve_readonly_token_id %}PVE_READONLY_TOKEN_ID={{ pve_readonly_token_id }}{% endif %}
 
           {% if pve_readonly_token_secret %}PVE_READONLY_TOKEN_SECRET={{ pve_readonly_token_secret }}{% endif %}
+
+          {% if pve_tiny_readonly_token_id %}PVE_TINY_READONLY_TOKEN_ID={{ pve_tiny_readonly_token_id }}{% endif %}
+
+          {% if pve_tiny_readonly_token_secret %}PVE_TINY_READONLY_TOKEN_SECRET={{ pve_tiny_readonly_token_secret }}{% endif %}
 
           {% if portainer_token %}PORTAINER_TOKEN={{ portainer_token }}{% endif %}
 
