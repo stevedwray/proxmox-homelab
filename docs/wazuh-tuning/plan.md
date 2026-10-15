@@ -1,5 +1,25 @@
 # Wazuh tuning plan
 
+**Status (2026-10-15): executed and merged to `stable` (PR #478); live on `pve`.** The phase text below is the
+original plan (intent and gates). What actually happened, including every deviation, is in the table here and in the
+per-phase records in [README.md](README.md#phase-records). Results against the targets: README "Results at a glance".
+
+| Phase | Status | Where reality differed from the plan |
+|---|---|---|
+| 0 baseline, tooling, regression suites | **done** | Added a second tier (live actions on apt-cacher-stack) and a Docker tier (portainer-stack); counts cross-checked against the raw `alerts.json` (0.001% apart) |
+| 1a dashboard healthcheck | **done** | Applied by editing the live compose and recreating only the dashboard (a playbook run would recreate all three containers) |
+| 1b version skew | **done** | Upgraded to 4.14.8 (the fleet's version), not 4.14.9; backup was the nightly PBS snapshot (operator choice) instead of a manager-volume copy + indexer snapshot |
+| 1c retention | **done** | 90 days (operator); plus pruning of the manager's raw logs, which Wazuh never rotates; the ISM plugin's system indices needed 0 replicas (cluster went yellow, fixed) |
+| 1d rule 87907 | **done** | 40 exact, anchored level-0 rules generated from `docker_healthchecks.json`; `& < >` cannot be escaped in a pcre2 field, so they match as `.`; the 24 h gate is **pending** |
+| 2a FIM ignore lists | **done** | Shared `agent.conf` per group, each block scoped to one agent by name; delivery needed stage-then-`mv` (a root-owned `docker cp` race made `remoted` skip the file) |
+| 2b rootcheck 510 | **done** | 3,314 of 3,320 were LXC's own `/dev/.lxc*` files: one anchored level-0 rule; the 6 overlayfs events/day are left alone |
+| 2c auth failures on graylog-stack | **done** | Not a graylog fault: MikroTik hAP log lines, 100% from the Greenbone scanner; lowered to L3 for that address and protocol only |
+| 2d scanner sshd | **done** | Rules for 5710, 5712 (was L10) and 5760; 5740 has no source address, so it is not scoped |
+| 3 vulnerability detector | **done, re-scoped** | Operator scoped the session to Wazuh and agents (no patching). Delivered `<nodiff>` for secrets, rootkit checks enabled fleet-wide, Debian profile, `vuln_triage.py`; syscollector and SCA reviewed and left alone |
+| 4 capacity and sizing | **pending** | Needs ~7 days of post-tuning data; the Wazuh dashboard is the instrument |
+| 5 coverage and detection testing | **pending, optional** | Known unenrolled: framework, pve-tiny, pentagi-stack |
+| 6 steady state | **done, except** alert rules and a scheduled weekly review | Dashboard, exporter and scrape targets live; no provisioned Grafana alert mechanism exists in the repo; the noisiest-rule share is a dashboard stat instead of a scheduled task |
+
 Method (carried over from the Greenbone work, where it found and fixed the scanner OOM
 crashes and the 2x scan duplication):
 
@@ -26,7 +46,7 @@ Stop conditions for any supervised change: indexer heap above 85% for 5 minutes,
 RAM under 800MB, any `events_dropped` increase, any queue usage above 50%, a must-fire
 test failing, an agent leaving `active`. Roll back first, investigate second.
 
-## Phase 0 - baseline and tooling (read-only)
+## Phase 0 - baseline and tooling (read-only) - DONE
 
 Goal: repeatable measurements and a regression suite, so every later phase has a
 before/after.
@@ -51,7 +71,7 @@ before/after.
 
 Gate: baseline recorded, must-fire suite green on current config.
 
-## Phase 1 - quick wins (each is its own supervised change)
+## Phase 1 - quick wins (each is its own supervised change) - DONE
 
 1a. **Dashboard healthcheck** - accept 401 as healthy (it proves the app answers) in
     `deploy-wazuh-stack.yml`; recreate only the dashboard container.
@@ -79,7 +99,7 @@ Gate: baseline recorded, must-fire suite green on current config.
     Gate: alerts per day drop by at least 85%; the must-fire container tests pass;
     non-health-check `docker exec` still alerts.
 
-## Phase 2 - FIM and rootcheck tuning
+## Phase 2 - FIM and rootcheck tuning - DONE
 
 2a. **FIM ignore list**, repo-managed through agent groups' shared `agent.conf` (the
     mechanism already used for segments) rather than per-host ossec.conf edits:
@@ -100,7 +120,7 @@ Gate: baseline recorded, must-fire suite green on current config.
     still alert.
     Gate for phase: total alerts per day under 50k and no single rule above 10%.
 
-## Phase 3 - vulnerability detector, SCA and inventory configuration (Wazuh side only)
+## Phase 3 - vulnerability detector, SCA and inventory configuration (Wazuh side only) - DONE
 
 Scope: Wazuh's own configuration and what the agents feed it. Applying host updates, removing packages and
 changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
@@ -115,48 +135,66 @@ changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
 5. Decide how findings are surfaced (Phase 6 dashboard / weekly `vuln_triage.py` report), not hidden.
    Gate: documented settings with their reasons; any change has a before/after and keeps detection intact.
 
-## Phase 4 - capacity and sizing
+## Phase 4 - capacity and sizing - PENDING
 
-1. With noise gone, measure again for 7 days: indexer heap, RSS, shards, EPS, disk growth.
-2. Right-size the LXC (RAM, heap `wazuh_indexer_heap_gb`, shard count, one monthly index
-   instead of daily for low-volume indices). Use the Proxmox-change-then-set-in-config
-   pattern so Terraform does not see drift (as done for greenbone-stack).
+1. With the noise gone, measure for ~7 days from the Wazuh dashboard (`/d/wazuh`; raw numbers via the helper's `health`
+   and `retention` modes): indexer heap and RSS, shards, events per second, alert-index growth per day, disk used.
+   Baseline for comparison: heap 69% of 4GB at 175 shards, ~0.4GB/day, ~1.3GB free RAM of 8GB.
+2. Right-size the LXC (RAM, `wazuh_indexer_heap_gb`) and shard count: a one-shard-per-index template for new alert indices
+   (a single node does not need 3-4 shards per index; 90-day retention would otherwise reach ~330 shards). Use the
+   Proxmox-change-then-set-in-config pattern so Terraform sees no drift (as done for greenbone-stack).
 3. Decide with the numbers whether the stack is a pve-tiny candidate (separate plan).
    Gate: documented steady-state numbers and headroom of at least 30% on RAM and heap.
 
-## Phase 5 - coverage and detection testing (optional, operator decides)
+## Phase 5 - coverage and detection testing (optional, operator decides) - PENDING
 
-1. List unenrolled hosts (framework, pve-tiny, others) and enrol per the existing role.
-2. Per-agent-type test matrix (LXC Docker stack, hypervisor, bare metal): FIM paths,
-   Docker monitoring, SCA results, syscollector inventory present.
-3. Agent upgrade procedure documented and tested on one host before the fleet.
+1. List unenrolled hosts (known: `framework`, `pve-tiny` hypervisor, `pentagi-stack`) and enrol per the existing role
+   (`ansible/00-initial-setup/proxmox-wazuh-agent.yml` is the pattern for hypervisors and bare metal). Each enrolment
+   needs the MikroTik rule for 1514/1515/55000 from its zone and a group in `agent_conf/`.
+2. Per-agent-type test matrix (LXC Docker stack, hypervisor, bare metal): FIM paths, Docker monitoring, SCA results,
+   syscollector inventory, rootkit checks. The live suite (`wazuh-mustfire-live.yml`) already takes `live_group`,
+   `live_docker` and `live_rootcheck`, so a new host type is an inventory plus its case list.
+3. Agent upgrade procedure documented and tested on one host before the fleet (the role now pins the version, so an
+   upgrade is a deliberate change of `wazuh_agent_version` with the manager first).
+4. Optional: a custom SCA policy that skips the CIS checks that cannot apply inside an LXC (baseline 43%, ~105 failing
+   and 22 invalid checks per host).
 
-## Phase 6 - steady state
+## Phase 6 - steady state - DONE (alert rules and weekly review aside)
 
-1. Grafana: reuse the Greenbone pattern (textfile exporter + dashboard): alerts per day,
-   top rules, agents not active, queue usage, indexer heap and disk, events dropped.
-2. Alert rules for those (delivery via Discord stays a separate plan).
-3. A weekly noise review task: `wazuh_tuning.py alerts` flags any rule over 10% of volume.
-4. Final docs pass: docs/wazuh-stack/README.md brought up to date (28 agents, current
-   design), this workspace closed out, memory updated.
+1. Done: Grafana via the Greenbone pattern (role `wazuh_metrics`, textfile exporter, dashboard `wazuh.json`, scrape
+   targets, cAdvisor on the host). The host also appears in Node Detail, Docker Containers and Lab Overview.
+2. Open: alert rules. The repo has no provisioned Grafana alert mechanism (only a manual coredns example) and delivery
+   (Discord) is a separate plan.
+3. Weekly noise review: the "noisiest rule share" stat on the dashboard covers it; `wazuh_tuning.py alerts` is the
+   detail view. Not scheduled as a task.
+4. Done: docs pass (this workspace and `docs/wazuh-stack/README.md`) and memory.
 
 ## Order, risk and sessions
 
-| Phase | Risk | Session notes |
-|---|---|---|
-| 0 | none (read-only) | start here; produces the baseline and the regression suite |
-| 1a, 1c, 1d | low | each independently approvable; 1d gives the biggest win |
-| 1b | highest | upgrade, own slot, backup checkpoint |
-| 2 | low-medium | needs per-path review with the operator |
-| 3 | low | mostly analysis |
-| 4 | medium | resize needs a maintenance moment |
-| 5, 6 | low | optional / last |
+| Phase | Risk | Status | Notes |
+|---|---|---|---|
+| 0 | none (read-only) | done | produced the baseline and the regression suites |
+| 1a, 1c, 1d | low | done | 1d gave the biggest win; each was its own approval |
+| 1b | highest | done | own slot; PBS snapshot as the safety net |
+| 2 | low-medium | done | per-path review with the operator; one delivery race found and fixed |
+| 3 | low | done | re-scoped to Wazuh-side configuration |
+| 4 | medium | pending | a resize needs a maintenance moment |
+| 5 | low | pending, optional | |
+| 6 | low | done | alert rules aside |
 
-Suggested first slice for the next session: Phase 0 in full, then 1a and 1d, because
-together they remove most of the noise and the unhealthy flag with little risk.
+Every production change followed the same loop: preflight, operator "proceed", a named `TASK_APPROVAL`, the change, the
+regression suites, the after-action summary. The manager was restarted about six times on 2026-10-15 for rule changes:
+batch `local_rules.xml` changes in future.
+
+## Next session
+
+1. Take the 24 h measurements (runbook, "Re-measure the 24 h gates") and write the "after" values into the README.
+2. Decide on Phase 4 once ~7 days of data exist; Phase 5 and the small follow-ups are listed in README "Open items".
 
 ## Done when
 
-All phases accepted or explicitly dropped by the operator; every change is in the repo
-and reproduced by a clean deploy; README baseline table has "after" values; docs and
-memory are current; the branch is merged to `stable`.
+All phases accepted or explicitly dropped by the operator; every change is in the repo and reproduced by a clean
+deploy; README has "after" values; docs and memory are current; everything merged to `stable`.
+
+State: everything above is merged (#478) and reproduced by the repo, docs and memory are current. Remaining before the plan
+can be closed: the 24 h "after" values, then Phase 4, and a decision on Phase 5.

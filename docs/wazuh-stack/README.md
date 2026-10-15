@@ -2,116 +2,74 @@
 
 ## Status
 
-> **2026-10-15:** this status block is the August pilot (6 agents). The fleet is now
-> 28 agents, and a baseline survey plus a tuning plan live in
-> [docs/wazuh-tuning/](../wazuh-tuning/README.md) (branch `work/wazuh-tuning`).
+**LIVE in production on `pve` (vmid `40015`, `192.168.40.15`, `infra_seg`), version 4.14.8, tuned.**
+Manager + indexer + dashboard (three Docker containers) behind Traefik with real Authentik OIDC login at
+`https://wazuh.lab.gibbsgreatly.xyz`. **27 enrolled agents in 11 zone groups, plus the manager's own local agent
+(28 entries in the API), all `active` and all on 4.14.8.** Roughly 30,000 alerts a day (it was about 500,000 before the
+2026-10-15 tuning; the 24 h figure is being re-confirmed), a 90-day retention policy, and a Grafana dashboard.
 
-**LIVE in production on `pve`, agent pilot rollout complete as of
-2026-08-29.** Manager + indexer + dashboard up and healthy at vmid
-`40015` (`192.168.40.15`, `infra_seg`). Real Authentik OIDC login
-confirmed working end-to-end at `https://wazuh.lab.gibbsgreatly.xyz`.
+The August pilot (6 agents) grew into the fleet rollout recorded in
+[docs/lxc-scan-and-monitoring-rollout/](../lxc-scan-and-monitoring-rollout/README.md). The baseline, the tuning work, the
+results and the open items are in [docs/wazuh-tuning/](../wazuh-tuning/README.md); how to measure, test and change
+the stack is its [runbook](../wazuh-tuning/runbook.md). This file describes what the stack is and where its configuration lives.
 
-**6 agents enrolled and `Active`**: `authentik-stack`, `proxy-stack`,
-`harbor-stack`, `technitium-stack`, `apt-cacher-stack`, and `pve`
-itself (the hypervisor — the single highest-value host in the rollout,
-since it's the root of trust for everything else). `apt-cacher-stack`
-and `harbor-stack` share `wazuh-stack`'s own zone (`infra_seg`) so
-needed no firewall change; `authentik-stack`/`technitium-stack`
-(`mgmt_seg`), `proxy-stack` (`edge_seg`), and `pve` (flat `lan`) each
-needed a narrowly-scoped new MikroTik forward rule to `wazuh-stack`'s
-manager ports (tcp/1514+1515), all confirmed live.
+Per agent, verified against real indexer data (not just configured): **FIM** (`syscheck`, per-stack extra watch paths, ignore
+lists and `<nodiff>` for secrets via shared config), **rootcheck** (including the rootkit-file and trojan checks), **SCA**
+(the `cis_debian13` policy; fleet score 43%), **vulnerability detection** (Debian tracker feed, about 3,957 open findings,
+97% not yet triaged upstream) and **Docker container monitoring** (`docker-listener` wodle, opt-in, on the Docker stacks).
 
-Confirmed genuinely working per-agent (not just configured — verified
-against real indexer data and the actual dashboard, not just green
-checkmarks): **FIM** (`syscheck`, with per-stack extra watch paths),
-**SCA** (CIS-style config auditing, real alerts across every host),
-**vulnerability-detection** (500+ real CVEs per agent, correlated
-against actual installed Debian 13 packages), and **Docker container
-monitoring** (`docker-listener` wodle, opt-in, enabled on the 4 Docker
-Compose stacks only — not `apt-cacher-stack`/`pve`, which have nothing
-local for it to watch).
-
-`framework` (bare-metal Ubuntu, AI/LLM workloads) and the operator's
-own desktop are NOT yet enrolled — both real candidates for a future
-pass, not decided against, just not done. See "What's not built yet".
+Not enrolled: `framework` (bare-metal Ubuntu), the `pve-tiny` hypervisor, `pentagi-stack` and the operator's own desktop
+(see "What's not built yet").
 
 ## What this is
 
-A standalone `wazuh-stack` LXC running Wazuh's official all-in-one
-single-node deployment (manager + indexer + dashboard, three Docker
-containers) in `infra_seg`, fronted by Traefik with real Authentik OIDC
-login on the dashboard — same shape as `opensearch-stack`'s Dashboards
-route — plus a shared `wazuh_agent` Ansible role
-(`terraform/lxc/ansible/roles/wazuh_agent/`) deployed as an explicit
-opt-in addition to specific stacks' own playbooks (not wired into
-`lxc_base`, so it stays deliberate per-host, not fleet-wide-by-default).
+A standalone `wazuh-stack` LXC running Wazuh's official all-in-one single-node deployment (manager + indexer + dashboard),
+plus a shared `wazuh_agent` Ansible role (`terraform/lxc/ansible/roles/wazuh_agent/`) deployed as an explicit opt-in addition
+to each stack's own playbook (not wired into `lxc_base`, so enrolment stays deliberate per host). Agents enrol with
+`agent-auth` against `wazuh-authd` (`use_password: yes`) into one zone group per host (`infra_seg`, `mgmt_seg`, ...).
+
+## Where the configuration lives
+
+| What | Where (repo) | How it is deployed |
+|---|---|---|
+| Stack, versions, healthchecks, indexer/manager config | `terraform/lxc/ansible/playbooks/deploy-wazuh-stack.yml` (`wazuh_image_tag` must equal the agent role's `wazuh_agent_version`) | the stack's provision; a compose change recreates all three containers |
+| Local rules (health-check suppression, scanner, rootcheck, router logins) | `terraform/lxc/ansible/files/wazuh-stack/`: `docker_healthchecks.json` + `gen_local_rules.py` generate `local_rules.xml`, unit-tested | `--tags wazuh_local_rules` (validated with `wazuh-analysisd -t`, then a manager restart) |
+| Shared agent config (FIM ignore lists, `<nodiff>`, rootkit file paths) | `files/wazuh-stack/agent_conf/common.xml` (every group) + `<group>.xml` (agent-scoped) | `--tags wazuh_agent_conf` (no restart; agents reload) |
+| Alert retention (90 days) | ISM policy `wazuh-alerts-retention` + host cron for the manager's raw logs; `wazuh_alert_retention_days` | `--tags wazuh_retention` |
+| Agent `ossec.conf` | role `wazuh_agent` | each stack's provision |
+| Metrics and dashboard | role `wazuh_metrics`, `terraform/lxc/stacks/monitoring-stack/dashboards/wazuh.json` | `--tags monitoring-integration`; monitoring-stack targets |
+| Findings to opensearch-stack | role `wazuh_findings_ingest` (vulnerability state, daily 06:00 UTC) | the stack's provision |
+| Measurement and regression suites | `files/wazuh-tuning/`, `playbooks/wazuh-tuning.yml`, `playbooks/wazuh-mustfire-live.yml` | by hand through `./with-secrets-prod` |
+
+Secrets are in OpenBao (`kv/services/wazuh`: `WAZUH_INDEXER_ADMIN_PASSWORD`, `WAZUH_API_PASSWORD`,
+`WAZUH_OIDC_CLIENT_SECRET`, `WAZUH_AGENT_AUTHD_PASSWORD`); the stack's address is the `LAB_IP_WAZUH` variable.
 
 ## What's built and live
 
-- `terraform/lxc/stacks/wazuh-stack/` — all 5 files (`STACK_CONTRACT.md`,
-  `stack.yaml`, `terragrunt.hcl` ×2 for both `pve` and `pve-test-vm`,
-  `edge.yaml`)
-- `terraform/lxc/ansible/playbooks/deploy-wazuh-stack.yml` — the manager
-  deploy, including `wazuh-authd` auto-enrollment (`use_password: yes`,
-  shared `WAZUH_AGENT_AUTHD_PASSWORD` SOPS secret, password file
-  injected via `docker cp` rather than bind-mounted — see the file's own
-  comments for why)
-- `terraform/lxc/ansible/roles/wazuh_agent/` — the shared agent role:
-  installs from Wazuh's own apt repo, writes an explicit `ossec.conf`
-  (rootcheck/FIM/SCA/syscollector always on, `docker-listener` opt-in
-  via `wazuh_agent_docker_monitoring_enabled`), enrolls via
-  `agent-auth`. Idempotency is keyed on the agent's *real* connection
-  status (`wazuh-agentd.state`, `status='connected'`), not merely
-  whether a `client.keys` file exists — a real bug (a 7-month-old
-  unrelated leftover enrollment on `pve` blocked re-enrollment silently)
-  forced this fix.
-- `ansible/00-initial-setup/proxmox-wazuh-agent.yml` — the separate
-  playbook path for enrolling bare-metal/hypervisor hosts (`pve`,
-  and the pattern to follow for `framework` later), reusing the same
-  `wazuh_agent` role via `ansible/ansible.cfg`'s shared `roles_path`
-- 5 wazuh-agent-role inclusions added directly to
-  `deploy-authentik-stack.yml`, `deploy-proxy-stack.yml`,
-  `deploy-harbor-stack.yml`, `deploy-technitium-stack.yml`,
-  `deploy-apt-cacher-stack.yml`
-- New SOPS secrets: `WAZUH_INDEXER_ADMIN_PASSWORD`, `WAZUH_API_PASSWORD`,
-  `WAZUH_OIDC_CLIENT_SECRET`, `WAZUH_AGENT_AUTHD_PASSWORD`; new `.env`
-  var `LAB_IP_WAZUH`
-- `discover-authentik-edge.py`'s OIDC registry — `wazuh-stack`'s
-  dashboard route registered
-- `scripts/check-required-sops-keys.sh` — generalized from a hardcoded
-  MikroTik-only allowlist to scanning every key in
-  `terraform/secrets.common.enc.yaml`, after a real 5-day-old
-  unrelated corruption (`HARBOR_DB_PASSWORD` silently wiped to `""`)
-  surfaced during this rollout and took Harbor down in production; see
-  git history on commit `f690714b` for the full incident
-- Full edge activation: Authentik application/provider created,
-  Traefik route published and live, Technitium DNS record live
+- `terraform/lxc/stacks/wazuh-stack/` (contract, `stack.yaml`, terragrunt, `edge.yaml`), the manager playbook (including
+  `wazuh-authd` enrolment with the password file injected via `docker cp`), the shared `wazuh_agent` role (idempotency keyed on
+  the agent's real connection status, not on a leftover `client.keys`), and `ansible/00-initial-setup/proxmox-wazuh-agent.yml`
+  for hypervisors and bare metal.
+- Agent fleet: 27 agents, 18 of them in a zone group only (no `default`), which is why the rootkit rule files are copied into
+  every group directory.
+- Full edge: Authentik application and provider, Traefik route, Technitium record.
+- The 2026-10-15 tuning (details in docs/wazuh-tuning/): dashboard healthcheck, 4.14.8 upgrade, 90-day retention and manager
+  log pruning, 40 health-check suppression rules, FIM ignore lists, scanner and LXC rootcheck rules, `<nodiff>` for secrets,
+  rootkit checks enabled, Grafana metrics and dashboard, and the regression suites that guard all of it.
+- Logs: the host, the indexer container and the dashboard container ship to Graylog (rsyslog forward; Docker uses the syslog
+  log-driver). The manager's own `ossec.log` and `api.log` are files in the `wazuh_logs` volume and are not shipped yet.
 
 ## What's not built yet
 
-- **`framework` and the operator's own desktop as agents** — real
-  candidates, not yet done. `framework` would reuse the exact same
-  `ansible/00-initial-setup/proxmox-wazuh-agent.yml`-style pattern
-  against the `framework` inventory group. The desktop is a genuinely
-  different category (personal daily-driver, not IaC-managed) and was
-  left as the operator's own call.
-- **Feeding Wazuh's vulnerability-detector findings into
-  `secpipe-stack`'s CVE correlation pipeline** — `secpipe-stack`
-  already correlates Harbor (container images) and Greenbone/GVM
-  (network scans); Wazuh adds a third, genuinely different angle
-  (installed OS packages on the host itself). Not scoped or designed
-  yet, just identified as the next real step.
-- Everything from `docs/threat-vuln-platform/plan.md`'s `*-events`
-  family (Wazuh → `opensearch-stack` filtered sync) — still future work
-- Wazuh's own default `kibanaserver` password (left at its vendor demo
-  value, matching `opensearch-stack`'s precedent)
-- `monitoring-stack` scrape config still doesn't include `wazuh-stack`
-  — a standing, pre-existing platform gap, not introduced here
-- The dashboard's numeric API-connection label (`1513629884013`) —
-  a same-day rename attempt caused a real regression (the dashboard app
-  re-injects a stale duplicate entry on a non-numeric key) and was
-  reverted; needs real investigation of the app's own validation logic
-  before retrying, not worth the risk for a cosmetic fix
+- **Agents for `framework`, `pve-tiny`, `pentagi-stack` and the operator's desktop** (Phase 5 of the tuning plan, optional). The
+  desktop is a different category (personal daily driver, not IaC-managed) and is the operator's call.
+- **Grafana alert rules** (the repo has no provisioned alert mechanism; delivery to Discord is a separate plan).
+- **The manager's `ossec.log` / `api.log` in Graylog** (proposed: an rsyslog `imfile` drop-in, not decided).
+- **Phase 4 sizing**: right-sizing the LXC and a one-shard-per-index template for new alert indices, after ~7 days of data.
+- Wazuh's own default `kibanaserver` password is still at the vendor demo value (same precedent as `opensearch-stack`).
+- The dashboard's numeric API-connection label (`1513629884013`): a same-day rename caused a real regression (the app
+  re-injects a stale duplicate entry on a non-numeric key) and was reverted; needs investigation of the app's validation logic.
+- Moving the stack to `pve-tiny` is a separate plan (tuning makes it cheaper: much less data and indexing load).
 
 ## Lessons worth not re-learning
 
@@ -131,3 +89,13 @@ opt-in addition to specific stacks' own playbooks (not wired into
   actually care about true right now" — silently wrong exactly when a
   container gets rebuilt independently of whatever the cheap proxy was
   tracking.
+
+- **Never `docker cp` into a shared agent-group directory** (it is briefly root-owned and `wazuh-remoted` skips the file);
+  stage outside `shared/`, `chown`, then `mv`. Backups in a group directory get pushed to the agents.
+- **Rules see the line after the pre-decoder** (timestamp and hostname are gone), and logtest cannot produce rootcheck events.
+- **An unmeasured SIEM is mostly noise**: one Docker health-check rule was 90% of all alerts, and the real signal was
+  invisible. Measure first, tune one thing at a time, and keep a must-fire test for every suppression.
+- **FIM `report_changes` stores file content in the alert**; without `<nodiff>` that put password hashes, private keys and
+  tokens into the indexer.
+- **The `wazuh_agent` role used to install the latest package**, which let agents get ahead of the manager; the version is
+  now pinned and a test keeps the manager tag and the agent version equal.

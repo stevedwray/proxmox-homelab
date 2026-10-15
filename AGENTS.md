@@ -233,6 +233,7 @@ Not all stacks run Docker containers. When writing health/verify gate commands, 
 | `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
 | `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
 | `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
+| `wazuh-stack` | Docker Compose (Wazuh manager + indexer + dashboard) | `docker ps` shows three healthy containers; `./with-secrets-prod ansible-playbook ... playbooks/wazuh-tuning.yml -e tune_mode=health` (see `docs/wazuh-tuning/runbook.md`, which also has the regression suites) |
 
 ## Execution Guardrails
 
