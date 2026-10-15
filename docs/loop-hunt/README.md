@@ -402,7 +402,7 @@ actual synthetic pilot answers. The interrupted 15-request run regraded to
 preserved byte-for-byte under its regrade-backups. Full history and hashes
 are in [lh-05](plan.md#lh-05-pilot).
 
-## Matrix (lh-06, paused at upstream C5)
+## Matrix (lh-06, running; C5 retry)
 
 The successful pilot satisfied the operator's conditional approvals. The
 remaining 20 jobs are running sequentially in two consecutive batches,
@@ -440,18 +440,20 @@ agreement on accepted requests, and verified cleanup. C3 imported C1 rows
 are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
 in reasoning, with no answer repetition; blind judging remains pending.
 They do not yet establish a build-specific loop. As of 2026-10-16 (NZDT), thirteen of 20 jobs are complete. Upstream C5
-is paused after one clean saved request: its intermediate token-count
+stopped after one clean saved request: its intermediate token-count
 probe received HTTP 400, Cannot continue an assistant message that contains
 tool calls. Model restoration, free lock and active timer are independently
 verified. Replays remain waiting.
 
-A local correction disables generation continuation only when counting a
-partial history ending in an assistant tool call; ordinary inference-count
-probes still enable it. Its regression reproduces the real error; all 76
-tests pass. This has not been deployed. It can change C5 audit-filler lengths,
-so applying it and restarting C5 require operator approval under the
-standing prompt-change stop rule. The failed run and its saved request
-remain preserved.
+The operator explicitly approved the correction and rerun on 2026-10-16.
+Generation continuation is now disabled only when counting a partial history
+ending in an assistant tool call; ordinary inference-count probes still
+enable it. All 76 tests pass. Only this count correction was deployed to the
+active matrix harness. C5 restarted at 17:06 UTC (06:06 NZDT) in
+upstream-C5-attempt2, with its watcher attached. The original failed directory
+and request are untouched. The controller resolves this job to its fresh
+retry directory; five lifecycle tests include preservation of failed evidence.
+The matrix continues after the retry, with settings and budgets unchanged.
 
 Between jobs, the restored upgrade timer triggered its scheduled service.
 The next launch stopped safely at the upgrade-active preflight. After the

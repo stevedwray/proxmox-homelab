@@ -1440,6 +1440,28 @@ and replay continuation remain paused pending that decision. Existing saved
 evidence and all completed jobs are preserved; no production changes outside
 read-only diagnosis were made during this status check.
 
+C5 correction/retry Result (2026-10-16 NZDT): explicit operator approval
+received to apply the counting fix, rerun C5 and continue. Before deployment,
+verified original model/build restored, lock free, upgrade timer active and
+upgrade service inactive. Preserved the failed directory and its one saved
+record untouched; backed up the active harness and campaign state. Applied
+only the count-method correction to the existing matrix harness (SHA-256
+6f96952fa83c55f3172af8527f90253ea0d55416b3c3049fde14230a2d77b771).
+Queued classification/seed/report corrections remain deferred to the matrix
+review boundary. Relaunched upstream C5 at 17:06:23 UTC in
+upstream-C5-attempt2, unit loop-hunt-20261015t170623z.service; watcher
+loop-hunt-20261015t170623z-watch.service first successful poll verified.
+Controller retry_directories records the fresh path without changing the
+immutable job definitions. Five lifecycle tests include failed-evidence
+preservation; 76 harness tests passed. This is C5 retry 1.
+
+Refreshed waiting replay staging and cutover hashes, retaining the full
+matrix-review gate and preserving previous staging. Waiting continuation
+invocation 71336c29649747ada663ffa7cab1a9e1; staged latest tested harness
+SHA-256 81b48cb76cdd1e588870e19cd2f8fc567e50c5b40850141f1e89a7e9d96c35b6.
+No replay inference has started. Continue matrix supervision, then preserved
+regrades/review, seven replay jobs, and stop at lh-08 as already instructed.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
