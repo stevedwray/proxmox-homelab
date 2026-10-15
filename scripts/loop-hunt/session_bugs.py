@@ -223,7 +223,9 @@ class SessionRun(cb.Run):
             if '-sess' in restore:restore=cb.DEFAULT_MODEL
             self.manifest=dict(identity=identity,started=cb.now(),job_id='loop-hunt-'+self.directory.name,
                 restore_model=restore,checkpoints={},status='running',sampling='server defaults; no request sampling fields',
-                replay_kind='reconstruction; system/tool schemas absent unless supplied by capture' if self.replay else None)
+                replay_kind='reconstruction; system/tool schemas absent unless supplied by capture' if self.replay else None,
+                replay_coverage=dict(original_tool_invocations=self.replay.get('original_tool_invocations'),
+                                     tool_execution='not reconstructed by the replay runner') if self.replay else None)
         if args.condition=='C3' and not args.continue_from:
             raise ValueError('C3 requires --continue-from a completed C1 run')
         if args.continue_from:
@@ -247,9 +249,17 @@ class SessionRun(cb.Run):
         cb.write_json(self.directory/'progress.json',dict(status=self.manifest.get('status'),completed=len(self.records),updated=cb.now(),run_dir=str(self.directory)))
         lines=['# Loop hunt session report','',f"Status: {self.manifest.get('status')}",
                'Sampling: server defaults (seed and output budget recorded per request).',
-               'Coverage: '+(f"limited to turn {self.manifest['identity']['max_turns']}" if self.manifest['identity'].get('max_turns') else 'full configured condition'),'',
+               'Coverage: '+('selected user-turn reconstruction; synthetic full-context condition not exercised' if self.manifest.get('replay_kind') else
+                            f"limited to turn {self.manifest['identity']['max_turns']}" if self.manifest['identity'].get('max_turns') else 'full configured condition'),'',
                '| Session | Turn | Mode | Prompt tokens | Server tokens | Cached | Generated | Prompt tok/s | Generation tok/s | Wall seconds | Recall | Similarity | Flags |',
                '| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |']
+        if self.manifest.get('replay_kind'):
+            coverage=self.manifest.get('replay_coverage') or {}
+            note='Replay limitation: historical system/tool schemas may be missing; the replay runner does not reconstruct agent tool execution.'
+            if coverage.get('original_tool_invocations'):
+                note+=' Historical tool-loop reproduction/absence is not established by these completions.'
+            # Put the caveat before the table header, not between header and separator.
+            lines[5:5]=[note,'']
         for r in self.records:
             lines.append(f"| {r['session']} | {r['turn']} | {r['mode']} | {r['prompt_tokens']} | {r.get('server_prompt_tokens')} | {r.get('cached_tokens')} | {r['generated_tokens']} | {r.get('prompt_tok_s')} | {r.get('generation_tok_s')} | {r['wall_seconds']:.3f} | {sum(q['correct'] for q in r.get('recall',[]))}/{len(r.get('recall',[]))} | {r['similarity']:.3f} | {', '.join(r['flags'])} |")
         lines+=['','## Collapse context','','| Session | First flagged turn | Prompt tokens |','| --- | ---: | ---: |']

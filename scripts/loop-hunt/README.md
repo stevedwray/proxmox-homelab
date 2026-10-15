@@ -287,3 +287,9 @@ run.json, report.md, any previous regraded.json and the raw directory under
 `regrade-backups/<timestamp>/`. The manifest records the backup path and
 original-results/scorer hashes. Earlier backups are never overwritten.
 All 74 loop-hunt tests pass after this scoring correction.
+
+Replay reports label selected-user-turn reconstruction separately from the
+synthetic full-context conditions. They state that historical agent tool
+execution is not recreated; when the saved source contains tool invocations,
+a clean completion cannot establish absence of that historical tool loop.
+This reporting change does not alter replay prompts or model requests.

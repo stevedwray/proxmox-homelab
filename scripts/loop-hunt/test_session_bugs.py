@@ -179,13 +179,17 @@ class SessionHarnessTests(unittest.TestCase):
     def test_replay_has_three_seeds_and_final_cold_pairs(self):
         fixture=gs.turn_fixture(1,1,chars=400)
         replay=self.root/'replay.json'
-        replay.write_text(json.dumps(dict(messages=[dict(role='system',content=gs.SYSTEM),dict(role='user',content=fixture['user'])])))
+        replay.write_text(json.dumps(dict(original_tool_invocations=3,messages=[dict(role='system',content=gs.SYSTEM),dict(role='user',content=fixture['user'])])))
         with server() as stub:
             run=self.runner(stub,extra=['--replay',str(replay)])
             self.assertEqual(self.execute(run),0,run.manifest)
             self.assertEqual(len(run.records),6)
             self.assertEqual({r['seed'] for r in run.records},{1,2,3})
             self.assertEqual(len(run.manifest['checkpoints']),3)
+            report=(run.directory/'report.md').read_text()
+            self.assertIn('synthetic full-context condition not exercised',report)
+            self.assertIn('Historical tool-loop reproduction/absence is not established',report)
+            self.assertNotIn('Coverage: full configured condition',report)
 
     def test_regrade_uses_saved_fixture_checks(self):
         with server() as stub:
