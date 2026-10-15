@@ -268,7 +268,13 @@ sys\.exit\(0\)\z</field>
   </rule>
   <rule id="100212" level="0">
     <if_sid>510</if_sid>
-    <hostname>^\(framework\.gibbsgreatly\.xyz\) </hostname>
+    <hostname>^(framework.gibbsgreatly.xyz) </hostname>
+    <regex type="pcre2">^Trojaned version of file '/(?:usr/)?bin/[A-Za-z0-9_.+-]+' detected\. Signature used: '[^']+' \(Generic\)\.\z</regex>
+    <description>rootcheck: generic trojan signature on a /bin or /usr/bin file of framework.gibbsgreatly.xyz (uutils coreutils; suppressed for this agent only)</description>
+  </rule>
+  <rule id="100213" level="0">
+    <if_sid>510</if_sid>
+    <location>^(framework.gibbsgreatly.xyz) </location>
     <regex type="pcre2">^Trojaned version of file '/(?:usr/)?bin/[A-Za-z0-9_.+-]+' detected\. Signature used: '[^']+' \(Generic\)\.\z</regex>
     <description>rootcheck: generic trojan signature on a /bin or /usr/bin file of framework.gibbsgreatly.xyz (uutils coreutils; suppressed for this agent only)</description>
   </rule>
