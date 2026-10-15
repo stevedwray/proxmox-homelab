@@ -1,0 +1,928 @@
+{
+  "uid": "tpot-events",
+  "title": "T-Pot Honeypot Events",
+  "tags": [
+    "tpot",
+    "honeypot",
+    "security",
+    "opensearch"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "editable": true,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "description": "LAN tripwire view of T-Pot (tpot-events-* in the central OpenSearch). Data is up to ~1h behind (hourly sync).",
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Tripwire - any sensor event from a source that is not on the allowlist",
+      "collapsed": false,
+      "id": 1,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Sensor events (all sources)",
+      "description": "Events logged by an actual honeypot sensor (Cowrie, Dionaea, Mailoney, ...), excluding Suricata/P0f/NGINX.",
+      "id": 2,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Sensor events from UNEXPECTED sources",
+      "description": "The tripwire. Should be 0 on a quiet LAN. Allowlist is the NOT src_ip.keyword:(...) clause in this panel's query - see docs/tpot-honeypot/opensearch-grafana-plan.md.",
+      "id": 3,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx) AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\")",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Distinct unexpected sources",
+      "description": "Number of different source IPs behind the tripwire count.",
+      "id": 4,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx) AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\")",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "cardinality",
+              "field": "src_ip.keyword"
+            }
+          ],
+          "bucketAggs": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Suricata alerts (noise filtered)",
+      "description": "Suricata alerts after dropping Ethertype-unknown, reserved-internal, STREAM decode and DHCP/NetBIOS/mDNS chatter.",
+      "id": 5,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND event_type.keyword:alert AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Latest sensor events from unexpected sources",
+      "description": "Newest first. Empty is the healthy state.",
+      "id": 6,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx) AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\")",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "raw_data",
+              "settings": {
+                "size": "100"
+              }
+            }
+          ],
+          "bucketAggs": []
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "@timestamp",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "@timestamp",
+                "honeypot",
+                "src_ip",
+                "dest_port",
+                "eventid",
+                "message",
+                "url",
+                "username",
+                "password",
+                "input"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sensor events by sensor",
+      "description": "All sources, so expected scans (Greenbone) and test traffic show too.",
+      "id": 7,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "honeypot.keyword",
+              "settings": {
+                "size": "12",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top unexpected source IPs",
+      "description": "",
+      "id": 8,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 15
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "NOT honeypot.keyword:(suricata OR p0f OR nginx) AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\")",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "src_ip.keyword",
+              "settings": {
+                "size": "15",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "row",
+      "title": "Network context - Suricata (noise filtered)",
+      "collapsed": false,
+      "id": 9,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Suricata alerts by signature (top 8)",
+      "description": "",
+      "id": 10,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND event_type.keyword:alert AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "alert.signature.keyword",
+              "settings": {
+                "size": "8",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            },
+            {
+              "id": "3",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "title": "Top alert signatures",
+      "description": "",
+      "id": 11,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND event_type.keyword:alert AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "alert.signature.keyword",
+              "settings": {
+                "size": "12",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "table",
+      "title": "Top sources talking to the Pi that are not on the allowlist",
+      "description": "Includes non-sensor traffic such as scans that hit closed ports.",
+      "id": 12,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND dest_ip.keyword:\"192.168.1.28\" AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\") AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "src_ip.keyword",
+              "settings": {
+                "size": "15",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "table",
+      "title": "Destination ports hit on the Pi (excl. expected sources)",
+      "description": "",
+      "id": 13,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND dest_ip.keyword:\"192.168.1.28\" AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\") AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "dest_port",
+              "settings": {
+                "size": "15",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "table",
+      "title": "External source countries (non-private)",
+      "description": "Only populated when the source has a public IP; empty on a LAN-only honeypot.",
+      "id": 14,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "geoip.country_name:* AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\") AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "geoip.country_name.keyword",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "table",
+      "title": "Event types (Suricata, filtered)",
+      "description": "",
+      "id": 15,
+      "datasource": {
+        "type": "grafana-opensearch-datasource",
+        "uid": "tpot-events"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 41
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-opensearch-datasource",
+            "uid": "tpot-events"
+          },
+          "query": "honeypot.keyword:suricata AND NOT alert.signature:\"SURICATA Ethertype unknown\" AND NOT alert.signature:\"ET INFO Reserved Internal IP Traffic\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT alert.signature:\"SURICATA STREAM\" AND NOT dest_port:(546 OR 547 OR 137 OR 138 OR 67 OR 68 OR 5353 OR 1900)",
+          "queryType": "lucene",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "event_type.keyword",
+              "settings": {
+                "size": "10",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "transformations": []
+    },
+    {
+      "type": "row",
+      "title": "Sensor coverage",
+      "collapsed": false,
+      "id": 16,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      }
+    },
+    {
+      "type": "text",
+      "title": "Which ports have a sensor",
+      "id": 17,
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Sensor events are only generated for these ports (T-Pot on 192.168.1.28, verified 2026-10-15):**\n\n| Sensor | Ports |\n|---|---|\n| Cowrie (SSH/telnet) | 22, 23 |\n| Dionaea | 21, 135, 445, 1433, 1723, 1883, 3306, 27017, 42, 69/udp, 81 |\n| Mailoney | 25, 587 |\n| Heralding | 110, 143, 465, 993, 995, 1080, 5432, 5900 |\n| Snare/Tanner, Wordpot, H0neytr4p, Honeyaml | 80, 8080, 443, 3000 |\n| Elasticpot, Redishoneypot, IPPhoney, Miniprint | 9200, 6379, 631, 9100 |\n| Conpot, SentryPeer | 1025, 10001, 50100, 5060 |\n| Honeytrap | any TCP port not otherwise handled |\n\nNot covered (RST, Suricata only): 3389/RDP and other ports T-Pot's firewall accepts but nothing serves. Admin ports 64295 (SSH) and 64297 (web UI) are the Pi's own.\nLocal changes that make these LAN-visible: `docs/tpot-honeypot/local-changes.md`."
+      }
+    }
+  ]
+}

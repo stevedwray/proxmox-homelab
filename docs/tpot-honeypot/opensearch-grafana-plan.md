@@ -1,6 +1,6 @@
 # T-Pot event panels in Grafana, read from the central OpenSearch
 
-Status (2026-10-15): **planned, nothing built.** Follows `monitoring-plan.md`
+Status (2026-10-15): **built and committed, NOT deployed** (see "Implementation" at the end). Follows `monitoring-plan.md`
 (host health/metrics, deployed) and the cAdvisor dashboard
 `terraform/lxc/stacks/monitoring-stack/dashboards/tpot-honeypot.json`.
 
@@ -104,3 +104,38 @@ None are expected for steps 1-4 (the playbook creates the OpenSearch user with
 the admin credential it already reads from OpenBao, as the uvm user is). The
 deploy itself is `scripts/provision.sh --stack monitoring-stack` under the
 production approval flow.
+
+## Implementation (2026-10-15, branch work/tpot-monitoring)
+
+- `deploy-monitoring-stack.yml`: role `tpot_events_reader` (cluster
+  `cluster_composite_ops_ro`, index `read` on `tpot-events-*` only), user
+  `grafana_tpot_events` with a generated password kept in
+  `<monitoring_compose_dir>/grafana/tpot-events-es.env` (0600, created once,
+  re-read into the Grafana `.env` as `TPOT_EVENTS_ES_PASSWORD` every run);
+  `GF_INSTALL_PLUGINS` gains `grafana-opensearch-datasource`; a provisioned
+  datasource `T-Pot Events` (uid `tpot-events`, `tpot-events-*`, TLS skip-verify
+  like the uvm exporter). The password-extraction Jinja expression was tested
+  for present/empty/no-match credential files.
+- Dashboard `terraform/lxc/stacks/monitoring-stack/dashboards/tpot-events.json`
+  (generated; 17 panels): tripwire row (sensor events, from unexpected sources,
+  distinct sources, filtered Suricata alerts, latest unexpected events table),
+  network-context row (filtered Suricata alerts/signatures/sources/ports/
+  countries) and a sensor-coverage text panel. All 6 distinct Lucene queries
+  were validated against T-Pot's own ES (24h): they parse and the counts are
+  sensible (58 sensor events, all from the Kali test host).
+- Allowlist = the `NOT src_ip.keyword:(...)` clause in the tripwire queries
+  (Pi itself, .1.4, garuda .1.104, router .1.251, secpipe, monitoring, Graylog,
+  Technitium, Wazuh, Greenbone). Edit the generator/JSON to change it.
+
+### Not verified (needs the deploy)
+
+- That `grafana-opensearch-datasource` installs on this Grafana and the
+  provisioning keys (`flavor`, `version`, `database`, `timeField`) are accepted.
+- That the `tpot-events-*` copy contains the new sensor events (hourly sync).
+- Panel rendering: queries were checked as Lucene against T-Pot's ES, not
+  through the plugin.
+
+Deploy (operator, production approval flow):
+`TASK_APPROVAL=tpot-events-dashboard ./with-secrets-prod scripts/provision.sh --stack monitoring-stack`
+then Grafana -> Connections -> Data sources -> "T-Pot Events" -> Save & test,
+and open "T-Pot Honeypot Events" and "T-Pot Honeypot" dashboards.
