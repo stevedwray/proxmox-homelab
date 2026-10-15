@@ -224,6 +224,21 @@ only; its attempts to read values are denied (verified in the audit log).
 **There is no alerting yet.** Watch the snapshot age (should be under 26 h)
 and drift (should be 0).
 
+Drift is judged against `secrets/manifest.json` on the **`stable` branch of
+GitHub**, which the inventory exporter on the OpenBao LXC fetches every 15 min
+(public repo, no credential). If GitHub is unreachable it falls back to a
+deploy-time copy and the "Manifest compared against" tile shows FALLBACK; that
+means the drift tiles may be wrong, not that secrets are. Drift is deliberately
+graced because writing a secret and merging its manifest entry cannot be
+simultaneous: "not in OpenBao" goes red after 3h, "not in manifest" after 6h,
+and the "Drifting entries" table names the entries. A red "Inventory exporter
+age" tile means every other tile is stale. Roll out exporter script changes alone
+with `ANSIBLE_TAGS=inventory_exporter scripts/provision.sh --stack openbao-stack`
+(production approval flow applies).
+
+The snapshot-age panel holds `nightly` to 26h/36h; `postwrite` is judged against
+its 90-day retention instead, since it only runs after a secret write.
+
 ## Checking everything still works
 
 - `python3 scripts/secrets_env.py --profile <env> --check` for each

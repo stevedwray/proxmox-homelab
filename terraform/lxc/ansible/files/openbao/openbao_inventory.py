@@ -8,14 +8,18 @@ in /etc/openbao-metrics/{role-id,secret-id} (root 0600). KV v2 metadata holds
 version numbers and timestamps only; secret values live under kv/data/*, which
 that policy does not grant.
 
-Field counts come from /etc/openbao-metrics/manifest.json (a copy of the repo's
-secrets/manifest.json -- field NAMES only), which also gives manifest-vs-OpenBao
-drift. Output: node_exporter textfile /var/lib/node_exporter/textfile/openbao_inventory.prom.
+Field counts and manifest-vs-OpenBao drift come from the repo's
+secrets/manifest.json (field NAMES only). The source of truth is the `stable`
+branch of the public repo, fetched on every run, so drift reflects what is merged
+and not whenever this LXC was last redeployed. If the fetch fails the deploy-time
+copy /etc/openbao-metrics/manifest.json is used and openbao_manifest_source says
+so (the dashboard shows that as its own state, not as drift). Output: node_exporter textfile /var/lib/node_exporter/textfile/openbao_inventory.prom.
 Standard library only.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -30,7 +34,11 @@ from pathlib import Path
 ADDR = "https://192.168.20.16:8200"
 CACERT = "/usr/local/share/ca-certificates/homelab-root.crt"
 CRED_DIR = Path("/etc/openbao-metrics")
-MANIFEST = CRED_DIR / "manifest.json"
+MANIFEST = CRED_DIR / "manifest.json"  # deploy-time copy: fallback only
+MANIFEST_URL = os.environ.get(
+    "OPENBAO_MANIFEST_URL",
+    "https://raw.githubusercontent.com/stevedwray/proxmox-homelab/stable/secrets/manifest.json",
+)
 OUT = Path("/var/lib/node_exporter/textfile/openbao_inventory.prom")
 
 
@@ -54,7 +62,29 @@ def _esc(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def build_metrics(live: dict[str, dict], manifest_entries: dict[str, dict], now: float) -> str:
+def _fetch_remote_manifest() -> bytes:
+    with urllib.request.urlopen(MANIFEST_URL, timeout=15) as resp:  # noqa: S310 -- fixed https URL
+        return resp.read()
+
+
+def load_manifest(fetch=None, local: Path = MANIFEST) -> tuple[dict[str, dict], str, str]:
+    """Return (entries, source, short sha256). source is "remote", or "local" if the fetch failed."""
+    fetch = fetch or _fetch_remote_manifest
+    try:
+        raw = fetch()
+        source = "remote"
+    except Exception as exc:  # noqa: BLE001 -- fall back, but say so
+        print(f"openbao-inventory: manifest fetch failed ({exc}); using local copy", file=sys.stderr)
+        raw = local.read_bytes()
+        source = "local"
+    entries = json.loads(raw)["entries"]
+    if not isinstance(entries, dict):
+        raise ValueError("manifest 'entries' is not an object")
+    return entries, source, hashlib.sha256(raw).hexdigest()[:12]
+
+
+def build_metrics(live: dict[str, dict], manifest_entries: dict[str, dict], now: float,
+                  manifest_source: str = "local", manifest_sha: str = "unknown") -> str:
     """live: entry -> {"version": int, "updated": float}; manifest_entries: entry -> {"fields": [...]}."""
     lines: list[str] = []
 
@@ -63,7 +93,7 @@ def build_metrics(live: dict[str, dict], manifest_entries: dict[str, dict], now:
         lines.append(f"# TYPE {name} gauge")
         for labels, value in samples:
             lab = ",".join(f'{k}="{_esc(v)}"' for k, v in labels.items())
-            lines.append(f"{name}{{{lab}}} {value:g}" if lab else f"{name} {value:g}")
+            lines.append(f"{name}{{{lab}}} {value:.12g}" if lab else f"{name} {value:.12g}")
 
     cats = sorted({category(e) for e in live} | {category(e) for e in manifest_entries})
     metric("openbao_kv_entries", "KV entries present in OpenBao, by category.",
@@ -83,6 +113,13 @@ def build_metrics(live: dict[str, dict], manifest_entries: dict[str, dict], now:
     metric("openbao_kv_manifest_drift", "Entries listed in the manifest but absent from OpenBao, and vice versa.",
            [({"kind": "missing_in_openbao"}, len(missing_in_bao)),
             ({"kind": "missing_in_manifest"}, len(missing_in_manifest))])
+    metric("openbao_kv_manifest_drift_entry", "1 per drifting entry, so the dashboard can name it.",
+           [({"entry": e, "kind": "missing_in_openbao"}, 1) for e in missing_in_bao]
+           + [({"entry": e, "kind": "missing_in_manifest"}, 1) for e in missing_in_manifest])
+    metric("openbao_manifest_source", "Where the manifest used for drift came from (1 = this source); local = remote fetch failed.",
+           [({"source": src}, 1 if src == manifest_source else 0) for src in ("remote", "local")])
+    metric("openbao_manifest_info", "Short sha256 of the manifest that was compared.",
+           [({"sha": manifest_sha}, 1)])
     metric("openbao_inventory_last_success_timestamp_seconds", "Unix time of the last successful inventory run.",
            [({}, now)])
     return "\n".join(lines) + "\n"
@@ -135,13 +172,13 @@ def main() -> int:
         for entry in walk(client):
             meta = client.call("GET", f"kv/metadata/{entry}")["data"]
             live[entry] = {"version": int(meta["current_version"]), "updated": parse_rfc3339(meta["updated_time"])}
-        manifest_entries = json.loads(MANIFEST.read_text())["entries"]
-        text = build_metrics(live, manifest_entries, time.time())
+        manifest_entries, source, sha = load_manifest()
+        text = build_metrics(live, manifest_entries, time.time(), source, sha)
         OUT.parent.mkdir(parents=True, exist_ok=True)
         tmp = OUT.with_suffix(".prom.tmp")
         tmp.write_text(text)
         os.replace(tmp, OUT)
-        print(f"openbao-inventory: OK {len(live)} entries")
+        print(f"openbao-inventory: OK {len(live)} entries, manifest {source} {sha}")
         return 0
     except Exception as exc:  # noqa: BLE001 -- report and leave the previous file in place
         print(f"openbao-inventory: FAILED: {exc}", file=sys.stderr)

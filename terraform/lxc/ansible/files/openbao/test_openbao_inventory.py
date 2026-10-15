@@ -61,12 +61,53 @@ class BuildMetricsTests(unittest.TestCase):
         self.assertIn('openbao_kv_manifest_drift{kind="missing_in_openbao"} 1', self.text)
         self.assertIn('openbao_kv_manifest_drift{kind="missing_in_manifest"} 1', self.text)
 
+    def test_drift_entries_are_named(self):
+        self.assertIn('openbao_kv_manifest_drift_entry{entry="shared/platform",kind="missing_in_openbao"} 1', self.text)
+        self.assertIn('openbao_kv_manifest_drift_entry{entry="services/stray",kind="missing_in_manifest"} 1', self.text)
+
+    def test_manifest_source_defaults_local_and_reports_remote(self):
+        self.assertIn('openbao_manifest_source{source="local"} 1', self.text)
+        remote = MODULE.build_metrics(self.LIVE, self.MANIFEST, 999.0, "remote", "abc123def456")
+        self.assertIn('openbao_manifest_source{source="remote"} 1', remote)
+        self.assertIn('openbao_manifest_source{source="local"} 0', remote)
+        self.assertIn('openbao_manifest_info{sha="abc123def456"} 1', remote)
+
+    def test_timestamps_keep_full_precision(self):
+        # %g's default 6 significant digits would round a unix time by hours.
+        text = MODULE.build_metrics({"a/b": {"version": 1, "updated": 1792086901.4}}, {}, 1792086999.0)
+        self.assertIn('openbao_kv_entry_updated_timestamp_seconds{entry="a/b",category="a"} 1792086901.4', text)
+        self.assertIn("openbao_inventory_last_success_timestamp_seconds 1792086999", text)
+
     def test_no_values_ever(self):
         # The exporter never receives values; make sure nothing but names/numbers is emitted.
         for line in self.text.splitlines():
             if line.startswith("#"):
                 continue
             self.assertRegex(line, r'^[a-z_]+(\{[a-z_]+="[A-Za-z0-9/_.-]+"(,[a-z_]+="[A-Za-z0-9/_.-]+")*\})? [0-9.e+]+$')
+
+
+class LoadManifestTests(unittest.TestCase):
+    BODY = b'{"entries": {"a/b": {"fields": ["X"]}}}'
+
+    def test_remote_preferred(self):
+        entries, source, sha = MODULE.load_manifest(fetch=lambda: self.BODY, local=Path("/nonexistent"))
+        self.assertEqual((list(entries), source, len(sha)), (["a/b"], "remote", 12))
+
+    def test_falls_back_to_local_when_fetch_fails(self):
+        import tempfile
+
+        def boom():
+            raise OSError("no route")
+
+        with tempfile.TemporaryDirectory() as d:
+            local = Path(d) / "manifest.json"
+            local.write_bytes(self.BODY)
+            entries, source, _ = MODULE.load_manifest(fetch=boom, local=local)
+        self.assertEqual((list(entries), source), (["a/b"], "local"))
+
+    def test_malformed_remote_is_an_error_not_silent_drift(self):
+        with self.assertRaises(ValueError):
+            MODULE.load_manifest(fetch=lambda: b'{"entries": []}', local=Path("/nonexistent"))
 
 
 if __name__ == "__main__":
