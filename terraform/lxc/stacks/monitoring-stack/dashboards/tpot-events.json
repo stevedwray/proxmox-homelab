@@ -69,7 +69,17 @@
               "type": "count"
             }
           ],
-          "bucketAggs": []
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ]
         }
       ],
       "fieldConfig": {
@@ -133,7 +143,17 @@
               "type": "count"
             }
           ],
-          "bucketAggs": []
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ]
         }
       ],
       "fieldConfig": {
@@ -198,11 +218,22 @@
           "metrics": [
             {
               "id": "1",
-              "type": "cardinality",
-              "field": "src_ip.keyword"
+              "type": "count"
             }
           ],
-          "bucketAggs": []
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "terms",
+              "field": "src_ip.keyword",
+              "settings": {
+                "size": "500",
+                "order": "desc",
+                "orderBy": "_count",
+                "min_doc_count": "1"
+              }
+            }
+          ]
         }
       ],
       "fieldConfig": {
@@ -228,9 +259,9 @@
       "options": {
         "reduceOptions": {
           "calcs": [
-            "sum"
+            "count"
           ],
-          "fields": "",
+          "fields": "/^Count$/",
           "values": false
         },
         "colorMode": "value",
@@ -270,7 +301,17 @@
               "type": "count"
             }
           ],
-          "bucketAggs": []
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0"
+              }
+            }
+          ]
         }
       ],
       "fieldConfig": {
