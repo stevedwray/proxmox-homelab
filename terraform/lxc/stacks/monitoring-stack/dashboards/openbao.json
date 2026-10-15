@@ -23,7 +23,7 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Hours since last successful snapshot (alert threshold 36h -- no alerting yet, see design 27.0.1)",
+      "title": "Hours since last successful snapshot (nightly alert threshold 36h -- no alerting yet, see design 27.0.1)",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -63,7 +63,36 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "postwrite"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 720
+                    },
+                    {
+                      "color": "red",
+                      "value": 2160
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "colorMode": "background",
@@ -76,7 +105,8 @@
           "values": false
         },
         "textMode": "value_and_name"
-      }
+      },
+      "description": "nightly runs every night, so >26h is late. postwrite only runs after a secret write (scripts/openbao_write.py) and so is legitimately old between writes; it is shown against the 90-day retention window, not the nightly one."
     },
     {
       "id": 2,
@@ -416,7 +446,8 @@
           "values": false
         },
         "textMode": "value"
-      }
+      },
+      "description": "Entries in the manifest but not in OpenBao, plus the reverse. Compared against /etc/openbao-metrics/manifest.json on the OpenBao LXC, a COPY of secrets/manifest.json that only refreshes when it is re-synced. A non-zero value usually means the copy is stale: run ANSIBLE_TAGS=manifest_sync scripts/provision.sh --stack openbao-stack (see docs/reference/secrets-management.md)."
     },
     {
       "id": 8,

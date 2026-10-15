@@ -224,6 +224,16 @@ only; its attempts to read values are denied (verified in the audit log).
 **There is no alerting yet.** Watch the snapshot age (should be under 26 h)
 and drift (should be 0).
 
+The drift panel compares OpenBao with a **copy** of the manifest on the OpenBao
+LXC (`/etc/openbao-metrics/manifest.json`), not the repo file. After any
+`secrets/manifest.json` change, re-sync the copy (no restarts, no other changes):
+`ANSIBLE_TAGS=manifest_sync ./with-secrets-prod scripts/provision.sh --stack openbao-stack`
+(production approval flow applies). Drift left non-zero after a sync is real:
+an entry is in the manifest but unwritten, or written but unlisted.
+
+The snapshot-age panel holds `nightly` to 26h/36h; `postwrite` is judged against
+its 90-day retention instead, since it only runs after a secret write.
+
 ## Checking everything still works
 
 - `python3 scripts/secrets_env.py --profile <env> --check` for each

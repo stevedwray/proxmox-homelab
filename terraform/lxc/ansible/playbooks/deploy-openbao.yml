@@ -347,7 +347,11 @@
         owner: root
         group: root
         mode: "0700"
+      tags: [manifest_sync]
 
+    # Re-sync after ANY secrets/manifest.json change, or the dashboard's drift
+    # panel goes red against a stale copy. Cheap and restart-free:
+    #   ANSIBLE_TAGS=manifest_sync scripts/provision.sh --stack openbao-stack
     - name: Install secrets manifest (names only) for field counts and drift
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../../../../secrets/manifest.json"
@@ -355,6 +359,7 @@
         owner: root
         group: root
         mode: "0600"
+      tags: [manifest_sync]
 
     - name: Install inventory exporter
       ansible.builtin.copy:
