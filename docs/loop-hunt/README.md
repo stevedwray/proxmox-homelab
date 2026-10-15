@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 stopped for recall/format scoring problem; cleanup verified**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 rerunning with corrected scoring; prior evidence preserved**
 (2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -443,3 +443,11 @@ Cleanup verified after 15 warm requests (turns 1–15; two flagged responses,
 no CK reached): original model/build restored, lock free, upgrade timer
 active. Watcher stopped after independent cleanup verification. Matrix and
 replay have not started; raw responses and grades are preserved.
+
+Approved scoring correction passed all 74 loop-hunt tests and was copied to
+Framework. The 15 saved requests now grade 35/35 correct facts; turns 11/12
+separately fail question-line formatting. Pre-fix results/report/manifest/raw
+grades were preserved byte-for-byte under the run's regrade-backups. A fresh
+unchanged-settings pilot is running at
+`/storage/artifacts/loop-hunt/20261015T010713Z-pilot`; review is pending.
+Updated autonomy rules and conditional matrix/replay approvals are in the plan.

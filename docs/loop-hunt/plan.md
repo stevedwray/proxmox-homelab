@@ -158,7 +158,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-02-session-harness | local | — | done 2026-10-15 (69 + 96 tests; deterministic fixtures; C1–C5 full stub runs) |
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
-| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | stopped 2026-10-15; recall/format scoring problem; cleanup verified |
+| lh-05-pilot | Framework (production) | `loop-hunt-pilot` | rerunning 2026-10-15 with corrected scoring; prior evidence preserved |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | todo |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | pending: selected V1/V9 reconstructions |
 | lh-08-judge | local + operator | — | todo |
@@ -1224,6 +1224,17 @@ All 74 loop-hunt tests pass. Every regrade creates an exclusive timestamped
 backup of results/manifest/report/raw grades, with backup/source/scorer hashes
 recorded in run.json. No prompts, model/build settings or sampling changed.
 Framework code update, preserved regrade and pilot rerun follow below.
+
+Result, preserved regrade (2026-10-15): all 15 saved requests regraded,
+35/35 factual answers correct. Only turns 11/12 flag if-fail:question_lines;
+all other responses are clean. Original evidence preserved byte-for-byte in
+Framework run `20261015T003810Z-pilot/regrade-backups/1792026392385125497`;
+original results SHA-256
+`b9de05fdb5dca82c614449670084c4b757328b21eda12fed2b3f89db194cecba`.
+Corrected tools copied only to ~/loop-hunt. Fresh unchanged-settings pilot:
+`/storage/artifacts/loop-hunt/20261015T010713Z-pilot`, harness unit
+`loop-hunt-20261015t010713z.service`, watcher
+`loop-hunt-pilot-watch-20261015t010713z.service`. Review pending.
 
 #### lh-06-matrix
 
