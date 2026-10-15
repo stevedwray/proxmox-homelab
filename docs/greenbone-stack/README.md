@@ -470,6 +470,13 @@ with 8200 left out, .16 takes 21 minutes, Redis peaks at 351MB and the LSC
 results appear (they were missing in the full-zone run, where Redis writes failed
 while pinned at the cap). That host is now scanned as its own task, see below.
 
+**Discovery tasks were missed (2026-10-15).** The discovery tasks had no `max_hosts`
+(GVM default 20) and no OpenBao exclusion. `mgmt_seg discovery` ran all 10 hosts at once
+from 23:00; Redis sat at the 6 GB cap from about 23:15 until `.16` finished at 23:24, and
+gvmd marked the task Interrupted at 23:29. No OOM kill (the cap held), so the OOM panel
+stayed at 0. `setup_scan_program.py` now excludes `.16` from mgmt_seg discovery and caps
+discovery at 6 hosts (mgmt_seg 2). Takes effect on the next scan-program apply.
+
 ## Web UI session timeout
 
 gsad expires an idle web UI session after `--timeout` minutes (default 15). The
