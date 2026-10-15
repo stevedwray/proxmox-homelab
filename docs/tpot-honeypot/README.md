@@ -58,8 +58,10 @@ state for full detail):
 
 **Update 2026-10-15**: host apt-upgraded (Docker 29.9.1; 30 containers + ES
 green after). Monitoring integration (Graylog, Grafana via cAdvisor, Wazuh
-agent) is planned in [monitoring-plan.md](monitoring-plan.md) -- not yet
-deployed.
+agent) is in [monitoring-plan.md](monitoring-plan.md) -- deployed 2026-10-15
+(logs, cAdvisor + Grafana dashboard JSON, Wazuh agent). Event panels from the
+central OpenSearch: [opensearch-grafana-plan.md](opensearch-grafana-plan.md)
+-- planned, not built.
 
 ## What this is
 
