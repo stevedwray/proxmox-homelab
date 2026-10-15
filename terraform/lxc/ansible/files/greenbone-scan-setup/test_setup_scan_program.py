@@ -69,6 +69,14 @@ class FragileHostsTests(unittest.TestCase):
         self.assertEqual(sp.discovery_excludes("lan", ["192.168.1.113"]), ["192.168.1.113", "192.168.1.253"])
         self.assertEqual(sp.discovery_excludes("ai_seg", []), [])
 
+    def test_openbao_is_left_out_of_mgmt_discovery_only(self):
+        self.assertEqual(sp.discovery_excludes("mgmt_seg", []), ["192.168.20.16"])
+        self.assertNotIn("192.168.20.16", sp.discovery_excludes("lan", []))
+
+    def test_discovery_concurrency_is_bounded(self):
+        self.assertEqual(sp.DISCOVERY_ZONE_MAX_HOSTS["mgmt_seg"], 2)
+        self.assertLess(sp.DISCOVERY_MAX_HOSTS, 20)
+
     def test_other_zones_not_affected(self):
         self.assertNotIn("192.168.1.253", sp.full_vuln_excludes("mgmt_seg", {"mgmt_seg": ["192.168.20.10"]}, []))
 

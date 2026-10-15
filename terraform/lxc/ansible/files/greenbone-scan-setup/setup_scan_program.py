@@ -110,6 +110,22 @@ FRAGILE_HOSTS = {
 # load of 33 on 2026-10-14.
 FULL_VULN_MAX_HOSTS = 6
 
+# Discovery tasks had no max_hosts either, so GVM ran 20 hosts at once. mgmt_seg
+# discovery (2026-10-15 23:00) ran all 10 of its hosts together, including OpenBao,
+# and pinned Redis at its 6 GB cap for ten minutes before the task was Interrupted.
+# mgmt_seg keeps the credentialed task's limit of 2 (ZONE_MAX_HOSTS in
+# setup_credentials.py); its web UIs are what fill Redis.
+DISCOVERY_MAX_HOSTS = 6
+DISCOVERY_ZONE_MAX_HOSTS = {"mgmt_seg": 2}
+
+# Left out of discovery only. 192.168.20.16 (openbao): its UI on 8200 answers every
+# /ui/<anything> with a ~1 MB page, which the web probes cache in Redis (see
+# SPLIT_HOSTS in setup_credentials.py). It is a managed host with its own credentialed
+# task, which excludes port 8200; discovery shares the zone port list, so exclude the host.
+DISCOVERY_EXCLUDE = {
+    "mgmt_seg": ["192.168.20.16"],
+}
+
 
 def load_managed_hosts(path=MANAGED_HOSTS_FILE):
     """{zone: [ip, ...]}. Raises if the file is missing, so a broken deploy
@@ -127,7 +143,7 @@ def full_vuln_excludes(zone_key, managed, fixtures):
 
 def discovery_excludes(zone_key, fixtures):
     """Addresses the discovery task leaves out for a zone."""
-    return sorted(set(fixtures) | set(FRAGILE_HOSTS.get(zone_key, [])))
+    return sorted(set(fixtures) | set(FRAGILE_HOSTS.get(zone_key, [])) | set(DISCOVERY_EXCLUDE.get(zone_key, [])))
 
 
 def resolve_id(gmp, getter, name, tag):
@@ -222,6 +238,7 @@ def main():
             ensure_target_and_task(
                 gmp, f"LAN scan: {key} discovery", cidr, discovery_excludes(key, fixtures),
                 discovery_config_id, scanner_id, port_list_id,
+                max_hosts=DISCOVERY_ZONE_MAX_HOSTS.get(key, DISCOVERY_MAX_HOSTS),
             )
             ensure_target_and_task(
                 gmp, f"LAN scan: {key} full-vuln", cidr, full_vuln_excludes(key, managed, fixtures),
