@@ -105,6 +105,8 @@ def classify(warm,cold):
     informational={'dense-reasoning','ctx-divergence','build-divergence','http-error'}
     if 'crash' in warm['flags'] or 'crash' in cold['flags']:
         return 'not comparable (server failure)'
+    if warm.get('error') or cold.get('error'):
+        return 'not comparable (request refused)'
     a=set(warm['flags'])-informational
     b=set(cold['flags'])-informational
     if a and not b:
@@ -114,7 +116,6 @@ def classify(warm,cold):
     if a and b:
         return 'model/content' if a & b else 'not attributable (different failure modes)'
     if b:return 'cold only'
-    if warm.get('error') or cold.get('error'):return 'not comparable (request refused)'
     return 'clean'
 
 

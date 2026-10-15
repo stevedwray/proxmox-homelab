@@ -1345,6 +1345,30 @@ active timer verified. Together with the pilot, C1 covers both seeds:
 line-format failures. C2 is now running four concurrent sessions; remaining
 jobs continue under the approved campaign. Aggregate table is in README.
 
+Matrix Result, C2 in progress (2026-10-15): read-only /slots observation
+at 02:10:57 UTC confirmed all four slots is_processing true, each n_ctx
+131072, alias qwen3.8-flash-next-q4-nathanw-sess131k and build
+b10814-9e21f2e53. Observation saved privately in its run's
+slot-observations.jsonl (0600). First four ~16k warm/cold pairs are clean.
+At turn 8 the four prompt counts sum to 131275; all four warm requests
+returned HTTP 500, message Context size has been exceeded. /health remained
+healthy, with no evidence errors. The matching cold ~32k request succeeded;
+comparison is not comparable (request refused), not a looping finding.
+The harness continues the planned capacity test and four extra turns with
+settings unchanged. Full C2 review remains pending.
+
+Matrix scoring correction queued (2026-10-15): source review against the
+real C2 refusal shape found that classify checked one-sided flags before
+request errors. If the successful peer had a formatting/degeneration flag,
+a refused request could be labelled warm-only/cold-only instead of not
+comparable. Error handling now precedes those comparisons, with a regression
+covering both directions using the real refusal and pilot-format shapes.
+All 75 loop-hunt tests pass. Actual requests/settings are unchanged. Keep
+the active matrix harness fixed; at the completed-review boundary, preserve
+pre-fix results and regrade saved evidence with the corrected classifier,
+then refresh the staged replay version/hashes before releasing the review
+gate. Clean-peer refusal pairs already recorded correctly remain unchanged.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
@@ -1397,13 +1421,19 @@ no replay inference yet and active matrix harness unchanged.
 
 The continuation requires matrix status complete, exactly 20 completed jobs,
 all cleanup verified, each run complete/restored, free lock and active timer.
+It additionally waits for matrix-review.json, written only after the agent
+finishes the required matrix review/README update: status reviewed; no
+unaddressed measuring problem, matching jobs_sha256 and a results_sha256
+map covering all 20 jobs. Every reviewed results hash must still match.
+The waiting unit was restarted to apply this gate before any replay request;
+requires_matrix_review true was verified, with the matrix unaffected.
 It verifies immutable matrix-job and replay-input hashes. At that boundary
 only, it preserves the existing loop-hunt harness source and atomically
 installs the tested reporting/metadata corrections. No other production
 code/config changes. Replay seed metadata now records the already-used
 seeds 1–3; actual request seeds/budgets unchanged (74 regression tests pass).
-Five additional local boundary tests reject early/partial/unclean matrix
-completion and check the seven targets. Commands are transient orchestration
+Nine local boundary tests reject early/partial/unclean matrix completion,
+require the completed agent review and check the seven targets. Commands are transient orchestration
 in ignored artifacts/replay-campaign-20261015, not model-generated code.
 
 Replay jobs: V1 on Qwen current/previous/upstream plus GLM upstream; V9 on

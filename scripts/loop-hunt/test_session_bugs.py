@@ -254,6 +254,14 @@ class RecallGradingTests(unittest.TestCase):
 
 
 class AgentChecksTests(unittest.TestCase):
+    def test_refused_request_cannot_be_compared_with_a_flagged_answer(self):
+        # Real C2 refusal shape combined with the pilot's formatting flag.
+        refused=dict(flags=['http-error'],error='HTTP 500: Context size has been exceeded.')
+        answered=dict(flags=['if-fail:question_lines'],cached_tokens=10)
+        for warm,cold in ((refused,answered),(answered,refused)):
+            with self.subTest(warm=warm):
+                self.assertEqual(sb.classify(warm,cold),'not comparable (request refused)')
+
     def response(self,name='read_file',arguments='{}',content=''):
         return dict(choices=[dict(message=dict(content=content,tool_calls=[dict(function=dict(name=name,arguments=arguments))]),finish_reason='tool_calls')])
 

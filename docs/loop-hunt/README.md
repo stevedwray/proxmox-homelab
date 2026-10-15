@@ -15,7 +15,7 @@ Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; l
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 74 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 75 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -326,7 +326,7 @@ No repeat production scan is needed to finish that work.
 ## Session harness (lh-02, 2026-10-15)
 
 Initial local validation passed **69 loop-hunt and 96 ctx-bugs tests**.
-The current loop-hunt suite passes **74 tests** after the scoring/reporting
+The current loop-hunt suite passes **75 tests** after the scoring/reporting
 regressions below. Deterministic session regeneration ran twice with
 a clean tracked-fixture diff. Full stand-in runs completed C1/C2/C3/C4/C5:
 22/48/28/46/62 saved requests respectively (C3 includes imported C1 records).
@@ -420,7 +420,12 @@ The first format failure was at 45097 tokens; no semantic collapse is
 established by that formatting flag. Both seeds have exact prompt/server
 token agreement and zero evidence errors. Seed 2's 32-request job restored
 the original model, freed the lock and restored the timer; watcher complete.
-C2 (four concurrent sessions) is now running. Other rows remain queued.
+C2 is running; a server snapshot confirmed four simultaneously processing
+slots. At turn 8, summed prompts reached 131275 tokens: four HTTP 500
+context-size refusals, server healthy; a matching cold request succeeded.
+This records shared-pool capacity behaviour, not a looping diagnosis.
+The planned extra turns and remaining comparisons continue. Other rows
+remain queued.
 
 Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
 job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
@@ -441,7 +446,8 @@ explicit stops for measurement changes, failed cleanup and lh-08/lh-10.
 The separately approved continuation is staged and verified waiting:
 `loop-hunt-replay-after-matrix-20261015.service`. Private state lives at
 `/storage/artifacts/loop-hunt/replay-campaign-20261015/continuation.json`.
-It requires all 20 matrix jobs complete and cleanup verified, then installs
+It requires all 20 matrix jobs complete, cleanup verified and the agent's
+completed matrix review with matching result hashes, then installs
 tested reporting/seed-metadata corrections and runs the seven selected
 targets with seeds 1–3 and warm/cold comparisons. It stops at lh-08.
 The active matrix harness stays fixed until this boundary.
@@ -457,3 +463,8 @@ execution are unavailable, so a clean completion cannot establish absence
 of the original tool loop. Replay reports state this coverage limit and
 avoid claiming a synthetic full-context run. Replay seed metadata records
 the three seeds already used by the runner; requests remain unchanged.
+
+A comparison-order scoring fix (75 tests pass) ensures every refused pair
+is not comparable even if its successful peer has a flag. It changes no
+requests or settings. Pre-fix results will be preserved and regraded at the
+matrix review boundary before replay starts; the active harness stays fixed.
