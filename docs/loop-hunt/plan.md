@@ -1336,6 +1336,15 @@ Status uses `~/loop-hunt/run.sh --status --results-root
 a top-level pilot, so use this campaign root. Supervision/review still
 running; do not mark the matrix complete yet.
 
+Matrix Result update (2026-10-15): first queued job, fork-current C1
+seed 2, completed 32 requests with 74/74 recall, zero flags/evidence errors
+and exact prompt/server token counts. Three clean warm/cold pairs at
+65657/98447/118974 tokens; watcher complete and original model, free lock,
+active timer verified. Together with the pilot, C1 covers both seeds:
+64 requests, 148/148 recall, six clean CK pairs, only the pilot's two
+line-format failures. C2 is now running four concurrent sessions; remaining
+jobs continue under the approved campaign. Aggregate table is in README.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

@@ -411,6 +411,17 @@ supplies Qwen fork-current C1 seed 1. Every job has a detached watcher and
 original-model, free-lock and D10 timer cleanup gates before the next job.
 C4 runs last. Matrix findings/review remain pending.
 
+| Model/build | Condition | Recall | Flags | Warm/cold | State |
+| --- | --- | ---: | --- | --- | --- |
+| Qwen fork current | C1 seeds 1 and 2 | 148/148 | two line-format failures in seed 1; seed 2 clean | six clean pairs | complete |
+
+C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
+The first format failure was at 45097 tokens; no semantic collapse is
+established by that formatting flag. Both seeds have exact prompt/server
+token agreement and zero evidence errors. Seed 2's 32-request job restored
+the original model, freed the lock and restored the timer; watcher complete.
+C2 (four concurrent sessions) is now running. Other rows remain queued.
+
 Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
 job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
 Current status:
