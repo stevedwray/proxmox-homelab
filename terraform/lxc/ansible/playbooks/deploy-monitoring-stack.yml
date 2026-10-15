@@ -269,6 +269,8 @@
                   labels: {stack: graylog-stack}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8083"]
                   labels: {stack: framework}
+                - targets: ["tpot.gibbsgreatly.xyz:8083"]
+                  labels: {stack: tpot-honeypot}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
                   labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:8082"]
