@@ -141,7 +141,7 @@ re-deploy. Removed records are archived as JSON by the deletion tool, and
 - `exclude_vmids` is a manual list. If another stack is relocated to pve-tiny and left
   stopped on pve, add its VMID, or destroy the stopped copy.
 
-## pve-test (added 2026-10-16)
+## pve-test (added and live 2026-10-16)
 
 `pve-test` is the bare-metal laptop that hosts the isolated CyberSecEval cyber range
 (`cse-kali`, the stopped `metasploitable3-win2k8` target, a template builder). It is **not** a
@@ -157,3 +157,8 @@ pve-tiny, with its own variables:
 Caveats: the laptop is often off, so an unreachable node is skipped with a warning (its records then show
 in the drift report as stale, but nothing is deleted); and range VMs are created per run and destroyed after,
 so their records will come and go. This is a read-only inventory pull, so it does not weaken the range's isolation.
+
+Result: `pve-test` device (192.168.1.40), `pve-test-cluster` with `cse-kali@pve-test` (192.168.70.210) and
+`debian13-template-builder@pve-test` (192.168.1.209); follow-up `--plan` empty, 0 stale. Populate only
+records LXC containers with an address, so QEMU guests such as the stopped `metasploitable3-win2k8` are not
+listed (the same is true of pve's QEMU guests).
