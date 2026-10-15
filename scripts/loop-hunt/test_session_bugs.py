@@ -185,6 +185,7 @@ class SessionHarnessTests(unittest.TestCase):
             self.assertEqual(self.execute(run),0,run.manifest)
             self.assertEqual(len(run.records),6)
             self.assertEqual({r['seed'] for r in run.records},{1,2,3})
+            self.assertEqual(run.manifest['identity']['sessions'],[1,2,3])
             self.assertEqual(len(run.manifest['checkpoints']),3)
             report=(run.directory/'report.md').read_text()
             self.assertIn('synthetic full-context condition not exercised',report)

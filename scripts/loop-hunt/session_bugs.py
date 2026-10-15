@@ -520,6 +520,8 @@ def parse_args(argv=None):
     parser.add_argument('--checkpoint-tokens',nargs='+',type=int,help='override CK thresholds, recorded in run identity')
     parser.add_argument('--client-output-limit',type=int,default=8192)
     args=parser.parse_args(argv)
+    # Replay has always regenerated seeds 1–3; record the actual seeds too.
+    if args.replay:args.sessions=[1,2,3]
     if not args.regrade and (not args.condition or not args.entry):parser.error('--condition and --entry required')
     if not args.dry_run:
         args.swap_url=args.swap_url or 'http://127.0.0.1:8099'
