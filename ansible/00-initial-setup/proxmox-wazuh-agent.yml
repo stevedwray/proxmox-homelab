@@ -28,8 +28,11 @@
 #   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets-prod \
 #     ansible-playbook -i ansible/inventory/ ansible/00-initial-setup/proxmox-wazuh-agent.yml
 
-- name: Enroll pve as a Wazuh agent
-  hosts: pve.gibbsgreatly.xyz
+# Other hypervisors reuse this play: -e wazuh_agent_target=pve-test.gibbsgreatly.xyz (non-production laptop node;
+# secrets via PVE_ENV=pve-test ./with-secrets, no TASK_APPROVAL) or pve-tiny.gibbsgreatly.xyz (production; needs an
+# inventory entry and ./with-secrets-prod-tiny). docs/wazuh-tuning/plan.md Phase 5a.
+- name: Enroll a Proxmox hypervisor as a Wazuh agent
+  hosts: "{{ wazuh_agent_target | default('pve.gibbsgreatly.xyz') }}"
   become: true
   gather_facts: true
   vars:

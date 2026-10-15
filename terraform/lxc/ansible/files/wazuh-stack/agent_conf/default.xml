@@ -6,3 +6,11 @@
     <ignore>/etc/pve/nodes/pve/lrm_status</ignore>
   </syscheck>
 </agent_config>
+
+<!-- Phase 5a: the same pmxcfs status file exists on every Proxmox node under its own node name; ignore it before
+     the pve-test agent enrols so its first hour is not the lrm_status flood pve had. -->
+<agent_config name="pve-test.gibbsgreatly.xyz">
+  <syscheck>
+    <ignore>/etc/pve/nodes/pve-test/lrm_status</ignore>
+  </syscheck>
+</agent_config>
