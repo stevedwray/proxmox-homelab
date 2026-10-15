@@ -79,23 +79,26 @@ class HealthcheckRules(unittest.TestCase):
         self.assertFalse(rx.match(line.format("/bin/ls", sig, "Bash")))          # a named rootkit signature still alerts
         self.assertFalse(rx.match(line.format("/bin/ls", sig, "Generic") + " extra"))
 
-    def test_framework_rule_is_scoped_to_one_agent_and_only_that_rule(self):
+    def test_framework_rules_are_scoped_to_one_agent_and_only_those_rules(self):
         root = ET.fromstring("<r>" + g.render().replace("<!-- Local rules -->", "") + "</r>")
-        scoped = [r for r in root.iter("rule") if r.find("hostname") is not None]
-        self.assertEqual([r.get("id") for r in scoped], ["100212"])
-        r = scoped[0]
-        self.assertEqual(r.find("if_sid").text, "510")
-        self.assertEqual(r.get("level"), "0")
-        # what the manager shows for an agent event: "(framework.gibbsgreatly.xyz) any"
-        rx = re.compile(r.find("hostname").text.replace("\\(", "[(]").replace("\\)", "[)]").replace("\\.", "[.]"))
-        self.assertTrue(rx.search("(framework.gibbsgreatly.xyz) any"))
-        self.assertTrue(rx.search("(framework.gibbsgreatly.xyz) 192.168.1.18"))
-        for other in ["(apt-cacher-stack) any", "(xframework.gibbsgreatly.xyz) any", "(pve-framework.gibbsgreatly.xyz) any",
-                      "framework.gibbsgreatly.xyz", "(framework.gibbsgreatly.xyz.evil) any", "(frameworkXgibbsgreatly.xyz) any"]:
-            self.assertFalse(rx.search(other), other)
-        self.assertEqual(r.find("hostname").text, r"^\(framework\.gibbsgreatly\.xyz\) ")
-        # every other rootcheck-parent rule must stay unscoped, so nothing else is silenced for one host only by accident
-        self.assertNotIn("framework", "".join(ET.tostring(x, encoding="unicode") for x in root.iter("rule") if x is not r and x.get("id") != "100210" and x.find("if_sid") is not None and x.find("if_sid").text == "510"))
+        scoped = [r for r in root.iter("rule") if r.find("hostname") is not None or r.find("location") is not None]
+        self.assertEqual([r.get("id") for r in scoped], ["100212", "100213"])   # hostname and location candidates
+        for r in scoped:
+            self.assertEqual(r.find("if_sid").text, "510")
+            self.assertEqual(r.get("level"), "0")
+            field = r.find("hostname") if r.find("hostname") is not None else r.find("location")
+            # OS_Match syntax: a leading ^ anchors the start, everything else (parentheses, dots) is literal and a
+            # backslash is NOT an escape. The manager shows an agent's events as "(<agent name>) any->rootcheck".
+            self.assertEqual(field.text, "^(framework.gibbsgreatly.xyz) ")
+            self.assertNotIn("\\", field.text)
+
+            def osmatch(value):
+                return value.startswith(field.text[1:])
+            self.assertTrue(osmatch("(framework.gibbsgreatly.xyz) any"))
+            self.assertTrue(osmatch("(framework.gibbsgreatly.xyz) 192.168.1.18"))
+            for other in ["(apt-cacher-stack) any", "(xframework.gibbsgreatly.xyz) any", "(pve-framework.gibbsgreatly.xyz) any",
+                          "framework.gibbsgreatly.xyz", "(framework.gibbsgreatly.xyz.evil) any", "x(framework.gibbsgreatly.xyz) any"]:
+                self.assertFalse(osmatch(other), other)
 
     def test_no_xml_special_chars_in_patterns(self):
         for line in open(os.path.join(g.HERE, "local_rules.xml")):

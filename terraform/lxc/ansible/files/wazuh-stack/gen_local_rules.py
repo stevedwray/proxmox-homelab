@@ -60,8 +60,15 @@ EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description[, 
     (100211, 2501, 3, HAP_PATTERN, f"MikroTik hAP ssh login failure from the Greenbone scanner {SCANNER_IP} (lowered)"),
     (100212, 510, 0, TROJAN_GENERIC_PATTERN,
      f"rootcheck: generic trojan signature on a /bin or /usr/bin file of {FRAMEWORK_AGENT} (uutils coreutils; suppressed for this agent only)",
-     FRAMEWORK_AGENT),
+     ("hostname", FRAMEWORK_AGENT)),
+    (100213, 510, 0, TROJAN_GENERIC_PATTERN,
+     f"rootcheck: generic trojan signature on a /bin or /usr/bin file of {FRAMEWORK_AGENT} (uutils coreutils; suppressed for this agent only)",
+     ("location", FRAMEWORK_AGENT)),
 ]
+
+
+def agent_match(name):
+    return f"^({name}) "
 
 
 def load():
@@ -96,9 +103,10 @@ def render():
     out += ['<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->',
             '<group name="local,rootcheck,syslog,">']
     for rid, parent, level, pat, desc, *agent in EXTRA_RULES:
-        # for events from an agent the manager's hostname is "(<agent name>) <ip or any>" (the alert header reads
-        # "(framework.gibbsgreatly.xyz) any->rootcheck"), so anchor on the parenthesised name, not the bare name
-        host = f'    <hostname>^\\({re.escape(agent[0])}\\) </hostname>\n' if agent else ""
+        # <hostname> and <location> take OS_Match syntax (^ start, $ end, | or, everything else literal, no backslash
+        # escapes), not regex. For an agent's events the manager shows "(<agent name>) any->rootcheck"; which of the two
+        # options carries the "(<agent name>) " prefix is settled live, so both candidates ship until one is proven.
+        host = f'    <{agent[0][0]}>{agent_match(agent[0][1])}</{agent[0][0]}>\n' if agent else ""
         out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n{host}'
                    f'    <regex type="pcre2">{escape(pat)}</regex>\n    <description>{escape(desc)}</description>\n  </rule>')
     out.append("</group>\n")
