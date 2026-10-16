@@ -228,13 +228,21 @@ Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
 
-### Upgrade to 4.14.9 (decided 2026-10-16) - repo ready, live steps pending
+### Upgrade to 4.14.9 (decided 2026-10-16) - manager stack DONE 2026-10-16, agents pending
 
 Why: `framework` was upgraded to 4.14.9 by hand while the manager was 4.14.8 (an agent must not be newer than its manager), and
 4.14.9 (released 2026-10-14) is a maintenance release with security hardening (authd/cluster idle connections, API access log
 escaping, remoted bounds) and no listed breaking changes, indexer changes or manual upgrade steps. The `4.14.9` tags exist on
 Docker Hub for the manager, indexer and dashboard. The repo now pins `wazuh_image_tag` and `wazuh_agent_version` to 4.14.9
 (a test keeps them equal) and the agent role holds the package after install, lifting the hold only for a version change.
+
+Manager stack done (2026-10-16 14:58 NZDT, task `wazuh-upgrade-4149`): compose tags edited on the host (backup
+`/opt/wazuh-stack/docker-compose.yml.bak-4149`), `docker compose pull`, one `docker compose up -d`; about 30 s from start to all
+10 daemons running. Before/after: the four suites pass, cluster green, `events_dropped` 0, 32 agents active, vulnerability
+documents 10,513 before and after, ISM 49/49, heap 15% after the restart, 5.3GB RAM available, no `wazuh-apid` failure. 30 agents are
+still on 4.14.8 (supported: the manager is newer); `framework` and the manager's own agent are on 4.14.9. Not done: the
+agent rollout (step 4), the Authentik login check on the dashboard (browser), and the `docker image prune` for the 4.14.8
+images (docker volume 75% with both generations; the prune reclaims about 4.4GB).
 
 Procedure (Phase 1b method; each step its own approval; stop and roll back on any stop condition):
 1. Before: suites (`mustfire`, `suppression`, `scanner`, `hap`), `health` and `agents` baselines; cluster green; PBS backup is the
