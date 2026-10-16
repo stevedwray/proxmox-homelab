@@ -39,3 +39,8 @@ hwmon_sensor_names:
   - {stack: argon-01, chip: thermal_thermal_zone0, sensor: temp0, name: "CPU"}
   - {stack: argon-01, chip: thermal_thermal_zone0, sensor: temp1, drop: true}
   - {stack: argon-01, chip: "soc:firmware_raspberrypi_hwmon", sensor: in0, name: "Undervoltage alarm"}
+  # argon-02 (Pi 4): same layout as argon-01 (temp0/temp1 are one thermal zone;
+  # a single sample differed by one 0.97 C sensor step, read-time quantisation)
+  - {stack: argon-02, chip: thermal_thermal_zone0, sensor: temp0, name: "CPU"}
+  - {stack: argon-02, chip: thermal_thermal_zone0, sensor: temp1, drop: true}
+  - {stack: argon-02, chip: "soc:firmware_raspberrypi_hwmon", sensor: in0, name: "Undervoltage alarm"}

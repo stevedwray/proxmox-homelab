@@ -147,3 +147,9 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
 - Relabel bug found by rendering: chip `thermal_thermal_zone0` is the Pi's
   real CPU sensor but pve-test's placeholder, so chip drops are now scoped
   per stack (`{stack, chip}`); per-sensor `drop: true` also supported.
+
+### argon-02: DONE 2026-10-17 (operator ran it; ok=28 failed=0)
+
+- no-auth 401; same chips as argon-01 (`thermal_thermal_zone0`,
+  `soc:firmware_raspberrypi_hwmon`); sensor names added. temp0/temp1 differed
+  by one 0.97 C step in one sample (quantisation), treated as one zone.
