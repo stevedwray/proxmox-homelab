@@ -213,7 +213,7 @@
         content: |
           [Service]
           ExecStart=
-          ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml{{ ' --web.listen-address=' + node_exporter_listen_address if node_exporter_listen_address | length > 0 else '' }}{{ ' --collector.textfile.directory=' + node_exporter_textfile_dir if node_exporter_textfile_dir | length > 0 else '' }}
+          ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml{{ ' --collector.textfile.directory=' + node_exporter_textfile_dir if node_exporter_textfile_dir | length > 0 else '' }}
       register: node_exporter_dropin
 
     - name: Restart node_exporter when TLS config changes

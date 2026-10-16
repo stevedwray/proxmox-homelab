@@ -6,19 +6,19 @@
 #     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
 #     ansible/00-initial-setup/hw-monitoring-node-exporter.yml --limit pve-tiny
 # pve-test is not a production node: use plain ./with-secrets for it.
+# T-Pot is NOT in hw_hosts: it runs node_exporter as a container via
+# tpot-monitoring.yml --tags hwmon (see that file's header).
 - name: Install node_exporter with hwmon sensors
   hosts: hw_hosts
   become: true
   gather_facts: true
   roles:
     - role: node_exporter
-      vars:
-        node_exporter_textfile_dir: "{{ '/var/lib/node_exporter/textfile_collector' if hw_pmic_textfile | default(false) | bool else '' }}"
   post_tasks:
     - name: Confirm hwmon metrics are served locally
       ansible.builtin.shell: >-
         curl -sk -u prometheus:"$NODE_EXPORTER_SCRAPE_PASSWORD"
-        https://127.0.0.1{{ node_exporter_listen_address | default(':9100') }}/metrics
+        https://127.0.0.1:9100/metrics
         | grep -c '^node_hwmon_temp_celsius'
       environment:
         NODE_EXPORTER_SCRAPE_PASSWORD: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') }}"
@@ -26,30 +26,3 @@
       changed_when: false
       failed_when: hw_hwmon_count.stdout | int < 1
       no_log: true
-
-- name: Pi 5 PMIC rails via textfile collector
-  hosts: tpot-host
-  become: true
-  tags: [pmic]
-  tasks:
-    - name: Copy PMIC textfile script
-      ansible.builtin.copy:
-        src: files/rpi_pmic_textfile.py
-        dest: /usr/local/bin/rpi_pmic_textfile.py
-        mode: "0755"
-    - name: Write PMIC textfile service and timer
-      ansible.builtin.copy:
-        dest: "/etc/systemd/system/{{ item.name }}"
-        mode: "0644"
-        content: "{{ item.content }}"
-      loop:
-        - name: rpi-pmic-textfile.service
-          content: "[Unit]\nDescription=Write Pi PMIC rails for node_exporter\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /usr/local/bin/rpi_pmic_textfile.py\n"
-        - name: rpi-pmic-textfile.timer
-          content: "[Unit]\nDescription=Refresh Pi PMIC rails\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=30s\n\n[Install]\nWantedBy=timers.target\n"
-    - name: Enable the timer
-      ansible.builtin.systemd:
-        name: rpi-pmic-textfile.timer
-        enabled: true
-        state: started
-        daemon_reload: true

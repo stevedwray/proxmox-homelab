@@ -73,7 +73,7 @@
       },
       "targets": [
         {
-          "expr": "max by (stack) (node_hwmon_temp_celsius{job=\"node_exporter_hw\",stack=~\"$host\"})",
+          "expr": "max by (stack) (node_hwmon_temp_celsius{job=~\"node_exporter_hw.*\",stack=~\"$host\"})",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }
@@ -124,7 +124,7 @@
       },
       "targets": [
         {
-          "expr": "min by (stack) (node_hwmon_fan_rpm{job=\"node_exporter_hw\",stack=~\"$host\"} > 0)",
+          "expr": "min by (stack) (node_hwmon_fan_rpm{job=~\"node_exporter_hw.*\",stack=~\"$host\"} > 0)",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }
@@ -179,7 +179,7 @@
       },
       "targets": [
         {
-          "expr": "max by (stack) (node_hwmon_in_lcrit_alarm{job=\"node_exporter_hw\",stack=~\"$host\"})",
+          "expr": "max by (stack) (node_hwmon_in_lcrit_alarm{job=~\"node_exporter_hw.*\",stack=~\"$host\"})",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }
@@ -240,7 +240,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_temp_celsius{job=\"node_exporter_hw\",stack=~\"$host\"}",
+          "expr": "node_hwmon_temp_celsius{job=~\"node_exporter_hw.*\",stack=~\"$host\"}",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }
@@ -302,7 +302,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_fan_rpm{job=\"node_exporter_hw\",stack=~\"$host\"}",
+          "expr": "node_hwmon_fan_rpm{job=~\"node_exporter_hw.*\",stack=~\"$host\"}",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }
@@ -352,7 +352,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_pwm{job=\"node_exporter_hw\",stack=~\"$host\"} / 255",
+          "expr": "node_hwmon_pwm{job=~\"node_exporter_hw.*\",stack=~\"$host\"} / 255",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }
@@ -413,7 +413,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_in_volts{job=\"node_exporter_hw\",stack=~\"$host\"} * label_value(node_hwmon_in_volts{job=\"node_exporter_hw\",stack=~\"$host\"}, \"scale\")",
+          "expr": "node_hwmon_in_volts{job=~\"node_exporter_hw.*\",stack=~\"$host\"} * label_value(node_hwmon_in_volts{job=~\"node_exporter_hw.*\",stack=~\"$host\"}, \"scale\")",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }
@@ -462,7 +462,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_power_average_watt{job=\"node_exporter_hw\",stack=~\"$host\"}",
+          "expr": "node_hwmon_power_average_watt{job=~\"node_exporter_hw.*\",stack=~\"$host\"}",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }
@@ -487,9 +487,9 @@
           "type": "prometheus",
           "uid": "VictoriaMetrics"
         },
-        "definition": "label_values(node_hwmon_temp_celsius{job=\"node_exporter_hw\"}, stack)",
+        "definition": "label_values(node_hwmon_temp_celsius{job=~\"node_exporter_hw.*\"}, stack)",
         "query": {
-          "query": "label_values(node_hwmon_temp_celsius{job=\"node_exporter_hw\"}, stack)",
+          "query": "label_values(node_hwmon_temp_celsius{job=~\"node_exporter_hw.*\"}, stack)",
           "refId": "A"
         },
         "refresh": 2,

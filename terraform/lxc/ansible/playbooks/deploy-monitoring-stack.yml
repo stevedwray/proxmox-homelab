@@ -184,10 +184,17 @@
         - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
-    - name: Build hwmon scrape targets
+    - name: Build hwmon scrape targets (https, basic auth)
       ansible.builtin.set_fact:
         hwmon_static_configs: "{{ (hwmon_static_configs | default([])) + [{'targets': [item.target ~ ':' ~ (item.port | default(9100))], 'labels': {'stack': item.stack}}] }}"
       loop: "{{ hwmon_hosts }}"
+      when: not (item.plain | default(false))
+
+    - name: Build hwmon scrape targets (plain http, containerised exporters)
+      ansible.builtin.set_fact:
+        hwmon_static_configs_plain: "{{ (hwmon_static_configs_plain | default([])) + [{'targets': [item.target ~ ':' ~ item.port], 'labels': {'stack': item.stack}}] }}"
+      loop: "{{ hwmon_hosts }}"
+      when: item.plain | default(false)
 
     - name: Build hwmon base relabel rules
       ansible.builtin.set_fact:
@@ -278,6 +285,14 @@
                 username: prometheus
                 password: "{{ node_exporter_scrape_password }}"
               static_configs: {{ hwmon_static_configs | to_json }}
+              metric_relabel_configs: {{ hwmon_relabel | to_json }}
+
+            # T-Pot's containerised node_exporter (plain HTTP, like cAdvisor):
+            # a host-level listener would be swallowed by T-Pot's NFQUEUE
+            # catch-all. Same sensor relabeling as node_exporter_hw.
+            - job_name: node_exporter_hw_plain
+              scheme: http
+              static_configs: {{ hwmon_static_configs_plain | default([]) | to_json }}
               metric_relabel_configs: {{ hwmon_relabel | to_json }}
 
             # Framework's native llama.cpp servers (--metrics), which

@@ -7,6 +7,27 @@ everything outside the YAML blocks is for the operator or the frontier session.
 **Branching:** cut `work/hw-monitoring` from the current HEAD before step 01.
 Run `git branch --show-current` first. Do not push or open a PR until asked.
 
+## Revision 2026-10-17: T-Pot runs node_exporter as a container
+
+The reachability probe found T-Pot's INPUT chain ends in an NFQUEUE catch-all,
+so a host-level node_exporter would be swallowed by honeytrap (README,
+"Reachability probe"). Operator chose a Docker-published container, like
+cAdvisor. Consequences, already applied in the repo (commit after 8d1da4fb):
+
+- hwmon-01 (role `node_exporter_listen_address`) is **superseded and
+  reverted**: nothing needs a non-default port now.
+- hwmon-03/04: tpot is NOT in `hw_hosts`; that group is pve, pve-tiny,
+  pve-test, argon-01, argon-02. The playbook has no second play.
+- hwmon-06: the PMIC script and its systemd timer, plus the node_exporter
+  compose project (`quay.io/prometheus/node-exporter:v1.12.1`, only the
+  `hwmon` and `textfile` collectors, published on **tcp/8084**), live in
+  `ansible/00-initial-setup/tpot-monitoring.yml` under `--tags hwmon`.
+- hwmon-05: a second scrape job `node_exporter_hw_plain` (plain HTTP, no
+  basic auth, same trust as cAdvisor) carries hosts marked `plain: true` in
+  `hwmon-hosts.yml`; it reuses the same sensor relabel rules.
+- hwmon-07: the dashboard filters `job=~"node_exporter_hw.*"`.
+Where a step block below still says otherwise, this section wins.
+
 ## Design (decided; do not re-litigate in execution)
 
 - One new Prometheus job, `node_exporter_hw`, in VictoriaMetrics' `scrape.yml`.
@@ -27,6 +48,7 @@ Run `git branch --show-current` first. Do not push or open a PR until asked.
   source of truth.
 - The Argon Pi 4 fans have no tachometer (I2C-driven by `argononed`), so they
   get temperature and undervoltage only. Do not invent fan RPM for them.
+- T-Pot: see the Revision section above (container on :8084, plain HTTP).
 - Rendering uses `| to_json` inside `content: |`, never `{% for %}` blocks or
   `to_nice_yaml`: both were tested and break YAML indentation.
 
@@ -449,8 +471,8 @@ Not step blocks (production mutations, and the sensor names need live data).
 
 1. After Phase A and steps 01-04/06: for each host, one at a time, post a
    Preflight Summary, get "Proceed", then run the hw-monitoring playbook with
-   `--limit <host>`. Order: pve-test (plain `./with-secrets`), tpot-host, argon-01,
-   argon-02, pve-tiny, pve. The Pis run Debian-family OS; the role installs
+   `--limit <host>`. Order: pve-test (plain `./with-secrets`), argon-01,
+   argon-02, pve-tiny, pve, then T-Pot via `tpot-monitoring.yml --tags hwmon` (host-layer; never touches ~/tpotce). The Pis run Debian-family OS; the role installs
    `prometheus-node-exporter` via apt. Stop on the first host that errors.
 2. **Reachability gate (read-only):** from monitoring-stack
    (192.168.20.12), `curl -sk` each target:port. mgmt_seg -> 192.168.1.0/24

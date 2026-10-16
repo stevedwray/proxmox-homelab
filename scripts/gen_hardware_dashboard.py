@@ -9,7 +9,7 @@ import pathlib
 
 OUT = pathlib.Path("terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json")
 DS = {"type": "prometheus", "uid": "VictoriaMetrics"}
-SEL = '{job="node_exporter_hw",stack=~"$host"}'
+SEL = '{job=~"node_exporter_hw.*",stack=~"$host"}'
 
 _id = 0
 
@@ -89,8 +89,8 @@ dash = {
     "tags": ["lab", "hardware"],
     "templating": {"list": [{
         "name": "host", "label": "Host", "type": "query", "datasource": DS,
-        "definition": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
-        "query": {"query": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
+        "definition": 'label_values(node_hwmon_temp_celsius{job=~"node_exporter_hw.*"}, stack)',
+        "query": {"query": 'label_values(node_hwmon_temp_celsius{job=~"node_exporter_hw.*"}, stack)',
                   "refId": "A"},
         "refresh": 2, "sort": 1, "multi": True, "includeAll": True,
         "allValue": ".+", "current": {}, "hide": 0}]},

@@ -107,6 +107,6 @@ an explicit ACCEPT allow-list (~60 TCP ports) ending in
 So any host-level listener (our systemd node_exporter) on a port not in the
 list is swallowed by the honeypot. 9101 is honeytrap's own listener; 9100 is
 T-Pot's miniprint docker-proxy. cAdvisor on 8083 works only because Docker
-publishes it via DNAT (bypasses INPUT). Decision needed: run node_exporter as
-a Docker-published container (like cAdvisor), or add an INPUT ACCEPT rule on
-T-Pot's firewall.
+publishes it via DNAT (bypasses INPUT). **Decided 2026-10-17:** run node_exporter
+as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
+`tpot-monitoring.yml --tags hwmon`; no change to T-Pot's firewall.

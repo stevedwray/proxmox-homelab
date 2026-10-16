@@ -60,7 +60,7 @@ longer emitted.**
 |-----|----------|--------|
 | node_exporter | all 10 managed LXCs | ✅ up (HTTPS + basic auth, TLS cert from step-ca) |
 | node_exporter | Proxmox host | the LXC `node_exporter` job still does not scrape hosts; Proxmox hosts, Pis and T-Pot are scraped for hardware sensors only via `node_exporter_hw` (below) |
-| node_exporter_hw | pve, pve-tiny, pve-test, argon-01/02, tpot | hardware sensors (docs/hw-monitoring/); targets/names in `stacks/monitoring-stack/hwmon-hosts.yml`; not live until deployed |
+| node_exporter_hw / node_exporter_hw_plain | pve, pve-tiny, pve-test, argon-01/02 (https) / tpot container :8084 (plain http) | hardware sensors (docs/hw-monitoring/); targets/names in `stacks/monitoring-stack/hwmon-hosts.yml`; not live until deployed |
 | cadvisor | authentik, monitoring, portainer, proxy, harbor, netbox stacks | ✅ up |
 | coredns | 192.168.20.13:9153 | ✅ up |
 | traefik | 192.168.30.10:8082 | ✅ up |

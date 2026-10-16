@@ -8,7 +8,9 @@ hwmon_hosts:
   - {stack: pve-test, target: pve-test.gibbsgreatly.xyz, port: 9100}
   - {stack: argon-01, target: 192.168.1.22, port: 9100}
   - {stack: argon-02, target: 192.168.1.23, port: 9100}
-  - {stack: tpot, target: tpot.gibbsgreatly.xyz, port: 9101}
+  # tpot: node_exporter runs as a Docker-published container (plain HTTP, no
+  # basic auth) -- see ansible/00-initial-setup/tpot-monitoring.yml --tags hwmon
+  - {stack: tpot, target: tpot.gibbsgreatly.xyz, port: 8084, plain: true}
 
 # Chips to drop entirely (duplicates). pve's gigabyte_wmi temps are the same
 # six sensors as the it87 chip's temp1-6. Filled in Phase C once the exact
