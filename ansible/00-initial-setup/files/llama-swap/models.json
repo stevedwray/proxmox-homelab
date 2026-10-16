@@ -36,23 +36,15 @@
         "top_p": 0.95,
         "min_p": 0.01
       },
-      "variants": [
-        {
-          "suffix": "sess131k",
-          "label": "loop hunt 131k",
-          "settings": {
-            "ctx_size": 131072
-          }
-        }
-      ],
+      "variants": [],
       "tags": [
         "thinking"
       ],
       "status": {
         "upstream": {
           "status": "works",
-          "reason": "",
-          "checked": "2026-10-09"
+          "reason": "loop-hunt: no looping, 270/270 recall to 131k; ignores the question-line format (docs/loop-hunt)",
+          "checked": "2026-10-17"
         },
         "hip": {
           "status": "works",
@@ -73,22 +65,7 @@
       "settings": {
         "ctx_size": 131072
       },
-      "variants": [
-        {
-          "suffix": "sess131k",
-          "label": "loop hunt 131k",
-          "settings": {
-            "ctx_size": 131072
-          }
-        },
-        {
-          "suffix": "sess262k",
-          "label": "loop hunt 262k",
-          "settings": {
-            "ctx_size": 262144
-          }
-        }
-      ],
+      "variants": [],
       "tags": [
         "thinking"
       ],
@@ -100,13 +77,13 @@
         },
         "nathanw": {
           "status": "works",
-          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test).",
-          "checked": "2026-10-15"
+          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). Loop-hunt: no loops or recall loss to 262k; long reasoning can exhaust small output caps (docs/loop-hunt).",
+          "checked": "2026-10-17"
         },
         "upstream": {
           "status": "works",
-          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test).",
-          "checked": "2026-10-15"
+          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). Loop-hunt: no loops or recall loss to 262k; long reasoning can exhaust small output caps; cold 250k prefill is slow, 123 tok/s (docs/loop-hunt).",
+          "checked": "2026-10-17"
         }
       }
     },
