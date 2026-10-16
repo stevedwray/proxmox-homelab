@@ -1,6 +1,8 @@
 ---
 node_exporter_tls_enabled: true
 node_exporter_step_cli_version: "0.30.2"
+# step CLI release arch; x86 LXCs/hosts stay amd64, Raspberry Pi (aarch64) gets arm64.
+node_exporter_step_cli_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
 node_exporter_config_dir: /etc/node_exporter
 node_exporter_cert_dir: /etc/node_exporter/certs
 node_exporter_scrape_username: prometheus
