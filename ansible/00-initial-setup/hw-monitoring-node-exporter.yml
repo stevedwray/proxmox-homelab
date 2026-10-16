@@ -12,6 +12,25 @@
   hosts: hw_hosts
   become: true
   gather_facts: true
+  pre_tasks:
+    # The node_exporter role passes --root /usr/local/share/ca-certificates/
+    # homelab-root.crt to `step ca certificate`; LXCs get it from lxc_base,
+    # bare-metal hosts do not (pve-tiny had no file; pve-test had a stale,
+    # different root from an old CA -- found 2026-10-17).
+    - name: Install the current homelab root CA
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+        dest: /usr/local/share/ca-certificates/homelab-root.crt
+        owner: root
+        group: root
+        mode: "0644"
+      register: hw_root_ca
+      when: hw_install_root_ca | default(true) | bool
+
+    - name: Refresh the system trust store
+      ansible.builtin.command: update-ca-certificates
+      changed_when: true
+      when: hw_root_ca is changed
   roles:
     - role: node_exporter
   post_tasks:
