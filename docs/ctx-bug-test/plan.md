@@ -374,7 +374,7 @@ stops only at one of the stop points in rule 1.
 | ctx-15-fork-check | Framework (read-only) | — | done 2026-10-17 (5 newer fork commits, none about Laguna/tokens) |
 | ctx-16-laguna-harness | local | — | done 2026-10-17 |
 | ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | done 2026-10-17 (candidate 20261016-8e9dcfeb7, not promoted) |
-| ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | todo |
+| ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | done 2026-10-17: NOT fixed (same flood as b10814) |
 | ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | todo |
 
 #### ctx-01-build-check (done)
@@ -1813,7 +1813,17 @@ plausibly explain the result. **Do not promote.** If it is fixed, say so
 and stop for the operator's decision on promotion (that affects every
 fork-served model and is outside this test).
 
-Result: —
+Result (2026-10-17, `ctx-laguna-fork-run`): **not fixed**. D10 timer paused
+(inactive twice), then run unit `framework-ctx-bugs-20261016t195434z` (run
+`/storage/artifacts/framework-ctx-bugs/20261016T195434Z`) and watcher unit
+`framework-ctx-watch-20261016t195434z` started; 12 requests complete in about
+19 minutes, no crash/GPU/evidence flags, previous model restored, and the
+watcher restored the timer (`active`). Candidate Laguna flags are identical to
+b10814 at 32k and 131k (S1 758 generated / 342 visible, hidden-tokens +
+template-leak; S2 289 / 51); upstream is 339 / 337 and 51 / 49. S4 now stops at
+2800 tokens at full budget (the earlier 2048 cap had cut it). Details in the
+README "Laguna on a newer fork". Not promoted. Continuing to ctx-19 as the
+operator specified for a not-fixed verdict.
 
 #### ctx-19-laguna-cleanup
 

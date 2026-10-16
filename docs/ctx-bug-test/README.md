@@ -381,3 +381,41 @@ Related: [docs/llama-swap](../llama-swap/README.md) (the catalogue, builds
 and entries this uses), [docs/model-params](../model-params/README.md)
 (variants; the Laguna-on-fork token-14 finding; RULER),
 [docs/framework-ubuntu](../framework-ubuntu/README.md).
+
+## Laguna on a newer fork (ctx-15 to ctx-18, 2026-10-17)
+
+Question: does a newer Nathanw fork fix Laguna-S-2.1's hidden-token flood?
+
+**Answer: no.** The candidate fork build **20261016-8e9dcfeb7** (b10819, fork
+head 8e9dcfeb7, 5 commits after current 9e21f2e53) fails exactly as b10814
+does. Greedy S1-S5 and F at 32k and 131k, full 16384-token budget, the full
+run's batch 512/128 and parallel 1 settings (run `20261016T195434Z`, 12 requests,
+no crash or GPU flag, previous model restored):
+
+| Request | b10814 (full run) | Candidate 8e9dcfeb7 | Upstream b11514 |
+| --- | --- | --- | --- |
+| S1 generated / visible tokens | 758 / 342 | 758 / 342 | 339 / 337 |
+| S1 flags | hidden-tokens, template-leak, only-numbers, wrong:sanity | same | build-divergence only |
+| S2 generated / visible | 289 / 51 | 289 / 51 | 51 / 49 |
+| S2 flags | hidden-tokens | hidden-tokens | build-divergence only |
+| S3 | wrong:q8 | wrong:q8 | wrong:q8 |
+| S4 generated / visible | 2048 / 1766 (2048 cap) | 2800 / 2517, stops | 2390 / 2388, stops |
+| S5, F | clean | clean | clean |
+
+- **Fixed: no. Partly: no.** The candidate's generated and visible token counts
+  match b10814 token for token on S1 and S2 at both sizes (hidden control tokens,
+  reasoning and `</think>` leaking into the answer), and the 32k and 131k
+  results are identical to each other, as before. The flood is not a
+  context-size effect.
+- **Why this was expected.** None of the 5 new commits touches Laguna, chat
+  templates, reasoning parsing, special/control tokens or llama-vocab (they are
+  speculative decoding, bf16 weight loading, qwen4exp, the ggml allocator and
+  KQ-mask sizing; see plan.md ctx-15). No commit plausibly explains a change.
+- **New side result.** Run at the full budget, the fork's S4 now finishes in
+  2800 tokens (stop) instead of being cut at the earlier short-form 2048 cap, so
+  the old "S4 exhausts the budget" reading for Laguna on the fork was an artefact
+  of that cap: its S4 flag is just the end marker, against upstream's word
+  counts. The hidden-token bug is unaffected.
+- Not promoted; fork `current` stays 9e21f2e53. Promotion is not warranted for
+  Laguna. Laguna stays off the fork (catalogue status `broken`, now also
+  noting this candidate).
