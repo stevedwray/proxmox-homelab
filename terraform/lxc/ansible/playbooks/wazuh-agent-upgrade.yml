@@ -10,6 +10,11 @@
 #   ./with-secrets-prod ansible-playbook -u root -i localhost, terraform/lxc/ansible/playbooks/wazuh-agent-upgrade.yml \
 #     -e '{"upgrade_agents":["apt-cacher-stack"]}'
 #
+# A host that is not reached as root over its agent IP (tpot: user steve through the operator's ssh alias) is described
+# with upgrade_host_overrides, e.g.
+#   -e '{"upgrade_agents":["tpot.gibbsgreatly.xyz"],"upgrade_host_overrides":{"tpot.gibbsgreatly.xyz":{"ansible_host":"tpot","ansible_user":"steve"}}}'
+# (and drop -u root from the command line, which would override ansible_user).
+#
 # Agents on pve-tiny's LXCs and pve-tiny itself use the same command (the wazuh secrets are in both profiles).
 # One host at a time; any failure stops the run before the next host. Rollback for one agent:
 #   apt-mark unhold wazuh-agent && apt-get install -y --allow-downgrades wazuh-agent=<old>-1 && apt-mark hold wazuh-agent
@@ -67,8 +72,8 @@
       ansible.builtin.add_host:
         name: "{{ item.name }}"
         groups: upgrade_targets
-        ansible_host: "{{ item.ip }}"
-        ansible_user: root
+        ansible_host: "{{ (upgrade_host_overrides | default({}))[item.name].ansible_host | default(item.ip) }}"
+        ansible_user: "{{ (upgrade_host_overrides | default({}))[item.name].ansible_user | default('root') }}"
         previous_version: "{{ item.version }}"
       loop: "{{ upgrade_api.results[0].json.data.affected_items }}"
       when:
@@ -82,6 +87,7 @@
   gather_facts: false
   serial: 1
   max_fail_percentage: 0
+  become: "{{ ansible_user != 'root' }}"   # a non-root login (tpot) needs sudo; root does not
   vars_files:
     - "{{ playbook_dir }}/../roles/wazuh_agent/defaults/main.yml"
   tasks:
