@@ -183,7 +183,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | done 2026-10-15; 32 requests, 74/74 recall, three clean CK pairs; cleanup verified |
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | done and reviewed 2026-10-16 (20/20 jobs, 793 primary records, 1434/1434 accepted-response facts; README "Matrix") |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | done 2026-10-16/17 (7/7 targets, 42 requests, cleanup verified; reviewed in README "Replays") |
-| lh-08-judge | local + operator | — | local corpus/guide built 2026-10-17; waiting for operator to run the cloud judge |
+| lh-08-judge | local + operator | — | done 2026-10-17 (operator chose a sample: flagged turns plus 100 random unflagged, replays excluded; judged and re-checked; see Result) |
 | lh-09-writeup | local | — | drafted 2026-10-17 (README "Findings and answer"); answer: not established, FND-1 suggestive only |
 | lh-10-cleanup | Framework (production) | `loop-hunt-cleanup` | done 2026-10-17 (27 ordinary entries, no sess/candidate, model restored) |
 

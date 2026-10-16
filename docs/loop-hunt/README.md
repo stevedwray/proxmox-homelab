@@ -623,6 +623,14 @@ or matched (model/content). The looping reported in real use remains
 unreproduced as a build defect; what reproduces everywhere is long Qwen3.8
 reasoning.
 
+**Link to the operator's VS Code loops.** The older fork build
+b10710-b02cb35f2 was the fork serving Qwen on Framework until the
+2026-10-09 promotion of b10814-9e21f2e53 (docs/llama-swap/README.md), so
+it covers the period of the operator's reported loops (V1: 2026-10-07;
+its exact serving model/build was not recorded). FND-1 is therefore the
+most plausible explanation for those loops, at the same low-to-medium
+confidence, and the current fork has not shown them.
+
 **Speed:** the same ordering shows up in long-context speed. With default
 batches, cold prompt reading on upstream falls from 489 tok/s (<16k) to 141
 tok/s (128-262k), against 690 to 615 on the current fork and 623 to 442 on the
