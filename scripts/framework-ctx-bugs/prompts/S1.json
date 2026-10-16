@@ -1,0 +1,9 @@
+{
+  "expected": "391,12,708",
+  "messages": [
+    {
+      "content": "Compute 17 times 23 and 144 divided by 12. The lookup table says host-maple has value 708. What are the two arithmetic results and that lookup value, in that order? Answer with only the numbers, comma-separated.",
+      "role": "user"
+    }
+  ]
+}

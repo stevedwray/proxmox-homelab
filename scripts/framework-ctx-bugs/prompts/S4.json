@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "content": "Write a runbook for a synthetic service migration with exactly 12 numbered sections, in order, using headings like 1. Title. Each section must have a different title and 150–250 words of body text. No sentence may be repeated. End with -- END OF RUNBOOK --. The fictional migration concerns Maple, a service that reads synthetic inventory events from a local queue. The new release uses a replacement event parser and a new local audit directory. The old release can be restored from an offline package kept on the same host. Possible topics include preparation, ownership, dependency review, package inspection, configuration review, queue draining, service shutdown, installation, service startup, validation, rollback and operational handover. These topics are background suggestions. The numbered section count, distinct titles, body lengths, unique sentences and final marker are the requirements. All host names and values in the runbook should belong to this fictional example.",
+      "role": "user"
+    }
+  ]
+}

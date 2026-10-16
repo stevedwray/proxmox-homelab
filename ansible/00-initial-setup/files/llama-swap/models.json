@@ -43,8 +43,8 @@
       "status": {
         "upstream": {
           "status": "works",
-          "reason": "",
-          "checked": "2026-10-09"
+          "reason": "loop-hunt: no looping, 270/270 recall to 131k; ignores the question-line format (docs/loop-hunt)",
+          "checked": "2026-10-17"
         },
         "hip": {
           "status": "works",
@@ -74,6 +74,16 @@
           "status": "works",
           "reason": "",
           "checked": "2026-10-09"
+        },
+        "nathanw": {
+          "status": "works",
+          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). Loop-hunt: no loops or recall loss to 262k; long reasoning can exhaust small output caps (docs/loop-hunt).",
+          "checked": "2026-10-17"
+        },
+        "upstream": {
+          "status": "works",
+          "reason": "Context test: S1/S2/S5 and F pass; S3 numeric-type failures; S4 exhausts 16384 tokens on both builds (docs/ctx-bug-test). Loop-hunt: no loops or recall loss to 262k; long reasoning can exhaust small output caps; cold 250k prefill is slow, 123 tok/s (docs/loop-hunt).",
+          "checked": "2026-10-17"
         }
       }
     },
@@ -115,8 +125,13 @@
       "status": {
         "upstream": {
           "status": "works",
-          "reason": "",
-          "checked": "2026-10-09"
+          "reason": "F 7/7 through 131k with batch 512/128 and parallel 1; S3 count and S4 length failures; default-batch pilot GPU timeout (docs/ctx-bug-test).",
+          "checked": "2026-10-15"
+        },
+        "nathanw": {
+          "status": "broken",
+          "reason": "Matched full-budget S1 probes expose reasoning/template and hidden tokens on b10814 at all four sizes (docs/ctx-bug-test). Also broken on the newer fork candidate 8e9dcfeb7 (b10819): identical S1/S2 hidden-token output at 32k and 131k with the full budget (docs/ctx-bug-test, 2026-10-17).",
+          "checked": "2026-10-17"
         }
       }
     },

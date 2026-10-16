@@ -1,0 +1,138 @@
+{
+  "estimate_chars_per_token": 3.0,
+  "prompts": {
+    "F-template": {
+      "estimated_tokens": null,
+      "expected": [
+        "amber-914",
+        "amber-915",
+        "amber-916",
+        "amber-917",
+        "amber-918",
+        "NOT IN LOG",
+        "NOT IN LOG"
+      ],
+      "file": "F-template.json",
+      "needles": [
+        {
+          "host": "host-needle-1",
+          "id": "REC-N1",
+          "severity": "warning",
+          "ticket": "TCK-8201",
+          "value": "amber-914"
+        },
+        {
+          "host": "host-needle-2",
+          "id": "REC-N2",
+          "severity": "warning",
+          "ticket": "TCK-8202",
+          "value": "amber-915"
+        },
+        {
+          "host": "host-needle-3",
+          "id": "REC-N3",
+          "severity": "warning",
+          "ticket": "TCK-8203",
+          "value": "amber-916"
+        },
+        {
+          "host": "host-needle-4",
+          "id": "REC-N4",
+          "severity": "warning",
+          "ticket": "TCK-8204",
+          "value": "amber-917"
+        },
+        {
+          "host": "host-needle-5",
+          "id": "REC-N5",
+          "severity": "warning",
+          "ticket": "TCK-8205",
+          "value": "amber-918"
+        }
+      ],
+      "sha256": "aae35977872ae92e5ad9d4df8a28b532c30395d310624928dfb52c74d472f955"
+    },
+    "S1": {
+      "estimated_tokens": 71,
+      "expected": "391,12,708",
+      "file": "S1.json",
+      "needles": [],
+      "sha256": "00a2d5d365b88022a97b4d35f8be81332c0584acb8b188ad4c0f83fdfbe04c2a"
+    },
+    "S2": {
+      "estimated_tokens": 381,
+      "expected": null,
+      "file": "S2.json",
+      "needles": [],
+      "sha256": "a51eb963944389e796e5d7b65eb3e4e3bbe8f644064c4ad29cc8039e22123b3d"
+    },
+    "S3": {
+      "estimated_tokens": 10772,
+      "expected": [
+        "amber-914",
+        "amber-915",
+        "amber-916",
+        "amber-917",
+        "amber-918",
+        "NOT IN LOG",
+        "NOT IN LOG",
+        6
+      ],
+      "file": "S3.json",
+      "needles": [
+        {
+          "char_offset": 1590,
+          "depth_percent": 5,
+          "id": "REC-N1",
+          "record_index": 10,
+          "value": "amber-914"
+        },
+        {
+          "char_offset": 7950,
+          "depth_percent": 25,
+          "id": "REC-N2",
+          "record_index": 50,
+          "value": "amber-915"
+        },
+        {
+          "char_offset": 15900,
+          "depth_percent": 50,
+          "id": "REC-N3",
+          "record_index": 100,
+          "value": "amber-916"
+        },
+        {
+          "char_offset": 23691,
+          "depth_percent": 75,
+          "id": "REC-N4",
+          "record_index": 149,
+          "value": "amber-917"
+        },
+        {
+          "char_offset": 30051,
+          "depth_percent": 95,
+          "id": "REC-N5",
+          "record_index": 189,
+          "value": "amber-918"
+        }
+      ],
+      "sha256": "6d780dced8f8fb965e389af20385c32b54e8713eeeb0dedf05e15b8faf23fbc5"
+    },
+    "S4": {
+      "estimated_tokens": 328,
+      "expected": null,
+      "file": "S4.json",
+      "needles": [],
+      "sha256": "261c8ca9e438a4cc3f81950dd6f3a4ad92f7d2dba67606eb9985f634937bf048"
+    },
+    "S5": {
+      "estimated_tokens": 10505,
+      "expected": "cedar-582",
+      "file": "S5.json",
+      "needles": [],
+      "sha256": "8f4ac5a672785fdff88e4ca26b3caf67efe1bbe7c71d3e985cd17810cc79f7ac"
+    }
+  },
+  "seed": 4471,
+  "version": 1
+}
