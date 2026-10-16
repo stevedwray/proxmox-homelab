@@ -228,6 +228,15 @@ Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
 
+### Cluster yellow on 2026-10-16 (ISM history replica)
+
+Status check found one unassigned shard: the replica of `.opendistro-ism-managed-index-history-2026.10.15-000002`, created
+by ISM's daily rollover with 1 replica. The earlier fix (0 replicas on existing `.opendistro-*` indices plus a template) did not
+cover rollovers because the plugin creates the index with an explicit count from the cluster setting
+`plugins.index_state_management.history.number_of_replicas` (default 1). The deploy play now sets it to 0
+(`--tags wazuh_retention`, which also re-applies 0 replicas to the existing index). Check after the next rollover that the
+cluster stays green.
+
 ### Phase 5a result: `pve-test`, `pve-tiny` and `framework` enrolled (2026-10-16)
 
 All three agents are 4.14.8 in the `default` group, connected, secrets protected by `nodiff`. The role reads journald
