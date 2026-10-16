@@ -1606,6 +1606,22 @@ timeout changes the recorded run settings, so recovery requires the
 operator's decision under the standing stop rule. Live polling was stopped
 at the operator's request; this was a one-off status/diagnostic check.
 
+Approved timeout recovery Result (2026-10-16, 17:17 NZDT): the new policy
+passes 80 loop-hunt tests (boundary >200000, JSON/SSE transport, management
+timeout isolation, saved-row prefix preservation) and six launcher tests.
+The source deployed for resume is the original matrix harness plus only
+the timeout patch, SHA b9f7354b1ed20fc514418c721e61e8a250c3a065f37d32406ff2a5ed965d315e.
+The manifest's source identity was migrated explicitly, with previous
+identity/source and all 65 result rows/raw evidence preserved at
+campaign-20261015/before-timeout-resume-20261016. No saved row changed.
+Supervisor resumed only upstream-C4, same directory, unit
+loop-hunt-20261016t041744z.service, with a fresh watcher bound to that unit.
+Launcher waits for fresh running metadata before watcher attachment; stale
+failed watcher state is backed up. Timer pause, lock/build checks and model
+restoration remain enforced. Analysis worker restarted; waiting replay
+staging includes the tested timeout policy and retains the matrix-review
+gate. Cold 250k timing/rate will be recorded from the completed response.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 stopped at 19/20 jobs on the final cold-request timeout; prior evidence preserved**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 resumed at 19/20 jobs with approved long-prompt timeout; prior evidence preserved**
 (2026-10-16). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -402,7 +402,19 @@ actual synthetic pilot answers. The interrupted 15-request run regraded to
 preserved byte-for-byte under its regrade-backups. Full history and hashes
 are in [lh-05](plan.md#lh-05-pilot).
 
-## Matrix (lh-06, final job needs attention)
+## Matrix (lh-06, final job resumed)
+
+The operator approved a 7200-second client timeout above 200000 prompt
+tokens, retaining 1800 seconds otherwise, and made client waits/timeouts
+autonomous plumbing. All 80 loop-hunt tests and six launcher lifecycle
+tests passed. Only the unfinished upstream C4 job resumed, in the same
+directory, as `loop-hunt-20261016t041744z.service`; its new safety watcher
+was attached and verified. All 65 saved result rows remain byte-identical.
+Original run/progress/watcher/source and raw evidence are backed up under
+`campaign-20261015/before-timeout-resume-20261016/`. The manifest records
+the exact timeout-only source-identity migration. Queued scorer changes
+still wait for the matrix boundary. Analysis was restarted; replay staging
+was refreshed but its agent-review gate remains closed until matrix review.
 
 One-off status check at 16:53 NZDT on 2026-10-16: 19/20 jobs complete.
 The final upstream C4 run saved 65 requests; its turn-61 warm request at
