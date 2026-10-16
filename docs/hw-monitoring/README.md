@@ -285,5 +285,5 @@ Names live in `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`
 4. pve `it87` DKMS: install `proxmox-headers-<kver>` for 7.0.14-19/-20 before
    rebooting pve into them.
 5. Garuda `wine-meta` is held (`--ignore`) until Garuda fixes its conflict.
-6. Promote: branch `work/hw-monitoring` is unpushed; operator decides on
-   PR/merge to `stable`.
+6. Promote: merged to `stable` as PR #505 (2026-10-17); `stable` -> `main`
+   is not done yet.
