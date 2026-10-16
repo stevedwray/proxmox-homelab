@@ -216,7 +216,7 @@
     wazuh_compose_dir: /opt/wazuh-stack
     wazuh_indexer_data_dir: /var/lib/wazuh-indexer-data   # extra_mount path from stack.yaml
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-    wazuh_image_tag: "4.14.8"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
+    wazuh_image_tag: "4.14.9"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
     wazuh_alert_retention_days: 90   # ISM delete age for wazuh-alerts-4.x-* and the manager-side raw log cleanup (docs/wazuh-tuning)
     wazuh_indexer_admin_password: >-
       {{

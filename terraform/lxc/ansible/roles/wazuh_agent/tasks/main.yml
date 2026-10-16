@@ -110,12 +110,26 @@
 # new as every agent, and an unversioned install pulled 4.14.8 onto agents while the manager was
 # 4.14.7. Keep this equal to the manager's wazuh_image_tag; a test enforces it. state: present
 # leaves an agent that already has this version alone; a newer one fails the task (apt will not downgrade).
+# The package is held after install so a routine `apt upgrade` or unattended upgrade cannot move an agent past the
+# manager (framework was upgraded to 4.14.9 while the manager was 4.14.8, 2026-10-16). Versions change only by editing
+# wazuh_agent_version: the hold is lifted just for this task. apt-mark is not idempotent-reporting, so no changed flag.
+- name: Lift the wazuh-agent hold for a deliberate version change
+  ansible.builtin.command:
+    argv: [apt-mark, unhold, wazuh-agent]
+  changed_when: false
+  failed_when: false
+
 - name: Install the wazuh-agent package
   ansible.builtin.apt:
     name: "wazuh-agent{{ '=' ~ wazuh_agent_version ~ '-1' if wazuh_agent_version | length > 0 else '' }}"
     state: present
     update_cache: true
   register: wazuh_agent_installed
+
+- name: Hold the wazuh-agent package at the pinned version
+  ansible.builtin.command:
+    argv: [apt-mark, hold, wazuh-agent]
+  changed_when: false
 
 # Docker container monitoring (docker-listener wodle) -- opt-in per host,
 # see wazuh_agent_docker_monitoring_enabled's own comment in defaults/main.yml
