@@ -17,14 +17,28 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLAYBOOK="${REPO_ROOT}/terraform/lxc/ansible/playbooks/node-exporter-renew-fix.yml"
 export ANSIBLE_CONFIG="${REPO_ROOT}/terraform/lxc/ansible/ansible.cfg"
-ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${PVE_ENV:?PVE_ENV is not set; run via a with-secrets wrapper}"
+ENV_NAME="${PVE_ENV:?PVE_ENV is not set; run via a with-secrets wrapper}"
+ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${ENV_NAME}"
+# Generated inventories are gitignored, so a git worktree has none: fall back to
+# the main checkout's (the first entry of `git worktree list` is always it).
+MAIN_ROOT="$(git -C "$REPO_ROOT" worktree list --porcelain | sed -n 's/^worktree //p;q')"
+MAIN_ENV_ROOT="${MAIN_ROOT}/terraform/lxc/environments/${ENV_NAME}"
+
+find_inventory() {  # <stack> -> path of its inventory.yml, or nothing
+  local root
+  for root in "$ENV_ROOT" "$MAIN_ENV_ROOT"; do
+    [[ -f "${root}/$1/inventory.yml" ]] && { echo "${root}/$1/inventory.yml"; return 0; }
+  done
+  return 1
+}
 
 stacks=()
+explicit=0
 hw_hosts=0
 extra=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --stack) stacks+=("$2"); shift 2 ;;
+    --stack) stacks+=("$2"); explicit=1; shift 2 ;;
     --hw-hosts) hw_hosts=1; shift ;;
     --check) extra+=(--check); shift ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
@@ -46,11 +60,17 @@ if [[ "$hw_hosts" -eq 1 ]]; then
   run_pass "hw_hosts" -i "${REPO_ROOT}/ansible/inventory/inventory.yml" --limit hw_hosts
 else
   if [[ ${#stacks[@]} -eq 0 ]]; then
-    for inv in "${ENV_ROOT}"/*/inventory.yml; do stacks+=("$(basename "$(dirname "$inv")")"); done
+    while IFS= read -r name; do stacks+=("$name"); done < <(
+      for inv in "${ENV_ROOT}"/*/inventory.yml "${MAIN_ENV_ROOT}"/*/inventory.yml; do
+        [[ -f "$inv" ]] && basename "$(dirname "$inv")"
+      done | sort -u)
   fi
   for stack in "${stacks[@]}"; do
-    inv="${ENV_ROOT}/${stack}/inventory.yml"
-    [[ -f "$inv" ]] || { echo "=== ${stack}: no inventory, skipped"; continue; }
+    inv="$(find_inventory "$stack")" || {
+      echo "=== ${stack}: no inventory in ${ENV_ROOT} or ${MAIN_ENV_ROOT}"
+      [[ "$explicit" -eq 1 ]] && failed+=("$stack (no inventory)")  # asked for by name: not a silent skip
+      continue
+    }
     run_pass "$stack" -i "$inv"
   done
 fi
