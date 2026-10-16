@@ -188,3 +188,21 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
 - PMIC rails arrive as `rpi_pmic_volts{rail}` / `rpi_pmic_current_amps{rail}`
   (textfile timer working: EXT5V 5.12 V, VDD_CORE 0.87 V / 0.66 A). The
   dashboard gained a "Raspberry Pi 5 power rails" row (15 panels now).
+
+## monitoring-stack deploy (2026-10-17)
+
+- Run 1 (operator, `./with-secrets-prod scripts/provision.sh --stack
+  monitoring-stack`, no dry run first): scrape.yml and `hardware-health.json`
+  landed at 09:25 and VictoriaMetrics + Grafana restarted, then the playbook
+  **failed in the wazuh_agent role**: this branch pinned agent 4.14.8 (cut from
+  a stale local `stable`) while the host runs 4.14.9 held; apt refuses to
+  downgrade. Fixed by merging `origin/stable` (pin 4.14.9) into the branch
+  (524fd668); the branch is now origin/stable plus only hw-monitoring files.
+  A re-run is needed to finish the rest of the playbook. Lesson (as in
+  `feedback_shared_checkout_deploys_wrong_branch`): `git fetch` and compare
+  to `origin/stable` before any deploy from a work branch.
+- Live checks (read-only, from the monitoring LXC): all 6 targets `up`
+  (5 `node_exporter_hw` https + tpot `node_exporter_hw_plain` :8084);
+  temperatures present for all six stacks; 0 sensors left with a raw
+  chip-path name; the MetricsQL `label_value(..., "scale")` voltage query
+  works on pve: +3.3V 3.285 V, +5V 4.98 V, +12V 11.952 V (raw 1.992 V each).
