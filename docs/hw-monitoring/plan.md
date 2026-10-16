@@ -110,8 +110,8 @@ depends_on: []
 
 change: >
   Create terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml with exactly
-  the content below. `hwmon_sensor_names` is deliberately empty: it is filled
-  in Phase C from live data, never guessed.
+  the content below. `hwmon_sensor_names` and `hwmon_drop_chips` are
+  deliberately empty: they are filled in Phase C from live data, never guessed.
 
   ---
   # Hardware-monitoring targets and sensor names, read by
@@ -125,8 +125,16 @@ change: >
     - {stack: argon-02, target: 192.168.1.23, port: 9100}
     - {stack: tpot, target: tpot.gibbsgreatly.xyz, port: 9101}
 
-  # Friendly sensor names. One entry per sensor:
+  # Chips to drop entirely (duplicates). pve's gigabyte_wmi temps are the same
+  # six sensors as the it87 chip's temp1-6. Filled in Phase C once the exact
+  # `chip` label is read from live data; empty until then.
+  hwmon_drop_chips: []
+
+  # Friendly sensor names. One entry per sensor. `scale` is optional: a
+  # multiplier for voltages behind resistor dividers (the chip reports the
+  # raw divided value, e.g. pve in2 = 1.99 V raw for the +12V rail, scale 6).
   #   {stack: pve, chip: "<node_hwmon chip label>", sensor: "fan2", name: "CPU fan"}
+  #   {stack: pve, chip: "<node_hwmon chip label>", sensor: "in2", name: "+12V", scale: 6}
   hwmon_sensor_names: []
 
 scope:
@@ -134,11 +142,11 @@ scope:
     - terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Adding any entry to hwmon_sensor_names"
+    - "Adding any entry to hwmon_sensor_names or hwmon_drop_chips"
 
 gates:
   - id: parses
-    cmd: "python3 -c \"import yaml;d=yaml.safe_load(open('terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml'));assert len(d['hwmon_hosts'])==6 and d['hwmon_sensor_names']==[]\""
+    cmd: "python3 -c \"import yaml;d=yaml.safe_load(open('terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml'));assert len(d['hwmon_hosts'])==6 and d['hwmon_sensor_names']==[] and d['hwmon_drop_chips']==[]\""
     expect: "exit 0"
     critical: true
 ```
@@ -276,11 +284,16 @@ change: >
           hwmon_static_configs: "{{ (hwmon_static_configs | default([])) + [{'targets': [item.target ~ ':' ~ (item.port | default(9100))], 'labels': {'stack': item.stack}}] }}"
         loop: "{{ hwmon_hosts }}"
 
+      - name: Build hwmon base relabel rules
+        ansible.builtin.set_fact:
+          hwmon_relabel: "{{ (hwmon_drop_chips | default([]) | map('community.general.dict_kv', 'regex') | map('combine', {'source_labels': ['chip'], 'action': 'drop'}) | list) + [{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}, {'source_labels': ['__name__'], 'regex': 'node_hwmon_in_volts', 'target_label': 'scale', 'replacement': '1'}] }}"
+
       - name: Build hwmon sensor-name relabel rules
         ansible.builtin.set_fact:
           hwmon_relabel: >-
-            {{ (hwmon_relabel | default([{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}]))
-            + [{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'sensor_name', 'replacement': item.name}] }}
+            {{ hwmon_relabel
+            + [{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'sensor_name', 'replacement': item.name}]
+            + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'scale', 'replacement': item.scale | string}] if item.scale is defined else []) }}
         loop: "{{ hwmon_sensor_names }}"
 
   Job (inside content):
@@ -294,10 +307,12 @@ change: >
                   username: prometheus
                   password: "{{ node_exporter_scrape_password }}"
                 static_configs: {{ hwmon_static_configs | to_json }}
-                metric_relabel_configs: {{ hwmon_relabel | default([{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}]) | to_json }}
+                metric_relabel_configs: {{ hwmon_relabel | to_json }}
 
-  Note: when hwmon_sensor_names is empty the second task's loop is skipped,
-  so hwmon_relabel is undefined; the job line's `default([...])` covers it.
+  Note: the first task always defines hwmon_relabel (base rules: optional
+  chip drops, default sensor_name, default scale=1 on voltages); the second
+  task's loop only appends per-sensor name and scale rules, and is skipped
+  when hwmon_sensor_names is empty. Tested by rendering with ansible.
 
 scope:
   allowed_paths:
@@ -327,46 +342,10 @@ depends_on: [hwmon-04-playbook]
 
 change: >
   Create ansible/00-initial-setup/files/rpi_pmic_textfile.py with exactly the
-  script below (tested against sample vcgencmd output). Then append to
+  script in the python block directly below this step's YAML (tested against
+  sample vcgencmd output). Then append to
   ansible/00-initial-setup/hw-monitoring-node-exporter.yml, as a SECOND play
   after the first, the play below. Only tpot (Pi 5) runs it.
-
-  Script:
-    #!/usr/bin/env python3
-    """Write Raspberry Pi 5 PMIC rail readings for node_exporter's textfile collector.
-
-    Reads `vcgencmd pmic_read_adc` (lines like `  3V3_SYS_A current(1)=0.121A`
-    and `  3V3_SYS_V volt(9)=3.3045V`) and writes rpi_pmic_current_amps /
-    rpi_pmic_volts, one series per rail, atomically.
-    """
-    import os
-    import re
-    import subprocess
-    import sys
-
-    OUT = sys.argv[1] if len(sys.argv) > 1 else "/var/lib/node_exporter/textfile_collector/rpi_pmic.prom"
-    VCGENCMD = "/usr/bin/vcgencmd"
-    LINE = re.compile(r"^\s*(\S+)_([AV])\s+(?:current|volt)\(\d+\)=([0-9.eE+-]+)[AV]\s*$")
-
-    raw = subprocess.run([VCGENCMD, "pmic_read_adc"], capture_output=True, text=True, check=True).stdout
-    cur, volt = [], []
-    for line in raw.splitlines():
-        m = LINE.match(line)
-        if not m:
-            continue
-        rail, kind, value = m.groups()
-        (cur if kind == "A" else volt).append(f'{{rail="{rail}"}} {float(value)}')
-
-    lines = ["# TYPE rpi_pmic_current_amps gauge"]
-    lines += [f"rpi_pmic_current_amps{s}" for s in cur]
-    lines += ["# TYPE rpi_pmic_volts gauge"]
-    lines += [f"rpi_pmic_volts{s}" for s in volt]
-
-    tmp = OUT + ".tmp"
-    with open(tmp, "w") as fh:
-        fh.write("\n".join(lines) + "\n")
-    os.replace(tmp, OUT)
-
 
   Second play:
   - name: Pi 5 PMIC rails via textfile collector
@@ -420,6 +399,45 @@ gates:
     critical: true
 ```
 
+Script for this step (copy verbatim):
+
+```python
+#!/usr/bin/env python3
+"""Write Raspberry Pi 5 PMIC rail readings for node_exporter's textfile collector.
+
+Reads `vcgencmd pmic_read_adc` (lines like `  3V3_SYS_A current(1)=0.121A`
+and `  3V3_SYS_V volt(9)=3.3045V`) and writes rpi_pmic_current_amps /
+rpi_pmic_volts, one series per rail, atomically.
+"""
+import os
+import re
+import subprocess
+import sys
+
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/var/lib/node_exporter/textfile_collector/rpi_pmic.prom"
+VCGENCMD = "/usr/bin/vcgencmd"
+LINE = re.compile(r"^\s*(\S+)_([AV])\s+(?:current|volt)\(\d+\)=([0-9.eE+-]+)[AV]\s*$")
+
+raw = subprocess.run([VCGENCMD, "pmic_read_adc"], capture_output=True, text=True, check=True).stdout
+cur, volt = [], []
+for line in raw.splitlines():
+    m = LINE.match(line)
+    if not m:
+        continue
+    rail, kind, value = m.groups()
+    (cur if kind == "A" else volt).append(f'{{rail="{rail}"}} {float(value)}')
+
+lines = ["# TYPE rpi_pmic_current_amps gauge"]
+lines += [f"rpi_pmic_current_amps{s}" for s in cur]
+lines += ["# TYPE rpi_pmic_volts gauge"]
+lines += [f"rpi_pmic_volts{s}" for s in volt]
+
+tmp = OUT + ".tmp"
+with open(tmp, "w") as fh:
+    fh.write("\n".join(lines) + "\n")
+os.replace(tmp, OUT)
+```
+
 ## Phase C: deploy and name the sensors (operator + frontier session)
 
 Not step blocks (production mutations, and the sensor names need live data).
@@ -442,6 +460,9 @@ Not step blocks (production mutations, and the sensor names need live data).
    `hwmon_sensor_names` in hwmon-hosts.yml using board manuals: Gigabyte
    `gigabyte_wmi` temp1..6, MSI/NCT header names, ASUS `AUXTIN*`/`in*`
    mapping, Pi rails. Redeploy monitoring-stack; check `sensor_name` appears.
+   Also verify live that `node_hwmon_in_volts * label_value(node_hwmon_in_volts,
+   "scale")` returns scaled values in VictoriaMetrics; if it does not, change
+   step 07's voltage panel to per-rail PromQL multipliers instead.
    Verify metric names the dashboard uses exist live before step 07:
    `node_hwmon_temp_celsius`, `node_hwmon_fan_rpm`, `node_hwmon_in_volts`,
    `node_hwmon_pwm`, `node_hwmon_power_average_watt`, `node_hwmon_in_lcrit_alarm`.
@@ -456,113 +477,12 @@ title: Add the Hardware Health dashboard generator and its JSON
 depends_on: [hwmon-05-scrape-job]
 
 change: >
-  Create scripts/gen_hardware_dashboard.py with exactly the content below
-  (tested), then run `python3 scripts/gen_hardware_dashboard.py` from the repo
+  Create scripts/gen_hardware_dashboard.py with exactly the script in the
+  python block directly below this step's YAML (tested), then run `python3 scripts/gen_hardware_dashboard.py` from the repo
   root to produce
   terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json and
   commit both. Before running, apply any metric-name corrections found in
   Phase C step 4 (edit only the `node_hwmon_*` names in the script).
-
-  #!/usr/bin/env python3
-  """Generate terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json.
-
-  Run from the repo root:  python3 scripts/gen_hardware_dashboard.py
-  The JSON is committed; this script is the source of truth for its layout.
-  """
-  import json
-  import pathlib
-
-  OUT = pathlib.Path("terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json")
-  DS = {"type": "prometheus", "uid": "VictoriaMetrics"}
-  SEL = '{job="node_exporter_hw",stack=~"$host"}'
-
-  _id = 0
-
-
-  def _next_id():
-      global _id
-      _id += 1
-      return _id
-
-
-  def row(title, y):
-      return {"collapsed": False, "gridPos": {"h": 1, "w": 24, "x": 0, "y": y},
-              "id": _next_id(), "panels": [], "title": title, "type": "row"}
-
-
-  def ts(title, expr, legend, unit, x, y, w=12, h=8, vmin=None, vmax=None):
-      defaults = {"color": {"mode": "palette-classic"},
-                  "custom": {"lineWidth": 1, "fillOpacity": 10}, "unit": unit}
-      if vmin is not None:
-          defaults["min"] = vmin
-      if vmax is not None:
-          defaults["max"] = vmax
-      return {"datasource": DS, "fieldConfig": {"defaults": defaults, "overrides": []},
-              "gridPos": {"h": h, "w": w, "x": x, "y": y}, "id": _next_id(),
-              "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table",
-                                     "placement": "bottom"},
-                          "tooltip": {"mode": "multi"}},
-              "targets": [{"expr": expr, "legendFormat": legend, "refId": "A"}],
-              "title": title, "type": "timeseries"}
-
-
-  def stat(title, expr, legend, unit, x, y, w=6, h=4, steps=None):
-      steps = steps or [{"color": "green", "value": None}]
-      return {"datasource": DS,
-              "fieldConfig": {"defaults": {"unit": unit, "color": {"mode": "thresholds"},
-                                           "thresholds": {"mode": "absolute", "steps": steps}},
-                              "overrides": []},
-              "gridPos": {"h": h, "w": w, "x": x, "y": y}, "id": _next_id(),
-              "options": {"colorMode": "background", "graphMode": "none",
-                          "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}},
-              "targets": [{"expr": expr, "legendFormat": legend, "refId": "A"}],
-              "title": title, "type": "stat"}
-
-
-  TEMP_STEPS = [{"color": "green", "value": None}, {"color": "orange", "value": 75},
-                {"color": "red", "value": 90}]
-  LEG = "{{stack}} {{sensor_name}}"
-
-  panels = [
-      row("Overview", 0),
-      stat("Hottest sensor", f"max by (stack) (node_hwmon_temp_celsius{SEL})",
-           "{{stack}}", "celsius", 0, 1, w=8, steps=TEMP_STEPS),
-      stat("Slowest running fan (non-zero)",
-           f"min by (stack) (node_hwmon_fan_rpm{SEL} > 0)", "{{stack}}", "rpm", 8, 1, w=8),
-      stat("Pi undervoltage alarm (1 = active)",
-           f"max by (stack) (node_hwmon_in_lcrit_alarm{SEL})", "{{stack}}", "none", 16, 1, w=8,
-           steps=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
-      row("Temperatures", 5),
-      ts("Temperatures", f"node_hwmon_temp_celsius{SEL}", LEG, "celsius", 0, 6, w=24, h=10),
-      row("Fans", 16),
-      ts("Fan speed", f"node_hwmon_fan_rpm{SEL}", LEG, "rpm", 0, 17, vmin=0),
-      ts("Fan PWM duty", f"node_hwmon_pwm{SEL} / 255", LEG, "percentunit", 12, 17,
-         vmin=0, vmax=1),
-      row("Voltages and power", 25),
-      ts("Voltages", f"node_hwmon_in_volts{SEL}", LEG, "volt", 0, 26),
-      ts("Power", f"node_hwmon_power_average_watt{SEL}", LEG, "watt", 12, 26, vmin=0),
-  ]
-
-  dash = {
-      "annotations": {"list": []},
-      "description": "Hardware sensors (temperatures, fans, voltages) from node_exporter's hwmon collector, with friendly sensor names applied at scrape time",
-      "editable": True, "fiscalYearStartMonth": 0, "graphTooltip": 1, "id": None,
-      "links": [], "panels": panels, "refresh": "30s", "schemaVersion": 38,
-      "tags": ["lab", "hardware"],
-      "templating": {"list": [{
-          "name": "host", "label": "Host", "type": "query", "datasource": DS,
-          "definition": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
-          "query": {"query": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
-                    "refId": "A"},
-          "refresh": 2, "sort": 1, "multi": True, "includeAll": True,
-          "allValue": ".+", "current": {}, "hide": 0}]},
-      "time": {"from": "now-6h", "to": "now"}, "timepicker": {}, "timezone": "browser",
-      "title": "Hardware Health", "uid": "hardware-health", "version": 1,
-  }
-
-  OUT.write_text(json.dumps(dash, indent=2) + "\n")
-  print(f"wrote {OUT}")
-
 
 scope:
   allowed_paths:
@@ -581,6 +501,113 @@ gates:
     cmd: "python3 -c \"import json;d=json.load(open('terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json'));assert d['uid']=='hardware-health' and len(d['panels'])==12\""
     expect: "exit 0"
     critical: true
+```
+
+Script for this step (copy verbatim):
+
+```python
+#!/usr/bin/env python3
+"""Generate terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json.
+
+Run from the repo root:  python3 scripts/gen_hardware_dashboard.py
+The JSON is committed; this script is the source of truth for its layout.
+"""
+import json
+import pathlib
+
+OUT = pathlib.Path("terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json")
+DS = {"type": "prometheus", "uid": "VictoriaMetrics"}
+SEL = '{job="node_exporter_hw",stack=~"$host"}'
+
+_id = 0
+
+
+def _next_id():
+    global _id
+    _id += 1
+    return _id
+
+
+def row(title, y):
+    return {"collapsed": False, "gridPos": {"h": 1, "w": 24, "x": 0, "y": y},
+            "id": _next_id(), "panels": [], "title": title, "type": "row"}
+
+
+def ts(title, expr, legend, unit, x, y, w=12, h=8, vmin=None, vmax=None):
+    defaults = {"color": {"mode": "palette-classic"},
+                "custom": {"lineWidth": 1, "fillOpacity": 10}, "unit": unit}
+    if vmin is not None:
+        defaults["min"] = vmin
+    if vmax is not None:
+        defaults["max"] = vmax
+    return {"datasource": DS, "fieldConfig": {"defaults": defaults, "overrides": []},
+            "gridPos": {"h": h, "w": w, "x": x, "y": y}, "id": _next_id(),
+            "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table",
+                                   "placement": "bottom"},
+                        "tooltip": {"mode": "multi"}},
+            "targets": [{"expr": expr, "legendFormat": legend, "refId": "A"}],
+            "title": title, "type": "timeseries"}
+
+
+def stat(title, expr, legend, unit, x, y, w=6, h=4, steps=None):
+    steps = steps or [{"color": "green", "value": None}]
+    return {"datasource": DS,
+            "fieldConfig": {"defaults": {"unit": unit, "color": {"mode": "thresholds"},
+                                         "thresholds": {"mode": "absolute", "steps": steps}},
+                            "overrides": []},
+            "gridPos": {"h": h, "w": w, "x": x, "y": y}, "id": _next_id(),
+            "options": {"colorMode": "background", "graphMode": "none",
+                        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}},
+            "targets": [{"expr": expr, "legendFormat": legend, "refId": "A"}],
+            "title": title, "type": "stat"}
+
+
+TEMP_STEPS = [{"color": "green", "value": None}, {"color": "orange", "value": 75},
+              {"color": "red", "value": 90}]
+LEG = "{{stack}} {{sensor_name}}"
+
+panels = [
+    row("Overview", 0),
+    stat("Hottest sensor", f"max by (stack) (node_hwmon_temp_celsius{SEL})",
+         "{{stack}}", "celsius", 0, 1, w=8, steps=TEMP_STEPS),
+    stat("Slowest running fan (non-zero)",
+         f"min by (stack) (node_hwmon_fan_rpm{SEL} > 0)", "{{stack}}", "rpm", 8, 1, w=8),
+    stat("Pi undervoltage alarm (1 = active)",
+         f"max by (stack) (node_hwmon_in_lcrit_alarm{SEL})", "{{stack}}", "none", 16, 1, w=8,
+         steps=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
+    row("Temperatures", 5),
+    ts("Temperatures", f"node_hwmon_temp_celsius{SEL}", LEG, "celsius", 0, 6, w=24, h=10),
+    row("Fans", 16),
+    ts("Fan speed", f"node_hwmon_fan_rpm{SEL}", LEG, "rpm", 0, 17, vmin=0),
+    ts("Fan PWM duty", f"node_hwmon_pwm{SEL} / 255", LEG, "percentunit", 12, 17,
+       vmin=0, vmax=1),
+    row("Voltages and power", 25),
+    # `scale` label (default 1, set per divider-fed rail) is read as a number
+  # by MetricsQL label_value(); VERIFY this live in Phase C before step 07.
+  ts("Voltages", f"node_hwmon_in_volts{SEL} * label_value(node_hwmon_in_volts{SEL}, \"scale\")",
+     LEG, "volt", 0, 26),
+    ts("Power", f"node_hwmon_power_average_watt{SEL}", LEG, "watt", 12, 26, vmin=0),
+]
+
+dash = {
+    "annotations": {"list": []},
+    "description": "Hardware sensors (temperatures, fans, voltages) from node_exporter's hwmon collector, with friendly sensor names applied at scrape time",
+    "editable": True, "fiscalYearStartMonth": 0, "graphTooltip": 1, "id": None,
+    "links": [], "panels": panels, "refresh": "30s", "schemaVersion": 38,
+    "tags": ["lab", "hardware"],
+    "templating": {"list": [{
+        "name": "host", "label": "Host", "type": "query", "datasource": DS,
+        "definition": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
+        "query": {"query": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
+                  "refId": "A"},
+        "refresh": 2, "sort": 1, "multi": True, "includeAll": True,
+        "allValue": ".+", "current": {}, "hide": 0}]},
+    "time": {"from": "now-6h", "to": "now"}, "timepicker": {}, "timezone": "browser",
+    "title": "Hardware Health", "uid": "hardware-health", "version": 1,
+}
+
+OUT.write_text(json.dumps(dash, indent=2) + "\n")
+print(f"wrote {OUT}")
 ```
 
 ### hwmon-08-docs

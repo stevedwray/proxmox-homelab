@@ -64,4 +64,27 @@ Raw output is in the gitignored `artifacts/` directory.
 - Voltage rail names (in0-in14) need the MSI BIOS hardware-monitor page to
   label; do not guess from raw values.
 
-### pve: pending
+### pve: DONE 2026-10-17 (out-of-tree it87 via DKMS)
+
+- In-tree `modprobe it87` -> ENODEV (no supported chip). The chip is an
+  **IT8689E** (not IT8688E as first guessed): `Found IT8689E chip at 0xa40
+  [MMIO at 0xfe000000], revision 2`, Gigabyte SIV ID 61050607.
+- Driver: frankcrawford/it87 pinned at commit
+  `bd7a566c8a60fe0308d67e26761e16260368191a`, built with DKMS as
+  `it87/bd7a566` for 7.0.14-15-pve (headers `proxmox-headers-7.0.14-15-pve`
+  installed). No module options, no ACPI conflict, no kernel parameter, no
+  reboot. DKMS archived the in-tree module; `dkms remove it87/bd7a566 --all`
+  restores it. Kernel shows a taint line (unsigned module); Secure Boot is off.
+- Persisted: `/etc/modules-load.d/hwmon.conf` = `it87`. DKMS AUTOINSTALL=yes:
+  **install `proxmox-headers-<kver>` for 7.0.14-19/-20 before rebooting into
+  them**, or the sensors vanish on that kernel.
+- node_exporter `chip` label will be `platform_it87_2624`.
+- Sensor map (from the driver's Gigabyte config, which lists "B550 GAMING X
+  V2" for SIV 0x61050607; cross-checked against live values): temp1/2 System
+  1/2, temp3 CPU (75 C, matches Tctl), temp4 PCIEX16, temp5 VRM MOS, temp6
+  PCH; fan1 CPU_FAN, fan2 SYS_FAN1, fan3 SYS_FAN2, fan4 SYS_FAN3 (empty),
+  fan5 CPU_OPT; in0 CPU Vcore, in4 CPU VCORE SOC, in5 CPU VDDP, in6 DRAM,
+  3VSB, Vbat; **in1 +3.3V (x1.649), in2 +12V (x6), in3 +5V (x2.5)**: raw
+  readings are divider-scaled (all 1.99 V), so the plan carries a `scale`.
+- `gigabyte_wmi` temp1-6 are the same six sensors as it87 temp1-6: drop that
+  chip (`hwmon_drop_chips`) and use the it87 names.
