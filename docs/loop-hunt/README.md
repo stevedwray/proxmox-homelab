@@ -516,6 +516,18 @@ builds/targets must finish before cross-build attribution or final findings.
 Cap exhaustion alone is not a semantic-loop diagnosis. No prompts or new
 transcript excerpts are returned. The campaign continues automatically.
 
+All four V1 targets subsequently completed and passed cleanup. Each has
+repetition candidates; current fork and upstream also have cap-exhausted
+responses. Thus the observed flags are not exclusive to the fork. Final
+channel/seed analysis waits for all targets. The scheduled upgrade service
+started after GLM cleanup and blocked V9's first launch before any request
+or directory existed. After it finished naturally, original model/build,
+free lock and active timer were verified. The first permitted launch retry
+preserved/skipped all four V1 jobs and launched V9 fork current as
+loop-hunt-20261016t070130z.service, with a verified new safety watcher.
+The failure and retry are retained in campaign.json and its backup. No
+upgrade service, server setting or test content was changed.
+
 The separately approved continuation is staged; matrix review has passed:
 `loop-hunt-replay-after-matrix-20261015.service`. Private state lives at
 `/storage/artifacts/loop-hunt/replay-campaign-20261015/continuation.json`.

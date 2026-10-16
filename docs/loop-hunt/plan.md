@@ -1758,6 +1758,22 @@ Requests took 198–336 seconds each, plus model reloads. Remaining targets
 continue under the existing approval. No test setting/content change and
 no lh-08 action. Only aggregate saved metadata was read, no new excerpts.
 
+Replay launch recovery Result (2026-10-16, 20:01 NZDT): all four V1 jobs
+complete, six requests each, zero evidence errors and cleanup verified.
+All four recorded repetition candidates; current fork/upstream additionally
+have length-at-cap responses. No exclusive fork attribution follows from
+these flags. At 07:00 UTC, after GLM cleanup restored the timer, the scheduled
+upgrade service was activating. V9-fork-current stopped at upgrade-active
+preflight before directory creation or any request. Original model/build,
+free lock and active timer were verified independently. The upgrade service
+finished naturally; none was stopped or modified. Under the standing launch
+rule, first retry preserved campaign.before-v9-launch-retry-1.json and all
+four completed V1 jobs, marked the same campaign running, and restarted the
+unchanged continuation/job list. V9 fork current launched as
+loop-hunt-20261016t070130z.service with its new watcher verified. Models,
+builds, settings, sampling and input content unchanged. Remaining V9 targets
+continue automatically. No operator input was needed within the retry scope.
+
 #### lh-08-judge
 
 Build a blind corpus (model/build/condition replaced by opaque ids) of
