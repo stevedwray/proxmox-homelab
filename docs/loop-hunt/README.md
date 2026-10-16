@@ -10,7 +10,7 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 complete and reviewed; lh-07 approved and ready; prior evidence preserved**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 complete and reviewed; lh-07 running; prior evidence preserved**
 (2026-10-16). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
@@ -502,7 +502,19 @@ Matrix-analysis-before.json records invariant evidence fingerprints, and
 matrix-review-ready.json binds all 20 final result hashes. Replay release
 requires the reviewed hashes; no transcript excerpts enter git.
 
-## Replays (lh-07, matrix reviewed)
+## Replays (lh-07, running)
+
+The hash-bound matrix gate was released after review commit 02281038.
+The first replay, V1 on fork current, completed all six requests and
+restored its baseline. Each had 58 prompt tokens and zero warm/cold cache.
+Seed 1 has repetition flags in both modes, seed 2 is clean, and seed 3
+exhausted the 8192-token cap in both modes (finish_reason length). These
+are two flagged seed pairs, not four independent bugs. No exact-loop,
+transport or evidence-capture flag was recorded. Requests took 198–336
+seconds each; full model reloads add to the campaign wall time. Remaining
+builds/targets must finish before cross-build attribution or final findings.
+Cap exhaustion alone is not a semantic-loop diagnosis. No prompts or new
+transcript excerpts are returned. The campaign continues automatically.
 
 The separately approved continuation is staged; matrix review has passed:
 `loop-hunt-replay-after-matrix-20261015.service`. Private state lives at

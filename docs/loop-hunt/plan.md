@@ -1744,6 +1744,20 @@ after the matrix, then records `lh-08-reached; awaiting operator` and takes
 no judge/writeup/production-cleanup action. continuation.json and campaign.json
 on Framework retain progress. Observe and fix only within operator scope.
 
+Replay progress Result (2026-10-16): matrix review gate released after
+commit 02281038, with all 20 result hashes verified. First launch
+loop-hunt-20261016t050000z.service had seeds 1/2/3 and a verified new safety
+watcher. V1 on fork current completed six requests, 58 prompt tokens each,
+zero cache in both modes and restored_default true. Seed 1: repetition
+candidate warm/cold, stop at 5185 generated tokens. Seed 2: clean warm/cold,
+stop at 4893. Seed 3: length at 8192 in both modes, cap-exhaustion candidate.
+Each warm/cold pair has identical request content except cache use; no
+transport/evidence error. These are two flagged seed pairs, not four
+independent findings, with no build attribution until controls finish.
+Requests took 198–336 seconds each, plus model reloads. Remaining targets
+continue under the existing approval. No test setting/content change and
+no lh-08 action. Only aggregate saved metadata was read, no new excerpts.
+
 #### lh-08-judge
 
 Build a blind corpus (model/build/condition replaced by opaque ids) of
