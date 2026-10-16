@@ -54,8 +54,8 @@
       },
       "targets": [
         {
-          "expr": "harbor_up{component=~\"core|database|jobservice|portal|redis|registry|registryctl|trivy\"}",
-          "legendFormat": "{{component}}",
+          "expr": "harbor_up{exported_component=~\"core|database|jobservice|portal|redis|registry|registryctl|trivy\"}",
+          "legendFormat": "{{exported_component}}",
           "refId": "A"
         }
       ],
@@ -125,11 +125,11 @@
       },
       "targets": [
         {
-          "expr": "harbor_task_concurrency",
+          "expr": "sum(harbor_task_concurrency)",
           "refId": "A"
         }
       ],
-      "title": "Task Concurrency",
+      "title": "Running Tasks (all types)",
       "type": "stat"
     },
     {
@@ -223,6 +223,7 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "fillOpacity": 10, "lineWidth": 1 },
+          "noValue": "No jobs ran in this range",
           "unit": "s"
         },
         "overrides": []
@@ -419,6 +420,7 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "fillOpacity": 10, "lineWidth": 1 },
+          "noValue": "No registry storage activity in this range",
           "unit": "s"
         },
         "overrides": []

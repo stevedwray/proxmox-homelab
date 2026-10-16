@@ -404,6 +404,15 @@ The repo now contains validated remediation work:
     - severity totals by repository
     - detailed CVE rows derived from Harbor vulnerability additions payloads
   - Harbor alerting and dashboard refinement are still future work
+  - `/findings.json` is ~44 MB / ~37k rows on live `pve` (2026-10-17), which
+    overwhelmed Grafana's Infinity plugin (it was killed mid-query on the
+    1.5 GB monitoring LXC) and left the CVE Inventory table empty. The feed now
+    takes opt-in query filters, `?severity=Critical,High&project=dockerhub&limit=5000`
+    (comma lists, case-insensitive, `*` or empty = no filter; rows come back
+    most severe first and `total_rows`/`returned_rows` are added). With no query
+    string the output is unchanged, so the Elasticsearch sync is unaffected.
+    The dashboard defaults to Critical+High, 5000 rows, via the `severity`,
+    `project` and `max_rows` variables.
 
 The main remaining work is no longer Harbor scan convergence or basic Harbor
 operations visibility. It is Harbor alerting and later refinement of findings

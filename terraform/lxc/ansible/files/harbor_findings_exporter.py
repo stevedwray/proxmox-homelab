@@ -247,15 +247,68 @@ class SnapshotStore:
                 header.append(self.metrics_body)
             return "\n".join(header) + "\n"
 
-    def render_findings_json(self) -> str:
+    def render_findings_json(
+        self,
+        severities: set[str] | None = None,
+        projects: set[str] | None = None,
+        limit: int | None = None,
+    ) -> str:
+        """Render the findings feed.
+
+        With no arguments the output is the full, unfiltered feed (other
+        consumers, e.g. the Elasticsearch sync, rely on that). Filters are
+        opt-in: they narrow the rows server-side so a dashboard does not have
+        to pull and parse the whole ~40 MB feed.
+        """
         with self._lock:
-            payload = {
+            rows = list(self.findings_rows)
+            payload: dict[str, Any] = {
                 "exporter_up": int(self.exporter_up),
                 "last_success_ts": float(self.last_success_ts),
                 "last_duration_seconds": float(self.last_duration_seconds),
-                "rows": list(self.findings_rows),
             }
+            if severities or projects or limit is not None:
+                total = len(rows)
+                rows = filter_findings_rows(rows, severities, projects, limit)
+                payload["total_rows"] = total
+                payload["returned_rows"] = len(rows)
+            payload["rows"] = rows
             return json.dumps(payload, default=str)
+
+
+def filter_findings_rows(
+    rows: list[dict[str, Any]],
+    severities: set[str] | None = None,
+    projects: set[str] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Filter findings by severity/project (case-insensitive), most severe first, then cap."""
+    wanted_sev = {value.lower() for value in severities or ()}
+    wanted_proj = {value.lower() for value in projects or ()}
+    selected = [
+        row
+        for row in rows
+        if (not wanted_sev or str(row.get("severity", "")).lower() in wanted_sev)
+        and (not wanted_proj or str(row.get("project", "")).lower() in wanted_proj)
+    ]
+    rank = {name.lower(): index for index, name in enumerate(SEVERITIES)}
+    selected.sort(
+        key=lambda row: (
+            rank.get(str(row.get("severity", "")).lower(), len(rank)),
+            str(row.get("project", "")),
+            str(row.get("repository", "")),
+            str(row.get("cve_id", "")),
+        )
+    )
+    if limit is not None:
+        selected = selected[:limit]
+    return selected
+
+
+def _csv_param(params: dict[str, list[str]], name: str) -> set[str]:
+    """Comma-separated query parameter as a set; empty or '*' means no filter."""
+    values = {part.strip() for raw in params.get(name, []) for part in raw.split(",") if part.strip()}
+    return set() if "*" in values else values
 
 
 def _determine_scan_state(
@@ -502,7 +555,9 @@ class MetricsHandler(BaseHTTPRequestHandler):
     exporter: HarborFindingsExporter
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path in {"/metrics", "/metrics/"}:
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
+        if path in {"/metrics", "/metrics/"}:
             payload = self.exporter.snapshot.render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -511,8 +566,20 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
             return
 
-        if self.path in {"/findings.json", "/findings.json/"}:
-            payload = self.exporter.snapshot.render_findings_json().encode("utf-8")
+        if path in {"/findings.json", "/findings.json/"}:
+            params = urllib.parse.parse_qs(parsed.query)
+            try:
+                limit_raw = (params.get("limit") or [""])[0].strip()
+                limit = int(limit_raw) if limit_raw else None
+                if limit is not None and limit < 0:
+                    raise ValueError(limit_raw)
+            except ValueError:
+                self.send_response(400)
+                self.end_headers()
+                return
+            payload = self.exporter.snapshot.render_findings_json(
+                _csv_param(params, "severity"), _csv_param(params, "project"), limit
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
