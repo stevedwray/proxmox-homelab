@@ -245,6 +245,12 @@ Ubuntu 26.04 findings:
   FIM still watches `/bin` and `/usr/bin`. logtest cannot produce rootcheck events, so the scoping is proven by unit
   tests on the pattern and the generated XML, then live: trigger a rootcheck scan on `framework` and on one LXC agent
   after the deploy (`PUT /rootcheck`), expect no new trojan alerts for `framework` and an unchanged picture elsewhere.
+  Result (2026-10-16, deployed by in-place reload): a rootcheck scan on `framework` stored 20 Trojaned detections in the
+  manager and raised 0 alerts; `apt-cacher-stack` scanned clean and unchanged. One of the two candidates matches, the live test
+  cannot say which (level-0 matches are not logged), so both stay; prune one by deploying `hostname`-only, scanning, and
+  swapping if alerts return. The earlier deploy with a container restart lost `wazuh-apid` to a SIGKILL during start (8GB LXC with
+  the indexer at ~4.9GB, about 400MB free at the low point) and the manager was down ~11 minutes until a second restart; rule
+  deploys now use `-e wazuh_rules_apply=reload` (no restart). Phase 4 sizing should treat the LXC RAM as the first item.
 - **FIM:** one benign `fopen` error on a dangling `pollinate.service` symlink; add an agent-scoped ignore only if it repeats.
 - **Vulnerability detection:** not yet checked for Ubuntu 26.04 (the feed may not cover it).
 
