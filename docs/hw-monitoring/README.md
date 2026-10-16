@@ -88,3 +88,25 @@ Raw output is in the gitignored `artifacts/` directory.
   readings are divider-scaled (all 1.99 V), so the plan carries a `scale`.
 - `gigabyte_wmi` temp1-6 are the same six sensors as it87 temp1-6: drop that
   chip (`hwmon_drop_chips`) and use the it87 names.
+
+## Reachability probe (read-only, 2026-10-17, from monitoring-stack 192.168.20.12)
+
+TCP connect test: `REFUSED` means the packet reached the host and nothing
+listens (path open); a firewall drop would show as a timeout.
+
+| Target | Result |
+|---|---|
+| framework:9100 (control, already scraped) | open |
+| pve, pve-tiny, pve-test, argon-01, argon-02 :9100 | refused = path open, no MikroTik rule needed |
+| pve:9190 | refused = path open (not 9100-only) |
+| tpot:9100 / :9101 / :9190 | all "open", **meaningless** (see below) |
+
+**T-Pot constraint (blocks the current tpot design):** T-Pot's INPUT chain is
+an explicit ACCEPT allow-list (~60 TCP ports) ending in
+`-j NFQUEUE --queue-num 0` for every other new SYN, which honeytrap answers.
+So any host-level listener (our systemd node_exporter) on a port not in the
+list is swallowed by the honeypot. 9101 is honeytrap's own listener; 9100 is
+T-Pot's miniprint docker-proxy. cAdvisor on 8083 works only because Docker
+publishes it via DNAT (bypasses INPUT). Decision needed: run node_exporter as
+a Docker-published container (like cAdvisor), or add an INPUT ACCEPT rule on
+T-Pot's firewall.
