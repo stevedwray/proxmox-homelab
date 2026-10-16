@@ -7,6 +7,7 @@
 # Differences from the role, on purpose:
 #   - the step-ca provisioner password is used only to issue the first
 #     certificate and is never written to disk (renewal uses the cert itself);
+#   - Arch's step-cli package installs the binary as `step-cli`, not `step`;
 #   - only the hwmon collector is enabled (no process/disk/network detail).
 #
 # Run on the workstation itself (needs sudo; any env works for the secrets):
@@ -66,7 +67,7 @@
            && openssl x509 -checkend 2592000 -noout -in "{{ ws_cert_dir }}/tls.crt" >/dev/null 2>&1; then
           exit 0
         fi
-        step ca certificate "{{ ws_fqdn }}" \
+        step-cli ca certificate "{{ ws_fqdn }}" \
           "{{ ws_cert_dir }}/tls.crt" "{{ ws_cert_dir }}/tls.key" \
           --san "{{ ws_fqdn }}" --san garuda --not-after 2160h \
           --ca-url "{{ ws_step_ca_url }}" --root "{{ ws_root_ca }}" \
@@ -130,7 +131,7 @@
           CERT={{ ws_cert_dir }}/tls.crt
           KEY={{ ws_cert_dir }}/tls.key
           if ! openssl x509 -checkend 2592000 -noout -in "$CERT" 2>/dev/null; then
-            step ca renew --force --ca-url {{ ws_step_ca_url }} --root {{ ws_root_ca }} "$CERT" "$KEY"
+            step-cli ca renew --force --ca-url {{ ws_step_ca_url }} --root {{ ws_root_ca }} "$CERT" "$KEY"
             chown root:node_exporter "$CERT" "$KEY"
             chmod 0640 "$CERT" "$KEY"
             systemctl kill --signal=HUP prometheus-node-exporter.service

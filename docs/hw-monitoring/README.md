@@ -223,3 +223,24 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   mechanism (with `step crypto keypair` on pve-test). Not tested: the full run.
 - After it runs: redeploy monitoring-stack (new scrape target), then name the
   nct6799 sensors.
+
+- Run 1 of the workstation playbook failed at cert issuance: Arch's `step-cli`
+  package installs `/usr/bin/step-cli`, not `step` (hidden by `no_log`;
+  reproduced by hand). Playbook now calls `step-cli` for issuance and renewal.
+  Safe to re-run (the earlier tasks are idempotent).
+
+## Deferred: pve-tiny sensor names (noted 2026-10-17, operator will return to this)
+
+Fans and voltage rails on pve-tiny still carry neutral names ("Fan 2", "Fan 3",
+"nct6797 in0".."in14") because the chip cannot say which header or rail is
+which and no lm-sensors config exists for the MSI B450 GAMING PLUS MAX. To name
+them, read the BIOS Hardware Monitor page and send:
+- RPM shown against each fan header (CPU_FAN1/PUMP_FAN1/SYS_FAN*), to match
+  fan2 ~1900 RPM and fan3 ~1150 RPM, or which fans are plugged in where;
+- any rail values the BIOS shows (CPU core, DRAM, +12V, +5V, +3.3V).
+Likely mapping to confirm: in0 CPU Vcore (1.43 V); in2/in3 AVCC/+3.3V (3.36/
+3.34 V); in7 3VSB (3.34 V); in8 Vbat (3.31 V); in1 +12V if x12 (raw 1.008 V ->
+12.1 V); in4 +5V if x5 (raw 1.016 V -> 5.08 V). The last two are unconfirmed.
+If wanted sooner, the fallback is provisional names marked "(unverified)".
+Names live in `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`
+(`stack: pve-tiny` entries); a redeploy of monitoring-stack applies them.
