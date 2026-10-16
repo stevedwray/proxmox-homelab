@@ -1636,6 +1636,39 @@ regrade, retaining line-format flags and original evidence. Active resumed
 request source/payload remains unchanged. Final regrade will establish the
 aggregate corrected score; the earlier 0/100 is not factual recall loss.
 
+Final matrix review Result (2026-10-16, 17:56 NZDT): all 20 jobs complete;
+761 new matrix records plus 32 passed-pilot records = 793 primary records,
+with imported C1 rows excluded from C3 totals. All 1434 accepted-response
+facts are correct after preserved regrading. GLM C2 is 100/100; previous
+fork C1/C2/C3/C4 recall flags and absent-fact claims were extraction errors.
+Three previous-fork reasoning-repetition candidates remain (C1/C4 seed-1
+turn 4; C2 seed-6 turn 1), with no exact-loop or answer-repetition flag.
+Semantic coherence/looping awaits lh-08. All six C5 tasks completed with
+identical final file trees; earlier fork C5 growth-probe provenance remains
+separate from the corrected upstream run. Every model/build's C2 recorded
+20 HTTP 500 capacity refusals; C3 had four HTTP 400 limit refusals per build.
+
+The resumed upstream cold request at 250110 tokens completed cleanly with
+client_timeout 7200, cache zero, prompt read 2025.209341 seconds at
+123.498344 tok/s, total wall 2036.727495 seconds. This is the requested
+cold-250k read finding. Fork current: 250078 tokens, prompt 410.922727s /
+608.576707 tok/s; previous: 250186, 608.772765s / 410.967794 tok/s.
+Each cold/warm pair has identical content except cache use; cross-build
+histories differ slightly, so rates do not isolate a causal build defect.
+All 65 original rows were preserved byte-for-byte in the pre-regrade 66-row
+file and remain backed up. The successful cold became the sole added row.
+
+Seven unique fence-fallback kernel warnings were retained: GLM C1 seed 2
+one; upstream C4 six, including three during the original timed-out cold
+request. Thus four completed-response GPU flags do not count all pending
+kernel evidence. No reset or driver/service change occurred; no causal GPU
+claim follows. All 20 provenance/layout/token/evidence/cleanup gates pass,
+pilot hash unchanged, and actual-evidence fingerprints are unchanged after
+regrading. Original model/build, free lock and active upgrade timer verified.
+All 83 tests pass. Matrix findings are recorded in README; no unaddressed
+measuring problem remains. Release only the hash-bound review gate to the
+already-approved seven replays, then stop with findings before lh-08.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

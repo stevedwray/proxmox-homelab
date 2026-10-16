@@ -10,12 +10,12 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 resumed at 19/20 jobs with approved long-prompt timeout; prior evidence preserved**
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 complete and reviewed; lh-07 approved and ready; prior evidence preserved**
 (2026-10-16). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 82 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 83 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -402,175 +402,116 @@ actual synthetic pilot answers. The interrupted 15-request run regraded to
 preserved byte-for-byte under its regrade-backups. Full history and hashes
 are in [lh-05](plan.md#lh-05-pilot).
 
-## Matrix (lh-06, final job resumed)
+## Matrix (lh-06, complete and reviewed)
 
-The operator approved a 7200-second client timeout above 200000 prompt
-tokens, retaining 1800 seconds otherwise, and made client waits/timeouts
-autonomous plumbing. All 80 loop-hunt tests and six launcher lifecycle
-tests passed. Only the unfinished upstream C4 job resumed, in the same
-directory, as `loop-hunt-20261016t041744z.service`; its new safety watcher
-was attached and verified. All 65 saved result rows remain byte-identical.
-Original run/progress/watcher/source and raw evidence are backed up under
-`campaign-20261015/before-timeout-resume-20261016/`. The manifest records
-the exact timeout-only source-identity migration. Queued scorer changes
-still wait for the matrix boundary. Analysis was restarted; replay staging
-was refreshed but its agent-review gate remains closed until matrix review.
+All 20 queued jobs completed on 2026-10-16. Including the passed pilot,
+there are 793 primary completed request records: 761 new matrix records
+plus 32 pilot records. Imported C1 rows in C3 are counted once. Failed pilot
+and C5 attempts, and the interrupted cold request, remain separate evidence.
 
-One-off status check at 16:53 NZDT on 2026-10-16: 19/20 jobs complete.
-The final upstream C4 run saved 65 requests; its turn-61 warm request at
-250110 prompt tokens completed cleanly. The identical cold request hit the
-1800-second client timeout at 16:30 NZDT while the server was still
-processing: 231667 tokens, approximately 93%, at the last journal sample.
-Its pending evidence records `timed out`; no completion is invented or
-counted. Three GPU-warning flags are recorded in this run, with zero
-evidence-capture errors. Original model/build restoration, free run lock
-and active upgrade timer were independently verified. Analysis stopped
-behind the incomplete matrix; replays remain gated. No retry or timeout
-change has been made. Increasing the timeout changes a recorded run
-setting and requires the operator's decision under the standing stop rule.
-Live polling remains stopped at the operator's request. The progress table
-below is the earlier partial review; the remaining completed jobs have not
-yet received the final preserved regrade/review.
+The preserved regrade gives 1434/1434 correct facts in accepted responses.
+HTTP refusals are excluded from factual-accuracy denominators. No exact
+loop, runaway or hidden-token flood was detected. Semantic coherence and
+semantic looping remain pending lh-08; perfect literal recall does not
+establish either.
 
-The successful pilot satisfied the operator's conditional approvals. The
-remaining 20 jobs are running sequentially in two consecutive batches,
-using unchanged prompts, models/builds, sampling and settings. The pilot
-supplies Qwen fork-current C1 seed 1. Every job has a detached watcher and
-original-model, free-lock and D10 timer cleanup gates before the next job.
-C4 runs last. Matrix findings/review remain pending.
+| Model/build | Condition | Recall | Findings | Warm/cold |
+| --- | --- | ---: | --- | --- |
+| Qwen fork current | C1, seeds 1/2 | 148/148 | two line-format flags in pilot | six clean pairs |
+| Qwen fork previous | C1, seeds 1/2 | 148/148 | one reasoning-repetition candidate | six clean checkpoint pairs |
+| Qwen upstream | C1, seeds 1/2 | 148/148 | none | six clean pairs |
+| GLM upstream | C1, seeds 1/2 | 170/170 | 74 question-line format flags; one completed-request GPU warning | six matching format-failure pairs |
+| Qwen fork current | C2 | 80/80 | 20 capacity refusals | four clean; four refused pairs |
+| Qwen fork previous | C2 | 80/80 | one reasoning-repetition candidate; 20 capacity refusals | four clean; four refused pairs |
+| Qwen upstream | C2 | 83/83 | 20 capacity refusals | four clean; five refused pairs |
+| GLM upstream | C2 | 100/100 | 44 question-line format flags; 20 capacity refusals | four matching format-failure; four refused pairs |
+| Qwen, each build | C3, new turns only | 5/5 each | four context-limit refusals each | one refused pair each |
+| Qwen, each build | C5, both output budgets | — | all six tasks done; identical final file-tree hash; no detector flags | no cold comparison |
+| Qwen fork current | C4, 262k | 154/154 | five question-line format flags | five clean pairs |
+| Qwen fork previous | C4, 262k | 154/154 | one reasoning-repetition candidate | five clean checkpoint pairs |
+| Qwen upstream | C4, 262k | 154/154 | three completed-request GPU-warning flags | four clean; one cold GPU-warning pair |
 
-| Model/build | Condition | Recall | Flags | Warm/cold | State |
-| --- | --- | ---: | --- | --- | --- |
-| Qwen fork current | C1 seeds 1 and 2 | 148/148 | two line-format failures in seed 1; seed 2 clean | six clean pairs | complete |
-| Qwen fork current | C2 | 80/80 accepted-response facts | 20 capacity refusals | four clean; four refused pairs | complete |
-| Qwen fork current | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
-| Qwen fork current | C5 (both budgets) | — | none | — | complete |
-| Qwen fork previous | C1 seeds 1 and 2 | preview: 148/148 | one reasoning-repetition flag; old recall flags invalid | pending preserved regrade | complete |
-| Qwen fork previous | C2 | preview: 80/80 accepted-response facts | one reasoning-repetition flag; 20 capacity refusals | pending preserved regrade | complete |
-| Qwen fork previous | C3 (new turns only) | preview: 5/5 accepted-response facts | four context-limit refusals | pending preserved regrade | complete |
-| Qwen fork previous | C5 (both budgets) | — | none | — | complete |
-| Qwen upstream | C1 seeds 1 and 2 | 148/148 | none | six clean pairs | complete |
-| Qwen upstream | C2 | 83/83 accepted-response facts | 20 capacity refusals | four clean; five refused pairs | complete |
-| Qwen upstream | C3 (new turns only) | 5/5 accepted-response facts | four context-limit refusals | one refused pair | complete |
-| Qwen upstream | C5 retry 2 | — | none | — | complete; both synthetic tasks done |
-| GLM upstream | C1 seeds 1 and 2 | 170/170 | question-line formatting in all 74 responses; one kernel GPU warning in seed 2 | six matching format-failure pairs; GPU warning retained separately | complete |
+C2 crossed the shared pool at round 8 for the Qwen builds and round 10 for
+GLM, then completed the four planned extra rounds. Every model/build
+recorded 20 HTTP 500 context-capacity refusals. Cold requests at the same
+per-session sizes succeeded. C3 produced HTTP 400 context-limit refusals.
+No silent token truncation was observed in accepted responses.
 
-Recall correction pending canonical regrade: the previous build sometimes
-prefixes every question/reference line with [TRIAGE]. The extractor attached
-these prefixes to preceding values, falsely flagging correct facts, including
-NOT PROVIDED. Exact saved turns 1/24/27 reproduce it; 78 tests pass with
-prefixes included in the following label/reference boundary. Exact literal
-matching and question-line grading remain independent. A read-only in-memory
-preview yields 148/148 for previous-build C1, 80/80 for C2 and 5/5 new C3
-facts, with no remaining recall flags. These supersede earlier preliminary
-recall/hallucination claims. Canonical results are unchanged; backups and
-regrade will occur after the matrix, including CK reclassification.
+The previous fork's three repetition flags are reasoning-shingle candidates,
+at C1/C4 seed-1 turn 4 (16462 prompt tokens) and C2 seed-6 turn 1 (4141).
+They are not three established independent bugs; C1/C4 revisit the same
+early-session material. There was no answer-repetition flag or factual loss.
+Question-line flags likewise do not establish semantic collapse. The first
+C4 format flag on the current fork was at 45097 tokens; upstream's first
+C4 kernel flag was at 147573. These are detector/rule observations, with
+semantic collapse context deferred to judging.
 
-GLM C2 also exposed comma separators being absorbed into recalled values.
-The queued correction treats a comma directly before the next labelled
-Qn/reference field as its boundary; other punctuation/prose remains literal.
-Exact saved synthetic-answer and negative cases pass in the 82-test suite.
-The original 0/100 GLM C2 score and absent-fact flags are therefore awaiting
-preserved regrade, rather than evidence of factual loss. Question-line
-format violations remain graded independently. No active request changed.
+### Cold prompt reading near 250k tokens
 
-C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
-The first format failure was at 45097 tokens; no semantic collapse is
-established by that formatting flag. Both seeds have exact prompt/server
-token agreement and zero evidence errors. Seed 2's 32-request job restored
-the original model, freed the lock and restored the timer; watcher complete.
-C2 completed all four planned extra rounds after the shared pool filled.
-Both fork builds refused all four warm sessions on rounds 8–12 with HTTP
-500; matching cold requests succeeded. Their crossing prompt sums were
-131275 (current) and 131287 (previous). These are capacity refusals,
-reported separately from factual accuracy and repetition. All sixteen
-completed matrix jobs have zero evidence errors, exact prompt/server token
-agreement on accepted requests, and verified cleanup. C3 imported C1 rows
-are excluded from its new-request totals. The previous build's two repetition flags are eight-word shingle repeats
-in reasoning, with no answer repetition; blind judging remains pending.
-They do not yet establish a build-specific loop. Sixteen of 20 jobs are complete as of 11:05 NZDT on 2026-10-16. GLM C2 is running.
-The original upstream C5 attempt stopped after one clean saved request: its intermediate token-count
-probe received HTTP 400, Cannot continue an assistant message that contains
-tool calls. Model restoration, free lock and active timer are independently
-verified. Replays remain waiting.
+| Build | Prompt tokens | Prompt read seconds | Prompt tok/s | Total request seconds |
+| --- | ---: | ---: | ---: | ---: |
+| Fork current b10814-9e21f2e53 | 250078 | 410.923 | 608.577 | 420.602 |
+| Fork previous b10710-b02cb35f2 | 250186 | 608.773 | 410.968 | 615.593 |
+| Upstream b11514-de7fa0a3c | 250110 | 2025.209 | 123.498 | 2036.727 |
 
-The operator approved the C5 counting correction and rerun on 2026-10-16.
-The first fix changed add_generation_prompt, but upstream still rejected
-its partial assistant history. Its pinned source shows that assistant
-prefill is automatic regardless of this flag. The corrected growth probe
-now includes the real tool result before audit filler, so it measures a
-complete exchange without mutating inference history. The stand-in enforces
-upstream's rejection for both flag values; all 77 tests pass, plus a full
-62-request C5 stand-in run at both budgets with task completion and no flags.
+All three cold cache counts were zero and all three final answers were
+clean. Each cold payload exactly matched its own warm payload except cache
+use. Cross-build histories have slightly different model answers, so these
+are observed rates, not a controlled isolation of the cause.
 
-The second permitted retry, upstream-C5-attempt3, completed 31 clean requests.
-Both tasks finished with matching final file-tree hashes: 39 calls / peak
-121743 prompt tokens at the 8192 budget; 38 calls / peak 113406 at the
-16384 budget. Rendered/server token counts agree throughout; zero evidence
-errors and verified model/lock/timer cleanup, watcher complete. GLM C1 seed 1
-started at 17:47 UTC (06:47 NZDT). Both failed attempts remain untouched.
-Only the complete-exchange counting correction is active; scorer corrections
-remain deferred to the matrix review boundary. No models, builds, sampling
-or answer budgets changed.
+Upstream's original final cold request hit the 1800-second client timeout
+while still advancing at 93%. Under the operator-approved policy, requests
+above 200000 measured prompt tokens now get 7200 seconds; others retain
+1800. Only that unfinished job resumed. Its 65 saved rows were byte-identical
+before regrading; the successful cold request became row 66 and records
+client_timeout 7200. The completed timing shows that the original timeout
+was too short for this observed prefill. Client waits/timeouts are now
+autonomous plumbing, with server settings and test content held fixed.
 
-Between jobs, the restored upgrade timer triggered its scheduled service.
-The next launch stopped safely at the upgrade-active preflight. After the
-service finished, model restoration, free lock and active timer were verified;
-no upstream C2 request had started. One approved launch retry resumed the
-unchanged campaign, with the new watcher attached and timer paused again.
-The original failure and retry are preserved in campaign.json and its backup.
+Seven distinct amdgpu fence-fallback timer warnings were retained: one in
+GLM C1 seed 2 and six in upstream C4. Three upstream events occurred during
+the original interrupted cold request and therefore are in pending kernel
+evidence, not completed-response flags. The successful retried cold request
+had no GPU flag. No GPU reset, driver change or service intervention was
+performed. These observations do not prove the cause of the rate difference.
 
-GLM C1 seed 1 completed 37 requests with 85/85 factual answers. Every response
-failed only question-line formatting. The cold checkpoints were 67905,
-100197 and 121731 tokens, taking 709.6 / 1170.8 / 1509.4 seconds respectively;
-all cold cache counts zero, exact warm/cold requests except cache use, and
-exact rendered/server counts. These are matching format failures, not a
-semantic-loop diagnosis. No timeout or other setting changed. Cleanup and
-watcher completion verified; GLM C1 seed 2 started automatically.
+### Measurement review and preservation
 
-GLM C1 seed 2 also completed 37 requests with 85/85 factual answers,
-question-line formatting failures throughout and verified cleanup. Actual
-cold checkpoints were 67884 / 100236 / 121846 tokens, with zero cold cache,
-exact warm/cold payloads except cache use and matching rendered/server
-counts. One warm request (turn 34) captured a kernel warning at
-2026-10-15 20:18:18 UTC: `Fence fallback timer expired on ring comp_1.2.0`.
-The request completed without a transport or evidence-capture error. This
-is retained as a GPU finding; no driver or service intervention was made.
-GLM C2 then started and had 48 saved requests at 22:05 UTC. A current-run
-watcher snapshot does not cover GPU flags from earlier completed jobs.
+All 20 jobs passed model/build, four full-context slots, fixture/dependency
+hash, request-setting, token-count and cleanup checks. Accepted requests
+had exact rendered/server token agreement and zero evidence-capture errors.
+All cold requests had zero cache reuse. The original model/build, free run
+lock and active upgrade timer were independently verified after the matrix.
+The passed pilot's result hash is unchanged.
 
-Post-matrix analysis is staged as
-`loop-hunt-matrix-analysis-20261015.service`, verified waiting. It requires
-all 20 jobs and their cleanup to pass measurement checks, then preserves
-pre-fix results/reports/raw data/progress and regrades them with the tested
-scorer. Request/response/token/timing fingerprints must remain identical.
-Regrading preserves completion timestamps. It writes matrix-review-ready.json;
-the separate replay gate remains closed until agent review and docs update.
+All 83 tests pass. Recall extraction now separates repeated TRIAGE prefixes
+and commas immediately before labelled Qn/reference fields from literal
+values, while retaining exact-value negative tests and separate line-format
+grading. The preserved canonical regrade withdraws the old previous-fork
+recall/hallucination claims and the old GLM C2 0/100 result. Request/response,
+token, timing and evidence fingerprints remained identical; completion
+timestamps were preserved. C5's earlier counting failures and approved
+complete-tool-exchange fix remain recorded in the plan; both failed attempts
+are untouched. The earlier fork C5 runs used the old growth probe, so their
+actual measured peaks are retained rather than claiming identical histories.
 
-Supervisor: `loop-hunt-matrix-campaign-20261015.service`. Private state and
-job directories: `/storage/artifacts/loop-hunt/campaign-20261015/`.
-Current status:
+Private evidence root: /storage/artifacts/loop-hunt/campaign-20261015/.
+Each run has regrade-backups; before-timeout-resume-20261016 preserves the
+65-row checkpoint, original source/identity and pending raw evidence.
+Matrix-analysis-before.json records invariant evidence fingerprints, and
+matrix-review-ready.json binds all 20 final result hashes. Replay release
+requires the reviewed hashes; no transcript excerpts enter git.
 
-```bash
-~/loop-hunt/run.sh --status --results-root /storage/artifacts/loop-hunt/campaign-20261015
-```
+## Replays (lh-07, matrix reviewed)
 
-campaign.json records every job path, unit, aggregate flags and cleanup.
-The default results root still selects a top-level pilot. The plan records
-exact jobs and the approved autonomy rules: scoring fixes with regression
-and preserved regrades; up to two plumbing retries after verified cleanup;
-explicit stops for measurement changes, failed cleanup and lh-08/lh-10.
-
-## Replay preparation (lh-07, waiting for matrix)
-
-The separately approved continuation is staged and verified waiting:
+The separately approved continuation is staged; matrix review has passed:
 `loop-hunt-replay-after-matrix-20261015.service`. Private state lives at
 `/storage/artifacts/loop-hunt/replay-campaign-20261015/continuation.json`.
 It requires all 20 matrix jobs complete, cleanup verified and the agent's
 completed matrix review with matching result hashes, then installs
 tested reporting/seed-metadata corrections and runs the seven selected
 targets with seeds 1–3 and warm/cold comparisons. It stops at lh-08.
-The active matrix harness stays fixed until this boundary.
+The scorer corrections were installed only after matrix completion.
 
 Private replay inputs are verified at
 `/storage/artifacts/loop-hunt/replay-inputs-20261015/` (0700, files 0600).
@@ -584,7 +525,6 @@ of the original tool loop. Replay reports state this coverage limit and
 avoid claiming a synthetic full-context run. Replay seed metadata records
 the three seeds already used by the runner; requests remain unchanged.
 
-A comparison-order scoring fix (75 tests pass) ensures every refused pair
-is not comparable even if its successful peer has a flag. It changes no
-requests or settings. Pre-fix results will be preserved and regraded at the
-matrix review boundary before replay starts; the active harness stays fixed.
+The preserved matrix regrade includes the comparison-order correction: a refused
+pair is not comparable even when its successful peer has a flag. Model
+requests and server settings stayed fixed.
