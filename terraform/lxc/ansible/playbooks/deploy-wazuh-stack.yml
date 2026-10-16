@@ -1237,6 +1237,25 @@
       changed_when: false
       tags: [wazuh_retention]
 
+    # The template below is not enough for the ISM history index: the plugin creates each daily rollover index with an
+    # explicit replica count taken from this cluster setting (default 1), and a create-index request overrides a
+    # template. Found 2026-10-16: .opendistro-ism-managed-index-history-2026.10.15-000002 came up with 1 replica
+    # that could never be assigned, leaving the cluster yellow.
+    - name: ISM history indices are created with 0 replicas (single node)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/settings"
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          persistent:
+            plugins.index_state_management.history.number_of_replicas: 0
+      changed_when: false
+      tags: [wazuh_retention]
+
     - name: Template so new .opendistro-* system indices also get 0 replicas
       ansible.builtin.uri:
         url: "https://127.0.0.1:9200/_template/wazuh-single-node-system-indices"
