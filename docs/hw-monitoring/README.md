@@ -41,3 +41,27 @@ to Grafana via the existing VictoriaMetrics/node_exporter path.
   is the `tpot` alias (port 64295).
 
 Raw output is in the gitignored `artifacts/` directory.
+
+## Phase A results
+
+### pve-tiny: DONE 2026-10-17
+
+- `modprobe nct6775` found `NCT6797D or compatible chip at 0x4e:0xa20`; zero
+  ACPI resource conflicts before or after, so no kernel parameter or reboot.
+  In-tree driver, no DKMS.
+- Persisted: `/etc/modules-load.d/hwmon.conf` = `nct6775`.
+- node_exporter `chip` label will be `platform_nct6775_2592`.
+- Live: fan2 1493 RPM, fan3 1185 RPM (fan1, fan4-6 read 0: empty headers);
+  SYSTIN/CPUTIN 36 C, AUXTIN0 35.5 C, AUXTIN2 42 C, SMBUSMASTER 0 / TSI0_TEMP
+  47 C; voltages in0-in14 (unlabelled; in10 reads 0 V).
+- Exclude from names/dashboards: AUXTIN1 (-128 C) and AUXTIN3 (-3 C) are
+  unconnected probes; PCH_* and Agent0 Dimm0 read 0 (unsupported); both
+  intrusion alarms are unconnected switches.
+- Chip min/max limits are 0, so every `ALARM` is meaningless; never alert on
+  chip limits.
+- pwm1 raw = 255 (100%), pwm1_enable = 5 (SmartFan auto, BIOS in control).
+  `sensors` printing "128%" is a display quirk; `/255` in the dashboard is right.
+- Voltage rail names (in0-in14) need the MSI BIOS hardware-monitor page to
+  label; do not guess from raw values.
+
+### pve: pending
