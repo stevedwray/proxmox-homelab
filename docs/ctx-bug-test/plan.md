@@ -371,6 +371,11 @@ stops only at one of the stop points in rule 1.
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
 | ctx-13-writeup | local | — | done 2026-10-15 |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | done 2026-10-15 |
+| ctx-15-fork-check | Framework (read-only) | — | todo (follow-up: does a newer fork fix Laguna?) |
+| ctx-16-laguna-harness | local | — | todo |
+| ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | todo |
+| ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | todo |
+| ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | todo |
 
 #### ctx-01-build-check (done)
 
@@ -1635,6 +1640,145 @@ any further production write. Builds/current links, ordinary settings,
 overrides and default model were not changed. No rollback was needed.
 README status is complete. ctx-12 remains skipped by D11; no execution
 steps remain.
+
+### Follow-up: does a newer Nathanw fork fix Laguna? (operator, 2026-10-17)
+
+The full run found Laguna-S-2.1 broken on fork b10814-9e21f2e53 (hidden
+control tokens, reasoning and `</think>` in the answer, from the first
+token, at every size) and clean on upstream b11514. This follow-up builds
+the newest fork as a **candidate** (never promoted) and repeats the matched
+Laguna checks on it, with the same settings as the full run's Laguna cells,
+so the result compares directly with both the old fork and upstream.
+
+Same agent rules as above. Each production step needs its own chat
+approval (the operator may approve several named steps in one message).
+
+#### ctx-15-fork-check
+
+Read-only: `ssh steve@framework.gibbsgreatly.xyz 'llama-builds status'`.
+Record the fork's tracked branch head, how many commits it is ahead of
+current (9e21f2e53) and the commit subjects since then (`git -C
+/storage/llama-builds/src log --oneline 9e21f2e53..fork/strix-halo-vulkan`).
+**If the fork has no new commits, stop: there is nothing newer to test.**
+Note any commit that mentions Laguna, chat templates, reasoning parsing,
+special/control tokens or `llama-vocab`, since those are the likely fixes.
+
+Result: —
+
+#### ctx-16-laguna-harness
+
+```yaml
+id: ctx-16-laguna-harness
+title: Full-budget candidate runs and the temporary Laguna fork entries (repo only)
+depends_on: [ctx-15-fork-check]
+runs_on: local
+change: >
+  (1) scripts/framework-ctx-bugs/ctx_bugs.py: add --full-budget. With it,
+  a --candidate Laguna x nathanw cell uses the normal flow (full-budget S1
+  probe, 16384-token requests) instead of the D1 short form; without it,
+  behaviour is unchanged. Record full_budget in run.json identity. Test
+  with the stub: candidate + --full-budget runs the probe and full budgets;
+  without the flag the short form stays.
+  (2) ansible/00-initial-setup/files/llama-swap/models.json, laguna-s-2.1
+  only: backends ["fork", "upstream", "upstream-hip"]; variants exactly
+  [{"suffix": "ctx32k", "label": "ctx test 32k", "settings": {"ctx_size": 32768, "parallel": 1, "extra_args": ["--batch-size", "512", "--ubatch-size", "128"]}},
+   {"suffix": "ctx131k", "label": "ctx test 131k", "settings": {"ctx_size": 131072, "parallel": 1, "extra_args": ["--batch-size", "512", "--ubatch-size", "128"]}}]
+  (the full run's settings, D9); keep the existing "nathanw": broken status.
+  Change nothing else.
+scope:
+  allowed_paths:
+    - scripts/framework-ctx-bugs/
+    - ansible/00-initial-setup/files/llama-swap/models.json
+gates:
+  - id: tests
+    cmd: "python3 -m unittest discover -s scripts/framework-ctx-bugs -p 'test_*.py' && python3 -m unittest discover -s ansible/00-initial-setup/files/llama-builds -p 'test_*.py'"
+    expect: "exit 0"
+    critical: true
+  - id: catalogue
+    cmd: "python3 -c \"import json;m={x['id']:x for x in json.load(open('ansible/00-initial-setup/files/llama-swap/models.json'))['models']};l=m['laguna-s-2.1'];assert l['backends'][0]=='fork' and [v['suffix'] for v in l['variants']]==['ctx32k','ctx131k'];assert sum(bool(x.get('variants')) for x in m.values())==1;print('ok')\""
+    expect: "ok"
+    critical: true
+```
+
+Result: —
+
+#### ctx-17-laguna-candidate
+
+```yaml
+id: ctx-17-laguna-candidate
+title: Build the newest fork as a candidate and deploy the temporary entries
+depends_on: [ctx-16-laguna-harness]
+runs_on: framework
+approval: ctx-laguna-fork-build
+preflight: >
+  Framework (production). (1) `llama-builds build fork`: compiles the
+  fork's tracked branch head into a new build dir (about 5 min) and points
+  fork/candidate at it; it then rewrites llama-swap's config (the loaded
+  model stops 1-2 min and reloads). Not promoted: fork/current stays
+  9e21f2e53 and every normal fork entry keeps using it. (2) llama-builds
+  playbook installs the edited models.json. (3) guarded config rewrite,
+  requiring laguna-s-2.1-nathanw-candidate-ctx32k and -ctx131k. (4) copy
+  the harness. Out of scope: promotion, other models, builds of other
+  backends, OpenBao.
+commands:
+  - "ssh steve@framework.gibbsgreatly.xyz 'llama-builds build fork'"
+  - "./with-secrets-prod-tiny ansible-inventory -i ansible/inventory/inventory.yml --graph framework && echo SECRETS-OK"
+  - "TASK_APPROVAL=ctx-laguna-fork-build ./with-secrets-prod-tiny ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/framework-desktop-llama-builds.yml"
+  - "ssh steve@framework.gibbsgreatly.xyz 'bash -s -- laguna-s-2.1-nathanw-candidate-ctx32k laguna-s-2.1-nathanw-candidate-ctx131k' < scripts/framework-ctx-bugs/guarded_swap_config.sh"
+  - "rsync -a --exclude results/ --exclude __pycache__/ scripts/framework-ctx-bugs/ steve@framework.gibbsgreatly.xyz:framework-ctx-bugs/"
+gates:
+  - id: built
+    cmd: "(command 1)"
+    expect: "a new fork build dir named <date>-<sha of the branch head from ctx-15> and 'candidate ->' it; if the compile fails, stop and report the log path"
+    critical: true
+  - id: guarded-write
+    cmd: "(command 4)"
+    expect: "GATE OK, config written, the previous model loaded again (the 16-id check does not apply here; only the two given ids are required: use the script's extra-id mode, and if its fixed 16-id check blocks this, add a tested --only-extra option first)"
+    critical: true
+```
+
+Then take the candidate's `/props` under the run lock (load the
+candidate ctx32k entry, read `/props`, restore the previous model) and
+write `/storage/artifacts/framework-ctx-bugs/build-expectations-laguna-candidate-<date>.json`
+with `write_build_expectations.py --link nathanw=candidate`.
+
+Result: —
+
+#### ctx-18-laguna-run
+
+Approval `ctx-laguna-fork-run`. With the D10 upgrade-timer pause and
+restore, the watcher and model restoration as in ctx-11:
+`~/framework-ctx-bugs/run.sh --builds-json <the candidate expectations> --models laguna-s-2.1 --builds nathanw --candidate --full-budget --sizes 32768 131072 --greedy-only`
+(S1–S5 and F, greedy, full budget, at 32k and 131k: 12 requests plus
+probes, about 30–60 min). Then review against the full run's Laguna
+cells (fork b10814 broken; upstream b11514 clean), in a "Laguna on a
+newer fork" section of the README:
+
+- **Fixed:** no hidden-tokens, template-leak or no-answer flags, and the
+  S1 probe's generated and visible token counts match, at both sizes.
+- **Not fixed:** the same flags as b10814.
+- **Partly:** anything in between, with the details.
+
+Name the candidate's commit and the fork commits since 9e21f2e53 that
+plausibly explain the result. **Do not promote.** If it is fixed, say so
+and stop for the operator's decision on promotion (that affects every
+fork-served model and is outside this test).
+
+Result: —
+
+#### ctx-19-laguna-cleanup
+
+Approval `ctx-laguna-fork-cleanup`. models.json: Laguna variants back to
+`[]`; backends back to `["upstream", "upstream-hip"]`; add the candidate's
+result to Laguna's `nathanw` status reason (status stays `broken` unless
+the operator promotes a fixed build later). Point the candidate back at
+current (`llama-builds build fork 9e21f2e53`, no compile), playbook,
+guarded write; verify no `-ctx`/candidate entries remain, the previous
+model is loaded, the lock is free and the upgrade timer is active. Keep
+the candidate's build dir on disk (it is the evidence and the promotion
+path if wanted).
+
+Result: —
 
 ## Decisions (operator, 2026-10-13)
 
