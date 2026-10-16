@@ -796,6 +796,31 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(len(run.records), 6)
             self.assertTrue(all('-candidate-' in r['cell'] and r['settings']['max_tokens']==2048 for r in run.records))
 
+    def test_candidate_full_budget_never_switches_to_short(self):
+        # The default stub floods hidden tokens for Laguna on the fork, the case that triggers short form.
+        with tempfile.TemporaryDirectory() as tmp, server() as s:
+            args = cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp, '--candidate', '--full-budget',
+                                  '--models', cb.MODELS[1], '--builds', 'nathanw', '--sizes', '32768', '--greedy-only'])
+            run = cb.Run(args)
+            self.assertEqual(run.execute(), 0)
+            self.assertEqual(len(run.records), 6)
+            self.assertTrue(all(r['settings']['max_tokens'] == 16384 for r in run.records))
+            self.assertTrue(any('hidden-tokens' in r['flags'] for r in run.records))
+            self.assertFalse(any(c.get('short') for c in run.manifest['cells'].values()))
+            self.assertIs(run.manifest['identity']['full_budget'], True)
+            self.assertFalse((Path(tmp)/'raw'/run.records[0]['cell']/'S1-probe.json').exists())
+
+    def test_full_budget_needs_candidate_and_is_absent_otherwise(self):
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                cb.parse_args(['--dry-run', '--full-budget'])
+        with tempfile.TemporaryDirectory() as tmp, server(clean=True) as s:
+            run = cb.Run(cb.parse_args(['--dry-run', '--base-url', s.url, '--run-dir', tmp,
+                                        '--models', cb.MODELS[0], '--builds', 'upstream', '--sizes', '32768',
+                                        '--prompts', 'S1', '--greedy-only']))
+            run.prepare()
+            self.assertNotIn('full_budget', run.manifest['identity'])
+
     def test_incomplete_append_recovery(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'results.jsonl'

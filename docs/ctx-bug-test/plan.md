@@ -371,8 +371,8 @@ stops only at one of the stop points in rule 1.
 | ctx-12-reproduce | Framework (production) | `ctx-bug-reproduce` | skipped (D11, 2026-10-15) |
 | ctx-13-writeup | local | — | done 2026-10-15 |
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | done 2026-10-15 |
-| ctx-15-fork-check | Framework (read-only) | — | todo (follow-up: does a newer fork fix Laguna?) |
-| ctx-16-laguna-harness | local | — | todo |
+| ctx-15-fork-check | Framework (read-only) | — | done 2026-10-17 (5 newer fork commits, none about Laguna/tokens) |
+| ctx-16-laguna-harness | local | — | done 2026-10-17 |
 | ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | todo |
 | ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | todo |
 | ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | todo |
@@ -1663,7 +1663,22 @@ current (9e21f2e53) and the commit subjects since then (`git -C
 Note any commit that mentions Laguna, chat templates, reasoning parsing,
 special/control tokens or `llama-vocab`, since those are the likely fixes.
 
-Result: —
+Result (2026-10-17, read-only; the status call refreshed the fork remote): the
+fork tracks `fork/strix-halo-vulkan` at 8e9dcfeb7, **5 commits ahead of
+current 9e21f2e53** (all Nathan Wilson, 2026-10-09). The newest first:
+8e9dcfeb7 speculative: keep every verify row for MTP accept when another
+drafter is in the chain; 4347f181f llama: load bf16 matmul weights on GPU
+buffers as f16; bfbaf522b qwen4exp: give a bf16 hc down projection an f32
+input; d94696935 ggml-alloc: grow the chunk list on demand instead of an
+unbounded 16th chunk; d2d0cc493 llama: size the KQ-mask ubatch check by the
+device tensor limit, not the allocator chunk. Files touched: common/
+speculative.cpp, ggml-alloc.c, ggml-vulkan.cpp, llama-context.cpp,
+llama-model-loader.{cpp,h}, models/qwen4exp.cpp. **None mentions Laguna, chat
+templates, reasoning parsing, special/control tokens or llama-vocab**, so no
+commit is an obvious fix for the hidden-token flood; the test is still worth
+running because the allocator, loader and Vulkan changes could affect output.
+Current links unchanged (fork current = candidate = 9e21f2e53). Newer commits
+exist, so the approved ctx-17 to ctx-19 sequence proceeds.
 
 #### ctx-16-laguna-harness
 
@@ -1700,7 +1715,21 @@ gates:
     critical: true
 ```
 
-Result: —
+Result (2026-10-17): `--full-budget` added to `ctx_bugs.py`. With `--candidate`
+it makes Laguna x nathanw skip the D1 short form (16384-token requests) and
+also skip the hidden-token S1 probe that would otherwise switch the cell to
+short form, so S1 simply runs with the other five prompts at full budget (the
+probe is redundant: it is the same S1 greedy request). `full_budget: true` is
+recorded in run.json identity only when the flag is set, so earlier runs still
+resume. Without the flag behaviour is unchanged; the flag alone (no
+`--candidate`) is a usage error. Two tests: a flooding stub with candidate +
+`--full-budget --greedy-only` gives 6 records at 16384, hidden-tokens flagged,
+no short cell and no probe file; and the identity key is absent otherwise.
+models.json: Laguna backends are now fork, upstream, upstream-hip with
+variants ctx32k and ctx131k carrying exactly the full run's settings
+(`parallel` 1, batch 512 / ubatch 128, checked against 6fed5459); status
+untouched. Gates: 98 harness tests and 42 llama-builds tests pass; the
+catalogue gate prints ok. Not deployed.
 
 #### ctx-17-laguna-candidate
 

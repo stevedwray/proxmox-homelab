@@ -547,6 +547,8 @@ class Run:
                         script_hashes={p.name: gp.sha(p.read_bytes()) for p in Path(__file__).parent.glob('*.py')
                                        if not p.name.startswith('test_') and p.name != 'stub_server.py'},
                         answer_budget=BUDGET, margin=MARGIN, cache_prompt=False)
+        if self.args.full_budget:
+            identity['full_budget'] = True  # only recorded when set, so earlier runs still resume
         if self.manifest_path.exists():
             self.manifest = json.loads(self.manifest_path.read_text())
             if self.manifest['identity'] != identity:
@@ -784,7 +786,8 @@ class Run:
                 for build in self.args.builds:
                     entry = entry_id(model, build, size, self.args.candidate, self.args.entry_suffix)
                     existing = self.manifest['cells'].get(entry, {})
-                    short = existing.get('short', self.args.candidate and model == MODELS[1] and build == 'nathanw')
+                    short = existing.get('short', self.args.candidate and model == MODELS[1] and build == 'nathanw'
+                                            and not self.args.full_budget)
                     pending = [r for r in runs(short, self.args.greedy_only, self.args.extra_seeds, self.args.prompts)
                                if f'{entry}/{r[0]}/{r[1]}' not in self.done]
                     if not pending:
@@ -797,7 +800,8 @@ class Run:
                         # The normal S1 greedy is a probe only if it triggers short form.
                         # Save that probe separately, then run all six short requests at 2048.
                         probe_key = f'{entry}/S1/greedy'
-                        if (model == MODELS[1] and build == 'nathanw' and not short
+                        # --full-budget never switches to short form: S1 just runs at the full budget with the rest.
+                        if (model == MODELS[1] and build == 'nathanw' and not short and not self.args.full_budget
                                 and 'S1' in self.args.prompts and probe_key not in self.done):
                             probe = self.request(model, build, size, entry, fixtures['S1'], counts['S1'],
                                                  'S1', 'greedy', 1, True, False)
@@ -887,6 +891,8 @@ def parse_args(argv=None):
     parser.add_argument('--builds-root', default='/storage/llama-builds')
     parser.add_argument('--builds-json', help='explicit {nathanw,upstream: {name,sha,build_info}} expectations')
     parser.add_argument('--candidate', action='store_true', help='use candidate build links; Laguna/nathanw retains its D1 short form')
+    parser.add_argument('--full-budget', action='store_true',
+                        help='with --candidate, run Laguna/nathanw at the normal 16384-token budget instead of the D1 short form')
     parser.add_argument('--entry-suffix', help='extra catalogue variant suffix, lowercase letters/digits, e.g. b512')
     parser.add_argument('--prompts', nargs='+', choices=PROMPTS, default=list(PROMPTS),
                         help='selected prompts, always executed in S1–S5/F order')
@@ -898,6 +904,8 @@ def parse_args(argv=None):
     if not args.dry_run:
         args.swap_url = args.swap_url or 'http://127.0.0.1:8099'
         args.api_key_file = args.api_key_file or '/etc/llamacpp/api-key'
+    if args.full_budget and not args.candidate:
+        parser.error('--full-budget only applies with --candidate')
     if args.extra_seeds and (len(set(args.extra_seeds)) != 3 or any(s <= 3 for s in args.extra_seeds)):
         parser.error('reproduction needs three distinct seeds greater than 3')
     return args
