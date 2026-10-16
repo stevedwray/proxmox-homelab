@@ -1,6 +1,6 @@
 # hw-monitoring
 
-Status: **LIVE 2026-10-17: all six hosts deployed and scraped, Hardware Health dashboard provisioned.** Open: workstation (Phase E), pve-tiny fan/rail names, alerting. See [plan.md](plan.md). Goal: add hardware
+Status: **LIVE 2026-10-17: all seven hosts (incl. the workstation) scraped, Hardware Health dashboard provisioned.** Open: neutral rail/fan names on pve-tiny and garuda, alerting. Open: workstation (Phase E), pve-tiny fan/rail names, alerting. See [plan.md](plan.md). Goal: add hardware
 health (temperatures, fans, voltages, throttling) with properly labelled
 sensors for pve, pve-tiny, pve-test, argon-01/02 (Pi 4) and the T-Pot Pi 5
 to Grafana via the existing VictoriaMetrics/node_exporter path.
@@ -266,3 +266,24 @@ Names live in `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`
   pve-tiny).
 - Observation: nvme1 and nvme2 sensor readings up to ~66 C.
 - Not yet scraped: needs the monitoring-stack redeploy.
+
+### monitoring-stack redeploy for garuda: DONE 2026-10-17 (ok=142 failed=0, smoke passed)
+
+- 7/7 targets `up` (garuda included); temperatures present for all seven
+  stacks (garuda 24 series, pve 18, pve-tiny 9, tpot 4, pve-test 3, argon 1+1).
+- Every sensor has its friendly name (the one "raw name" a naive check flagged
+  was "DRAM CH(A/B)", which just contains a slash).
+- garuda sample: Fan 2/4/7 = 707/920/2986 RPM, dGPU fan 0 RPM (idle, zero-RPM
+  mode), hottest: AUXTIN0 68 C, NVMe 1 sensor 1 65.9 C, dGPU junction 59 C.
+
+## Remaining (all optional)
+
+1. Name pve-tiny and garuda fan headers and voltage rails (needs BIOS/board
+   manual; see "Deferred" above and the garuda notes).
+2. Alerting (over-temperature, fan stall, undervoltage); not built.
+3. Look at pve nvme1 Sensor 2 (~80 C) and garuda nvme1/2 (~66 C) airflow.
+4. pve `it87` DKMS: install `proxmox-headers-<kver>` for 7.0.14-19/-20 before
+   rebooting pve into them.
+5. Garuda `wine-meta` is held (`--ignore`) until Garuda fixes its conflict.
+6. Promote: branch `work/hw-monitoring` is unpushed; operator decides on
+   PR/merge to `stable`.
