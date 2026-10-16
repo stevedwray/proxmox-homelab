@@ -14,3 +14,5 @@ node_exporter_scrape_password_hash: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASS
 # directory (for host-specific custom metrics, e.g. GPU stats scripts).
 # Empty by default so the other 10+ managed hosts are unaffected.
 node_exporter_textfile_dir: ""
+# Opt-in: e.g. ":9101" when :9100 is taken (T-Pot). Empty keeps the package default.
+node_exporter_listen_address: ""

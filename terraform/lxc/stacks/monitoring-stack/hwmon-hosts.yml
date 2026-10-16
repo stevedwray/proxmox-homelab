@@ -1,0 +1,23 @@
+---
+# Hardware-monitoring targets and sensor names, read by
+# terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml.
+# docs/hw-monitoring/plan.md. `stack` becomes the Grafana "Host" value.
+hwmon_hosts:
+  - {stack: pve, target: pve.gibbsgreatly.xyz, port: 9100}
+  - {stack: pve-tiny, target: pve-tiny.gibbsgreatly.xyz, port: 9100}
+  - {stack: pve-test, target: pve-test.gibbsgreatly.xyz, port: 9100}
+  - {stack: argon-01, target: 192.168.1.22, port: 9100}
+  - {stack: argon-02, target: 192.168.1.23, port: 9100}
+  - {stack: tpot, target: tpot.gibbsgreatly.xyz, port: 9101}
+
+# Chips to drop entirely (duplicates). pve's gigabyte_wmi temps are the same
+# six sensors as the it87 chip's temp1-6. Filled in Phase C once the exact
+# `chip` label is read from live data; empty until then.
+hwmon_drop_chips: []
+
+# Friendly sensor names. One entry per sensor. `scale` is optional: a
+# multiplier for voltages behind resistor dividers (the chip reports the
+# raw divided value, e.g. pve in2 = 1.99 V raw for the +12V rail, scale 6).
+#   {stack: pve, chip: "<node_hwmon chip label>", sensor: "fan2", name: "CPU fan"}
+#   {stack: pve, chip: "<node_hwmon chip label>", sensor: "in2", name: "+12V", scale: 6}
+hwmon_sensor_names: []

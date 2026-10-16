@@ -64,3 +64,31 @@ all:
           ansible_user: steve
       vars:
         ansible_python_interpreter: /usr/bin/python3
+
+    # Hosts that get node_exporter + hardware sensors (docs/hw-monitoring/).
+    hw_hosts:
+      hosts:
+        pve:
+          ansible_host: pve.gibbsgreatly.xyz
+          ansible_user: root
+        pve-tiny:
+          ansible_host: pve-tiny.gibbsgreatly.xyz
+          ansible_user: root
+        pve-test:
+          ansible_host: pve-test.gibbsgreatly.xyz
+          ansible_user: root
+        argon-01:
+          ansible_host: 192.168.1.22
+          ansible_user: ansible
+        argon-02:
+          ansible_host: 192.168.1.23
+          ansible_user: ansible
+        tpot-host:
+          ansible_host: tpot.gibbsgreatly.xyz
+          ansible_user: steve
+          ansible_port: 64295
+          node_exporter_listen_address: ":9101"
+          hw_pmic_textfile: true
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=accept-new'

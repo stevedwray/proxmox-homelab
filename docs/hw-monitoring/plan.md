@@ -162,7 +162,7 @@ change: >
   In ansible/inventory/inventory.yml, directly after the `tpot:` group block
   at the end of the file (same 4-space indent as the other groups under
   `children:`), append exactly this group. Host keys are the stack names
-  because the node_exporter role uses inventory_hostname as the TLS cert CN.
+  because the node_exporter role uses inventory_hostname as the TLS cert CN. The T-Pot host is named `tpot-host` (not `tpot`): a host named `tpot` collides with the existing `tpot` group and makes `hosts: tpot` ambiguous (found executing the plan). Its monitoring `stack` label stays `tpot`.
   tpot uses its real FQDN and port 64295 here (not the ~/.ssh/config alias)
   so the cert SAN is correct.
 
@@ -184,7 +184,7 @@ change: >
           argon-02:
             ansible_host: 192.168.1.23
             ansible_user: ansible
-          tpot:
+          tpot-host:
             ansible_host: tpot.gibbsgreatly.xyz
             ansible_user: steve
             ansible_port: 64295
@@ -201,7 +201,7 @@ scope:
 
 gates:
   - id: group-listed
-    cmd: "ansible-inventory -i ansible/inventory/inventory.yml --list | python3 -c \"import json,sys;h=json.load(sys.stdin)['hw_hosts']['hosts'];assert sorted(h)==['argon-01','argon-02','pve','pve-test','pve-tiny','tpot'],h\""
+    cmd: "ansible-inventory -i ansible/inventory/inventory.yml --list | python3 -c \"import json,sys;h=json.load(sys.stdin)['hw_hosts']['hosts'];assert sorted(h)==['argon-01','argon-02','pve','pve-test','pve-tiny','tpot-host'],h\""
     expect: "exit 0"
     critical: true
 ```
@@ -286,7 +286,12 @@ change: >
 
       - name: Build hwmon base relabel rules
         ansible.builtin.set_fact:
-          hwmon_relabel: "{{ (hwmon_drop_chips | default([]) | map('community.general.dict_kv', 'regex') | map('combine', {'source_labels': ['chip'], 'action': 'drop'}) | list) + [{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}, {'source_labels': ['__name__'], 'regex': 'node_hwmon_in_volts', 'target_label': 'scale', 'replacement': '1'}] }}"
+          hwmon_relabel: "{{ [{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}, {'source_labels': ['__name__'], 'regex': 'node_hwmon_in_volts', 'target_label': 'scale', 'replacement': '1'}] }}"
+
+      - name: Build hwmon chip drop rules
+        ansible.builtin.set_fact:
+          hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['chip'], 'regex': item | regex_escape, 'action': 'drop'}] }}"
+        loop: "{{ hwmon_drop_chips }}"
 
       - name: Build hwmon sensor-name relabel rules
         ansible.builtin.set_fact:
@@ -309,8 +314,8 @@ change: >
                 static_configs: {{ hwmon_static_configs | to_json }}
                 metric_relabel_configs: {{ hwmon_relabel | to_json }}
 
-  Note: the first task always defines hwmon_relabel (base rules: optional
-  chip drops, default sensor_name, default scale=1 on voltages); the second
+  Note: the first task always defines hwmon_relabel (base rules: default
+  sensor_name, default scale=1 on voltages); a separate loop appends chip drops; the second
   task's loop only appends per-sensor name and scale rules, and is skipped
   when hwmon_sensor_names is empty. Tested by rendering with ansible.
 
@@ -349,7 +354,7 @@ change: >
 
   Second play:
   - name: Pi 5 PMIC rails via textfile collector
-    hosts: tpot
+    hosts: tpot-host
     become: true
     tags: [pmic]
     tasks:
@@ -444,7 +449,7 @@ Not step blocks (production mutations, and the sensor names need live data).
 
 1. After Phase A and steps 01-04/06: for each host, one at a time, post a
    Preflight Summary, get "Proceed", then run the hw-monitoring playbook with
-   `--limit <host>`. Order: pve-test (plain `./with-secrets`), tpot, argon-01,
+   `--limit <host>`. Order: pve-test (plain `./with-secrets`), tpot-host, argon-01,
    argon-02, pve-tiny, pve. The Pis run Debian-family OS; the role installs
    `prometheus-node-exporter` via apt. Stop on the first host that errors.
 2. **Reachability gate (read-only):** from monitoring-stack

@@ -1,6 +1,6 @@
 # hw-monitoring
 
-Status: **survey done and plan written (2026-10-17); no steps executed yet.** See [plan.md](plan.md). Goal: add hardware
+Status: **Phase A done (pve-tiny, pve); repo steps 01-08 written and gated locally, nothing deployed.** See [plan.md](plan.md). Goal: add hardware
 health (temperatures, fans, voltages, throttling) with properly labelled
 sensors for pve, pve-tiny, pve-test, argon-01/02 (Pi 4) and the T-Pot Pi 5
 to Grafana via the existing VictoriaMetrics/node_exporter path.
