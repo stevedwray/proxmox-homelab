@@ -28,6 +28,10 @@ class AgentUpgradePlay(unittest.TestCase):
         self.assertIn("allow_downgrade: false", self.text)
         self.assertIn("is version(", self.text)                      # never past the manager
 
+    def test_non_root_login_is_supported_via_overrides_with_sudo(self):
+        self.assertIn("upgrade_host_overrides", self.text)
+        self.assertIn("become: \"{{ ansible_user != 'root' }}\"", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()
