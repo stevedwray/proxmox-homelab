@@ -1828,6 +1828,23 @@ seed2 3%, C2 16%, C4 24%, C5 attempt3 19%; GLM C1/C2 100%. C3's new turns
 (2 per build, 34 on fork current incl. imports) are mostly 0-18%. Private map:
 `sample/PRIVATE-key-map.jsonl`.
 
+Sample judging Result (2026-10-17, preliminary): judged by 12 parallel Claude
+Sonnet 5.5 subagents (not an independent cloud model; one fresh context per
+batch, no calibration between batches). 11 of 12 batches (211 of 231 turns)
+validated and joined; sample-001 (20 turns) failed twice on a Sonnet safeguard
+(`reasoning_extraction`) and is not judged, no workaround attempted. It held
+7 GLM flagged, 2 upstream-C4, 5 fork-previous, 3 fork-current, 3 upstream turns.
+Moderate-or-worse semantic looping / context echoing (phrase looping: none
+anywhere): GLM 0/111; Qwen fork current 1/33 and 2/33; fork previous 11/39 and
+9/39; upstream 0/28 and 1/28. All but one moderate+ finding is in the reasoning
+channel. Mean coherence GLM 4.99, current 4.76, previous 4.33, upstream 4.68.
+Judge flagged 9 of 88 unflagged Qwen turns, so detector flags miss most of
+what it called looping; the three severe cases are previous-fork turns the
+detector had flagged. One low-coherence turn (1/5, upstream C5). GLM
+instruction-following 3.55 reflects its question-line format flags. Caveats:
+small unequal samples, one judge, reasoning-channel only, build differences not
+yet tested against seeds/conditions. Not a build conclusion until reviewed.
+
 #### lh-09-writeup
 
 `docs/loop-hunt/README.md`: findings in the framework's FND format
