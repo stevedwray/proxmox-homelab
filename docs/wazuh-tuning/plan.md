@@ -228,6 +228,29 @@ Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
 
+### Upgrade to 4.14.9 (decided 2026-10-16) - repo ready, live steps pending
+
+Why: `framework` was upgraded to 4.14.9 by hand while the manager was 4.14.8 (an agent must not be newer than its manager), and
+4.14.9 (released 2026-10-14) is a maintenance release with security hardening (authd/cluster idle connections, API access log
+escaping, remoted bounds) and no listed breaking changes, indexer changes or manual upgrade steps. The `4.14.9` tags exist on
+Docker Hub for the manager, indexer and dashboard. The repo now pins `wazuh_image_tag` and `wazuh_agent_version` to 4.14.9
+(a test keeps them equal) and the agent role holds the package after install, lifting the hold only for a version change.
+
+Procedure (Phase 1b method; each step its own approval; stop and roll back on any stop condition):
+1. Before: suites (`mustfire`, `suppression`, `scanner`, `hap`), `health` and `agents` baselines; cluster green; PBS backup is the
+   nightly snapshot (confirm it is recent).
+2. Manager stack (production, mutating): on the host edit the image tags in the live `docker-compose.yml` (backup
+   `docker-compose.yml.bak-4149`), `docker compose pull`, one `docker compose up -d`. About 1-2 minutes of downtime; volumes kept.
+   Watch free RAM (12GB LXC now) and `wazuh-control status` (expect 10 daemons) during the start.
+3. After: the same suites, `agents` (all active, nobody newer than the manager), `events_dropped` 0, vulnerability finding count
+   unchanged (about 3,957), ISM 49/49, cluster green, dashboard healthy, Authentik login to the dashboard.
+4. Agents: canary first (one LXC agent, then `pve-test`), then the fleet by zone group, via each stack's normal agent role run
+   (the role installs `wazuh-agent=4.14.9-1` and re-holds it). `framework` is already on 4.14.9.
+5. Follow-up: `docker image prune` for the 4.14.8 images (about 4.4GB) once stable.
+
+Rollback: tags back to 4.14.8 in the compose file and `up -d`, or PBS restore. Agents on 4.14.9 against a 4.14.8 manager are
+unsupported, so do not start step 4 until step 3 passes.
+
 ### Cluster yellow on 2026-10-16 (ISM history replica)
 
 Status check found one unassigned shard: the replica of `.opendistro-ism-managed-index-history-2026.10.15-000002`, created

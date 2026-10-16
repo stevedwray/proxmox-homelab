@@ -10,7 +10,7 @@ wazuh_agent_fim_paths: []
 
 # Package version of wazuh-agent, equal to the manager's wazuh_image_tag (deploy-wazuh-stack.yml).
 # Empty string installs the newest, which can be newer than the manager (unsupported).
-wazuh_agent_version: "4.14.8"
+wazuh_agent_version: "4.14.9"
 
 # Fleet-wide agent_groups (docs/lxc-scan-and-monitoring-rollout/plan.md,
 # waz-01, added 2026-09-29 -- the pilot-era comment here used to say
