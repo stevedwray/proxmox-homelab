@@ -109,7 +109,6 @@
       "name": "Laguna-S-2.1 UD-Q4_K_M",
       "gguf": "/storage/models/llm/Laguna-S-2.1-UD-Q4_K_M-merged.gguf",
       "backends": [
-        "fork",
         "upstream",
         "upstream-hip"
       ],
@@ -119,36 +118,7 @@
         "jinja": true,
         "reasoning_format": "deepseek"
       },
-      "variants": [
-        {
-          "suffix": "ctx32k",
-          "label": "ctx test 32k",
-          "settings": {
-            "ctx_size": 32768,
-            "parallel": 1,
-            "extra_args": [
-              "--batch-size",
-              "512",
-              "--ubatch-size",
-              "128"
-            ]
-          }
-        },
-        {
-          "suffix": "ctx131k",
-          "label": "ctx test 131k",
-          "settings": {
-            "ctx_size": 131072,
-            "parallel": 1,
-            "extra_args": [
-              "--batch-size",
-              "512",
-              "--ubatch-size",
-              "128"
-            ]
-          }
-        }
-      ],
+      "variants": [],
       "tags": [
         "thinking"
       ],
@@ -160,8 +130,8 @@
         },
         "nathanw": {
           "status": "broken",
-          "reason": "Matched full-budget S1 probes expose reasoning/template and hidden tokens on b10814 at all four sizes (docs/ctx-bug-test).",
-          "checked": "2026-10-15"
+          "reason": "Matched full-budget S1 probes expose reasoning/template and hidden tokens on b10814 at all four sizes (docs/ctx-bug-test). Also broken on the newer fork candidate 8e9dcfeb7 (b10819): identical S1/S2 hidden-token output at 32k and 131k with the full budget (docs/ctx-bug-test, 2026-10-17).",
+          "checked": "2026-10-17"
         }
       }
     },
