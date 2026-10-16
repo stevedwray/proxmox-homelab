@@ -1,6 +1,6 @@
 # hw-monitoring
 
-Status: **Phase A done (pve-tiny, pve); repo steps 01-08 written and gated locally, nothing deployed.** See [plan.md](plan.md). Goal: add hardware
+Status: **LIVE 2026-10-17: all six hosts deployed and scraped, Hardware Health dashboard provisioned.** Open: workstation (Phase E), pve-tiny fan/rail names, alerting. See [plan.md](plan.md). Goal: add hardware
 health (temperatures, fans, voltages, throttling) with properly labelled
 sensors for pve, pve-tiny, pve-test, argon-01/02 (Pi 4) and the T-Pot Pi 5
 to Grafana via the existing VictoriaMetrics/node_exporter path.
@@ -206,3 +206,9 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   temperatures present for all six stacks; 0 sensors left with a raw
   chip-path name; the MetricsQL `label_value(..., "scale")` voltage query
   works on pve: +3.3V 3.285 V, +5V 4.98 V, +12V 11.952 V (raw 1.992 V each).
+
+- Run 2 (operator, from the fixed branch): the `--check` dry run failed in
+  `docker_live_usage_reporter` (`index_check.status` undefined because the
+  uri task is skipped in check mode; a pre-existing check-mode limitation of
+  that role, not this project). The real run then passed: ok=141 failed=0,
+  smoke test passed, wazuh step clean. **Hardware monitoring is live.**
