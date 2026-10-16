@@ -15,7 +15,7 @@ Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; l
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
-The [scan tools](../../scripts/loop-hunt/README.md) pass all 78 tests,
+The [scan tools](../../scripts/loop-hunt/README.md) pass all 82 tests,
 including a read-only online backup of committed WAL-only rows and a snapshot
 integrity check. Under explicit `loop-hunt-chat-scan` approval the tools were
 copied to Framework and the live database was opened read-only for backup.
@@ -465,6 +465,14 @@ preview yields 148/148 for previous-build C1, 80/80 for C2 and 5/5 new C3
 facts, with no remaining recall flags. These supersede earlier preliminary
 recall/hallucination claims. Canonical results are unchanged; backups and
 regrade will occur after the matrix, including CK reclassification.
+
+GLM C2 also exposed comma separators being absorbed into recalled values.
+The queued correction treats a comma directly before the next labelled
+Qn/reference field as its boundary; other punctuation/prose remains literal.
+Exact saved synthetic-answer and negative cases pass in the 82-test suite.
+The original 0/100 GLM C2 score and absent-fact flags are therefore awaiting
+preserved regrade, rather than evidence of factual loss. Question-line
+format violations remain graded independently. No active request changed.
 
 C1 actual peak prompt counts: 118897 (seed 1), 118974 (seed 2).
 The first format failure was at 45097 tokens; no semantic collapse is

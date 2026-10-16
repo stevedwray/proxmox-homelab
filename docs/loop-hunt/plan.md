@@ -1622,6 +1622,20 @@ restoration remain enforced. Analysis worker restarted; waiting replay
 staging includes the tested timeout policy and retains the matrix-review
 gate. Cold 250k timing/rate will be recorded from the completed response.
 
+Additional scoring correction queued (2026-10-16): completed GLM C2
+answers use comma-separated Qn/reference fields. The old extractor included
+each separator comma in the preceding exact value, yielding 0/100 recall
+and twelve false absent-fact flags despite correct literal values in the
+reviewed response. Commas directly before the next labelled field now belong
+to that field boundary, like the earlier repeated-prefix correction. Other
+punctuation, explanatory suffixes, wrong values and duplicate labels still
+fail exact matching. Two regression tests include the exact synthetic
+seed-3/10/cold answer, an absent-fact case and negative suffix/wrong-value
+cases; all 82 tests pass. Apply only during the backed-up post-matrix
+regrade, retaining line-format flags and original evidence. Active resumed
+request source/payload remains unchanged. Final regrade will establish the
+aggregate corrected score; the earlier 0/100 is not factual recall loss.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04

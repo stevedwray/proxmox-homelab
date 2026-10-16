@@ -133,12 +133,14 @@ def recall_fields(answer, count):
     """Extract exact values independently of the requested line layout."""
     # A repeated question prefix belongs to the following label, not the
     # previous value. Keep exact literal matching inside each boundary.
-    markers=list(re.finditer(r'(?<!\S)(?:\[TRIAGE\][ \t]+)?Q([1-9]\d*):[ \t]*',answer))
+    # A comma directly before the next labelled field is a separator, not
+    # part of the preceding literal value. Other punctuation/prose stays.
+    markers=list(re.finditer(r'(?:,[ \t]*|(?<!\S))(?:\[TRIAGE\][ \t]+)?Q([1-9]\d*):[ \t]*',answer))
     values={}
     for offset,marker in enumerate(markers):
         end=markers[offset+1].start() if offset+1<len(markers) else len(answer)
         segment=answer[marker.end():end]
-        reference=re.search(r'(?<!\S)(?:\[TRIAGE\][ \t]+)?ref:[ \t]*',segment)
+        reference=re.search(r'(?:,[ \t]*|(?<!\S))(?:\[TRIAGE\][ \t]+)?ref:[ \t]*',segment)
         if reference:segment=segment[:reference.start()]
         values.setdefault(int(marker[1]),[]).append(segment.strip())
     # Duplicate labels are ambiguous, even if one happens to contain the right value.

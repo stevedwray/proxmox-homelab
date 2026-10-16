@@ -285,6 +285,27 @@ class RecallGradingTests(unittest.TestCase):
         result=self.grade('[TRIAGE] Q1: route-01-011-375356627d\nQ2: route-01-005-3c7a49ef44\nref: INC-7001')
         self.assertEqual(result['flags'],[])
 
+    def test_real_glm_c2_comma_separators_do_not_change_recalled_values(self):
+        # Exact saved synthetic answer: GLM C2, seed 3, turn 10 cold.
+        answer='[TRIAGE] Q1: route-03-010-4a8cbec708, Q2: route-03-001-acfa5474c2, ref: INC-7003'
+        response=dict(choices=[dict(message=dict(content=answer),finish_reason='stop')],usage=dict(completion_tokens=40))
+        result=sb.grade(response,gs.turn_fixture(3,10),40,[])
+        self.assertTrue(all(q['correct'] for q in result['recall']))
+        self.assertEqual(result['flags'],['if-fail:question_lines'])
+        result=sb.grade(dict(response,choices=[dict(message=dict(content=answer.replace('Q1: route-03-010-4a8cbec708','Q1: wrong')),finish_reason='stop')]),gs.turn_fixture(3,10),40,[])
+        self.assertIn('wrong:q1',result['flags'])
+        self.assertNotIn('wrong:q2',result['flags'])
+
+    def test_comma_delimiters_keep_absent_facts_and_exact_matching(self):
+        fixture=gs.turn_fixture(1,12)
+        answer='[TRIAGE] '+', '.join('Q%d: %s'%(i,v) for i,v in enumerate(fixture['expected'],1))+', ref: '+fixture['reference']
+        result=self.grade(answer,12)
+        self.assertTrue(all(q['correct'] for q in result['recall']))
+        self.assertEqual(result['flags'],['if-fail:question_lines'])
+        for suffix in (', extra',','):
+            changed=answer.replace('Q1: '+fixture['expected'][0],'Q1: '+fixture['expected'][0]+suffix)
+            self.assertIn('wrong:q1',self.grade(changed,12)['flags'])
+
     def test_real_previous_build_repeated_triage_prefix_is_not_an_answer_suffix(self):
         # Exact synthetic answer from fork-previous C1 seed 1, turn 1.
         answer='[TRIAGE] Q1: route-01-001-3a1d47a406\n[TRIAGE] Q2: route-01-001-3a1d47a406\nref: INC-7001'
