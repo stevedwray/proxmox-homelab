@@ -16,8 +16,10 @@ Read-only modes:
   taskinfo <task>         target hosts/excludes, alive tests, preferences, results by host
   credinfo <task>         task status and whether its target carries an SSH credential
   lancheck                every "LAN scan: " task: status, exclude count, max_hosts, schedule
-  hostresults <task> <ip> every recorded result for one host (login/OS/LSC detail)
-  vulns <task>            non-Log findings of a task, grouped by host and severity
+  hostresults <task> <ip> [ov] every recorded result for one host (ov: apply overrides)
+  vulns <task>            non-Log findings of a task, grouped by host and severity (ALL its reports)
+  overrides               every override: NVT, host, port, new severity
+  lastresults <task> [all] non-Log results of the task's latest report only (all: include Log)
   byfamily <name-prefix>  non-Log findings of every task with that name prefix, tallied by scan-config family
   compare <zone>...       non-Log findings of "Credentialed scan: <zone>" vs "LAN scan: <zone> full-vuln"
   families                the scan-config families and test counts of "Full and fast"
@@ -225,7 +227,8 @@ def main():
         if mode == "hostresults":
             t = find(gmp, sys.argv[2])
             want = sys.argv[3]
-            r = gmp.get_results(filter_string=f"task_id={t['id']} rows=-1")
+            ov = "apply_overrides=1" if "ov" in sys.argv[4:] else "apply_overrides=0"
+            r = gmp.get_results(filter_string=f"task_id={t['id']} {ov} rows=-1")
             for res in r.findall("result"):
                 host = (res.findtext("host") or "").strip().split("\n")[0].strip()
                 if host != want:
@@ -236,6 +239,28 @@ def main():
                 if any(k in nm for k in ("Authenticated", "Local Security", "OS Detection", "Determine OS", "LSC", "SSH Authorization", "Hostname", "Detection (HTTP)")):
                     for line in (res.findtext("description") or "").splitlines()[:14]:
                         print("      | " + line[:150])
+            return
+        if mode == "lastresults":
+            # Only the task's LATEST report. "task_id=" in get_results spans every report the
+            # task ever produced, so old findings linger in hostresults/vulns after a fix.
+            t = find(gmp, sys.argv[2])
+            task = gmp.get_task(t["id"]).find("task")
+            rep = task.find("last_report/report")
+            if rep is None:
+                print("no report yet")
+                return
+            print(f"report {rep.get('id')} start={rep.findtext('scan_start')} end={rep.findtext('scan_end')}")
+            r = gmp.get_results(filter_string=f"report_id={rep.get('id')} apply_overrides=0 rows=-1")
+            for res in r.findall("result"):
+                if (res.findtext("threat") or "") == "Log" and "all" not in sys.argv[3:]:
+                    continue
+                nvt = res.find("nvt")
+                print(f"{res.findtext('threat') or '':8} {res.findtext('port') or '':14} {(res.findtext('host') or '').split(chr(10))[0].strip():16} {res.findtext('name')[:70]} [{nvt.get('oid') if nvt is not None else ''}]")
+            return
+        if mode == "overrides":
+            for o in gmp.get_overrides().findall("override"):
+                nvt = o.find("nvt")
+                print(f"{o.get('id')[:8]} nvt={nvt.get('oid') if nvt is not None else ''} name={(nvt.findtext('name') if nvt is not None else '')[:48]!r} hosts={o.findtext('hosts')} port={o.findtext('port')} new_sev={o.findtext('new_severity')} created={o.findtext('creation_time')}")
             return
         if mode == "portlist":
             pl = gmp.get_port_lists(filter_string='name="All TCP and Nmap top 100 UDP"').find("port_list")
