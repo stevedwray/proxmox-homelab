@@ -153,3 +153,14 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
 - no-auth 401; same chips as argon-01 (`thermal_thermal_zone0`,
   `soc:firmware_raspberrypi_hwmon`); sensor names added. temp0/temp1 differed
   by one 0.97 C step in one sample (quantisation), treated as one zone.
+
+### pve-tiny: DONE 2026-10-17 (operator ran it with ./with-secrets-prod-tiny; ok=28 failed=0)
+
+- no-auth 401; authenticated scrape 5524 lines. Chip labels: `platform_nct6775_2592`
+  (nct6797), `pci0000:00_0000:00:18_3` (k10temp), `nvme_nvme0`,
+  `0000:00:03_1_0000:26:00_0` (nouveau GPU).
+- nct TSI0_TEMP/SMBUSMASTER duplicate the k10temp Tctl (59 C): dropped.
+  nouveau `pwm1` is 0-100 (reads 100), not 0-255, so the dashboard's `/255`
+  would show 39%: dropped. Only the GPU fan RPM is shown.
+- Fan headers and voltage rails are NOT named: names stay neutral
+  ("Fan 2", "nct6797 in3") until identified from the MSI BIOS monitor page.

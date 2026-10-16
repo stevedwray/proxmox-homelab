@@ -44,3 +44,54 @@ hwmon_sensor_names:
   - {stack: argon-02, chip: thermal_thermal_zone0, sensor: temp0, name: "CPU"}
   - {stack: argon-02, chip: thermal_thermal_zone0, sensor: temp1, drop: true}
   - {stack: argon-02, chip: "soc:firmware_raspberrypi_hwmon", sensor: in0, name: "Undervoltage alarm"}
+  # pve-tiny (MSI B450 GAMING PLUS MAX, nct6797 via nct6775). Header/rail names
+  # are not known from the chip alone: fans/voltages keep neutral names until
+  # identified against the MSI BIOS hardware-monitor page.
+  - {stack: pve-tiny, chip: "pci0000:00_0000:00:18_3", sensor: temp1, name: "CPU Tctl"}
+  - {stack: pve-tiny, chip: "pci0000:00_0000:00:18_3", sensor: temp3, name: "CPU CCD1"}
+  - {stack: pve-tiny, chip: nvme_nvme0, sensor: temp1, name: "NVMe composite"}
+  - {stack: pve-tiny, chip: nvme_nvme0, sensor: temp3, name: "NVMe sensor 2"}
+  - {stack: pve-tiny, chip: "0000:00:03_1_0000:26:00_0", sensor: temp1, name: "GPU"}
+  - {stack: pve-tiny, chip: "0000:00:03_1_0000:26:00_0", sensor: fan1, name: "GPU fan"}
+  - {stack: pve-tiny, chip: "0000:00:03_1_0000:26:00_0", sensor: pwm1, drop: true}   # nouveau pwm is 0-100, not 0-255
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp1, name: "Motherboard (SYSTIN)"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp2, name: "CPU socket (CPUTIN)"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp3, name: "AUXTIN0"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp5, name: "AUXTIN2"}
+  # dropped nct temps: temp4/temp6 unconnected probes (-128/-3 C), temp7/temp13 duplicate the CPU Tctl, temp8-12 read 0 (unsupported)
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp4, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp6, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp7, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp8, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp9, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp10, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp11, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp12, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: temp13, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan2, name: "Fan 2"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm2, name: "Fan 2 duty"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan3, name: "Fan 3"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm3, name: "Fan 3 duty"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan1, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm1, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan4, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm4, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan5, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm5, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: fan6, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: pwm6, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in0, name: "nct6797 in0"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in1, name: "nct6797 in1"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in2, name: "nct6797 in2"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in3, name: "nct6797 in3"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in4, name: "nct6797 in4"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in5, name: "nct6797 in5"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in6, name: "nct6797 in6"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in7, name: "nct6797 in7"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in8, name: "nct6797 in8"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in9, name: "nct6797 in9"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in10, drop: true}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in11, name: "nct6797 in11"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in12, name: "nct6797 in12"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in13, name: "nct6797 in13"}
+  - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in14, name: "nct6797 in14"}
