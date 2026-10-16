@@ -673,17 +673,20 @@ gates:
     critical: true
 ```
 
-## Phase E: workstation (Garuda/Arch), after the above is proven
+## Phase E: workstation (Garuda/Arch)
 
-Not a step block: it is not an apt host, so the shared role may not apply.
-Plan: try the role in `--check` first. Arch ships `prometheus-node-exporter`
-and `step-cli`; the service user and unit names may differ from Debian, so
-verify them before any run. The workstation is on the 192.168.1.0/24 LAN and
-is not a managed fleet host, so the operator decides whether the monitoring
-LXC may scrape it (a MikroTik rule) or whether to skip it. Add it to
-`hwmon_hosts` and `hw_hosts` only once reachable. Known good data to name:
-nct6799 voltages `in0..in17`, fans `fan1..7`, `SYSTIN/CPUTIN/AUXTIN0-5`; the
-firmware min/max are 0 so never alert on the chip's own limits.
+Written 2026-10-17: `ansible/00-initial-setup/hw-monitoring-workstation.yml`
+(local connection, inventory group `workstation`, host `garuda`). Not a use of
+the apt-based `node_exporter` role. It installs `prometheus-node-exporter` and
+`step-cli` with pacman, issues a step-ca cert for `garuda.gibbsgreatly.xyz`
+(provisioner password passed via process substitution, never written to disk;
+renewal uses the cert, so the password does not rest on the machine), serves
+TLS + basic auth, and enables **only the hwmon collector**. Reachability was
+probed from the monitoring LXC: path open, no workstation firewall running,
+production root CA already trusted (fingerprint matches). The target
+`garuda.gibbsgreatly.xyz:9100` is in `hwmon-hosts.yml`; it shows `down` when
+the workstation is off. Sensor names (nct6799: SYSTIN/CPUTIN/AUXTIN*, in0-in17)
+are added after the first scrape, using the ASUS TUF B650-E board manual.
 
 ## Not in this plan
 

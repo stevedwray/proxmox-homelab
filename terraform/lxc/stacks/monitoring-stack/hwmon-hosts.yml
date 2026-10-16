@@ -8,6 +8,8 @@ hwmon_hosts:
   - {stack: pve-test, target: pve-test.gibbsgreatly.xyz, port: 9100}
   - {stack: argon-01, target: 192.168.1.22, port: 9100}
   - {stack: argon-02, target: 192.168.1.23, port: 9100}
+  # workstation: Arch playbook (hwmon collector only), DHCP lease + DNS name
+  - {stack: garuda, target: garuda.gibbsgreatly.xyz, port: 9100}
   # tpot: node_exporter runs as a Docker-published container (plain HTTP, no
   # basic auth) -- see ansible/00-initial-setup/tpot-monitoring.yml --tags hwmon
   - {stack: tpot, target: tpot.gibbsgreatly.xyz, port: 8084, plain: true}

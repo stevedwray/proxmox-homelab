@@ -1,0 +1,180 @@
+---
+# node_exporter (TLS + basic auth, hwmon collector ONLY) on the operator's
+# Garuda/Arch workstation, scraped by monitoring-stack's node_exporter_hw job.
+# docs/hw-monitoring/plan.md Phase E. The shared node_exporter role is
+# apt/Debian-specific, so this is a small Arch playbook instead.
+#
+# Differences from the role, on purpose:
+#   - the step-ca provisioner password is used only to issue the first
+#     certificate and is never written to disk (renewal uses the cert itself);
+#   - only the hwmon collector is enabled (no process/disk/network detail).
+#
+# Run on the workstation itself (needs sudo; any env works for the secrets):
+#   PVE_ENV=pve-test ./with-secrets ansible-playbook \
+#     -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/hw-monitoring-workstation.yml -K
+- name: Install node_exporter (hwmon only) on the workstation
+  hosts: workstation
+  become: true
+  gather_facts: false
+
+  vars:
+    ws_fqdn: garuda.gibbsgreatly.xyz
+    ws_conf_dir: /etc/node_exporter
+    ws_cert_dir: /etc/node_exporter/certs
+    ws_root_ca: /etc/ca-certificates/trust-source/anchors/homelab-root.crt
+    ws_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') }}"
+    ws_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
+
+  tasks:
+    - name: Assert required secrets and config are present
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD_HASH') | length > 0
+          - lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') | length > 0
+          - lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | length > 0
+          - lookup('env', 'LAB_IP_STEP_CA') | length > 0
+        fail_msg: Run via ./with-secrets so the node_exporter and step-ca values are set.
+        quiet: true
+
+    - name: Assert the homelab root CA is already trusted on this machine
+      ansible.builtin.stat:
+        path: "{{ ws_root_ca }}"
+      register: ws_root_ca_stat
+      failed_when: not ws_root_ca_stat.stat.exists
+
+    - name: Install node_exporter and the step CLI
+      ansible.builtin.command: pacman -S --needed --noconfirm prometheus-node-exporter step-cli
+      register: ws_pacman
+      changed_when: "'installing' in ws_pacman.stdout"
+
+    - name: Create config and certificate directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: node_exporter
+        mode: "0750"
+      loop:
+        - "{{ ws_conf_dir }}"
+        - "{{ ws_cert_dir }}"
+
+    - name: Issue the TLS certificate from step-ca when missing or near expiry
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [[ -s "{{ ws_cert_dir }}/tls.crt" && -s "{{ ws_cert_dir }}/tls.key" ]] \
+           && openssl x509 -checkend 2592000 -noout -in "{{ ws_cert_dir }}/tls.crt" >/dev/null 2>&1; then
+          exit 0
+        fi
+        step ca certificate "{{ ws_fqdn }}" \
+          "{{ ws_cert_dir }}/tls.crt" "{{ ws_cert_dir }}/tls.key" \
+          --san "{{ ws_fqdn }}" --san garuda --not-after 2160h \
+          --ca-url "{{ ws_step_ca_url }}" --root "{{ ws_root_ca }}" \
+          --provisioner "{{ ws_provisioner }}" \
+          --provisioner-password-file <(printf '%s' "$STEP_PW") \
+          --force >/dev/null
+        echo issued
+      args:
+        executable: /bin/bash
+      environment:
+        STEP_PW: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') }}"
+      register: ws_cert
+      changed_when: "'issued' in ws_cert.stdout"
+      no_log: true
+
+    - name: Enforce certificate and key permissions
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: root
+        group: node_exporter
+        mode: "0640"
+      loop:
+        - "{{ ws_cert_dir }}/tls.crt"
+        - "{{ ws_cert_dir }}/tls.key"
+
+    - name: Write web.config.yaml (TLS + basic auth)
+      ansible.builtin.copy:
+        dest: "{{ ws_conf_dir }}/web.config.yaml"
+        owner: root
+        group: node_exporter
+        mode: "0640"
+        content: |
+          tls_server_config:
+            cert_file: {{ ws_cert_dir }}/tls.crt
+            key_file: {{ ws_cert_dir }}/tls.key
+
+          basic_auth_users:
+            prometheus: {{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD_HASH') }}
+      no_log: true
+      register: ws_web_config
+
+    - name: Write the service arguments (hwmon collector only)
+      ansible.builtin.copy:
+        dest: /etc/conf.d/prometheus-node-exporter
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          NODE_EXPORTER_ARGS="--web.config.file={{ ws_conf_dir }}/web.config.yaml --collector.disable-defaults --collector.hwmon"
+      register: ws_args
+
+    - name: Write the certificate renewal script
+      ansible.builtin.copy:
+        dest: "{{ ws_conf_dir }}/renew-cert.sh"
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          CERT={{ ws_cert_dir }}/tls.crt
+          KEY={{ ws_cert_dir }}/tls.key
+          if ! openssl x509 -checkend 2592000 -noout -in "$CERT" 2>/dev/null; then
+            step ca renew --force --ca-url {{ ws_step_ca_url }} --root {{ ws_root_ca }} "$CERT" "$KEY"
+            chown root:node_exporter "$CERT" "$KEY"
+            chmod 0640 "$CERT" "$KEY"
+            systemctl kill --signal=HUP prometheus-node-exporter.service
+          fi
+
+    - name: Write the renewal service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ item.content }}"
+      loop:
+        - name: node-exporter-cert-renew.service
+          content: "[Unit]\nDescription=Renew node_exporter TLS certificate from step-ca\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart={{ ws_conf_dir }}/renew-cert.sh\n"
+        - name: node-exporter-cert-renew.timer
+          content: "[Unit]\nDescription=Daily node_exporter certificate renewal check\n\n[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1h\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
+
+    - name: Enable the exporter and the renewal timer
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - prometheus-node-exporter.service
+        - node-exporter-cert-renew.timer
+
+    - name: Restart the exporter when its config changed
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter.service
+        state: restarted
+      when: ws_web_config.changed or ws_args.changed
+
+    - name: Confirm hwmon metrics are served over TLS with auth
+      ansible.builtin.shell: >-
+        curl -s --cacert {{ ws_root_ca }} -u prometheus:"$PW"
+        https://{{ ws_fqdn }}:9100/metrics | grep -c '^node_hwmon_temp_celsius'
+      environment:
+        PW: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') }}"
+      register: ws_check
+      changed_when: false
+      failed_when: ws_check.stdout | int < 1
+      retries: 5
+      delay: 2
+      until: ws_check is succeeded
+      no_log: true

@@ -86,3 +86,11 @@ all:
       vars:
         ansible_python_interpreter: /usr/bin/python3
         ansible_ssh_common_args: '-o StrictHostKeyChecking=accept-new'
+
+    # Operator workstation (Garuda/Arch, ASUS TUF B650-E). Local connection:
+    # run the playbook on the machine itself. docs/hw-monitoring/ Phase E.
+    workstation:
+      hosts:
+        garuda:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3

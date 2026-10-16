@@ -212,3 +212,14 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   uri task is skipped in check mode; a pre-existing check-mode limitation of
   that role, not this project). The real run then passed: ok=141 failed=0,
   smoke test passed, wazuh step clean. **Hardware monitoring is live.**
+
+## Workstation (Phase E) -- written, not yet run
+
+- Playbook `hw-monitoring-workstation.yml` (see plan Phase E). Operator runs it
+  on the workstation (needs sudo): `PVE_ENV=pve-test ./with-secrets
+  ansible-playbook -i ansible/inventory/inventory.yml
+  ansible/00-initial-setup/hw-monitoring-workstation.yml -K`.
+- Tested: syntax check; the `--provisioner-password-file <(printf ...)`
+  mechanism (with `step crypto keypair` on pve-test). Not tested: the full run.
+- After it runs: redeploy monitoring-stack (new scrape target), then name the
+  nct6799 sensors.
