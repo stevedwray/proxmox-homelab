@@ -623,6 +623,11 @@ or matched (model/content). The looping reported in real use remains
 unreproduced as a build defect; what reproduces everywhere is long Qwen3.8
 reasoning.
 
+**Speed:** the same ordering shows up in long-context speed. With default
+batches, cold prompt reading on upstream falls from 489 tok/s (<16k) to 141
+tok/s (128-262k), against 690 to 615 on the current fork and 623 to 442 on the
+older fork; generation speed is about the same on all builds (see Performance).
+
 ### Context Integrity Score (0-1000)
 
 CIS = recall x (judged coherence / 5) x (1 - detector repetition/runaway/
@@ -708,3 +713,102 @@ Not applied. Existing statuses stay "works"; reasons are appended.
 
 No model is marked broken by this test. If the operator wants FND-1 treated
 as established, a second judge on a larger sample should come first.
+
+## Performance (read-only, from saved timings)
+
+Source: llama-server `timings` saved with each completed request, no new
+inference. 1048 requests: the ctx-bug-test full run
+(`/storage/artifacts/framework-ctx-bugs/20261014T071722Z`) and the loop-hunt
+pilot, matrix and replays (duplicate rows removed; refused or timed-out requests
+have no timings and are not included). The two data sets differ in server
+settings, so they are separate tables and are never mixed. Builds are compared
+only within the same model, data set and bucket.
+
+| | ctx-bug-test | loop-hunt |
+| --- | --- | --- |
+| Batch / ubatch | 512 / 128 | llama.cpp defaults |
+| Slots | 1 (parallel 1) | 4, one shared KV pool |
+| Prompt cache | off (every request cold) | on |
+| Builds | fork current, upstream | fork current, fork previous, upstream |
+| Models | Qwen3.8 Q4 (and Laguna S 2.1, extra) | Qwen3.8 Q4; GLM-5.3 on upstream only |
+| Context sizes | 32k to 131k | 131k and 262k |
+
+Method: buckets are by tokens (decimal): <16k, 16-64k, 64-128k, 128-262k.
+Prompt-read speed is `prompt_per_second` for cold requests only (cache 0 and at
+least 512 new prompt tokens), bucketed by prompt length. Generation speed is
+`predicted_per_second` for requests that generated at least 64 tokens,
+bucketed by total context (new plus cached prompt tokens). Cells are median
+(p10-p90) tok/s and request count n. C2 (four concurrent sessions) is excluded
+from the main tables because its requests share the GPU; it is listed after.
+Where n is below about 5, p10/p90 only show the spread of those few requests.
+
+### ctx-bug-test (batch 512/128, parallel 1, cache off)
+
+Prompt-read tok/s, cold:
+
+| Model | Build | <16k | 16-64k | 64-128k | 128-262k |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.8 Q4 | fork current | 380 (374-513) n=34 | 346 n=2 | 333 (330-337) n=4 | none |
+| Qwen3.8 Q4 | upstream | 276 (275-392) n=34 | 218 n=2 | 184 (176-193) n=4 | none |
+| Laguna S 2.1 | fork current | 326 (324-403) n=9 | 283 n=1 | 233 (222-245) n=2 | none |
+| Laguna S 2.1 | upstream | 229 (229-300) n=34 | 206 n=2 | 168 (156-180) n=4 | none |
+
+Generation tok/s by context:
+
+| Model | Build | <16k | 16-64k | 64-128k | 128-262k |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.8 Q4 | fork current | 24 (24-26) n=82 | 23 n=2 | 22 (21-22) n=4 | none |
+| Qwen3.8 Q4 | upstream | 25 (25-26) n=82 | 23 n=2 | 21 (21-22) n=4 | none |
+| Laguna S 2.1 | fork current | 30 (29-30) n=12 | none | none | none |
+| Laguna S 2.1 | upstream | 29 (29-30) n=36 | none | 18 (17-19) n=2 | none |
+
+This test only reaches 131k, and its long-context cells are single fill
+prompts, so the three upper buckets rest on 1 to 4 requests each.
+
+### loop-hunt (default batches, 4 slots, cache on)
+
+Prompt-read tok/s, cold (cache 0). The 128-262k cells are the cold 250k
+requests plus a few late 131k-session turns:
+
+| Model | Build | <16k | 16-64k | 64-128k | 128-262k |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.8 Q4 | fork current | 690 (663-693) n=4 | 667 (664-671) n=2 | 645 (640-656) n=9 | 615 (610-633) n=3 |
+| Qwen3.8 Q4 | fork previous | 623 (605-624) n=3 | 565 n=2 | 501 (490-525) n=9 | 442 (417-479) n=3 |
+| Qwen3.8 Q4 | upstream | 489 n=3 | 437 (435-437) n=4 | 212 (187-272) n=9 | 141 (127-171) n=3 |
+| GLM-5.3 | upstream | 162 (162-163) n=2 | none | 86 (81-97) n=6 | none |
+
+Generation tok/s by context:
+
+| Model | Build | <16k | 16-64k | 64-128k | 128-262k |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3.8 Q4 | fork current | 24 (23-25) n=24 | 23 (22-23) n=56 | 21 (21-22) n=66 | 20 (20-21) n=33 |
+| Qwen3.8 Q4 | fork previous | 25 (24-25) n=21 | 23 (22-23) n=46 | 21 (20-21) n=70 | 19 (18-20) n=33 |
+| Qwen3.8 Q4 | upstream | 25 (24-25) n=21 | 23 (22-24) n=53 | 21 (20-22) n=67 | 19 (17-20) n=33 |
+| GLM-5.3 | upstream | 17 (16-18) n=10 | 15 (14-16) n=9 | 13 (12-14) n=13 | none |
+
+C2, four concurrent sessions (so per-request speeds are lower and noisy; no
+request passed 64k): Qwen cold prompt-read median 153 / 193 / 128 tok/s at <16k
+and 554 / 669 / 380 at 16-64k for fork previous / current / upstream; Qwen
+generation 10 to 12 tok/s on all three builds; GLM 39 and 118 tok/s prompt
+read, 3 to 4 tok/s generation.
+
+### Reading these numbers
+
+- **Prompt reading differs by build, and the gap grows with length.** In both
+  data sets the current fork reads cold prompts faster than upstream on the
+  same model and bucket: 1.4x at <16k and 1.8x at 64-128k with batch 512/128,
+  and 1.4x at <16k rising to 3x at 64-128k and 4.4x at 128-262k with default
+  batches. The older fork sits between them: 10% to 28% slower than the current
+  fork, and 2.4x (64-128k) to 3.1x (128-262k) faster than upstream. Upstream's loss with
+  length (489 to 141 tok/s) is much steeper than the forks' (690 to 615
+  current, 623 to 442 previous). Cells with n of 3 or fewer are indicative only.
+- **Generation speed does not separate the builds.** Qwen runs about 24-25
+  tok/s short and 19-20 tok/s past 128k on all three, with overlapping p10-p90
+  ranges. GLM is slower (17 falling to 13 tok/s) and has no cross-build
+  comparison.
+- **What this does not show.** These are observed rates from different runs, not
+  a controlled benchmark: histories differ slightly across builds, upstream's
+  long requests coincided with amdgpu fence-fallback warnings (see FND-4), and
+  each bucket is a handful of requests at the long end. Cause is not isolated.
+- Laguna S 2.1 appears only in the ctx-bug-test tables as extra context; it was
+  not part of loop-hunt.
