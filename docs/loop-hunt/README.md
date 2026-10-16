@@ -10,8 +10,8 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 matrix running; prior evidence preserved**
-(2026-10-15). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 stopped at 19/20 jobs on the final cold-request timeout; prior evidence preserved**
+(2026-10-16). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
@@ -402,7 +402,23 @@ actual synthetic pilot answers. The interrupted 15-request run regraded to
 preserved byte-for-byte under its regrade-backups. Full history and hashes
 are in [lh-05](plan.md#lh-05-pilot).
 
-## Matrix (lh-06, running)
+## Matrix (lh-06, final job needs attention)
+
+One-off status check at 16:53 NZDT on 2026-10-16: 19/20 jobs complete.
+The final upstream C4 run saved 65 requests; its turn-61 warm request at
+250110 prompt tokens completed cleanly. The identical cold request hit the
+1800-second client timeout at 16:30 NZDT while the server was still
+processing: 231667 tokens, approximately 93%, at the last journal sample.
+Its pending evidence records `timed out`; no completion is invented or
+counted. Three GPU-warning flags are recorded in this run, with zero
+evidence-capture errors. Original model/build restoration, free run lock
+and active upgrade timer were independently verified. Analysis stopped
+behind the incomplete matrix; replays remain gated. No retry or timeout
+change has been made. Increasing the timeout changes a recorded run
+setting and requires the operator's decision under the standing stop rule.
+Live polling remains stopped at the operator's request. The progress table
+below is the earlier partial review; the remaining completed jobs have not
+yet received the final preserved regrade/review.
 
 The successful pilot satisfied the operator's conditional approvals. The
 remaining 20 jobs are running sequentially in two consecutive batches,

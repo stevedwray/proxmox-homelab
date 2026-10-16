@@ -1581,6 +1581,22 @@ completed-job flag; corrected promptly after reviewing saved evidence.
 Cleanup and watcher completion verified before GLM C2. Sixteen jobs complete;
 GLM C2 had 48 saved requests at 22:05 UTC. Analysis/replays still waiting.
 
+Matrix stop Result (2026-10-16, checked 16:53 NZDT): 19/20 jobs complete;
+final upstream C4 stopped with seed-1/61/cold pending after the existing
+1800-second client timeout. Its matching warm request at 250110 prompt
+tokens completed cleanly; 65 completed requests remain saved. The final
+server journal sample before cancellation shows 231667 tokens (93%) at
+1797.56 seconds, still advancing. The pending raw JSON explicitly records
+"timed out", with no evidence-capture error. Three GPU-warning flags are
+retained in this run; no completed response was fabricated for the timeout.
+Original qwen3-coder-next-upstream / b11514-de7fa0a3c, free run lock and
+active apt-daily-upgrade.timer were independently verified read-only.
+Analysis exited needs-attention behind the incomplete matrix, and replays
+remain gated. No retry, identity edit or timeout change was made. A longer
+timeout changes the recorded run settings, so recovery requires the
+operator's decision under the standing stop rule. Live polling was stopped
+at the operator's request; this was a one-off status/diagnostic check.
+
 #### lh-07-replay-real
 
 V1's actual served model/build are unknown: the journal check in lh-04
