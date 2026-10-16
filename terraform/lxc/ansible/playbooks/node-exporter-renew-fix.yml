@@ -3,9 +3,8 @@
 #
 # The role's renewal script sent SIGHUP to prometheus-node-exporter expecting a
 # reload, but node_exporter exits on SIGHUP and systemd counts that as a clean
-# stop, so it never came back (gaming-stack-lab and pentagi-stack went dark on
-# 2026-10-12; most of the fleet's certs reach the 30-day renewal line around
-# 2026-10-20/21). The role is fixed for new deploys; this playbook repairs
+# stop, so it never came back (gaming-stack-lab went dark on 2026-10-12; most of
+# the fleet's certs reach the 30-day renewal line around 2026-10-20/21). The role is fixed for new deploys; this playbook repairs
 # hosts that already have the old script. Idempotent, safe to re-run, and it
 # also starts any exporter that is currently stopped.
 #
