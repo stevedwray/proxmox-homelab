@@ -1809,7 +1809,24 @@ sized by characters (max 20 records / 60k chars). Private join key:
 `PRIVATE-key-map.jsonl` (never upload). Judging guide: `judging-guide.md`
 (scores per the plan, plus loop_channel). Replay records contain the operator's
 real first prompts; upload `corpus-replay` batches only if the operator accepts
-that. Waiting for the operator's cloud-judge JSONL results.
+that. Waiting for the operator's cloud-judge JSONL results (sample only; see below).
+
+Sample decision (operator, 2026-10-17): judge a sample, not the full corpus.
+Drawn from the 703 synthetic turns (replays excluded, they hold real VS Code
+prompts) into ignored `artifacts/judge/sample/`: all 131 turns with any
+detector flag (below the 150 cap, so no group balancing was needed) plus 100
+unflagged turns by `random.Random(20261017).sample`, then shuffled (same seed)
+under new ids s-0001..s-0231 and re-batched at 20 records / 60k characters:
+231 turns, 12 batches (the limits make fewer than 12 impossible). Flags by
+kind in the full corpus: 125 question-line format, 22 runaway, 21 repetition,
+20 no-answer, 4 gpu-error. Caveat: 118 of the 131 flagged turns are GLM
+format-only flags (all three GLM runs, 37/37/44, are 100% in the sample), so
+the sample is half GLM and only 13 Qwen turns carry any flag. Share of each
+group sampled: Qwen fork current C1 9%, C2 28%, C3 18%, C4 20%, C5 20%; fork
+previous C1 seed1 22%, seed2 16%, C2 25%, C4 17%, C5 48%; upstream C1 seed1 9%,
+seed2 3%, C2 16%, C4 24%, C5 attempt3 19%; GLM C1/C2 100%. C3's new turns
+(2 per build, 34 on fork current incl. imports) are mostly 0-18%. Private map:
+`sample/PRIVATE-key-map.jsonl`.
 
 #### lh-09-writeup
 
