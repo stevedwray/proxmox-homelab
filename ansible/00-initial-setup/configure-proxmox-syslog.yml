@@ -1,12 +1,14 @@
 ---
-# Configure rsyslog on the Proxmox bare-metal host to forward all syslog to
-# the graylog-stack LXC rsyslog relay on TCP :514.
+# Configure rsyslog on a Proxmox bare-metal host to forward all syslog to
+# the graylog-stack LXC rsyslog relay on TCP :514 (192.168.20.14). Same play
+# for every hypervisor; pass the host with -e target_host=... (required).
 #
-# Run command (pve-test-vm):
-#   PVE_ENV=pve-test-vm ./with-secrets ansible-playbook \
-#     -i ansible/inventory/dev.yml \
+# Run command (pve-test, non-production laptop node; no TASK_APPROVAL):
+#   PVE_ENV=pve-test ./with-secrets ansible-playbook \
+#     -i ansible/inventory/production.yml \
 #     ansible/00-initial-setup/configure-proxmox-syslog.yml \
-#     --limit pve-test-vm.gibbsgreatly.xyz
+#     -e target_host=pve-test.gibbsgreatly.xyz \
+#     --limit pve-test.gibbsgreatly.xyz
 #
 # Run command (pve production):
 #   PVE_ENV=pve ./with-secrets-prod ansible-playbook \
@@ -15,11 +17,22 @@
 #     -e target_host=pve.gibbsgreatly.xyz \
 #     --limit pve.gibbsgreatly.xyz
 #
+# Run command (pve-tiny production; inventory group proxmox_tiny):
+#   TASK_APPROVAL=<task> ./with-secrets-prod-tiny ansible-playbook \
+#     -i ansible/inventory/production.yml \
+#     ansible/00-initial-setup/configure-proxmox-syslog.yml \
+#     -e target_host=pve-tiny.gibbsgreatly.xyz \
+#     --limit pve-tiny.gibbsgreatly.xyz
+#
+# Firewall: the shared Graylog ingress rule (mikrotik-firewall-shared-graylog-ingress.yml)
+# already admits 192.168.1.0/24, which covers all three hypervisors.
+#
 # Validation: after running, check Graylog for:
-#   source:<pve-test-vm|pve> AND application_name:ansible-proxmox-syslog-test
+#   source:<pve-test|pve|pve-tiny> AND application_name:ansible-proxmox-syslog-test
+# Rollback: delete /etc/rsyslog.d/90-graylog-forward.conf and restart rsyslog.
 
 - name: Configure Proxmox host rsyslog forwarding to Graylog
-  hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"
+  hosts: "{{ target_host | mandatory('pass -e target_host=<hypervisor fqdn>') }}"
   become: true
   gather_facts: true
 
