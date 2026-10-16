@@ -181,9 +181,9 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-03-catalogue | local | — | done 2026-10-15 (only two models' variants; JSON gate and 42 generator tests pass) |
 | lh-04-deploy | Framework (production) | `loop-hunt-deploy` | done 2026-10-15; guarded rewrite, tools and all three build identities verified |
 | lh-05-pilot | Framework (production) | `loop-hunt-pilot` | done 2026-10-15; 32 requests, 74/74 recall, three clean CK pairs; cleanup verified |
-| lh-06-matrix | Framework (production) | `loop-hunt-matrix` | running 2026-10-15; 20 remaining jobs queued, two batches |
-| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | queued 2026-10-15; seven targets, waiting for completed matrix and cleanup |
-| lh-08-judge | local + operator | — | todo |
+| lh-06-matrix | Framework (production) | `loop-hunt-matrix` | done and reviewed 2026-10-16 (20/20 jobs, 793 primary records, 1434/1434 accepted-response facts; README "Matrix") |
+| lh-07-replay-real | Framework (production) | `loop-hunt-replay` | done 2026-10-16/17 (7/7 targets, 42 requests, cleanup verified; reviewed in README "Replays") |
+| lh-08-judge | local + operator | — | local corpus/guide built 2026-10-17; waiting for operator to run the cloud judge |
 | lh-09-writeup | local | — | todo |
 | lh-10-cleanup | Framework (production) | `loop-hunt-cleanup` | todo |
 
@@ -1774,6 +1774,18 @@ loop-hunt-20261016t070130z.service with its new watcher verified. Models,
 builds, settings, sampling and input content unchanged. Remaining V9 targets
 continue automatically. No operator input was needed within the retry scope.
 
+Replay completion Result (2026-10-17): the continuation finished all seven
+targets (campaign.json status complete, continuation.json stage `lh-08-reached;
+awaiting operator`): 42 requests, six per target (seeds 1-3, warm and cold),
+zero evidence errors, cleanup verified for every target. Independently
+re-verified read-only on Framework: loaded model qwen3-coder-next-upstream /
+b11514-de7fa0a3c, framework:run-lock free, apt-daily-upgrade.timer active and
+its service inactive, no loop-hunt-* or watcher units left. No further launch
+retries were needed after the single recorded V9 retry. Review is in the README
+"Replays" section. Single-turn replays have cache 0 in both modes, so every
+warm/cold pair is a duplicate deterministic sample (identical token counts
+and text lengths) and the three seeds are the only independent samples.
+
 #### lh-08-judge
 
 Build a blind corpus (model/build/condition replaced by opaque ids) of
@@ -1784,7 +1796,20 @@ turn: phrase looping, semantic looping and context echoing
 The operator runs the cloud judge per `docs/framework-ubuntu/benchmarks.md`
 §5 and drops the JSONL results back; the agent joins them to the ids.
 
-Result: —
+Result (local part, 2026-10-17): `scripts/loop-hunt/judge_corpus.py`
+(extract on Framework read-only, build locally; 1 test) built the blind
+corpus in ignored `artifacts/judge/`: 745 assistant turns (703 synthetic
+session/agent turns, 42 V1/V9 replay turns), duplicates removed (C3's imported
+C1 rows, repeated pilot rows, identical failed-C5 first requests), HTTP-refused
+requests excluded (no assistant output; 92). Model, build, condition, seed,
+session, turn and warm/cold are hidden behind shuffled ids j-0001..; a grep for
+model/build names finds nothing. Records carry rules, the latest request,
+the prior answer, answer, reasoning, tool calls and a cut-off flag. Batches are
+sized by characters (max 20 records / 60k chars). Private join key:
+`PRIVATE-key-map.jsonl` (never upload). Judging guide: `judging-guide.md`
+(scores per the plan, plus loop_channel). Replay records contain the operator's
+real first prompts; upload `corpus-replay` batches only if the operator accepts
+that. Waiting for the operator's cloud-judge JSONL results.
 
 #### lh-09-writeup
 

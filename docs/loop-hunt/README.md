@@ -502,7 +502,54 @@ Matrix-analysis-before.json records invariant evidence fingerprints, and
 matrix-review-ready.json binds all 20 final result hashes. Replay release
 requires the reviewed hashes; no transcript excerpts enter git.
 
-## Replays (lh-07, running)
+## Replays (lh-07, complete and reviewed)
+
+All seven targets finished (42 requests: 7 targets x seeds 1-3 x warm/cold),
+with zero transport or evidence errors, verified cleanup and no GPU flag. After
+the run the loaded model (qwen3-coder-next-upstream, b11514-de7fa0a3c), the free
+run lock and the active upgrade timer were re-checked read-only.
+
+**How to read these.** Each replay is one prompt-only turn (V1: 58 Qwen / 18 GLM
+tokens; V9: 117 Qwen tokens) with no system prompt or tool schemas. Cache is
+zero in warm and cold, so a warm/cold pair is the same request twice: all 21
+pairs matched in token count, text lengths and flags. The seeds are the only
+independent samples (3 per target); warm/cold agreement is not extra evidence,
+and it cannot test a KV-cache bug here. Different builds with the same seed
+produce different text, so cross-build comparisons are of rates over three
+samples, not of matched outputs. Flags are detector output, not a semantic judge.
+
+| Target | Seeds hitting 8192 cap | Seeds with repetition flag (channel) | Other |
+| --- | ---: | --- | --- |
+| V1 Qwen fork current | 1 (s3, answer present) | s1 (reasoning) | s2 clean |
+| V1 Qwen fork previous | 0 | s3 (answer, finished normally at 7748 tokens) | s1, s2 clean |
+| V1 Qwen upstream | 1 (s3, no answer) | s2, s3 (reasoning) | s1 clean, 677 tokens |
+| V1 GLM upstream | 0 | s2 (reasoning, 6500 tokens, finished) | s1, s3 clean |
+| V9 Qwen fork current | 3 of 3, no answer | s2, s3 (reasoning) | |
+| V9 Qwen fork previous | 3 of 3, no answer | s3 (reasoning) | |
+| V9 Qwen upstream | 3 of 3, no answer | s1 (reasoning) | |
+
+Findings:
+
+- **V9 is build-independent on Qwen.** All nine samples on all three builds
+  spent the whole 8192-token budget in the reasoning channel and returned no
+  answer (about 28-31k characters of reasoning each). That matches the
+  known Qwen3.8 default of very long reasoning (reasoning_effort xhigh) and
+  the 8192 per-turn cap; it is a model/settings behaviour, not something
+  the fork introduces. Whether the original V9 tool loop occurs is not
+  established: no tool schemas or execution were replayed.
+- **V1 shows no build-exclusive pattern.** Repetition flags appear on every
+  Qwen build and on GLM (1, 1, 2, 1 of 3 seeds for current, previous,
+  upstream, GLM), mostly in the reasoning channel. Cap exhaustion happened on
+  fork current (1) and upstream (1), not on previous. Three samples per
+  cell cannot separate builds; do not read the previous build's lower
+  count as better. The single answer-channel repetition flag was on
+  fork previous, seed 3.
+- **No runtime/cache signal.** Because cache is zero and pairs match exactly,
+  the replays say nothing for or against a KV-cache cause; the matrix CK
+  pairs (all clean or matching model/content) remain the evidence for that.
+- Blind semantic judging of these 42 responses is pending (lh-08).
+
+Earlier campaign log, kept for provenance:
 
 The hash-bound matrix gate was released after review commit 02281038.
 The first replay, V1 on fork current, completed all six requests and
