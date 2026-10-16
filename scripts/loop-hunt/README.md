@@ -5,6 +5,12 @@ lh-01 is built and its approved Framework scan completed: 12 chats,
 [the plan](../../docs/loop-hunt/plan.md) for approvals and later steps.
 Python stdlib only. Synthetic tests:
 
+Completion requests above 200000 rendered prompt tokens use a 7200-second
+client timeout; other requests retain the default 1800 seconds. This is a
+client wait policy, with no change to sampling, server settings or request
+content. New result rows record `client_timeout`. A resumed run preserves
+saved rows and records any approved source-identity migration separately.
+
 ```bash
 python3 -m unittest discover -s scripts/loop-hunt -p 'test_*.py' -v
 ```

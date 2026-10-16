@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import gen_sessions as gs
 import session_bugs as sb
@@ -42,6 +43,30 @@ class SessionHarnessTests(unittest.TestCase):
     def execute(self,run):
         with contextlib.redirect_stdout(io.StringIO()):return run.execute()
 
+    def test_long_prompt_timeout_boundary_and_transport_isolation(self):
+        for count,expected in ((199999,1800),(200000,1800),(200001,7200),(250110,7200)):
+            self.assertEqual(sb.completion_timeout(count,1800),expected)
+        with server() as stub:
+            run=self.runner(stub,extra=['--max-turns','1','--checkpoint-tokens','999999'])
+            with mock.patch.object(run.client.opener,'open',wraps=run.client.opener.open) as opened:
+                self.assertEqual(self.execute(run),0)
+            requests=[c for c in opened.call_args_list if c.args[0].full_url.endswith('/v1/chat/completions')]
+            self.assertEqual(len(requests),1)
+            self.assertEqual(requests[0].kwargs['timeout'],1800)
+            self.assertEqual(run.records[0]['client_timeout'],1800)
+            self.assertEqual(run.client.timeout,1800)
+
+    def test_long_completion_timeout_does_not_change_management_timeout(self):
+        client=sb.SessionClient('http://127.0.0.1:1',timeout=1800)
+        for stream in (False,True):
+            with self.subTest(stream=stream),mock.patch.object(client.opener,'open',side_effect=TimeoutError('test timeout')) as opened:
+                with self.assertRaises(TimeoutError):client.complete({'stream':stream},timeout=7200)
+                self.assertEqual(opened.call_args.kwargs['timeout'],7200)
+                self.assertEqual(client.timeout,1800)
+        with mock.patch.object(client.opener,'open',side_effect=TimeoutError('management')) as opened:
+            with self.assertRaises(TimeoutError):client.call('/health')
+            self.assertEqual(opened.call_args.kwargs['timeout'],1800)
+
     def test_warm_only_loop_classifies_runtime_and_payloads_match(self):
         with server(loop_mode='warm') as stub:
             run=self.runner(stub,extra=['--checkpoint-tokens','1800'])
@@ -68,6 +93,7 @@ class SessionHarnessTests(unittest.TestCase):
             first=self.runner(stub,extra=['--checkpoint-tokens','999999'])
             self.assertEqual(self.execute(first),1)
             self.assertEqual([r['turn'] for r in first.records],[1])
+            saved=(first.directory/'results.jsonl').read_bytes()
             resumed=self.runner(stub,extra=['--checkpoint-tokens','999999'])
             self.assertEqual(self.execute(resumed),0,resumed.manifest)
             self.assertEqual([r['turn'] for r in resumed.records],[1,2,3])
@@ -75,6 +101,7 @@ class SessionHarnessTests(unittest.TestCase):
             self.assertEqual(turns,[1,2,2,3])
             self.assertGreater(len(resumed.records[-1]['payload']['messages']),len(resumed.records[0]['payload']['messages']))
             self.assertEqual(len({r['key'] for r in resumed.records}),len(resumed.records))
+            self.assertTrue((resumed.directory/'results.jsonl').read_bytes().startswith(saved))
 
     def test_c2_four_concurrent_requests_shared_pool_eviction(self):
         with server(capacity=5000,overflow='truncate',pool_full='evict',request_delay=.05) as stub:

@@ -84,6 +84,15 @@ have separate named approvals; their prerequisite pilot review has passed.
 Production wrappers, named task scopes and per-run timer/model/lock cleanup
 still apply. No broader production approval is implied.
 
+**Timeout/wait override (operator, 2026-10-16):** client-side timeouts and
+waits are plumbing; adjust autonomously and record changes in Result while
+keeping server settings and test content fixed. Approved policy: requests
+above 200000 measured prompt tokens use 7200 seconds, the rest retain 1800.
+Resume only the unfinished upstream C4 job, preserving its 65 saved requests.
+Then complete matrix analysis and the already-approved lh-07 replays; stop
+with findings before lh-08. The earlier settings-change stop does not apply
+to client-side timeouts/waits.
+
 ## The matrix
 
 | | |

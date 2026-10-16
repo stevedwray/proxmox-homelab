@@ -28,6 +28,16 @@ import ctx_bugs as cb
 import detectors
 
 
+# Operator-approved plumbing policy (2026-10-16). Counts are rendered prompt
+# tokens from the loaded model; server settings and request content stay fixed.
+LONG_PROMPT_THRESHOLD = 200000
+LONG_PROMPT_TIMEOUT = 7200
+
+
+def completion_timeout(prompt_tokens, default):
+    return LONG_PROMPT_TIMEOUT if prompt_tokens > LONG_PROMPT_THRESHOLD else default
+
+
 class SessionClient(cb.Client):
     def count(self,messages,tools=None):
         payload=dict(messages=messages,add_generation_prompt=True)
@@ -46,14 +56,14 @@ class SessionClient(cb.Client):
         with self.opener.open(request,timeout=self.timeout) as response:
             response.read()  # Management success may have an empty/plain-text body.
 
-    def complete(self,payload):
-        if not payload.get('stream'):return self.call('/v1/chat/completions',payload)
+    def complete(self,payload,*,timeout=None):
+        if not payload.get('stream'):return self.call('/v1/chat/completions',payload,timeout=timeout)
         headers={'Content-Type':'application/json'}
         if self.api_key:headers['Authorization']='Bearer '+self.api_key
         request=urllib.request.Request(self.base+'/v1/chat/completions',data=json.dumps(payload).encode(),headers=headers)
         answer,reasoning,calls='', '', {}
         finish,usage,timings,ended=None,{}, {},False
-        with self.opener.open(request,timeout=self.timeout) as response:
+        with self.opener.open(request,timeout=self.timeout if timeout is None else timeout) as response:
             try:
                 for raw in response:
                     line=raw.decode().strip()
@@ -311,8 +321,9 @@ class SessionRun(cb.Run):
         except (OSError,RuntimeError,ValueError) as exc:evidence.append('before identity: '+str(exc))
         start_epoch,start=time.time(),time.monotonic()
         response,error={},None
+        request_timeout=completion_timeout(count,self.args.timeout)
         try:
-            response=self.client.complete(payload)
+            response=self.client.complete(payload,timeout=request_timeout)
             if not response.get('choices') or not isinstance(response['choices'][0].get('message'),dict):
                 raise ValueError('invalid completion response')
         except urllib.error.HTTPError as exc:
@@ -328,7 +339,7 @@ class SessionRun(cb.Run):
             with (self.directory/'dmesg.txt').open('a') as out:
                 out.write(f'\n## {key} pending @{start_epoch:.6f} to @{until:.6f}\n{window}\n')
             cb.write_json(self.directory/'raw'/f"{key.replace('/','-')}-pending.json",
-                          dict(payload=payload,error=str(exc),recorded=cb.now(),
+                          dict(payload=payload,error=str(exc),recorded=cb.now(),client_timeout=request_timeout,
                                kernel_window=dict(since=start_epoch,until=until),evidence_error=capture_error))
             self.verify_request_swap(key,swap,error=str(exc))
             raise cb.InfrastructureFailure(f'interrupted request remains pending: {key}') from exc
@@ -359,7 +370,7 @@ class SessionRun(cb.Run):
         cached=timings.get('cache_n',usage.get('prompt_tokens_details',{}).get('cached_tokens'))
         with (self.directory/'dmesg.txt').open('a') as out:
             out.write(f'\n## {key} @{start_epoch:.6f} to @{end_epoch:.6f}\n{window}\n')
-        return dict(fixture=fixture,detector_evidence=detector_evidence,key=key,session=session,turn=turn,mode=mode,seed=seed,payload=payload,
+        return dict(fixture=fixture,detector_evidence=detector_evidence,key=key,session=session,turn=turn,mode=mode,seed=seed,payload=payload,client_timeout=request_timeout,
             prompt_tokens=count,server_prompt_tokens=usage.get('prompt_tokens'),cached_tokens=cached,
             generated_tokens=usage.get('completion_tokens',0),timings=timings,
             prompt_tok_s=timings.get('prompt_per_second'),generation_tok_s=timings.get('predicted_per_second'),
