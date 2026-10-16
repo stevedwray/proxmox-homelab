@@ -50,9 +50,10 @@ the API), all on 4.14.8.
    separate plan); put the manager's `ossec.log`/`api.log` into Graylog (host, indexer and dashboard container logs
    already arrive; the manager writes files, not stdout; an rsyslog `imfile` drop-in was proposed, not yet
    decided); SCA baseline is 43% with ~105 failing checks per host (a baseline, not noise).
-5. **Leftover backups on hosts** from the supervised changes: `/opt/wazuh-stack/docker-compose.yml.bak-1a` and
-   `.bak-1b`, the monitoring stack's `victoria-metrics/scrape.yml.bak-p6`, and the manager's
-   `/var/ossec/etc/agent-conf-backup/`. Safe to delete once nobody needs a rollback.
+5. **Backups on hosts (cleaned 2026-10-16, task `wazuh-cleanup-4149`):** the 4.14.8 Docker images, `docker-compose.yml.bak-1a`/`.bak-1b`
+   and the monitoring `scrape.yml.bak-p6` are deleted (Docker volume 75% to 57%). Kept on purpose: `/opt/wazuh-stack/docker-compose.yml.bak-4149`
+   (rollback copy of the 4.14.9 upgrade; delete after a quiet week), the manager's `/var/ossec/etc/agent-conf-backup/` (28KB, one
+   backup per group) and `local_rules.xml.bak` (the deploy play restores from it).
 6. **Known and accepted:** the nextcloud Redis health check carries its password on the command line (it showed up in
    Docker events and indexed alerts; a 4-character prefix of it is in the git history of #478); the operator decided
    not to purge or rotate. 97% of the 3,957 vulnerability findings are Debian-tracker items with no urgency assigned
