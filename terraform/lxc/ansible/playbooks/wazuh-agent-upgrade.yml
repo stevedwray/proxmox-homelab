@@ -1,0 +1,124 @@
+---
+# Upgrade Wazuh agents to wazuh_agent_version (roles/wazuh_agent/defaults/main.yml) -- docs/wazuh-tuning/plan.md,
+# "Upgrade to 4.14.9". Upgrade only: it never touches ossec.conf, the agent group or client.keys, so it cannot undo a
+# stack's own FIM paths, zone group or Docker-monitoring choice (re-running the wazuh_agent role from here would).
+#
+# The hosts come from the manager's own agent list, not an inventory: you name the agents, the play looks up their IPs
+# and only acts on those still below the target version. The manager must already be at or above the target.
+#
+#   export TASK_APPROVAL=<task> ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles
+#   ./with-secrets-prod ansible-playbook -u root -i localhost, terraform/lxc/ansible/playbooks/wazuh-agent-upgrade.yml \
+#     -e '{"upgrade_agents":["apt-cacher-stack"]}'
+#
+# Agents on pve-tiny's LXCs and pve-tiny itself use the same command (the wazuh secrets are in both profiles).
+# One host at a time; any failure stops the run before the next host. Rollback for one agent:
+#   apt-mark unhold wazuh-agent && apt-get install -y --allow-downgrades wazuh-agent=<old>-1 && apt-mark hold wazuh-agent
+
+- name: Resolve the agents to upgrade from the manager
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../roles/wazuh_agent/defaults/main.yml"
+  vars:
+    manager_api: "https://{{ lookup('env', 'LAB_IP_WAZUH') | mandatory }}:55000"
+  tasks:
+    - name: Require an explicit list of agent names
+      ansible.builtin.assert:
+        that: upgrade_agents is defined and upgrade_agents | length > 0
+        fail_msg: pass -e '{"upgrade_agents":["<agent name>", ...]}' -- there is deliberately no "all"
+
+    - name: Authenticate to the Wazuh manager API
+      ansible.builtin.uri:
+        url: "{{ manager_api }}/security/user/authenticate?raw=true"
+        method: POST
+        url_username: wazuh-wui
+        url_password: "{{ lookup('env', 'WAZUH_API_PASSWORD') | mandatory }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- Wazuh's own self-signed cert, internal network only
+        return_content: true
+      register: upgrade_token
+      no_log: true
+
+    - name: Read the agent list and the manager version
+      ansible.builtin.uri:
+        url: "{{ manager_api }}{{ item }}"
+        headers:
+          Authorization: "Bearer {{ upgrade_token.content }}"
+        validate_certs: false  # nosonar: ansible:S4830 -- see above
+        return_content: true
+      loop: ["/agents?select=id,name,ip,version,status&limit=500", "/manager/info"]
+      register: upgrade_api
+
+    - name: Refuse to upgrade an agent past its manager
+      ansible.builtin.assert:
+        that: ("v" ~ wazuh_agent_version) is version(upgrade_api.results[1].json.data.affected_items[0].version, '<=')
+        fail_msg: the manager is older than {{ wazuh_agent_version }}; upgrade the manager first
+
+    - name: Every named agent must exist and be active
+      ansible.builtin.assert:
+        that: item in known and known[item].status == 'active'
+        fail_msg: "{{ item }} is not an active agent on the manager"
+      vars:
+        known: "{{ dict(upgrade_api.results[0].json.data.affected_items | map(attribute='name') | zip(upgrade_api.results[0].json.data.affected_items)) }}"
+      loop: "{{ upgrade_agents }}"
+
+    - name: Add the agents still below the target version
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: upgrade_targets
+        ansible_host: "{{ item.ip }}"
+        ansible_user: root
+        previous_version: "{{ item.version }}"
+      loop: "{{ upgrade_api.results[0].json.data.affected_items }}"
+      when:
+        - item.name in upgrade_agents
+        - item.version != 'Wazuh v' ~ wazuh_agent_version
+      loop_control:
+        label: "{{ item.name }} {{ item.version }}"
+
+- name: Upgrade the wazuh-agent package, one host at a time
+  hosts: upgrade_targets
+  gather_facts: false
+  serial: 1
+  max_fail_percentage: 0
+  vars_files:
+    - "{{ playbook_dir }}/../roles/wazuh_agent/defaults/main.yml"
+  tasks:
+    - name: Lift the wazuh-agent hold for this deliberate version change
+      ansible.builtin.command:
+        argv: [apt-mark, unhold, wazuh-agent]
+      changed_when: false
+
+    - name: Install the pinned wazuh-agent version
+      ansible.builtin.apt:
+        name: "wazuh-agent={{ wazuh_agent_version }}-1"
+        state: present
+        update_cache: true
+        allow_downgrade: false
+
+    - name: Hold the package at the pinned version
+      ansible.builtin.command:
+        argv: [apt-mark, hold, wazuh-agent]
+      changed_when: false
+
+    - name: Make sure the agent service is running
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: started
+
+    - name: Wait for the agent to reconnect to the manager
+      ansible.builtin.command:
+        argv: [grep, -q, "status='connected'", /var/ossec/var/run/wazuh-agentd.state]
+      register: upgrade_connected
+      until: upgrade_connected.rc == 0
+      retries: 18
+      delay: 10
+      changed_when: false
+
+    - name: Confirm the installed agent version
+      ansible.builtin.command:
+        argv: [/var/ossec/bin/wazuh-control, info, -v]
+      register: upgrade_version
+      changed_when: false
+      failed_when: upgrade_version.stdout is not search('v' ~ wazuh_agent_version)
