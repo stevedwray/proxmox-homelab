@@ -269,6 +269,19 @@ Procedure (Phase 1b method; each step its own approval; stop and roll back on an
 Rollback: tags back to 4.14.8 in the compose file and `up -d`, or PBS restore. Agents on 4.14.9 against a 4.14.8 manager are
 unsupported, so do not start step 4 until step 3 passes.
 
+### Gate read, 2026-10-17 (interim; the clean 24 h read is after ~17:00 NZDT, 24 h past the last change)
+
+A rolling 24 h read at 05:30 was not a clean window (the rule deploys, the manager outage and restart, the 4.14.9 upgrade, agent
+restarts, three new agents' first scans and a lot of automation all fell inside it), so only an 11 h interim (since ~18:30 the day
+before) is recorded: 9,886 alerts (about 21,600 a day, gate under 50,000 passes), FIM rule 550 240, cluster green, 0 dropped, 32/32
+agents on 4.14.9, suites pass. The "no rule over 10%" gate failed on two self-inflicted groups, now fixed in the repo (deploy pending the
+clean read so the baseline stays measurable): rule 87907 at 37% was entirely six metrics-collector commands that run once a minute
+(the Wazuh manager's two `.state` reads and `agent_control -l`, and three `redis-cli` queries in Greenbone's Redis; added to the
+suppression list), and the sshd/PAM login rules were mostly the Greenbone credentialed scan (`gvm-scan` from 192.168.70.11, publickey):
+its successful sshd logins (5715) are now rule 100203 at level 0, limited to that user and that address, while the PAM session pair
+(5501/5502) has no source address and is left alone. The gate's intent is "no single noise rule", so login audit trails that remain are
+accepted. `framework` had no rule 510 in the last 12 h; `pve-test` and `pve-tiny` had 4 alerts each in 11 h.
+
 ### Cluster yellow on 2026-10-16 (ISM history replica)
 
 Status check found one unassigned shard: the replica of `.opendistro-ism-managed-index-history-2026.10.15-000002`, created

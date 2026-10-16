@@ -24,82 +24,82 @@
   <rule id="100100" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ \[\ \$\(valkey\-cli\ \-\-pass\ "\$\{REDIS_PASSWORD\}"\ ping\)\ =\ 'PONG'\ \]\z</field>
-    <description>Docker health check (suppressed): netbox-redis-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): netbox-redis-1</description>
   </rule>
   <rule id="100101" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ /usr/bin/healthcheck\.sh\z</field>
-    <description>Docker health check (suppressed): cadvisor</description>
+    <description>Docker health check or metrics-collector command (suppressed): cadvisor</description>
   </rule>
   <rule id="100102" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ test\ \-e\ \$STATE_FILE\z</field>
-    <description>Docker health check (suppressed): greenbone-community-edition-cert-bund-data-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-cert-bund-data-1</description>
   </rule>
   <rule id="100103" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-sk\ https://localhost:9200\ \|\ grep\ \-q\ 'Unauthorized'\z</field>
-    <description>Docker health check (suppressed): opensearch-stack-opensearch</description>
+    <description>Docker health check or metrics-collector command (suppressed): opensearch-stack-opensearch</description>
   </rule>
   <rule id="100104" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-s\ \-o\ /dev/null\ \-w\ '%\{http_code\}'\ http://localhost:5601/api/status\ \|\ grep\ \-qE\ '200\|302'\z</field>
-    <description>Docker health check (suppressed): opensearch-stack-dashboards</description>
+    <description>Docker health check or metrics-collector command (suppressed): opensearch-stack-dashboards</description>
   </rule>
   <rule id="100105" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ pg_isready\ \-U\ docs_rag\z</field>
-    <description>Docker health check (suppressed): docs-rag-pgvector</description>
+    <description>Docker health check or metrics-collector command (suppressed): docs-rag-pgvector</description>
   </rule>
   <rule id="100106" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ /gluetun\-entrypoint\ healthcheck\z</field>
-    <description>Docker health check (suppressed): torrent-stack-lab-gluetun</description>
+    <description>Docker health check or metrics-collector command (suppressed): torrent-stack-lab-gluetun</description>
   </rule>
   <rule id="100107" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: pg_isready\ \-U\ gvmd\ \-d\ gvmd\z</field>
-    <description>Docker health check (suppressed): greenbone-community-edition-pg-gvm-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-pg-gvm-1</description>
   </rule>
   <rule id="100108" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /ldap\ healthcheck\z</field>
-    <description>Docker health check (suppressed): authentik-stack-ldap-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): authentik-stack-ldap-1</description>
   </rule>
   <rule id="100109" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: redis\-cli\ \-a\ \S+\ ping\z</field>
-    <description>Docker health check (suppressed): nextcloud-stack-redis</description>
+    <description>Docker health check or metrics-collector command (suppressed): nextcloud-stack-redis</description>
   </rule>
   <rule id="100110" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ pg_isready\ \-U\ nextcloud\z</field>
-    <description>Docker health check (suppressed): nextcloud-stack-db</description>
+    <description>Docker health check or metrics-collector command (suppressed): nextcloud-stack-db</description>
   </rule>
   <rule id="100111" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ pg_isready\ \-q\ \-t\ 2\ \-d\ \$POSTGRES_DB\ \-U\ \$POSTGRES_USER\z</field>
-    <description>Docker health check (suppressed): netbox-postgres-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): netbox-postgres-1</description>
   </rule>
   <rule id="100112" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ /health_check\.sh\z</field>
-    <description>Docker health check (suppressed): graylog-stack-graylog-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): graylog-stack-graylog-1</description>
   </rule>
   <rule id="100113" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ ps\ \-aux\ \|\ grep\ \-v\ grep\ \|\ grep\ \-q\ rqworker\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): netbox-netbox-worker-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): netbox-netbox-worker-1</description>
   </rule>
   <rule id="100114" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-f\ http://localhost:8080/login/\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): netbox-netbox-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): netbox-netbox-1</description>
   </rule>
   <rule id="100115" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: curl\ \-f\ http://localhost/status\.php\z</field>
-    <description>Docker health check (suppressed): nextcloud-stack-app</description>
+    <description>Docker health check or metrics-collector command (suppressed): nextcloud-stack-app</description>
   </rule>
   <rule id="100116" level="0">
     <if_sid>87907</if_sid>
@@ -108,92 +108,92 @@ try:\
 \ \ \ \ urllib\.request\.urlopen\('http://127\.0\.0\.1:8091/',\ timeout=10\)\
 except\ urllib\.error\.HTTPError\ as\ e:\
 \ \ \ \ sys\.exit\(0\ if\ e\.code\ ==\ 404\ else\ 1\)\z</field>
-    <description>Docker health check (suppressed): deep-research-files</description>
+    <description>Docker health check or metrics-collector command (suppressed): deep-research-files</description>
   </rule>
   <rule id="100117" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: python3\ \-c\ import\ urllib\.request;\ urllib\.request\.urlopen\('http://127\.0\.0\.1:8000/docs',\ timeout=10\)\z</field>
-    <description>Docker health check (suppressed): web-search-mcp</description>
+    <description>Docker health check or metrics-collector command (suppressed): web-search-mcp</description>
   </rule>
   <rule id="100118" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: python3\ \-c\ import\ urllib\.request;\ urllib\.request\.urlopen\('http://127\.0\.0\.1:8090/',\ timeout=10\)\z</field>
-    <description>Docker health check (suppressed): deep-research</description>
+    <description>Docker health check or metrics-collector command (suppressed): deep-research</description>
   </rule>
   <rule id="100119" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: ak\ healthcheck\z</field>
-    <description>Docker health check (suppressed): authentik-stack-worker-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): authentik-stack-worker-1</description>
   </rule>
   <rule id="100120" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080\ \|\|\ curl\ \-k\ \-\-fail\ \-s\ https://localhost:8443\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): harbor-portal</description>
+    <description>Docker health check or metrics-collector command (suppressed): harbor-portal</description>
   </rule>
   <rule id="100121" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ netstat\ \-ltun\|grep\ 10514\z</field>
-    <description>Docker health check (suppressed): harbor-log</description>
+    <description>Docker health check or metrics-collector command (suppressed): harbor-log</description>
   </rule>
   <rule id="100122" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:5000\ \|\|\ curl\ \-k\ \-\-fail\ \-s\ https://localhost:5443\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): registry</description>
+    <description>Docker health check or metrics-collector command (suppressed): registry</description>
   </rule>
   <rule id="100123" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): nginx</description>
+    <description>Docker health check or metrics-collector command (suppressed): nginx</description>
   </rule>
   <rule id="100124" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080/api/health\ \|\|\ curl\ \-sk\ \-\-fail\ \-\-key\ /etc/harbor/ssl/registryctl\.key\ \-\-cert\ /etc/harbor/ssl/registryctl\.crt\ https://localhost:8443/api/health\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): registryctl</description>
+    <description>Docker health check or metrics-collector command (suppressed): registryctl</description>
   </rule>
   <rule id="100125" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080/api/v1/stats\ \|\|\ curl\ \-sk\ \-\-fail\ \-\-key\ /etc/harbor/ssl/job_service\.key\ \-\-cert\ /etc/harbor/ssl/job_service\.crt\ https://localhost:8443/api/v1/stats\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): harbor-jobservice</description>
+    <description>Docker health check or metrics-collector command (suppressed): harbor-jobservice</description>
   </rule>
   <rule id="100126" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080/api/v2\.0/ping\ \|\|\ curl\ \-k\ \-\-fail\ \-s\ https://localhost:8443/api/v2\.0/ping\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): harbor-core</description>
+    <description>Docker health check or metrics-collector command (suppressed): harbor-core</description>
   </rule>
   <rule id="100127" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-fail\ \-s\ http://localhost:8080/probe/healthy\ \|\|\ curl\ \-k\ \-\-fail\ \-s\ https://localhost:8443/probe/healthy\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): trivy-adapter</description>
+    <description>Docker health check or metrics-collector command (suppressed): trivy-adapter</description>
   </rule>
   <rule id="100128" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-\-silent\ \-\-fail\ http://localhost:\$\{PORT:\-8080\}/health\ \|\ jq\ \-ne\ 'input\.status\ ==\ true'\ \|\|\ exit\ 1\z</field>
-    <description>Docker health check (suppressed): openwebui</description>
+    <description>Docker health check or metrics-collector command (suppressed): openwebui</description>
   </rule>
   <rule id="100129" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ immich\-healthcheck\z</field>
-    <description>Docker health check (suppressed): media-stack-lab-immich-server</description>
+    <description>Docker health check or metrics-collector command (suppressed): media-stack-lab-immich-server</description>
   </rule>
   <rule id="100130" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ test\ \-e\ /run/gsa/copying\.done\z</field>
-    <description>Docker health check (suppressed): greenbone-community-edition-gsa-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-gsa-1</description>
   </rule>
   <rule id="100131" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /docker\-healthcheck\.sh\ \z</field>
-    <description>Docker health check (suppressed): harbor-db</description>
+    <description>Docker health check or metrics-collector command (suppressed): harbor-db</description>
   </rule>
   <rule id="100132" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: docker\-healthcheck\ \z</field>
-    <description>Docker health check (suppressed): redis</description>
+    <description>Docker health check or metrics-collector command (suppressed): redis</description>
   </rule>
   <rule id="100133" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ echo\ ".get_version/."\ \|\ socat\ \-\ UNIX\-CONNECT:/run/gvmd/gvmd\.sock\z</field>
-    <description>Docker health check (suppressed): greenbone-community-edition-gvmd-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-gvmd-1</description>
   </rule>
   <rule id="100134" level="0">
     <if_sid>87907</if_sid>
@@ -205,32 +205,62 @@ except\ urllib\.error\.HTTPError:\
 except\ Exception:\
 \ \ \ \ sys\.exit\(1\)\
 sys\.exit\(0\)\z</field>
-    <description>Docker health check (suppressed): cve-mcp-server</description>
+    <description>Docker health check or metrics-collector command (suppressed): cve-mcp-server</description>
   </rule>
   <rule id="100135" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ python3\ healthcheck\.py\z</field>
-    <description>Docker health check (suppressed): media-stack-lab-immich-machine-learning</description>
+    <description>Docker health check or metrics-collector command (suppressed): media-stack-lab-immich-machine-learning</description>
   </rule>
   <rule id="100136" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: wget\ \-q\ \-\-spider\ http://localhost:8080/search\?q=test.format=json\z</field>
-    <description>Docker health check (suppressed): searxng</description>
+    <description>Docker health check or metrics-collector command (suppressed): searxng</description>
   </rule>
   <rule id="100137" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: mongosh\ \-\-quiet\ \-\-eval\ db\.runCommand\('ping'\)\.ok\z</field>
-    <description>Docker health check (suppressed): graylog-stack-mongodb-1</description>
+    <description>Docker health check or metrics-collector command (suppressed): graylog-stack-mongodb-1</description>
   </rule>
   <rule id="100138" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ /usr/local/bin/healthcheck\.sh\z</field>
-    <description>Docker health check (suppressed): media-stack-lab-database</description>
+    <description>Docker health check or metrics-collector command (suppressed): media-stack-lab-database</description>
   </rule>
   <rule id="100139" level="0">
     <if_sid>87907</if_sid>
     <field name="docker.Action" type="pcre2">^exec_start: /bin/sh\ \-c\ curl\ \-s\ \-o\ /dev/null\ \-w\ '%\{http_code\}'\ http://localhost:5601/api/status\ \|\ grep\ \-qE\ '200\|302\|401'\z</field>
-    <description>Docker health check (suppressed): wazuh-stack-dashboard</description>
+    <description>Docker health check or metrics-collector command (suppressed): wazuh-stack-dashboard</description>
+  </rule>
+  <rule id="100140" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: cat\ /var/ossec/var/run/wazuh\-analysisd\.state\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): wazuh-stack-manager</description>
+  </rule>
+  <rule id="100141" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: cat\ /var/ossec/var/run/wazuh\-remoted\.state\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): wazuh-stack-manager</description>
+  </rule>
+  <rule id="100142" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: /var/ossec/bin/agent_control\ \-l\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): wazuh-stack-manager</description>
+  </rule>
+  <rule id="100143" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: redis\-cli\ \-s\ /run/redis/redis\.sock\ info\ memory\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-redis-server-1</description>
+  </rule>
+  <rule id="100144" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: redis\-cli\ \-s\ /run/redis/redis\.sock\ config\ get\ maxmemory\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-redis-server-1</description>
+  </rule>
+  <rule id="100145" level="0">
+    <if_sid>87907</if_sid>
+    <field name="docker.Action" type="pcre2">^exec_start: redis\-cli\ \-s\ /run/redis/redis\.sock\ info\ keyspace\z</field>
+    <description>Docker health check or metrics-collector command (suppressed): greenbone-community-edition-redis-server-1</description>
   </rule>
 </group>
 
@@ -251,6 +281,12 @@ sys\.exit\(0\)\z</field>
     <if_sid>5760</if_sid>
     <srcip>192.168.70.11</srcip>
     <description>sshd: authentication failed from the Greenbone scanner 192.168.70.11 (lowered)</description>
+  </rule>
+  <rule id="100203" level="0">
+    <if_sid>5715</if_sid>
+    <srcip>192.168.70.11</srcip>
+    <user>^gvm-scan$</user>
+    <description>sshd: successful login of the scan account from the Greenbone scanner 192.168.70.11 (suppressed)</description>
   </rule>
 </group>
 

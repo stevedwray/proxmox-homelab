@@ -158,5 +158,29 @@
  {
   "container": "wazuh-stack-dashboard",
   "command": "/bin/sh -c curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302|401'"
+ },
+ {
+  "container": "wazuh-stack-manager",
+  "command": "cat /var/ossec/var/run/wazuh-analysisd.state"
+ },
+ {
+  "container": "wazuh-stack-manager",
+  "command": "cat /var/ossec/var/run/wazuh-remoted.state"
+ },
+ {
+  "container": "wazuh-stack-manager",
+  "command": "/var/ossec/bin/agent_control -l"
+ },
+ {
+  "container": "greenbone-community-edition-redis-server-1",
+  "command": "redis-cli -s /run/redis/redis.sock info memory"
+ },
+ {
+  "container": "greenbone-community-edition-redis-server-1",
+  "command": "redis-cli -s /run/redis/redis.sock config get maxmemory"
+ },
+ {
+  "container": "greenbone-community-edition-redis-server-1",
+  "command": "redis-cli -s /run/redis/redis.sock info keyspace"
  }
 ]
