@@ -50,7 +50,8 @@ if __name__ == '__main__':
 
 class GuardTests(unittest.TestCase):
     def run_guard(self, *, unchanged=False, entries=None, extra=False,
-                  mismatch=False, missing_config=False, wrong_count=False, cleanup=False, preview_override=None):
+                  mismatch=False, missing_config=False, wrong_count=False, cleanup=False, preview_override=None,
+                  only_extra=None):
         entries = list(REQUIRED if entries is None else entries)
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
@@ -72,7 +73,7 @@ class GuardTests(unittest.TestCase):
                                                 preview=preview, calls=str(calls))))
             env = dict(os.environ, PATH=str(folder)+os.pathsep+os.environ['PATH'],
                        GUARD_TEST_SCENARIO=str(scenario))
-            result = subprocess.run(['bash', str(SCRIPT)]+(['--cleanup'] if cleanup else [])+([EXTRA] if extra else []),
+            result = subprocess.run(['bash', str(SCRIPT)]+(['--cleanup'] if cleanup else [])+(['--only-extra']+only_extra if only_extra is not None else [])+([EXTRA] if extra else []),
                                     env=env, text=True, capture_output=True, timeout=10)
             return result, calls.read_text().splitlines(), config.read_text() if config.exists() else None, rendered
 
@@ -82,6 +83,33 @@ class GuardTests(unittest.TestCase):
         self.assertIn('GATE OK', result.stdout)
         self.assertIn('loaded again', result.stdout)
         self.assertEqual(calls, ['swap-config --dry-run', 'swap-config'])
+
+    def test_only_extra_needs_no_ctx_list_and_writes(self):
+        ids = ['laguna-s-2.1-nathanw-candidate-ctx32k', 'laguna-s-2.1-nathanw-candidate-ctx131k']
+        result, calls, _, _ = self.run_guard(entries=ORDINARY+ids, only_extra=ids)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('GATE OK', result.stdout)
+        self.assertEqual(calls, ['swap-config --dry-run', 'swap-config'])
+        result, calls, _, _ = self.run_guard(unchanged=True, entries=ORDINARY+ids, only_extra=ids)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ['swap-config --dry-run'])
+
+    def test_only_extra_refuses_missing_extra_ordinary_or_unknown_preview(self):
+        ids = ['laguna-s-2.1-nathanw-candidate-ctx32k']
+        for entries in (ORDINARY, ORDINARY[1:]+ids):
+            with self.subTest(entries=len(entries)):
+                result, calls, _, _ = self.run_guard(entries=entries, only_extra=ids)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('nothing written', result.stdout)
+                self.assertEqual(calls, ['swap-config --dry-run'])
+        result, calls, _, _ = self.run_guard(entries=ORDINARY+ids, only_extra=ids,
+                                             preview_override='something unfamiliar')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, ['swap-config --dry-run'])
+
+    def test_only_extra_without_ids_refuses_before_any_call(self):
+        with self.assertRaises(FileNotFoundError):  # the stand-in tool was never called
+            self.run_guard(entries=ORDINARY, only_extra=[])
 
     def test_changed_missing_id_refuses_write(self):
         result, calls, _, _ = self.run_guard(entries=REQUIRED[:-1])

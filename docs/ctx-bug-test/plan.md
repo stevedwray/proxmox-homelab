@@ -373,7 +373,7 @@ stops only at one of the stop points in rule 1.
 | ctx-14-cleanup | Framework (production) | `ctx-bug-cleanup` | done 2026-10-15 |
 | ctx-15-fork-check | Framework (read-only) | — | done 2026-10-17 (5 newer fork commits, none about Laguna/tokens) |
 | ctx-16-laguna-harness | local | — | done 2026-10-17 |
-| ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | todo |
+| ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | done 2026-10-17 (candidate 20261016-8e9dcfeb7, not promoted) |
 | ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | todo |
 | ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | todo |
 
@@ -1771,7 +1771,27 @@ candidate ctx32k entry, read `/props`, restore the previous model) and
 write `/storage/artifacts/framework-ctx-bugs/build-expectations-laguna-candidate-<date>.json`
 with `write_build_expectations.py --link nathanw=candidate`.
 
-Result: —
+Result (2026-10-17, `ctx-laguna-fork-build`): all gates passed. Pre-state: lock
+free, upgrade timer active, fork current = candidate = 9e21f2e53, 1017 GB free.
+`llama-builds build fork` compiled **20261016-8e9dcfeb7** (sha
+8e9dcfeb7522f302ff1e5d2bb0492283bc16d24d, reports b10819-8e9dcfeb7, log
+/storage/llama-builds/logs/fork-20261016-8e9dcfeb7.log), pointed the fork
+candidate at it and rewrote llama-swap (34 entries); fork **current stays
+9e21f2e53**, nothing promoted. Inventory printed only the Framework host; the
+playbook gave `ok=15 changed=1 failed=0` and previewed 44 entries including
+`laguna-s-2.1-nathanw-candidate-ctx32k/-ctx131k`. The guarded write then
+stopped, as the plan anticipated, because its fixed 16-ctx-id check cannot be
+met by the two Laguna variants: nothing written. Added a tested `--only-extra`
+mode to `guarded_swap_config.sh` (needs at least one id, all given ids and the
+five ordinary entries, recognised preview, verifies unchanged config bytes as
+before; 3 new tests, 101 harness tests pass). With it: `GATE OK: ordinary
+entries and 2 extra present; writing`, then 44 entries written and
+qwen3-coder-next-upstream loaded again. Harness rsynced. Under the run lock the
+candidate Laguna ctx32k entry was loaded for /props only (no inference) and the
+previous model restored; expectations written to
+`/storage/artifacts/framework-ctx-bugs/build-expectations-laguna-candidate-20261017.json`
+(nathanw = candidate 20261016-8e9dcfeb7 / b10819-8e9dcfeb7, upstream
+b11514-de7fa0a3c). Final state: lock free, timer active, model restored.
 
 #### ctx-18-laguna-run
 

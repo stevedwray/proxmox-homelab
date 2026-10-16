@@ -4,8 +4,19 @@
 # plus any extra entry ids given as arguments (ssh ... 'bash -s -- <id> ...');
 # otherwise prints what is missing and exits 1 without writing anything.
 # --cleanup inverts the ctx-entry gate for ctx-14 and removes Laguna fork.
+# --only-extra (ctx-17) drops the fixed 16 ctx-entry list: it needs at least
+# one extra id, all given ids, and the ordinary tested entries, then writes.
 set -euo pipefail
 cleanup=false
+only_extra=false
+if [[ "${1:-}" == --only-extra ]]; then
+  only_extra=true
+  shift
+  if (( $# == 0 )); then
+    echo 'GATE FAILED: --only-extra needs at least one entry id -- nothing written'
+    exit 1
+  fi
+fi
 if [[ "${1:-}" == --cleanup ]]; then
   cleanup=true
   shift
@@ -72,6 +83,27 @@ if [[ "$cleanup" == true ]]; then
     exit 0
   fi
   echo 'GATE OK: no ctx-test entries or Laguna fork; ordinary tested entries retained; writing'
+  llama-builds swap-config
+  exit 0
+fi
+if [[ "$only_extra" == true ]]; then
+  if ! grep -qE '^(would write [0-9]+ entries:|Verified unchanged config entries:)$' <<<"$out"; then
+    echo 'GATE FAILED: unrecognized preview -- nothing written'
+    exit 1
+  fi
+  missing=""
+  for id in qwen3.8-flash-next-q4-nathanw qwen3.8-flash-next-q4-upstream qwen3.8-flash-next-q4-hip laguna-s-2.1-upstream laguna-s-2.1-hip "$@"; do
+    grep -qxF "  $id" <<<"$out" || missing="$missing $id"
+  done
+  if [ -n "$missing" ]; then
+    echo "GATE FAILED: dry run is missing:$missing -- nothing written"
+    exit 1
+  fi
+  if [[ "$unchanged" == true ]]; then
+    echo "GATE OK: ordinary entries and $# extra present; verified unchanged -- no write or reload"
+    exit 0
+  fi
+  echo "GATE OK: ordinary entries and $# extra present; writing"
   llama-builds swap-config
   exit 0
 fi
