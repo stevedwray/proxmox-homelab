@@ -202,15 +202,16 @@
 
     - name: Build hwmon chip drop rules
       ansible.builtin.set_fact:
-        hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['chip'], 'regex': item | regex_escape, 'action': 'drop'}] }}"
+        hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['stack', 'chip'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape), 'action': 'drop'}] }}"
       loop: "{{ hwmon_drop_chips }}"
 
     - name: Build hwmon sensor-name relabel rules
       ansible.builtin.set_fact:
         hwmon_relabel: >-
           {{ hwmon_relabel
-          + [{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'sensor_name', 'replacement': item.name}]
-          + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'scale', 'replacement': item.scale | string}] if item.scale is defined else []) }}
+          + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'action': 'drop'}] if item.drop | default(false)
+          else [{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'sensor_name', 'replacement': item.name}]
+          + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'scale', 'replacement': item.scale | string}] if item.scale is defined else [])) }}
       loop: "{{ hwmon_sensor_names }}"
 
     # dns-stack's node_exporter target removed 2026-09-08 -- purely cosmetic

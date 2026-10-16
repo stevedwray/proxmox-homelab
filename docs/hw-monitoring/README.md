@@ -131,3 +131,19 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   16 C, dropped). Names filled in `hwmon-hosts.yml`.
 - Metric-name finding: battery power is `node_hwmon_power_watt`, GPU is
   `node_hwmon_power_average_watt`; the dashboard Power panel matches both.
+
+### argon-01: DONE 2026-10-17 (run by the operator; auto-mode blocked the agent)
+
+- Role fix first: the step CLI download was hardcoded amd64; both Pis are
+  aarch64. `node_exporter_step_cli_arch` now picks arm64 (d9af0451). Both Pis
+  already use the Technitium resolvers; Pi-hole is inactive on both.
+- Playbook: ok=28 failed=0. Verified: no-auth 401; authenticated scrape
+  returns `rpi_volt` and `cpu_thermal` chips.
+- Metrics: `node_hwmon_temp_celsius{chip="thermal_thermal_zone0",sensor=
+  "temp0"|"temp1"}` (same zone twice, temp1 dropped);
+  undervoltage is `node_hwmon_in_lcrit_alarm_volts{chip=
+  "soc:firmware_raspberrypi_hwmon",sensor="in0"}` (0 = fine). The dashboard
+  stat panel used the wrong name and is fixed.
+- Relabel bug found by rendering: chip `thermal_thermal_zone0` is the Pi's
+  real CPU sensor but pve-test's placeholder, so chip drops are now scoped
+  per stack (`{stack, chip}`); per-sensor `drop: true` also supported.

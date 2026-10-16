@@ -65,7 +65,7 @@ panels = [
     stat("Slowest running fan (non-zero)",
          f"min by (stack) (node_hwmon_fan_rpm{SEL} > 0)", "{{stack}}", "rpm", 8, 1, w=8),
     stat("Pi undervoltage alarm (1 = active)",
-         f"max by (stack) (node_hwmon_in_lcrit_alarm{SEL})", "{{stack}}", "none", 16, 1, w=8,
+         f"max by (stack) (node_hwmon_in_lcrit_alarm_volts{SEL})", "{{stack}}", "none", 16, 1, w=8,
          steps=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
     row("Temperatures", 5),
     ts("Temperatures", f"node_hwmon_temp_celsius{SEL}", LEG, "celsius", 0, 6, w=24, h=10),

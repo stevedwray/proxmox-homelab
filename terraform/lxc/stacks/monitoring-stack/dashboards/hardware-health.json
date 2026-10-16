@@ -179,7 +179,7 @@
       },
       "targets": [
         {
-          "expr": "max by (stack) (node_hwmon_in_lcrit_alarm{job=~\"node_exporter_hw.*\",stack=~\"$host\"})",
+          "expr": "max by (stack) (node_hwmon_in_lcrit_alarm_volts{job=~\"node_exporter_hw.*\",stack=~\"$host\"})",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }

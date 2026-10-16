@@ -150,7 +150,7 @@ change: >
   # Chips to drop entirely (duplicates). pve's gigabyte_wmi temps are the same
   # six sensors as the it87 chip's temp1-6. Filled in Phase C once the exact
   # `chip` label is read from live data; empty until then.
-  hwmon_drop_chips: []
+  hwmon_drop_chips: []   # entries are {stack, chip}, never a bare chip name
 
   # Friendly sensor names. One entry per sensor. `scale` is optional: a
   # multiplier for voltages behind resistor dividers (the chip reports the
@@ -312,7 +312,7 @@ change: >
 
       - name: Build hwmon chip drop rules
         ansible.builtin.set_fact:
-          hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['chip'], 'regex': item | regex_escape, 'action': 'drop'}] }}"
+          hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['stack', 'chip'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape), 'action': 'drop'}] }}"
         loop: "{{ hwmon_drop_chips }}"
 
       - name: Build hwmon sensor-name relabel rules
@@ -492,7 +492,7 @@ Not step blocks (production mutations, and the sensor names need live data).
    step 07's voltage panel to per-rail PromQL multipliers instead.
    Verify metric names the dashboard uses exist live before step 07:
    `node_hwmon_temp_celsius`, `node_hwmon_fan_rpm`, `node_hwmon_in_volts`,
-   `node_hwmon_pwm`, `node_hwmon_power_watt` (battery) and `node_hwmon_power_average_watt` (GPU), `node_hwmon_in_lcrit_alarm`.
+   `node_hwmon_pwm`, `node_hwmon_power_watt` (battery) and `node_hwmon_power_average_watt` (GPU), `node_hwmon_in_lcrit_alarm_volts`.
 
 ## Phase D: dashboard and docs (local-model steps)
 
@@ -600,7 +600,7 @@ panels = [
     stat("Slowest running fan (non-zero)",
          f"min by (stack) (node_hwmon_fan_rpm{SEL} > 0)", "{{stack}}", "rpm", 8, 1, w=8),
     stat("Pi undervoltage alarm (1 = active)",
-         f"max by (stack) (node_hwmon_in_lcrit_alarm{SEL})", "{{stack}}", "none", 16, 1, w=8,
+         f"max by (stack) (node_hwmon_in_lcrit_alarm_volts{SEL})", "{{stack}}", "none", 16, 1, w=8,
          steps=[{"color": "green", "value": None}, {"color": "red", "value": 1}]),
     row("Temperatures", 5),
     ts("Temperatures", f"node_hwmon_temp_celsius{SEL}", LEG, "celsius", 0, 6, w=24, h=10),
