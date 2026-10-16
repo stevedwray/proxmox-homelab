@@ -78,7 +78,7 @@ panels = [
   # by MetricsQL label_value(); VERIFY this live in Phase C before step 07.
   ts("Voltages", f"node_hwmon_in_volts{SEL} * label_value(node_hwmon_in_volts{SEL}, \"scale\")",
      LEG, "volt", 0, 26),
-    ts("Power", f"node_hwmon_power_average_watt{SEL}", LEG, "watt", 12, 26, vmin=0),
+    ts("Power", f'{{__name__=~"node_hwmon_power(_average)?_watt",job=~"node_exporter_hw.*",stack=~"$host"}}', LEG, "watt", 12, 26, vmin=0),
 ]
 
 dash = {

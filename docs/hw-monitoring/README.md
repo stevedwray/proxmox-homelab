@@ -110,3 +110,24 @@ T-Pot's miniprint docker-proxy. cAdvisor on 8083 works only because Docker
 publishes it via DNAT (bypasses INPUT). **Decided 2026-10-17:** run node_exporter
 as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
 `tpot-monitoring.yml --tags hwmon`; no change to T-Pot's firewall.
+
+## Deploy log
+
+### pve-test: DONE 2026-10-17 (operator chose full TLS deploy, option B)
+
+- First run failed at step-ca cert issuance: pve-test trusted a stale root CA
+  (fingerprint F3:5E:A5..., April) instead of production's A9:3B:F0...; the
+  role's `--root` needs the current one. pve-tiny had no root file at all.
+  Playbook now installs `certs/homelab-root.crt` first (cf5f098d).
+- Consequences accepted by the operator: pve-test's root CA file was
+  replaced with the production one, and the step-ca provisioner password
+  (`/etc/node_exporter/provisioner-password.txt`, root 0600) now lives on the
+  cyber-range laptop (every managed LXC already holds the same).
+- Verified: no-auth -> 401, plain http -> 400, authenticated TLS scrape OK
+  with 4192 metric lines.
+- Live chips: `platform_coretemp_0` (temp1 Package, temp2/3 Core 0/1),
+  `lnxsybus:00_tos6208:00` (fan1, 3090 RPM), `power_supply_bat1` (in0
+  10.85 V, power1), `power_supply_adp1`, `thermal_thermal_zone0` (constant
+  16 C, dropped). Names filled in `hwmon-hosts.yml`.
+- Metric-name finding: battery power is `node_hwmon_power_watt`, GPU is
+  `node_hwmon_power_average_watt`; the dashboard Power panel matches both.

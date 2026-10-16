@@ -462,7 +462,7 @@
       },
       "targets": [
         {
-          "expr": "node_hwmon_power_average_watt{job=~\"node_exporter_hw.*\",stack=~\"$host\"}",
+          "expr": "{__name__=~\"node_hwmon_power(_average)?_watt\",job=~\"node_exporter_hw.*\",stack=~\"$host\"}",
           "legendFormat": "{{stack}} {{sensor_name}}",
           "refId": "A"
         }

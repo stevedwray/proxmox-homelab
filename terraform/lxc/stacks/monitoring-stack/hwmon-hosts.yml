@@ -15,11 +15,20 @@ hwmon_hosts:
 # Chips to drop entirely (duplicates). pve's gigabyte_wmi temps are the same
 # six sensors as the it87 chip's temp1-6. Filled in Phase C once the exact
 # `chip` label is read from live data; empty until then.
-hwmon_drop_chips: []
+hwmon_drop_chips:
+  # pve-test acpitz reads a constant 16 C (placeholder zone), not a real sensor
+  - thermal_thermal_zone0
 
 # Friendly sensor names. One entry per sensor. `scale` is optional: a
 # multiplier for voltages behind resistor dividers (the chip reports the
 # raw divided value, e.g. pve in2 = 1.99 V raw for the +12V rail, scale 6).
 #   {stack: pve, chip: "<node_hwmon chip label>", sensor: "fan2", name: "CPU fan"}
 #   {stack: pve, chip: "<node_hwmon chip label>", sensor: "in2", name: "+12V", scale: 6}
-hwmon_sensor_names: []
+hwmon_sensor_names:
+  # pve-test (Toshiba R930); names from the kernel's own sensor labels
+  - {stack: pve-test, chip: platform_coretemp_0, sensor: temp1, name: "CPU package"}
+  - {stack: pve-test, chip: platform_coretemp_0, sensor: temp2, name: "CPU core 0"}
+  - {stack: pve-test, chip: platform_coretemp_0, sensor: temp3, name: "CPU core 1"}
+  - {stack: pve-test, chip: "lnxsybus:00_tos6208:00", sensor: fan1, name: "System fan"}
+  - {stack: pve-test, chip: power_supply_bat1, sensor: in0, name: "Battery voltage"}
+  - {stack: pve-test, chip: power_supply_bat1, sensor: power1, name: "Battery power"}
