@@ -986,6 +986,31 @@
       no_log: true
       tags: [oci-edge-scan]
 
+    # Pangolin's Next.js UI answers 200 for unknown paths, which makes the osCommerce
+    # NVTs fire on a host with no osCommerce. Narrow overrides (one host, one port,
+    # named NVTs); see the docstring in the script and oci/docs/
+    # vulnerability-scan-maintenance-plan.md. Idempotent: lists before creating.
+    - name: Write OCI Pangolin false-positive overrides script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_oci_pangolin_overrides.py"
+        dest: "{{ greenbone_compose_dir }}/setup_oci_pangolin_overrides.py"
+        mode: "0644"
+      tags: [oci-overrides]
+
+    - name: Create the OCI Pangolin false-positive overrides (idempotent)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_oci_pangolin_overrides.py:/tmp/setup_oci_pangolin_overrides.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          gvm-tools python3 /tmp/setup_oci_pangolin_overrides.py
+        chdir: "{{ greenbone_compose_dir }}"
+      register: greenbone_oci_overrides_setup
+      changed_when: "'created override' in greenbone_oci_overrides_setup.stdout"
+      no_log: true
+      tags: [oci-overrides]
+
     - name: Create temporary directory for OCI Pangolin credentialed scan key
       ansible.builtin.tempfile:
         state: directory
