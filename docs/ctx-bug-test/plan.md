@@ -375,7 +375,7 @@ stops only at one of the stop points in rule 1.
 | ctx-16-laguna-harness | local | — | done 2026-10-17 |
 | ctx-17-laguna-candidate | Framework (production) | `ctx-laguna-fork-build` | done 2026-10-17 (candidate 20261016-8e9dcfeb7, not promoted) |
 | ctx-18-laguna-run | Framework (production) | `ctx-laguna-fork-run` | done 2026-10-17: NOT fixed (same flood as b10814) |
-| ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | todo |
+| ctx-19-laguna-cleanup | Framework (production) | `ctx-laguna-fork-cleanup` | done 2026-10-17 |
 
 #### ctx-01-build-check (done)
 
@@ -1837,7 +1837,24 @@ model is loaded, the lock is free and the upgrade timer is active. Keep
 the candidate's build dir on disk (it is the evidence and the promotion
 path if wanted).
 
-Result: —
+Result (2026-10-17, `ctx-laguna-fork-cleanup`): done. models.json: Laguna
+variants `[]`, backends `["upstream","upstream-hip"]`, `nathanw` status stays
+`broken` with the candidate result appended (checked 2026-10-17); a JSON
+comparison against the pre-ctx-16 catalogue (35bbb492) shows Laguna's entry is
+the only difference and no variants remain anywhere. Pre-state: no harness
+units, timer active and upgrade service inactive, lock free, candidate still
+20261016-8e9dcfeb7. Inventory printed only the Framework host; playbook
+`ok=15 changed=1 failed=0`, previewing 34 entries. `llama-builds build fork
+9e21f2e53` (already built, no compile) pointed the candidate back at current,
+which rewrote llama-swap to 27 entries with qwen3-coder-next-upstream loaded
+again. The cleanup guard then reported `llama-swap config unchanged (27
+entries)` and `GATE OK: no ctx-test entries or Laguna fork; verified unchanged
+-- no write or reload`, so no second write was needed. Verified: 27 generated
+entries, none with `-ctx`, candidate or Laguna fork; loaded model
+qwen3-coder-next-upstream / b11514-de7fa0a3c; run lock free; timer active; fork
+current = candidate = 20261008-9e21f2e53. The candidate build dir
+20261016-8e9dcfeb7 and the run evidence were kept on disk. No build was
+promoted.
 
 ## Decisions (operator, 2026-10-13)
 
