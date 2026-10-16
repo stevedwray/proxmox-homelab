@@ -525,7 +525,7 @@ gates:
     expect: "prints 'wrote terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json'"
     critical: true
   - id: json-valid
-    cmd: "python3 -c \"import json;d=json.load(open('terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json'));assert d['uid']=='hardware-health' and len(d['panels'])==12\""
+    cmd: "python3 -c \"import json;d=json.load(open('terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json'));assert d['uid']=='hardware-health' and len(d['panels'])==15\""
     expect: "exit 0"
     critical: true
 ```
@@ -544,7 +544,7 @@ import pathlib
 
 OUT = pathlib.Path("terraform/lxc/stacks/monitoring-stack/dashboards/hardware-health.json")
 DS = {"type": "prometheus", "uid": "VictoriaMetrics"}
-SEL = '{job="node_exporter_hw",stack=~"$host"}'
+SEL = '{job=~"node_exporter_hw.*",stack=~"$host"}'
 
 _id = 0
 
@@ -614,6 +614,13 @@ panels = [
   ts("Voltages", f"node_hwmon_in_volts{SEL} * label_value(node_hwmon_in_volts{SEL}, \"scale\")",
      LEG, "volt", 0, 26),
     ts("Power", f'{{__name__=~"node_hwmon_power(_average)?_watt",job=~"node_exporter_hw.*",stack=~"$host"}}', LEG, "watt", 12, 26, vmin=0),
+    row("Raspberry Pi 5 power rails (PMIC)", 34),
+    ts("PMIC rail voltages",
+       f'rpi_pmic_volts{{job=~"node_exporter_hw.*",stack=~"$host"}} > 0',
+       "{{stack}} {{rail}}", "volt", 0, 35),
+    ts("PMIC rail currents",
+       f'rpi_pmic_current_amps{{job=~"node_exporter_hw.*",stack=~"$host"}}',
+       "{{stack}} {{rail}}", "amp", 12, 35, vmin=0),
 ]
 
 dash = {
@@ -624,8 +631,8 @@ dash = {
     "tags": ["lab", "hardware"],
     "templating": {"list": [{
         "name": "host", "label": "Host", "type": "query", "datasource": DS,
-        "definition": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
-        "query": {"query": 'label_values(node_hwmon_temp_celsius{job="node_exporter_hw"}, stack)',
+        "definition": 'label_values(node_hwmon_temp_celsius{job=~"node_exporter_hw.*"}, stack)',
+        "query": {"query": 'label_values(node_hwmon_temp_celsius{job=~"node_exporter_hw.*"}, stack)',
                   "refId": "A"},
         "refresh": 2, "sort": 1, "multi": True, "includeAll": True,
         "allValue": ".+", "current": {}, "hide": 0}]},

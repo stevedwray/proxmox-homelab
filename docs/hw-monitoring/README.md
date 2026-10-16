@@ -176,3 +176,15 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   x1.649, +12V x6, +5V x2.5).
 - Observation: `nvme_nvme1` Sensor 2 reads ~79.9 C (composite ~54.9 C) --
   worth a look at airflow/placement; nvme limits exported are meaningless.
+
+### tpot: DONE 2026-10-17 (operator ran `tpot-monitoring.yml --tags hwmon`; ok=7 failed=0)
+
+- node_exporter container on tcp/8084 (plain HTTP), 238 metric lines, only
+  hwmon + textfile collectors. Chips: `thermal_thermal_zone0` (temp0/temp1 are
+  one zone; temp1 dropped), `nvme_nvme0`, `platform_cooling_fan` (fan 0 RPM,
+  pwm 0 at 45 C: fan idle), `soc_107c000000:firmware_raspberrypi_hwmon`
+  (undervoltage 0), `1000120000_pcie_1f000c8000_adc` (RP1 temp 50 C; in1-in4
+  unlabelled ADC inputs, dropped).
+- PMIC rails arrive as `rpi_pmic_volts{rail}` / `rpi_pmic_current_amps{rail}`
+  (textfile timer working: EXT5V 5.12 V, VDD_CORE 0.87 V / 0.66 A). The
+  dashboard gained a "Raspberry Pi 5 power rails" row (15 panels now).

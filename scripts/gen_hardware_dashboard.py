@@ -79,6 +79,13 @@ panels = [
   ts("Voltages", f"node_hwmon_in_volts{SEL} * label_value(node_hwmon_in_volts{SEL}, \"scale\")",
      LEG, "volt", 0, 26),
     ts("Power", f'{{__name__=~"node_hwmon_power(_average)?_watt",job=~"node_exporter_hw.*",stack=~"$host"}}', LEG, "watt", 12, 26, vmin=0),
+    row("Raspberry Pi 5 power rails (PMIC)", 34),
+    ts("PMIC rail voltages",
+       f'rpi_pmic_volts{{job=~"node_exporter_hw.*",stack=~"$host"}} > 0',
+       "{{stack}} {{rail}}", "volt", 0, 35),
+    ts("PMIC rail currents",
+       f'rpi_pmic_current_amps{{job=~"node_exporter_hw.*",stack=~"$host"}}',
+       "{{stack}} {{rail}}", "amp", 12, 35, vmin=0),
 ]
 
 dash = {

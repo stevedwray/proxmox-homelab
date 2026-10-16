@@ -143,3 +143,17 @@ hwmon_sensor_names:
   - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: pwm1, name: "GPU fan duty"}
   - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: in0, name: "GPU vddgfx"}
   - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: power1, name: "GPU power"}
+  # tpot (Pi 5): node_exporter container on :8084. rp1_adc in1-in4 are unlabelled
+  # ADC inputs with no known wiring, dropped; re-add if a HAT uses them.
+  - {stack: tpot, chip: thermal_thermal_zone0, sensor: temp0, name: "CPU"}
+  - {stack: tpot, chip: thermal_thermal_zone0, sensor: temp1, drop: true}
+  - {stack: tpot, chip: "1000120000_pcie_1f000c8000_adc", sensor: temp1, name: "RP1 chip"}
+  - {stack: tpot, chip: "1000120000_pcie_1f000c8000_adc", sensor: in1, drop: true}
+  - {stack: tpot, chip: "1000120000_pcie_1f000c8000_adc", sensor: in2, drop: true}
+  - {stack: tpot, chip: "1000120000_pcie_1f000c8000_adc", sensor: in3, drop: true}
+  - {stack: tpot, chip: "1000120000_pcie_1f000c8000_adc", sensor: in4, drop: true}
+  - {stack: tpot, chip: nvme_nvme0, sensor: temp1, name: "NVMe composite"}
+  - {stack: tpot, chip: nvme_nvme0, sensor: temp3, name: "NVMe sensor 2"}
+  - {stack: tpot, chip: platform_cooling_fan, sensor: fan1, name: "Case fan"}
+  - {stack: tpot, chip: platform_cooling_fan, sensor: pwm1, name: "Case fan duty"}
+  - {stack: tpot, chip: "soc_107c000000:firmware_raspberrypi_hwmon", sensor: in0, name: "Undervoltage alarm"}
