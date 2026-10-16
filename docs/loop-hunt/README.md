@@ -10,8 +10,8 @@ overflow, 262k context, the fork's older build, real Open WebUI chats, and
 a blind judge for semantic looping and context echoing. See
 [plan.md](plan.md).
 
-Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 complete and reviewed; lh-07 running; prior evidence preserved**
-(2026-10-16). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
+Status: **lh-01–01c complete; V1/V9 selected; lh-02–04 complete; deployed; lh-05 complete; lh-06 and lh-07 complete and reviewed; lh-08 sample judged; lh-09 drafted; lh-10 awaiting approval**
+(2026-10-17). Decisions D-L1 to D-L7 are settled. The corrected plan leaves
 parallel unset and requires the pilot to confirm the expected shared-pool
 slot layout through `/props` and `/slots`; a different layout stops the pilot.
 
@@ -599,3 +599,112 @@ the three seeds already used by the runner; requests remain unchanged.
 The preserved matrix regrade includes the comparison-order correction: a refused
 pair is not comparable even when its successful peer has a flag. Model
 requests and server settings stayed fixed.
+
+## Findings and answer (lh-09, drafted 2026-10-17)
+
+### Short answer
+
+**Does the Nathanw fork loop where upstream does not?** Not established.
+Under every condition tested, the current fork (b10814-9e21f2e53) behaved
+like upstream (b11514-de7fa0a3c): no exact loops, no answer-channel repetition,
+perfect recall. The only build-specific signal is on the older fork build
+(b10710-b02cb35f2, the "previous" candidate): its reasoning channel was
+rated moderately-or-worse semantically looping on 11 of 39 judged turns,
+against 1 of 33 (current fork) and 0 of 28 (upstream). Three of its turns
+were severe, and they reproduced exactly on a second blind pass. This is
+**suggestive, not established**: the judge was one Claude Sonnet model (not
+independent), the sample was small and uneven, the second pass covered only
+half the planned check (the rest was blocked by a model safeguard), and a
+tuned replay of two real prompts showed repetition candidates on all builds.
+The signal is also not tied to context size: repetition candidates came at
+4k and 16k tokens, and the judge's hits span C1, C2 and C4. Nothing points to
+a long-context or KV-cache cause: all warm/cold checkpoint pairs were clean
+or matched (model/content). The looping reported in real use remains
+unreproduced as a build defect; what reproduces everywhere is long Qwen3.8
+reasoning.
+
+### Context Integrity Score (0-1000)
+
+CIS = recall x (judged coherence / 5) x (1 - detector repetition/runaway/
+no-answer rate) x 1000. Recall was 1.0 for every build. Coherence is the
+judge's mean on the sample (flagged turns over-represented; GLM sample is
+nearly its whole population), so it is a rough build-level figure. A
+per-condition CIS is not given: the judged sample is too thin per condition.
+
+| Model/build | Recall | Mean coherence | Detector bad-turn rate | CIS |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen fork current | 1.00 | 4.76 | 0/188 | ~952 |
+| Qwen fork previous | 1.00 | 4.33 | 3/195 | ~853 |
+| Qwen upstream | 1.00 | 4.68 | 0/202 | ~936 |
+| GLM upstream | 1.00 | 4.99 | 0/118 | ~998 |
+
+Detector bad-turn rate by condition (rep/runaway/no-answer flags, completed
+turns): fork previous C1 1/64, C2 1/36, C4 1/66, others 0; every other cell 0.
+GLM's lower instruction-following (3.55) is its question-line format
+failures, not looping, and is not in this CIS.
+
+### Collapse context
+
+No size at which a build collapses was found. Recorded onsets: fork previous
+reasoning-repetition candidates at 16462 (C1/C4 turn 4) and 4141 (C2 turn 1)
+prompt tokens; fork current first format flag at 45097 (C4); upstream first
+GPU-warning flag at 147573 (C4). None grew with context. The judge's
+moderate-or-worse hits (all builds) appear in C1, C2 and C4; no size trend
+was computed.
+
+### Findings
+
+**FND-1: older fork build shows more reasoning-channel semantic looping**
+- Environment: Qwen3.8-Flash-Next Q4, fork b10710-b02cb35f2, sess131k/262k,
+  synthetic incident sessions, server defaults.
+- Observation: judge rated 11/39 sampled turns moderate+ (3 severe); the
+  other builds 1/33 and 0/28. Detector flagged only 3 of them.
+- Evidence: sample judging and re-check in plan.md lh-08; 5 of 8 re-checked
+  moderate+ turns held, the 3 severe ones reproduced.
+- Impact: wasted reasoning tokens; visible answers and recall unaffected.
+- Confidence: low to medium.
+- Suspected cause: unknown; the 10-08 Vulkan FA NaN fixes are the obvious
+  difference from the current fork, untested.
+- Workaround: use the current fork or upstream.
+
+**FND-2: Qwen3.8 reasoning exhausts an 8192-token cap on a short real prompt**
+- Environment: all three Qwen builds, V9 replay, 117-token prompt, cache 0.
+- Observation: 9 of 9 samples spent the full budget in reasoning with no
+  answer; V1 hit the cap on 1 of 3 seeds on fork current and upstream.
+- Impact: empty answers under small output limits. Not build-specific.
+- Confidence: high for the behaviour; cause (default high reasoning effort)
+  is consistent with earlier findings but not isolated here.
+- Workaround: larger output limit or lower reasoning effort.
+
+**FND-3: shared-pool exhaustion and overflow refuse requests, no truncation**
+- Observation: C2 returned HTTP 500 (context size exceeded) once the four
+  sessions' summed prompts reached about 131k, 20 requests per model/build;
+  C3 returned HTTP 400 past n_ctx. No silent truncation in accepted
+  responses; cold requests at the same sizes succeeded.
+- Impact: clients must handle 500/400 at the pool limit; identical on all
+  builds. Confidence: high.
+
+**FND-4: upstream cold prefill near 250k is slower; GPU fence warnings**
+- Observation: cold 250k prompt read at 123 tok/s on upstream vs 609 (fork
+  current) and 411 (previous); seven amdgpu fence-fallback warnings (one GLM
+  C1, six upstream C4). Histories differ slightly across builds.
+- Impact: very long first prefill needs a long client timeout (7200 s used).
+  Confidence: medium on the rate; no causal GPU claim.
+
+**FND-5: GLM-5.3-Flash ignores the question-line format**
+- Observation: format flag on essentially every GLM turn; recall 270/270.
+- Impact: instruction-following, not looping. Confidence: high.
+
+### Drafted model-list statuses for lh-10
+
+Not applied. Existing statuses stay "works"; reasons are appended.
+
+| Entry | Scope | Proposed status | Proposed reason |
+| --- | --- | --- | --- |
+| qwen3.8-flash-next-q4 | nathanw (current fork) | works | loop-hunt: no loops or recall loss to 262k (docs/loop-hunt); long reasoning can exhaust small output caps |
+| qwen3.8-flash-next-q4 | upstream | works | same as above; cold 250k prefill is slow (123 tok/s) |
+| glm-5.3-flash | upstream | works | loop-hunt: no looping, 270/270 recall to 131k; ignores the question-line format |
+| fork previous build | candidate only | no entry | removed with the candidate at lh-10 |
+
+No model is marked broken by this test. If the operator wants FND-1 treated
+as established, a second judge on a larger sample should come first.

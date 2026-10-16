@@ -184,7 +184,7 @@ Same agent rules as ctx-bug-test. Operator prompt:
 | lh-06-matrix | Framework (production) | `loop-hunt-matrix` | done and reviewed 2026-10-16 (20/20 jobs, 793 primary records, 1434/1434 accepted-response facts; README "Matrix") |
 | lh-07-replay-real | Framework (production) | `loop-hunt-replay` | done 2026-10-16/17 (7/7 targets, 42 requests, cleanup verified; reviewed in README "Replays") |
 | lh-08-judge | local + operator | — | local corpus/guide built 2026-10-17; waiting for operator to run the cloud judge |
-| lh-09-writeup | local | — | todo |
+| lh-09-writeup | local | — | drafted 2026-10-17 (README "Findings and answer"); answer: not established, FND-1 suggestive only |
 | lh-10-cleanup | Framework (production) | `loop-hunt-cleanup` | todo |
 
 #### lh-00-decisions
@@ -1866,7 +1866,7 @@ to: "Does the Nathanw fork loop where upstream doesn't, and if so, under
 which condition and since which build?" Update the model list statuses
 as a drafted table for lh-10.
 
-Result: —
+Result (2026-10-17): drafted in README "Findings and answer": short answer, CIS table (per build; per-condition not computable from the sample), collapse context (none found), FND-1..5 and the drafted model statuses for lh-10 (no model marked broken). Needs operator review.
 
 #### lh-10-cleanup
 
