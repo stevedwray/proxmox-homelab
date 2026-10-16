@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Bounded overnight supervision. No service restarts or checkpoint edits."""
+import argparse
+import datetime
+import fcntl
+import json
+import subprocess
+import time
+import urllib.request
+from pathlib import Path
+
+
+class Watcher:
+    def __init__(self, directory, unit, builds_json):
+        self.directory = Path(directory)
+        self.builds_json = str(builds_json)
+        self.path = self.directory / 'watcher.json'
+        self.state = json.loads(self.path.read_text()) if self.path.exists() else dict(
+            unit=unit, retries=0, status='watching', timer_restored=False)
+
+    def save(self, message):
+        self.state['updated'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self.state['message'] = message
+        temporary = self.path.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(self.state, indent=2, sort_keys=True)+'\n')
+        temporary.replace(self.path)
+        line = self.state['updated']+' '+message
+        with (self.directory/'watcher.log').open('a') as log:
+            log.write(line+'\n')
+        print(line, flush=True)
+
+    def command(self, argv, check=True):
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        if check and result.returncode:
+            raise RuntimeError(f"{' '.join(argv)}: {(result.stderr or result.stdout).strip()}")
+        return result.stdout.strip()
+
+    def unit_state(self):
+        value = self.command(['systemctl', '--user', 'is-active', self.state['unit']], check=False)
+        if value not in ('active', 'activating', 'reloading', 'deactivating', 'inactive', 'failed', 'unknown'):
+            raise RuntimeError('cannot determine run unit state; refuse timer/recovery actions')
+        return value
+
+    def restore_timer(self):
+        self.command(['sudo', '-n', 'systemctl', 'start', 'apt-daily-upgrade.timer'])
+        if self.command(['systemctl', 'is-active', 'apt-daily-upgrade.timer']) != 'active':
+            raise RuntimeError('daily upgrade timer is not active after restoration')
+        self.state['timer_restored'] = True
+
+    def pause_timer(self):
+        # Never stop an upgrade service, even if its timer became due meanwhile.
+        if self.command(['systemctl', 'is-active', 'apt-daily-upgrade.service'], check=False) != 'inactive':
+            raise RuntimeError('daily upgrade service is not inactive; refuse automatic resume')
+        self.command(['sudo', '-n', 'systemctl', 'stop', 'apt-daily-upgrade.timer'])
+        values = self.command(['systemctl', 'is-active', 'apt-daily-upgrade.service',
+                               'apt-daily-upgrade.timer'], check=False).splitlines()
+        if values != ['inactive', 'inactive']:
+            raise RuntimeError('daily upgrade service/timer inactivity gate failed')
+        self.state['timer_restored'] = False
+
+    def swap_ready(self, identity):
+        url = identity['swap_url']
+        if url != 'http://127.0.0.1:8099':
+            raise RuntimeError('automatic resume requires the approved local swap URL')
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        previous = None
+        for attempt in range(2):
+            with opener.open(url+'/running', timeout=5) as response:
+                data = json.load(response)
+            if not isinstance(data.get('running'), list):
+                raise RuntimeError('unexpected swap /running response')
+            current = self.command(['systemctl', 'show', '-p', 'MainPID', '-p',
+                                    'ActiveEnterTimestampMonotonic', '--value', 'llama-swap.service'])
+            values = current.splitlines()
+            if len(values) != 2 or not all(v.isdigit() and int(v)>0 for v in values):
+                raise RuntimeError('swap has no active identity')
+            if previous is not None and current != previous:
+                raise RuntimeError('swap identity is still changing; refuse resume')
+            previous = current
+            if attempt == 0:
+                time.sleep(5)
+
+    def resume(self, manifest):
+        identity = manifest['identity']
+        expected = dict(models=['qwen3.8-flash-next-q4', 'laguna-s-2.1'],
+                        builds_selected=['nathanw', 'upstream'], sizes=[32768,65536,98304,131072],
+                        greedy_only=False, candidate=False, entry_suffix=None, extra_seeds=None,
+                        prompts=['S1','S2','S3','S4','S5','F'], dry_run=False)
+        if any(identity.get(k) != v for k,v in expected.items()):
+            raise RuntimeError('automatic resume only supports this approved full matrix')
+        self.swap_ready(identity)
+        self.state['retries'] += 1
+        self.save('Attempting the one permitted checkpointed infrastructure resume')
+        self.pause_timer()
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ').lower()
+        unit = 'framework-ctx-bugs-watch-resume-'+stamp
+        self.state['unit'] = unit+'.service'
+        self.save('Tracking resume unit before launch: '+self.state['unit'])
+        self.command(['systemd-run', '--user', '--unit', unit, '--collect',
+                      '--property=Nice=10', '--property=IOSchedulingClass=best-effort',
+                      '--property=IOSchedulingPriority=6', 'python3',
+                      str(Path(__file__).with_name('ctx_bugs.py')), '--run-dir', str(self.directory),
+                      '--builds-json', self.builds_json])
+        self.state['status'] = 'watching'
+        self.save('Checkpointed resume launched as '+self.state['unit'])
+
+    def poll(self):
+        unit_state = self.unit_state()
+        active = unit_state in ('active', 'activating', 'reloading', 'deactivating')
+        if not active:
+            # Even corrupted run metadata must not prevent D10 cleanup.
+            self.restore_timer()
+        manifest = json.loads((self.directory/'run.json').read_text())
+        progress = json.loads((self.directory/'progress.json').read_text())
+        status = progress['status']
+        self.state.update(run_status=status, completed=progress['completed'])
+        if active:
+            self.state['status'] = 'watching'
+            results = self.directory/'results.jsonl'
+            records = []
+            if results.exists():
+                data = results.read_bytes()
+                lines = data.splitlines() if data.endswith(b'\n') else data.splitlines()[:-1]
+                records = [json.loads(line) for line in lines if line]
+            self.state['flag_counts'] = {flag: sum(flag in r['flags'] for r in records)
+                                        for flag in ('crash','gpu-error','runaway','loop','repetition','hidden-tokens')}
+            self.state['evidence_errors'] = sum(bool(r.get('evidence_error')) for r in records)
+            if records:
+                self.state['latest_request'] = records[-1]['key']
+            updated = datetime.datetime.fromisoformat(progress.get('updated', manifest['started']))
+            idle = (datetime.datetime.now(datetime.timezone.utc)-updated).total_seconds()
+            self.state['progress_idle_seconds'] = round(idle)
+            self.state['progress_warning'] = idle > 2700
+            self.save(f"Run {status}, {progress['completed']} requests recorded; unit {unit_state}")
+            return False
+        if status == 'complete':
+            self.state['status'] = 'complete' if manifest.get('restored_default') else 'needs-attention'
+            self.save('Run complete; upgrade timer active; model restoration '+
+                      ('confirmed' if manifest.get('restored_default') else 'NOT confirmed'))
+            return True
+        eligible = (status == 'failed' and self.state['retries'] == 0 and
+                    manifest.get('restored_default') is True and
+                    manifest.get('failure', '').startswith('llama-swap restarted or unreachable during '))
+        if eligible:
+            try:
+                self.resume(manifest)
+                return False
+            except Exception as exc:
+                if self.unit_state() in ('active', 'activating', 'reloading', 'deactivating'):
+                    self.save('Resume command reported an error but tracked unit is active; keep watching: '+str(exc))
+                    return False
+                self.restore_timer()
+                self.state['status'] = 'needs-attention'
+                self.save('Automatic recovery refused/failed: '+str(exc)+'; timer active')
+                return True
+        self.state['status'] = 'needs-attention'
+        self.save('Run stopped; timer active; no automatic retry: '+manifest.get('failure', status))
+        return True
+
+    def run(self):
+        with (self.directory/'.watcher-lock').open('a') as guard:
+            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.save('Watcher attached; poll every 600s; at most one infrastructure resume')
+            while True:
+                try:
+                    if self.poll():
+                        return 0 if self.state['status']=='complete' else 1
+                except Exception as exc:
+                    # Keep supervising after a temporary read/command failure;
+                    # especially keep retrying timer restoration on terminal runs.
+                    self.save('Watcher error; no recovery action: '+str(exc))
+                time.sleep(600)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--run-dir', type=Path, required=True)
+    parser.add_argument('--run-unit', required=True)
+    parser.add_argument('--builds-json', type=Path, required=True)
+    args = parser.parse_args()
+    raise SystemExit(Watcher(args.run_dir, args.run_unit, args.builds_json).run())

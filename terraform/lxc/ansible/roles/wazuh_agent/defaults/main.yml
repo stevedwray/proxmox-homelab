@@ -10,7 +10,7 @@ wazuh_agent_fim_paths: []
 
 # Package version of wazuh-agent, equal to the manager's wazuh_image_tag (deploy-wazuh-stack.yml).
 # Empty string installs the newest, which can be newer than the manager (unsupported).
-wazuh_agent_version: "4.14.8"
+wazuh_agent_version: "4.14.9"
 
 # Fleet-wide agent_groups (docs/lxc-scan-and-monitoring-rollout/plan.md,
 # waz-01, added 2026-09-29 -- the pilot-era comment here used to say
@@ -30,3 +30,9 @@ wazuh_agent_group: ""
 # unprivileged user. Only set this true for a host where that tradeoff
 # has been deliberately accepted (see docs/wazuh-stack/).
 wazuh_agent_docker_monitoring_enabled: false
+
+# Where the agent reads system and auth logs from. The LXC fleet has rsyslog (lxc_base), so /var/log/syslog and
+# /var/log/auth.log exist. A host with journald only, such as the Proxmox hypervisors, has neither file and the agent
+# logs error 1103 on every start and never sees SSH or sudo events. "auto" uses journald when /var/log/auth.log is
+# missing; "files" or "journald" force it (docs/wazuh-tuning/plan.md Phase 5a).
+wazuh_agent_log_source: auto

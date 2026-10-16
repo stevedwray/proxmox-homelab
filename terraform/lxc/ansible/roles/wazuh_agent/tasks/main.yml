@@ -110,12 +110,26 @@
 # new as every agent, and an unversioned install pulled 4.14.8 onto agents while the manager was
 # 4.14.7. Keep this equal to the manager's wazuh_image_tag; a test enforces it. state: present
 # leaves an agent that already has this version alone; a newer one fails the task (apt will not downgrade).
+# The package is held after install so a routine `apt upgrade` or unattended upgrade cannot move an agent past the
+# manager (framework was upgraded to 4.14.9 while the manager was 4.14.8, 2026-10-16). Versions change only by editing
+# wazuh_agent_version: the hold is lifted just for this task. apt-mark is not idempotent-reporting, so no changed flag.
+- name: Lift the wazuh-agent hold for a deliberate version change
+  ansible.builtin.command:
+    argv: [apt-mark, unhold, wazuh-agent]
+  changed_when: false
+  failed_when: false
+
 - name: Install the wazuh-agent package
   ansible.builtin.apt:
     name: "wazuh-agent{{ '=' ~ wazuh_agent_version ~ '-1' if wazuh_agent_version | length > 0 else '' }}"
     state: present
     update_cache: true
   register: wazuh_agent_installed
+
+- name: Hold the wazuh-agent package at the pinned version
+  ansible.builtin.command:
+    argv: [apt-mark, hold, wazuh-agent]
+  changed_when: false
 
 # Docker container monitoring (docker-listener wodle) -- opt-in per host,
 # see wazuh_agent_docker_monitoring_enabled's own comment in defaults/main.yml
@@ -154,6 +168,17 @@
     append: true
   when: wazuh_agent_docker_monitoring_enabled | bool
   register: wazuh_agent_docker_group
+
+- name: Check whether this host writes /var/log/auth.log (rsyslog)
+  ansible.builtin.stat:
+    path: /var/log/auth.log
+  register: wazuh_agent_auth_log
+
+- name: Choose the system and auth log source
+  ansible.builtin.set_fact:
+    wazuh_agent_use_journald: >-
+      {{ wazuh_agent_log_source == 'journald'
+         or (wazuh_agent_log_source == 'auto' and not wazuh_agent_auth_log.stat.exists) }}
 
 - name: Write this host's ossec.conf
   ansible.builtin.copy:
@@ -243,6 +268,14 @@
           <ignore>/etc/httpd/logs</ignore>
         </syscheck>
 
+        {%- if wazuh_agent_use_journald | bool +%}
+
+        <localfile>
+          <log_format>journald</log_format>
+          <location>journald</location>
+        </localfile>
+        {%- else +%}
+
         <localfile>
           <log_format>syslog</log_format>
           <location>/var/log/syslog</location>
@@ -252,6 +285,7 @@
           <log_format>syslog</log_format>
           <location>/var/log/auth.log</location>
         </localfile>
+        {%- endif +%}
       </ossec_config>
   register: wazuh_agent_ossec_conf
 

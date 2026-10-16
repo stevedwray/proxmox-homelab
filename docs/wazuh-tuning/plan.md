@@ -140,6 +140,9 @@ changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
 1. With the noise gone, measure for ~7 days from the Wazuh dashboard (`/d/wazuh`; raw numbers via the helper's `health`
    and `retention` modes): indexer heap and RSS, shards, events per second, alert-index growth per day, disk used.
    Baseline for comparison: heap 69% of 4GB at 175 shards, ~0.4GB/day, ~1.3GB free RAM of 8GB.
+   2026-10-16: LXC memory raised 8192 -> 12288 MB (`stack.yaml`, applied live with `pct set 40015 -memory 12288`, no restart)
+   after a manager restart lost wazuh-apid at ~400MB free. Re-measure free RAM and the indexer heap after a week; the heap itself
+   (4GB) and container limits were not changed.
 2. Right-size the LXC (RAM, `wazuh_indexer_heap_gb`) and shard count: a one-shard-per-index template for new alert indices
    (a single node does not need 3-4 shards per index; 90-day retention would otherwise reach ~330 shards). Use the
    Proxmox-change-then-set-in-config pattern so Terraform sees no drift (as done for greenbone-stack).
@@ -196,6 +199,11 @@ Decisions (operator, 2026-10-16): `pve-test` first as the canary, then `pve-tiny
    `agent_conf/default.xml` now ignores `/etc/pve/nodes/pve-test/lrm_status` for the agent `pve-test.gibbsgreatly.xyz`
    (add `pve-tiny` the same way), delivered before the agent enrols.
 
+Found on enrol (2026-10-16): `pve-test` has journald only (no rsyslog), so the role's fixed `/var/log/syslog` and
+`/var/log/auth.log` localfiles logged error 1103 on every start and SSH/sudo events were invisible. The role now has
+`wazuh_agent_log_source` (`auto` | `files` | `journald`, default `auto` = journald when `/var/log/auth.log` is missing);
+the files layout renders byte-identical to before, pinned by `test_agent_conf.py`, so the LXC fleet is unaffected.
+
 Steps (each its own approval or go-ahead, in order):
 
 1. Done in the repo (branch `work/wazuh-phase5-pve-test`): `proxmox-wazuh-agent.yml` takes `wazuh_agent_target`
@@ -211,12 +219,106 @@ Steps (each its own approval or go-ahead, in order):
    (`cis_debian13`) results present, vulnerability detection populated, no `lrm_status` FIM alerts.
 5. Measure one hour then 24 h with `wazuh_tuning.py agents/alerts/noise`. Gates: agent stays active, no rule above 10%
    of fleet alerts, no `events_dropped` increase, manager free RAM stays above 800MB. Then repeat for `pve-tiny`
-   (inventory entry, `./with-secrets-prod-tiny`, its own preflight and approval).
+   (repo side done: inventory group `proxmox_tiny`, deliberately outside `proxmox`/`proxmox_production` so the storage and
+   terraform playbooks cannot target it, and the `lrm_status` ignore in `default.xml`; still to run: shared-config delivery
+   and enrol via `./with-secrets-prod-tiny`, each with its own preflight and approval).
 6. Record results in README "Results at a glance" and open items; `docs/wazuh-stack/README.md` enrolled count 27 -> 28.
 
 Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `pve-test`, and delete the agent on the
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
+
+### Upgrade to 4.14.9 (decided 2026-10-16) - DONE 2026-10-16: manager stack and all 32 agents
+
+Why: `framework` was upgraded to 4.14.9 by hand while the manager was 4.14.8 (an agent must not be newer than its manager), and
+4.14.9 (released 2026-10-14) is a maintenance release with security hardening (authd/cluster idle connections, API access log
+escaping, remoted bounds) and no listed breaking changes, indexer changes or manual upgrade steps. The `4.14.9` tags exist on
+Docker Hub for the manager, indexer and dashboard. The repo now pins `wazuh_image_tag` and `wazuh_agent_version` to 4.14.9
+(a test keeps them equal) and the agent role holds the package after install, lifting the hold only for a version change.
+
+Manager stack done (2026-10-16 14:58 NZDT, task `wazuh-upgrade-4149`): compose tags edited on the host (backup
+`/opt/wazuh-stack/docker-compose.yml.bak-4149`), `docker compose pull`, one `docker compose up -d`; about 30 s from start to all
+10 daemons running. Before/after: the four suites pass, cluster green, `events_dropped` 0, 32 agents active, vulnerability
+documents 10,513 before and after, ISM 49/49, heap 15% after the restart, 5.3GB RAM available, no `wazuh-apid` failure. 30 agents are
+still on 4.14.8 (supported: the manager is newer); `framework` and the manager's own agent are on 4.14.9. Not done: the
+agent rollout (step 4), the Authentik login check on the dashboard (browser), and the `docker image prune` for the 4.14.8
+images (docker volume 75% with both generations; the prune reclaims about 4.4GB).
+
+Agent rollout done (2026-10-16, play `playbooks/wazuh-agent-upgrade.yml`, PRs #499/#500): upgrade-only (never touches
+`ossec.conf`, group or keys), explicit agent list, one host at a time, stops on failure, refuses to pass the manager version, holds
+the package afterwards. Order: canary `apt-cacher-stack`; `pve-test` + ci-runner, netbox, harbor; app/game/media/edge (10);
+management/observability (6); core DNS/ingress/SSO + the Wazuh LXC (5); `pve`, then `pve-tiny`; `greenbone-stack`; finally `tpot`,
+which needs `upgrade_host_overrides` (user steve through the ssh alias `tpot`, with sudo). After every batch: agents active at 4.14.9,
+`events_dropped` 0, cluster green. Final state: 32/32 agents on 4.14.9, manager 4.14.9, suites pass, cluster green, heap 37%,
+4.8GB RAM available. Left: Authentik login check on the dashboard (browser), `docker image prune` of the 4.14.8 images, host
+`.bak` files. The LXC agents do not self-upgrade (the unattended-upgrades allow-list is Debian security only), so a future version
+change is a deliberate bump of `wazuh_image_tag` + `wazuh_agent_version`, the manager first, then this play.
+
+Procedure (Phase 1b method; each step its own approval; stop and roll back on any stop condition):
+1. Before: suites (`mustfire`, `suppression`, `scanner`, `hap`), `health` and `agents` baselines; cluster green; PBS backup is the
+   nightly snapshot (confirm it is recent).
+2. Manager stack (production, mutating): on the host edit the image tags in the live `docker-compose.yml` (backup
+   `docker-compose.yml.bak-4149`), `docker compose pull`, one `docker compose up -d`. About 1-2 minutes of downtime; volumes kept.
+   Watch free RAM (12GB LXC now) and `wazuh-control status` (expect 10 daemons) during the start.
+3. After: the same suites, `agents` (all active, nobody newer than the manager), `events_dropped` 0, vulnerability finding count
+   unchanged (about 3,957), ISM 49/49, cluster green, dashboard healthy, Authentik login to the dashboard.
+4. Agents: canary first (one LXC agent, then `pve-test`), then the fleet by zone group, via each stack's normal agent role run
+   (the role installs `wazuh-agent=4.14.9-1` and re-holds it). `framework` is already on 4.14.9.
+5. Follow-up: `docker image prune` for the 4.14.8 images (about 4.4GB) once stable.
+
+Rollback: tags back to 4.14.8 in the compose file and `up -d`, or PBS restore. Agents on 4.14.9 against a 4.14.8 manager are
+unsupported, so do not start step 4 until step 3 passes.
+
+### Gate read, 2026-10-17 (interim; the clean 24 h read is after ~17:00 NZDT, 24 h past the last change)
+
+A rolling 24 h read at 05:30 was not a clean window (the rule deploys, the manager outage and restart, the 4.14.9 upgrade, agent
+restarts, three new agents' first scans and a lot of automation all fell inside it), so only an 11 h interim (since ~18:30 the day
+before) is recorded: 9,886 alerts (about 21,600 a day, gate under 50,000 passes), FIM rule 550 240, cluster green, 0 dropped, 32/32
+agents on 4.14.9, suites pass. The "no rule over 10%" gate failed on two self-inflicted groups, now fixed in the repo (deploy pending the
+clean read so the baseline stays measurable): rule 87907 at 37% was entirely six metrics-collector commands that run once a minute
+(the Wazuh manager's two `.state` reads and `agent_control -l`, and three `redis-cli` queries in Greenbone's Redis; added to the
+suppression list), and the sshd/PAM login rules were mostly the Greenbone credentialed scan (`gvm-scan` from 192.168.70.11, publickey):
+its successful sshd logins (5715) are now rule 100203 at level 0, limited to that user and that address, while the PAM session pair
+(5501/5502) has no source address and is left alone. The gate's intent is "no single noise rule", so login audit trails that remain are
+accepted. `framework` had no rule 510 in the last 12 h; `pve-test` and `pve-tiny` had 4 alerts each in 11 h.
+
+### Cluster yellow on 2026-10-16 (ISM history replica)
+
+Status check found one unassigned shard: the replica of `.opendistro-ism-managed-index-history-2026.10.15-000002`, created
+by ISM's daily rollover with 1 replica. The earlier fix (0 replicas on existing `.opendistro-*` indices plus a template) did not
+cover rollovers because the plugin creates the index with an explicit count from the cluster setting
+`plugins.index_state_management.history.number_of_replicas` (default 1). The deploy play now sets it to 0
+(`--tags wazuh_retention`, which also re-applies 0 replicas to the existing index). Check after the next rollover that the
+cluster stays green.
+
+### Phase 5a result: `pve-test`, `pve-tiny` and `framework` enrolled (2026-10-16)
+
+All three agents are 4.14.8 in the `default` group, connected, secrets protected by `nodiff`. The role reads journald
+when the host has no rsyslog (the two Proxmox nodes); `framework` (Ubuntu 26.04.1, rsyslog) reads the log files.
+`framework` was enrolled with `-e '{"wazuh_agent_fim_paths":["/root/.ssh","/home/steve/.ssh"]}'` (the play's default
+paths are hypervisor paths) through `./with-secrets-prod-framework`.
+
+Ubuntu 26.04 findings:
+- **SCA:** the agent ships only `cis_ubuntu22-04`, which skips itself on version check, so `framework` has no CIS score.
+  A custom 26.04 policy belongs to the optional SCA item below.
+- **Rootcheck false positives:** 48 L7 "Trojaned version of file" alerts per scan (every 12 h), on `/bin` and `/usr/bin`
+  tools. Ubuntu 26.04 uses Rust uutils coreutils whose binaries contain strings the generic trojan signatures look for.
+  Rules 100212 (`<hostname>`) and 100213 (`<location>`), both level 0, are limited to agent `framework.gibbsgreatly.xyz` (the manager
+  shows an agent's events as `(<agent name>) any->rootcheck`; both options take OS_Match syntax, `^(name) `, where a backslash is
+  literal. The first two attempts used regex escapes and never matched, the safe failure; both candidates ship until the live
+  scan shows which field carries the prefix, then the other is removed), rule 510 parent, Generic signatures and a
+  single `/bin` or `/usr/bin` file name; named rootkit signatures, other paths and every other host keep 510 at L7, and
+  FIM still watches `/bin` and `/usr/bin`. logtest cannot produce rootcheck events, so the scoping is proven by unit
+  tests on the pattern and the generated XML, then live: trigger a rootcheck scan on `framework` and on one LXC agent
+  after the deploy (`PUT /rootcheck`), expect no new trojan alerts for `framework` and an unchanged picture elsewhere.
+  Result (2026-10-16, deployed by in-place reload): a rootcheck scan on `framework` stored 20 Trojaned detections in the
+  manager and raised 0 alerts; `apt-cacher-stack` scanned clean and unchanged. One of the two candidates matches, the live test
+  cannot say which (level-0 matches are not logged), so both stay; prune one by deploying `hostname`-only, scanning, and
+  swapping if alerts return. The earlier deploy with a container restart lost `wazuh-apid` to a SIGKILL during start (8GB LXC with
+  the indexer at ~4.9GB, about 400MB free at the low point) and the manager was down ~11 minutes until a second restart; rule
+  deploys now use `-e wazuh_rules_apply=reload` (no restart). Phase 4 sizing should treat the LXC RAM as the first item.
+- **FIM:** one benign `fopen` error on a dangling `pollinate.service` symlink; add an agent-scoped ignore only if it repeats.
+- **Vulnerability detection:** not yet checked for Ubuntu 26.04 (the feed may not cover it).
 
 ## Phase 6 - steady state - DONE (alert rules and weekly review aside)
 

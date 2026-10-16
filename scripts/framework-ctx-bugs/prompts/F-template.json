@@ -1,0 +1,68 @@
+{
+  "depths_percent": [
+    5,
+    25,
+    50,
+    75,
+    95
+  ],
+  "expected": [
+    "amber-914",
+    "amber-915",
+    "amber-916",
+    "amber-917",
+    "amber-918",
+    "NOT IN LOG",
+    "NOT IN LOG"
+  ],
+  "needles": [
+    {
+      "host": "host-needle-1",
+      "id": "REC-N1",
+      "severity": "warning",
+      "ticket": "TCK-8201",
+      "value": "amber-914"
+    },
+    {
+      "host": "host-needle-2",
+      "id": "REC-N2",
+      "severity": "warning",
+      "ticket": "TCK-8202",
+      "value": "amber-915"
+    },
+    {
+      "host": "host-needle-3",
+      "id": "REC-N3",
+      "severity": "warning",
+      "ticket": "TCK-8203",
+      "value": "amber-916"
+    },
+    {
+      "host": "host-needle-4",
+      "id": "REC-N4",
+      "severity": "warning",
+      "ticket": "TCK-8204",
+      "value": "amber-917"
+    },
+    {
+      "host": "host-needle-5",
+      "id": "REC-N5",
+      "severity": "warning",
+      "ticket": "TCK-8205",
+      "value": "amber-918"
+    }
+  ],
+  "questions": [
+    "What is the value in REC-N1?",
+    "What is the value in REC-N2?",
+    "What is the value in REC-N3?",
+    "What is the value in REC-N4?",
+    "What is the value in REC-N5?",
+    "What is the recovery password for host-absent?",
+    "What is the value in REC-ABSENT?"
+  ],
+  "seed": 4473,
+  "system": "Start every answer with [LOG-QA]. Answer only from the log. If the log does not say, answer NOT IN LOG. Return a JSON list of seven answers in question order after the prefix. No other text.",
+  "target": "ctx_size - 16384 - 2048",
+  "with_count": false
+}

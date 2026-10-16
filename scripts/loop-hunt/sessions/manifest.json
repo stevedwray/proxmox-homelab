@@ -1,0 +1,3994 @@
+{
+  "estimate": "ceil(chars/3.0); only /apply-template and /tokenize measure runtime context",
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "sessions": {
+    "1": [
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-01-001-3a1d47a406",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "327633603bdc6835d52db8f4174b2d50b46a801e3b9e68efab47e45a31a87d8e"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-01-002-47d2b39f06",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "8440346c77b1fef3ae34466aacaeeba9bd948280130558a2ba7c0efd4e8f5180"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-01-003-34af1a6585",
+          "route-01-001-3a1d47a406",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "4f4e563484a4f1e7645443b7a69d6cca4c0288e42339d0ffe96ceef7504f8a2f"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-01-004-51a31c0d6f",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "63ca2ad87b695d767c8b3faa2269b418c6cfc5e9d6f19916417d92d8f2ee12a1"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-01-005-3c7a49ef44",
+          "route-01-002-47d2b39f06"
+        ],
+        "file": "seed-1/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "2d8dcb1806061cab56e68c5f45348dff36120f27c23cbf4fac71c18b271fd084"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-01-006-13d9ca35a9",
+          "route-01-003-34af1a6585",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "ae482d4a6027b6491a9dbc45f864a5254ca784c8c0d0c51a434c0bbe15b5c5c4"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-01-007-9da3540494",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "d8c2c05c6689cbab13fa10aa5a2ecd9255fa6424da398bce08cd76730732af9e"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-01-008-0046222efe",
+          "route-01-004-51a31c0d6f"
+        ],
+        "file": "seed-1/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "246e5a9f906c18198e329b432feaa5e100f5a5ae275c976bbd455a29159b734d"
+      },
+      {
+        "estimated_tokens": 6142,
+        "expected": [
+          "route-01-009-eefca04ea9",
+          "route-01-006-13d9ca35a9",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "7b14d8c9aedc55474135fcae4c7890d8b5e8dbabfe1cc0e83fa3cd9a2331dea3"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-01-010-4ee75d79ec",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "75446bfe6b0f7a1b6e62f8aeddb0cb8dea1adb39cc507a26cf2fff5ce296ea78"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-01-011-375356627d",
+          "route-01-005-3c7a49ef44"
+        ],
+        "file": "seed-1/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "875a83660619be27b3c88a31e3957008ac7b7da8c8ba1f0db834fc68fddab87c"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-01-012-f514b6847f",
+          "route-01-009-eefca04ea9",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "94b5a6b0684a5c67b38c852eaff45040650a342d64579735723747b6af490975"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-01-013-c13d118b3e",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "60461259cb7eb4126b6e07899f553d4976da55e1f1b93af0f514af2af05d56de"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-01-014-10de00ded1",
+          "route-01-007-9da3540494"
+        ],
+        "file": "seed-1/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "92e0215b0a09681a30b477bd6bf8de3120209bef6a920e15013354026a31c85b"
+      },
+      {
+        "estimated_tokens": 6144,
+        "expected": [
+          "route-01-015-c1e2830c9a",
+          "route-01-012-f514b6847f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "5fb4c85736e3d45714b07f670be101bd6ae4c1b218266ac17c9f2bb183068221"
+      },
+      {
+        "estimated_tokens": 6123,
+        "expected": [
+          "route-01-016-f3c2326cea",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "65c187a775c71a9b432504d16c686c02f29724fba3dc0a9c42f13f7c44e9dc6f"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-01-017-3c31700bc9",
+          "route-01-008-0046222efe"
+        ],
+        "file": "seed-1/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "b62ecddf3dc78e51243849f234c2b0678af87f813fe5caeaa1b1d4ef34e6431c"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-01-018-10b78920a5",
+          "route-01-015-c1e2830c9a",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "b95f4a0e7f7cd967ba3cf27b2ff43069cb581b7b16b08e0d26c433610f1c0940"
+      },
+      {
+        "estimated_tokens": 6130,
+        "expected": [
+          "route-01-019-1f6280ffc2",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "a4d00763aab0948d9e92ee7764b77aaf4994e1ee838b07e44f43bd2523466ba1"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-01-020-8ddd4e4469",
+          "route-01-010-4ee75d79ec"
+        ],
+        "file": "seed-1/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "f7cf6d487a368856b5adb992f02c132af6bd8cbd84aaf7d337a7868c3d19fb01"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-01-021-d5317f516e",
+          "route-01-018-10b78920a5",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "30d14aba3a48a3c5cf7be64b66dd663620fd110db4052b93a60e5e0414d05dd4"
+      },
+      {
+        "estimated_tokens": 6116,
+        "expected": [
+          "route-01-022-7dcb7c3180",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "4f497c58ae35b613d61704cf7ac2a75b72fa37dca01343c866c5d4da47db64ac"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-01-023-618787bf28",
+          "route-01-011-375356627d"
+        ],
+        "file": "seed-1/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "8767590b5d224ba27e5e2004f9eb2faedcc4c3f56715774607918dd7d93ff787"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-01-024-2a0bc25c73",
+          "route-01-021-d5317f516e",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "3153f2c2f3167ff56712615d82bac5295eb681ee24e0b7e60208e491341780e4"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-01-025-aee03328c9",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "c0794ac70d335228ca080e321d5004377ce414c09c01ddd9d83edf5f698aff76"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-01-026-a683c55df0",
+          "route-01-013-c13d118b3e"
+        ],
+        "file": "seed-1/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "f201be7fe3f1db885b8ce8bf094eb76ad82340d4f73995da61385188ad75fd93"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-01-027-b2290fe7f7",
+          "route-01-024-2a0bc25c73",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "eacc6ab42d793aa01f574b869ad24c2fdad8ac75995299e326527a55df5a67c6"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-01-028-47ae0c731c",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "78bb09efd0fccfbd09b7a8fe1a44a4bb9910be991bac53a648b0b48e35c625df"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-01-029-2c6b7795c8",
+          "route-01-014-10de00ded1"
+        ],
+        "file": "seed-1/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "594bbf7048d5780bbf2ecf797d815df17dede4c4d04bd2abf13ccebdbd8cb722"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-01-030-fdf4d6e034",
+          "route-01-027-b2290fe7f7",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "6346404f87898189ede8d955f1e4c0eda6cc15af97a8f733c1b178585574e9f4"
+      },
+      {
+        "estimated_tokens": 6130,
+        "expected": [
+          "route-01-031-f8610cb899",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "91d1826424e80df96b0f6b85ff67c8881a40cd745e05ca082cbd6631da8ce830"
+      },
+      {
+        "estimated_tokens": 6082,
+        "expected": [
+          "route-01-032-619c4e1ad3",
+          "route-01-016-f3c2326cea"
+        ],
+        "file": "seed-1/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "e78069fee76450828bb7c536a23443404bdeb8097c28102ed5e78de4409106d5"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-01-033-2bed2a81c0",
+          "route-01-030-fdf4d6e034",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "83e46ff75e31d5e7c8f36db1c19840e991e7fb430bd3336b5905dca9e7857946"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-01-034-55c56e3a03",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "e1114fb5b814786139a748af17868eb87e331d87428eb92ed71c6dbed77b462e"
+      },
+      {
+        "estimated_tokens": 6104,
+        "expected": [
+          "route-01-035-918dff8ace",
+          "route-01-017-3c31700bc9"
+        ],
+        "file": "seed-1/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "b675fcee311a5d82ee6d3c2059048b76ea6b6cc7daf7af83684b2e43837466df"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-01-036-8940af2a88",
+          "route-01-033-2bed2a81c0",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "56d784d5714448613a6d7bbe2ce91a0d56a6ebf15cc09e2bf2e7a57fee7a6f10"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-01-037-a56a35aa49",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "fc767da718499b710c3dc100bcfe45ae038aef0a416ba18a37e73bfcb5ea7249"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-01-038-0857bef7cc",
+          "route-01-019-1f6280ffc2"
+        ],
+        "file": "seed-1/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "fb567a25f8e335ab35a4b6acd96bf479e08fc547a291dd7547b8e89f95f6190d"
+      },
+      {
+        "estimated_tokens": 6143,
+        "expected": [
+          "route-01-039-9e2c833fb3",
+          "route-01-036-8940af2a88",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "b7657bdac2ca38ed81a3a7b1b73e62e87adb6f26b7c647b820f23d816d6f6b3e"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-01-040-f84743f67b",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "44e0063d82818f1d83872c8607846269b0d8099c1fd158f2997014a193496dc4"
+      },
+      {
+        "estimated_tokens": 6106,
+        "expected": [
+          "route-01-041-bc1d54f892",
+          "route-01-020-8ddd4e4469"
+        ],
+        "file": "seed-1/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "5c05ba8c0d0cf60f422ebd5335de0379badf7b8b40dd43cd0024722746caa732"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-01-042-88d6fe6db5",
+          "route-01-039-9e2c833fb3",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "6fbc0a49bec074c29aa31b6d93f3d1998438c2f2677676f60a2ca12cce555f0e"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-01-043-b0b5552483",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "1d436e871261c13aeab6c37246971b74797008067b7a0350eff1747bbfc8adac"
+      },
+      {
+        "estimated_tokens": 6128,
+        "expected": [
+          "route-01-044-dadfe53817",
+          "route-01-022-7dcb7c3180"
+        ],
+        "file": "seed-1/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "06c9d5fc9fd28cbdd3ab86e16f1b565e965a29050caa2c092dcc6b5aec2ea051"
+      },
+      {
+        "estimated_tokens": 6142,
+        "expected": [
+          "route-01-045-a35d657b19",
+          "route-01-042-88d6fe6db5",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "a60e8b016827d82f0655b071c64cc5148884602c6f4e8e678f6372b20810153d"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-01-046-d08020c197",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "326dd5711dab1118df23b6c2c89858d7cba7ce33c85222e49d78b8e6ed3f227d"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-01-047-f831fb250e",
+          "route-01-023-618787bf28"
+        ],
+        "file": "seed-1/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "1265b0f1b63507371c1b1346e677c967efe4106a18ec914eae2d6c30ba89c98f"
+      },
+      {
+        "estimated_tokens": 6137,
+        "expected": [
+          "route-01-048-d753fb38ff",
+          "route-01-045-a35d657b19",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "4ff55ec69acbfb2236b07b69901abafd45d45e979e81d50381f7ed79d695b7e3"
+      },
+      {
+        "estimated_tokens": 6090,
+        "expected": [
+          "route-01-049-c4ceaeaa63",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "60f0f5143f38ac93387b794efba65d639d2658efe14591cc85fc1e5e6be20858"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-01-050-062eda493a",
+          "route-01-025-aee03328c9"
+        ],
+        "file": "seed-1/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "85f379280774f244655ac7d23080b2c5a8e51119d0749b3fd7a80b0d3a92bc11"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-01-051-48ee946d0f",
+          "route-01-048-d753fb38ff",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "4d6f5d3095055c846bbf8d7b47b3d72fbbb998c28995fe7dc8ee9ec6b3246315"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-01-052-3c93aaf8fb",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "dc7cd8c9391f29dfbb4a4f48695edc64a34357a455c33fc028a94b97a11d16fc"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-01-053-ff2094767c",
+          "route-01-026-a683c55df0"
+        ],
+        "file": "seed-1/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "b4b0c508e81666c7a9d250b886fa6755f58701a72a887f453d80096d72e483c5"
+      },
+      {
+        "estimated_tokens": 6105,
+        "expected": [
+          "route-01-054-cdb028ff08",
+          "route-01-051-48ee946d0f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "2317fd53029374d570857aa48e216da4dfa2907f7b82bc9e62bc3d878ae9c040"
+      },
+      {
+        "estimated_tokens": 6090,
+        "expected": [
+          "route-01-055-39eac2596e",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "e3a1abc0840d206213dbd9a68ff1fc5a43840deb0bec8a8598fc535922f7f18d"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-01-056-7560cdf763",
+          "route-01-028-47ae0c731c"
+        ],
+        "file": "seed-1/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "ac7ca4db1debb8d72c674685e3c926279c7189bad3fbc356e00cc8ad70d702d1"
+      },
+      {
+        "estimated_tokens": 6114,
+        "expected": [
+          "route-01-057-3f95e1979e",
+          "route-01-054-cdb028ff08",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "637fd2a307916400ffc28630b5a29f2b33ddf1a6c2522b1945cc698dc1a670c9"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-01-058-0d630a1e1c",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "79658fefe82272469ede851564e30d99faea05cb61987b74b321e77cf698fc3e"
+      },
+      {
+        "estimated_tokens": 6123,
+        "expected": [
+          "route-01-059-d451d49402",
+          "route-01-029-2c6b7795c8"
+        ],
+        "file": "seed-1/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "29593cb0895c91bfcbbc898cd2f971e53ea72269886c1d7669799b1d3805a559"
+      },
+      {
+        "estimated_tokens": 6153,
+        "expected": [
+          "route-01-060-dd99f1e91b",
+          "route-01-057-3f95e1979e",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "4d42fe7e06d77fc15a4022e473f48d682459616a51c884367d2dff14f37654d6"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-01-061-386d6a30c5",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "783c49481d4415d856a8dabb97a9ab92ae5453cb530ead75124f3b5756450446"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-01-062-13e111b64d",
+          "route-01-031-f8610cb899"
+        ],
+        "file": "seed-1/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "49bd4b2dde4d14fd92a290bfe09629c769770cd90cd9dc7a82481053613f35b9"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-01-063-542c3b11f2",
+          "route-01-060-dd99f1e91b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-1/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "1898470ac824998bd878f8c9374c33abcfc29b252fc92d930724efdb2940636c"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-01-064-fd6d723b8c",
+          "route-01-001-3a1d47a406"
+        ],
+        "file": "seed-1/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "bfcda058eac7c6e820f1ce838bb2e3b940ecffc1445ad97fbfcb2f56c91cce18"
+      }
+    ],
+    "2": [
+      {
+        "estimated_tokens": 6122,
+        "expected": [
+          "route-02-001-eb601e32f8",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "0187d68ecff36403baef31fe956123695ceceacf426940112b118019593ccfc0"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-02-002-940a080ba1",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "69abcbed405bd32f03527602a1745cd83beeba2c393472951c94c4d1ac8d1a87"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-02-003-04423735f0",
+          "route-02-001-eb601e32f8",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "7abfd42fb21bb044fd555ccfc69e4dd8c59259763319e2eba333a418af14320a"
+      },
+      {
+        "estimated_tokens": 6137,
+        "expected": [
+          "route-02-004-0da76e5029",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "7bd6448f21637b073161286c7b197a0dfc295e1250c84348ef13a5188cadd7fd"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-02-005-516dd1caab",
+          "route-02-002-940a080ba1"
+        ],
+        "file": "seed-2/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "f0562d883bba73af8e1b0f7d40be2757867ff4d138925280238677fb5e74dab7"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-02-006-89d3c5630a",
+          "route-02-003-04423735f0",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "2532bc7ea5900081442282739f6240342a73c90011697eb02ac8f8d9f767f7ae"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-02-007-03b9373342",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "c6f5f388d8ed11454ffd1f1dd79e2817f19b0b0672caf6ed1936bf8dec4b3a6f"
+      },
+      {
+        "estimated_tokens": 6082,
+        "expected": [
+          "route-02-008-d1b9b063d5",
+          "route-02-004-0da76e5029"
+        ],
+        "file": "seed-2/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "499cd0ea9012d7455107f37c60a698183c147d9d16ae4b25f93e04bf89664734"
+      },
+      {
+        "estimated_tokens": 6136,
+        "expected": [
+          "route-02-009-ed724fd801",
+          "route-02-006-89d3c5630a",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "09442ec427ae0c9831dc79cc0d0890e2bc2ae3ca1079fbca144df7f9d8b3dc6e"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-010-603d922eff",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "74f94d0b045ee169f910cc79fc3b10236515edb0b92c21099079d5c14efe61c3"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-02-011-12636dd9b7",
+          "route-02-005-516dd1caab"
+        ],
+        "file": "seed-2/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "8631ba052b7af30a2f56e1d2d07f07daf7afe8c60cad3ac65a806b9cda8d0019"
+      },
+      {
+        "estimated_tokens": 6122,
+        "expected": [
+          "route-02-012-a99ded27e3",
+          "route-02-009-ed724fd801",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "e273f9ddbeebdb2f51ea100a7a8a20f740b9c7373d7af688738e2e53cc79d876"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-02-013-fe94681080",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "c1bb32fadda8ca49afc85709a6c3d6f44bfc22da57cc6480bb6565b39c5ef0d1"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-02-014-e79175ef99",
+          "route-02-007-03b9373342"
+        ],
+        "file": "seed-2/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "001f664ab63ca0182b92d5e9bf0450cc10a59d79b776dae0d7255e9d12cfa97c"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-02-015-19714de50b",
+          "route-02-012-a99ded27e3",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "af2f8259cc505d0297c7dc92bce73f19610792612e9e4e48f16a5bbb60739b69"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-02-016-431cf1004b",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "e12f7792c530c298f45a14ffdf3c3c5b5ddd8220dd55e5485d54cf9b59c6153d"
+      },
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-02-017-56023939a9",
+          "route-02-008-d1b9b063d5"
+        ],
+        "file": "seed-2/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "1fc469ca2ea1b505331fb52a8b6fdfad3aaf5c4e8966bdb054341db9da093450"
+      },
+      {
+        "estimated_tokens": 6139,
+        "expected": [
+          "route-02-018-f6d2d6ff03",
+          "route-02-015-19714de50b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "4d227d3994a5bc44f0caa3403403aef85a83f912a8a8a314e6abe9b0ce2243d5"
+      },
+      {
+        "estimated_tokens": 6084,
+        "expected": [
+          "route-02-019-8f226c1828",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "b0e4db1c80dc7f903095ed6fba23b5b6e2134d3827daa03f41d216c8b1ae5aa6"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-020-6bc7811c15",
+          "route-02-010-603d922eff"
+        ],
+        "file": "seed-2/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "2d13109f3eb49cb7b5ac02b1a7cee0f458238f8716c7b86a62979f7c9484b798"
+      },
+      {
+        "estimated_tokens": 6122,
+        "expected": [
+          "route-02-021-2e1cb61da9",
+          "route-02-018-f6d2d6ff03",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "3163f7a75ea4c5460d3793a862935fbfa55e72c53b66abbba9bcd0e896bba007"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-02-022-cf8b1c1965",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "9ccc09c8d66a70be2adddab881ca07eb00f785dba9ab845f7e04ccd79e3479b4"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-02-023-4944506c6a",
+          "route-02-011-12636dd9b7"
+        ],
+        "file": "seed-2/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "3bf07100ae74c5b8f38448f1df43ebf875062f97ac30b9861bbf2b3ef3067135"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-02-024-fe8c2d9872",
+          "route-02-021-2e1cb61da9",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "0e15aeffcd5f7068b311ba7e369903b2164b83f91b70fec4f9cd30e4c5355b37"
+      },
+      {
+        "estimated_tokens": 6101,
+        "expected": [
+          "route-02-025-c758d39c8d",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "c84009803f3d92a65eefdc90ba0099e86c4f049a9f14def1614903ffb88a6c44"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-02-026-0d889e97b8",
+          "route-02-013-fe94681080"
+        ],
+        "file": "seed-2/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "57ae99efe335c2b07d818b37a165774fc4ea1fce06bc5a7c010be7bd8e4c1d1f"
+      },
+      {
+        "estimated_tokens": 6144,
+        "expected": [
+          "route-02-027-b50cc51735",
+          "route-02-024-fe8c2d9872",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "50f9591ea339bf810f4540ebbad5baa39cb93f54b44b11f04a021339bff823e3"
+      },
+      {
+        "estimated_tokens": 6105,
+        "expected": [
+          "route-02-028-c49abb44fc",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "623f32feaec526c275557a094e35ae7e180e90fb03918598e204b2f0b0400eb8"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-029-2acef80cbd",
+          "route-02-014-e79175ef99"
+        ],
+        "file": "seed-2/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "d062d45d8f5df9fd3c690797814dbcecd34951d3fefbd7bfc3a2acb30622e4ca"
+      },
+      {
+        "estimated_tokens": 6148,
+        "expected": [
+          "route-02-030-a4bae474c3",
+          "route-02-027-b50cc51735",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "765744a7aea296b4aaeef30c879d3bc42196f556bb6f06f3b3a8fb51161e04f2"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-02-031-44f16912dd",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "00d5398a53c1f187b6640ad8abb928e49de54b66890d7b621a66c1f879fb7214"
+      },
+      {
+        "estimated_tokens": 6116,
+        "expected": [
+          "route-02-032-643eed9105",
+          "route-02-016-431cf1004b"
+        ],
+        "file": "seed-2/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "5b98e47695422f1e0aaf0e98e808f5843e9a54841aaf5ca84f659c1eafba918d"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-02-033-e11e4cf6d1",
+          "route-02-030-a4bae474c3",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "08b2aecc3f800f1f859310d92b66a4763e8cabff7ce0e4ea67577578610e7f92"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-02-034-5fc552cb2f",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "f8b15bea6c0cc276e775c30de9ddf37475f170def653f9435549798f65f6c393"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-02-035-b2ba879b91",
+          "route-02-017-56023939a9"
+        ],
+        "file": "seed-2/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "4da9256dcdd46f40d0def359d56eabd752cfd8c452d7d5669f17d0d141ac4430"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-036-09fd7f4916",
+          "route-02-033-e11e4cf6d1",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "a54228d134372fb7a59da5c759e27c86512d974ed1bba7069925ef94f532c304"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-02-037-8c2ae9ee85",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "89a13d83367e67bb47fd50139c113920fd172a8196d9baf2c3228945eb271222"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-02-038-563871a492",
+          "route-02-019-8f226c1828"
+        ],
+        "file": "seed-2/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "14e2c7af9a56a4a86167053fb81ec501890ddd2d608421fe970ebe16b748a060"
+      },
+      {
+        "estimated_tokens": 6122,
+        "expected": [
+          "route-02-039-6d4ac25d64",
+          "route-02-036-09fd7f4916",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "17df2edcfadfa19727850c509844abf22870c4096ac2a5492fe5c19c054c9a65"
+      },
+      {
+        "estimated_tokens": 6086,
+        "expected": [
+          "route-02-040-09a0aa3ce6",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "d58106ed7784d1e271b8ee18059a6ce7e8422a317891755a503a314c6d210392"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-02-041-45b7a1c84f",
+          "route-02-020-6bc7811c15"
+        ],
+        "file": "seed-2/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "01507d0dd0cdbdfdd5c8c9281aa58f02c5f17ad885495154344752f71156aea5"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-02-042-8698f65dea",
+          "route-02-039-6d4ac25d64",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "17a775a625c51b6a1e6b4b7579b463d049e5980adc3fabdb315e0fe31355f197"
+      },
+      {
+        "estimated_tokens": 6134,
+        "expected": [
+          "route-02-043-ae74e864dd",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "93c863d06bcad00290506e251f0f3672a07d9d1cf5ee626927fd674072b355f3"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-02-044-a939727cf4",
+          "route-02-022-cf8b1c1965"
+        ],
+        "file": "seed-2/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "68ab12d209867d46086e4fb9ec03b9f40ddbfdca1199976a3a40e38a5ac09735"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-045-d4a4048658",
+          "route-02-042-8698f65dea",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "f96b80af17c2df545743a66a77cf1122b9e39cf57a12e2074589fffc2b56b2dd"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-02-046-710ab41177",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "892f8045a9b9c4f99e867edc02566a148052980f3ef468363c9272e6435a6b4e"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-02-047-d9856250b3",
+          "route-02-023-4944506c6a"
+        ],
+        "file": "seed-2/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "50b4626c8424d4fe23c222e19385f7e7d9cb99ee6ab4d9fee4da258a07410d94"
+      },
+      {
+        "estimated_tokens": 6136,
+        "expected": [
+          "route-02-048-8a1bbba62b",
+          "route-02-045-d4a4048658",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "6a1dc7622bb59206550c748fd75cde4e0a9f119d5367a46135c6146cf81159ca"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-02-049-7acfb118d9",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "29af34ad07baa5acb1ac7bfe0ccd9f6dc56a513eb24cb442e912873ac624acd1"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-02-050-121956d697",
+          "route-02-025-c758d39c8d"
+        ],
+        "file": "seed-2/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "7aa589172d3cab3a02088081a70d2dfe856a5b66ba23a90ede7828f8d06c20ff"
+      },
+      {
+        "estimated_tokens": 6141,
+        "expected": [
+          "route-02-051-dfe2d3a6cd",
+          "route-02-048-8a1bbba62b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "2b385f7c21a96f8bb49ce7f89763f44fd0baa8691750d361d1c78517f7eb1174"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-02-052-c5fa7c8410",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "b4eadc9e8f0e478044c56c3cd8d4d119e137c2186c35e5fffd1e7cf0c6f2deb1"
+      },
+      {
+        "estimated_tokens": 6134,
+        "expected": [
+          "route-02-053-493e9f0160",
+          "route-02-026-0d889e97b8"
+        ],
+        "file": "seed-2/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "3c760a2a6df2ec1c87698b5908697d9673dacca47f061defb2058dcbecac9cfa"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-02-054-ab15248ab0",
+          "route-02-051-dfe2d3a6cd",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "8fd686b030a0073904692b3b04e1d1b4be32f1e8d04decfb8946a2bc833b0f94"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-02-055-dd3c9404a9",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "87e8330a09a6374f26686f66d2a53ee24e74158f2c2de7bcf84134074d71b372"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-02-056-2bcbbb100c",
+          "route-02-028-c49abb44fc"
+        ],
+        "file": "seed-2/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "0acae77a972f54d995d3001c0bf1822ff18030488deaa398c4023c7e1c07eaf7"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-02-057-6f5f89b34f",
+          "route-02-054-ab15248ab0",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "c8dd78c6af83a2461b0a6607c436ebe802afa09453d26a2d3b5a8e859cf64b49"
+      },
+      {
+        "estimated_tokens": 6087,
+        "expected": [
+          "route-02-058-34f47c0480",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "c788bbef4b1013be350b541202ddc1b8377a521516d1eefe30392430546c0ef4"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-02-059-ae07d730e9",
+          "route-02-029-2acef80cbd"
+        ],
+        "file": "seed-2/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "0bed108ab64e4bd61528518981b7b2428887d0af1398188a25309326f527e17a"
+      },
+      {
+        "estimated_tokens": 6106,
+        "expected": [
+          "route-02-060-bf2249c2e6",
+          "route-02-057-6f5f89b34f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "a1efa314ee163993c7201cc2c224fce2044504909f06745ffe074d5d1185c8cc"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-02-061-0185de0713",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "8ad236e46f06e0a3cc6455acdbbc14ce813a0ad68c2006b652c5169138462607"
+      },
+      {
+        "estimated_tokens": 6086,
+        "expected": [
+          "route-02-062-9e358db0a5",
+          "route-02-031-44f16912dd"
+        ],
+        "file": "seed-2/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "f81fc18e084e3f1643282fc4c431cad3d74e92e7c7b47f1fc776adc6b54ab291"
+      },
+      {
+        "estimated_tokens": 6145,
+        "expected": [
+          "route-02-063-e76417350d",
+          "route-02-060-bf2249c2e6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-2/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "cc51212207ec8595e9814d2cd40f7b9aad1539efd51d45edf88d95512d829dcf"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-02-064-41a86f44ed",
+          "route-02-001-eb601e32f8"
+        ],
+        "file": "seed-2/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "619af72bbe84d5e36a17b7863e2f7d3d902365c46a0d3ea4c4c7273e3678b2b6"
+      }
+    ],
+    "3": [
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-03-001-acfa5474c2",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "187537756c32e0262743be9ac460c7c8324b2d987ec3aa4361c7d2e618347efb"
+      },
+      {
+        "estimated_tokens": 6090,
+        "expected": [
+          "route-03-002-6f306cb3c1",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "8a403f2ca9b40814cc0868ab9966907a8e7f64a9eb9583472d32589bacc9dbca"
+      },
+      {
+        "estimated_tokens": 6135,
+        "expected": [
+          "route-03-003-c3d4ec3f64",
+          "route-03-001-acfa5474c2",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "2d3dccf65a552497e5299094e6aa86421a190c412d3a810b33ec04371970f017"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-03-004-8f7f1ddf78",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "81890c975255b45f01fef05284a7e4689a3281eb1942203bb1e0d8de2bc93ff7"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-03-005-20a3cb26ec",
+          "route-03-002-6f306cb3c1"
+        ],
+        "file": "seed-3/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "67018207c5501b747c51a790b2bd9a0580b9a357abfbd4b663345796e5101248"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-03-006-e27cd4c949",
+          "route-03-003-c3d4ec3f64",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "daee847f579f921d39cef91dfcec7726d0f2a18a02a454ba6cd01f943c37a090"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-03-007-3a26fa4a27",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "7e69665dc6c8d882fd0d83dc5b52a5904f847c165d0028868bde3e32784de0a7"
+      },
+      {
+        "estimated_tokens": 6114,
+        "expected": [
+          "route-03-008-b2c473fc4d",
+          "route-03-004-8f7f1ddf78"
+        ],
+        "file": "seed-3/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "1fb5332024e4468a49b58237b8e83dbe8fc2d0e875a797b11b92cf876b9bbfe5"
+      },
+      {
+        "estimated_tokens": 6139,
+        "expected": [
+          "route-03-009-2830bd85e6",
+          "route-03-006-e27cd4c949",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "33c29e3b63a378cf09cf084cd7e79942cd5af426e7bb368aaeaaac68971f8689"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-03-010-4a8cbec708",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "5b79c2239d734bb99407ede021e8462c9b3dcbf625f4f130c61e1fb418ee1f43"
+      },
+      {
+        "estimated_tokens": 6082,
+        "expected": [
+          "route-03-011-a785ecd2a4",
+          "route-03-005-20a3cb26ec"
+        ],
+        "file": "seed-3/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "5737158b250585c435907e5dec2941a512ad9b2fd254cfcdd36f138498c9b634"
+      },
+      {
+        "estimated_tokens": 6147,
+        "expected": [
+          "route-03-012-9d37e9a573",
+          "route-03-009-2830bd85e6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "131d9685ab541fc2949cc9248811c46a8ef3d62191aabaf9251a9d670404fbef"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-03-013-40a22a1cc6",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "66e168a137ec025184a11d31ef0169c928aeaf22384e017be07097551e4c5714"
+      },
+      {
+        "estimated_tokens": 6096,
+        "expected": [
+          "route-03-014-e3cc240fa2",
+          "route-03-007-3a26fa4a27"
+        ],
+        "file": "seed-3/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "a33fc457085655491684d4e66229542b4c17813ac50b4f00f33b861d568af5ed"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-03-015-2438c74ee2",
+          "route-03-012-9d37e9a573",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "b1869a7d342afce4bca0dbafb1e6185abee3183bc45a3c1a6f919641801ad200"
+      },
+      {
+        "estimated_tokens": 6092,
+        "expected": [
+          "route-03-016-1e3fd285b6",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "a2df8f5d6138c2d533e58a828dbc41f79e3d319a96eb63995a27b05a510fc754"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-03-017-4dafa4d238",
+          "route-03-008-b2c473fc4d"
+        ],
+        "file": "seed-3/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "4aab0ad734e1de7a5ca81db72f0c77790ca6af13cca16e3cac1b8f3132dc95af"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-03-018-bf6efb0db7",
+          "route-03-015-2438c74ee2",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "93db751a07affe2ebb55547e1ee0b6b7c62328ae20e456197f9eea4ec7dfd1ab"
+      },
+      {
+        "estimated_tokens": 6096,
+        "expected": [
+          "route-03-019-9e2632d0bf",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "85f2ee0b1f7f353975663b1893737cbd2d30a954e99f35452b2702bb7011e2c2"
+      },
+      {
+        "estimated_tokens": 6135,
+        "expected": [
+          "route-03-020-7556d173a6",
+          "route-03-010-4a8cbec708"
+        ],
+        "file": "seed-3/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "f564226bfb9e4077c33e27ecea87dd0aeb2beb5ba9c28071e70489544e90147c"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-03-021-f4ad0e4043",
+          "route-03-018-bf6efb0db7",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "74942c9f9741be5bb02dcc100dfd0789e58e0392e5830844433a0f634d06479c"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-03-022-9fb9051553",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "a7c750d1be74261d5c3042f617cf13f7edcdff59c45f1cc8dbd479c1e7c57c93"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-03-023-87844831cd",
+          "route-03-011-a785ecd2a4"
+        ],
+        "file": "seed-3/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "0141fc4f3c7c1f46695112e606b97e59e486889dc236eb5ce9b1da504726c15e"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-03-024-b2dbe9044f",
+          "route-03-021-f4ad0e4043",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "22ed3688cd5d844cecd062eeb95cadab250087f314cc9373a15a3dcf9ad854fe"
+      },
+      {
+        "estimated_tokens": 6125,
+        "expected": [
+          "route-03-025-ba13eb8c3f",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "cfe717cfbecbbe0306008c918747e60d371cad14fd9887e19754843682c78f96"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-03-026-61dc2ec77a",
+          "route-03-013-40a22a1cc6"
+        ],
+        "file": "seed-3/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "949d37fe16075e0b37c73910c27734c90c08977bbf54d677cdca2f1a79f61f9e"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-03-027-e9138bcd06",
+          "route-03-024-b2dbe9044f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "119b4025e5e6a1ea750cf0cd68b6325099c0a1300b5a1928752915612068e41c"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-03-028-357f662f59",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "92e9aa023d3508cced7c29eeccebc48f614c5972be819fd5931d813ac007b88f"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-03-029-43bf078b3f",
+          "route-03-014-e3cc240fa2"
+        ],
+        "file": "seed-3/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "046246e9fecf6b351e2fd86a11af0209f0a022dc5c24bc0008027f6de95433c2"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-03-030-600633469f",
+          "route-03-027-e9138bcd06",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "7b6acf64846dde68dfa2e7c59d9a32c1a3121457b03a649866462e5b2b24e900"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-03-031-348c0cf968",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "c692fe1fe47edf97e8240b99bfd6014ce1a0d76e17ef934fcef1365d3f901408"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-03-032-e3f9447c33",
+          "route-03-016-1e3fd285b6"
+        ],
+        "file": "seed-3/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "0ea263de0343132847c10d29aeece5fb4db4c04a3db1121fa911587bb5b18102"
+      },
+      {
+        "estimated_tokens": 6128,
+        "expected": [
+          "route-03-033-5e9c272416",
+          "route-03-030-600633469f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "6b6c19ae0bc6fddb80347259fa8f35d0b4fb900fed593760d4883124785522bd"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-03-034-555a2bacaa",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "83383b9c880abf43347c251335ec420414593054bd219d6ca680018366834dae"
+      },
+      {
+        "estimated_tokens": 6096,
+        "expected": [
+          "route-03-035-3f5eec762d",
+          "route-03-017-4dafa4d238"
+        ],
+        "file": "seed-3/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "d4bcfbe98a2b9306882a59429f96ccd1d45806d9abf194bf2c2796e405435588"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-03-036-977933345d",
+          "route-03-033-5e9c272416",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "e2eb84e64947b639aa106f124d18b63b301d26cc5a3ec6b2a6d8960c13e171ce"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-03-037-9e4e31615a",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "63672ddfc9388bd1e7de1b13e823dead7128b3c70f44e57679bc4b1343f60b3c"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-03-038-f538c54538",
+          "route-03-019-9e2632d0bf"
+        ],
+        "file": "seed-3/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "fa06f012c2fc8302cf731a275ed40982abbbee4132647216282ae2ec0b2a0ec2"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-03-039-a90c7c633e",
+          "route-03-036-977933345d",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "b7b9e2bf3ee212bb4b82fca09b8cdfa326ad51621e3ee7a0a709927004e361ef"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-03-040-342f0e04d6",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "97716fe2aa33dc8e5d2bb19dcc9fdcc095c846a772e1ac08e1b283feefb2ac12"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-03-041-03a2cdeb44",
+          "route-03-020-7556d173a6"
+        ],
+        "file": "seed-3/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "cd24a7410e746e9909ae9f7be07bd6f884f7297c8db9df975287a3cbcbded2ba"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-03-042-db183b9670",
+          "route-03-039-a90c7c633e",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "c1613429e163a78e64a2edce60ef0056bbc69b9187ca2fb0fb142cb2cfde2e10"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-03-043-fd52a3b78e",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "8a9979cea0137f0a4bf195133f857945c7a14dfb6b1512dda894ae4814106c32"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-03-044-6d50f21441",
+          "route-03-022-9fb9051553"
+        ],
+        "file": "seed-3/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "bafc8c7f63aee4c1ed919e321717a72790b5bdbd813ba45250174d5f4fc1e292"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-03-045-b69d398700",
+          "route-03-042-db183b9670",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "bf2361015bd41835592d8036bd2ac1139cedd4b11ce91b9a7e6e6b688462b011"
+      },
+      {
+        "estimated_tokens": 6130,
+        "expected": [
+          "route-03-046-92e851911c",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "e7e908e6cfd949d0747aac12308ccc191fc6513641e9f7d97c858796f67e4f58"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-03-047-cc0900fa33",
+          "route-03-023-87844831cd"
+        ],
+        "file": "seed-3/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "85a72640773660ec436184c5e15393422b7d1b2e2c54c72b20216055e71cab63"
+      },
+      {
+        "estimated_tokens": 6142,
+        "expected": [
+          "route-03-048-deba5a2e2c",
+          "route-03-045-b69d398700",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "0814c50e22f863646db904427ad949e68936c3fe0562ad6f774e30a338a70eb4"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-03-049-f4192cd64d",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "659ed85ad24fcd2b2868d78d896a21f5ca4097e04fa60053c22f1549705cb425"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-03-050-be6ebde98d",
+          "route-03-025-ba13eb8c3f"
+        ],
+        "file": "seed-3/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "b90303ee3ae2b962885785de80383bc09f1215b3dc8b810c3540b07fbca11904"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-03-051-2f1d32fb20",
+          "route-03-048-deba5a2e2c",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "5221220db8473489f7362e2d238531fcafc5984ea9c3062e8ffa7d1421e4a516"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-03-052-8fe4121daa",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "520e2034a68b51f65c1282494efd9986f36333f5f0283734f93efa13dfc92521"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-03-053-c90b8c8f36",
+          "route-03-026-61dc2ec77a"
+        ],
+        "file": "seed-3/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "5715c899ae9115d699bfad6f5ed137131d97c730335b69b07418408d233e413a"
+      },
+      {
+        "estimated_tokens": 6146,
+        "expected": [
+          "route-03-054-16e327b590",
+          "route-03-051-2f1d32fb20",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "4307ad133ad3a275d379d56992b807602cdc3d84d832b13ff20f4302bd9d0a9c"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-03-055-56d6ca489e",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "baaac039ab8bd70a9d079b8207613d1347e1d9841d9524634b7ccdd5cc3266a2"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-03-056-7a7de49c45",
+          "route-03-028-357f662f59"
+        ],
+        "file": "seed-3/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "8af72a802018530ae825407bf132b17e9c502b5491346ce21015fb3030a1ae03"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-03-057-5c032ca861",
+          "route-03-054-16e327b590",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "697ff0e69ce9ad92b40b6ca7055ba7f99b0b12ba179fd1e24495304a9d260ccd"
+      },
+      {
+        "estimated_tokens": 6084,
+        "expected": [
+          "route-03-058-bc7aa710b3",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "bd981196898edbb136faa99341dee3c85fde6e22608f6c094a75351d0f2a9a58"
+      },
+      {
+        "estimated_tokens": 6086,
+        "expected": [
+          "route-03-059-915ed9bd61",
+          "route-03-029-43bf078b3f"
+        ],
+        "file": "seed-3/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "e5df691f7533aa8a409674918d51d312eeacd4ee0c23356bed6d54eee1123cea"
+      },
+      {
+        "estimated_tokens": 6137,
+        "expected": [
+          "route-03-060-97758d4147",
+          "route-03-057-5c032ca861",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "5cfc8e00144177a6054b549eb23f5836b2585fdd896a1723ab6d4b9313093d71"
+      },
+      {
+        "estimated_tokens": 6137,
+        "expected": [
+          "route-03-061-6f174d144c",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "f2df58bbcec7bb3c47ad975e1fb0c822e545966c2f112243f4facba8c23facd2"
+      },
+      {
+        "estimated_tokens": 6085,
+        "expected": [
+          "route-03-062-2c6bdb6ee0",
+          "route-03-031-348c0cf968"
+        ],
+        "file": "seed-3/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "67b113e88578dcc70026f0ffeb5a2738218a7c239874207123fa73d8a2e88ded"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-03-063-f5f430f31e",
+          "route-03-060-97758d4147",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-3/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "dcf6cdfe57c26aa6b4dd15231326f8ba4016248cfd72e7999f71947aa2d4b0ff"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-03-064-bc181b45c7",
+          "route-03-001-acfa5474c2"
+        ],
+        "file": "seed-3/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "b55516a145c16ea38a044d9b4bfc41a134f97e9bbe9743dac777d4e55b674324"
+      }
+    ],
+    "4": [
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-04-001-c7381781f4",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "d37709e9c165a25f1556058002bdee1af3c65eb2c974c12f2e6ee214cd255610"
+      },
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-04-002-c75c51d6d9",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "010eb40c48b71d349bcadb9cd11dd87f207755515b3c7045642285154239c9bb"
+      },
+      {
+        "estimated_tokens": 6121,
+        "expected": [
+          "route-04-003-c821342585",
+          "route-04-001-c7381781f4",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "a21ddf5330b8cc91a39fe372be93dcc18b47829ee30c7b634f495af42dd70904"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-04-004-6cc1110d63",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "6b58bcc5592d5a5e6df6b0c036bb0e9501d5a2e222de34987baca949faa994e0"
+      },
+      {
+        "estimated_tokens": 6123,
+        "expected": [
+          "route-04-005-5948e839e6",
+          "route-04-002-c75c51d6d9"
+        ],
+        "file": "seed-4/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "123bfc6f748a2dbd61b878a2b18b1afe0feb1dd5db89fca00da156cb314c1643"
+      },
+      {
+        "estimated_tokens": 6138,
+        "expected": [
+          "route-04-006-4bbadf7bdc",
+          "route-04-003-c821342585",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "7f2667da5b2983b5437be8d9675720bd5e66aba7d64df5e61f642ad133c32382"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-04-007-69302ee12d",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "1f35d011a4e07b5dea7d690f2f9ede40631abe894c43db79c239f11fe72eb1b8"
+      },
+      {
+        "estimated_tokens": 6101,
+        "expected": [
+          "route-04-008-484fc66269",
+          "route-04-004-6cc1110d63"
+        ],
+        "file": "seed-4/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "0dee07041b91d083d47dd28a2f87db29492c8b7ebf30ff75ff9a0d3af89fcc48"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-04-009-46f8f0f2c9",
+          "route-04-006-4bbadf7bdc",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "52b40cdb2daa47e2eecd9b5f3c88b9140bb37a54b9271ee1270c9e87b7f491d9"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-04-010-edb8ddbcbe",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "2699245894c5910926026c0e126292f4f116599f189bf27bf43817cf6109c3f2"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-04-011-06566b8bc6",
+          "route-04-005-5948e839e6"
+        ],
+        "file": "seed-4/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "c494b8ea2101b2014f1069f2bb00562f85a86a1fa9457a3fd8214284fe2b2542"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-04-012-d2a96a629d",
+          "route-04-009-46f8f0f2c9",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "95233a9db8d4f50c0319bf3508a06665174c37bcbf822f112b25b92ca7add717"
+      },
+      {
+        "estimated_tokens": 6081,
+        "expected": [
+          "route-04-013-7e9cc51532",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "6b57c18bb433229308260190c11a1b358c6dfce8c51e4ca7fe8053130fd64fb7"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-04-014-e8ecfe0e27",
+          "route-04-007-69302ee12d"
+        ],
+        "file": "seed-4/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "90b0ed873ac734ead3fd29b58ad06650a33d25ee6b0e0703d1b8f98390c4611d"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-04-015-9eccc3f1ef",
+          "route-04-012-d2a96a629d",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "f828e14c33492f73b9a4d8fb69cc8041d4f7b8f6fa1ac05415d64b292d3a46c0"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-04-016-3e6aa9d8d6",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "7df66dbcd641f16cc090d1263845e2516db989c27c77d5b3fe3e433656379080"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-04-017-dbce078412",
+          "route-04-008-484fc66269"
+        ],
+        "file": "seed-4/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "64cf953bc6a33dc2dc84e3f812d6ca73c3f8c0af9f3e9b0c47c642ff801a281e"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-04-018-850ea64986",
+          "route-04-015-9eccc3f1ef",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "cb094b6866f2a924804d8ffb6114e4e9c122f91e47f355924d6829d8911ba4ff"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-04-019-524f27d0b6",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "1bcafba3a36bfdb5c86737f6238e754d27bd4615c4c04193346b2d7362dc53bd"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-04-020-d64a979559",
+          "route-04-010-edb8ddbcbe"
+        ],
+        "file": "seed-4/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "bb12208b31334b28419a4f8921e202d181bf72b3226928e83558646b339d8dde"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-04-021-1358d93651",
+          "route-04-018-850ea64986",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "27f65ece69c2c39f269e7634f2c88c9358e2ee6aad4518ce2ecdf1e1d5dd21af"
+      },
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-04-022-b7aa2c29bf",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "82388cfaeaae9478d32c2aa43b7e34f0eccbbca29c4c4821878e7bcd2a2cefb4"
+      },
+      {
+        "estimated_tokens": 6096,
+        "expected": [
+          "route-04-023-681d477d4d",
+          "route-04-011-06566b8bc6"
+        ],
+        "file": "seed-4/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "8bbf26b779ae999b7883c63db11bf7a1f3ab6184a4e92e6cba543d7658c0b890"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-04-024-9d65658866",
+          "route-04-021-1358d93651",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "a2aef70c8798ac59d850d2950faf05675e821c3c85b4098be67f278cebdc5181"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-04-025-f40eba1ad2",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "4a02d44155092162c857acfe399637808f32ad9ab05f1eb76559d6b30d430a90"
+      },
+      {
+        "estimated_tokens": 6084,
+        "expected": [
+          "route-04-026-e6971ec11f",
+          "route-04-013-7e9cc51532"
+        ],
+        "file": "seed-4/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "5da235ae455300e7618b010decee5bf44155b6aba0195203fd56b1a9a6fb2b3e"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-04-027-5a8bfee48c",
+          "route-04-024-9d65658866",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "e6050774b69d3f4fe2b95ed1fdddc84b32fc68e63c9616a3aff4576b9c234eb0"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-04-028-313c074900",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "a78d298709e58b6c93741cdfb6d9182e328eaa6bad45c8452364baa38be68e56"
+      },
+      {
+        "estimated_tokens": 6092,
+        "expected": [
+          "route-04-029-e5a042b4fb",
+          "route-04-014-e8ecfe0e27"
+        ],
+        "file": "seed-4/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "0282df5c6a27f40d036e9b244488f8372145c69630c2c38d7d6b733b18e9c3b5"
+      },
+      {
+        "estimated_tokens": 6125,
+        "expected": [
+          "route-04-030-31a64a08d1",
+          "route-04-027-5a8bfee48c",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "1921356c92589245e1ba860bcbc27be0be3a937f207053dd1eee1243597a5761"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-04-031-8e80c402b6",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "62f586908df7e42ba472cd388ff275e8d69083732c836a0804d0e0dc85dc4826"
+      },
+      {
+        "estimated_tokens": 6136,
+        "expected": [
+          "route-04-032-d1c421a3bb",
+          "route-04-016-3e6aa9d8d6"
+        ],
+        "file": "seed-4/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "438c7cadc9247e21bb6b500b77d1b1a7ddf6135c74de016f51e12657aa2b0740"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-04-033-4613a16b6c",
+          "route-04-030-31a64a08d1",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "e8ac0d5b27a805f7aaf2fd364dcd0f2087152c7c4bc5f288d8f4337c5678cefe"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-04-034-d73eb3d994",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "8fd222fcdc16108b3e3096a4e3a4e758e144af3449cd155a0da3370a9ca71c84"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-04-035-ddfd7fbd73",
+          "route-04-017-dbce078412"
+        ],
+        "file": "seed-4/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "063a2641f8064974a64cdb1d946441e12389da99a4827520fe36f445381e19c0"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-04-036-9e951fe349",
+          "route-04-033-4613a16b6c",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "508ab183726516612cb79f344ba51d63b8eb92268f3b466c0e37d4ba9f269e90"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-04-037-72317f3362",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "b61b828e59190dab5dd492e32924b44705e92d2cd3492403b7c3e601afa00e44"
+      },
+      {
+        "estimated_tokens": 6116,
+        "expected": [
+          "route-04-038-5a55e3a397",
+          "route-04-019-524f27d0b6"
+        ],
+        "file": "seed-4/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "edb8e462ccb513247a7d875ec35e9493b23494b1f3987ad16a205f572016adac"
+      },
+      {
+        "estimated_tokens": 6105,
+        "expected": [
+          "route-04-039-f9ec25df6f",
+          "route-04-036-9e951fe349",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "4377b61a077a10373b789b04946d42005e6dadbd98a28873792861c35529954d"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-04-040-a1c089fa97",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "b1f125ef9738a9687e038963993650b35ffa84cc1da0c2481ec752f55b466de6"
+      },
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-04-041-53c7ac64d3",
+          "route-04-020-d64a979559"
+        ],
+        "file": "seed-4/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "98a94cdfff924dcbcd7954fcce7c853db59989bff7598da475bc0ad48175858c"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-04-042-f4ebe95a04",
+          "route-04-039-f9ec25df6f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "ca420ad043c1720ed823408f228972cad667e9e4d3f1fb6dabed28ed42b74fdb"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-04-043-ad4c2228a0",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "c54a18e20ee962409114d1e14c965b607759232554aa10f2a7c5308b7fbea428"
+      },
+      {
+        "estimated_tokens": 6083,
+        "expected": [
+          "route-04-044-37ff0f3609",
+          "route-04-022-b7aa2c29bf"
+        ],
+        "file": "seed-4/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "9e7bc077221380406c7003afa16b7f9f9d6d02e1a32cc59e48dc8080b91726ec"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-04-045-0c561a4c43",
+          "route-04-042-f4ebe95a04",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "d79926e11268da05c97240e6362cc95ea797834f822e5bf79c1f6b0efaa48cc5"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-04-046-f68819474b",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "ae6fb228b99751654cbaa13ba118b365b320a7a18f04ae72805cdb15d34bb902"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-04-047-cd8a410497",
+          "route-04-023-681d477d4d"
+        ],
+        "file": "seed-4/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "079b7b450a4202e4bbcf738f282702146f294a5d6d5915d675aa6f533fe30b92"
+      },
+      {
+        "estimated_tokens": 6137,
+        "expected": [
+          "route-04-048-d97e0cb02e",
+          "route-04-045-0c561a4c43",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "c527183f307cd61b7913a0d0ca00fe20d5a15d5f6771ce0ffcb267cf8ef7e820"
+      },
+      {
+        "estimated_tokens": 6117,
+        "expected": [
+          "route-04-049-437a631741",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "61f71bc8767b08e816767f37b45d34e3d3fe7b942cc1f49141d02e503cbac19c"
+      },
+      {
+        "estimated_tokens": 6086,
+        "expected": [
+          "route-04-050-b488fe46ba",
+          "route-04-025-f40eba1ad2"
+        ],
+        "file": "seed-4/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "09a3cbef5cde90c21a839d8c638550664e540799a61e02921498e807ed8695f4"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-04-051-fd9b13a77a",
+          "route-04-048-d97e0cb02e",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "6c2298f2caa0be5fbefa79e0bffb9b863a1562d3ca7dd3b32ab09a6758c52322"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-04-052-4c14fc95c5",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "d8ce2c7e453024e0e18e89ce4268b36167214a36c154bad4bf95653bde94fc55"
+      },
+      {
+        "estimated_tokens": 6128,
+        "expected": [
+          "route-04-053-b308387f39",
+          "route-04-026-e6971ec11f"
+        ],
+        "file": "seed-4/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "2bd660ca61c6bc9a698ec3345fc773814880152f639625d422abb15e8f2f416e"
+      },
+      {
+        "estimated_tokens": 6138,
+        "expected": [
+          "route-04-054-d629925963",
+          "route-04-051-fd9b13a77a",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "f682f7127ddede245e724c8e134240dd5ae16cf85ffc9314504e377f3e635e41"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-04-055-e74f4007fb",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "b7f5e3ba35724ef6c0de1225783827d26d1615e393ae8d351bcde7656d23446a"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-04-056-e88a3d553c",
+          "route-04-028-313c074900"
+        ],
+        "file": "seed-4/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "c24c1a7aa2e93f89be4c71f7a3accecf26abee74f6a5abf91908b34de83ab5c5"
+      },
+      {
+        "estimated_tokens": 6139,
+        "expected": [
+          "route-04-057-d8c458714e",
+          "route-04-054-d629925963",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "59acdaa0283f369645af36b04a1bfe4fbedc7a46955935e34a5681d66f0ade42"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-04-058-e6ae76c03d",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "30a4b5b8d3f84c1b70ee92ee7d2b862e6881af031b95c42b83c45e2b52409b7f"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-04-059-8caa41245e",
+          "route-04-029-e5a042b4fb"
+        ],
+        "file": "seed-4/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "f77540ccc961612108adb32f002651cd8138234dcf185db8692dce00ec63c600"
+      },
+      {
+        "estimated_tokens": 6148,
+        "expected": [
+          "route-04-060-0ccee72165",
+          "route-04-057-d8c458714e",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "a417fbc81b37a3eb72c4cfeffb23dba06967fe5dc714fff6aaa50f02d67a3685"
+      },
+      {
+        "estimated_tokens": 6104,
+        "expected": [
+          "route-04-061-ef689bb445",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "6ecd8ede0d75fc4404fc8ef1f6dd21d972603bee7771b75031765601703e897a"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-04-062-27b2c44547",
+          "route-04-031-8e80c402b6"
+        ],
+        "file": "seed-4/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "948bd0679f97ec7d69ef6ddae0bbb54a6ad72cd4b7de02cb16660c0375197247"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-04-063-0114ef1275",
+          "route-04-060-0ccee72165",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-4/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "8922e1b19e896a725d5c6d5433895e72a214f4b4dda165a77570c22899f541bf"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-04-064-24627aacef",
+          "route-04-001-c7381781f4"
+        ],
+        "file": "seed-4/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "9fe8fb89d9eee918497dee96c9c1e55a445b005d706e6e15dc28e5ba3982c5ba"
+      }
+    ],
+    "5": [
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-05-001-b0a2ced0e4",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "9d3c7651d37f9f94474ccfec341ac36852609ad3430b2a4a193e1c3a5baccf52"
+      },
+      {
+        "estimated_tokens": 6082,
+        "expected": [
+          "route-05-002-6bdc1db748",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "0f4825518edeea7cfef8246e8c249ff1d399337882618d31631e2c3446bf1c2b"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-05-003-b418670789",
+          "route-05-001-b0a2ced0e4",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "56f2ac36d1ce371acd79634515d6b1e8d868ab67c6af90fb5b4a7ea3945488ea"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-05-004-d932149ed7",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "8b105fe09e9458c7c0554b7404a2537f3dbeeea4082f49269212544d843708de"
+      },
+      {
+        "estimated_tokens": 6085,
+        "expected": [
+          "route-05-005-08399ba95b",
+          "route-05-002-6bdc1db748"
+        ],
+        "file": "seed-5/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "88af54bad88219b82a46062be3b18ee1da32383ffcec188a2476d9d4ad74aeed"
+      },
+      {
+        "estimated_tokens": 6149,
+        "expected": [
+          "route-05-006-991d1386bf",
+          "route-05-003-b418670789",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "d122f0f1efde2448a4c85e612ac8a726febf169f77850d16ba83194a9ce4ab1d"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-05-007-258f5c563f",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "cdd0abdcb101d8ab7f9c7a7542aa240de3a1f20179c81eda885d7ca20428e167"
+      },
+      {
+        "estimated_tokens": 6128,
+        "expected": [
+          "route-05-008-9ee8bd028c",
+          "route-05-004-d932149ed7"
+        ],
+        "file": "seed-5/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "8ffa8dfd93f09cdfb1f3739f324506e5f3094e9feeb03cdf3a7d7cb4ee638c48"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-05-009-72a864c7d0",
+          "route-05-006-991d1386bf",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "275776270fa93cb3ab6ea3bad955abb4ac18446048ab064021c2f8aa17f23ddf"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-05-010-3787a7dc53",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "4cb703171f39efddffbd4159af45444d73b64cb982b0d8428e4f7cfa344c1ede"
+      },
+      {
+        "estimated_tokens": 6082,
+        "expected": [
+          "route-05-011-4c4c27dd33",
+          "route-05-005-08399ba95b"
+        ],
+        "file": "seed-5/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "2bf8141bb9d7955055ea3ee7f3dff6432aec137927536188320ddab9b6aa929b"
+      },
+      {
+        "estimated_tokens": 6135,
+        "expected": [
+          "route-05-012-70b0eacbab",
+          "route-05-009-72a864c7d0",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "3d9f764a8106b292387760d6a416e0a44592ff6f695575e7b205e783167a9600"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-05-013-3cd959eca9",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "afc3222c8a41dba3dda3c94bf0a74b5c3621efc5bd7e41bf7895a9e21ecf5efa"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-05-014-c583d96ffd",
+          "route-05-007-258f5c563f"
+        ],
+        "file": "seed-5/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "3e5fb2e208f0a62b54cddeb29740808364bb349387ec9850e0e79e99105a1b3f"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-05-015-7aff81e7a9",
+          "route-05-012-70b0eacbab",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "99a97c2c25d42d3093dcffee9a502b3856d43c70361cce2a27abe1042a4db7b4"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-05-016-d69a89637c",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "528a300c8134dc8b03093867642abe2735db4dc1122b9a2bb61a4e8bc88eb6cf"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-05-017-2710313c1e",
+          "route-05-008-9ee8bd028c"
+        ],
+        "file": "seed-5/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "db4a6122604a92bbea850d88581de0929beb387331622308181f3d00afe01520"
+      },
+      {
+        "estimated_tokens": 6135,
+        "expected": [
+          "route-05-018-aa94b42739",
+          "route-05-015-7aff81e7a9",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "e6c5849d277197fc97ab952abf1c947f95a52ac9fee82f363ab008e6be546223"
+      },
+      {
+        "estimated_tokens": 6088,
+        "expected": [
+          "route-05-019-1726b2598f",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "d5c3648fe821afe8b46737d6f5a0ca0df01913beb8415f3a0ec1461d4faab795"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-05-020-07e22c38fb",
+          "route-05-010-3787a7dc53"
+        ],
+        "file": "seed-5/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "f846e44c0c44eb78d5ec9f2da307b4b62e82b2f0efe7f49f0f8d9aa4535f7a66"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-05-021-18d5327d06",
+          "route-05-018-aa94b42739",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "f77186d2b6e1480951fdf0c8d39e381659bc724b5b74a56e21ce2b21cfcb3f01"
+      },
+      {
+        "estimated_tokens": 6134,
+        "expected": [
+          "route-05-022-0a7a9d91b4",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "b1a29e0368df8595c86d4bde3ae57c33ce2ffa66a523d7f9daae4db10ad506b8"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-05-023-17ae76e2b6",
+          "route-05-011-4c4c27dd33"
+        ],
+        "file": "seed-5/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "fba9153d91c24af9bcd8cf8dd5b401feab063afd57fc62134a62c9e1f6627798"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-05-024-cf266e664d",
+          "route-05-021-18d5327d06",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "58d39e9f1b540fb1de389786b4a988e8ec8841b9a75e553fb0870bc655e73c2f"
+      },
+      {
+        "estimated_tokens": 6104,
+        "expected": [
+          "route-05-025-689e4a69b2",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "4da58dd0ed70f5de231e619edd596c87f483118e5c1a8f8d74302c46d188141f"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-05-026-67d317463c",
+          "route-05-013-3cd959eca9"
+        ],
+        "file": "seed-5/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "32599fee2906af0e4b059cb0f4ffabe2c2a7c034ce6342c9817dc20d61499012"
+      },
+      {
+        "estimated_tokens": 6150,
+        "expected": [
+          "route-05-027-77a19eb4f4",
+          "route-05-024-cf266e664d",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "cb3b901d6317554d0001224a06c8cbc4ddc4d7bdcb6e2a61a0fb96e1b6dae6dc"
+      },
+      {
+        "estimated_tokens": 6114,
+        "expected": [
+          "route-05-028-ad79463615",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "95b3d6ab0162e18d134af74e9a6f871e119d4e75ededa939a0324c39ec3791ea"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-05-029-1351c87073",
+          "route-05-014-c583d96ffd"
+        ],
+        "file": "seed-5/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "af265600b0fc2b0fe361dcf24259ff82921cf5693a0637fab67c61f9c47d5526"
+      },
+      {
+        "estimated_tokens": 6144,
+        "expected": [
+          "route-05-030-23446df354",
+          "route-05-027-77a19eb4f4",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "5085e2a230727fee69e34f823cafac0f82849baa360f82ac4b946a1a09293ab4"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-05-031-1dd5165867",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "3bcb13ea968e43fab3c92e17eafb4e27231b0fc93ea48bddc06a83b7454fa484"
+      },
+      {
+        "estimated_tokens": 6138,
+        "expected": [
+          "route-05-032-8d93c892a6",
+          "route-05-016-d69a89637c"
+        ],
+        "file": "seed-5/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "9d7499e086e23cea965f883a2c3f3d1b0728102c852cbf9f6dd6b2d6960649c6"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-05-033-eaf5d4ec1a",
+          "route-05-030-23446df354",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "074fce465357a99c6ee50ecd2bddf443077fd2dc716f0d0ada940d5deced15c3"
+      },
+      {
+        "estimated_tokens": 6128,
+        "expected": [
+          "route-05-034-7df58353d6",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "42e8ab4e312faec3196e0642c266bb464225470d32e90ff67dc27655b53caf45"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-05-035-710a7add29",
+          "route-05-017-2710313c1e"
+        ],
+        "file": "seed-5/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "45db63a3b1af48671f59bfc5ec0f93b2a6b0f12bd002105c73a329b5892cff35"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-05-036-993526949b",
+          "route-05-033-eaf5d4ec1a",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "b42a9d396be693f0d3877e82fb6e17b79f8bc64c57e5757ddf414d4d8c8dbf71"
+      },
+      {
+        "estimated_tokens": 6133,
+        "expected": [
+          "route-05-037-6489382d86",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "a3dc25a260c3ba58aea5074258b77407451d85cbfd96d1a9409c7720f3c58263"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-05-038-61b4ae0f1a",
+          "route-05-019-1726b2598f"
+        ],
+        "file": "seed-5/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "549682740c76d0ea9bf4a56e82f392400972b22c1c401155e8b87df9b44c13b7"
+      },
+      {
+        "estimated_tokens": 6140,
+        "expected": [
+          "route-05-039-474c5edd4b",
+          "route-05-036-993526949b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "3fb341d01a674bab68326707264ef22f5e872beeb435f5c62bcdaa9cf0f58e98"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-040-9fea702e3d",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "c11cfdbfc060fcf1f2f775c68b0a49b5559565cdf136999a2e8474723de3c5d9"
+      },
+      {
+        "estimated_tokens": 6084,
+        "expected": [
+          "route-05-041-6c1abdc4d1",
+          "route-05-020-07e22c38fb"
+        ],
+        "file": "seed-5/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "c8d553e6026a33fdfaa92681d1197df677a4848dc8076151c8f7e0592ad7bea3"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-042-ab4f1af2fd",
+          "route-05-039-474c5edd4b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "2ed29402c756d650fcbbcec7f73639173ae3b1db044ecf1ebc906de0802fbb40"
+      },
+      {
+        "estimated_tokens": 6114,
+        "expected": [
+          "route-05-043-669784cfc9",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "c7c7cb4bca1e500f200017d8b79b198d3c5b96aa239b3629036096e12474dfe2"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-05-044-d486e0148b",
+          "route-05-022-0a7a9d91b4"
+        ],
+        "file": "seed-5/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "2fe78ccbfad799681b448d4e2706b820589d9b12b2d87aa7c9ba52500a6a3f42"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-05-045-d72fa9cdc6",
+          "route-05-042-ab4f1af2fd",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "500e0a558e34a7a566d52a9039ddcced86bc244caf7b9f0d99e7f56083b957f0"
+      },
+      {
+        "estimated_tokens": 6121,
+        "expected": [
+          "route-05-046-9d121a72e9",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "2b1c3002f3488eab43d531203ce16196d3f50f5f21756b4e2030bdf042a72e05"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-047-5b3ee2e84e",
+          "route-05-023-17ae76e2b6"
+        ],
+        "file": "seed-5/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "03ba133f73a8fc7fb6c8dad3c43b598460b0fc46b271b2350504ca34d08dbdf5"
+      },
+      {
+        "estimated_tokens": 6096,
+        "expected": [
+          "route-05-048-21cfd9e9dc",
+          "route-05-045-d72fa9cdc6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "edb461ff322821caad6b7ac843e29b07b8c15da546e1e1aaaa999107cb553487"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-05-049-08033c41c3",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "672eda68797078d949d548d980f98d97199448aa9485f3950d66d63caa6cc0e5"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-05-050-6c4fee2fb8",
+          "route-05-025-689e4a69b2"
+        ],
+        "file": "seed-5/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "2cfa0e33ce30e81d9938acccfa5d608b3a3116d21d844030b3b340d88633a333"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-051-1fbb5bfd28",
+          "route-05-048-21cfd9e9dc",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "02174206acc1a2c33b355f2a643234a966bc7f7bde5b0f2068d7dc0e13d05a19"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-05-052-b065e2f561",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "75259799ee9864781e129a60843d5e780436bd0ca11bae715693e6e9dda68487"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-05-053-e3f60069d6",
+          "route-05-026-67d317463c"
+        ],
+        "file": "seed-5/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "d4a46100787dabbd811c06415cf40db0b555a16e533bbe48fb17dbd4dd476338"
+      },
+      {
+        "estimated_tokens": 6106,
+        "expected": [
+          "route-05-054-2fdf4a73ee",
+          "route-05-051-1fbb5bfd28",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "2b6166294f40b84eab0425312b7f17935e4241c2d535c72c040d8a584dea6f4c"
+      },
+      {
+        "estimated_tokens": 6109,
+        "expected": [
+          "route-05-055-d960639df8",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "8f8f6e57f5bf5725612ce80d4f3d60be1af2a864f876ab306df6721e94467600"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-05-056-3eba33f671",
+          "route-05-028-ad79463615"
+        ],
+        "file": "seed-5/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "7bc1b86b00062b60808fda61786f7b4e0aeed516f30d595d03ffb618a64b4dd0"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-05-057-c700b8846b",
+          "route-05-054-2fdf4a73ee",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "a09f4d16b625a80f7e561dd070c1f10db855c3143117761767935684ef3a163f"
+      },
+      {
+        "estimated_tokens": 6123,
+        "expected": [
+          "route-05-058-5714b44e18",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "f00b6218adec6c4e99020c6d7b02d84ab5ae19f6dc4712a894f4fdc4785157c9"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-05-059-fcd4d346dd",
+          "route-05-029-1351c87073"
+        ],
+        "file": "seed-5/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "6eceb084c67853ed79bd508c3be4fb0cc6790cd04137e431e31bd1e0a8c1f4c4"
+      },
+      {
+        "estimated_tokens": 6148,
+        "expected": [
+          "route-05-060-af73b045d1",
+          "route-05-057-c700b8846b",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "a261bbef3bd23349c1427458261f01b6b3890f858837c75863e85feb90e68924"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-05-061-e65189c9f8",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "7521f0d8ec8efa923badb2ea1b57a23a8bb63ac3fce3e1d95c10c3d1a27ebe5a"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-062-e71c8de7ce",
+          "route-05-031-1dd5165867"
+        ],
+        "file": "seed-5/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "242f5933a0a2de5afd8e543aec8987d6947b231398e96bf1aa8f09b42c8ba057"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-05-063-9acc4565fa",
+          "route-05-060-af73b045d1",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-5/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "3f39b2fe98c9fc1fd70c2e23e928b24898038c0100d705a3faa93844914b084a"
+      },
+      {
+        "estimated_tokens": 6129,
+        "expected": [
+          "route-05-064-e826b47ddf",
+          "route-05-001-b0a2ced0e4"
+        ],
+        "file": "seed-5/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "98184c5b56f4c2f884413e1f1369b47803e5e6be51743eafb3abe8d4b0b255cb"
+      }
+    ],
+    "6": [
+      {
+        "estimated_tokens": 6131,
+        "expected": [
+          "route-06-001-12d2fc3f16",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-001.json",
+        "recalled_turn": 1,
+        "sha256": "96a5e7d2f886ca1d990151658779330cf026ebfaafe01abaf2a64bcc589fb7e5"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-06-002-93709a1070",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-002.json",
+        "recalled_turn": 1,
+        "sha256": "e4a7e7dd4fad5063aac72586b7f5f3034d54d44c50df797d1735cc9f4986f844"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-06-003-84ce526a92",
+          "route-06-001-12d2fc3f16",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-003.json",
+        "recalled_turn": 1,
+        "sha256": "bc8ed14a2ccc07b7cc75ec27c792d25df0a6dd573e4317d397e1b76863afa0f2"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-06-004-a9dd029a49",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-004.json",
+        "recalled_turn": 1,
+        "sha256": "9b3f6c2b05df25485328897af22cb336729b0ae8a4539929d171bcb9e5b5b542"
+      },
+      {
+        "estimated_tokens": 6095,
+        "expected": [
+          "route-06-005-4ece403a9c",
+          "route-06-002-93709a1070"
+        ],
+        "file": "seed-6/turn-005.json",
+        "recalled_turn": 2,
+        "sha256": "1a0f4106f772d7c7deab85ac283e776b40c84243db4e39463a8177cefe03f3ed"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-06-006-d5b7461fbe",
+          "route-06-003-84ce526a92",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-006.json",
+        "recalled_turn": 3,
+        "sha256": "83760879dce10d6818271cc64f24616270b85f594e58e3b112e6fb47aeba5fd6"
+      },
+      {
+        "estimated_tokens": 6098,
+        "expected": [
+          "route-06-007-35969ae786",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-007.json",
+        "recalled_turn": 1,
+        "sha256": "7afbef2f1933ae5db79972f07a264128f4fa6af9e22d817240f434a1439b7618"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-06-008-3fc4427792",
+          "route-06-004-a9dd029a49"
+        ],
+        "file": "seed-6/turn-008.json",
+        "recalled_turn": 4,
+        "sha256": "891fcb8c2d0c7cc84933fbe5165122929d03673daffe16fbc7dd460bb289f47d"
+      },
+      {
+        "estimated_tokens": 6142,
+        "expected": [
+          "route-06-009-9589d49a9c",
+          "route-06-006-d5b7461fbe",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-009.json",
+        "recalled_turn": 6,
+        "sha256": "4f4bf68867bb73843cf3645f6d7ba712c517f92e06298a85ed179ab92ed3758d"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-06-010-2b920d2944",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-010.json",
+        "recalled_turn": 1,
+        "sha256": "f665aca3e2148005bfd01fb9117efe4924947c8cf46b067a23ad836b879b3d61"
+      },
+      {
+        "estimated_tokens": 6108,
+        "expected": [
+          "route-06-011-060c5c8734",
+          "route-06-005-4ece403a9c"
+        ],
+        "file": "seed-6/turn-011.json",
+        "recalled_turn": 5,
+        "sha256": "012cbde8496a983d7bec830469e43a8ae5c2c7910ebb47b4353650f629fb7bf4"
+      },
+      {
+        "estimated_tokens": 6147,
+        "expected": [
+          "route-06-012-efc2cb27a2",
+          "route-06-009-9589d49a9c",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-012.json",
+        "recalled_turn": 9,
+        "sha256": "928a5580955f5fcaf1e431f2368d59650d2ab5262841f6140216de3583a96e07"
+      },
+      {
+        "estimated_tokens": 6125,
+        "expected": [
+          "route-06-013-2f85f701d1",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-013.json",
+        "recalled_turn": 1,
+        "sha256": "3b5a3f527fbef1ffc7e116e1132c2c0d764ac2d2fce6a3e889abd630e8d0c618"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-06-014-ace4596594",
+          "route-06-007-35969ae786"
+        ],
+        "file": "seed-6/turn-014.json",
+        "recalled_turn": 7,
+        "sha256": "75f1a85b543feaceef1aa063767d59f014dedd562b7f28f1d17973c4ca345f36"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-06-015-10289e2bd6",
+          "route-06-012-efc2cb27a2",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-015.json",
+        "recalled_turn": 12,
+        "sha256": "eaaf9dc30b71b21ea00f4dc0055168df368586c328cf1b1739ed3aa219f65bf2"
+      },
+      {
+        "estimated_tokens": 6112,
+        "expected": [
+          "route-06-016-58e8b68c2f",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-016.json",
+        "recalled_turn": 1,
+        "sha256": "bad8abd5adefe4a864e674a863bb8a06b053c0b726cfdf071fd82aef6db46b14"
+      },
+      {
+        "estimated_tokens": 6093,
+        "expected": [
+          "route-06-017-a3699a1989",
+          "route-06-008-3fc4427792"
+        ],
+        "file": "seed-6/turn-017.json",
+        "recalled_turn": 8,
+        "sha256": "7a969c1f2f074644f9ea12a25eb3c0fa1d6ab3f445bba9055f2512658eb5559c"
+      },
+      {
+        "estimated_tokens": 6105,
+        "expected": [
+          "route-06-018-ff91bfc7da",
+          "route-06-015-10289e2bd6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-018.json",
+        "recalled_turn": 15,
+        "sha256": "3310ea32697723141eb2749f0c5626b5b94ec05ff0c0fbfbc543f89c624d5c57"
+      },
+      {
+        "estimated_tokens": 6092,
+        "expected": [
+          "route-06-019-35a7c93ed1",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-019.json",
+        "recalled_turn": 1,
+        "sha256": "32b38b34dbefb2acdd1431284cabd9c7b2d4fbb699d59f16f6eeae2bde7c40c8"
+      },
+      {
+        "estimated_tokens": 6118,
+        "expected": [
+          "route-06-020-f5d663aa4d",
+          "route-06-010-2b920d2944"
+        ],
+        "file": "seed-6/turn-020.json",
+        "recalled_turn": 10,
+        "sha256": "c3c381ff6caeed067a5d97cf1a38cbea3a50f409ef56f7dcfa33241d6c43d55c"
+      },
+      {
+        "estimated_tokens": 6119,
+        "expected": [
+          "route-06-021-f210cc4f81",
+          "route-06-018-ff91bfc7da",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-021.json",
+        "recalled_turn": 18,
+        "sha256": "92b6a3b14115951765de014bd6e2878839b0fefbb98b8b02ddc0b780f5784557"
+      },
+      {
+        "estimated_tokens": 6110,
+        "expected": [
+          "route-06-022-7efc76c818",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-022.json",
+        "recalled_turn": 1,
+        "sha256": "e12153af381264f38015eeff3826123bf8b7404b4a9c7227c1d3e7a2efcfb918"
+      },
+      {
+        "estimated_tokens": 6127,
+        "expected": [
+          "route-06-023-e478dafe42",
+          "route-06-011-060c5c8734"
+        ],
+        "file": "seed-6/turn-023.json",
+        "recalled_turn": 11,
+        "sha256": "556c11bd6d1668541cae2429a39922b24ebbfe13723c88ea72ba380aa4244487"
+      },
+      {
+        "estimated_tokens": 6136,
+        "expected": [
+          "route-06-024-bc0179fcab",
+          "route-06-021-f210cc4f81",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-024.json",
+        "recalled_turn": 21,
+        "sha256": "3f6ad1e16afcfb8edc45610335e858fb9476c3ea4b97611062b3a9137ddace62"
+      },
+      {
+        "estimated_tokens": 6091,
+        "expected": [
+          "route-06-025-49cbec859d",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-025.json",
+        "recalled_turn": 1,
+        "sha256": "f572e48c290ac1328a2b62a3a5b3a5f3e146d283a736f4b7708bdc8b6b79e1d0"
+      },
+      {
+        "estimated_tokens": 6106,
+        "expected": [
+          "route-06-026-2f7d15310c",
+          "route-06-013-2f85f701d1"
+        ],
+        "file": "seed-6/turn-026.json",
+        "recalled_turn": 13,
+        "sha256": "dfb89d64576bb998351b0afa77764a50a2f2669a66fcfe32f9d0ad9ee881235a"
+      },
+      {
+        "estimated_tokens": 6148,
+        "expected": [
+          "route-06-027-8aa023f636",
+          "route-06-024-bc0179fcab",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-027.json",
+        "recalled_turn": 24,
+        "sha256": "e66ef892b2d059d3e8ac3ac5136986803bbdbf4a35414d603759743b99c02b7d"
+      },
+      {
+        "estimated_tokens": 6135,
+        "expected": [
+          "route-06-028-bedb9271e7",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-028.json",
+        "recalled_turn": 1,
+        "sha256": "9d1fe8b5074ca8a1c865cb5e5296374ba408192bdef13a9f4825d1fcef2e929d"
+      },
+      {
+        "estimated_tokens": 6111,
+        "expected": [
+          "route-06-029-7a32c4a907",
+          "route-06-014-ace4596594"
+        ],
+        "file": "seed-6/turn-029.json",
+        "recalled_turn": 14,
+        "sha256": "0881cd5a55b87b9876d73e0e6d439a946c02c621195f750244bc23f111197957"
+      },
+      {
+        "estimated_tokens": 6103,
+        "expected": [
+          "route-06-030-8f0695ed39",
+          "route-06-027-8aa023f636",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-030.json",
+        "recalled_turn": 27,
+        "sha256": "9240c847a2b1708497a5313d4a0b2c8a64f309a8187e1c6823b306486a10386a"
+      },
+      {
+        "estimated_tokens": 6083,
+        "expected": [
+          "route-06-031-21662e5f0a",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-031.json",
+        "recalled_turn": 1,
+        "sha256": "0d9bdc626932d16e1ace713b935cbd739f923a627565cf80513d5e1282d7559a"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-06-032-3d7a06ea79",
+          "route-06-016-58e8b68c2f"
+        ],
+        "file": "seed-6/turn-032.json",
+        "recalled_turn": 16,
+        "sha256": "47d04d059cd7fb1dcd5262c19c1a9b60896f9283ba63feb267cccb002afda55f"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-06-033-7179ec9eb1",
+          "route-06-030-8f0695ed39",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-033.json",
+        "recalled_turn": 30,
+        "sha256": "844956e0bdc22f42d50c70f410cc98e52948cbb3ec9cc72cf6dc84467e1f7177"
+      },
+      {
+        "estimated_tokens": 6115,
+        "expected": [
+          "route-06-034-2bdc527fd6",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-034.json",
+        "recalled_turn": 1,
+        "sha256": "e0f942fe59773425cfc56bb01a718300250f3420e58fd51521f47e9ad167ef30"
+      },
+      {
+        "estimated_tokens": 6085,
+        "expected": [
+          "route-06-035-de5a309d87",
+          "route-06-017-a3699a1989"
+        ],
+        "file": "seed-6/turn-035.json",
+        "recalled_turn": 17,
+        "sha256": "183b5291667db465ed835a6b888e1f381f354b52551836b3daeb81a1969337c9"
+      },
+      {
+        "estimated_tokens": 6106,
+        "expected": [
+          "route-06-036-20b6990325",
+          "route-06-033-7179ec9eb1",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-036.json",
+        "recalled_turn": 33,
+        "sha256": "0ae6e5a253b15025fc8ff78314e2a4b3b49c779e2f7f30ac45e121d6a526d2eb"
+      },
+      {
+        "estimated_tokens": 6094,
+        "expected": [
+          "route-06-037-9b1fe405c7",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-037.json",
+        "recalled_turn": 1,
+        "sha256": "e28cc7eba57b73d617005aebe4a3834a3ac8c732f31fee1535241bd52179cb20"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-06-038-373ad4d67c",
+          "route-06-019-35a7c93ed1"
+        ],
+        "file": "seed-6/turn-038.json",
+        "recalled_turn": 19,
+        "sha256": "e947dabcc4f9d7b9c310c3d2a44b89114edc0d0db98bba578c3b4e774e3387c2"
+      },
+      {
+        "estimated_tokens": 6141,
+        "expected": [
+          "route-06-039-579214ac58",
+          "route-06-036-20b6990325",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-039.json",
+        "recalled_turn": 36,
+        "sha256": "1939b1deb25a66127c453ec6f2950d8c96d87b9ebfbd141818ef2caf55c8c9a8"
+      },
+      {
+        "estimated_tokens": 6126,
+        "expected": [
+          "route-06-040-8cff3d5139",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-040.json",
+        "recalled_turn": 1,
+        "sha256": "9135ddf11ef571af369558187bab517c85b9b0e4685313b5e15af8e4f900fa84"
+      },
+      {
+        "estimated_tokens": 6125,
+        "expected": [
+          "route-06-041-e51c0c12aa",
+          "route-06-020-f5d663aa4d"
+        ],
+        "file": "seed-6/turn-041.json",
+        "recalled_turn": 20,
+        "sha256": "2d3d9054aedaea495f725353f5e5e9e38751e28ce14c150464032dae412bf1be"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-06-042-daf1996ca6",
+          "route-06-039-579214ac58",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-042.json",
+        "recalled_turn": 39,
+        "sha256": "a560a086f0299ceb12a1b92950f6e7e862de99b3ee2a97d234eda8fad8f1f7ae"
+      },
+      {
+        "estimated_tokens": 6113,
+        "expected": [
+          "route-06-043-65608c14da",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-043.json",
+        "recalled_turn": 1,
+        "sha256": "b1363baf9e9a6178ff158b6f646fc959fda4c0b58917787758f393abd78ef7a5"
+      },
+      {
+        "estimated_tokens": 6123,
+        "expected": [
+          "route-06-044-3d69c63866",
+          "route-06-022-7efc76c818"
+        ],
+        "file": "seed-6/turn-044.json",
+        "recalled_turn": 22,
+        "sha256": "1ccb0033f209aeebdabda734f80bb3da2b1fc2c9a44ea0aa97a94200e3ddeacc"
+      },
+      {
+        "estimated_tokens": 6149,
+        "expected": [
+          "route-06-045-788884f709",
+          "route-06-042-daf1996ca6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-045.json",
+        "recalled_turn": 42,
+        "sha256": "2f738579daebd4f73cee515581b0bd804fd1f488b4a57a81f1a27a7ef242da33"
+      },
+      {
+        "estimated_tokens": 6080,
+        "expected": [
+          "route-06-046-4bb382ef9c",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-046.json",
+        "recalled_turn": 1,
+        "sha256": "6e96daea6e4ce50c703347d393d087f6abd12c25b7ea2fe31ea073f97416d38f"
+      },
+      {
+        "estimated_tokens": 6105,
+        "expected": [
+          "route-06-047-f0c56cf070",
+          "route-06-023-e478dafe42"
+        ],
+        "file": "seed-6/turn-047.json",
+        "recalled_turn": 23,
+        "sha256": "dcd14ec320979043ae45345584db3733f0dd204ad3566a02bdef2eff86557fa0"
+      },
+      {
+        "estimated_tokens": 6100,
+        "expected": [
+          "route-06-048-def247f602",
+          "route-06-045-788884f709",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-048.json",
+        "recalled_turn": 45,
+        "sha256": "0af7716f71cce9c3efb0446283ea39c77aac7e6dd2c1982dae607b95c70853e7"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-06-049-5357052e63",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-049.json",
+        "recalled_turn": 1,
+        "sha256": "479bb84d2484d2dbf4be5a52cd295be04941fb1d6f8e30cdd7b28112734b326d"
+      },
+      {
+        "estimated_tokens": 6092,
+        "expected": [
+          "route-06-050-52db11efd3",
+          "route-06-025-49cbec859d"
+        ],
+        "file": "seed-6/turn-050.json",
+        "recalled_turn": 25,
+        "sha256": "e5a48ddc634b5a936fc2c2b192cc9dfab97af8e406fbd9b6ae9f7a093f1121c8"
+      },
+      {
+        "estimated_tokens": 6120,
+        "expected": [
+          "route-06-051-869e88d9d6",
+          "route-06-048-def247f602",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-051.json",
+        "recalled_turn": 48,
+        "sha256": "17b2fae009dfdf53cad79c7c26411763bcc3fc68f668a9ba200dd91907a8ca8d"
+      },
+      {
+        "estimated_tokens": 6114,
+        "expected": [
+          "route-06-052-c3be2b5587",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-052.json",
+        "recalled_turn": 1,
+        "sha256": "bbdb1e2ea08144b777845df5f233cfc3c709b60c71aa111fa102bcc540288b55"
+      },
+      {
+        "estimated_tokens": 6092,
+        "expected": [
+          "route-06-053-9734252213",
+          "route-06-026-2f7d15310c"
+        ],
+        "file": "seed-6/turn-053.json",
+        "recalled_turn": 26,
+        "sha256": "8b256b9d278d60cd45069d53ad7b46255088c4808aa7d3e82440b739f061eb7f"
+      },
+      {
+        "estimated_tokens": 6102,
+        "expected": [
+          "route-06-054-f8ec7b07f3",
+          "route-06-051-869e88d9d6",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-054.json",
+        "recalled_turn": 51,
+        "sha256": "270dc2afbbc37a5a46797d6d7284be0b21af7fd5ad009fde7944b7bf1f67d321"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-06-055-69f75fcda5",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-055.json",
+        "recalled_turn": 1,
+        "sha256": "75e86cf9e349d019051ab0d54a74ffedea42e56339c2d36271ada090a9057b87"
+      },
+      {
+        "estimated_tokens": 6099,
+        "expected": [
+          "route-06-056-cfc7a5260a",
+          "route-06-028-bedb9271e7"
+        ],
+        "file": "seed-6/turn-056.json",
+        "recalled_turn": 28,
+        "sha256": "c7c95c2b1dd486cb7259711e7fb71a4ee056711a2f9e324a1d8980d77a5ae0d7"
+      },
+      {
+        "estimated_tokens": 6124,
+        "expected": [
+          "route-06-057-1a6942b396",
+          "route-06-054-f8ec7b07f3",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-057.json",
+        "recalled_turn": 54,
+        "sha256": "eaa0d2ae7a48b7ef12b75aa72eaa2256dbfbb86dcfe48910c170f084e0405084"
+      },
+      {
+        "estimated_tokens": 6097,
+        "expected": [
+          "route-06-058-44393f4dd2",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-058.json",
+        "recalled_turn": 1,
+        "sha256": "6ae4351e55a48d6a56fd675d8122efd7366dc495c5fd0f0e48a1018238bb9f90"
+      },
+      {
+        "estimated_tokens": 6089,
+        "expected": [
+          "route-06-059-45e9613811",
+          "route-06-029-7a32c4a907"
+        ],
+        "file": "seed-6/turn-059.json",
+        "recalled_turn": 29,
+        "sha256": "f8adb31fefe6d9e985234fff60d914b71f808af79d4c865a014ad4f746902da2"
+      },
+      {
+        "estimated_tokens": 6136,
+        "expected": [
+          "route-06-060-6254375b9f",
+          "route-06-057-1a6942b396",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-060.json",
+        "recalled_turn": 57,
+        "sha256": "3f6634e80882c5042b34981fa4bcf19af9d7795f665054bc5ec356bd7fea777b"
+      },
+      {
+        "estimated_tokens": 6131,
+        "expected": [
+          "route-06-061-87e6df5199",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-061.json",
+        "recalled_turn": 1,
+        "sha256": "60579c4e33649c57a5a571077c19a27919d2339aa228e09a1fe5f7d1d70262f9"
+      },
+      {
+        "estimated_tokens": 6130,
+        "expected": [
+          "route-06-062-4af073bdbe",
+          "route-06-031-21662e5f0a"
+        ],
+        "file": "seed-6/turn-062.json",
+        "recalled_turn": 31,
+        "sha256": "c32b6c6e91421ac51677e73f4bc897390d3c4aa9fe1957abe2e6f53f7804c551"
+      },
+      {
+        "estimated_tokens": 6107,
+        "expected": [
+          "route-06-063-17a58e5fcb",
+          "route-06-060-6254375b9f",
+          "NOT PROVIDED"
+        ],
+        "file": "seed-6/turn-063.json",
+        "recalled_turn": 60,
+        "sha256": "4c6d6f67836bd5968a21f636af3253b6a11c97ad40b2d8f833d90613d12b4c46"
+      },
+      {
+        "estimated_tokens": 6132,
+        "expected": [
+          "route-06-064-26fdc73236",
+          "route-06-001-12d2fc3f16"
+        ],
+        "file": "seed-6/turn-064.json",
+        "recalled_turn": 1,
+        "sha256": "ca18efdda44e23fcf9b5f50be95b12d2ff827ed36f525ae88567beceaae34520"
+      }
+    ]
+  },
+  "system": "You investigate a synthetic incident. Start every answer with [TRIAGE], end with the requested ref: INC-<n>, and use no bullets. Answer only from supplied evidence; use NOT PROVIDED for absent facts. Answer in question order, one line per question as Q1: value, Q2: value, etc. Do not include reasoning in the answer.",
+  "turns": 64,
+  "version": 1
+}

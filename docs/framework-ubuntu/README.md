@@ -57,6 +57,10 @@ rather than just re-tuning its memory limit.
 - [`glm-5.3-flash-evaluation.md`](./glm-5.3-flash-evaluation.md) — bounded
   load/speed/CyberSecEval test of Z.ai's GLM-5.3-Flash (320B MoE, ~2-bit)
   on an upstream llama.cpp build. Serving and CSE-ready.
+- [`../ctx-bug-test/`](../ctx-bug-test/README.md) — planned bug hunt:
+  Qwen3.8-Flash-Next and Laguna-S-2.1 on the Nathanw fork vs upstream
+  llama.cpp at 32k/64k/96k/131k context (hallucination, repetition,
+  looping, instruction loss). Planning only, not started.
 - [`local-ai-development.md`](./local-ai-development.md) — the layer above
   inference: coding agents, MCP, model gateway/workflow platforms, chat UIs,
   image-gen additions. Candidate table plus a phased development/test plan.

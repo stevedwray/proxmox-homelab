@@ -6,7 +6,7 @@ network:
   zone: infra_seg
 vmid: 40015
 cores: 4
-memory: 8192
+memory: 12288
 swap: 2048
 rootfs_size: 16
 storage_profile: platform-apps-zfs

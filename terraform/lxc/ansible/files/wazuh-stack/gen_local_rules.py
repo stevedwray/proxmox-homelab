@@ -23,6 +23,11 @@ SCANNER_RULES = [  # (rule id, parent sid, what it lowers); the parent keeps its
     (100201, 5712, "sshd: brute-force burst"),
     (100202, 5760, "sshd: authentication failed"),
 ]
+# 2026-10-17: the Greenbone credentialed scan logs in as gvm-scan from the scanner (key auth) about once a minute per
+# scanned host. Its successful sshd logins (5715) are expected; the same account from any other address, and every other
+# user from the scanner address, keep the stock level 3. The PAM session pair (5501/5502) carries no source address, so it is not touched.
+SCANNER_LOGIN_USER = "gvm-scan"
+SCANNER_LOGIN_RULE = (100203, 5715, "sshd: successful login of the scan account from the Greenbone scanner")
 STOCK = """<!-- Local rules -->
 
 <!-- Modify it at your will. -->
@@ -49,10 +54,26 @@ STOCK = """<!-- Local rules -->
 LXC_DEV_PATTERN = r"^File '/dev/\.lxc(?:-boot-id|/proc/[a-z0-9_-]+)' present on /dev\. Possible hidden file\.\z"
 # The pre-decoder strips "<ISO timestamp> hAP " (timestamp and hostname) before a rule's regex sees the line.
 HAP_PATTERN = r"^login failure for user \S+ from " + re.escape(SCANNER_IP) + r" via ssh\z"
-EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description)
+# Phase 5a. Ubuntu 26.04 ships Rust (uutils) coreutils; their binaries contain strings such as "/dev/" and "file.h", which
+# the generic signatures in rootkit_trojans.txt match, so every rootcheck scan reports ~48 "Trojaned version of file" L7
+# alerts for /bin and /usr/bin tools. Suppressed for that one agent and only for the Generic signatures of a single
+# /bin or /usr/bin file; every other host keeps rule 510 as is, and FIM still watches /bin and /usr/bin on framework.
+FRAMEWORK_AGENT = "framework.gibbsgreatly.xyz"
+TROJAN_GENERIC_PATTERN = r"^Trojaned version of file '/(?:usr/)?bin/[A-Za-z0-9_.+-]+' detected\. Signature used: '[^']+' \(Generic\)\.\z"
+EXTRA_RULES = [  # (id, parent sid, level, pcre2 on the full log, description[, agent name the rule is limited to])
     (100210, 510, 0, LXC_DEV_PATTERN, "rootcheck: LXC's own bookkeeping file under /dev (suppressed); any other hidden /dev file still alerts"),
     (100211, 2501, 3, HAP_PATTERN, f"MikroTik hAP ssh login failure from the Greenbone scanner {SCANNER_IP} (lowered)"),
+    (100212, 510, 0, TROJAN_GENERIC_PATTERN,
+     f"rootcheck: generic trojan signature on a /bin or /usr/bin file of {FRAMEWORK_AGENT} (uutils coreutils; suppressed for this agent only)",
+     ("hostname", FRAMEWORK_AGENT)),
+    (100213, 510, 0, TROJAN_GENERIC_PATTERN,
+     f"rootcheck: generic trojan signature on a /bin or /usr/bin file of {FRAMEWORK_AGENT} (uutils coreutils; suppressed for this agent only)",
+     ("location", FRAMEWORK_AGENT)),
 ]
+
+
+def agent_match(name):
+    return f"^({name}) "
 
 
 def load():
@@ -74,7 +95,7 @@ def render():
     for i, e in enumerate(load()):
         out.append(f'  <rule id="{FIRST_ID + i}" level="0">\n    <if_sid>87907</if_sid>\n'
                    f'    <field name="docker.Action" type="pcre2">{escape(pattern(e["command"]))}</field>\n'
-                   f'    <description>Docker health check (suppressed): {escape(e["container"])}</description>\n  </rule>')
+                   f'    <description>Docker health check or metrics-collector command (suppressed): {escape(e["container"])}</description>\n  </rule>')
     out.append("</group>\n")
     out += ['<!-- Phase 2d: the Greenbone scanner probes ssh on purpose. Its events are lowered to level 3, not removed,',
             '     and only for this source address; every other source keeps the stock level. -->',
@@ -83,11 +104,19 @@ def render():
         out.append(f'  <rule id="{rid}" level="3">\n    <if_sid>{parent}</if_sid>\n'
                    f'    <srcip>{SCANNER_IP}</srcip>\n'
                    f'    <description>{what} from the Greenbone scanner {SCANNER_IP} (lowered)</description>\n  </rule>')
+    rid, parent, what = SCANNER_LOGIN_RULE
+    out.append(f'  <rule id="{rid}" level="0">\n    <if_sid>{parent}</if_sid>\n'
+               f'    <srcip>{SCANNER_IP}</srcip>\n    <user>^{SCANNER_LOGIN_USER}$</user>\n'
+               f'    <description>{what} {SCANNER_IP} (suppressed)</description>\n  </rule>')
     out.append("</group>\n")
     out += ['<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->',
             '<group name="local,rootcheck,syslog,">']
-    for rid, parent, level, pat, desc in EXTRA_RULES:
-        out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n'
+    for rid, parent, level, pat, desc, *agent in EXTRA_RULES:
+        # <hostname> and <location> take OS_Match syntax (^ start, $ end, | or, everything else literal, no backslash
+        # escapes), not regex. For an agent's events the manager shows "(<agent name>) any->rootcheck"; which of the two
+        # options carries the "(<agent name>) " prefix is settled live, so both candidates ship until one is proven.
+        host = f'    <{agent[0][0]}>{agent_match(agent[0][1])}</{agent[0][0]}>\n' if agent else ""
+        out.append(f'  <rule id="{rid}" level="{level}">\n    <if_sid>{parent}</if_sid>\n{host}'
                    f'    <regex type="pcre2">{escape(pat)}</regex>\n    <description>{escape(desc)}</description>\n  </rule>')
     out.append("</group>\n")
     return "\n".join(out)

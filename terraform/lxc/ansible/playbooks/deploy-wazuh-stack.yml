@@ -216,7 +216,7 @@
     wazuh_compose_dir: /opt/wazuh-stack
     wazuh_indexer_data_dir: /var/lib/wazuh-indexer-data   # extra_mount path from stack.yaml
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-    wazuh_image_tag: "4.14.8"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
+    wazuh_image_tag: "4.14.9"   # manager/indexer/dashboard; must equal wazuh_agent_version in roles/wazuh_agent/defaults (a test checks this); manager >= every agent. Do not use the 5.0 beta line
     wazuh_alert_retention_days: 90   # ISM delete age for wazuh-alerts-4.x-* and the manager-side raw log cleanup (docs/wazuh-tuning)
     wazuh_indexer_admin_password: >-
       {{
@@ -1106,10 +1106,21 @@
             argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-analysisd, -t]
           changed_when: false
 
+        # wazuh_rules_apply: restart (default) restarts the whole container, which also restarts the API and the
+        # indexer connection; on this 8GB LXC a restart once lost wazuh-apid to a SIGKILL during start and left the
+        # manager down for ~10 minutes (2026-10-16). -e wazuh_rules_apply=reload runs wazuh-control reload instead,
+        # which reloads the ruleset in place with no container restart.
         - name: Restart the manager so analysisd loads the new rules
           ansible.builtin.command:
             argv: [docker, restart, wazuh-stack-manager]
           changed_when: true
+          when: (wazuh_rules_apply | default('restart')) == 'restart'
+
+        - name: Reload the ruleset in place (wazuh-control reload)
+          ansible.builtin.command:
+            argv: [docker, exec, wazuh-stack-manager, /var/ossec/bin/wazuh-control, reload]
+          changed_when: true
+          when: (wazuh_rules_apply | default('restart')) == 'reload'
 
         - name: Wait for manager API port to accept connections after the rules restart
           ansible.builtin.wait_for:
@@ -1223,6 +1234,25 @@
           - "https://localhost:9200/.opendistro-*/_settings?expand_wildcards=all"
           - -d
           - '{"index":{"number_of_replicas":0}}'
+      changed_when: false
+      tags: [wazuh_retention]
+
+    # The template below is not enough for the ISM history index: the plugin creates each daily rollover index with an
+    # explicit replica count taken from this cluster setting (default 1), and a create-index request overrides a
+    # template. Found 2026-10-16: .opendistro-ism-managed-index-history-2026.10.15-000002 came up with 1 replica
+    # that could never be assigned, leaving the cluster yellow.
+    - name: ISM history indices are created with 0 replicas (single node)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/settings"
+        method: PUT
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          persistent:
+            plugins.index_state_management.history.number_of_replicas: 0
       changed_when: false
       tags: [wazuh_retention]
 
