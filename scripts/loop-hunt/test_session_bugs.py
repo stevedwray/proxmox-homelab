@@ -67,6 +67,20 @@ class SessionHarnessTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):client.call('/health')
             self.assertEqual(opened.call_args.kwargs['timeout'],1800)
 
+    def test_measure_uses_loaded_prompt_count_for_long_timeout(self):
+        with server() as stub:
+            run=self.runner(stub)
+            run.prepare()
+            fixture=run.fixtures[1][0]
+            messages=[dict(role='system',content=run.system),dict(role='user',content=fixture['user'])]
+            with mock.patch.object(run.client,'count',return_value=250110),mock.patch.object(run.client.opener,'open',wraps=run.client.opener.open) as opened:
+                row=run.measure('seed-1',1,messages,fixture)
+            requests=[c for c in opened.call_args_list if c.args[0].full_url.endswith('/v1/chat/completions')]
+            self.assertEqual(requests[0].kwargs['timeout'],7200)
+            self.assertEqual(row['client_timeout'],7200)
+            self.assertEqual(row['payload']['messages'],messages)
+            self.assertEqual(run.client.timeout,1800)
+
     def test_warm_only_loop_classifies_runtime_and_payloads_match(self):
         with server(loop_mode='warm') as stub:
             run=self.runner(stub,extra=['--checkpoint-tokens','1800'])
