@@ -113,6 +113,11 @@ def scanner(scanner_ip="192.168.70.11"):
     for kind, stock, local in (("invalid", ("5710", 5), ("100200", 3)), ("failed", ("5760", 5), ("100202", 3))):
         checks.append((f"{kind} login from another address", logtest_session([ssh_line(kind, other)])[0], stock))
         checks.append((f"{kind} login from the scanner", logtest_session([ssh_line(kind, scanner_ip)])[0], local))
+    login = "Oct 15 10:00:00 testhost sshd[1234]: Accepted publickey for {} from {} port 4242 ssh2: RSA SHA256:mustfire"
+    checks.append(("scan account login from the scanner is suppressed", logtest_session([login.format("gvm-scan", scanner_ip)])[0], ("100203", 0)))
+    checks.append(("scan account login from another address still alerts", logtest_session([login.format("gvm-scan", other)])[0], ("5715", 3)))
+    checks.append(("another user from the scanner address still alerts", logtest_session([login.format("root", scanner_ip)])[0], ("5715", 3)))
+    checks.append(("a look-alike account from the scanner address still alerts", logtest_session([login.format("gvm-scanx", scanner_ip)])[0], ("5715", 3)))
     other_burst = logtest_session([ssh_line("invalid", other, i) for i in range(12)])
     scan_burst = logtest_session([ssh_line("invalid", scanner_ip, i) for i in range(12)])
     checks.append(("burst from another address reaches brute-force 5712 L10", max(other_burst, key=lambda x: x[1]), ("5712", 10)))

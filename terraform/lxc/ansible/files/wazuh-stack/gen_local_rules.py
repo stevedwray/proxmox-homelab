@@ -23,6 +23,11 @@ SCANNER_RULES = [  # (rule id, parent sid, what it lowers); the parent keeps its
     (100201, 5712, "sshd: brute-force burst"),
     (100202, 5760, "sshd: authentication failed"),
 ]
+# 2026-10-17: the Greenbone credentialed scan logs in as gvm-scan from the scanner (key auth) about once a minute per
+# scanned host. Its successful sshd logins (5715) are expected; the same account from any other address, and every other
+# user from the scanner address, keep the stock level 3. The PAM session pair (5501/5502) carries no source address, so it is not touched.
+SCANNER_LOGIN_USER = "gvm-scan"
+SCANNER_LOGIN_RULE = (100203, 5715, "sshd: successful login of the scan account from the Greenbone scanner")
 STOCK = """<!-- Local rules -->
 
 <!-- Modify it at your will. -->
@@ -90,7 +95,7 @@ def render():
     for i, e in enumerate(load()):
         out.append(f'  <rule id="{FIRST_ID + i}" level="0">\n    <if_sid>87907</if_sid>\n'
                    f'    <field name="docker.Action" type="pcre2">{escape(pattern(e["command"]))}</field>\n'
-                   f'    <description>Docker health check (suppressed): {escape(e["container"])}</description>\n  </rule>')
+                   f'    <description>Docker health check or metrics-collector command (suppressed): {escape(e["container"])}</description>\n  </rule>')
     out.append("</group>\n")
     out += ['<!-- Phase 2d: the Greenbone scanner probes ssh on purpose. Its events are lowered to level 3, not removed,',
             '     and only for this source address; every other source keeps the stock level. -->',
@@ -99,6 +104,10 @@ def render():
         out.append(f'  <rule id="{rid}" level="3">\n    <if_sid>{parent}</if_sid>\n'
                    f'    <srcip>{SCANNER_IP}</srcip>\n'
                    f'    <description>{what} from the Greenbone scanner {SCANNER_IP} (lowered)</description>\n  </rule>')
+    rid, parent, what = SCANNER_LOGIN_RULE
+    out.append(f'  <rule id="{rid}" level="0">\n    <if_sid>{parent}</if_sid>\n'
+               f'    <srcip>{SCANNER_IP}</srcip>\n    <user>^{SCANNER_LOGIN_USER}$</user>\n'
+               f'    <description>{what} {SCANNER_IP} (suppressed)</description>\n  </rule>')
     out.append("</group>\n")
     out += ['<!-- Phase 2b/2c: known-benign signatures, each an exact anchored pattern on the whole log line. -->',
             '<group name="local,rootcheck,syslog,">']
