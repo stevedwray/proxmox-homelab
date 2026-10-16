@@ -164,3 +164,15 @@ as a Docker-published container on tcp/8084 (like cAdvisor), plain HTTP, via
   would show 39%: dropped. Only the GPU fan RPM is shown.
 - Fan headers and voltage rails are NOT named: names stay neutral
   ("Fan 2", "nct6797 in3") until identified from the MSI BIOS monitor page.
+
+### pve: DONE 2026-10-17 (operator ran it with ./with-secrets-prod; ok=28 failed=0)
+
+- no-auth 401; authenticated scrape 11,830 lines. Chips: `platform_it87_2624`
+  (board), `pci0000:00_0000:00:18_3` (k10temp), `nvme_nvme0/1/2`,
+  `0000:05:00_0_0000:06:00_0` (amdgpu), `r8169_0_700_r8169_0_700:00` (NIC),
+  `wmi_bus_pnp0c14:00_deadbeef_...` (gigabyte_wmi, dropped as a duplicate),
+  `thermal_thermal_zone0` (constant 16.8 C, dropped).
+- Sensor map filled in with the Gigabyte config names and scales (+3.3V
+  x1.649, +12V x6, +5V x2.5).
+- Observation: `nvme_nvme1` Sensor 2 reads ~79.9 C (composite ~54.9 C) --
+  worth a look at airflow/placement; nvme limits exported are meaningless.

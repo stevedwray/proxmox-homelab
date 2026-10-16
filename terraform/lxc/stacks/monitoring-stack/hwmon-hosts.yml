@@ -20,6 +20,10 @@ hwmon_hosts:
 hwmon_drop_chips:
   # pve-test acpitz reads a constant 16 C (placeholder zone), not a real sensor
   - {stack: pve-test, chip: thermal_thermal_zone0}
+  # pve: gigabyte_wmi repeats the it87 chip's temp1-6 (identical values);
+  # acpitz is a constant 16.8 C placeholder (3 identical zones)
+  - {stack: pve, chip: "wmi_bus_pnp0c14:00_deadbeef_2001_0000_00a0_c90629100000"}
+  - {stack: pve, chip: thermal_thermal_zone0}
 
 # Friendly sensor names. One entry per sensor. `scale` is optional: a
 # multiplier for voltages behind resistor dividers (the chip reports the
@@ -95,3 +99,47 @@ hwmon_sensor_names:
   - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in12, name: "nct6797 in12"}
   - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in13, name: "nct6797 in13"}
   - {stack: pve-tiny, chip: platform_nct6775_2592, sensor: in14, name: "nct6797 in14"}
+  # pve (Gigabyte B550 GAMING X V2, IT8689E via it87 DKMS). Board names from the
+  # it87 project's Gigabyte config for SIV 0x61050607; scales are the config's
+  # compute factors (raw in1-in3 all read 1.99 V). Cross-checked 2026-10-17.
+  - {stack: pve, chip: platform_it87_2624, sensor: temp1, name: "System 1"}
+  - {stack: pve, chip: platform_it87_2624, sensor: temp2, name: "System 2"}
+  - {stack: pve, chip: platform_it87_2624, sensor: temp3, name: "CPU"}
+  - {stack: pve, chip: platform_it87_2624, sensor: temp4, name: "PCIEX16"}
+  - {stack: pve, chip: platform_it87_2624, sensor: temp5, name: "VRM MOS"}
+  - {stack: pve, chip: platform_it87_2624, sensor: temp6, name: "PCH"}
+  - {stack: pve, chip: platform_it87_2624, sensor: fan1, name: "CPU_FAN"}
+  - {stack: pve, chip: platform_it87_2624, sensor: fan2, name: "SYS_FAN1"}
+  - {stack: pve, chip: platform_it87_2624, sensor: fan3, name: "SYS_FAN2"}
+  - {stack: pve, chip: platform_it87_2624, sensor: fan5, name: "CPU_OPT"}
+  - {stack: pve, chip: platform_it87_2624, sensor: pwm1, name: "CPU_FAN duty"}
+  - {stack: pve, chip: platform_it87_2624, sensor: pwm2, name: "SYS_FAN1 duty"}
+  - {stack: pve, chip: platform_it87_2624, sensor: pwm3, name: "SYS_FAN2 duty"}
+  - {stack: pve, chip: platform_it87_2624, sensor: pwm5, name: "CPU_OPT duty"}
+  - {stack: pve, chip: platform_it87_2624, sensor: fan4, drop: true}   # SYS_FAN3, empty header
+  - {stack: pve, chip: platform_it87_2624, sensor: pwm4, drop: true}
+  - {stack: pve, chip: platform_it87_2624, sensor: in0, name: "CPU Vcore"}
+  - {stack: pve, chip: platform_it87_2624, sensor: in1, name: "+3.3V", scale: 1.649}
+  - {stack: pve, chip: platform_it87_2624, sensor: in2, name: "+12V", scale: 6}
+  - {stack: pve, chip: platform_it87_2624, sensor: in3, name: "+5V", scale: 2.5}
+  - {stack: pve, chip: platform_it87_2624, sensor: in4, name: "CPU VCORE SOC"}
+  - {stack: pve, chip: platform_it87_2624, sensor: in5, name: "CPU VDDP"}
+  - {stack: pve, chip: platform_it87_2624, sensor: in6, name: "DRAM CH(A/B)"}
+  - {stack: pve, chip: platform_it87_2624, sensor: in7, name: "3VSB"}
+  - {stack: pve, chip: platform_it87_2624, sensor: in8, name: "Vbat"}
+  - {stack: pve, chip: "pci0000:00_0000:00:18_3", sensor: temp1, name: "CPU Tctl"}
+  - {stack: pve, chip: "pci0000:00_0000:00:18_3", sensor: temp3, name: "CPU CCD1"}
+  - {stack: pve, chip: "pci0000:00_0000:00:18_3", sensor: temp4, name: "CPU CCD2"}
+  - {stack: pve, chip: nvme_nvme0, sensor: temp1, name: "NVMe 0 composite"}
+  - {stack: pve, chip: nvme_nvme1, sensor: temp1, name: "NVMe 1 composite"}
+  - {stack: pve, chip: nvme_nvme1, sensor: temp2, name: "NVMe 1 sensor 1"}
+  - {stack: pve, chip: nvme_nvme1, sensor: temp3, name: "NVMe 1 sensor 2"}
+  - {stack: pve, chip: nvme_nvme2, sensor: temp1, name: "NVMe 2 composite"}
+  - {stack: pve, chip: "r8169_0_700_r8169_0_700:00", sensor: temp1, name: "NIC (r8169)"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: temp1, name: "GPU edge"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: temp2, name: "GPU junction"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: temp3, name: "GPU memory"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: fan1, name: "GPU fan"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: pwm1, name: "GPU fan duty"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: in0, name: "GPU vddgfx"}
+  - {stack: pve, chip: "0000:05:00_0_0000:06:00_0", sensor: power1, name: "GPU power"}
