@@ -1845,6 +1845,17 @@ instruction-following 3.55 reflects its question-line format flags. Caveats:
 small unequal samples, one judge, reasoning-channel only, build differences not
 yet tested against seeds/conditions. Not a build conclusion until reviewed.
 
+Judge re-check (2026-10-17): a second blind pass of 40 judged turns (all 15
+moderate+ plus 25 random) in fresh contexts with new ids. One of its two
+batches (20 turns) was blocked by the same Sonnet safeguard and not retried;
+the other 20 completed. Level agreement was exact on 50 of 60 scores; mean
+coherence differed by 0.1. All three severe fork-previous turns reproduced
+exactly. Of 8 first-pass moderate+ turns in that half, 5 stayed moderate+ and 3
+dropped to mild (one fork current, two fork previous); none of the 12 turns
+first rated below moderate rose to moderate. So severe findings are stable,
+the moderate band is noisy, and the first-pass counts overstate it somewhat.
+The fork-previous excess is not rechecked for the unreviewed half.
+
 #### lh-09-writeup
 
 `docs/loop-hunt/README.md`: findings in the framework's FND format
