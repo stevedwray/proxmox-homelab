@@ -159,3 +159,77 @@ hwmon_sensor_names:
   - {stack: tpot, chip: platform_cooling_fan, sensor: fan1, name: "Case fan"}
   - {stack: tpot, chip: platform_cooling_fan, sensor: pwm1, name: "Case fan duty"}
   - {stack: tpot, chip: "soc_107c000000:firmware_raspberrypi_hwmon", sensor: in0, name: "Undervoltage alarm"}
+  # garuda (workstation, ASUS TUF GAMING B650-E WIFI, nct6799 via nct6775). Rails and
+  # AUXTIN probes keep neutral names: the function of each is not knowable from the
+  # chip. Evidence so far: nct in0 tracks the iGPU vddgfx (1.272 vs 1.275 V), so it
+  # is probably CPU Vcore -- confirm in the board manual/BIOS before renaming.
+  - {stack: garuda, chip: "pci0000:00_0000:00:18_3", sensor: temp1, name: "CPU Tctl"}
+  - {stack: garuda, chip: "pci0000:00_0000:00:18_3", sensor: temp3, name: "CPU CCD1"}
+  - {stack: garuda, chip: nvme_nvme0, sensor: temp1, name: "NVMe 0 composite"}
+  - {stack: garuda, chip: nvme_nvme0, sensor: temp2, name: "NVMe 0 sensor 1"}
+  - {stack: garuda, chip: nvme_nvme1, sensor: temp1, name: "NVMe 1 composite"}
+  - {stack: garuda, chip: nvme_nvme1, sensor: temp2, name: "NVMe 1 sensor 1"}
+  - {stack: garuda, chip: nvme_nvme1, sensor: temp3, name: "NVMe 1 sensor 2"}
+  - {stack: garuda, chip: nvme_nvme2, sensor: temp1, name: "NVMe 2 composite"}
+  - {stack: garuda, chip: nvme_nvme2, sensor: temp2, name: "NVMe 2 sensor 1"}
+  - {stack: garuda, chip: nvme_nvme2, sensor: temp3, name: "NVMe 2 sensor 2"}
+  - {stack: garuda, chip: i2c_0_0_0051, sensor: temp1, name: "DIMM (SPD 0x51)"}
+  - {stack: garuda, chip: i2c_0_0_0053, sensor: temp1, name: "DIMM (SPD 0x53)"}
+  - {stack: garuda, chip: r8169_0_a00_r8169_0_a00:00, sensor: temp1, name: "NIC (r8169)"}
+  - {stack: garuda, chip: ieee80211_phy0, sensor: temp1, name: "WiFi (mt7921)"}
+  - {stack: garuda, chip: "0000:00:08_1_0000:0f:00_0", sensor: temp1, name: "iGPU"}
+  - {stack: garuda, chip: "0000:00:08_1_0000:0f:00_0", sensor: in0, name: "iGPU vddgfx"}
+  - {stack: garuda, chip: "0000:00:08_1_0000:0f:00_0", sensor: in1, name: "iGPU vddnb"}
+  - {stack: garuda, chip: "0000:00:08_1_0000:0f:00_0", sensor: power1, name: "iGPU power"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: temp1, name: "dGPU edge"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: temp2, name: "dGPU junction"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: temp3, name: "dGPU memory"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: fan1, name: "dGPU fan"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: pwm1, name: "dGPU fan duty"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: in0, name: "dGPU vddgfx"}
+  - {stack: garuda, chip: "0000:02:00_0_0000:03:00_0", sensor: power1, name: "dGPU power"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp1, name: "Motherboard (SYSTIN)"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp2, name: "CPU socket (CPUTIN)"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp3, name: "AUXTIN0"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp5, name: "AUXTIN2"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp6, name: "AUXTIN3"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp7, name: "AUXTIN4"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp4, drop: true}   # AUXTIN1 reads 3 C: below ambient, not a connected probe
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp9, drop: true}   # AUXTIN5 reads 12 C: below ambient, not a connected probe
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp8, drop: true}   # "PECI/TSI Agent 0 Calibration" is a calibration offset, not a temperature
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp10, drop: true}   # PCH_* read 0: unsupported
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp11, drop: true}   # PCH_* read 0: unsupported
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp12, drop: true}   # PCH_* read 0: unsupported
+  - {stack: garuda, chip: platform_nct6775_656, sensor: temp13, drop: true}   # TSI0_TEMP duplicates k10temp Tctl (53.1 vs 53.4 C)
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan2, name: "Fan 2"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm2, name: "Fan 2 duty"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan4, name: "Fan 4"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm4, name: "Fan 4 duty"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan7, name: "Fan 7"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm7, name: "Fan 7 duty"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan1, drop: true}   # empty header (0 RPM)
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm1, drop: true}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan3, drop: true}   # empty header (0 RPM)
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm3, drop: true}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan5, drop: true}   # empty header (0 RPM)
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm5, drop: true}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: fan6, drop: true}   # empty header (0 RPM)
+  - {stack: garuda, chip: platform_nct6775_656, sensor: pwm6, drop: true}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in0, name: "nct6799 in0"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in1, name: "nct6799 in1"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in2, name: "nct6799 in2"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in3, name: "nct6799 in3"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in4, name: "nct6799 in4"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in5, name: "nct6799 in5"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in6, name: "nct6799 in6"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in7, name: "nct6799 in7"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in8, name: "nct6799 in8"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in9, name: "nct6799 in9"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in10, name: "nct6799 in10"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in11, name: "nct6799 in11"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in12, name: "nct6799 in12"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in13, name: "nct6799 in13"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in14, name: "nct6799 in14"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in15, name: "nct6799 in15"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in16, name: "nct6799 in16"}
+  - {stack: garuda, chip: platform_nct6775_656, sensor: in17, name: "nct6799 in17"}

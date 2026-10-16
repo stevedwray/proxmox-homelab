@@ -244,3 +244,25 @@ Likely mapping to confirm: in0 CPU Vcore (1.43 V); in2/in3 AVCC/+3.3V (3.36/
 If wanted sooner, the fallback is provisional names marked "(unverified)".
 Names live in `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`
 (`stack: pve-tiny` entries); a redeploy of monitoring-stack applies them.
+
+### workstation (garuda): exporter LIVE 2026-10-17 (operator ran the playbook: ok=13 failed=0)
+
+- Before that: Garuda's `wine-meta` 2-4 conflicted with `lib32-audit`/
+  `lib32-libcap` (needed by lib32-pam/lib32-gstreamer) during `pacman -Syu`;
+  operator used `--ignore wine-meta` and removed the unused
+  plasma-x11-session (Wayland-only). Garuda bug, unrelated to this project.
+  Remember `wine-meta` is held until Garuda fixes it.
+- Verified: no-auth 401; authenticated scrape 757 lines, hwmon collector only
+  (0 cpu/memory/disk/network series). Chips: `platform_nct6775_656` (nct6799),
+  `pci0000:00_0000:00:18_3` (k10temp), `nvme_nvme0/1/2`, two `spd5118`
+  (`i2c_0_0_0051/0053`), two amdgpu (`0000:00:08_1_...` iGPU,
+  `0000:02:00_0_...` dGPU), r8169, mt7921.
+- Sensor map written (182 entries total in the file). Dropped as not real/
+  duplicate: AUXTIN1 (3 C) and AUXTIN5 (12 C, below ambient), PECI Agent 0
+  Calibration, PCH_* (0), TSI0_TEMP (dup of Tctl), empty fan headers
+  fan1/3/5/6 and their pwm. Rails `in0..in17` and AUXTIN probes keep neutral
+  names; evidence: nct in0 tracks iGPU vddgfx (1.272 vs 1.275 V), so likely CPU
+  Vcore. Needs the ASUS board manual/BIOS to name (same deferred work as
+  pve-tiny).
+- Observation: nvme1 and nvme2 sensor readings up to ~66 C.
+- Not yet scraped: needs the monitoring-stack redeploy.
