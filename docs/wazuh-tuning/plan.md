@@ -228,7 +228,7 @@ Roll back: stop and disable `wazuh-agent`, `apt remove --purge wazuh-agent` on `
 manager (`DELETE /agents`). `framework` follows the same shape after this proves out (Ubuntu, so the `debian13`
 config profile and `cis_debian13` SCA policy need checking against its OS).
 
-### Upgrade to 4.14.9 (decided 2026-10-16) - manager stack DONE 2026-10-16, agents pending
+### Upgrade to 4.14.9 (decided 2026-10-16) - DONE 2026-10-16: manager stack and all 32 agents
 
 Why: `framework` was upgraded to 4.14.9 by hand while the manager was 4.14.8 (an agent must not be newer than its manager), and
 4.14.9 (released 2026-10-14) is a maintenance release with security hardening (authd/cluster idle connections, API access log
@@ -243,6 +243,16 @@ documents 10,513 before and after, ISM 49/49, heap 15% after the restart, 5.3GB 
 still on 4.14.8 (supported: the manager is newer); `framework` and the manager's own agent are on 4.14.9. Not done: the
 agent rollout (step 4), the Authentik login check on the dashboard (browser), and the `docker image prune` for the 4.14.8
 images (docker volume 75% with both generations; the prune reclaims about 4.4GB).
+
+Agent rollout done (2026-10-16, play `playbooks/wazuh-agent-upgrade.yml`, PRs #499/#500): upgrade-only (never touches
+`ossec.conf`, group or keys), explicit agent list, one host at a time, stops on failure, refuses to pass the manager version, holds
+the package afterwards. Order: canary `apt-cacher-stack`; `pve-test` + ci-runner, netbox, harbor; app/game/media/edge (10);
+management/observability (6); core DNS/ingress/SSO + the Wazuh LXC (5); `pve`, then `pve-tiny`; `greenbone-stack`; finally `tpot`,
+which needs `upgrade_host_overrides` (user steve through the ssh alias `tpot`, with sudo). After every batch: agents active at 4.14.9,
+`events_dropped` 0, cluster green. Final state: 32/32 agents on 4.14.9, manager 4.14.9, suites pass, cluster green, heap 37%,
+4.8GB RAM available. Left: Authentik login check on the dashboard (browser), `docker image prune` of the 4.14.8 images, host
+`.bak` files. The LXC agents do not self-upgrade (the unattended-upgrades allow-list is Debian security only), so a future version
+change is a deliberate bump of `wazuh_image_tag` + `wazuh_agent_version`, the manager first, then this play.
 
 Procedure (Phase 1b method; each step its own approval; stop and roll back on any stop condition):
 1. Before: suites (`mustfire`, `suppression`, `scanner`, `hap`), `health` and `agents` baselines; cluster green; PBS backup is the
