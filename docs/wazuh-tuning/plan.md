@@ -140,6 +140,9 @@ changing pinned libraries are out of scope for this plan (operator, 2026-10-15).
 1. With the noise gone, measure for ~7 days from the Wazuh dashboard (`/d/wazuh`; raw numbers via the helper's `health`
    and `retention` modes): indexer heap and RSS, shards, events per second, alert-index growth per day, disk used.
    Baseline for comparison: heap 69% of 4GB at 175 shards, ~0.4GB/day, ~1.3GB free RAM of 8GB.
+   2026-10-16: LXC memory raised 8192 -> 12288 MB (`stack.yaml`, applied live with `pct set 40015 -memory 12288`, no restart)
+   after a manager restart lost wazuh-apid at ~400MB free. Re-measure free RAM and the indexer heap after a week; the heap itself
+   (4GB) and container limits were not changed.
 2. Right-size the LXC (RAM, `wazuh_indexer_heap_gb`) and shard count: a one-shard-per-index template for new alert indices
    (a single node does not need 3-4 shards per index; 90-day retention would otherwise reach ~330 shards). Use the
    Proxmox-change-then-set-in-config pattern so Terraform sees no drift (as done for greenbone-stack).
