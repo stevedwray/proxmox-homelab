@@ -13,6 +13,14 @@
 #   cadvisor  cAdvisor on tcp/8083 (9100 is held by a T-Pot docker-proxy, so
 #             node_exporter cannot be used). Scraped by monitoring-stack's
 #             `cadvisor` job.
+#   hwmon     node_exporter as a Docker-published container on tcp/8084
+#             (hardware sensors, docs/hw-monitoring/) plus the Pi 5 PMIC
+#             rail textfile timer. A host-level listener cannot be used:
+#             T-Pot's INPUT chain ends in an NFQUEUE catch-all that hands any
+#             port outside its allow-list to honeytrap. Docker-published
+#             ports (DNAT) bypass INPUT, same as cAdvisor. Plain HTTP, no
+#             basic auth (same trust as cAdvisor); scraped by monitoring-
+#             stack's `node_exporter_hw_plain` job.
 #   wazuh     wazuh_agent -> manager 1514/1515 (already allowed from
 #             192.168.1.0/24). Needs the host route from
 #             tpot-host-baseline.yml (tpot_extra_host_routes: 192.168.40.15)
@@ -36,6 +44,10 @@
     tpot_cadvisor_image: "ghcr.io/google/cadvisor:v0.60.5"
     tpot_cadvisor_port: 8083
     tpot_cadvisor_dir: /opt/cadvisor-docker
+    tpot_nodeexp_image: "quay.io/prometheus/node-exporter:v1.12.1"
+    tpot_nodeexp_port: 8084
+    tpot_nodeexp_dir: /opt/node-exporter-docker
+    tpot_nodeexp_textfile_dir: /var/lib/node_exporter/textfile_collector
 
   tasks:
     - name: Install rsyslog_forward for Graylog log shipping
@@ -84,6 +96,75 @@
       register: tpot_cadvisor_up
       changed_when: "'Started' in tpot_cadvisor_up.stderr or 'Created' in tpot_cadvisor_up.stderr"
       tags: [cadvisor]
+
+    - name: Create node_exporter docker-compose and textfile directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ tpot_nodeexp_dir }}"
+        - "{{ tpot_nodeexp_textfile_dir }}"
+      tags: [hwmon]
+
+    - name: Install node_exporter docker-compose.yml (hwmon + textfile collectors only)
+      ansible.builtin.copy:
+        dest: "{{ tpot_nodeexp_dir }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          services:
+            node-exporter:
+              image: {{ tpot_nodeexp_image }}
+              container_name: node-exporter-hw
+              restart: unless-stopped
+              command:
+                - --path.sysfs=/host/sys
+                - --collector.disable-defaults
+                - --collector.hwmon
+                - --collector.textfile
+                - --collector.textfile.directory=/textfile
+              ports:
+                - "{{ tpot_nodeexp_port }}:9100"
+              volumes:
+                - /sys:/host/sys:ro
+                - {{ tpot_nodeexp_textfile_dir }}:/textfile:ro
+      register: tpot_nodeexp_compose
+      tags: [hwmon]
+
+    - name: Bring up node_exporter via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ tpot_nodeexp_dir }}"
+      register: tpot_nodeexp_up
+      changed_when: "'Started' in tpot_nodeexp_up.stderr or 'Created' in tpot_nodeexp_up.stderr or 'Recreated' in tpot_nodeexp_up.stderr"
+      tags: [hwmon]
+
+    - name: Copy Pi PMIC textfile script
+      ansible.builtin.copy:
+        src: files/rpi_pmic_textfile.py
+        dest: /usr/local/bin/rpi_pmic_textfile.py
+        mode: "0755"
+      tags: [hwmon]
+
+    - name: Write Pi PMIC textfile service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        mode: "0644"
+        content: "{{ item.content }}"
+      loop:
+        - name: rpi-pmic-textfile.service
+          content: "[Unit]\nDescription=Write Pi PMIC rails for node_exporter\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /usr/local/bin/rpi_pmic_textfile.py {{ tpot_nodeexp_textfile_dir }}/rpi_pmic.prom\n"
+        - name: rpi-pmic-textfile.timer
+          content: "[Unit]\nDescription=Refresh Pi PMIC rails\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=30s\n\n[Install]\nWantedBy=timers.target\n"
+      tags: [hwmon]
+
+    - name: Enable the PMIC timer
+      ansible.builtin.systemd:
+        name: rpi-pmic-textfile.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      tags: [hwmon]
 
     - name: Install the Wazuh agent (docker monitoring deliberately OFF)
       ansible.builtin.include_role:

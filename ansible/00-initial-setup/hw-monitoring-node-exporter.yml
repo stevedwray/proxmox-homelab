@@ -1,0 +1,47 @@
+---
+# node_exporter (TLS + basic auth) on hardware-monitored hosts, scraped by
+# monitoring-stack's node_exporter_hw job. docs/hw-monitoring/plan.md.
+# Run one host at a time with --limit:
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/hw-monitoring-node-exporter.yml --limit pve-tiny
+# pve-test is not a production node: use plain ./with-secrets for it.
+# T-Pot is NOT in hw_hosts: it runs node_exporter as a container via
+# tpot-monitoring.yml --tags hwmon (see that file's header).
+- name: Install node_exporter with hwmon sensors
+  hosts: hw_hosts
+  become: true
+  gather_facts: true
+  pre_tasks:
+    # The node_exporter role passes --root /usr/local/share/ca-certificates/
+    # homelab-root.crt to `step ca certificate`; LXCs get it from lxc_base,
+    # bare-metal hosts do not (pve-tiny had no file; pve-test had a stale,
+    # different root from an old CA -- found 2026-10-17).
+    - name: Install the current homelab root CA
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+        dest: /usr/local/share/ca-certificates/homelab-root.crt
+        owner: root
+        group: root
+        mode: "0644"
+      register: hw_root_ca
+      when: hw_install_root_ca | default(true) | bool
+
+    - name: Refresh the system trust store
+      ansible.builtin.command: update-ca-certificates
+      changed_when: true
+      when: hw_root_ca is changed
+  roles:
+    - role: node_exporter
+  post_tasks:
+    - name: Confirm hwmon metrics are served locally
+      ansible.builtin.shell: >-
+        curl -sk -u prometheus:"$NODE_EXPORTER_SCRAPE_PASSWORD"
+        https://127.0.0.1:9100/metrics
+        | grep -c '^node_hwmon_temp_celsius'
+      environment:
+        NODE_EXPORTER_SCRAPE_PASSWORD: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') }}"
+      register: hw_hwmon_count
+      changed_when: false
+      failed_when: hw_hwmon_count.stdout | int < 1
+      no_log: true

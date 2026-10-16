@@ -92,8 +92,8 @@
 
     - name: Download step CLI release archive
       ansible.builtin.get_url:
-        url: "https://github.com/smallstep/cli/releases/download/v{{ node_exporter_step_cli_version }}/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
-        dest: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+        url: "https://github.com/smallstep/cli/releases/download/v{{ node_exporter_step_cli_version }}/step_linux_{{ node_exporter_step_cli_version }}_{{ node_exporter_step_cli_arch }}.tar.gz"
+        dest: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_{{ node_exporter_step_cli_arch }}.tar.gz"
         mode: "0600"
       when: not node_exporter_step_cli_stat.stat.exists
 
@@ -106,7 +106,7 @@
 
     - name: Extract step CLI archive
       ansible.builtin.unarchive:
-        src: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+        src: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_{{ node_exporter_step_cli_arch }}.tar.gz"
         dest: /tmp/step-cli-install
         remote_src: true
       when: not node_exporter_step_cli_stat.stat.exists
@@ -126,7 +126,7 @@
 
     - name: Remove step CLI archive
       ansible.builtin.file:
-        path: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+        path: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_{{ node_exporter_step_cli_arch }}.tar.gz"
         state: absent
 
     - name: Write step-ca provisioner password file

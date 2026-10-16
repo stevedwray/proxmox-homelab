@@ -66,6 +66,8 @@
   become: true
   gather_facts: false
 
+  vars_files:
+    - "{{ playbook_dir }}/../../stacks/monitoring-stack/hwmon-hosts.yml"
   vars:
     monitoring_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     monitoring_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ monitoring_lab_domain, true) }}"
@@ -182,6 +184,36 @@
         - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
+    - name: Build hwmon scrape targets (https, basic auth)
+      ansible.builtin.set_fact:
+        hwmon_static_configs: "{{ (hwmon_static_configs | default([])) + [{'targets': [item.target ~ ':' ~ (item.port | default(9100))], 'labels': {'stack': item.stack}}] }}"
+      loop: "{{ hwmon_hosts }}"
+      when: not (item.plain | default(false))
+
+    - name: Build hwmon scrape targets (plain http, containerised exporters)
+      ansible.builtin.set_fact:
+        hwmon_static_configs_plain: "{{ (hwmon_static_configs_plain | default([])) + [{'targets': [item.target ~ ':' ~ item.port], 'labels': {'stack': item.stack}}] }}"
+      loop: "{{ hwmon_hosts }}"
+      when: item.plain | default(false)
+
+    - name: Build hwmon base relabel rules
+      ansible.builtin.set_fact:
+        hwmon_relabel: "{{ [{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}, {'source_labels': ['__name__'], 'regex': 'node_hwmon_in_volts', 'target_label': 'scale', 'replacement': '1'}] }}"
+
+    - name: Build hwmon chip drop rules
+      ansible.builtin.set_fact:
+        hwmon_relabel: "{{ hwmon_relabel + [{'source_labels': ['stack', 'chip'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape), 'action': 'drop'}] }}"
+      loop: "{{ hwmon_drop_chips }}"
+
+    - name: Build hwmon sensor-name relabel rules
+      ansible.builtin.set_fact:
+        hwmon_relabel: >-
+          {{ hwmon_relabel
+          + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'action': 'drop'}] if item.drop | default(false)
+          else [{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'sensor_name', 'replacement': item.name}]
+          + ([{'source_labels': ['stack', 'chip', 'sensor'], 'separator': ';', 'regex': item.stack ~ ';' ~ (item.chip | regex_escape) ~ ';' ~ item.sensor, 'target_label': 'scale', 'replacement': item.scale | string}] if item.scale is defined else [])) }}
+      loop: "{{ hwmon_sensor_names }}"
+
     # dns-stack's node_exporter target removed 2026-09-08 -- purely cosmetic
     # (a metrics scrape target, not a functional dependency check), but
     # dns-stack is being decommissioned and this would otherwise just show
@@ -243,6 +275,26 @@
                   labels: {stack: technitium-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:9100"]
                   labels: {stack: technitium-tiny-stack}
+
+            # Bare-metal host hardware sensors, docs/hw-monitoring/plan.md.
+            # Targets and sensor names: stacks/monitoring-stack/hwmon-hosts.yml.
+            - job_name: node_exporter_hw
+              scheme: https
+              tls_config:
+                ca_file: /etc/ssl/certs/homelab-root.crt
+              basic_auth:
+                username: prometheus
+                password: "{{ node_exporter_scrape_password }}"
+              static_configs: {{ hwmon_static_configs | to_json }}
+              metric_relabel_configs: {{ hwmon_relabel | to_json }}
+
+            # T-Pot's containerised node_exporter (plain HTTP, like cAdvisor):
+            # a host-level listener would be swallowed by T-Pot's NFQUEUE
+            # catch-all. Same sensor relabeling as node_exporter_hw.
+            - job_name: node_exporter_hw_plain
+              scheme: http
+              static_configs: {{ hwmon_static_configs_plain | default([]) | to_json }}
+              metric_relabel_configs: {{ hwmon_relabel | to_json }}
 
             # Framework's native llama.cpp servers (--metrics), which
             # replaced Ollama's textfile collector --
