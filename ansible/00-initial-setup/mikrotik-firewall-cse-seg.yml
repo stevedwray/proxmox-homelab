@@ -24,8 +24,11 @@
 #   5. cse_seg -> framework:8080 -- moved to mikrotik-firewall-framework-fqdn.yml (FQDN address-list)
 #   6. cse-controller -> cse-kali agent:22  (cross-zone into pve-test's pentest_seg -- genuinely new, didn't
 #      exist before since infra_seg had no restrictions to need it worked around)
-#   7. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
-#   8. cse_seg -> everywhere else: DROP  (the actual isolation)
+#   7. pentest-runner -> pentest-fixture:8080  (cross-zone into pve-test's pentest_seg, same pattern as #6 --
+#      docs/autonomous-pentesting-lab/plan.md package 2. No matching pentest_seg-side rule needed: rule #6
+#      already established that one cse_seg-sourced forward rule is sufficient for return traffic too.)
+#   8. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
+#   9. cse_seg -> everywhere else: DROP  (the actual isolation)
 
 - name: Ensure cse_seg firewall rules exist on the live MikroTik
   hosts: localhost
@@ -64,6 +67,13 @@
     # single one-off cross-zone path.
     cse_controller_ip: "192.168.100.70"
     cse_kali_agent_ip: "192.168.70.212"
+    # pentest-runner (cse_seg) and pentest-fixture (pentest_seg) -- same
+    # hardcoded-specific-host-rule convention as the pair above, added
+    # for docs/autonomous-pentesting-lab/plan.md package 2 (see
+    # terraform/lxc/stacks/pentest-runner/STACK_CONTRACT.md and
+    # terraform/lxc/stacks/pentest-fixture/STACK_CONTRACT.md).
+    pentest_runner_ip: "192.168.100.72"
+    pentest_fixture_ip: "192.168.70.213"
 
     # Each dict has exactly the keys that rule needs -- matches the
     # exact field shapes of the real precedent rules read live
@@ -102,6 +112,13 @@
         src-address: "{{ cse_controller_ip }}"
         dst-address: "{{ cse_kali_agent_ip }}"
         dst-port: "22"
+      - comment: "pentest-runner to pentest-fixture HTTP (pentest_seg, cross-node)"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ pentest_runner_ip }}"
+        dst-address: "{{ pentest_fixture_ip }}"
+        dst-port: "8080"
       - comment: "cse_seg internet egress (git clone, apt/pip installs)"
         chain: "forward"
         action: "accept"
