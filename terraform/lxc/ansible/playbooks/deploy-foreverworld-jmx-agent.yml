@@ -16,6 +16,12 @@
 # rather than touching Panel allocations, a small socat proxy joined to
 # pterodactyl_nw forwards host :9404 to the game container by name.
 #
+# Do NOT open or save user_jvm_args.txt in the Panel's file editor: a save of a
+# stale copy silently reverts the -javaagent line (seen 2026-10-17; nothing
+# regenerates the file by itself). To check the agent actually loaded, look at the
+# EXPANDED arguments, not /proc/<pid>/cmdline (which only shows @user_jvm_args.txt):
+#   docker exec <uuid> /opt/java/openjdk/bin/jcmd $(pgrep -o java) VM.command_line
+#
 # Rollback: delete the -javaagent line from user_jvm_args.txt (a timestamped
 # backup is kept beside it), restart the server, and
 # `docker compose down` in /srv/docker/game-monitoring/jmx-proxy.
