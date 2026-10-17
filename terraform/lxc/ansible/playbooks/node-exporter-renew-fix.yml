@@ -1,0 +1,57 @@
+---
+# One-off fleet repair: node_exporter dies when its TLS certificate renews.
+#
+# The role's renewal script sent SIGHUP to prometheus-node-exporter expecting a
+# reload, but node_exporter exits on SIGHUP and systemd counts that as a clean
+# stop, so it never came back (gaming-stack-lab went dark on 2026-10-12; most of
+# the fleet's certs reach the 30-day renewal line around 2026-10-20/21). The role is fixed for new deploys; this playbook repairs
+# hosts that already have the old script. Idempotent, safe to re-run, and it
+# also starts any exporter that is currently stopped.
+#
+# Run it with scripts/node-exporter-renew-fix.sh (one pass per stack inventory).
+- name: Make node_exporter survive certificate renewal
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    nexp_conf_dir: /etc/node_exporter
+    nexp_dropin_dir: /etc/systemd/system/prometheus-node-exporter.service.d
+
+  tasks:
+    - name: Check whether this host runs the TLS node_exporter
+      tags: [always]
+      ansible.builtin.stat:
+        path: "{{ nexp_conf_dir }}/renew-cert.sh"
+      register: nexp_script
+
+    - name: Replace SIGHUP with a restart in the renewal script
+      tags: [script]
+      ansible.builtin.replace:
+        path: "{{ nexp_conf_dir }}/renew-cert.sh"
+        regexp: 'systemctl kill --signal=HUP prometheus-node-exporter\.service'
+        replace: 'systemctl restart prometheus-node-exporter.service'
+      when: nexp_script.stat.exists
+
+    - name: Always restart the exporter if it stops
+      tags: [dropin]
+      ansible.builtin.copy:
+        dest: "{{ nexp_dropin_dir }}/restart.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Restart=always
+          RestartSec=5
+      register: nexp_dropin
+      when: nexp_script.stat.exists
+
+    - name: Start the exporter (this also revives one the old script killed)
+      tags: [start]
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter
+        state: started
+        enabled: true
+        daemon_reload: "{{ nexp_dropin is changed }}"
+      when: nexp_script.stat.exists

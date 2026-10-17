@@ -119,6 +119,18 @@
           NODE_EXPORTER_ARGS="--web.config.file={{ ws_conf_dir }}/web.config.yaml --collector.disable-defaults --collector.hwmon"
       register: ws_args
 
+    - name: Restart the exporter if anything ever stops it (it exits on SIGHUP)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prometheus-node-exporter.service.d/restart.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Restart=always
+          RestartSec=5
+      register: ws_restart_dropin
+
     - name: Write the certificate renewal script
       ansible.builtin.copy:
         dest: "{{ ws_conf_dir }}/renew-cert.sh"
@@ -134,7 +146,7 @@
             step-cli ca renew --force --ca-url {{ ws_step_ca_url }} --root {{ ws_root_ca }} "$CERT" "$KEY"
             chown root:node_exporter "$CERT" "$KEY"
             chmod 0640 "$CERT" "$KEY"
-            systemctl kill --signal=HUP prometheus-node-exporter.service
+            systemctl restart prometheus-node-exporter.service
           fi
 
     - name: Write the renewal service and timer
@@ -164,7 +176,7 @@
       ansible.builtin.systemd:
         name: prometheus-node-exporter.service
         state: restarted
-      when: ws_web_config.changed or ws_args.changed
+      when: ws_web_config.changed or ws_args.changed or ws_restart_dropin.changed
 
     - name: Confirm hwmon metrics are served over TLS with auth
       ansible.builtin.shell: >-
