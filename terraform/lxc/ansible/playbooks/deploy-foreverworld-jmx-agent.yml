@@ -1,0 +1,202 @@
+---
+# Prometheus JMX Java agent for the Foreverworld Minecraft server running under
+# Pterodactyl/Wings (gaming-stack-lab). Restores the JVM heap / GC / thread
+# panels of the Foreverworld Grafana dashboard.
+#
+# History: the Compose-era agent (deploy-minecraft-wildworks.yml) lived at
+# /data/jmx-exporter. The Pterodactyl migration deliberately excluded it and
+# removed the -javaagent argument, because a missing agent jar makes Java exit
+# before it opens a port (docs/gaming-stack-lab/minecraft-migration.md). So the
+# order here is strict: the jar and config are installed and verified FIRST, and
+# the JVM argument is only added once the jar exists.
+#
+# This playbook never restarts the game server. The agent loads at the next
+# start: restart Foreverworld from the Panel at a quiet time (players are
+# disconnected). Wings only publishes ports that are Panel allocations, so
+# rather than touching Panel allocations, a small socat proxy joined to
+# pterodactyl_nw forwards host :9404 to the game container by name.
+#
+# Do NOT open or save user_jvm_args.txt in the Panel's file editor: a save of a
+# stale copy silently reverts the -javaagent line (seen 2026-10-17; nothing
+# regenerates the file by itself). To check the agent actually loaded, look at the
+# EXPANDED arguments, not /proc/<pid>/cmdline (which only shows @user_jvm_args.txt):
+#   docker exec <uuid> /opt/java/openjdk/bin/jcmd $(pgrep -o java) VM.command_line
+#
+# Rollback: delete the -javaagent line from user_jvm_args.txt (a timestamped
+# backup is kept beside it), restart the server, and
+# `docker compose down` in /srv/docker/game-monitoring/jmx-proxy.
+#
+# Run (targeted, production approval flow):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
+#     -i terraform/lxc/environments/pve/gaming-stack-lab/inventory.yml \
+#     terraform/lxc/ansible/playbooks/deploy-foreverworld-jmx-agent.yml
+- name: Install the JMX agent for the Foreverworld Pterodactyl server
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    # Wings names the game container, and the server volume, by server UUID.
+    fw_server_uuid: "aa27bd44-577c-473e-94d3-d3f04a63c1c0"
+    fw_volume: "/srv/docker/pterodactyl/volumes/{{ fw_server_uuid }}"
+    # The container user (pterodactyl on the host): numeric, as seen in the volume.
+    fw_uid: 999
+    fw_gid: 991
+    fw_jmx_version: "1.6.0"
+    # GitHub's recorded digest for this release asset (checked 2026-10-17).
+    fw_jmx_sha256: "a95983fd96e865d2bcdf911cc500e7c82808c27ab9fd226bf96732b6c3d8c46e"
+    fw_jmx_dir: "{{ fw_volume }}/jmx-exporter"
+    fw_jmx_jar_name: "jmx_prometheus_javaagent-{{ fw_jmx_version }}.jar"
+    # Paths as the JVM sees them inside the container (/home/container is the volume).
+    fw_javaagent_arg: >-
+      -javaagent:/home/container/jmx-exporter/{{ fw_jmx_jar_name }}=9404:/home/container/jmx-exporter/config.yaml
+    fw_proxy_dir: /srv/docker/game-monitoring/jmx-proxy
+    fw_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    fw_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ fw_lab_domain, true) }}"
+    fw_proxy_image: "{{ fw_registry_host }}/dockerhub/alpine/socat:1.8.1.1"
+
+  tasks:
+    - name: Check the server volume and its JVM arguments file exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ fw_volume }}"
+        - "{{ fw_volume }}/user_jvm_args.txt"
+      register: fw_paths
+
+    - name: Stop if this is not the expected Foreverworld volume
+      ansible.builtin.assert:
+        that: fw_paths.results | map(attribute='stat.exists') | list == [true, true]
+        fail_msg: "{{ fw_volume }} or its user_jvm_args.txt is missing; check fw_server_uuid in the Panel."
+        quiet: true
+
+    - name: Create the JMX exporter directory inside the server volume
+      ansible.builtin.file:
+        path: "{{ fw_jmx_dir }}"
+        state: directory
+        owner: "{{ fw_uid }}"
+        group: "{{ fw_gid }}"
+        mode: "0755"
+
+    - name: Install the JMX agent jar (checksum-pinned)
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/jmx_exporter/releases/download/{{ fw_jmx_version }}/{{ fw_jmx_jar_name }}"
+        dest: "{{ fw_jmx_dir }}/{{ fw_jmx_jar_name }}"
+        checksum: "sha256:{{ fw_jmx_sha256 }}"
+        owner: "{{ fw_uid }}"
+        group: "{{ fw_gid }}"
+        mode: "0644"
+
+    - name: Configure the JVM Prometheus exporter
+      # Heap comes from these rules; GC time and thread counts come from the
+      # agent's built-in JVM metrics (jvm_gc_collection_seconds_*,
+      # jvm_threads_current/daemon), which the dashboard already queries.
+      ansible.builtin.copy:
+        dest: "{{ fw_jmx_dir }}/config.yaml"
+        owner: "{{ fw_uid }}"
+        group: "{{ fw_gid }}"
+        mode: "0644"
+        content: |
+          lowercaseOutputName: true
+          lowercaseOutputLabelNames: true
+          rules:
+            - pattern: 'java.lang<type=Memory><HeapMemoryUsage>(used|committed|max): (.*)'
+              name: jvm_heap_memory_$1_bytes
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionCount>: (.*)'
+              name: jvm_gc_collection_count
+              value: '$2'
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionTime>: (.*)'
+              name: jvm_gc_collection_seconds_total
+              value: '$2'
+              valueFactor: 0.001
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=Threading><(ThreadCount|PeakThreadCount|DaemonThreadCount)>: (.*)'
+              name: jvm_threads_$1
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=OperatingSystem><ProcessCpuLoad>: (.*)'
+              name: jvm_process_cpu_load_ratio
+              value: '$1'
+              type: GAUGE
+            - pattern: 'java.lang<type=Runtime><Uptime>: (.*)'
+              name: jvm_uptime_seconds
+              value: '$1'
+              valueFactor: 0.001
+              type: GAUGE
+
+    - name: Verify the jar is in place before the JVM is told to load it
+      ansible.builtin.stat:
+        path: "{{ fw_jmx_dir }}/{{ fw_jmx_jar_name }}"
+        checksum_algorithm: sha256
+      register: fw_jar
+
+    - name: Refuse to touch the JVM arguments unless the jar is verified
+      ansible.builtin.assert:
+        that:
+          - fw_jar.stat.exists
+          - fw_jar.stat.checksum == fw_jmx_sha256
+        fail_msg: "The JMX agent jar is missing or its checksum differs; leaving user_jvm_args.txt alone."
+        quiet: true
+
+    - name: Add the -javaagent argument to the server's JVM arguments (takes effect at next start)
+      ansible.builtin.lineinfile:
+        path: "{{ fw_volume }}/user_jvm_args.txt"
+        regexp: '^-javaagent:.*jmx_prometheus_javaagent'
+        line: "{{ fw_javaagent_arg }}"
+        insertafter: EOF
+        backup: true
+      register: fw_args
+
+    - name: Create the proxy project directory
+      ansible.builtin.file:
+        path: "{{ fw_proxy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Install the metrics proxy compose project
+      # Joins the Wings network so Docker DNS resolves the game container by name.
+      ansible.builtin.copy:
+        dest: "{{ fw_proxy_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          services:
+            jmx-proxy:
+              image: {{ fw_proxy_image }}
+              container_name: foreverworld-jmx-proxy
+              command: ["TCP-LISTEN:9404,fork,reuseaddr", "TCP:{{ fw_server_uuid }}:9404"]
+              ports:
+                - "9404:9404"
+              networks:
+                - pterodactyl_nw
+              restart: unless-stopped
+
+          networks:
+            pterodactyl_nw:
+              external: true
+
+    - name: Bring the proxy up
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ fw_proxy_dir }}"
+      register: fw_proxy_up
+      changed_when: "'Started' in fw_proxy_up.stderr or 'Created' in fw_proxy_up.stderr or 'Recreated' in fw_proxy_up.stderr"
+
+    - name: Next step for the operator
+      ansible.builtin.debug:
+        msg: >-
+          The agent is installed and {{ 'the -javaagent argument was added' if fw_args is changed else 'the -javaagent argument was already present' }}.
+          It loads at the next Foreverworld start: restart it from the Panel, then check
+          http://{{ ansible_host }}:9404/metrics from monitoring-stack.

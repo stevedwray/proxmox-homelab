@@ -79,6 +79,9 @@
     monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
+    # Pterodactyl server UUID of Foreverworld (Panel -> server -> Settings -> UUID);
+    # it is also the Docker container name Wings creates for it.
+    monitoring_foreverworld_server_uuid: "aa27bd44-577c-473e-94d3-d3f04a63c1c0"
     vm_version: "v1.148.0"
     grafana_version: "13.0.2"
     python_version: "3.12-alpine"
@@ -337,7 +340,9 @@
                   labels: {stack: greenbone-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}:8080"]
                   labels: {stack: wazuh-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:8080"]
+                # Wings owns :8080 on this host; the cAdvisor sidecar is on :8082
+                # (deploy-gaming-stack-lab-monitoring.yml).
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:8082"]
                   labels: {stack: gaming-stack-lab}
                 - targets: ["{{ lookup('env', 'LAB_IP_MEDIA_STACK_LAB') }}:8080"]
                   labels: {stack: media-stack-lab}
@@ -345,6 +350,14 @@
                   labels: {stack: technitium-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:8080"]
                   labels: {stack: technitium-tiny-stack}
+              # Wings names game containers by server UUID. Give Foreverworld a
+              # stable name so the Foreverworld dashboard's container panels match.
+              metric_relabel_configs:
+                - source_labels: [stack, name]
+                  separator: ";"
+                  regex: "gaming-stack-lab;{{ monitoring_foreverworld_server_uuid }}"
+                  target_label: name
+                  replacement: foreverworld-minecraft
 
             - job_name: minecraft-status
               scrape_interval: 15s

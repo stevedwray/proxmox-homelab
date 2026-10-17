@@ -1,0 +1,96 @@
+---
+# Standalone monitoring sidecars for the gaming-stack-lab Wings host.
+#
+# Before the Foreverworld server moved under Pterodactyl, its Docker Compose
+# project (deploy-minecraft-wildworks.yml) carried an itzg/mc-monitor and a
+# cAdvisor sidecar. Wings manages the game container now, and Wings' own API
+# took port 8080, so those pieces vanished and the Foreverworld Grafana
+# dashboard went blank. This project restores them independently of Pterodactyl
+# (restarting or reinstalling a game server does not touch them):
+#
+#   mc-monitor  :8081  Minecraft status / latency / player count, queried
+#                      against the server's published address (ansible_host:25565)
+#   cAdvisor    :8082  per-container CPU/memory/disk (8080 belongs to Wings)
+#
+# monitoring-stack scrapes both (deploy-monitoring-stack.yml relabels the
+# Wings container UUID to `foreverworld-minecraft` for the dashboard) and
+# ansible/00-initial-setup/mikrotik-game-seg.yml allows 8081 and 8082 from it.
+#
+# Run (targeted, production approval flow):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
+#     -i terraform/lxc/environments/pve/gaming-stack-lab/inventory.yml \
+#     terraform/lxc/ansible/playbooks/deploy-gaming-stack-lab-monitoring.yml
+- name: Deploy mc-monitor and cAdvisor sidecars on gaming-stack-lab
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    gslm_dir: /srv/docker/game-monitoring
+    gslm_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    gslm_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ gslm_lab_domain, true) }}"
+    gslm_monitor_image: "{{ gslm_registry_host }}/dockerhub/itzg/mc-monitor:1.18.2"
+    gslm_cadvisor_image: "{{ gslm_registry_host }}/ghcr/google/cadvisor:v0.60.5"
+    gslm_minecraft_target: "{{ ansible_host }}:25565"
+    gslm_monitor_port: 8081
+    gslm_cadvisor_port: 8082
+
+  tasks:
+    - name: Create the sidecar project directory
+      ansible.builtin.file:
+        path: "{{ gslm_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Install the sidecar compose project
+      ansible.builtin.copy:
+        dest: "{{ gslm_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          services:
+            minecraft-monitor:
+              image: {{ gslm_monitor_image }}
+              container_name: foreverworld-monitor
+              command: export-for-prometheus
+              environment:
+                EXPORT_SERVERS: "{{ gslm_minecraft_target }}"
+                EXPORT_PORT: "8080"
+              ports:
+                - "{{ gslm_monitor_port }}:8080"
+              restart: unless-stopped
+
+            cadvisor:
+              image: {{ gslm_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "{{ gslm_cadvisor_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: gslm_compose
+
+    - name: Bring the sidecars up
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ gslm_dir }}"
+      register: gslm_up
+      changed_when: "'Started' in gslm_up.stderr or 'Created' in gslm_up.stderr or 'Recreated' in gslm_up.stderr"
+
+    - name: Wait for the metrics endpoints on this host
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 60
+      loop:
+        - "{{ gslm_monitor_port }}"
+        - "{{ gslm_cadvisor_port }}"
