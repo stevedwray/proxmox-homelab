@@ -28,18 +28,28 @@ legacy world or its RCON credential by default.
 
 ## Observability
 
-Foreverworld uses the shared Grafana/VictoriaMetrics and Graylog services:
+Foreverworld runs under Pterodactyl/Wings, which names its game containers by
+server UUID and owns port `:8080` (its API). Monitoring therefore runs as
+standalone pieces beside Wings, not inside the game server's Compose project:
 
 | Signal | Producer | Endpoint / destination |
 | --- | --- | --- |
 | LXC host health | `node_exporter` from `lxc_base` | HTTPS `:9100` |
-| Per-container CPU, memory, disk and network | cAdvisor sidecar | HTTP `:8080` |
-| Minecraft availability, status latency and player count | `itzg/mc-monitor` sidecar | HTTP `:8081` |
-| JVM heap, GC, threads and process metrics | Prometheus JMX Java agent | HTTP `:9404` |
+| Per-container CPU, memory, disk and network | cAdvisor sidecar (`deploy-gaming-stack-lab-monitoring.yml`) | HTTP `:8082` (8080 is Wings) |
+| Minecraft availability, status latency and player count | `itzg/mc-monitor` sidecar (same playbook), queries the published `:25565` | HTTP `:8081` |
+| JVM heap, GC, threads and process metrics | Prometheus JMX Java agent inside the server (`deploy-foreverworld-jmx-agent.yml`), reached through a socat proxy on `pterodactyl_nw` | HTTP `:9404` |
 | System and Docker logs | rsyslog forwarding from `lxc_base` | Graylog TCP `:514` |
 
 Only the monitoring stack may reach the four metrics endpoints through
-`game_seg`. The provisioned Grafana dashboard is named **Foreverworld**.
-These signals deliberately cover infrastructure and Minecraft protocol status;
-JVM internals and mod/game tick timings require separately approved server or
-modpack instrumentation.
+`game_seg` (`ansible/00-initial-setup/mikrotik-game-seg.yml`). The provisioned
+Grafana dashboard is named **Foreverworld**. monitoring-stack relabels the
+Wings container UUID to `foreverworld-minecraft` so the dashboard's container
+panels match; the UUID is `monitoring_foreverworld_server_uuid` in
+`deploy-monitoring-stack.yml` and `fw_server_uuid` in the JMX playbook (Panel
+-> server -> Settings). JVM internals beyond the agent's heap/GC/thread data and
+mod/game tick timings still require separately approved modpack instrumentation.
+
+History: the Pterodactyl cutover (2026-09-26) dropped the Compose-era mc-monitor,
+cAdvisor and JMX pieces and the dashboard went blank; the node_exporter on this
+host was additionally killed by a certificate-renewal SIGHUP on 2026-10-12 (see
+`node-exporter-renew-fix.yml`).

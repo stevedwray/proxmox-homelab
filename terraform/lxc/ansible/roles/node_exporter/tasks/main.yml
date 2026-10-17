@@ -212,6 +212,11 @@
         mode: "0644"  # nosonar: ansible:S2612 — systemd unit drop-in must be world-readable
         content: |
           [Service]
+          # node_exporter exits on SIGHUP and systemd treats that as a clean
+          # stop, so anything that HUPs it (the old renewal script did) left
+          # it dead. Always bring it back.
+          Restart=always
+          RestartSec=5
           ExecStart=
           ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml{{ ' --collector.textfile.directory=' + node_exporter_textfile_dir if node_exporter_textfile_dir | length > 0 else '' }}
       register: node_exporter_dropin
@@ -244,7 +249,9 @@
               "$CERT" "$KEY"
             chown root:prometheus "$CERT" "$KEY"
             chmod 0640 "$CERT" "$KEY"
-            systemctl kill --signal=HUP prometheus-node-exporter.service
+            # node_exporter has no reload: SIGHUP terminates it (it stayed dead
+            # after the 2026-10-12 renewals), so restart it explicitly.
+            systemctl restart prometheus-node-exporter.service
           fi
 
     - name: Write node_exporter cert renewal systemd service
