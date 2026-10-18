@@ -847,11 +847,18 @@
     # own key. The matching public key is hardcoded (non-secret) directly
     # in deploy-pentest-runner.yml/deploy-pentest-fixture.yml's own
     # authorized_keys task; if this key is ever rotated, both must change
-    # together.
+    # together. Stored base64-encoded, same convention as
+    # GVM_SCAN_SSH_PRIVATE_KEY (scripts/gvm_scan_host_secret.py) --
+    # openbao_write.py reads stdin one line at a time, and a raw
+    # multi-line PEM key doesn't survive that; decoded back here with
+    # Ansible's own b64decode filter, no extra helper script needed.
     - name: Write the pentest-worker's dedicated SSH private key
       no_log: true
       ansible.builtin.copy:
-        content: "{{ lookup('env', 'PENTEST_WORKER_SSH_PRIVATE_KEY') | mandatory('PENTEST_WORKER_SSH_PRIVATE_KEY must be set') }}\n"
+        content: >-
+          {{ (lookup('env', 'PENTEST_WORKER_SSH_PRIVATE_KEY')
+              | mandatory('PENTEST_WORKER_SSH_PRIVATE_KEY must be set')
+              | b64decode) }}
         dest: "{{ pentest_worker_ssh_key_path }}"
         mode: "0600"
 
