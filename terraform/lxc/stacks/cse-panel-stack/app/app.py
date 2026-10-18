@@ -169,6 +169,8 @@ app = FastAPI(title="CyberSecEval Control Panel")
 # eval-runner's benchmark battery page (/eval), docs/eval-runner/panel-plan.md.
 from eval_battery import router as eval_battery_router  # noqa: E402
 app.include_router(eval_battery_router)
+from pentest import router as pentest_router  # noqa: E402
+app.include_router(pentest_router)
 
 
 class TestSpec(BaseModel):

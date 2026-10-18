@@ -187,6 +187,7 @@ class EvalBatteryTest(unittest.TestCase):
         import app as panel_app
         paths = {r.path for r in panel_app.app.routes}
         self.assertIn("/eval/api/jobs", paths)
+        self.assertIn("/pentest/api/state", paths)
 
     def test_framework_endpoint_shows_lock_holder_and_model(self):
         import app as panel_app

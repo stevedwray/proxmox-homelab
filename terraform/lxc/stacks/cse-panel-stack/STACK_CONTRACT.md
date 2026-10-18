@@ -67,6 +67,12 @@ loading — assumes the target engine already has one loaded.
 Both exposed to the browser only through Traefik/Authentik forward-auth
 (see `edge.yaml`), never directly.
 
+The Pentest lab tab is read-only. `panel-web` reads only sanitized
+`pentest:*` status records in its existing Redis DB 1; the trusted launcher
+on the operator workstation writes those records during an approved run.
+Neither panel container receives runner SSH access, fixture keys, raw model
+captures, or a browser-triggered pentest launch endpoint.
+
 ## Dependencies
 
 | Stack | Why |
