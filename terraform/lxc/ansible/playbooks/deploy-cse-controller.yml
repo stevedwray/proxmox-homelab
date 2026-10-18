@@ -709,12 +709,15 @@
         mode: "0644"
 
     # Now that celery is installed into the venv and cse_tasks.py exists,
-    # start the worker service. Idempotent whole-file "up -d": leaves the
-    # already-running controller service untouched, only creates/starts
-    # whatever isn't running yet (worker, on a fresh deploy).
+    # start the worker service. Explicitly scoped to controller/worker --
+    # a bare "up -d" also starts every other service in this compose
+    # file, including pentest-worker/pentest-viewer-proxy, whose own venv
+    # doesn't exist yet at this point in the play (confirmed live: a bare
+    # "up -d" here failed those two containers with "no such file or
+    # directory" for a venv binary that a later play creates).
     - name: Start worker container via docker compose
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose up -d controller worker
         chdir: "{{ cse_controller_stack_dir }}"
       register: cse_controller_worker_up
       changed_when: "'Started' in cse_controller_worker_up.stdout or 'Created' in cse_controller_worker_up.stdout"
@@ -833,6 +836,15 @@
         - framework_lock_client.py
         - fixture_control.py
         - view_run.py
+        # Their own tests, deployed alongside -- "Run the pentest-worker's
+        # own unit tests" below needs these present, not just the modules
+        # (confirmed live: "discover" silently finds zero tests without
+        # them, which is not the same thing as them passing).
+        - test_run_task.py
+        - test_activity_status.py
+        - test_framework_lock_client.py
+        - test_fixture_control.py
+        - test_view_run.py
 
     - name: Deploy the worker and viewer-proxy modules
       ansible.builtin.copy:
@@ -842,6 +854,8 @@
       loop:
         - pentest_tasks.py
         - viewer_proxy.py
+        - test_pentest_tasks.py
+        - test_viewer_proxy.py
 
     # Writes the dedicated identity from OpenBao -- never the operator's
     # own key. The matching public key is hardcoded (non-secret) directly
