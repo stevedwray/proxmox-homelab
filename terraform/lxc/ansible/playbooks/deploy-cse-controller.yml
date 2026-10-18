@@ -88,6 +88,7 @@
         content: |
           LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}
           CSE_PANEL_REDIS_PASSWORD={{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}
+          LLM_GPU_STACK_API_KEY={{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY is required for the pentest-worker service') }}
       no_log: true
 
     - name: Write docker-compose.yml to stack directory

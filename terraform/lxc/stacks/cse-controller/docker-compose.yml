@@ -51,6 +51,11 @@ services:
       - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/0
       - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/1
       - PENTEST_WORKER_SSH_KEY=/srv/pentest-worker/id_pentest_runner
+      # run_task.py reads these two directly (not derived from the
+      # Celery URLs above) -- confirmed live missing on first deploy:
+      # the job completed as "crashed" with exactly this stop_reason.
+      - CSE_PANEL_REDIS_PASSWORD=${CSE_PANEL_REDIS_PASSWORD}
+      - LLM_GPU_STACK_API_KEY=${LLM_GPU_STACK_API_KEY}
     restart: unless-stopped
 
   pentest-viewer-proxy:
