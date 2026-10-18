@@ -831,6 +831,7 @@
         src: "../../stacks/pentest-runner/launcher/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
+      notify: Restart pentest-worker and viewer-proxy
       loop:
         - run_task.py
         - activity_status.py
@@ -852,6 +853,7 @@
         src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
+      notify: Restart pentest-worker and viewer-proxy
       loop:
         - pentest_tasks.py
         - viewer_proxy.py
@@ -974,6 +976,19 @@
       loop: "{{ pentest_worker_ssh_client_check.results }}"
       when: item.rc != 0
       changed_when: true
+
+  handlers:
+    # A bind-mounted .py file changing on disk does not make an
+    # already-running Python process re-import it -- confirmed live: a
+    # code fix was deployed, the file on disk was correct, and the
+    # running viewer-proxy process kept using the stale in-memory
+    # version until explicitly restarted (its own container StartedAt
+    # predated the file's new mtime). Only fires when the copy tasks
+    # above actually changed something, so a plain redeploy with no
+    # code changes doesn't bounce either service for no reason.
+    - name: Restart pentest-worker and viewer-proxy
+      ansible.builtin.command:
+        cmd: docker restart cse-controller-pentest-worker cse-controller-pentest-viewer-proxy
 
 - name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
   hosts: all
