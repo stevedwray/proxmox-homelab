@@ -28,3 +28,51 @@ services:
     env_file:
       - /srv/cyberseceval/config/worker.env
     restart: unless-stopped
+
+  pentest-worker:
+    # live-panel-plan.md's increment-2: browser-launchable pentest-lab
+    # runs. Separate venv/queue/failure-domain from `worker` above --
+    # unrelated project, deliberately not sharing CyberSecEval's own
+    # venv or Celery app.
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller-pentest-worker
+    volumes:
+      - /srv/pentest-worker:/srv/pentest-worker
+    working_dir: /srv/pentest-worker/launcher
+    command:
+      - /srv/pentest-worker/.venv/bin/celery
+      - -A
+      - pentest_tasks
+      - worker
+      - --loglevel=INFO
+      - --concurrency=1
+      - --queues=pentest-worker
+    environment:
+      - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/1
+      - PENTEST_WORKER_SSH_KEY=/srv/pentest-worker/id_pentest_runner
+    restart: unless-stopped
+
+  pentest-viewer-proxy:
+    # The one piece of this project's loopback-only philosophy that
+    # deliberately isn't: cse-panel-stack (mgmt_seg) must reach this over
+    # its own new, narrow MikroTik rule. See
+    # cse-controller/STACK_CONTRACT.md's note on this before changing the
+    # published port.
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller-pentest-viewer-proxy
+    volumes:
+      - /srv/pentest-worker:/srv/pentest-worker
+    working_dir: /srv/pentest-worker/launcher
+    command:
+      - python3
+      - viewer_proxy.py
+      - --listen-host
+      - "0.0.0.0"
+      - --listen-port
+      - "18810"
+    ports:
+      - "18810:18810"
+    environment:
+      - PENTEST_WORKER_SSH_KEY=/srv/pentest-worker/id_pentest_runner
+    restart: unless-stopped
