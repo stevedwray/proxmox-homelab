@@ -794,6 +794,141 @@
         # Nextcloud's own UI, not just view them. No re-share bit (16).
         nextcloud_folder_share_permissions: 15
 
+- name: Deploy the Pentest lab worker and native-detail viewer proxy (live-panel-plan.md)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    pentest_worker_dir: /srv/pentest-worker
+    pentest_worker_launcher_dir: "{{ pentest_worker_dir }}/launcher"
+    pentest_worker_venv_dir: "{{ pentest_worker_dir }}/.venv"
+    pentest_worker_ssh_key_path: "{{ pentest_worker_dir }}/id_pentest_runner"
+    # Separate venv from CyberSecEval's own (/srv/cyberseceval/.venv) --
+    # different project, different lifecycle, and the only dependencies
+    # this one needs (celery, redis) are tiny; sharing would couple two
+    # unrelated workers' dependency upgrades for no benefit.
+
+  tasks:
+    - name: Create the pentest-worker directory
+      ansible.builtin.file:
+        path: "{{ pentest_worker_launcher_dir }}"
+        state: directory
+        mode: "0755"
+
+    # One flat PYTHONPATH directory -- pentest_tasks.py/viewer_proxy.py
+    # import run_task/fixture_control/activity_status/framework_lock_client/
+    # view_run as same-directory siblings, exactly as they already do on
+    # pentest-runner and in this repo's own test suite. Copied, not a
+    # second maintained version -- the worker must call the exact same
+    # code the operator's own CLI does (run_task.py's own docstring).
+    - name: Deploy the shared launcher library (same code as pentest-runner's CLI)
+      ansible.builtin.copy:
+        src: "../../stacks/pentest-runner/launcher/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - run_task.py
+        - activity_status.py
+        - framework_lock_client.py
+        - fixture_control.py
+        - view_run.py
+
+    - name: Deploy the worker and viewer-proxy modules
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - pentest_tasks.py
+        - viewer_proxy.py
+
+    # Writes the dedicated identity from OpenBao -- never the operator's
+    # own key. The matching public key is hardcoded (non-secret) directly
+    # in deploy-pentest-runner.yml/deploy-pentest-fixture.yml's own
+    # authorized_keys task; if this key is ever rotated, both must change
+    # together.
+    - name: Write the pentest-worker's dedicated SSH private key
+      no_log: true
+      ansible.builtin.copy:
+        content: "{{ lookup('env', 'PENTEST_WORKER_SSH_PRIVATE_KEY') | mandatory('PENTEST_WORKER_SSH_PRIVATE_KEY must be set') }}\n"
+        dest: "{{ pentest_worker_ssh_key_path }}"
+        mode: "0600"
+
+    - name: Check whether the pentest-worker venv already exists
+      ansible.builtin.stat:
+        path: "{{ pentest_worker_venv_dir }}/bin/python3"
+      register: pentest_worker_venv_stat
+
+    - name: Create Python venv for the pentest-worker
+      ansible.builtin.command:
+        cmd: "python3 -m venv {{ pentest_worker_venv_dir }}"
+      when: not pentest_worker_venv_stat.stat.exists
+
+    - name: Install Celery/Redis client into the pentest-worker venv
+      ansible.builtin.command:
+        cmd: "{{ pentest_worker_venv_dir }}/bin/pip install celery==5.4.0 redis==5.2.1"
+      register: pentest_worker_pip_install
+      changed_when: "'Successfully installed' in pentest_worker_pip_install.stdout"
+
+    - name: Run the pentest-worker's own unit tests before (re)starting it
+      ansible.builtin.command:
+        cmd: "{{ pentest_worker_venv_dir }}/bin/python3 -m unittest discover -s . -p 'test_*.py'"
+        chdir: "{{ pentest_worker_launcher_dir }}"
+      environment:
+        CELERY_BROKER_URL: "memory://"
+        CELERY_RESULT_BACKEND: "cache+memory://"
+      register: pentest_worker_tests
+      changed_when: false
+
+    - name: Write/refresh the pentest-worker's docker-compose.yml
+      ansible.builtin.copy:
+        content: "{{ lookup('file', '../../stacks/cse-controller/docker-compose.yml') }}"
+        dest: /opt/stacks/cse-controller/docker-compose.yml
+        mode: "0644"
+
+    - name: Validate docker compose configuration after the pentest-worker services are added
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: /opt/stacks/cse-controller
+      environment:
+        LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
+        CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+      changed_when: false
+
+    - name: Start the pentest-worker and viewer-proxy services
+      ansible.builtin.command:
+        cmd: docker compose up -d pentest-worker pentest-viewer-proxy
+        chdir: /opt/stacks/cse-controller
+      environment:
+        LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
+        CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+      register: pentest_worker_compose_up
+      changed_when: "'Started' in pentest_worker_compose_up.stdout or 'Created' in pentest_worker_compose_up.stdout"
+
+    # Same idempotent docker-exec-apt-get pattern this file already uses
+    # for the `controller` container above -- these are bare python:3.10-
+    # slim images, so run_task.py/fixture_control.py/view_run.py's own
+    # `subprocess.run(["ssh", ...])` calls have nothing to execute without
+    # this. Checked per-container, not gated on a bootstrap marker file:
+    # cheap, and correctly re-installs after a container recreation.
+    - name: Check whether openssh-client is already installed in each new container
+      ansible.builtin.command:
+        cmd: "docker exec {{ item }} dpkg -s openssh-client"
+      loop:
+        - cse-controller-pentest-worker
+        - cse-controller-pentest-viewer-proxy
+      register: pentest_worker_ssh_client_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install openssh-client in each new container where it's missing
+      ansible.builtin.command:
+        cmd: "docker exec {{ item.item }} sh -c 'apt-get update && apt-get install -y --no-install-recommends openssh-client'"
+      loop: "{{ pentest_worker_ssh_client_check.results }}"
+      when: item.rc != 0
+      changed_when: true
+
 - name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
   hosts: all
   become: true
