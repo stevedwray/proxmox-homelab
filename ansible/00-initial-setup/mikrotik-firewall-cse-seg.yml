@@ -27,6 +27,9 @@
 #   7. pentest-runner -> pentest-fixture:8080  (cross-zone into pve-test's pentest_seg, same pattern as #6 --
 #      docs/autonomous-pentesting-lab/plan.md package 2. No matching pentest_seg-side rule needed: rule #6
 #      already established that one cse_seg-sourced forward rule is sufficient for return traffic too.)
+#   7b. pentest-runner -> metasploitable3-linux, all ports  (same cross-zone pattern as #7 -- the richer,
+#      multi-service target added as a follow-up to package 2; no port restriction is intentional, see
+#      metasploitable3_linux_ip's own comment below)
 #   8. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
 #   9. cse_seg -> everywhere else: DROP  (the actual isolation)
 
@@ -74,6 +77,16 @@
     # terraform/lxc/stacks/pentest-fixture/STACK_CONTRACT.md).
     pentest_runner_ip: "192.168.100.72"
     pentest_fixture_ip: "192.168.70.213"
+    # metasploitable3-linux (pentest_seg) -- same cross-node pattern as
+    # pentest_fixture_ip above, docs/autonomous-pentesting-lab/plan.md's
+    # "richer attack surface" follow-up (terraform/vm/metasploitable3-linux).
+    # Unlike pentest-fixture's single narrow port, this rule deliberately
+    # has no dst-port/protocol restriction -- the whole point of this
+    # target is its full multi-service surface (FTP/SSH/HTTP/SMB/MySQL/
+    # etc, confirmed live via nmap from cse-kali), an explicit operator
+    # decision, not an oversight. Still scoped narrowly by the src/dst
+    # address pair, same as every other rule here.
+    metasploitable3_linux_ip: "192.168.70.214"
 
     # Each dict has exactly the keys that rule needs -- matches the
     # exact field shapes of the real precedent rules read live
@@ -119,6 +132,11 @@
         src-address: "{{ pentest_runner_ip }}"
         dst-address: "{{ pentest_fixture_ip }}"
         dst-port: "8080"
+      - comment: "pentest-runner to metasploitable3-linux all ports (pentest_seg, cross-node)"
+        chain: "forward"
+        action: "accept"
+        src-address: "{{ pentest_runner_ip }}"
+        dst-address: "{{ metasploitable3_linux_ip }}"
       - comment: "cse_seg internet egress (git clone, apt/pip installs)"
         chain: "forward"
         action: "accept"
