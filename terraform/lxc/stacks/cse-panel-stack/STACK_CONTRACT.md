@@ -11,6 +11,15 @@ benchmark itself — it only submits jobs to a Celery worker that runs on
 `cse-controller` (see `docs/cyberseceval-panel/plan.md` Part B), where the
 actual PurpleLlama checkout/datasets/agent keys live.
 
+The same panel also hosts the Eval battery and Compare families. A fourth
+`Pentest lab` family is planned in
+`docs/autonomous-pentesting-lab/control-panel-plan.md`; it is not implemented
+or deployed yet. That family will keep this stack's existing trust direction:
+the panel submits jobs and reads bounded Redis state, while a trusted worker on
+`cse-controller` resets the fixture, drives `pentest-runner`, verifies the
+native trace, and publishes the result. The panel must never hold runner or
+fixture SSH keys, private answer keys, or raw model traffic.
+
 ## Network
 
 | Field   | Value |
@@ -76,6 +85,11 @@ Both exposed to the browser only through Traefik/Authentik forward-auth
 | Proxy-stack (Traefik) | Ingress routing for both routes |
 | `cse-controller` (cross-zone, `cse_seg`) | The actual benchmark execution -- this stack only submits jobs and displays their status; the Celery worker consuming them runs on `cse-controller`, not here |
 
+The planned Pentest lab family will reuse `cse-controller` as its worker host.
+It does not make `pentest-runner` or `pentest-fixture` direct dependencies of
+this panel stack; those connections originate from the worker and require
+separately reviewed identities and network rules.
+
 ## Persistent State
 
 - `/srv/cse-panel/redis-data` — Redis's `appendonly` persistence, so
@@ -120,6 +134,7 @@ other stacks build on.
 | `terraform/lxc/stacks/cse-panel-stack/docker-compose.yml` | Redis/Flower/panel-web container definitions |
 | `terraform/lxc/stacks/cse-panel-stack/app/app.py` | panel-web's FastAPI application |
 | `terraform/lxc/stacks/cse-panel-stack/app-ui/app.py` | panel-ui's Dash application |
+| `docs/autonomous-pentesting-lab/control-panel-plan.md` | Planned Pentest lab family, trust boundaries, current gaps and delivery gates |
 | `terraform/lxc/stacks/cse-panel-stack/edge.yaml` | Traefik/Authentik routing (EdgeManifest) |
 | `terraform/lxc/environments/pve-tiny/cse-panel-stack/terragrunt.hcl` | Terragrunt entrypoint |
 | `terraform/lxc/ansible/playbooks/deploy-cse-panel-stack.yml` | Stack playbook |
