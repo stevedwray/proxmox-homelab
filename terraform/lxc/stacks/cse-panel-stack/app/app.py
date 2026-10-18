@@ -169,8 +169,11 @@ app = FastAPI(title="CyberSecEval Control Panel")
 # eval-runner's benchmark battery page (/eval), docs/eval-runner/panel-plan.md.
 from eval_battery import router as eval_battery_router  # noqa: E402
 app.include_router(eval_battery_router)
-from pentest import router as pentest_router  # noqa: E402
+from pentest import router as pentest_router, viewer_proxy_router  # noqa: E402
 app.include_router(pentest_router)
+# Deliberately unprefixed -- see viewer_proxy_router's own docstring in
+# pentest.py for why (Strix's native viewer fetches absolute /api/* paths).
+app.include_router(viewer_proxy_router)
 
 
 class TestSpec(BaseModel):

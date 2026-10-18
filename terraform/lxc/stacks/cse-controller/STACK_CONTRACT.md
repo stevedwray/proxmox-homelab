@@ -53,6 +53,21 @@ Cross-zone reachability to `cse-kali`'s agent (`pentest_seg` on
 this is the first genuinely cross-zone rule this stack needed, since
 `infra_seg` never required one (nothing was restricted).
 
+**Planned, not yet deployed (live-panel-plan.md's native-detail viewer):**
+a `pentest_tasks.py` Celery worker and a `viewer_proxy.py` reverse proxy
+(both in `cse-controller/pentest-worker-config/`, code built and unit-
+tested, 19 October). The worker needs a dedicated SSH identity to
+`pentest-runner`/`pentest-fixture` (never a fleet-wide key) — same zone as
+`pentest-runner`, so that leg needs no new firewall rule, only the
+identity. `viewer_proxy.py` is the one genuine exception to this stack's
+loopback-only philosophy elsewhere in the project: it must bind to this
+host's own address (not `127.0.0.1`), because `cse-panel-stack`
+(`mgmt_seg`) needs to reach it — that requires its own new, narrow
+MikroTik rule (`cse-panel-stack` → `cse-controller`, this one port only),
+which does not exist yet. Do not infer either path from the existing
+`cse-controller → cse-kali` rule above; both are separate, newly-required
+trust paths.
+
 ## Inputs
 
 None yet. No secrets, no `.env`-sourced template variables — Phase 1 is
