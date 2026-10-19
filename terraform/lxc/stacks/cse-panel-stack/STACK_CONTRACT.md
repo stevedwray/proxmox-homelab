@@ -67,6 +67,15 @@ loading — assumes the target engine already has one loaded.
 Both exposed to the browser only through Traefik/Authentik forward-auth
 (see `edge.yaml`), never directly.
 
+The Pentest lab tab launches fixed catalog jobs through its dedicated Celery
+worker and reads sanitized `pentest:*` status records in Redis DB 1.
+For native trace review, panel-web asks the controller proxy to ensure a
+viewer, then serves it on one of four `cse-pentest-viewer-{1..4}` hostnames.
+Each host has a separate browser origin because Strix fetches `/api/*` from
+the origin root. A selected viewer can be stopped to free its slot; no slot
+is evicted automatically. Neither panel container receives runner SSH access,
+fixture keys, or raw model captures.
+
 ## Dependencies
 
 | Stack | Why |

@@ -88,6 +88,7 @@
         content: |
           LAB_IP_CSE_PANEL={{ lookup('env', 'LAB_IP_CSE_PANEL') | mandatory('LAB_IP_CSE_PANEL env var is required') }}
           CSE_PANEL_REDIS_PASSWORD={{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | mandatory('CSE_PANEL_REDIS_PASSWORD (OpenBao services/cse-panel) is required') }}
+          LLM_GPU_STACK_API_KEY={{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY is required for the pentest-worker service') }}
       no_log: true
 
     - name: Write docker-compose.yml to stack directory
@@ -709,12 +710,15 @@
         mode: "0644"
 
     # Now that celery is installed into the venv and cse_tasks.py exists,
-    # start the worker service. Idempotent whole-file "up -d": leaves the
-    # already-running controller service untouched, only creates/starts
-    # whatever isn't running yet (worker, on a fresh deploy).
+    # start the worker service. Explicitly scoped to controller/worker --
+    # a bare "up -d" also starts every other service in this compose
+    # file, including pentest-worker/pentest-viewer-proxy, whose own venv
+    # doesn't exist yet at this point in the play (confirmed live: a bare
+    # "up -d" here failed those two containers with "no such file or
+    # directory" for a venv binary that a later play creates).
     - name: Start worker container via docker compose
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose up -d controller worker
         chdir: "{{ cse_controller_stack_dir }}"
       register: cse_controller_worker_up
       changed_when: "'Started' in cse_controller_worker_up.stdout or 'Created' in cse_controller_worker_up.stdout"
@@ -817,8 +821,8 @@
         mode: "0755"
 
     # One flat PYTHONPATH directory -- pentest_tasks.py/viewer_proxy.py
-    # import run_task/fixture_control/activity_status/framework_lock_client/
-    # view_run as same-directory siblings, exactly as they already do on
+    # import run_task/fixture_control/activity_status/framework_lock_client
+    # as same-directory siblings, exactly as they already do on
     # pentest-runner and in this repo's own test suite. Copied, not a
     # second maintained version -- the worker must call the exact same
     # code the operator's own CLI does (run_task.py's own docstring).
@@ -827,59 +831,61 @@
         src: "../../stacks/pentest-runner/launcher/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
+      notify: Restart pentest-worker
       loop:
         - run_task.py
         - activity_status.py
         - framework_lock_client.py
         - fixture_control.py
         - view_run.py
+        # Their own tests, deployed alongside -- "Run the pentest-worker's
+        # own unit tests" below needs these present, not just the modules
+        # (confirmed live: "discover" silently finds zero tests without
+        # them, which is not the same thing as them passing).
+        - test_run_task.py
+        - test_activity_status.py
+        - test_framework_lock_client.py
+        - test_fixture_control.py
+        - test_view_run.py
 
-    - name: Deploy the worker and viewer-proxy modules
+    - name: Deploy the pentest worker module and tests
       ansible.builtin.copy:
         src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
+      notify: Restart pentest-worker
       loop:
         - pentest_tasks.py
+        - test_pentest_tasks.py
+
+    - name: Deploy the stateless viewer-proxy module and tests
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      notify: Restart pentest-viewer-proxy
+      loop:
         - viewer_proxy.py
+        - test_viewer_proxy.py
 
     # Writes the dedicated identity from OpenBao -- never the operator's
     # own key. The matching public key is hardcoded (non-secret) directly
     # in deploy-pentest-runner.yml/deploy-pentest-fixture.yml's own
     # authorized_keys task; if this key is ever rotated, both must change
-    # together.
+    # together. Stored base64-encoded, same convention as
+    # GVM_SCAN_SSH_PRIVATE_KEY (scripts/gvm_scan_host_secret.py) --
+    # openbao_write.py reads stdin one line at a time, and a raw
+    # multi-line PEM key doesn't survive that; decoded back here with
+    # Ansible's own b64decode filter, no extra helper script needed.
     - name: Write the pentest-worker's dedicated SSH private key
       no_log: true
       ansible.builtin.copy:
-        content: "{{ lookup('env', 'PENTEST_WORKER_SSH_PRIVATE_KEY') | mandatory('PENTEST_WORKER_SSH_PRIVATE_KEY must be set') }}\n"
+        content: >-
+          {{ (lookup('env', 'PENTEST_WORKER_SSH_PRIVATE_KEY')
+              | mandatory('PENTEST_WORKER_SSH_PRIVATE_KEY must be set')
+              | b64decode) }}
         dest: "{{ pentest_worker_ssh_key_path }}"
         mode: "0600"
-
-    - name: Check whether the pentest-worker venv already exists
-      ansible.builtin.stat:
-        path: "{{ pentest_worker_venv_dir }}/bin/python3"
-      register: pentest_worker_venv_stat
-
-    - name: Create Python venv for the pentest-worker
-      ansible.builtin.command:
-        cmd: "python3 -m venv {{ pentest_worker_venv_dir }}"
-      when: not pentest_worker_venv_stat.stat.exists
-
-    - name: Install Celery/Redis client into the pentest-worker venv
-      ansible.builtin.command:
-        cmd: "{{ pentest_worker_venv_dir }}/bin/pip install celery==5.4.0 redis==5.2.1"
-      register: pentest_worker_pip_install
-      changed_when: "'Successfully installed' in pentest_worker_pip_install.stdout"
-
-    - name: Run the pentest-worker's own unit tests before (re)starting it
-      ansible.builtin.command:
-        cmd: "{{ pentest_worker_venv_dir }}/bin/python3 -m unittest discover -s . -p 'test_*.py'"
-        chdir: "{{ pentest_worker_launcher_dir }}"
-      environment:
-        CELERY_BROKER_URL: "memory://"
-        CELERY_RESULT_BACKEND: "cache+memory://"
-      register: pentest_worker_tests
-      changed_when: false
 
     - name: Write/refresh the pentest-worker's docker-compose.yml
       ansible.builtin.copy:
@@ -896,9 +902,59 @@
         CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
       changed_when: false
 
-    - name: Start the pentest-worker and viewer-proxy services
+    # Start the viewer-proxy first -- it has no venv dependency (stdlib
+    # only), and its container is what creates/populates the venv below,
+    # matching the existing CyberSecEval venv's own precedent exactly
+    # (docker exec into a running container of the same image, never the
+    # host's own python3). Confirmed live: a venv created by running
+    # python3 -m venv directly on the host embeds the HOST's own
+    # /usr/bin/python3 in its activation symlinks, which does not exist
+    # at that path inside the container's separate filesystem -- "exec:
+    # no such file or directory" for the venv's own celery script, not a
+    # missing-file problem but a wrong-namespace one.
+    - name: Start the viewer-proxy service (no venv dependency)
       ansible.builtin.command:
-        cmd: docker compose up -d pentest-worker pentest-viewer-proxy
+        cmd: docker compose up -d pentest-viewer-proxy
+        chdir: /opt/stacks/cse-controller
+      environment:
+        LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
+        CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+      register: pentest_viewer_proxy_up
+      changed_when: "'Started' in pentest_viewer_proxy_up.stdout or 'Created' in pentest_viewer_proxy_up.stdout"
+
+    - name: Check whether the pentest-worker venv already exists
+      ansible.builtin.command:
+        cmd: docker exec cse-controller-pentest-viewer-proxy test -f /srv/pentest-worker/.venv/bin/python3
+      register: pentest_worker_venv_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create Python venv for the pentest-worker (inside the container, not the host)
+      ansible.builtin.command:
+        cmd: docker exec cse-controller-pentest-viewer-proxy python3 -m venv /srv/pentest-worker/.venv
+      when: pentest_worker_venv_check.rc != 0
+
+    - name: Install Celery/Redis client into the pentest-worker venv
+      ansible.builtin.command:
+        cmd: docker exec cse-controller-pentest-viewer-proxy /srv/pentest-worker/.venv/bin/pip install celery==5.4.0 redis==5.2.1
+      register: pentest_worker_pip_install
+      changed_when: "'Successfully installed' in pentest_worker_pip_install.stdout"
+
+    - name: Run the pentest-worker's own unit tests before starting it
+      ansible.builtin.command:
+        cmd: >-
+          docker exec
+          -e CELERY_BROKER_URL=memory://
+          -e CELERY_RESULT_BACKEND=cache+memory://
+          -w /srv/pentest-worker/launcher
+          cse-controller-pentest-viewer-proxy
+          /srv/pentest-worker/.venv/bin/python3 -m unittest discover -s . -p test_*.py
+      register: pentest_worker_tests
+      changed_when: false
+
+    - name: Start the pentest-worker service
+      ansible.builtin.command:
+        cmd: docker compose up -d pentest-worker
         chdir: /opt/stacks/cse-controller
       environment:
         LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
@@ -908,26 +964,40 @@
 
     # Same idempotent docker-exec-apt-get pattern this file already uses
     # for the `controller` container above -- these are bare python:3.10-
-    # slim images, so run_task.py/fixture_control.py/view_run.py's own
+    # slim images, so run_task.py/fixture_control.py's own
     # `subprocess.run(["ssh", ...])` calls have nothing to execute without
     # this. Checked per-container, not gated on a bootstrap marker file:
     # cheap, and correctly re-installs after a container recreation.
-    - name: Check whether openssh-client is already installed in each new container
+    - name: Check whether openssh-client is installed in the pentest worker
       ansible.builtin.command:
         cmd: "docker exec {{ item }} dpkg -s openssh-client"
       loop:
         - cse-controller-pentest-worker
-        - cse-controller-pentest-viewer-proxy
       register: pentest_worker_ssh_client_check
       failed_when: false
       changed_when: false
 
-    - name: Install openssh-client in each new container where it's missing
+    - name: Install openssh-client in the worker where it's missing
       ansible.builtin.command:
         cmd: "docker exec {{ item.item }} sh -c 'apt-get update && apt-get install -y --no-install-recommends openssh-client'"
       loop: "{{ pentest_worker_ssh_client_check.results }}"
       when: item.rc != 0
       changed_when: true
+
+  handlers:
+    # A bind-mounted .py file changing on disk does not make an
+    # already-running Python process re-import it -- confirmed live: a
+    # code fix was deployed, the file on disk was correct, and the
+    # running viewer-proxy process kept using the stale in-memory
+    # version until explicitly restarted (its own container StartedAt
+    # predated the file's new mtime). Only fires for changed files.
+    - name: Restart pentest-worker
+      ansible.builtin.command:
+        cmd: docker restart cse-controller-pentest-worker
+
+    - name: Restart pentest-viewer-proxy
+      ansible.builtin.command:
+        cmd: docker restart cse-controller-pentest-viewer-proxy
 
 - name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
   hosts: all

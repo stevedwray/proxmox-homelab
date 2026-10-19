@@ -53,6 +53,16 @@ Cross-zone reachability to `cse-kali`'s agent (`pentest_seg` on
 this is the first genuinely cross-zone rule this stack needed, since
 `infra_seg` never required one (nothing was restricted).
 
+The `pentest_tasks.py` Celery worker and `viewer_proxy.py` reverse proxy
+live in `cse-controller/pentest-worker-config/`. The worker needs a
+dedicated SSH identity to
+`pentest-runner`/`pentest-fixture` (never a fleet-wide key) — same zone as
+`pentest-runner`, so that leg needs no new firewall rule, only the
+identity. `viewer_proxy.py` binds port 18810 for the panel's existing
+narrow `mgmt_seg` → `cse_seg` rule. It is stateless: control and viewer
+requests go to the runner's supervisor at `192.168.100.72:18820` on the
+same subnet. Only the worker retains SSH; the proxy does not hold a tunnel.
+
 ## Inputs
 
 None yet. No secrets, no `.env`-sourced template variables — Phase 1 is
@@ -60,9 +70,8 @@ infrastructure-only.
 
 ## Provides
 
-None yet. No persistent service is exposed — the container makes outbound
-calls only (once the Framework side exists). A later phase may add an
-API for CI/webhook-triggered runs; update this table then.
+The pentest viewer proxy exposes `18810/tcp` to panel-web through the
+existing narrow firewall rule. It does not expose raw Strix child ports.
 
 ## Dependencies
 

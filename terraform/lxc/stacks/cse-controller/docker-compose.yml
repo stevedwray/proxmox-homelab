@@ -54,11 +54,8 @@ services:
     restart: unless-stopped
 
   pentest-viewer-proxy:
-    # The one piece of this project's loopback-only philosophy that
-    # deliberately isn't: cse-panel-stack (mgmt_seg) must reach this over
-    # its own new, narrow MikroTik rule. See
-    # cse-controller/STACK_CONTRACT.md's note on this before changing the
-    # published port.
+    # The panel reaches this stateless proxy through the existing narrow
+    # mgmt_seg -> cse_seg rule. The runner supervisor is on the same subnet.
     image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
     container_name: cse-controller-pentest-viewer-proxy
     volumes:
@@ -73,6 +70,4 @@ services:
       - "18810"
     ports:
       - "18810:18810"
-    environment:
-      - PENTEST_WORKER_SSH_KEY=/srv/pentest-worker/id_pentest_runner
     restart: unless-stopped
