@@ -821,8 +821,8 @@
         mode: "0755"
 
     # One flat PYTHONPATH directory -- pentest_tasks.py/viewer_proxy.py
-    # import run_task/fixture_control/activity_status/framework_lock_client/
-    # view_run as same-directory siblings, exactly as they already do on
+    # import run_task/fixture_control/activity_status/framework_lock_client
+    # as same-directory siblings, exactly as they already do on
     # pentest-runner and in this repo's own test suite. Copied, not a
     # second maintained version -- the worker must call the exact same
     # code the operator's own CLI does (run_task.py's own docstring).
@@ -831,7 +831,7 @@
         src: "../../stacks/pentest-runner/launcher/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
-      notify: Restart pentest-worker and viewer-proxy
+      notify: Restart pentest-worker
       loop:
         - run_task.py
         - activity_status.py
@@ -848,16 +848,24 @@
         - test_fixture_control.py
         - test_view_run.py
 
-    - name: Deploy the worker and viewer-proxy modules
+    - name: Deploy the pentest worker module and tests
       ansible.builtin.copy:
         src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
         dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
         mode: "0644"
-      notify: Restart pentest-worker and viewer-proxy
+      notify: Restart pentest-worker
       loop:
         - pentest_tasks.py
-        - viewer_proxy.py
         - test_pentest_tasks.py
+
+    - name: Deploy the stateless viewer-proxy module and tests
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      notify: Restart pentest-viewer-proxy
+      loop:
+        - viewer_proxy.py
         - test_viewer_proxy.py
 
     # Writes the dedicated identity from OpenBao -- never the operator's
@@ -956,21 +964,20 @@
 
     # Same idempotent docker-exec-apt-get pattern this file already uses
     # for the `controller` container above -- these are bare python:3.10-
-    # slim images, so run_task.py/fixture_control.py/view_run.py's own
+    # slim images, so run_task.py/fixture_control.py's own
     # `subprocess.run(["ssh", ...])` calls have nothing to execute without
     # this. Checked per-container, not gated on a bootstrap marker file:
     # cheap, and correctly re-installs after a container recreation.
-    - name: Check whether openssh-client is already installed in each new container
+    - name: Check whether openssh-client is installed in the pentest worker
       ansible.builtin.command:
         cmd: "docker exec {{ item }} dpkg -s openssh-client"
       loop:
         - cse-controller-pentest-worker
-        - cse-controller-pentest-viewer-proxy
       register: pentest_worker_ssh_client_check
       failed_when: false
       changed_when: false
 
-    - name: Install openssh-client in each new container where it's missing
+    - name: Install openssh-client in the worker where it's missing
       ansible.builtin.command:
         cmd: "docker exec {{ item.item }} sh -c 'apt-get update && apt-get install -y --no-install-recommends openssh-client'"
       loop: "{{ pentest_worker_ssh_client_check.results }}"
@@ -983,12 +990,14 @@
     # code fix was deployed, the file on disk was correct, and the
     # running viewer-proxy process kept using the stale in-memory
     # version until explicitly restarted (its own container StartedAt
-    # predated the file's new mtime). Only fires when the copy tasks
-    # above actually changed something, so a plain redeploy with no
-    # code changes doesn't bounce either service for no reason.
-    - name: Restart pentest-worker and viewer-proxy
+    # predated the file's new mtime). Only fires for changed files.
+    - name: Restart pentest-worker
       ansible.builtin.command:
-        cmd: docker restart cse-controller-pentest-worker cse-controller-pentest-viewer-proxy
+        cmd: docker restart cse-controller-pentest-worker
+
+    - name: Restart pentest-viewer-proxy
+      ansible.builtin.command:
+        cmd: docker restart cse-controller-pentest-viewer-proxy
 
 - name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
   hosts: all

@@ -44,3 +44,55 @@ spec:
         resolver: letsencrypt
       auth:
         mode: forwardAuth
+    - name: cse-pentest-viewer-1
+      host: cse-pentest-viewer-1.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_CSE_PANEL}:8000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: cse-pentest-viewer-2
+      host: cse-pentest-viewer-2.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_CSE_PANEL}:8000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: cse-pentest-viewer-3
+      host: cse-pentest-viewer-3.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_CSE_PANEL}:8000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+    - name: cse-pentest-viewer-4
+      host: cse-pentest-viewer-4.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_CSE_PANEL}:8000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth

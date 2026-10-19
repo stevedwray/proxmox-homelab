@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / "docs" / "provisioning-refactor" / "fixtures"
@@ -44,6 +45,18 @@ class TestDiscoverEdgeManifests(unittest.TestCase):
 
 
 class TestValidateEdgeManifests(unittest.TestCase):
+    def test_pentest_viewer_slots_have_four_distinct_protected_origins(self):
+        manifest = REPO_ROOT / "terraform/lxc/stacks/cse-panel-stack/edge.yaml"
+        routes = yaml.safe_load(manifest.read_text())["spec"]["routes"]
+        slots = [route for route in routes if route["name"].startswith("cse-pentest-viewer-")]
+        self.assertEqual(len(slots), 4)
+        for slot, route in enumerate(slots, 1):
+            self.assertEqual(route["host"], f"cse-pentest-viewer-{slot}.${{LAB_DOMAIN}}")
+            self.assertEqual(route["backend"]["url"], "http://${LAB_IP_CSE_PANEL}:8000")
+            self.assertTrue(route["dns"]["enabled"])
+            self.assertEqual(route["tls"]["resolver"], "letsencrypt")
+            self.assertEqual(route["auth"]["mode"], "forwardAuth")
+
     def test_valid_fixtures_pass(self):
         manifest_paths = sorted(VALID_DIR.glob("*.yaml"))
         result = validate_manifests(manifest_paths)
