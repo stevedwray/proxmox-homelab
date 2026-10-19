@@ -837,10 +837,15 @@
         - activity_status.py
         - framework_lock_client.py
         - fixture_control.py
-        # Their own tests, deployed alongside -- "Run the pentest-worker's
-        # own unit tests" below needs these present, not just the modules
-        # (confirmed live: "discover" silently finds zero tests without
-        # them, which is not the same thing as them passing).
+
+    # Tests must be present for the on-host discovery run, but the worker
+    # never imports them. Updating tests alone must not restart the worker.
+    - name: Deploy shared launcher tests without restarting the worker
+      ansible.builtin.copy:
+        src: "../../stacks/pentest-runner/launcher/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
         - test_run_task.py
         - test_activity_status.py
         - test_framework_lock_client.py
@@ -858,25 +863,31 @@
         - view_run.py
         - test_view_run.py
 
-    - name: Deploy the pentest worker module and tests
+    - name: Deploy the pentest worker module
       ansible.builtin.copy:
-        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
-        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        src: ../../stacks/cse-controller/pentest-worker-config/pentest_tasks.py
+        dest: "{{ pentest_worker_launcher_dir }}/pentest_tasks.py"
         mode: "0644"
       notify: Restart pentest-worker
-      loop:
-        - pentest_tasks.py
-        - test_pentest_tasks.py
 
-    - name: Deploy the stateless viewer-proxy module and tests
+    - name: Deploy the pentest worker test without restarting the worker
       ansible.builtin.copy:
-        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
-        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        src: ../../stacks/cse-controller/pentest-worker-config/test_pentest_tasks.py
+        dest: "{{ pentest_worker_launcher_dir }}/test_pentest_tasks.py"
+        mode: "0644"
+
+    - name: Deploy the stateless viewer-proxy module
+      ansible.builtin.copy:
+        src: ../../stacks/cse-controller/pentest-worker-config/viewer_proxy.py
+        dest: "{{ pentest_worker_launcher_dir }}/viewer_proxy.py"
         mode: "0644"
       notify: Restart pentest-viewer-proxy
-      loop:
-        - viewer_proxy.py
-        - test_viewer_proxy.py
+
+    - name: Deploy the stateless viewer-proxy test without restarting the proxy
+      ansible.builtin.copy:
+        src: ../../stacks/cse-controller/pentest-worker-config/test_viewer_proxy.py
+        dest: "{{ pentest_worker_launcher_dir }}/test_viewer_proxy.py"
+        mode: "0644"
 
     # Writes the dedicated identity from OpenBao -- never the operator's
     # own key. The matching public key is hardcoded (non-secret) directly
