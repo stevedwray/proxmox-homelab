@@ -837,7 +837,6 @@
         - activity_status.py
         - framework_lock_client.py
         - fixture_control.py
-        - view_run.py
         # Their own tests, deployed alongside -- "Run the pentest-worker's
         # own unit tests" below needs these present, not just the modules
         # (confirmed live: "discover" silently finds zero tests without
@@ -846,6 +845,17 @@
         - test_activity_status.py
         - test_framework_lock_client.py
         - test_fixture_control.py
+
+    # The legacy viewer CLI/readiness parser is retained for rollback and
+    # unit tests, but the persistent proxy and Celery worker do not import
+    # it. Updating these files must not bounce either running container.
+    - name: Deploy the legacy viewer helper and its test without a restart
+      ansible.builtin.copy:
+        src: "../../stacks/pentest-runner/launcher/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - view_run.py
         - test_view_run.py
 
     - name: Deploy the pentest worker module and tests
