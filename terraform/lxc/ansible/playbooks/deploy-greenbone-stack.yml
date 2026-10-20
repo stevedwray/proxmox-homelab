@@ -146,7 +146,15 @@
         path: "{{ gvm_bridge_build_dir }}"
         state: directory
         mode: "0750"
+      tags: [research-bridge]
 
+    # Tagged research-bridge too (confirmed missing live 2026-10-20: a
+    # --tags research-bridge-only run skipped this untagged copy, so
+    # "Rebuild gvm-bridge only" below built from whatever app.py happened
+    # to already be on disk -- in that incident, a version that predated
+    # the "complete" field scan_results relies on, which made every real
+    # refresh fail with "incomplete_results" / gateway_failure). The build
+    # context must always be current before a scoped rebuild runs.
     - name: Copy gvm-bridge source files from this repo
       ansible.builtin.copy:
         src: "{{ gvm_bridge_source_dir }}/{{ item }}"
@@ -156,6 +164,7 @@
         - Dockerfile
         - requirements.txt
         - app.py
+      tags: [research-bridge]
 
     # Narrow, tagged research-bridge section -- docs/autonomous-pentesting-lab/
     # research-snapshot-plan.md §1. Rebuilds only the gvm-bridge container
