@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 
 from flask import Flask, jsonify, request
@@ -154,26 +155,50 @@ def scan_results(task_id):
     # not which results are returned (confirmed against python-gvm's own
     # docstring) -- scoping to this task requires the GMP filter DSL
     # instead, or every call silently returns results across all tasks.
-    # rows=-1 disables GMP's default page size (10), which otherwise
-    # silently truncates larger result sets.
+    # rows=-1 is still limited by gvmd's global maximum; page explicitly.
+    # Validate before constructing the GMP filter expression.
+    if not re.fullmatch(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", task_id):
+        return jsonify({"error": "invalid task ID"}), 400
+    page_size = 500
+    page_limit = 200
+    result_elements = []
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
-        response = gmp.get_results(filter_string=f"task_id={task_id} rows=-1", details=True)
+        for page in range(page_limit):
+            response = gmp.get_results(
+                filter_string=f"task_id={task_id} first={1 + page * page_size} rows={page_size}",
+                details=True,
+            )
+            page_elements = response.findall("result")
+            result_elements.extend(page_elements)
+            if len(page_elements) < page_size:
+                break
+        else:
+            return jsonify({"error": "result page limit reached", "complete": False}), 502
 
     results = []
-    for r in response.findall("result"):
-        cve_ref = r.find('nvt/refs/ref[@type="cve"]')
+    for r in result_elements:
+        nvt = r.find("nvt")
+        refs = nvt.findall('refs/ref[@type="cve"]') if nvt is not None else []
+        cves = list(dict.fromkeys(ref.get("id") for ref in refs if ref.get("id")))
+        report = r.find("report")
         results.append(
             {
                 "host": r.findtext("host"),
                 "port": r.findtext("port"),
                 "severity": r.findtext("severity"),
-                "cve_id": cve_ref.get("id") if cve_ref is not None else None,
+                "cve_id": cves[0] if cves else None,
+                "cves": cves,
+                "name": r.findtext("name"),
+                "qod": r.findtext("qod/value"),
+                "finding_id": nvt.get("oid") if nvt is not None else None,
+                "result_id": r.get("id"),
+                "report_id": report.get("id") if report is not None else None,
                 "description": r.findtext("description"),
             }
         )
 
-    return jsonify({"results": results})
+    return jsonify({"results": results, "complete": True, "pages": page + 1})
 
 
 @app.get("/findings/all")
