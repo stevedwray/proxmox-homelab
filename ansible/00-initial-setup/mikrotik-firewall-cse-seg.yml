@@ -30,6 +30,9 @@
 #   7b. pentest-runner -> metasploitable3-linux, all ports  (same cross-zone pattern as #7 -- the richer,
 #      multi-service target added as a follow-up to package 2; no port restriction is intentional, see
 #      metasploitable3_linux_ip's own comment below)
+#   7c. cse-controller -> greenbone-stack research gateway:22  (same cross-zone pattern as #6 --
+#      docs/autonomous-pentesting-lab/research-snapshot-plan.md. Port 22 only, never gvm-bridge's own
+#      loopback-only :8010 -- see greenbone_stack_ip's own comment below)
 #   8. cse_seg -> internet            (git clone from GitHub, apt/pip installs)
 #   9. cse_seg -> everywhere else: DROP  (the actual isolation)
 
@@ -87,6 +90,12 @@
     # decision, not an oversight. Still scoped narrowly by the src/dst
     # address pair, same as every other rule here.
     metasploitable3_linux_ip: "192.168.70.214"
+    # greenbone-stack (pentest_seg) -- same cross-node pattern as the two
+    # entries above. docs/autonomous-pentesting-lab/research-snapshot-plan.md:
+    # the GVM-research worker's SSH forced-command gateway, port 22 only
+    # (the gateway itself, not the loopback-only gvm-bridge on :8010,
+    # which this rule does not and must not expose).
+    greenbone_stack_ip: "192.168.70.11"
 
     # Each dict has exactly the keys that rule needs -- matches the
     # exact field shapes of the real precedent rules read live
@@ -137,6 +146,13 @@
         action: "accept"
         src-address: "{{ pentest_runner_ip }}"
         dst-address: "{{ metasploitable3_linux_ip }}"
+      - comment: "cse-controller to greenbone-stack research gateway SSH (pentest_seg, cross-node)"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ cse_controller_ip }}"
+        dst-address: "{{ greenbone_stack_ip }}"
+        dst-port: "22"
       - comment: "cse_seg internet egress (git clone, apt/pip installs)"
         chain: "forward"
         action: "accept"

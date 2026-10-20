@@ -812,6 +812,15 @@
     # different project, different lifecycle, and the only dependencies
     # this one needs (celery, redis) are tiny; sharing would couple two
     # unrelated workers' dependency upgrades for no benefit.
+    # research-snapshot-plan.md: its own mount, deliberately separate from
+    # pentest_worker_dir above -- that directory is mounted whole into
+    # pentest-viewer-proxy, and this container's private key must never
+    # be reachable from there.
+    pentest_research_dir: /srv/pentest-research
+    pentest_research_worker_dir: "{{ pentest_research_dir }}/worker"
+    pentest_research_ssh_key_path: "{{ pentest_research_dir }}/id_gvm_research_gateway"
+    pentest_research_known_hosts_path: "{{ pentest_research_dir }}/known_hosts"
+    pentest_target_guard_dir: /srv/pentest-target-guard
 
   tasks:
     - name: Create the pentest-worker directory
@@ -889,6 +898,46 @@
         dest: "{{ pentest_worker_launcher_dir }}/test_viewer_proxy.py"
         mode: "0644"
 
+    # research_target_guard.py is imported by pentest_tasks.py (the M01
+    # launch path claims/releases the same guard the research worker
+    # uses) -- same-directory sibling import, same convention as
+    # run_task.py etc. above.
+    - name: Deploy the target guard module used by the pentest worker
+      ansible.builtin.copy:
+        src: ../../stacks/cse-controller/pentest-worker-config/research_target_guard.py
+        dest: "{{ pentest_worker_launcher_dir }}/research_target_guard.py"
+        mode: "0644"
+      notify: Restart pentest-worker
+
+    - name: Deploy the target guard test without restarting the worker
+      ansible.builtin.copy:
+        src: ../../stacks/cse-controller/pentest-worker-config/test_research_target_guard.py
+        dest: "{{ pentest_worker_launcher_dir }}/test_research_target_guard.py"
+        mode: "0644"
+
+    # research_review.py (viewer_proxy.py's read-only review routes)
+    # imports pentest_research.py as a same-directory sibling -- copied
+    # here too, not a second maintained version, same reasoning as every
+    # other shared-library copy in this file. The research worker's own,
+    # separately mounted copy below is the one that actually writes
+    # snapshots; this copy is read-only in practice because
+    # pentest-viewer-proxy's /srv/pentest-research/M01 mount is read-only.
+    - name: Deploy the research review module and its snapshot library dependency
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_worker_launcher_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - research_review.py
+        - pentest_research.py
+      notify: Restart pentest-viewer-proxy
+
+    - name: Deploy the research review test without restarting the proxy
+      ansible.builtin.copy:
+        src: ../../stacks/cse-controller/pentest-worker-config/test_research_review.py
+        dest: "{{ pentest_worker_launcher_dir }}/test_research_review.py"
+        mode: "0644"
+
     # Writes the dedicated identity from OpenBao -- never the operator's
     # own key. The matching public key is hardcoded (non-secret) directly
     # in deploy-pentest-runner.yml/deploy-pentest-fixture.yml's own
@@ -908,6 +957,83 @@
         dest: "{{ pentest_worker_ssh_key_path }}"
         mode: "0600"
 
+    # --- research-snapshot-plan.md: the GVM-research worker's own
+    # directory, code, key, and pinned host key. Deliberately separate
+    # from pentest_worker_dir above throughout this section.
+
+    - name: Create the pentest-research-worker directory
+      ansible.builtin.file:
+        path: "{{ pentest_research_worker_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy the research snapshot library and Celery entrypoint
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_research_worker_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - pentest_research.py
+        - pentest_research_tasks.py
+        - research_target_guard.py
+      notify: Restart pentest-research-worker
+
+    - name: Deploy research worker tests without restarting it
+      ansible.builtin.copy:
+        src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
+        dest: "{{ pentest_research_worker_dir }}/{{ item }}"
+        mode: "0644"
+      loop:
+        - test_pentest_research.py
+        - test_pentest_research_tasks.py
+        - test_research_target_guard.py
+
+    # Same OpenBao/b64decode convention as the pentest-worker key above.
+    # services/pentest-lab's new GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY
+    # field -- the matching public key is hardcoded (non-secret) in
+    # deploy-greenbone-stack.yml's "Authorize the research gateway's
+    # dedicated SSH key" task; if this key is ever rotated, both must
+    # change together.
+    - name: Write the research gateway's dedicated SSH private key
+      no_log: true
+      ansible.builtin.copy:
+        content: >-
+          {{ (lookup('env', 'GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY')
+              | mandatory('GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY must be set')
+              | b64decode) }}
+        dest: "{{ pentest_research_ssh_key_path }}"
+        mode: "0600"
+
+    # Pinned, not learned on first connect (StrictHostKeyChecking=yes in
+    # pentest_research.py's own ssh invocation per the plan's "fail closed
+    # on a mismatch" requirement). Captured 2026-10-20 from `pve` (the
+    # Proxmox node hosting greenbone-stack, a trusted vantage point) via
+    # `ssh-keyscan -t ed25519 192.168.70.11` -- not learned over the
+    # cross-zone path this same change opens, which would make the pin
+    # worthless (trusting whatever answered the very first connection).
+    - name: Write the pinned greenbone-stack host key
+      ansible.builtin.copy:
+        content: |
+          192.168.70.11 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK8ZMcddYy4Z77D/5qi8N1dTFnz5tO4R3vJ5YHoz9fIn
+        dest: "{{ pentest_research_known_hosts_path }}"
+        mode: "0644"
+
+    # Shared with pentest-worker at the identical path (see
+    # docker-compose.yml's own comment) -- created once, owned by root
+    # since both containers run as root internally (bare python:3.10-slim,
+    # no USER directive).
+    - name: Create the shared M01 target-operation guard directory
+      ansible.builtin.file:
+        path: "{{ pentest_target_guard_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create the M01 research snapshot directory
+      ansible.builtin.file:
+        path: "{{ pentest_research_dir }}/M01"
+        state: directory
+        mode: "0755"
+
     - name: Write/refresh the pentest-worker's docker-compose.yml
       ansible.builtin.copy:
         content: "{{ lookup('file', '../../stacks/cse-controller/docker-compose.yml') }}"
@@ -921,6 +1047,7 @@
       environment:
         LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
         CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+        LAB_DOMAIN: "{{ lookup('env', 'LAB_DOMAIN') | default('', true) }}"
       changed_when: false
 
     # Start the viewer-proxy first -- it has no venv dependency (stdlib
@@ -940,6 +1067,7 @@
       environment:
         LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
         CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+        LAB_DOMAIN: "{{ lookup('env', 'LAB_DOMAIN') | default('', true) }}"
       register: pentest_viewer_proxy_up
       changed_when: "'Started' in pentest_viewer_proxy_up.stdout or 'Created' in pentest_viewer_proxy_up.stdout"
 
@@ -980,8 +1108,67 @@
       environment:
         LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
         CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+        LAB_DOMAIN: "{{ lookup('env', 'LAB_DOMAIN') | default('', true) }}"
       register: pentest_worker_compose_up
       changed_when: "'Started' in pentest_worker_compose_up.stdout or 'Created' in pentest_worker_compose_up.stdout"
+
+    # --- research-snapshot-plan.md: pentest-research-worker's own venv,
+    # same "create inside a container, never the host's own python3"
+    # reasoning as pentest-worker's venv above. `docker compose run --rm
+    # --no-deps` builds a one-off container from this service's own
+    # image+mounts (not pentest-viewer-proxy's, which does not mount this
+    # directory read-write) and removes itself after -- no bootstrap
+    # sibling container needed.
+    - name: Check whether the pentest-research-worker venv already exists
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps --entrypoint test
+          pentest-research-worker -f {{ pentest_research_dir }}/.venv/bin/python3
+        chdir: /opt/stacks/cse-controller
+      register: pentest_research_venv_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create Python venv for pentest-research-worker (inside a container, not the host)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps --entrypoint python3
+          pentest-research-worker -m venv {{ pentest_research_dir }}/.venv
+        chdir: /opt/stacks/cse-controller
+      when: pentest_research_venv_check.rc != 0
+
+    - name: Install Celery/Redis client into the pentest-research-worker venv
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps --entrypoint
+          {{ pentest_research_dir }}/.venv/bin/pip
+          pentest-research-worker install celery==5.4.0 redis==5.2.1
+        chdir: /opt/stacks/cse-controller
+      register: pentest_research_pip_install
+      changed_when: "'Successfully installed' in pentest_research_pip_install.stdout"
+
+    - name: Run the pentest-research-worker's own unit tests before starting it
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -e CELERY_BROKER_URL=memory://
+          -e CELERY_RESULT_BACKEND=cache+memory://
+          --entrypoint {{ pentest_research_dir }}/.venv/bin/python3
+          pentest-research-worker -m unittest discover -s . -p test_*.py
+        chdir: /opt/stacks/cse-controller
+      register: pentest_research_tests
+      changed_when: false
+
+    - name: Start the pentest-research-worker service
+      ansible.builtin.command:
+        cmd: docker compose up -d pentest-research-worker
+        chdir: /opt/stacks/cse-controller
+      environment:
+        LAB_IP_CSE_PANEL: "{{ lookup('env', 'LAB_IP_CSE_PANEL') | default('', true) }}"
+        CSE_PANEL_REDIS_PASSWORD: "{{ lookup('env', 'CSE_PANEL_REDIS_PASSWORD') | default('', true) }}"
+        LAB_DOMAIN: "{{ lookup('env', 'LAB_DOMAIN') | default('', true) }}"
+      register: pentest_research_compose_up
+      changed_when: "'Started' in pentest_research_compose_up.stdout or 'Created' in pentest_research_compose_up.stdout"
 
     # Same idempotent docker-exec-apt-get pattern this file already uses
     # for the `controller` container above -- these are bare python:3.10-
@@ -994,6 +1181,7 @@
         cmd: "docker exec {{ item }} dpkg -s openssh-client"
       loop:
         - cse-controller-pentest-worker
+        - cse-controller-pentest-research-worker
       register: pentest_worker_ssh_client_check
       failed_when: false
       changed_when: false
@@ -1019,6 +1207,10 @@
     - name: Restart pentest-viewer-proxy
       ansible.builtin.command:
         cmd: docker restart cse-controller-pentest-viewer-proxy
+
+    - name: Restart pentest-research-worker
+      ansible.builtin.command:
+        cmd: docker restart cse-controller-pentest-research-worker
 
 - name: Provision the dedicated GVM credentialed-scan account (docs/gvm-coverage-cleanup/plan.md)
   hosts: all
