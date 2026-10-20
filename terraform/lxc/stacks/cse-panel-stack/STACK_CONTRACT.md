@@ -68,7 +68,14 @@ Both exposed to the browser only through Traefik/Authentik forward-auth
 (see `edge.yaml`), never directly.
 
 The Pentest lab tab launches fixed catalog jobs through its dedicated Celery
-worker and reads sanitized `pentest:*` status records in Redis DB 1.
+worker and reads sanitized `pentest:*` status records in Redis DB 1. It also
+offers a free-target launch (`POST /pentest/api/jobs/target`, body
+`{"target_ip": ...}`) for any host in `pentest_seg`, not just the fixed
+catalog's `metasploitable3-linux` entry — see
+`docs/autonomous-pentesting-lab/pipeline-generalization-plan.md`. A free-target
+run gets the exact same no-fixture-reset, no-automated-verdict,
+manual-review-only contract and still never accepts a target, command, or
+prompt beyond the IP itself.
 For native trace review, panel-web asks the controller proxy to ensure a
 viewer, then serves it on one of four `cse-pentest-viewer-{1..4}` hostnames.
 Each host has a separate browser origin because Strix fetches `/api/*` from
@@ -76,18 +83,20 @@ the origin root. A selected viewer can be stopped to free its slot; no slot
 is evicted automatically. Neither panel container receives runner SSH access,
 fixture keys, or raw model captures.
 
-**Design only as of 2026-10-20, not yet deployed** —
-`docs/autonomous-pentesting-lab/research-snapshot-plan.md` adds
-`POST /pentest/api/research/metasploitable3-linux/refresh` (enqueues a GVM scan + CVE-MCP
+**Live since 2026-10-20, generalized 2026-10-21** —
+`docs/autonomous-pentesting-lab/research-snapshot-plan.md` added
+`POST /pentest/api/research/{target_ip}/refresh` (enqueues a GVM scan + CVE-MCP
 triage on `cse-controller`'s separate `pentest-research-worker` queue,
 never this stack's own job-submission worker), `GET
-/pentest/api/research/metasploitable3-linux` (allowlisted phase/progress/snapshot-age, no raw
+/pentest/api/research/{target_ip}` (allowlisted phase/progress/snapshot-age, no raw
 scanner output), and `GET
-/pentest/api/research/metasploitable3-linux/snapshots/<id>/<kind>` (bounded, paginated,
+/pentest/api/research/{target_ip}/snapshots/<id>/<kind>` (bounded, paginated,
 escaped findings/CVE-triage review, forwarded read-only through the
 existing controller proxy — never through the Redis status channel, which
-stays status-only). This stack still receives no runner SSH access, fixture
-keys, raw model captures, or now GVM/MCP credentials either — the research
+stays status-only). `{target_ip}` is validated as a `pentest_seg` address on
+every route, by this app and again by the controller/gateway downstream --
+never passed through unchecked. This stack still receives no runner SSH access,
+fixture keys, raw model captures, or GVM/MCP credentials either — the research
 worker's SSH key and the GVM scan itself live entirely on `cse-controller`
 and `greenbone-stack`.
 

@@ -63,8 +63,8 @@ narrow `mgmt_seg` → `cse_seg` rule. It is stateless: control and viewer
 requests go to the runner's supervisor at `192.168.100.72:18820` on the
 same subnet. Only the worker retains SSH; the proxy does not hold a tunnel.
 
-**Design only as of 2026-10-20, not yet deployed** —
-`docs/autonomous-pentesting-lab/research-snapshot-plan.md` adds a second,
+**Live since 2026-10-20** —
+`docs/autonomous-pentesting-lab/research-snapshot-plan.md` added a second,
 separate Celery worker, `pentest-research-worker`, with its own dedicated
 SSH identity (`GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY`) to
 `greenbone-stack`'s research gateway — a genuinely new cross-zone path
@@ -74,12 +74,25 @@ mount is deliberately kept separate from `pentest_worker_dir`
 (`/srv/pentest-worker`), since that directory is mounted whole into
 `pentest-viewer-proxy` and the new key must never be reachable there.
 `pentest-worker` and `pentest-viewer-proxy` each get a new read-only mount
-scoped to just `/srv/pentest-research/metasploitable3-linux` (the snapshot data, not the key).
-A third shared mount, `/srv/pentest-target-guard`, is mounted at the
-identical host path into both `pentest-worker` and
+scoped to just `/srv/pentest-research/snapshots` (the per-target snapshot
+tree, not the key). A third shared mount, `/srv/pentest-target-guard`, is
+mounted at the identical host path into both `pentest-worker` and
 `pentest-research-worker` — `research_target_guard.py`'s `fcntl` locking
 only provides real cross-container mutual exclusion when both containers
 see the same underlying inode, not two separate bind mounts.
+
+**Generalized 2026-10-21** (`docs/autonomous-pentesting-lab/
+pipeline-generalization-plan.md`) — the research pipeline above, and
+Strix's own launch path, both accept any host in `pentest_seg`
+(`192.168.70.0/24`, CIDR-validated), not one hardcoded target. `pentest_tasks.py`
+gained `run_target_job(target_ip)`, a free-target Celery task alongside the
+fixed `TASK_CATALOG` entries — same no-fixture-reset/no-automated-verdict
+contract as `metasploitable3-linux`, same `research_target_guard` single-flight
+lock (still global across all targets, not per-target — a deliberate
+simplicity choice for this lab's scale, not an oversight). Snapshot storage
+is `/srv/pentest-research/snapshots/<target-slug>/` where `<target-slug>` is
+the target's dotted IP with `.` replaced by `-`; there is no longer a
+target-named subdirectory.
 
 ## Inputs
 
