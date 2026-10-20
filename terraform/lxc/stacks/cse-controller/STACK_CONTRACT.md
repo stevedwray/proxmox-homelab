@@ -74,7 +74,7 @@ mount is deliberately kept separate from `pentest_worker_dir`
 (`/srv/pentest-worker`), since that directory is mounted whole into
 `pentest-viewer-proxy` and the new key must never be reachable there.
 `pentest-worker` and `pentest-viewer-proxy` each get a new read-only mount
-scoped to just `/srv/pentest-research/M01` (the snapshot data, not the key).
+scoped to just `/srv/pentest-research/metasploitable3-linux` (the snapshot data, not the key).
 A third shared mount, `/srv/pentest-target-guard`, is mounted at the
 identical host path into both `pentest-worker` and
 `pentest-research-worker` — `research_target_guard.py`'s `fcntl` locking

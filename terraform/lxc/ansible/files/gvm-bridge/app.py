@@ -80,11 +80,16 @@ def scan_start():
 
     if not target_ip or not isinstance(target_ip, str):
         return jsonify({"error": "target_ip is required"}), 400
-    if not ports or not isinstance(ports, list):
-        return jsonify({"error": "ports must be a non-empty list of ints"}), 400
+    if isinstance(ports, str):
+        if not re.fullmatch(r"[0-9]+-[0-9]+", ports):
+            return jsonify({"error": "ports range string must be 'low-high'"}), 400
+        port_range = "T:" + ports
+    elif isinstance(ports, list) and ports:
+        port_range = "T:" + ",".join(str(int(p)) for p in ports)
+    else:
+        return jsonify({"error": "ports must be a non-empty list of ints or a 'low-high' range string"}), 400
 
     suffix = str(int(time.time()))
-    port_range = "T:" + ",".join(str(int(p)) for p in ports)
 
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)

@@ -898,7 +898,7 @@
         dest: "{{ pentest_worker_launcher_dir }}/test_viewer_proxy.py"
         mode: "0644"
 
-    # research_target_guard.py is imported by pentest_tasks.py (the M01
+    # research_target_guard.py is imported by pentest_tasks.py (the metasploitable3-linux
     # launch path claims/releases the same guard the research worker
     # uses) -- same-directory sibling import, same convention as
     # run_task.py etc. above.
@@ -921,7 +921,7 @@
     # other shared-library copy in this file. The research worker's own,
     # separately mounted copy below is the one that actually writes
     # snapshots; this copy is read-only in practice because
-    # pentest-viewer-proxy's /srv/pentest-research/M01 mount is read-only.
+    # pentest-viewer-proxy's /srv/pentest-research/snapshots mount is read-only.
     - name: Deploy the research review module and its snapshot library dependency
       ansible.builtin.copy:
         src: "../../stacks/cse-controller/pentest-worker-config/{{ item }}"
@@ -1022,15 +1022,18 @@
     # docker-compose.yml's own comment) -- created once, owned by root
     # since both containers run as root internally (bare python:3.10-slim,
     # no USER directive).
-    - name: Create the shared M01 target-operation guard directory
+    - name: Create the shared target-operation guard directory
       ansible.builtin.file:
         path: "{{ pentest_target_guard_dir }}"
         state: directory
         mode: "0755"
 
-    - name: Create the M01 research snapshot directory
+    # Each target's own subdirectory (slug of its IP) is created at refresh
+    # time by pentest_research.save_snapshot() -- this only needs the
+    # shared snapshots root to exist.
+    - name: Create the research snapshots root directory
       ansible.builtin.file:
-        path: "{{ pentest_research_dir }}/M01"
+        path: "{{ pentest_research_dir }}/snapshots"
         state: directory
         mode: "0755"
 

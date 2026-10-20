@@ -78,12 +78,12 @@ fixture keys, or raw model captures.
 
 **Design only as of 2026-10-20, not yet deployed** —
 `docs/autonomous-pentesting-lab/research-snapshot-plan.md` adds
-`POST /pentest/api/research/M01/refresh` (enqueues a GVM scan + CVE-MCP
+`POST /pentest/api/research/metasploitable3-linux/refresh` (enqueues a GVM scan + CVE-MCP
 triage on `cse-controller`'s separate `pentest-research-worker` queue,
 never this stack's own job-submission worker), `GET
-/pentest/api/research/M01` (allowlisted phase/progress/snapshot-age, no raw
+/pentest/api/research/metasploitable3-linux` (allowlisted phase/progress/snapshot-age, no raw
 scanner output), and `GET
-/pentest/api/research/M01/snapshots/<id>/<kind>` (bounded, paginated,
+/pentest/api/research/metasploitable3-linux/snapshots/<id>/<kind>` (bounded, paginated,
 escaped findings/CVE-triage review, forwarded read-only through the
 existing controller proxy — never through the Redis status channel, which
 stays status-only). This stack still receives no runner SSH access, fixture

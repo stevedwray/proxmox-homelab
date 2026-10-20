@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Forced-command gateway for the single Metasploitable3 research target.
+"""Forced-command gateway for GVM research scans against pentest_seg targets.
+
+Generalized from a single hardcoded Metasploitable3 target to any host in
+pentest_seg -- see docs/autonomous-pentesting-lab/pipeline-generalization-plan.md.
+A browser/panel can choose which pentest_seg host to scan, but never a host
+outside that network, and never the port list (every scan is full-range).
 
 The registry survives client disconnects. An ambiguous start is never retried
 automatically: an operator must reconcile it against GVM first.
 """
 
 import fcntl
+import ipaddress
 import json
 import os
 import re
@@ -14,8 +20,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-TARGET = "192.168.70.214"
-PORTS = [21, 22, 80, 445, 631, 3306, 8080]
+PENTEST_SEG = ipaddress.ip_network("192.168.70.0/24")
+FULL_PORT_RANGE = "1-65535"
 BRIDGE = "http://127.0.0.1:8010"
 REGISTRY = Path("/var/lib/gvm-research")
 REQUEST_ID = re.compile(r"[a-f0-9]{32}")
@@ -61,9 +67,9 @@ def save(path, value):
 
 
 def execute(request, registry=REGISTRY):
-    if not isinstance(request, dict) or set(request) != {"operation", "request_id"}:
+    if not isinstance(request, dict):
         raise GatewayError("invalid_request")
-    operation, request_id = request["operation"], request["request_id"]
+    operation, request_id = request.get("operation"), request.get("request_id")
     if operation not in {"start", "status", "results"} or not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
         raise GatewayError("invalid_request")
     registry.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -71,29 +77,45 @@ def execute(request, registry=REGISTRY):
         fcntl.flock(lock, fcntl.LOCK_EX)
         path = registry / f"{request_id}.json"
         if operation == "start":
+            if set(request) != {"operation", "request_id", "target_ip"}:
+                raise GatewayError("invalid_request")
+            target_ip = request["target_ip"]
+            try:
+                in_scope = isinstance(target_ip, str) and ipaddress.ip_address(target_ip) in PENTEST_SEG
+            except ValueError:
+                in_scope = False
+            if not in_scope:
+                raise GatewayError("target_out_of_scope")
             if path.exists():
                 record = json.loads(path.read_text())
                 if record.get("state") == "starting":
                     raise GatewayError("start_unknown")
                 return record
+            # Global, not per-target: research_target_guard.py's shared lock
+            # already serializes one scan across the whole research worker
+            # regardless of target, so this check stays global too -- making
+            # it per-target here would silently defeat that guarantee.
             for other in registry.glob("*.json"):
                 record = json.loads(other.read_text())
                 if record.get("state") != "terminal":
                     raise GatewayError("previous_scan_unresolved")
-            record = {"request_id": request_id, "state": "starting"}
+            record = {"request_id": request_id, "state": "starting", "target_ip": target_ip}
             save(path, record)
-            result = bridge_call("/scan/start", {"target_ip": TARGET, "ports": PORTS})
+            result = bridge_call("/scan/start", {"target_ip": target_ip, "ports": FULL_PORT_RANGE})
             task_id, report_id = result.get("task_id"), result.get("report_id")
             if not isinstance(task_id, str) or not UUID.fullmatch(task_id) or not isinstance(report_id, str) or not UUID.fullmatch(report_id):
                 raise GatewayError("start_unknown")
             record.update(state="started", task_id=task_id, report_id=report_id)
             save(path, record)
             return record
+        if set(request) != {"operation", "request_id"}:
+            raise GatewayError("invalid_request")
         if not path.exists():
             raise GatewayError("request_not_found")
         record = json.loads(path.read_text())
         task_id = record.get("task_id")
-        if not isinstance(task_id, str) or not UUID.fullmatch(task_id):
+        target_ip = record.get("target_ip")
+        if not isinstance(task_id, str) or not UUID.fullmatch(task_id) or not isinstance(target_ip, str):
             raise GatewayError("start_unknown")
         if operation == "status":
             result = bridge_call(f"/scan/status/{task_id}")
@@ -106,7 +128,7 @@ def execute(request, registry=REGISTRY):
         result = bridge_call(f"/scan/results/{task_id}")
         if result.get("complete") is not True or not isinstance(result.get("results"), list):
             raise GatewayError("incomplete_results")
-        if any(item.get("host") != TARGET for item in result["results"] if isinstance(item, dict)) or any(not isinstance(item, dict) for item in result["results"]):
+        if any(item.get("host") != target_ip for item in result["results"] if isinstance(item, dict)) or any(not isinstance(item, dict) for item in result["results"]):
             raise GatewayError("wrong_target")
         return result
 
