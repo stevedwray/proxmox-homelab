@@ -18,7 +18,16 @@ GVM_PASSWORD = os.environ["GVM_BRIDGE_PASSWORD"]
 # real UUIDs lazily below rather than hardcoding IDs, since they are
 # instance-specific even though the names are stable community-edition
 # defaults.
-SCAN_CONFIG_NAME = "Full and fast"
+#
+# "Full and fast (lean)" -- a clone of "Full and fast" with the "Web
+# application abuses" family deselected (created via
+# gvm_tuning.py mklean, docs/gvm-scan-redesign/) -- confirmed live
+# 2026-10-21: that family's thousands of per-CMS detect.nasl scripts ran
+# for hours against 192.168.70.214 with zero hits, since recon already
+# knows the real open services and this pipeline is the sole consumer of
+# this gvmd instance's scan configs (gvm-bridge is PentAGI/research-only;
+# the separate LAN/credentialed scans are unaffected by this constant).
+SCAN_CONFIG_NAME = "Full and fast (lean)"
 SCANNER_NAME = "OpenVAS Default"
 
 logging.basicConfig(level=logging.INFO)
