@@ -8,7 +8,7 @@ one credential, one multi-host Target and one Task:
 
   credential  zone-<zone>-login
   target/task Credentialed scan: <zone>
-  schedule    Weekly VLAN scan: <zone>   (ZONE_WEEKLY_SLOT)
+  schedule    Nightly|Weekly VLAN scan: <zone>   (ZONE_WEEKLY_SLOT; DAILY = nightly)
 
 A GVM Target carries one SSH credential for all of its hosts, which is why
 grouping by VLAN requires a shared key per VLAN. Each zone Task caps
@@ -61,18 +61,22 @@ from gvm.transforms import EtreeCheckCommandTransform
 # left free for the weekly CIDR full-vuln program (Sunday 22:00-Monday 04:00
 # and Wednesday 22:00-Thursday 02:00, setup_schedules.py).
 ZONE_WEEKLY_SLOT = {
+    # Big four: 72-190 min each, still weekly (docs/gvm-scan-redesign/).
     "lan": ("TU", "00:30"),
     "mgmt_seg": ("WE", "00:30"),
     "infra_seg": ("FR", "00:30"),
-    "pentest_seg": ("FR", "05:00"),
-    "connector_seg": ("FR", "06:00"),
-    "ai_seg": ("SA", "00:30"),
-    "game_seg": ("SA", "03:00"),
-    "edge_seg": ("SA", "05:00"),
-    "media_seg": ("SU", "00:30"),
-    "cse_seg": ("SU", "03:00"),
-    "build_seg": ("SU", "05:00"),
-    "apps_seg": ("SU", "06:00"),
+    # The quick ten run every night, staggered by their last measured duration plus a
+    # buffer (2026-10-22: 7-50 min each, 5.2 h in total, finishing about 04:45).
+    "connector_seg": ("DAILY", "22:00"),   # 7 min
+    "build_seg": ("DAILY", "22:15"),       # 23 min
+    "cse_seg": ("DAILY", "22:45"),         # 20 min
+    # (mgmt_seg openbao: DAILY 23:15, 22 min, see SPLIT_HOSTS)
+    "game_seg": ("DAILY", "23:45"),        # 28 min
+    "apps_seg": ("DAILY", "00:25"),        # 30 min
+    "ai_seg": ("DAILY", "01:05"),          # 40 min
+    "pentest_seg": ("DAILY", "01:55"),     # 41 min
+    "media_seg": ("DAILY", "02:45"),       # 49 min
+    "edge_seg": ("DAILY", "03:45"),        # 50 min
 }
 MIKROTIK_SLOT = ("WE", "05:00")
 WEEKDAY_INDEX = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
@@ -97,7 +101,7 @@ ZONE_MAX_HOSTS = {"mgmt_seg": 2}
 # minutes, Redis peaks at 351MB and the LSC results are complete.
 SPLIT_HOSTS = {
     "mgmt_seg": [
-        {"host": "192.168.20.16", "label": "openbao", "exclude_ports": [8200], "slot": ("TH", "02:30")},
+        {"host": "192.168.20.16", "label": "openbao", "exclude_ports": [8200], "slot": ("DAILY", "23:15")},
     ],
 }
 
@@ -322,17 +326,26 @@ def ensure_task(gmp, name, config_id, target_id, scanner_id, schedule_id,
     return task_id
 
 
-def ensure_weekly_schedule(gmp, name, day, hhmm):
-    """Re-applies icalendar/timezone every run so a corrected slot lands on
-    an existing schedule too. DTSTART is the next calendar date on the
-    slot's weekday (a date's weekday doesn't depend on timezone); gvmd
-    applies SCHEDULE_TIMEZONE to the naive time. Hand-built iCalendar --
-    the `icalendar` package isn't guaranteed in the gvm-tools image."""
+def schedule_name(zone, label, slot):
+    kind = "Nightly" if slot[0] == "DAILY" else "Weekly"
+    return f"{kind} VLAN scan: {zone}" + (f" ({label})" if label else "")
+
+
+def build_icalendar(name, day, hhmm, now):
+    """Hand-built iCalendar -- the `icalendar` package isn't guaranteed in the
+    gvm-tools image. gvmd applies SCHEDULE_TIMEZONE to the naive time.
+    Weekly: DTSTART is the next calendar date on the slot's weekday (a date's
+    weekday doesn't depend on timezone). DAILY: DTSTART is yesterday, so tonight's
+    slot is always the next occurrence whatever the time of day it is applied."""
     hour, minute = hhmm.split(":")
-    now = datetime.datetime.now(datetime.timezone.utc)
-    first = now.date() + datetime.timedelta(days=(WEEKDAY_INDEX[day] - now.weekday()) % 7)
+    if day == "DAILY":
+        first = now.date() - datetime.timedelta(days=1)
+        rrule = "RRULE:FREQ=DAILY\r\n"
+    else:
+        first = now.date() + datetime.timedelta(days=(WEEKDAY_INDEX[day] - now.weekday()) % 7)
+        rrule = "RRULE:FREQ=WEEKLY\r\n"
     uid = name.lower().replace(" ", "-").replace(":", "")
-    icalendar = (
+    return (
         "BEGIN:VCALENDAR\r\n"
         "VERSION:2.0\r\n"
         "PRODID:-//proxmox-homelab//gvm-vlan-schedule//EN\r\n"
@@ -340,19 +353,27 @@ def ensure_weekly_schedule(gmp, name, day, hhmm):
         f"UID:{uid}@proxmox-homelab\r\n"
         f"DTSTAMP:{now.strftime('%Y%m%dT%H%M%SZ')}\r\n"
         f"DTSTART:{first.strftime('%Y%m%d')}T{hour}{minute}00\r\n"
-        "RRULE:FREQ=WEEKLY\r\n"
+        + rrule +
         "END:VEVENT\r\n"
         "END:VCALENDAR\r\n"
     )
-    comment = f"Weekly {day} {hhmm} {SCHEDULE_TIMEZONE}."
+
+
+def ensure_weekly_schedule(gmp, name, day, hhmm):
+    """Re-applies icalendar/timezone every run so a corrected slot lands on
+    an existing schedule too (day is a weekday code, or DAILY)."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    icalendar = build_icalendar(name, day, hhmm, now)
+    when = f"every night at {hhmm}" if day == "DAILY" else f"weekly {day} {hhmm}"
+    comment = f"{when.capitalize()} {SCHEDULE_TIMEZONE}."
     existing = find_by_name(gmp, gmp.get_schedules, "schedule", name)
     if existing:
         gmp.modify_schedule(existing, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
-        print(f"schedule {name!r} ({existing}) set to weekly {day} {hhmm}")
+        print(f"schedule {name!r} ({existing}) set to {when}")
         return existing
     response = gmp.create_schedule(name=name, icalendar=icalendar, timezone=SCHEDULE_TIMEZONE, comment=comment)
     schedule_id = response.get("id")
-    print(f"created schedule {name!r} ({schedule_id}) weekly {day} {hhmm}")
+    print(f"created schedule {name!r} ({schedule_id}) {when}")
     return schedule_id
 
 
@@ -492,6 +513,7 @@ def main():
             ensure_weekly_schedule(gmp, "Weekly VLAN scan: MikroTik router", *MIKROTIK_SLOT),
         )
 
+        superseded = []
         for zone_target in expand_split_hosts(load_zone_targets(GVM_FLEET_DIR)):
             zone = zone_target["zone"]
             label = zone_target.get("label")
@@ -501,8 +523,9 @@ def main():
                 failures.append(f"zone {zone!r} (no slot)")
                 continue
             try:
-                schedule_id = ensure_weekly_schedule(
-                    gmp, f"Weekly VLAN scan: {zone}" + (f" ({label})" if label else ""), *slot)
+                schedule_id = ensure_weekly_schedule(gmp, schedule_name(zone, label, slot), *slot)
+                if slot[0] == "DAILY":
+                    superseded.append(f"Weekly VLAN scan: {zone}" + (f" ({label})" if label else ""))
                 if reconcile_zone(gmp, zone_target, config_id, scanner_id, port_list_id, schedule_id) is None:
                     failures.append(f"zone {zone!r} (task active)")
             except GvmError as exc:
@@ -510,6 +533,9 @@ def main():
                 failures.append(f"zone {zone!r}")
 
         cleanup_legacy_schedules_and_tags(gmp, failures)
+        for name in superseded:  # their tasks now point at the nightly schedule
+            if find_by_name(gmp, gmp.get_schedules, "schedule", name):
+                best_effort_delete(gmp, "schedule", name, failures)
 
         if START_TASK_NAME:
             task_id = find_by_name(gmp, gmp.get_tasks, "task", START_TASK_NAME)
