@@ -27,7 +27,7 @@ Grafana/Graylog — **without re-platforming it**.
 | Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
 | Missing in production | Exporter sidecars, scrape jobs, and secrets entry; node_exporter is installed but not yet scraped. Switch targets and scrape jobs are prepared locally, pending deployment |
 | DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
-| Scans | Already in GVM `EXTRA_HOSTS`; no Wazuh agent |
+| Scans | Already in GVM `EXTRA_HOSTS`; Wazuh agent enrolled 2026-10-23 (see hand-backs) |
 
 ## Switches (operator-reported, 2026-10-23)
 
@@ -140,3 +140,15 @@ Grafana/Graylog — **without re-platforming it**.
   deployed via `provision.sh --stack monitoring-stack` (141 tasks OK, smoke test
   passed). No alerting exists in monitoring-stack, so alerts are not done —
   needs a decision on Grafana alert rules vs vmalert and a notification channel.
+- Wazuh agent (2026-10-23): `wazuh_agent` role added to `deploy-omada-controller.yml`
+  (group `lan` — the zone name GVM uses for the flat LAN; docker monitoring on,
+  accepted root-equivalent docker.sock access for `wazuh` on this unprivileged
+  single-workload CT; FIM on the two compose files only, not `exporter.env`).
+  Deployed tag-scoped: `ANSIBLE_TAGS=wazuh_agent_rollout ./with-secrets-prod
+  scripts/provision.sh --stack omada-controller` (21 tasks OK). Verified on the
+  CT: agent active, connected to 192.168.40.15:1514, `docker-listener` started,
+  FIM watching both compose files, `wazuh` in `docker` group. No firewall change
+  needed (manager :1514/:1515 already reachable from the flat LAN). Benign
+  repeating `syscheckd` errors for `/etc/vconsole.conf` and the dangling
+  `wtmpdb-rotate.timer` symlink (Debian 13 base image paths in Wazuh's default
+  watch list).
