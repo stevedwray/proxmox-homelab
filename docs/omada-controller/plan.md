@@ -186,7 +186,7 @@ change: |
         ansible.builtin.assert:
           that:
             - omada_version is defined
-            - omada_version | regex_search('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+            - (omada_version | default('')) is match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
           fail_msg: "omada_version must be an exact four-part version (e.g. 5.15.24.19), never latest"
 
       - name: Refuse to run if the controller data volume is missing (would create a blank controller)
@@ -342,6 +342,15 @@ Ansible as mutating even in check mode:
 export TASK_APPROVAL=omada-controller-adopt
 ./with-secrets-prod scripts/provision.sh --stack omada-controller --check
 ```
+
+On the first Phase B attempt (2026-10-23), check mode reached `lxc_base` but
+could not complete because `prometheus-node-exporter` and `rsyslog` were not
+installed: Ansible simulated the apt changes, then could not start services
+that were still absent. The failed check made no production changes. Do not
+interpret this as a completed preflight or silently proceed to B2. Confirm
+the missing packages and volume read-only, then present the operator with a
+choice: approve the initial apply despite this check-mode limit, or revise the
+playbook to support a narrower check first. Record the choice in the README.
 
 Review the diff. Expected changes: `lxc_base` housekeeping (resolv.conf,
 homelab root CA, node_exporter install/TLS cert, rsyslog forwarder) and the

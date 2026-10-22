@@ -1,6 +1,6 @@
 # omada-controller (planning workspace)
 
-Status: **Phase A safety net verified; Phase B files prepared locally, not
+Status: **Phase A safety net verified; Phase B check mode blocked, not
 deployed.** The operator deferred the NAS copy and asked to continue with the
 verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
 switch details remain outstanding for Phase C. No controller deployment or
@@ -73,3 +73,12 @@ Grafana/Graylog — **without re-platforming it**.
   `sha256:ed9111379c2cc50ed3473b1d99c74dfabfed04ffda7a3f3161767e39a325d0b0`.
 - Follow-ups: NAS copy, weekly Auto Backup, and each switch's
   model/firmware/management IP before Phase C.
+- Phase B check mode (2026-10-23): the first run stopped at a version-guard
+  expression that returned a string; the guard was corrected to a boolean and
+  passed on rerun. The rerun reported expected prospective DNS, CA,
+  node_exporter package, rsyslog package/config, and apt changes, but stopped
+  inside `lxc_base` because check mode does not install the missing packages
+  before trying to start their services. A read-only audit confirmed both
+  `prometheus-node-exporter` and `rsyslog` are absent, Docker is active, and
+  `omada_omada-data` exists. No production change was made. Do not deploy
+  until the operator reviews and approves how to handle the incomplete check.
