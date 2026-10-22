@@ -134,3 +134,9 @@ Grafana/Graylog — **without re-platforming it**.
   D0 PBS snapshot after a few days of stable running / nightly backups on 6.3;
   weekly Auto Backup confirmation; Grafana dashboard + alerts; controller
   compose image still pulls from Docker Hub, not Harbor (policy follow-up).
+- Dashboard (2026-10-23): `Omada Network` Grafana dashboard
+  (`terraform/lxc/stacks/monitoring-stack/dashboards/omada.json`, uid
+  `omada-network`, 27 panels, all queries tested against live VictoriaMetrics)
+  deployed via `provision.sh --stack monitoring-stack` (141 tasks OK, smoke test
+  passed). No alerting exists in monitoring-stack, so alerts are not done —
+  needs a decision on Grafana alert rules vs vmalert and a notification channel.
