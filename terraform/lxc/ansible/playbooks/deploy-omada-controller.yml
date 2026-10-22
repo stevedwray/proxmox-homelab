@@ -1,0 +1,102 @@
+---
+# Adopts the hand-built Omada controller CT (VMID 114, 192.168.1.252) into the
+# lab's Ansible flow. See docs/omada-controller/plan.md.
+#
+# Deliberately NOT included: docker_base (Docker is already installed and
+# configured on this CT). lxc_base can still restart dockerd if it updates
+# the root CA. The compose project name (`omada`) and volume names
+# (omada_omada-data, omada_omada-logs) must stay exactly as they are -- they
+# hold the controller database and every switch's configuration.
+#
+# Run (production approval flow, see AGENTS.md):
+#   TASK_APPROVAL=<task> ./with-secrets-prod scripts/provision.sh --stack omada-controller
+- name: Manage the Omada controller CT
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    omada_compose_dir: /srv/docker/omada
+    omada_image: "mbentley/omada-controller:{{ omada_version }}"
+
+  pre_tasks:
+    - name: Refuse to run without a pinned, non-floating version
+      ansible.builtin.assert:
+        that:
+          - omada_version is defined
+          - omada_version | regex_search('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+        fail_msg: "omada_version must be an exact four-part version (e.g. 5.15.24.19), never latest"
+
+    - name: Refuse to run if the controller data volume is missing (would create a blank controller)
+      ansible.builtin.command: docker volume inspect omada_omada-data
+      changed_when: false
+
+  roles:
+    - lxc_base
+
+  tasks:
+    - name: Ensure the compose project directory exists
+      ansible.builtin.file:
+        path: "{{ omada_compose_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the pinned compose file
+      ansible.builtin.copy:
+        dest: "{{ omada_compose_dir }}/docker-compose.yaml"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        content: |
+          name: omada
+          services:
+            omada-controller:
+              image: {{ omada_image }}
+              container_name: omada-controller
+              restart: unless-stopped
+              network_mode: host   # Required for device discovery/adoption
+              environment:
+                - JAVA_OPTS=-Xms512m -Xmx1024m
+                - PUID=508
+                - PGID=508
+                - MANAGE_HTTP_PORT=8088
+                - MANAGE_HTTPS_PORT=8043
+                - PORTAL_HTTP_PORT=8888
+                - PORTAL_HTTPS_PORT=8843
+                - SHOW_SERVER_LOGS=true
+                - SHOW_MONGODB_LOGS=false
+                - SSL_CERT_NAME=tls.crt
+                - SSL_KEY_NAME=tls.key
+                - TZ=Pacific/Auckland
+              volumes:
+                - omada-data:/opt/tplink/EAPController/data
+                - omada-logs:/opt/tplink/EAPController/logs
+          volumes:
+            omada-data:
+            omada-logs:
+      register: omada_compose
+
+    - name: Apply the compose file (recreates the container only when it changed)
+      ansible.builtin.command: docker compose -f {{ omada_compose_dir }}/docker-compose.yaml up -d
+      args:
+        chdir: "{{ omada_compose_dir }}"
+      when: omada_compose.changed
+
+    - name: Wait for the controller management port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8043
+        timeout: 300
+      when: not ansible_check_mode
+
+    - name: Wait for the controller container to report healthy
+      ansible.builtin.command: docker inspect -f '{% raw %}{{.State.Health.Status}}{% endraw %}' omada-controller
+      register: omada_health
+      until: omada_health.stdout == 'healthy'
+      retries: 30
+      delay: 10
+      changed_when: false
+      when: not ansible_check_mode

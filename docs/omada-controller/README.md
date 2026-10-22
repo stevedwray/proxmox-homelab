@@ -1,9 +1,10 @@
 # omada-controller (planning workspace)
 
-Status: **Phase A in progress; PBS safety snapshot complete and a controller
-UI backup verified locally. NAS copy and switch details remain unconfirmed;
-weekly Auto Backup is not yet enabled. No controller deployment or
-configuration change applied.**
+Status: **Phase A safety net verified; Phase B files prepared locally, not
+deployed.** The operator deferred the NAS copy and asked to continue with the
+verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
+switch details remain outstanding for Phase C. No controller deployment or
+configuration change applied.
 Plan: [plan.md](plan.md). Branch:
 `work/omada-controller-adoption`.
 
@@ -37,6 +38,9 @@ Grafana/Graylog — **without re-platforming it**.
   interfaces are on the default VLAN, so no re-adoption / inform-URL change.
 - Monitoring: `omada_exporter` (controller API) + `snmp-exporter` (switch
   ports) + Graylog (already live).
+- For this run, proceed from Phase A with the verified PBS snapshot and local
+  `.cfg` export; NAS copy is deferred by the operator (2026-10-23). Weekly
+  Auto Backup remains a follow-up and is not being treated as enabled.
 
 ## Findings that shape the plan
 
@@ -60,5 +64,12 @@ Grafana/Graylog — **without re-platforming it**.
   host networking, and mounts
   `omada_omada-data:/opt/tplink/EAPController/data` and
   `omada_omada-logs:/opt/tplink/EAPController/logs`.
-- Phase A gate still open: copy the verified `.cfg` export to NAS, enable
-  weekly Auto Backup, and record each switch's model/firmware/management IP.
+- Steps 01-03 landed: stack dir + pinned playbook exist; not yet deployed.
+  Both files passed local syntax and YAML checks. A read-only comparison of
+  live and proposed Compose settings found no
+  environment, volume, host networking, container name, or restart-policy
+  difference. The exact `5.15.24.19` image is not cached locally, so the first
+  deploy would pull it. The `latest` image currently has ID
+  `sha256:ed9111379c2cc50ed3473b1d99c74dfabfed04ffda7a3f3161767e39a325d0b0`.
+- Follow-ups: NAS copy, weekly Auto Backup, and each switch's
+  model/firmware/management IP before Phase C.

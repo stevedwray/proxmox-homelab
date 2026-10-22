@@ -1,0 +1,16 @@
+---
+all:
+  children:
+    omada_controller:
+      hosts:
+        omada-controller:
+          ansible_host: 192.168.1.252
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          stack_name: omada-controller
+          ansible_playbook: deploy-omada-controller
+          vmid: 114
+          pve_host: pve.gibbsgreatly.xyz
+          dns_server: 192.168.1.1
+          omada_version: "5.15.24.19"

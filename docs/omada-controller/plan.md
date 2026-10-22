@@ -302,11 +302,10 @@ title: Record that steps 01-03 landed in the workspace README
 depends_on: [omada-controller-02-playbook]
 
 change: >
-  In docs/omada-controller/README.md, replace the line `## Hand-backs` and its
-  `_(none yet)_` line with a `## Hand-backs` section that is otherwise empty
-  except for the sentence "Steps 01-03 landed: stack dir + pinned playbook
-  exist; not yet deployed." — this is the only edit. Do not touch any other
-  docs file.
+  In docs/omada-controller/README.md, append a Hand-backs note saying
+  "Steps 01-03 landed: stack dir + pinned playbook exist; not yet deployed."
+  Preserve the Phase A backup and runtime observations already recorded there.
+  Update the status line to say Phase B files are locally prepared, not deployed.
 
 scope:
   allowed_paths:
@@ -329,7 +328,8 @@ compare them against the proposed file before requesting Phase B approval.
 If more live inspection is needed, include it in the Phase B preflight and
 run it only after approval.
 Confirm `omada_omada-data` is mounted at
-`/opt/tplink/EAPController/data`, the pinned 5.15.24.19 image exists, and
+`/opt/tplink/EAPController/data`, the pinned 5.15.24.19 tag exists in the
+registry (it was not cached on CT 114 at the Phase A inspection), and
 the controller backup from Phase A can be retrieved. Report the planned
 `lxc_base` changes explicitly: DNS, apt configuration, CA trust, node_exporter,
 and rsyslog. A CA update can restart dockerd and interrupt the controller.
