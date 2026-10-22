@@ -105,3 +105,8 @@ Grafana/Graylog — **without re-platforming it**.
   affected playbooks passed syntax check; neither has run for Phase C. The
   `services/omada` OpenBao fields remain a prerequisite. The monitoring
   stack has not been redeployed with these jobs.
+- Phase C sidecar (2026-10-23): `omada_exporter` 0.12.0 crash-looped on the 5.15
+  controller (`slice bounds out of range [1:0]` in `getCid`; upstream fixed in
+  v0.13.1, "fix getCid on new omada", 2024-08-05). The 0.12.0 pin came from a
+  truncated GHCR tag list; bumped to 0.13.1 and redeployed. Also `omada_exporter`
+  0.13.1 is the newest release; Omada 6.x compatibility is still unverified.

@@ -497,7 +497,7 @@ change: |
       # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
       # docs/harbor-stack/image-sourcing-enforcement.md.
       omm_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ omm_lab_domain, true) }}"
-      omm_exporter_image: "{{ omm_registry_host }}/ghcr/charlie-haley/omada_exporter:0.12.0"
+      omm_exporter_image: "{{ omm_registry_host }}/ghcr/charlie-haley/omada_exporter:0.13.1"
       omm_snmp_image: "{{ omm_registry_host }}/dockerhub/prom/snmp-exporter:v0.30.1"
       omm_exporter_user: "{{ lookup('env', 'OMADA_EXPORTER_USER') | mandatory('OMADA_EXPORTER_USER env var is required') }}"
       omm_exporter_password: "{{ lookup('env', 'OMADA_EXPORTER_PASSWORD') | mandatory('OMADA_EXPORTER_PASSWORD env var is required') }}"
