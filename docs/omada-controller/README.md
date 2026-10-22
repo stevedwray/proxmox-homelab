@@ -1,10 +1,11 @@
 # omada-controller (planning workspace)
 
-Status: **Phase A safety net verified; Phase B check mode blocked, not
-deployed.** The operator deferred the NAS copy and asked to continue with the
+Status: **Phase B deployed on `pve`; switch UI confirmation pending.** The
+operator accepted the first-install check-mode limitation and approved the
+deploy. The operator deferred the NAS copy and asked to continue with the
 verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
-switch details remain outstanding for Phase C. No controller deployment or
-configuration change applied.
+switch details remain outstanding for Phase C. No controller major-version
+upgrade has been made.
 Plan: [plan.md](plan.md). Branch:
 `work/omada-controller-adoption`.
 
@@ -18,13 +19,13 @@ Grafana/Graylog — **without re-platforming it**.
 |---|---|
 | Guest | Unprivileged LXC, VMID 114 `omada-controller` on `pve`; 4 cores / 8 GB / 20 GB (2.6 GB used); `onboot`; vmbr0, `192.168.1.252/24` (flat LAN — the switches' management VLAN) |
 | OS | Debian 13 |
-| Controller | Omada **5.15.24.19**, Docker image `mbentley/omada-controller:latest` (6 months old), `network_mode: host`, healthy |
-| Compose | `/srv/docker/omada/docker-compose.yaml`, project `omada`, volumes `omada_omada-data` (219 MB) + `omada_omada-logs`. Hand-written, untracked |
+| Controller | Omada **5.15.24.19**, Docker image pinned to `mbentley/omada-controller:5.15.24.19`, `network_mode: host`, healthy |
+| Compose | `/srv/docker/omada/docker-compose.yaml`, project `omada`, volumes `omada_omada-data` (219 MB) + `omada_omada-logs`. Now Ansible-managed by `deploy-omada-controller.yml` |
 | Database | MongoDB bundled in the controller image (127.0.0.1:27217); the controller is one service |
 | Other | Portainer agent on :9001; 38 wired clients, 0 wireless |
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
 | Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
-| Missing | node_exporter, any metrics, stack dir / inventory / playbook, secrets entry, version pin |
+| Missing | Exporter sidecars and scrape jobs, secrets entry, switch target list; node_exporter is installed but not yet added to monitoring scrape config |
 | DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
 | Scans | Already in GVM `EXTRA_HOSTS`; no Wazuh agent |
 
@@ -80,5 +81,14 @@ Grafana/Graylog — **without re-platforming it**.
   inside `lxc_base` because check mode does not install the missing packages
   before trying to start their services. A read-only audit confirmed both
   `prometheus-node-exporter` and `rsyslog` are absent, Docker is active, and
-  `omada_omada-data` exists. No production change was made. Do not deploy
-  until the operator reviews and approves how to handle the incomplete check.
+  `omada_omada-data` exists. No production change was made by check mode.
+  The operator explicitly accepted this first-install limitation and approved
+  the Phase B deploy.
+- Phase B deploy (2026-10-23): `scripts/provision.sh --stack omada-controller`
+  on `pve` passed (57 tasks OK, 30 changed, no failures). `lxc_base` installed
+  node_exporter, TLS configuration, and rsyslog; the CA refresh restarted
+  Docker. Compose pulled and started the pinned 5.15.24.19 image. Post-deploy
+  checks: HTTP 200 on `:8043`, Docker health `healthy`, both original named
+  volumes still mounted, Docker/node_exporter/rsyslog active, resolver still
+  `192.168.1.1`, and two Graylog `source:omada` messages in the last 15
+  minutes. Switch Connected state still needs operator UI confirmation.
