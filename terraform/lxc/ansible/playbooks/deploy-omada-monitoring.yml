@@ -1,18 +1,18 @@
 ---
 # Omada controller metrics sidecars on CT 114 (192.168.1.252):
 #   omada_exporter  :9202  controller API -> devices, ports, PoE, clients
-#   snmp-exporter   :9116  per-port counters from the TP-Link switches
-# monitoring-stack scrapes both (deploy-monitoring-stack.yml, jobs
-# omada_exporter / snmp_switches). docs/omada-controller/plan.md.
+# monitoring-stack scrapes it (deploy-monitoring-stack.yml, job omada_exporter).
+# The switches are Easy Managed models, which do not support SNMP, so there is
+# no snmp-exporter. docs/omada-controller/plan.md.
 #
-# Needs OMADA_EXPORTER_USER, OMADA_EXPORTER_PASSWORD and OMADA_SNMP_COMMUNITY
+# Needs OMADA_EXPORTER_USER and OMADA_EXPORTER_PASSWORD
 # (OpenBao services/omada, injected by ./with-secrets-prod).
 #
 # Run (production approval flow):
 #   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
 #     -i terraform/lxc/stacks/omada-controller/inventory.yml \
 #     terraform/lxc/ansible/playbooks/deploy-omada-monitoring.yml
-- name: Deploy omada_exporter and snmp-exporter on the Omada controller CT
+- name: Deploy omada_exporter on the Omada controller CT
   hosts: all
   become: true
   gather_facts: false
@@ -24,10 +24,8 @@
     # docs/harbor-stack/image-sourcing-enforcement.md.
     omm_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ omm_lab_domain, true) }}"
     omm_exporter_image: "{{ omm_registry_host }}/ghcr/charlie-haley/omada_exporter:0.12.0"
-    omm_snmp_image: "{{ omm_registry_host }}/dockerhub/prom/snmp-exporter:v0.30.1"
     omm_exporter_user: "{{ lookup('env', 'OMADA_EXPORTER_USER') | mandatory('OMADA_EXPORTER_USER env var is required') }}"
     omm_exporter_password: "{{ lookup('env', 'OMADA_EXPORTER_PASSWORD') | mandatory('OMADA_EXPORTER_PASSWORD env var is required') }}"
-    omm_snmp_community: "{{ lookup('env', 'OMADA_SNMP_COMMUNITY') | mandatory('OMADA_SNMP_COMMUNITY env var is required') }}"
 
   tasks:
     - name: Refuse to deploy without non-empty monitoring credentials
@@ -35,8 +33,7 @@
         that:
           - omm_exporter_user | length > 0
           - omm_exporter_password | length > 0
-          - omm_snmp_community | length > 0
-        fail_msg: "Omada exporter user, password, and SNMP community must be populated from OpenBao"
+        fail_msg: "Omada exporter user and password must be populated from OpenBao"
       no_log: true
 
     - name: Create the sidecar project directory
@@ -59,20 +56,6 @@
       no_log: true
       register: omm_env
 
-    - name: Write the snmp-exporter auth file (merged with the image's built-in modules)
-      ansible.builtin.copy:
-        dest: "{{ omm_dir }}/snmp-auth.yml"
-        owner: root
-        group: nogroup
-        mode: "0640"
-        content: |
-          auths:
-            omada_v2:
-              community: {{ omm_snmp_community | to_json }}
-              version: 2
-      no_log: true
-      register: omm_auth
-
     - name: Install the sidecar compose project
       ansible.builtin.copy:
         dest: "{{ omm_dir }}/compose.yaml"
@@ -92,24 +75,12 @@
                 - OMADA_INSECURE=true
               ports:
                 - "{{ ansible_host }}:9202:9202"
-            snmp-exporter:
-              image: {{ omm_snmp_image }}
-              container_name: omada-snmp-exporter
-              restart: unless-stopped
-              user: "65534:65534"
-              command:
-                - --config.file=/etc/snmp_exporter/snmp.yml
-                - --config.file=/etc/snmp_exporter/snmp-auth.yml
-              volumes:
-                - ./snmp-auth.yml:/etc/snmp_exporter/snmp-auth.yml:ro
-              ports:
-                - "{{ ansible_host }}:9116:9116"
       register: omm_compose
 
     - name: Pull and start the sidecars, recreating them when credentials changed
       ansible.builtin.command: >-
         docker compose -f {{ omm_dir }}/compose.yaml up -d --pull missing
-        {{ '--force-recreate' if (omm_env.changed or omm_auth.changed) else '' }}
+        {{ '--force-recreate' if omm_env.changed else '' }}
       args:
         chdir: "{{ omm_dir }}"
       when: not ansible_check_mode

@@ -386,6 +386,16 @@ use the A3 PBS snapshot as the rollback source under a separate approval.
 
 ## Phase C — monitoring
 
+> **Revision 2026-10-23 — SNMP dropped.** The Omada UI reports "Easy Managed
+> Switch does not support SNMP" (ES206X-M2, ES210GMP). Monitoring is
+> `omada_exporter` only (controller API). Wherever the steps below mention
+> `snmp-exporter`, the `snmp_switches` job, `OMADA_SNMP_COMMUNITY`, C2, or the
+> switch target list, they are **superseded**: the code on the branch no
+> longer contains them, `services/omada` has two fields
+> (`OMADA_EXPORTER_USER`, `OMADA_EXPORTER_PASSWORD`), and `switches.yml` holds
+> only `omada_controller_host`. Port-level SNMP counters (errors/discards) are
+> not available; per-port status/traffic/PoE come from the controller API.
+
 Prerequisites (operator, UI + OpenBao — do before step 04's deploy, not
 before writing the files):
 

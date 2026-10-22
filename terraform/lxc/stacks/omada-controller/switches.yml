@@ -1,7 +1,5 @@
 ---
 # Read by terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml.
-# `name` becomes the Grafana `switch` label.
+# The switches (ES206X-M2 .253, ES210GMP .254) are Easy Managed models with no
+# SNMP support; their metrics come from omada_exporter via the controller API.
 omada_controller_host: 192.168.1.252
-omada_switches:
-  - {name: es206x-m2, target: "192.168.1.253"}
-  - {name: es210gmp, target: "192.168.1.254"}

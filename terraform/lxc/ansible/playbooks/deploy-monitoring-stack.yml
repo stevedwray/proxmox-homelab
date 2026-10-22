@@ -200,11 +200,6 @@
       loop: "{{ hwmon_hosts }}"
       when: item.plain | default(false)
 
-    - name: Build Omada switch SNMP scrape targets
-      ansible.builtin.set_fact:
-        omada_snmp_static_configs: "{{ (omada_snmp_static_configs | default([])) + [{'targets': [item.target], 'labels': {'stack': 'omada-controller', 'switch': item.name}}] }}"
-      loop: "{{ omada_switches | default([]) }}"
-
     - name: Build hwmon base relabel rules
       ansible.builtin.set_fact:
         hwmon_relabel: "{{ [{'source_labels': ['chip', 'sensor'], 'separator': '/', 'regex': '(.+/.+)', 'target_label': 'sensor_name', 'replacement': '$1'}, {'source_labels': ['__name__'], 'regex': 'node_hwmon_in_volts', 'target_label': 'scale', 'replacement': '1'}] }}"
@@ -334,25 +329,6 @@
               static_configs:
                 - targets: ["{{ omada_controller_host }}:9202"]
                   labels: {stack: omada-controller}
-
-            # TP-Link switch port counters via the snmp-exporter sidecar on the
-            # same CT (multi-target pattern: the switch is a URL param, the
-            # scrape goes to the exporter).
-            - job_name: snmp_switches
-              scrape_interval: 60s
-              scrape_timeout: 30s
-              metrics_path: /snmp
-              params:
-                module: [if_mib]
-                auth: [omada_v2]
-              static_configs: {{ omada_snmp_static_configs | default([]) | to_json }}
-              relabel_configs:
-                - source_labels: [__address__]
-                  target_label: __param_target
-                - source_labels: [__param_target]
-                  target_label: instance
-                - target_label: __address__
-                  replacement: "{{ omada_controller_host }}:9116"
 
             - job_name: cadvisor
               static_configs:

@@ -44,8 +44,9 @@ Grafana/Graylog — **without re-platforming it**.
   without adding automatic updates.
 - Stays on the flat LAN at `192.168.1.252` — the switches' management
   interfaces are on the default VLAN, so no re-adoption / inform-URL change.
-- Monitoring: `omada_exporter` (controller API) + `snmp-exporter` (switch
-  ports) + Graylog (already live).
+- Monitoring: `omada_exporter` (controller API) + Graylog (already live).
+  SNMP was dropped 2026-10-23: the controller reports Easy Managed switches
+  do not support SNMP.
 - For this run, proceed from Phase A with the verified PBS snapshot and local
   `.cfg` export; NAS copy is deferred by the operator (2026-10-23). Weekly
   Auto Backup remains a follow-up and is not being treated as enabled.
