@@ -779,7 +779,7 @@ plus alerts for switch down / port flaps / PoE budget) against the real series.
 
 ## Phase D — security upgrade 5.15 → 6.3 (operator-led)
 
-Researched 2026-10-23. Not started.
+Researched and **executed 2026-10-23** (5.15.24.19 -> 6.3.0.45); see README hand-backs.
 
 **Why:** TP-Link's CVE-2026-81531 (unauthenticated account-info disclosure via
 an init API, CVSS 4.0 6.9, network-reachable, no auth) lists **6.3.0.45** as the

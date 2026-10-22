@@ -1,6 +1,6 @@
 # omada-controller (planning workspace)
 
-Status: **Phases B and C deployed on `pve`; both switches Connected; omada_exporter + node_exporter scraped (up).** The
+Status: **Phases B, C and D deployed on `pve`: controller upgraded 5.15.24.19 -> 6.3.0.45; switches Connected; omada_exporter + node_exporter scraped (up).** The
 operator accepted the first-install check-mode limitation and approved the
 deploy. The operator deferred the NAS copy and asked to continue with the
 verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
@@ -19,7 +19,7 @@ Grafana/Graylog — **without re-platforming it**.
 |---|---|
 | Guest | Unprivileged LXC, VMID 114 `omada-controller` on `pve`; 4 cores / 8 GB / 20 GB (2.6 GB used); `onboot`; vmbr0, `192.168.1.252/24` (flat LAN — the switches' management VLAN) |
 | OS | Debian 13 |
-| Controller | Omada **5.15.24.19**, Docker image pinned to `mbentley/omada-controller:5.15.24.19`, `network_mode: host`, healthy |
+| Controller | Omada **6.3.0.45** (upgraded 2026-10-23; was 5.15.24.19), Docker image pinned to `mbentley/omada-controller:6.3.0.45`, `network_mode: host`, healthy |
 | Compose | `/srv/docker/omada/docker-compose.yaml`, project `omada`, volumes `omada_omada-data` (219 MB) + `omada_omada-logs`. Now Ansible-managed by `deploy-omada-controller.yml` |
 | Database | MongoDB bundled in the controller image (127.0.0.1:27217); the controller is one service |
 | Other | Portainer agent on :9001; 38 wired clients, 0 wireless |
@@ -118,3 +118,19 @@ Grafana/Graylog — **without re-platforming it**.
   rule change was needed. SNMP dropped (Easy Managed switches do not support it).
   `services/omada` in OpenBao is at version 1. Remaining: dashboard + alerts
   (against the real metric names), weekly Auto Backup, NAS copy, Phase D upgrade.
+- Phase D deployed (2026-10-23): fresh PBS snapshot + `.cfg` export taken first.
+  Controller stopped; `mongodb-upgrade-3.6-to-8` container (via Harbor
+  `dockerhub/` path) stepped MongoDB 3.6 -> 4.0 -> 4.2 -> 4.4 -> 5.0 -> 6.0 ->
+  7.0 -> 8.0 and reported success (pre-upgrade backup `mongodb-preupgrade.tar`
+  left in the data volume). Then `deploy-omada-controller.yml` with the one-time
+  `-e omada_allow_major_upgrade=true` (run from repo root needs
+  `ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg` for the roles path)
+  recreated the controller on `6.3.0.45`: 50 tasks OK, healthy after 2 retries.
+  Verified: HTTP 200, UI version 6.3.0.45, `tcp/29817` listening, site `homelab`
+  shows 2 switches 0 disconnected, `omada_exporter` still returns 134 series,
+  VictoriaMetrics `up` = 1 for both jobs. v6 popup "Port Access Required"
+  (tcp/29817) needs no action (host networking, same LAN).
+- Cleanup left: delete `mongodb-preupgrade.tar` from the data volume and the
+  D0 PBS snapshot after a few days of stable running / nightly backups on 6.3;
+  weekly Auto Backup confirmation; Grafana dashboard + alerts; controller
+  compose image still pulls from Docker Hub, not Harbor (policy follow-up).
