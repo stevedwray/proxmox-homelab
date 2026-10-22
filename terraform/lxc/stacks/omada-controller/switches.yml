@@ -1,0 +1,7 @@
+---
+# Read by terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml.
+# `name` becomes the Grafana `switch` label.
+omada_controller_host: 192.168.1.252
+omada_switches:
+  - {name: es206x-m2, target: "192.168.1.253"}
+  - {name: es210gmp, target: "192.168.1.254"}

@@ -1,10 +1,10 @@
 # omada-controller (planning workspace)
 
-Status: **Phase B deployed on `pve`; switch UI confirmation pending.** The
+Status: **Phase B deployed on `pve`; both switches Connected.** The
 operator accepted the first-install check-mode limitation and approved the
 deploy. The operator deferred the NAS copy and asked to continue with the
 verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
-switch details remain outstanding for Phase C. No controller major-version
+the controller still reports an available update. No controller major-version
 upgrade has been made.
 Plan: [plan.md](plan.md). Branch:
 `work/omada-controller-adoption`.
@@ -25,9 +25,16 @@ Grafana/Graylog — **without re-platforming it**.
 | Other | Portainer agent on :9001; 38 wired clients, 0 wireless |
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
 | Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
-| Missing | Exporter sidecars and scrape jobs, secrets entry, switch target list; node_exporter is installed but not yet added to monitoring scrape config |
+| Missing in production | Exporter sidecars, scrape jobs, and secrets entry; node_exporter is installed but not yet scraped. Switch targets and scrape jobs are prepared locally, pending deployment |
 | DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
 | Scans | Already in GVM `EXTRA_HOSTS`; no Wazuh agent |
+
+## Switches (operator-reported, 2026-10-23)
+
+| Model | Management IP | Firmware | Omada Devices status |
+|---|---|---|---|
+| ES206X-M2 | `192.168.1.253` | `1.0.1 Build 20251128 Rel.41332` | Connected |
+| ES210GMP | `192.168.1.254` | `1.0.8 Build 20260718 Rel.11174` | Connected |
 
 ## Decisions made
 
@@ -65,15 +72,15 @@ Grafana/Graylog — **without re-platforming it**.
   host networking, and mounts
   `omada_omada-data:/opt/tplink/EAPController/data` and
   `omada_omada-logs:/opt/tplink/EAPController/logs`.
-- Steps 01-03 landed: stack dir + pinned playbook exist; not yet deployed.
+- Steps 01-03 landed: stack dir + pinned playbook exist and are deployed.
   Both files passed local syntax and YAML checks. A read-only comparison of
   live and proposed Compose settings found no
   environment, volume, host networking, container name, or restart-policy
   difference. The exact `5.15.24.19` image is not cached locally, so the first
   deploy would pull it. The `latest` image currently has ID
   `sha256:ed9111379c2cc50ed3473b1d99c74dfabfed04ffda7a3f3161767e39a325d0b0`.
-- Follow-ups: NAS copy, weekly Auto Backup, and each switch's
-  model/firmware/management IP before Phase C.
+- Follow-ups: NAS copy and weekly Auto Backup. Both switches were confirmed
+  Connected in the Omada UI on 2026-10-23.
 - Phase B check mode (2026-10-23): the first run stopped at a version-guard
   expression that returned a string; the guard was corrected to a boolean and
   passed on rerun. The rerun reported expected prospective DNS, CA,
@@ -91,7 +98,9 @@ Grafana/Graylog — **without re-platforming it**.
   checks: HTTP 200 on `:8043`, Docker health `healthy`, both original named
   volumes still mounted, Docker/node_exporter/rsyslog active, resolver still
   `192.168.1.1`, and two Graylog `source:omada` messages in the last 15
-  minutes. Switch Connected state still needs operator UI confirmation.
-- Phase C preparation: `deploy-omada-monitoring.yml` exists locally and passed
-  syntax check. It has not run. The `services/omada` OpenBao fields, switch
-  target list, and monitoring scrape configuration are not yet in place.
+  minutes. The operator subsequently confirmed both switches Connected.
+- Phase C preparation: `deploy-omada-monitoring.yml`, the operator-supplied
+  switch target list, and the monitoring scrape jobs exist locally. Both
+  affected playbooks passed syntax check; neither has run for Phase C. The
+  `services/omada` OpenBao fields remain a prerequisite. The monitoring
+  stack has not been redeployed with these jobs.

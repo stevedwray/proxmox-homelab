@@ -612,31 +612,28 @@ depends_on: []
 
 change: |
   Create terraform/lxc/stacks/omada-controller/switches.yml with the content
-  below. The two `<<NEEDS OPERATOR INPUT>>` values are the switches' management
-  IPs, recorded by the operator in Phase A4 (README "Hand-backs"); they cannot
-  be discovered from the repo. If the operator has not supplied them, STOP —
-  do not invent addresses, and do not leave the placeholder in a committed
-  file that step 07's apply would read. If only the name differs from
-  A4's, use the operator's name; keep names lowercase-with-hyphens.
+  below. The operator supplied the two models, firmware versions, and
+  management IPs on 2026-10-23; they are recorded in README.md. Verify both
+  devices show Connected before Phase C deployment. Keep names lowercase.
 
   ---
   # Read by terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml.
   # docs/omada-controller/plan.md. `name` becomes the Grafana `switch` label.
   omada_controller_host: 192.168.1.252
   omada_switches:
-    - {name: switch-01, target: "<<NEEDS OPERATOR INPUT>>"}
-    - {name: switch-02, target: "<<NEEDS OPERATOR INPUT>>"}
+    - {name: es206x-m2, target: "192.168.1.253"}
+    - {name: es210gmp, target: "192.168.1.254"}
 
 scope:
   allowed_paths:
     - terraform/lxc/stacks/omada-controller/switches.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Guessing switch IP addresses"
+    - "Changing operator-supplied switch IP addresses without verification"
 
 gates:
   - id: yaml-valid
-    cmd: "python3 -c \"import yaml; d=yaml.safe_load(open('terraform/lxc/stacks/omada-controller/switches.yml')); assert d['omada_controller_host']=='192.168.1.252' and len(d['omada_switches'])==2; print('ok')\""
+    cmd: "python3 -c \"import yaml; d=yaml.safe_load(open('terraform/lxc/stacks/omada-controller/switches.yml')); assert d['omada_controller_host']=='192.168.1.252' and d['omada_switches']==[{'name':'es206x-m2','target':'192.168.1.253'},{'name':'es210gmp','target':'192.168.1.254'}]; print('ok')\""
     expect: "prints ok, exit 0"
     critical: true
 ```
@@ -728,8 +725,8 @@ gates:
 
 ### Phase C deploy (operator, prose — production mutations, one approval each)
 
-Preflight: `grep -c 'NEEDS OPERATOR INPUT' terraform/lxc/stacks/omada-controller/switches.yml`
-must print `0`, and C1–C3 must be done.
+Preflight: `! rg -q 'NEEDS OPERATOR INPUT' terraform/lxc/stacks/omada-controller/switches.yml`
+must exit `0`, and C1–C3 must be done. Confirm both switches show Connected.
 
 C4. Sidecars on CT 114:
 
