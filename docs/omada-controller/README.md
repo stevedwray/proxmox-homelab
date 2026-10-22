@@ -1,6 +1,8 @@
 # omada-controller (planning workspace)
 
-Status: **planned, nothing applied.** Plan: [plan.md](plan.md). Branch:
+Status: **Phase A in progress; PBS safety snapshot complete, controller UI
+backup pending. No controller deployment or configuration change applied.**
+Plan: [plan.md](plan.md). Branch:
 `work/omada-controller-adoption`.
 
 Goal: bring the existing Omada controller (manages two TP-Link switches) under
@@ -18,7 +20,7 @@ Grafana/Graylog — **without re-platforming it**.
 | Database | MongoDB bundled in the controller image (127.0.0.1:27217); the controller is one service |
 | Other | Portainer agent on :9001; 38 wired clients, 0 wireless |
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
-| Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. No controller auto-backup configured |
+| Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller `.cfg` export and weekly auto-backup still pending |
 | Missing | node_exporter, any metrics, stack dir / inventory / playbook, secrets entry, version pin |
 | DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
 | Scans | Already in GVM `EXTRA_HOSTS`; no Wazuh agent |
@@ -48,4 +50,13 @@ Grafana/Graylog — **without re-platforming it**.
 
 ## Hand-backs
 
-_(none yet)_
+- Phase A: root SSH to CT 114 worked with the existing lab key, so no key was
+  installed. `pve` reported CT 114 running and `pbs-iscsi` active. The
+  on-demand snapshot finished successfully and appears in `pvesm list`.
+- Runtime preflight: controller image ID
+  `sha256:ed9111379c2cc50ed3473b1d99c74dfabfed04ffda7a3f3161767e39a325d0b0`,
+  host networking, and mounts
+  `omada_omada-data:/opt/tplink/EAPController/data` and
+  `omada_omada-logs:/opt/tplink/EAPController/logs`.
+- Phase A gate still open: operator UI `.cfg` export to NAS, weekly Auto Backup,
+  and switch model/firmware/management IP record.
