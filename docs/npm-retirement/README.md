@@ -32,4 +32,12 @@ here.)
 
 ## Hand-backs
 
-_(none yet)_
+- **Worktree runs need gitignored inventories.** `terraform/lxc/environments/**/inventory.yml`
+  is generated and absent from a worktree; `-i` pointing at it silently matches no hosts
+  ("no hosts matched", nothing deployed). Use the main checkout's path for `proxy-stack`
+  (T4b) and copy `environments/pve/technitium-stack/inventory.yml` into the worktree (T4c).
+- **`reconcile-edge.py --traefik-output-dir` renders every stack's manifest**, not just the
+  one passed. Do not push that dir (T4b would overwrite all routes). Render the single
+  manifest with `render-edge-traefik.py` into a clean dir instead (identical tpot file).
+- **T-Pot Part 1 progress (2026-10-23):** T2 (cert), T3, T4a-c (Authentik app, Traefik
+  route, DNS) done and verified; `tpot.lab` returns 302 to Authentik. T5-T8 pending.
