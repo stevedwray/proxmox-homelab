@@ -26,7 +26,7 @@ Grafana/Graylog — **without re-platforming it**.
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
 | Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
 | Missing in production | Exporter sidecars, scrape jobs, and secrets entry; node_exporter is installed but not yet scraped. Switch targets and scrape jobs are prepared locally, pending deployment |
-| DNS / front door | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static). That is the legacy management-stack running Nginx Proxy Manager (proxy host 32): TLS-terminates with a Let's Encrypt wildcard `*.gibbsgreatly.xyz` (NPM `npm-3`, expires 2026-12-08) and proxies HTTPS to `192.168.1.252:8043` (backend self-signed cert not verified). Working, not stale; hand-built, not in IaC |
+| DNS / front door | **`omada.lab.gibbsgreatly.xyz` → Traefik (`192.168.30.10`) → `https://192.168.1.252:8043`** (live 2026-10-23, Phase F; Let's Encrypt on the edge, step-ca cert on the controller). Legacy: `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static). That is the legacy management-stack running Nginx Proxy Manager (proxy host 32): TLS-terminates with a Let's Encrypt wildcard `*.gibbsgreatly.xyz` (NPM `npm-3`, expires 2026-12-08) and proxies HTTPS to `192.168.1.252:8043` (backend self-signed cert not verified). Working, not stale; hand-built, not in IaC |
 | Scans | Already in GVM `EXTRA_HOSTS`; Wazuh agent enrolled 2026-10-23 (see hand-backs) |
 
 ## Switches (operator-reported, 2026-10-23)
@@ -158,3 +158,18 @@ Grafana/Graylog — **without re-platforming it**.
   management-stack would take the front door with it; the controller itself
   keeps its self-signed cert on :8043 and devices use the IP directly, so
   switch management is unaffected either way.
+- Phase F (2026-10-23): moved the Omada UI front door to Traefik at
+  `omada.lab.gibbsgreatly.xyz` (auth `none`; controller's own login). F1: step-ca
+  cert for the controller (SANs `omada.lab.gibbsgreatly.xyz` + `192.168.1.252`,
+  90 d) issued by `deploy-omada-controller.yml` (tag `omada_tls`), mounted at
+  `/cert`, container recreated (80 tasks OK); renewal timer `omada-tls-renew.timer`
+  (03:20, renews at <15 d, restarts the controller ≈ every 75 d). F2a:
+  `edge.yaml` route rendered alone (`render-edge-traefik.py --output-dir /tmp/omada-edge
+  <manifest>`) and pushed with `deploy-proxy-stack.yml -e traefik_generated_source_dir=/tmp/omada-edge`
+  (111 tasks OK; `--check` is not usable on that playbook — later plays fail in
+  check mode). F2b: `provision.sh --stack technitium-stack` (288 tasks OK, smoke
+  passed) published the one new record. Verified: dig → 192.168.30.10 on Technitium
+  and the LAN resolver; HTTPS 200 with a valid cert; Traefik verifies the step-ca
+  backend. The old `omada.gibbsgreatly.xyz` NPM route is untouched and still works
+  (NPM does not verify the backend cert); remove its MikroTik record when
+  management-stack is retired.
