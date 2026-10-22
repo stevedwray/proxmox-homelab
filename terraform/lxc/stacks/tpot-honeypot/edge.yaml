@@ -1,0 +1,23 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: tpot-honeypot-edge
+  stack: tpot-honeypot
+spec:
+  routes:
+    - name: tpot
+      host: tpot.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: https://192.168.1.28:64297
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # T-Pot's own nginx basic auth is removed (Part 1, noauth); Authentik
+        # forwardAuth gates the whole UI and the host firewall limits :64297
+        # to Traefik.
+        mode: forwardAuth
