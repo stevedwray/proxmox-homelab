@@ -1,6 +1,6 @@
 # omada-controller (planning workspace)
 
-Status: **Phase B deployed on `pve`; both switches Connected.** The
+Status: **Phases B and C deployed on `pve`; both switches Connected; omada_exporter + node_exporter scraped (up).** The
 operator accepted the first-install check-mode limitation and approved the
 deploy. The operator deferred the NAS copy and asked to continue with the
 verified local `.cfg` and PBS snapshot. Weekly Auto Backup is not yet enabled;
@@ -110,3 +110,11 @@ Grafana/Graylog — **without re-platforming it**.
   v0.13.1, "fix getCid on new omada", 2024-08-05). The 0.12.0 pin came from a
   truncated GHCR tag list; bumped to 0.13.1 and redeployed. Also `omada_exporter`
   0.13.1 is the newest release; Omada 6.x compatibility is still unverified.
+- Phase C deployed (2026-10-23): `omada_exporter` 0.13.1 running on CT 114
+  (`:9202`, site `homelab`, 134 `omada_*` series: device CPU/mem/uptime/PoE,
+  per-port link/speed/rx/tx/power, client counts). monitoring-stack redeployed
+  (143 tasks, smoke test passed); VictoriaMetrics shows `up{stack="omada-controller"}`
+  = 1 for jobs `node_exporter` (:9100) and `omada_exporter` (:9202). No MikroTik
+  rule change was needed. SNMP dropped (Easy Managed switches do not support it).
+  `services/omada` in OpenBao is at version 1. Remaining: dashboard + alerts
+  (against the real metric names), weekly Auto Backup, NAS copy, Phase D upgrade.
