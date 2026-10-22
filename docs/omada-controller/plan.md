@@ -170,7 +170,7 @@ change: |
   # (omada_omada-data, omada_omada-logs) must stay exactly as they are -- they
   # hold the controller database and every switch's configuration.
   #
-  # Run (production approval flow, see CLAUDE.md):
+  # Run (production approval flow, see AGENTS.md):
   #   TASK_APPROVAL=<task> ./with-secrets-prod scripts/provision.sh --stack omada-controller
   - name: Manage the Omada controller CT
     hosts: all
