@@ -31,6 +31,28 @@
       ansible.builtin.command: docker volume inspect omada_omada-data
       changed_when: false
 
+    # A v6 image started against v5 data (MongoDB 3.6) breaks the controller:
+    # v6 ships MongoDB 8 and the data needs the stepwise mongodb-upgrade
+    # container first (docs/omada-controller/plan.md Phase D). Compare the major
+    # version recorded by the controller itself with the target major.
+    - name: Read the controller version that last ran against the data volume
+      ansible.builtin.slurp:
+        src: /var/lib/docker/volumes/omada_omada-data/_data/LAST_RAN_OMADA_VER.txt
+      register: omada_last_ran_raw
+
+    - name: Refuse a major-version jump unless the data has been migrated
+      ansible.builtin.assert:
+        that:
+          - >-
+            (omada_last_ran_raw.content | b64decode | trim).split('.')[0]
+            == omada_version.split('.')[0]
+            or (omada_allow_major_upgrade | default(false) | bool)
+        fail_msg: >-
+          Data volume last ran {{ omada_last_ran_raw.content | b64decode | trim }} but
+          omada_version is {{ omada_version }}: a different major version. Do the
+          MongoDB upgrade (plan.md Phase D) first, then pass
+          -e omada_allow_major_upgrade=true for that single cutover run only.
+
   roles:
     - lxc_base
 

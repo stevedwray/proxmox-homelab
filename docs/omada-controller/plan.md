@@ -777,52 +777,110 @@ knowable from the live exporter output. After C6 passes, plan a follow-up
 (Grafana dashboard JSON in `terraform/lxc/stacks/monitoring-stack/dashboards/`,
 plus alerts for switch down / port flaps / PoE budget) against the real series.
 
-## Phase D — security upgrade 5.15 → 6.x (operator-led, prose)
+## Phase D — security upgrade 5.15 → 6.3 (operator-led)
 
-Do not start until Phase C is verified and a fresh A3/A4 backup pair exists
-(redo both — the controller database changes across major versions and a
-5.x controller **cannot** import a 6.x backup).
+Researched 2026-10-23. Not started.
 
-D1. Decide the target. On 2026-10-23 Docker Hub listed the stable, exact
-`mbentley/omada-controller:6.3.0.45` tag, alongside 6.0.0.25, 6.1.0.19,
-and 6.2.14.11. TP-Link identifies 6.3.0.45 as fixed for
-CVE-2026-81531 on Linux and Windows. Its advisories for CVE-2026-107795
-and CVE-2026-102298 specifically name Windows; do not assume they apply to
-this Linux controller. Re-check the stable tag and TP-Link advisories at
-execution time:
+**Why:** TP-Link's CVE-2026-81531 (unauthenticated account-info disclosure via
+an init API, CVSS 4.0 6.9, network-reachable, no auth) lists **6.3.0.45** as the
+fixed Windows & Linux controller build. The advisory does not state whether
+5.15.24.19 is affected; treat it as likely, confirm with TP-Link if it matters.
+
+**What it really is:** not a tag bump. v6 ships **MongoDB 8**; the 5.x data is
+MongoDB 3.6. The image's guide
+(`github.com/mbentley/docker-omada-controller` → `mongodb_upgrade/`) uses a
+one-shot upgrade container run **while the controller is stopped**. It takes its
+own backup first and rolls itself back on error. Running a v6 image against v5
+data without it breaks the controller — `deploy-omada-controller.yml` now
+refuses a cross-major pin change unless `-e omada_allow_major_upgrade=true`.
+
+**Checked:** host CPU (Ryzen 9 5950X) has AVX/AVX2/BMI2 — MongoDB 8 OK. v6 adds
+`tcp/29817`; the container uses host networking, so no mapping change.
+
+**Target (my recommendation):** `6.3.0.45` — the build the advisory names,
+stable on Docker Hub since 2026-10-14. Newer: `6.3.0.111` (2026-10-17, the
+`6.3` tag). `6.2.14.11` does **not** carry the fix. Override if you prefer 111.
+
+**Alternatives to the in-place path** (both from the image guide): stand up a
+second v6 controller and use the controller's built-in migration, or install a
+fresh v6 on new volumes and restore the `.cfg`. Rejected as default: new
+controller ID / possible device re-adoption of the two switches. The in-place
+path keeps adoption intact; rollback is the PBS snapshot.
+
+### D0 — gates before starting (operator)
+
+1. TP-Link's Omada compatibility list covers **ES206X-M2 (fw 1.0.1 Build
+   20251128)** and **ES210GMP (fw 1.0.8 Build 20260718)** on controller 6.3.
+   (Not verifiable from the repo.) The switches keep forwarding even if the
+   controller is down, so this is a management risk, not an outage risk.
+2. Fresh backups, taken **now**, after Phase C (redo A3 and A4): PBS snapshot
+   `vzdump 114 --storage pbs-iscsi --mode snapshot --notes-template "omada pre-6.x"`,
+   plus a new `.cfg` export from the UI, plus Auto Backup enabled. Note the
+   NAS copy.
+3. A maintenance window: UI/controller offline roughly 10–20 minutes (migration
+   plus first start). Wired clients and switching are unaffected.
+
+### D1 — cutover (production mutation; one approval)
+
+Preflight (report before running): target CT 114 on `pve`; mutating; stops the
+`omada-controller` container, runs one MongoDB-upgrade container against
+`omada_omada-data`, then recreates the controller on the new image; out of
+scope: switches, other CTs, monitoring-stack.
+
 ```bash
-curl -s 'https://hub.docker.com/v2/repositories/mbentley/omada-controller/tags?page_size=100&name=6.3' | python3 -c "import sys,json; print([t['name'] for t in json.load(sys.stdin)['results'] if not t['name'].startswith('beta')])"
+# 1. stop the controller (on the CT)
+ssh root@192.168.1.252 'cd /srv/docker/omada && docker compose stop'
+
+# 2. MongoDB 3.6 -> 8 (interactive; prints progress; self-rolls-back on error)
+ssh -t root@192.168.1.252 'docker run -it --rm -e DEBUG=false \
+  -v omada_omada-data:/opt/tplink/EAPController/data \
+  harbor.lab.gibbsgreatly.xyz/dockerhub/mbentley/omada-controller:mongodb-upgrade-3.6-to-8'
 ```
-Sources: [Docker Hub tags](https://hub.docker.com/r/mbentley/omada-controller/tags),
-[CVE-2026-81531 advisory](https://support.omadanetworks.com/ro/document/133567/),
-[CVE-2026-107795 advisory](https://support.omadanetworks.com/hk/document/136188/),
-[CVE-2026-102298 advisory](https://support.omadanetworks.com/us/document/136187/).
-Read TP-Link's release notes for the target and the intermediate versions:
-confirm 5.15 → target is a supported direct upgrade (if not, step through the
-intermediate tags one at a time), and that the two switches' **firmware is
-supported by the target controller version**. Re-read the advisories to
-confirm whether 5.15.24.19 is actually in the affected range.
 
-D2. Upgrade: change `omada_version` in
-`terraform/lxc/stacks/omada-controller/inventory.yml` to the chosen tag
-(exact four-part version), commit, then:
+If step 2 reports an error, it rolls back automatically: start the old
+controller again (`ssh root@192.168.1.252 'cd /srv/docker/omada && docker compose start'`),
+change nothing else, and stop for review. (Image pulls go through Harbor, per
+`docs/harbor-stack/image-sourcing-enforcement.md`; if the `dockerhub/` path
+fails to pull, do not fall back to Docker Hub directly — stop.)
+
 ```bash
+# 3. bump the pin (edit omada_version in terraform/lxc/stacks/omada-controller/inventory.yml to "6.3.0.45"), commit, then:
 export TASK_APPROVAL=omada-controller-upgrade
-./with-secrets-prod scripts/provision.sh --stack omada-controller
+./with-secrets-prod ansible-playbook \
+  -i terraform/lxc/stacks/omada-controller/inventory.yml \
+  -e omada_allow_major_upgrade=true \
+  terraform/lxc/ansible/playbooks/deploy-omada-controller.yml
 ```
-First start after a major upgrade runs a database migration — allow up to ~10
-minutes before judging it hung (`docker logs -f omada-controller` on the CT).
 
-D3. Verify as in B3, plus: `omada_exporter` still returns `omada_*` metrics
-(if not, this is the compatibility risk noted in README — pin the exporter to
-a newer release and re-run C4, or accept SNMP-only monitoring and record it);
-Graylog still receiving; both switches Connected and their port/VLAN config
-unchanged against the A4 record.
+The playbook waits up to ~5 min for :8043 and ~5 more for `healthy`; a major
+first start can be slower — if it times out, check
+`ssh root@192.168.1.252 'docker logs --tail 50 omada-controller'` before
+concluding it failed. (Use the playbook directly, not `provision.sh`: the `-e`
+flag is intentionally per-run. Do not leave it set in any wrapper or env file.)
 
-D4. Rollback: set `omada_version` back **and** restore the pre-upgrade PBS
-snapshot (a 5.x controller cannot read the migrated 6.x data volume). The
-snapshot restore replaces the whole CT; confirm with the operator before
-doing it.
+### D2 — verify
+
+- `curl -sk -o /dev/null -w '%{http_code}\n' https://192.168.1.252:8043/` → 200;
+  login works; UI footer/version reads 6.3.0.45; update banner gone.
+- Devices: both switches **Connected** (not Pending/Isolated); port/VLAN config
+  matches the A4 record.
+- `ssh root@192.168.1.252 'docker inspect omada-controller --format "{{.Config.Image}}"; ss -tln | grep -c 29817'`
+  → image `...:6.3.0.45`, count ≥ 1.
+- `omada_exporter` still returns series:
+  `curl -s 192.168.1.252:9202/metrics | grep -c '^omada_'` (> 0). If it
+  crashes or returns nothing, it is a 6.x API change: record the log, leave the
+  controller upgrade in place, and plan an exporter bump separately (0.13.1 is
+  the newest release as of 2026-10-23 — may need a fork/patch).
+- VictoriaMetrics `up{stack="omada-controller"}` = 1 for both jobs; Graylog
+  `source:omada` still receiving.
+
+### D3 — rollback
+
+- Mongo upgrade failed: automatic; just `docker compose start` the old pin.
+- v6 started but misbehaves, or switches won't re-connect: set `omada_version`
+  back to `5.15.24.19` is **not enough** (data is now MongoDB 8). Restore the D0
+  PBS snapshot (replaces the whole CT — get operator confirmation first), then
+  re-run `scripts/provision.sh --stack omada-controller` with the old pin.
 
 ## Phase E — closeout
 
