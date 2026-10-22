@@ -22,7 +22,7 @@
   gather_facts: false
   vars:
     dir: /opt/greenbone-stack
-    background_modes: [runhosts, seq]
+    background_modes: [runhosts, seq, runall]
     plain_modes: [log, sample_start, sample_stop, sample_log, stoprun, redis_guard]
     redis_cli: docker exec greenbone-community-edition-redis-server-1 redis-cli -s /run/redis/redis.sock
   tasks:

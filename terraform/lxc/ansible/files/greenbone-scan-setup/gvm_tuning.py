@@ -41,6 +41,7 @@ Changing modes (the playbook asks for TASK_APPROVAL on production):
                           uses the lean scan config; each temporary task, target and port list is
                           deleted afterwards, after its non-Log findings are printed
   seq <zone>...           run whole zone tasks one after another and print per-host results
+  runall <epoch>          run EVERY task once, in sequence, starting at <epoch> (timeout per task; log in tuning.log)
   mklean                  create the scan config "Full and fast (lean)": a clone of "Full and fast"
                           with the "Web application abuses" family deselected (idempotent)
   cleanup                 stop and delete every "TEMP calibrate " task and target
@@ -121,6 +122,75 @@ def run_sequence(gmp, zones):
               f" (gvm start={t['start']} end={t['end']})", flush=True)
         for h, d in sorted(auth_counts(gmp, t["id"]).items()):
             print(f"      {h:16} {d}", flush=True)
+
+
+# One-off "run everything once, in sequence" (2026-10-22). Expected minutes are the last
+# measured durations; a task running past max(45, 2 x expected + 20) min (cap 300) is
+# stopped and the run moves on, so one stalled host cannot block everything behind it.
+RUNALL_ORDER = (
+    [(f"LAN scan: {z} discovery", m) for z, m in (
+        ("build_seg", 4), ("edge_seg", 6), ("mgmt_seg", 10), ("infra_seg", 11), ("ai_seg", 12),
+        ("game_seg", 11), ("pentest_seg", 7), ("media_seg", 8), ("cse_seg", 5),
+        ("connector_seg", 5), ("apps_seg", 8), ("lan", 20))]
+    + [(f"Credentialed scan: {z}", m) for z, m in (
+        ("connector_seg", 7), ("build_seg", 23), ("cse_seg", 20), ("mgmt_seg (openbao)", 22),
+        ("game_seg", 28), ("apps_seg", 30), ("ai_seg", 40), ("pentest_seg", 41),
+        ("media_seg", 49), ("edge_seg", 50))]
+    + [(f"LAN scan: {z} full-vuln", m) for z, m in (
+        ("build_seg", 7), ("mgmt_seg", 7), ("edge_seg", 7), ("infra_seg", 7), ("ai_seg", 7),
+        ("game_seg", 7), ("pentest_seg", 22), ("media_seg", 7), ("cse_seg", 8),
+        ("connector_seg", 7), ("apps_seg", 7), ("lan", 77))]
+    + [(f"Credentialed scan: {z}", m) for z, m in (
+        ("infra_seg", 78), ("MikroTik router", 72), ("lan", 111), ("mgmt_seg", 190))]
+)
+
+
+def run_all(gmp, start_epoch):
+    """Run RUNALL_ORDER once, one task at a time, optionally waiting until start_epoch."""
+    wait = start_epoch - time.time()
+    if wait > 0:
+        print(f"{time.strftime('%H:%M:%S')} waiting {wait / 60:.0f} min for the start time", flush=True)
+        time.sleep(wait)
+    total0 = time.time()
+    print(f"{time.strftime('%H:%M:%S')} runall begins: {len(RUNALL_ORDER)} tasks, "
+          f"~{sum(m for _, m in RUNALL_ORDER) / 60:.1f} h expected", flush=True)
+    results = []
+    for name, expected in RUNALL_ORDER:
+        limit = min(300, max(45, 2 * expected + 20)) * 60
+        try:
+            t = find(gmp, name)
+            if t is None:
+                print(f"{time.strftime('%H:%M:%S')} SKIP {name}: no such task", flush=True)
+                results.append((name, "missing", 0))
+                continue
+            waited = 0
+            while find(gmp, name)["status"] in BUSY and waited < limit:  # something else started it
+                time.sleep(60)
+                waited += 60
+            if find(gmp, name)["status"] in BUSY:
+                gmp.stop_task(t["id"])
+                time.sleep(60)
+            gmp.start_task(t["id"])
+            t0 = time.time()
+            print(f"{time.strftime('%H:%M:%S')} started {name} (expect ~{expected} min)", flush=True)
+            time.sleep(30)
+            stopped = False
+            while find(gmp, name)["status"] in BUSY:
+                if time.time() - t0 > limit and not stopped:
+                    print(f"{time.strftime('%H:%M:%S')} TIMEOUT {name} after {limit / 60:.0f} min -- stopping it", flush=True)
+                    gmp.stop_task(t["id"])
+                    stopped = True
+                time.sleep(60)
+            status = find(gmp, name)["status"]
+            mins = (time.time() - t0) / 60
+            print(f"{time.strftime('%H:%M:%S')} {name}: {status} in {mins:.0f} min (expected ~{expected})", flush=True)
+            results.append((name, "TIMEOUT-" + status if stopped else status, mins))
+        except Exception as exc:  # keep going with the rest
+            print(f"{time.strftime('%H:%M:%S')} ERROR {name}: {type(exc).__name__}: {exc}", flush=True)
+            results.append((name, "error", 0))
+    print(f"{time.strftime('%H:%M:%S')} runall finished in {(time.time() - total0) / 3600:.1f} h", flush=True)
+    for name, status, mins in results:
+        print(f"  {status:16} {mins:5.0f} min  {name}", flush=True)
 
 
 ALIVE = "ICMP, TCP-ACK Service & ARP Ping"
@@ -478,6 +548,9 @@ def main():
             t = find(gmp, sys.argv[2])
             gmp.modify_task(t["id"], schedule_id="0")
             print(f"removed schedule from {t['name']}")
+            return
+        if mode == "runall":
+            run_all(gmp, float(sys.argv[2]) if len(sys.argv) > 2 else 0)
             return
         if mode == "seq":
             run_sequence(gmp, sys.argv[2:])
