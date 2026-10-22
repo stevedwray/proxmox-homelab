@@ -92,3 +92,6 @@ Grafana/Graylog — **without re-platforming it**.
   volumes still mounted, Docker/node_exporter/rsyslog active, resolver still
   `192.168.1.1`, and two Graylog `source:omada` messages in the last 15
   minutes. Switch Connected state still needs operator UI confirmation.
+- Phase C preparation: `deploy-omada-monitoring.yml` exists locally and passed
+  syntax check. It has not run. The `services/omada` OpenBao fields, switch
+  target list, and monitoring scrape configuration are not yet in place.

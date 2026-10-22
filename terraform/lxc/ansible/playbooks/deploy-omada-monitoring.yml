@@ -1,0 +1,115 @@
+---
+# Omada controller metrics sidecars on CT 114 (192.168.1.252):
+#   omada_exporter  :9202  controller API -> devices, ports, PoE, clients
+#   snmp-exporter   :9116  per-port counters from the TP-Link switches
+# monitoring-stack scrapes both (deploy-monitoring-stack.yml, jobs
+# omada_exporter / snmp_switches). docs/omada-controller/plan.md.
+#
+# Needs OMADA_EXPORTER_USER, OMADA_EXPORTER_PASSWORD and OMADA_SNMP_COMMUNITY
+# (OpenBao services/omada, injected by ./with-secrets-prod).
+#
+# Run (production approval flow):
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook \
+#     -i terraform/lxc/stacks/omada-controller/inventory.yml \
+#     terraform/lxc/ansible/playbooks/deploy-omada-monitoring.yml
+- name: Deploy omada_exporter and snmp-exporter on the Omada controller CT
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    omm_dir: /srv/docker/omada-monitoring
+    omm_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    omm_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ omm_lab_domain, true) }}"
+    omm_exporter_image: "{{ omm_registry_host }}/ghcr/charlie-haley/omada_exporter:0.12.0"
+    omm_snmp_image: "{{ omm_registry_host }}/dockerhub/prom/snmp-exporter:v0.30.1"
+    omm_exporter_user: "{{ lookup('env', 'OMADA_EXPORTER_USER') | mandatory('OMADA_EXPORTER_USER env var is required') }}"
+    omm_exporter_password: "{{ lookup('env', 'OMADA_EXPORTER_PASSWORD') | mandatory('OMADA_EXPORTER_PASSWORD env var is required') }}"
+    omm_snmp_community: "{{ lookup('env', 'OMADA_SNMP_COMMUNITY') | mandatory('OMADA_SNMP_COMMUNITY env var is required') }}"
+
+  tasks:
+    - name: Refuse to deploy without non-empty monitoring credentials
+      ansible.builtin.assert:
+        that:
+          - omm_exporter_user | length > 0
+          - omm_exporter_password | length > 0
+          - omm_snmp_community | length > 0
+        fail_msg: "Omada exporter user, password, and SNMP community must be populated from OpenBao"
+      no_log: true
+
+    - name: Create the sidecar project directory
+      ansible.builtin.file:
+        path: "{{ omm_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Write the exporter credentials env file
+      ansible.builtin.copy:
+        dest: "{{ omm_dir }}/exporter.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          OMADA_USER={{ omm_exporter_user }}
+          OMADA_PASS={{ omm_exporter_password }}
+      no_log: true
+      register: omm_env
+
+    - name: Write the snmp-exporter auth file (merged with the image's built-in modules)
+      ansible.builtin.copy:
+        dest: "{{ omm_dir }}/snmp-auth.yml"
+        owner: root
+        group: nogroup
+        mode: "0640"
+        content: |
+          auths:
+            omada_v2:
+              community: {{ omm_snmp_community | to_json }}
+              version: 2
+      no_log: true
+      register: omm_auth
+
+    - name: Install the sidecar compose project
+      ansible.builtin.copy:
+        dest: "{{ omm_dir }}/compose.yaml"
+        owner: root
+        group: root
+        mode: "0640"
+        content: |
+          services:
+            omada-exporter:
+              image: {{ omm_exporter_image }}
+              container_name: omada-exporter
+              restart: unless-stopped
+              env_file: exporter.env
+              environment:
+                - OMADA_HOST=https://{{ ansible_host }}:8043
+                - OMADA_SITE=Default
+                - OMADA_INSECURE=true
+              ports:
+                - "{{ ansible_host }}:9202:9202"
+            snmp-exporter:
+              image: {{ omm_snmp_image }}
+              container_name: omada-snmp-exporter
+              restart: unless-stopped
+              user: "65534:65534"
+              command:
+                - --config.file=/etc/snmp_exporter/snmp.yml
+                - --config.file=/etc/snmp_exporter/snmp-auth.yml
+              volumes:
+                - ./snmp-auth.yml:/etc/snmp_exporter/snmp-auth.yml:ro
+              ports:
+                - "{{ ansible_host }}:9116:9116"
+      register: omm_compose
+
+    - name: Pull and start the sidecars, recreating them when credentials changed
+      ansible.builtin.command: >-
+        docker compose -f {{ omm_dir }}/compose.yaml up -d --pull missing
+        {{ '--force-recreate' if (omm_env.changed or omm_auth.changed) else '' }}
+      args:
+        chdir: "{{ omm_dir }}"
+      when: not ansible_check_mode

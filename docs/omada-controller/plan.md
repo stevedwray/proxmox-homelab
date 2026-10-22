@@ -494,6 +494,15 @@ change: |
       omm_snmp_community: "{{ lookup('env', 'OMADA_SNMP_COMMUNITY') | mandatory('OMADA_SNMP_COMMUNITY env var is required') }}"
 
     tasks:
+      - name: Refuse to deploy without non-empty monitoring credentials
+        ansible.builtin.assert:
+          that:
+            - omm_exporter_user | length > 0
+            - omm_exporter_password | length > 0
+            - omm_snmp_community | length > 0
+          fail_msg: "Omada exporter user, password, and SNMP community must be populated from OpenBao"
+        no_log: true
+
       - name: Create the sidecar project directory
         ansible.builtin.file:
           path: "{{ omm_dir }}"
@@ -523,7 +532,7 @@ change: |
           content: |
             auths:
               omada_v2:
-                community: "{{ omm_snmp_community }}"
+                community: {{ omm_snmp_community | to_json }}
                 version: 2
         no_log: true
         register: omm_auth
