@@ -11,8 +11,8 @@ switches must keep working throughout (they hold their own config; a
 controller restart of a few minutes does not interrupt switching).
 
 **Everything that touches `pve` is a production mutation** and goes through the
-approval flow in `CLAUDE.md` (Preflight Summary → "Proceed" → `TASK_APPROVAL`
-→ run → After-Action Summary), one approval per phase below. Steps in
+approval flow in `AGENTS.md` (Preflight Summary → "Proceed" → `TASK_APPROVAL`
+→ run → After-Action Summary), one approval per distinct production task. Steps in
 `yaml` blocks are file edits only — local-model work, no deploys. Everything
 else is plain prose for the operator.
 
@@ -34,27 +34,37 @@ Order matters: **C before D** so the exporter is proven on 5.15 first and any
 A1. Branch check: `git branch --show-current` must print
 `work/omada-controller-adoption` before any commit.
 
-A2. SSH preflight (the CT has never been Ansible-managed; root SSH with the
+A2. Give the operator the Phase A preflight summary before any production
+command: target `pve`, CT 114 only; proposed actions are a read-only SSH
+check, optional root public-key installation on CT 114, one PBS `vzdump`
+snapshot, and a controller UI backup/auto-backup setting. No other CT,
+network, Docker, or controller version changes are in scope. After the operator
+approves `omada-safety-net`, set `TASK_APPROVAL=omada-safety-net` for the SSH
+commands below. The production wrapper classifies SSH as ambiguous, including
+read-only SSH, so it requires this approval.
+
+SSH preflight (the CT has never been Ansible-managed; root SSH with the
 lab key is unconfirmed):
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=8 root@192.168.1.252 'hostname && docker ps --format "{{.Names}} {{.Image}}"'
+./with-secrets-prod ssh -o BatchMode=yes -o ConnectTimeout=8 root@192.168.1.252 'hostname && docker ps --format "{{.Names}} {{.Image}}"'
 ```
 
 Expected: `omada-controller`, and `omada-controller mbentley/omada-controller:latest`.
 If it fails with a permission error, install the lab public key from the pve
-node (mutating — needs approval):
-`ssh root@pve.gibbsgreatly.xyz "pct exec 114 -- bash -c 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys'" < ~/.ssh/id_ed25519.pub`
+node (included in the approved Phase A scope). Review the public key before
+running this command; it is appended to CT 114's root account only:
+`./with-secrets-prod ssh root@pve.gibbsgreatly.xyz "pct exec 114 -- bash -c 'umask 077; mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys'" < ~/.ssh/id_ed25519.pub`
 and re-run the check above.
 
 A3. On-demand PBS snapshot of CT 114 (production mutation — approve first):
 
 ```bash
-ssh root@pve.gibbsgreatly.xyz 'vzdump 114 --storage pbs-iscsi --mode snapshot --notes-template "omada pre-adoption"'
+./with-secrets-prod ssh root@pve.gibbsgreatly.xyz 'vzdump 114 --storage pbs-iscsi --mode snapshot --notes-template "omada pre-adoption"'
 ```
 
 Confirm the task ends `OK` and the backup shows in
-`pvesm list pbs-iscsi --vmid 114`.
+`./with-secrets-prod ssh root@pve.gibbsgreatly.xyz 'pvesm list pbs-iscsi --vmid 114'`.
 
 A4. Controller-level backup (UI, cannot be scripted from here): in the Omada
 UI (`https://192.168.1.252:8043`) → Settings → Maintenance → Backup → download
@@ -64,7 +74,9 @@ vzdump then captures. Record in the README: Omada version shown in the UI and
 the two switches' model, firmware, and management IPs (Devices page) —
 needed for step 07.
 
-**Gate to proceed:** A3 snapshot present and A4 `.cfg` file saved.
+**Gate to proceed:** A3 snapshot present and A4 `.cfg` file saved. Report
+the backup identifiers, UI backup location, exact changes, and switch details
+in the after-action summary; record no secret values in Git.
 
 ## Phase B — adopt under IaC
 
@@ -140,19 +152,21 @@ depends_on: [omada-controller-01-stack-files]
 
 change: |
   Create terraform/lxc/ansible/playbooks/deploy-omada-controller.yml with
-  exactly the content below. It reproduces the live compose file byte-for-byte
-  in behaviour (same env, same volumes, same `host` networking), pinned to
-  omada_version, and refuses to run if the data volume is missing or the
-  version is floating. Do NOT add docker_base (it can restart dockerd, and the
-  controller with it). Do NOT rename the compose project or volumes.
+  exactly the content below. Before deployment, compare the rendered compose
+  config and the live container's mounts, environment and networking; stop if
+  they differ beyond the intended image reference. The playbook pins
+  omada_version and refuses to run if the data volume is missing or the
+  version is floating. Do NOT add docker_base. Do NOT rename the compose
+  project or volumes. lxc_base can itself restart dockerd after a CA update,
+  so its changes must be reviewed in check mode.
 
   ---
   # Adopts the hand-built Omada controller CT (VMID 114, 192.168.1.252) into the
   # lab's Ansible flow. See docs/omada-controller/plan.md.
   #
   # Deliberately NOT included: docker_base (Docker is already installed and
-  # configured on this CT; re-running the role could restart dockerd and with it
-  # the controller). The compose project name (`omada`) and volume names
+  # configured on this CT). lxc_base can still restart dockerd if it updates
+  # the root CA. The compose project name (`omada`) and volume names
   # (omada_omada-data, omada_omada-logs) must stay exactly as they are -- they
   # hold the controller database and every switch's configuration.
   #
@@ -167,10 +181,7 @@ change: |
       omada_compose_dir: /srv/docker/omada
       omada_image: "mbentley/omada-controller:{{ omada_version }}"
 
-    roles:
-      - lxc_base
-
-    tasks:
+    pre_tasks:
       - name: Refuse to run without a pinned, non-floating version
         ansible.builtin.assert:
           that:
@@ -181,6 +192,11 @@ change: |
       - name: Refuse to run if the controller data volume is missing (would create a blank controller)
         ansible.builtin.command: docker volume inspect omada_omada-data
         changed_when: false
+
+    roles:
+      - lxc_base
+
+    tasks:
 
       - name: Ensure the compose project directory exists
         ansible.builtin.file:
@@ -307,8 +323,20 @@ gates:
 
 ### Phase B deploy (operator, prose — production mutation)
 
-B1. Syntax + check mode first (read-only against the CT; the wrapper still
-classifies `ansible-playbook` as mutating, so this needs approval too):
+B1. Use the approved Phase A inspection to record the live compose
+configuration and container mounts, image digest, environment and networking;
+compare them against the proposed file before requesting Phase B approval.
+If more live inspection is needed, include it in the Phase B preflight and
+run it only after approval.
+Confirm `omada_omada-data` is mounted at
+`/opt/tplink/EAPController/data`, the pinned 5.15.24.19 image exists, and
+the controller backup from Phase A can be retrieved. Report the planned
+`lxc_base` changes explicitly: DNS, apt configuration, CA trust, node_exporter,
+and rsyslog. A CA update can restart dockerd and interrupt the controller.
+Target is `pve`, CT 114; no other CT or volume changes are approved.
+
+After approval, run syntax check and check mode first. The wrapper classifies
+Ansible as mutating even in check mode:
 
 ```bash
 export TASK_APPROVAL=omada-controller-adopt
@@ -328,8 +356,10 @@ export TASK_APPROVAL=omada-controller-adopt
 ./with-secrets-prod scripts/provision.sh --stack omada-controller
 ```
 
-The container is recreated once (pinned tag, same software). Expect the
-Omada UI to be unavailable for roughly 2–5 minutes. Switches keep forwarding.
+The controller may restart because of the pinned image reference and/or a CA
+refresh. Expect the Omada UI to be unavailable for roughly 2–5 minutes;
+confirm the actual image digest and controller version after deployment.
+Switches should keep forwarding.
 
 B3. Verify:
 - `curl -sk -o /dev/null -w '%{http_code}\n' https://192.168.1.252:8043/` → `200`
@@ -338,11 +368,12 @@ B3. Verify:
 - `ssh root@192.168.1.252 'systemctl is-active prometheus-node-exporter'` → `active`
 - Graylog: search `source:omada` over the last 15 minutes returns messages.
 
-If either switch shows Disconnected for >10 minutes: roll back with
-`ssh root@192.168.1.252 'cp /srv/docker/omada/docker-compose.yaml.* /tmp/ && ls /tmp/docker-compose.yaml.*'`
-(Ansible's `backup: true` keeps the previous file), restore it over
-`docker-compose.yaml`, run `docker compose up -d` there, and stop for review.
-The A3 PBS snapshot is the last-resort restore.
+If either switch shows Disconnected for >10 minutes, stop and inspect logs.
+For a compose-only regression, identify the exact Ansible backup file made by
+`backup: true`, restore it to `docker-compose.yaml`, then run
+`docker compose up -d` under the production approval flow. Never copy a
+wildcard backup or guess which file to restore. If the data volume changed,
+use the A3 PBS snapshot as the rollback source under a separate approval.
 
 ## Phase C — monitoring
 
@@ -356,23 +387,25 @@ credentials on every scrape cycle; do not enable MFA on it.
 C2. Enable SNMP for the switches. In the Omada UI this is a site-level
 setting (wording and location vary by controller version — search the site
 settings for "SNMP"). Use **v2c** with a read-only community unique to this
-purpose; restrict allowed sources to `192.168.40.0/24` (monitoring-stack is
-in `infra_seg`) if the setting exposes that. If the switches only offer v3,
+purpose; restrict allowed sources to `192.168.1.252` (the exporter runs on
+CT 114, so this is the source the switches see) if the setting exposes that.
+If the switches only offer v3,
 stop and tell the planner — the auth block in step 04 must change.
 
 C3. Store the three secrets — the human, via OIDC login (agents never write
 OpenBao):
 
 ```bash
-bao login -method=oidc -no-store
-scripts/openbao_write.py services/omada OMADA_EXPORTER_USER exporter
-scripts/openbao_write.py services/omada OMADA_EXPORTER_PASSWORD '<password>'
-scripts/openbao_write.py services/omada OMADA_SNMP_COMMUNITY '<community>'
+export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
+LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/omada OMADA_EXPORTER_USER OMADA_EXPORTER_PASSWORD OMADA_SNMP_COMMUNITY
+unset BAO_TOKEN
 ```
 
-(Check `scripts/openbao_write.py --help` first for the exact argument form;
-`docs/reference/secrets-management.md` is authoritative.) Secret values are
-never written into files or chat.
+The helper prompts privately for all three values and writes one KV version.
+Set the first value to `exporter`. `docs/reference/secrets-management.md` is
+authoritative. Do not put secret values in command arguments, local scratch
+files, or chat text; the deployment later writes protected files on CT 114.
 
 ### omada-controller-04-secrets-manifest
 
@@ -476,8 +509,8 @@ change: |
         ansible.builtin.copy:
           dest: "{{ omm_dir }}/snmp-auth.yml"
           owner: root
-          group: root
-          mode: "0644"
+          group: nogroup
+          mode: "0640"
           content: |
             auths:
               omada_v2:
@@ -509,6 +542,7 @@ change: |
                 image: {{ omm_snmp_image }}
                 container_name: omada-snmp-exporter
                 restart: unless-stopped
+                user: "65534:65534"
                 command:
                   - --config.file=/etc/snmp_exporter/snmp.yml
                   - --config.file=/etc/snmp_exporter/snmp-auth.yml
@@ -518,17 +552,13 @@ change: |
                   - "{{ ansible_host }}:9116:9116"
         register: omm_compose
 
-      - name: Pull and start the sidecars
-        ansible.builtin.command: docker compose -f {{ omm_dir }}/compose.yaml up -d --pull missing
+      - name: Pull and start the sidecars, recreating them when credentials changed
+        ansible.builtin.command: >-
+          docker compose -f {{ omm_dir }}/compose.yaml up -d --pull missing
+          {{ '--force-recreate' if (omm_env.changed or omm_auth.changed) else '' }}
         args:
           chdir: "{{ omm_dir }}"
         when: not ansible_check_mode
-
-      - name: Restart the sidecars when credentials changed
-        ansible.builtin.command: docker compose -f {{ omm_dir }}/compose.yaml restart
-        args:
-          chdir: "{{ omm_dir }}"
-        when: not ansible_check_mode and (omm_env.changed or omm_auth.changed) and not omm_compose.changed
 
   (The file starts with the three-dash line.)
 
@@ -696,9 +726,10 @@ Verify from the CT: `curl -s 127.0.0.1:9202/metrics | head` shows `omada_*`
 series (no login error); `curl -s "127.0.0.1:9116/snmp?module=if_mib&auth=omada_v2&target=<switch-ip>" | head`
 shows `ifHCInOctets`. **If the exporter logs a login/parse error:** record it,
 leave the sidecar running, and stop — do not work around it in this plan. If
-the first Harbor pull of `ghcr/…` or `dockerhub/…` fails (the Harbor project
-may need to exist/warm up), `docker pull` it once manually from the CT and
-re-run; do not switch the playbook to Docker Hub/GHCR directly.
+the first Harbor pull of `ghcr/…` or `dockerhub/…` fails, stop and diagnose
+the proxy-cache project. Any manual pull from the CT is a separate production
+task requiring its own preflight and approval. Do not switch the playbook to
+Docker Hub/GHCR directly.
 
 C5. Redeploy monitoring-stack (regenerates the scrape config):
 
@@ -727,13 +758,20 @@ Do not start until Phase C is verified and a fresh A3/A4 backup pair exists
 (redo both — the controller database changes across major versions and a
 5.x controller **cannot** import a 6.x backup).
 
-D1. Decide the target. Candidates (Docker Hub tags, checked 2026-10-23):
-`6.0.0.25`, `6.1.0.19`, `6.2.14.11` (newest stable). TP-Link's advisories
-name **6.3.0.45** as fixed, but Docker Hub only has 6.3 as `beta-*` — re-check
-for a stable `6.3.x` tag first:
+D1. Decide the target. On 2026-10-23 Docker Hub listed the stable, exact
+`mbentley/omada-controller:6.3.0.45` tag, alongside 6.0.0.25, 6.1.0.19,
+and 6.2.14.11. TP-Link identifies 6.3.0.45 as fixed for
+CVE-2026-81531 on Linux and Windows. Its advisories for CVE-2026-107795
+and CVE-2026-102298 specifically name Windows; do not assume they apply to
+this Linux controller. Re-check the stable tag and TP-Link advisories at
+execution time:
 ```bash
 curl -s 'https://hub.docker.com/v2/repositories/mbentley/omada-controller/tags?page_size=100&name=6.3' | python3 -c "import sys,json; print([t['name'] for t in json.load(sys.stdin)['results'] if not t['name'].startswith('beta')])"
 ```
+Sources: [Docker Hub tags](https://hub.docker.com/r/mbentley/omada-controller/tags),
+[CVE-2026-81531 advisory](https://support.omadanetworks.com/ro/document/133567/),
+[CVE-2026-107795 advisory](https://support.omadanetworks.com/hk/document/136188/),
+[CVE-2026-102298 advisory](https://support.omadanetworks.com/us/document/136187/).
 Read TP-Link's release notes for the target and the intermediate versions:
 confirm 5.15 → target is a supported direct upgrade (if not, step through the
 intermediate tags one at a time), and that the two switches' **firmware is

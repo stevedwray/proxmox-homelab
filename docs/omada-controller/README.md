@@ -36,14 +36,15 @@ Grafana/Graylog — **without re-platforming it**.
 
 ## Findings that shape the plan
 
-- The controller is on 5.15.24.19. TP-Link's 2026 advisories (CVE-2026-81531,
-  -107795, -102298) list **6.3.0.45** as the fixed software-controller build;
-  Docker Hub currently has `6.3.x` only as `beta-*`. Newest stable image tag:
-  `6.2.14.11`. Version pages conflict across revisions — re-verify before
-  acting. Upgrade is Phase D.
+- The controller is on 5.15.24.19. TP-Link lists **6.3.0.45** as the fixed
+  Linux and Windows build for CVE-2026-81531. Its 2026-10 advisories for
+  CVE-2026-107795 and CVE-2026-102298 name Windows specifically. On
+  2026-10-23 Docker Hub listed stable `mbentley/omada-controller:6.3.0.45`.
+  Re-verify the exact tag, release notes, affected platforms, upgrade path,
+  and switch firmware compatibility before Phase D.
 - `omada_exporter` 0.12.0's README does not state Omada 6.x compatibility.
-  Phase C therefore deploys it on 5.15 first (known-good) so any 6.x breakage
-  is visible and attributable to the upgrade.
+  Phase C therefore tests it on 5.15 first, establishing a working baseline
+  before any 6.x upgrade.
 
 ## Hand-backs
 
