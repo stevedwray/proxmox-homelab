@@ -1,8 +1,9 @@
 # omada-controller (planning workspace)
 
 Status: **Phase A in progress; PBS safety snapshot complete and a controller
-UI backup verified locally. NAS copy, Auto Backup, and switch details remain
-unconfirmed. No controller deployment or configuration change applied.**
+UI backup verified locally. NAS copy and switch details remain unconfirmed;
+weekly Auto Backup is not yet enabled. No controller deployment or
+configuration change applied.**
 Plan: [plan.md](plan.md). Branch:
 `work/omada-controller-adoption`.
 
@@ -21,7 +22,7 @@ Grafana/Graylog — **without re-platforming it**.
 | Database | MongoDB bundled in the controller image (127.0.0.1:27217); the controller is one service |
 | Other | Portainer agent on :9001; 38 wired clients, 0 wireless |
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
-| Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy and weekly Auto Backup unconfirmed |
+| Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
 | Missing | node_exporter, any metrics, stack dir / inventory / playbook, secrets entry, version pin |
 | DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
 | Scans | Already in GVM `EXTRA_HOSTS`; no Wazuh agent |
@@ -59,5 +60,5 @@ Grafana/Graylog — **without re-platforming it**.
   host networking, and mounts
   `omada_omada-data:/opt/tplink/EAPController/data` and
   `omada_omada-logs:/opt/tplink/EAPController/logs`.
-- Phase A gate still open: copy the verified `.cfg` export to NAS, confirm
+- Phase A gate still open: copy the verified `.cfg` export to NAS, enable
   weekly Auto Backup, and record each switch's model/firmware/management IP.
