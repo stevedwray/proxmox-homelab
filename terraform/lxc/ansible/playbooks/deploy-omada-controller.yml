@@ -18,6 +18,16 @@
   vars:
     omada_compose_dir: /srv/docker/omada
     omada_image: "mbentley/omada-controller:{{ omada_version }}"
+    # Controller UI TLS: a step-ca cert (SANs: lab FQDN + IP) so Traefik can
+    # verify the backend via its global serversTransport.rootCAs. The image reads
+    # a full-chain /cert/tls.crt + /cert/tls.key at container start; renewal
+    # therefore needs a container restart, so use the 90d maximum (renew at <15d).
+    omada_cert_dir: "{{ omada_compose_dir }}/cert"
+    omada_fqdn: "omada.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    omada_root_ca: /usr/local/share/ca-certificates/homelab-root.crt
+    omada_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
+    omada_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
+    omada_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is required') }}"
     # Wazuh agent (docs/omada-controller/plan.md). Groups are zone names; the
     # flat LAN has none, so `lan` (the zone name the GVM scan config uses).
     wazuh_agent_group: lan
@@ -78,6 +88,106 @@
         group: root
         mode: "0755"
 
+    # ---- Controller UI TLS (step-ca) ----------------------------------------
+    - name: Ensure the controller TLS directory exists
+      ansible.builtin.file:
+        path: "{{ omada_cert_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      tags: [omada_tls]
+
+    - name: Check the current controller TLS certificate
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [[ -s "{{ omada_cert_dir }}/leaf.crt" && -s "{{ omada_cert_dir }}/tls.key" ]] \
+           && openssl x509 -checkend 1296000 -noout -in "{{ omada_cert_dir }}/leaf.crt" >/dev/null 2>&1; then
+          echo valid
+        else
+          echo issue
+        fi
+      args:
+        executable: /bin/bash
+      register: omada_tls_state
+      changed_when: false
+      tags: [omada_tls]
+
+    - name: Issue the controller TLS certificate from step-ca
+      when: omada_tls_state.stdout == 'issue'
+      tags: [omada_tls]
+      block:
+        - name: Write temporary step-ca provisioner password file
+          ansible.builtin.copy:
+            dest: /root/.omada-step-provisioner-password
+            content: "{{ omada_step_ca_provisioner_password }}\n"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+
+        - name: Request certificate with FQDN and IP SANs
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/step
+              - ca
+              - certificate
+              - "{{ omada_fqdn }}"
+              - "{{ omada_cert_dir }}/leaf.crt"
+              - "{{ omada_cert_dir }}/tls.key"
+              - --san
+              - "{{ omada_fqdn }}"
+              - --san
+              - "{{ ansible_host }}"
+              - --ca-url
+              - "{{ omada_step_ca_url }}"
+              - --root
+              - "{{ omada_root_ca }}"
+              - --provisioner
+              - "{{ omada_step_ca_provisioner }}"
+              - --provisioner-password-file
+              - /root/.omada-step-provisioner-password
+              - --not-after
+              - 2160h
+              - --force
+          changed_when: true
+      always:
+        - name: Remove temporary step-ca provisioner password file
+          ansible.builtin.file:
+            path: /root/.omada-step-provisioner-password
+            state: absent
+
+    - name: Assemble the full-chain tls.crt (leaf + intermediate, then the root)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat "{{ omada_cert_dir }}/leaf.crt" "{{ omada_root_ca }}" > "{{ omada_cert_dir }}/tls.crt.new"
+        if cmp -s "{{ omada_cert_dir }}/tls.crt.new" "{{ omada_cert_dir }}/tls.crt" 2>/dev/null; then
+          rm -f "{{ omada_cert_dir }}/tls.crt.new"
+          echo same
+        else
+          mv -f "{{ omada_cert_dir }}/tls.crt.new" "{{ omada_cert_dir }}/tls.crt"
+          echo updated
+        fi
+      args:
+        executable: /bin/bash
+      register: omada_tls_assemble
+      changed_when: omada_tls_assemble.stdout == 'updated'
+      when: not ansible_check_mode
+      tags: [omada_tls]
+
+    - name: Set controller TLS file modes
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ omada_cert_dir }}/leaf.crt", mode: "0644" }
+        - { path: "{{ omada_cert_dir }}/tls.crt", mode: "0644" }
+        - { path: "{{ omada_cert_dir }}/tls.key", mode: "0600" }
+      when: not ansible_check_mode
+      tags: [omada_tls]
+
     - name: Install the pinned compose file
       ansible.builtin.copy:
         dest: "{{ omada_compose_dir }}/docker-compose.yaml"
@@ -109,6 +219,7 @@
               volumes:
                 - omada-data:/opt/tplink/EAPController/data
                 - omada-logs:/opt/tplink/EAPController/logs
+                - ./cert:/cert:ro
           volumes:
             omada-data:
             omada-logs:
@@ -119,6 +230,85 @@
       args:
         chdir: "{{ omada_compose_dir }}"
       when: omada_compose.changed
+
+    - name: Restart the controller to load a changed certificate (compose already did if it recreated)
+      ansible.builtin.command: docker compose -f {{ omada_compose_dir }}/docker-compose.yaml restart omada-controller
+      args:
+        chdir: "{{ omada_compose_dir }}"
+      when:
+        - not ansible_check_mode
+        - omada_tls_assemble.changed | default(false)
+        - not omada_compose.changed
+      tags: [omada_tls]
+
+    - name: Write the controller TLS renewal script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/omada-tls-renew.sh
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          # Renew the controller UI cert via mTLS with the existing cert (no
+          # provisioner password stays on this host), rebuild the full chain, and
+          # restart the controller -- the image only reads /cert at start.
+          set -euo pipefail
+          DIR="{{ omada_cert_dir }}"
+          if openssl x509 -checkend 1296000 -noout -in "${DIR}/leaf.crt" >/dev/null 2>&1; then
+            echo "omada TLS cert valid for >15d, nothing to do"
+            exit 0
+          fi
+          /usr/local/bin/step ca renew --force \
+            --ca-url "{{ omada_step_ca_url }}" \
+            --root "{{ omada_root_ca }}" \
+            "${DIR}/leaf.crt" "${DIR}/tls.key"
+          cat "${DIR}/leaf.crt" "{{ omada_root_ca }}" > "${DIR}/tls.crt"
+          chmod 0644 "${DIR}/leaf.crt" "${DIR}/tls.crt"
+          chmod 0600 "${DIR}/tls.key"
+          docker compose -f {{ omada_compose_dir }}/docker-compose.yaml restart omada-controller
+          echo "omada TLS cert renewed; controller restarted"
+      tags: [omada_tls]
+
+    - name: Write the controller TLS renewal service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: "{{ item.content }}"
+      loop:
+        - name: omada-tls-renew.service
+          content: |
+            [Unit]
+            Description=Renew the Omada controller UI TLS certificate from step-ca
+            After=network-online.target docker.service
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/sbin/omada-tls-renew.sh
+        - name: omada-tls-renew.timer
+          content: |
+            [Unit]
+            Description=Daily check of the Omada controller UI TLS certificate
+
+            [Timer]
+            OnCalendar=*-*-* 03:20:00
+            RandomizedDelaySec=20m
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      tags: [omada_tls]
+
+    - name: Enable the controller TLS renewal timer
+      ansible.builtin.systemd:
+        name: omada-tls-renew.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+      tags: [omada_tls]
 
     - name: Wait for the controller management port
       ansible.builtin.wait_for:

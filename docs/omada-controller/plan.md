@@ -882,6 +882,68 @@ flag is intentionally per-run. Do not leave it set in any wrapper or env file.)
   PBS snapshot (replaces the whole CT — get operator confirmation first), then
   re-run `scripts/provision.sh --stack omada-controller` with the old pin.
 
+## Phase F — move `omada.*` from NPM to Traefik
+
+Decisions (operator, 2026-10-23): hostname `omada.lab.gibbsgreatly.xyz`; auth
+`none` (Omada has no OIDC/SAML — controller's own login, as today). The old
+`omada.gibbsgreatly.xyz` stays on NPM (management-stack) until that stack is
+retired; remove its MikroTik record then.
+
+**Findings that shaped it** (read-only, 2026-10-23)
+- The lab Traefik (`proxy-stack`, `192.168.30.10`, `edge_seg`) already reaches
+  `192.168.1.252:8043` — **no MikroTik change needed**.
+- Traefik cannot skip backend TLS verification, but it has a global
+  `serversTransport.rootCAs` (system CAs + homelab step-ca root), so an HTTPS
+  backend with a **step-ca-issued** cert verifies. Precedent: the OpenBao route
+  (`url: https://${LAB_IP_OPENBAO}:8200`). So the controller gets a step-ca cert
+  rather than a plain-HTTP side door (a cleartext admin-login hop on the LAN).
+- The controller is on TP-Link's default self-signed cert (never UI-installed),
+  so the image's `/cert/tls.crt` + `/cert/tls.key` mount method works. It only
+  reads them at container start → renewal = restart. Hence 90-day certs
+  (`--not-after 2160h`, the step-ca max here) with a daily timer that renews at
+  <15 days left (≈ one 1–2 min restart per ~75 days, ~03:20). OpenBao uses 30d
+  certs, which would mean a restart every ~15 days.
+- `edge.yaml` publishing is three separate steps (docs/design/lessons-learned.md):
+  render (`reconcile-edge.py`), push Traefik config (`deploy-proxy-stack.yml`),
+  publish DNS (`provision.sh --stack technitium-stack`). The Traefik push only
+  copies files into the dynamic dir (no purge), so push **only** the new
+  `omada-controller.yml` from its own directory to avoid republishing a stale
+  `.generated` set. The Technitium push regenerates records from *all*
+  manifests; checked: this branch's only other edge difference vs `stable`
+  (cse-panel-stack) is already live in Technitium, so it adds just the Omada record.
+
+**Code (in repo):** `deploy-omada-controller.yml` (step-ca cert issue + chain
+assembly + `/cert` mount + restart-on-change + `omada-tls-renew` timer, tag
+`omada_tls`) and `terraform/lxc/stacks/omada-controller/edge.yaml` (route `omada`
+→ `https://192.168.1.252:8043`). Validated: syntax-check; rendered scripts pass
+`bash -n`; all 23 EdgeManifests validate; rendered Traefik config has no
+router/service name collisions.
+
+### F1 — controller certificate (production; controller restarts ~2 min)
+
+```bash
+export TASK_APPROVAL=omada-controller-tls
+./with-secrets-prod scripts/provision.sh --stack omada-controller
+```
+
+Verify: `echo | openssl s_client -connect 192.168.1.252:8043 2>/dev/null | openssl x509 -noout -issuer -ext subjectAltName`
+(issuer = the homelab CA; SANs = `omada.lab.gibbsgreatly.xyz` + `192.168.1.252`);
+`curl --cacert certs/homelab-root.crt -o /dev/null -w '%{http_code}\n' https://192.168.1.252:8043/` → 200;
+both switches Connected; `omada_exporter` still returns series; the NPM route
+(`omada.gibbsgreatly.xyz`) still works (NPM doesn't verify the backend).
+Rollback: remove the `./cert:/cert:ro` volume line and re-run — the container
+falls back to its self-signed cert.
+
+### F2 — Traefik route + DNS (production)
+
+Render only the Omada manifest into its own directory, push just that file,
+then publish DNS (see the findings above for why). Exact commands and approvals
+are given at execution time; verify with
+`dig +short omada.lab.gibbsgreatly.xyz @192.168.20.15` → `192.168.30.10` and
+`curl -s -o /dev/null -w '%{http_code}\n' https://omada.lab.gibbsgreatly.xyz/` → 200
+with a valid Let's Encrypt cert (Traefik's `letsencrypt` resolver issues it on
+first request), then log in through it.
+
 ## Phase E — closeout
 
 - Update `docs/omada-controller/README.md`: live state, hand-backs, version history.
