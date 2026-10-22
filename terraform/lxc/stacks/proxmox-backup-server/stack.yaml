@@ -1,0 +1,4 @@
+hostname: proxmox-backup-server
+ip_address: "192.168.1.12"
+dns_server: "192.168.1.1"
+vmid: 105

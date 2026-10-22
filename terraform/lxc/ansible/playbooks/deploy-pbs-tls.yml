@@ -1,0 +1,268 @@
+---
+# Give the Proxmox Backup Server web UI/API a step-ca certificate so Traefik
+# can route to it (replacing the legacy NPM route pbs.gibbsgreatly.xyz).
+# docs/npm-retirement/plan.md Part 2.
+#
+# DANGER: this REPLACES the PBS proxy certificate. `pve` and `pve-tiny` pin the
+# OLD certificate's fingerprint on their `pbs-iscsi` storage, so every backup
+# from both nodes fails until their pin is removed (switching them to
+# CA-validation, which survives renewals). Follow the plan's ordering exactly;
+# do not run outside a backup-free window.
+#
+# Not included: lxc_base/docker_base/Wazuh (CT 105 is a hand-built legacy CT;
+# this playbook touches only the PBS proxy cert, the step CLI and a timer).
+#
+# Run (production approval flow; from repo root):
+#   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook \
+#     -i terraform/lxc/stacks/proxmox-backup-server/inventory.yml \
+#     terraform/lxc/ansible/playbooks/deploy-pbs-tls.yml [-e pbs_tls_install=true]
+# Without -e pbs_tls_install=true it only prepares (step CLI, root CA, issues the
+# certificate into /root/pbs-tls) and does NOT touch the live proxy cert.
+- name: Issue and install the PBS step-ca certificate
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    pbs_tls_install: false
+    pbs_tls_dir: /root/pbs-tls
+    pbs_conf_dir: /etc/proxmox-backup
+    pbs_ip: "{{ ansible_host }}"
+    pbs_fqdn: "pbs.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    pbs_root_ca: /usr/local/share/ca-certificates/homelab-root.crt
+    pbs_step_version: "0.30.2"
+    pbs_step_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+    pbs_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
+    pbs_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
+    pbs_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is required') }}"
+
+  tasks:
+    - name: Check whether the step CLI is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/step
+      register: pbs_step_stat
+
+    - name: Install the step CLI
+      when: not pbs_step_stat.stat.exists
+      block:
+        - name: Download the step CLI release archive
+          ansible.builtin.get_url:
+            url: "https://github.com/smallstep/cli/releases/download/v{{ pbs_step_version }}/step_linux_{{ pbs_step_version }}_{{ pbs_step_arch }}.tar.gz"
+            dest: "/tmp/step_linux_{{ pbs_step_version }}_{{ pbs_step_arch }}.tar.gz"
+            mode: "0600"
+        - name: Extract the step CLI archive
+          ansible.builtin.unarchive:
+            src: "/tmp/step_linux_{{ pbs_step_version }}_{{ pbs_step_arch }}.tar.gz"
+            dest: /tmp
+            remote_src: true
+        - name: Install the step CLI binary
+          ansible.builtin.copy:
+            src: "/tmp/step_{{ pbs_step_version }}/bin/step"
+            dest: /usr/local/bin/step
+            mode: "0755"  # nosonar: ansible:S2612 -- shared system binary in /usr/local/bin
+            remote_src: true
+      always:
+        - name: Remove the step CLI download leftovers
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "/tmp/step_linux_{{ pbs_step_version }}_{{ pbs_step_arch }}.tar.gz"
+            - "/tmp/step_{{ pbs_step_version }}"
+
+    - name: Install the homelab root CA on the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+        dest: "{{ pbs_root_ca }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: pbs_root_ca_installed
+
+    - name: Refresh the CA trust store
+      ansible.builtin.command: update-ca-certificates
+      when: pbs_root_ca_installed.changed
+      changed_when: true
+
+    - name: Ensure the TLS working directory exists
+      ansible.builtin.file:
+        path: "{{ pbs_tls_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Check the prepared PBS certificate
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [[ -s "{{ pbs_tls_dir }}/leaf.crt" && -s "{{ pbs_tls_dir }}/leaf.key" ]] \
+           && openssl x509 -checkend 1296000 -noout -in "{{ pbs_tls_dir }}/leaf.crt" >/dev/null 2>&1; then
+          echo valid
+        else
+          echo issue
+        fi
+      args:
+        executable: /bin/bash
+      register: pbs_tls_state
+      changed_when: false
+
+    - name: Issue the PBS certificate from step-ca
+      when: pbs_tls_state.stdout == 'issue'
+      block:
+        - name: Write temporary step-ca provisioner password file
+          ansible.builtin.copy:
+            dest: /root/.pbs-step-provisioner-password
+            content: "{{ pbs_step_ca_provisioner_password }}\n"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+        - name: Request certificate with FQDN and IP SANs
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/step
+              - ca
+              - certificate
+              - "{{ pbs_fqdn }}"
+              - "{{ pbs_tls_dir }}/leaf.crt"
+              - "{{ pbs_tls_dir }}/leaf.key"
+              - --san
+              - "{{ pbs_fqdn }}"
+              - --san
+              - "{{ pbs_ip }}"
+              - --san
+              - proxmox-backup.gibbsgreatly.xyz
+              - --san
+              - proxmox-backup-server
+              - --ca-url
+              - "{{ pbs_step_ca_url }}"
+              - --root
+              - "{{ pbs_root_ca }}"
+              - --provisioner
+              - "{{ pbs_step_ca_provisioner }}"
+              - --provisioner-password-file
+              - /root/.pbs-step-provisioner-password
+              - --not-after
+              - 2160h
+              - --force
+          changed_when: true
+      always:
+        - name: Remove temporary step-ca provisioner password file
+          ansible.builtin.file:
+            path: /root/.pbs-step-provisioner-password
+            state: absent
+
+    - name: Report the new certificate fingerprint (for the rollback record only)
+      ansible.builtin.command: openssl x509 -in {{ pbs_tls_dir }}/leaf.crt -noout -fingerprint -sha256
+      register: pbs_new_fp
+      changed_when: false
+
+    - name: Show the prepared certificate
+      ansible.builtin.debug:
+        msg: "Prepared {{ pbs_new_fp.stdout }} (install requested: {{ pbs_tls_install | bool }})"
+
+    # ---- install: ONLY with -e pbs_tls_install=true ------------------------
+    - name: Keep the stock self-signed PBS certificate and key (once)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cp -p "{{ pbs_conf_dir }}/proxy.pem" "{{ pbs_conf_dir }}/proxy.pem.selfsigned"
+        cp -p "{{ pbs_conf_dir }}/proxy.key" "{{ pbs_conf_dir }}/proxy.key.selfsigned"
+      args:
+        executable: /bin/bash
+        creates: "{{ pbs_conf_dir }}/proxy.pem.selfsigned"
+      when: pbs_tls_install | bool
+
+    - name: Install the full-chain cert and key and restart the PBS proxy
+      ansible.builtin.shell: |
+        set -euo pipefail
+        D="{{ pbs_conf_dir }}"
+        cat "{{ pbs_tls_dir }}/leaf.crt" "{{ pbs_root_ca }}" > "${D}/proxy.pem.new"
+        cp "{{ pbs_tls_dir }}/leaf.key" "${D}/proxy.key.new"
+        if cmp -s "${D}/proxy.pem.new" "${D}/proxy.pem" && cmp -s "${D}/proxy.key.new" "${D}/proxy.key"; then
+          rm -f "${D}/proxy.pem.new" "${D}/proxy.key.new"
+          echo same
+        else
+          chown root:backup "${D}/proxy.pem.new" "${D}/proxy.key.new"
+          chmod 0640 "${D}/proxy.pem.new" "${D}/proxy.key.new"
+          mv -f "${D}/proxy.pem.new" "${D}/proxy.pem"
+          mv -f "${D}/proxy.key.new" "${D}/proxy.key"
+          systemctl restart proxmox-backup-proxy
+          echo updated
+        fi
+      args:
+        executable: /bin/bash
+      register: pbs_tls_installed
+      changed_when: pbs_tls_installed.stdout == 'updated'
+      when: pbs_tls_install | bool
+
+    - name: Write the PBS certificate renewal script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/pbs-tls-renew.sh
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          # Renew the PBS cert via mTLS with the existing cert (no provisioner
+          # password stays on this host), reinstall it, restart the PBS proxy.
+          # pve/pve-tiny validate via the homelab CA (no pinned fingerprint), so
+          # a renewal needs no change on the clients.
+          set -euo pipefail
+          T="{{ pbs_tls_dir }}"
+          D="{{ pbs_conf_dir }}"
+          if openssl x509 -checkend 1296000 -noout -in "${T}/leaf.crt" >/dev/null 2>&1; then
+            echo "pbs TLS cert valid for >15d, nothing to do"
+            exit 0
+          fi
+          /usr/local/bin/step ca renew --force \
+            --ca-url "{{ pbs_step_ca_url }}" \
+            --root "{{ pbs_root_ca }}" \
+            "${T}/leaf.crt" "${T}/leaf.key"
+          cat "${T}/leaf.crt" "{{ pbs_root_ca }}" > "${D}/proxy.pem"
+          cp "${T}/leaf.key" "${D}/proxy.key"
+          chown root:backup "${D}/proxy.pem" "${D}/proxy.key"
+          chmod 0640 "${D}/proxy.pem" "${D}/proxy.key"
+          systemctl restart proxmox-backup-proxy
+          echo "pbs TLS cert renewed; proxy restarted"
+      when: pbs_tls_install | bool
+
+    - name: Write the renewal service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: "{{ item.content }}"
+      loop:
+        - name: pbs-tls-renew.service
+          content: |
+            [Unit]
+            Description=Renew the PBS web UI TLS certificate from step-ca
+            After=network-online.target proxmox-backup-proxy.service
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/sbin/pbs-tls-renew.sh
+        - name: pbs-tls-renew.timer
+          content: |
+            [Unit]
+            Description=Daily check of the PBS web UI TLS certificate
+
+            [Timer]
+            OnCalendar=*-*-* 03:40:00
+            RandomizedDelaySec=20m
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      when: pbs_tls_install | bool
+
+    - name: Enable the renewal timer
+      ansible.builtin.systemd:
+        name: pbs-tls-renew.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: pbs_tls_install | bool
