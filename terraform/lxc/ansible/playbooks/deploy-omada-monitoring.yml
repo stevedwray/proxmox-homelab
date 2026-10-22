@@ -71,7 +71,7 @@
               env_file: exporter.env
               environment:
                 - OMADA_HOST=https://{{ ansible_host }}:8043
-                - OMADA_SITE=Default
+                - OMADA_SITE={{ omada_site }}
                 - OMADA_INSECURE=true
               ports:
                 - "{{ ansible_host }}:9202:9202"

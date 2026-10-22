@@ -14,3 +14,4 @@ all:
           pve_host: pve.gibbsgreatly.xyz
           dns_server: 192.168.1.1
           omada_version: "5.15.24.19"
+            omada_site: homelab
