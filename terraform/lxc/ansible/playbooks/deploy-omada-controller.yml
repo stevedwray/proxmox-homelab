@@ -18,6 +18,17 @@
   vars:
     omada_compose_dir: /srv/docker/omada
     omada_image: "mbentley/omada-controller:{{ omada_version }}"
+    # Wazuh agent (docs/omada-controller/plan.md). Groups are zone names; the
+    # flat LAN has none, so `lan` (the zone name the GVM scan config uses).
+    wazuh_agent_group: lan
+    # Accepts docker.sock access for the wazuh user (root-equivalent on this CT)
+    # for container start/stop/die events -- same tradeoff as newt-connector;
+    # the CT is unprivileged and the Portainer agent already holds the socket.
+    wazuh_agent_docker_monitoring_enabled: true
+    # Compose files only; deliberately not exporter.env (credentials).
+    wazuh_agent_fim_paths:
+      - /srv/docker/omada/docker-compose.yaml
+      - /srv/docker/omada-monitoring/compose.yaml
 
   pre_tasks:
     - name: Refuse to run without a pinned, non-floating version
@@ -55,6 +66,8 @@
 
   roles:
     - lxc_base
+    - role: wazuh_agent
+      tags: [wazuh_agent_rollout]
 
   tasks:
     - name: Ensure the compose project directory exists
