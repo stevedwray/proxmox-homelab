@@ -26,7 +26,7 @@ Grafana/Graylog — **without re-platforming it**.
 | Logs | Controller syslog already reaches Graylog (`rewrite-omada-source` pipeline rule) |
 | Backups | Daily `pve` vzdump job (11:00 → `pbs-iscsi`) includes CT 114. On-demand pre-adoption PBS snapshot `pbs-iscsi:backup/ct/114/2026-10-22T19:26:13Z` completed 2026-10-23 08:26 NZDT. Controller export exists at `~/Downloads/omada_backup_5.15.24.19_2026-10-22_19-27-43.cfg` (111,042 bytes, mode `0600`, SHA-256 `7c061442a8c4ae731addaec47bc63e48b24191379cc030dbd82c49cebfa453ab`). NAS copy unconfirmed; weekly Auto Backup not yet enabled |
 | Missing in production | Exporter sidecars, scrape jobs, and secrets entry; node_exporter is installed but not yet scraped. Switch targets and scrape jobs are prepared locally, pending deployment |
-| DNS | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static; that is management-stack, not .252 — unverified what answers there) |
+| DNS / front door | `omada.gibbsgreatly.xyz` → `192.168.1.4` (MikroTik static). That is the legacy management-stack running Nginx Proxy Manager (proxy host 32): TLS-terminates with a Let's Encrypt wildcard `*.gibbsgreatly.xyz` (NPM `npm-3`, expires 2026-12-08) and proxies HTTPS to `192.168.1.252:8043` (backend self-signed cert not verified). Working, not stale; hand-built, not in IaC |
 | Scans | Already in GVM `EXTRA_HOSTS`; Wazuh agent enrolled 2026-10-23 (see hand-backs) |
 
 ## Switches (operator-reported, 2026-10-23)
@@ -152,3 +152,9 @@ Grafana/Graylog — **without re-platforming it**.
   repeating `syscheckd` errors for `/etc/vconsole.conf` and the dangling
   `wtmpdb-rotate.timer` symlink (Debian 13 base image paths in Wazuh's default
   watch list).
+- DNS/TLS investigation (2026-10-23, read-only): the `omada.gibbsgreatly.xyz` name
+  is served by NPM on management-stack (`192.168.1.4`, which docs/plan call
+  "decomm / split"), not by the lab's Traefik. Nothing was changed. Retiring
+  management-stack would take the front door with it; the controller itself
+  keeps its self-signed cert on :8043 and devices use the IP directly, so
+  switch management is unaffected either way.
