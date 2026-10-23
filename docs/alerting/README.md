@@ -49,10 +49,13 @@ itself going quiet.
 2. **Hardware rules must select `job="node_exporter_hw"`.** Every LXC's
    node_exporter also exposes the *host's* NVMe sensors, so 17 targets repeat
    the same drives. An unfiltered rule would page 17 times for one disk.
-3. **Alert on error *increase*, not overall health.** The failing pve-tiny
-   drive reported `smartmon_device_smart_healthy = 1` and
-   `nvme_critical_warning = 0` throughout. Use
-   `increase(nvme_media_errors_total[1h]) > 0`.
+3. **Alert on error *increase*, not on the overall health flag.** The failing
+   pve-tiny drive showed `smartmon_device_smart_healthy = 1`, but only because
+   `smartctl` cannot read that drive at all (`smartmon_device_smart_available
+   = 0`), so the flag was a default, not a verdict. The NVMe collector did read
+   it, and its `nvme_media_errors_total` was climbing. Use
+   `increase(nvme_media_errors_total[1h]) > 0`, and watch for SMART becoming
+   unreadable.
 4. **Exclude what is off or isolated on purpose.** `pve-test` (laptop, off
    while the heatsinks are reseated), the Foreverworld exporters, and
    everything from `pentest_seg`.
@@ -115,7 +118,11 @@ Relay contract (Phase 3 writes the steps; this is the agreed shape):
    whether SNMP is available. Needed before Phase 0 can close the NAS.
 3. **Healthchecks.io account** (Phase 4) and **Telegram bot via @BotFather**
    (Phase 3).
-4. Whether pve nvme composite readings of 67-70 C are acceptable. The
+4. **Two disks have no SMART health data at all:** pve `sdg` (an NVMe behind
+   a USB bridge; `smartctl` cannot read it) and pve-tiny's NVMe via the generic
+   collector (covered instead by the NVMe collector). `sdg` is a blind spot
+   until a newer `smartmontools` or a different `-d` type reads it.
+5. Whether pve nvme composite readings of 67-70 C are acceptable. The
    warning threshold is 70 C, so they sit right at the line.
 
 ## Native integrations to evaluate case by case (Phase 6)

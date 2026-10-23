@@ -832,6 +832,214 @@ change: |
           annotations:
             summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
 
+        - uid: hw-sata-bad-sectors
+          title: SATA disk has pending or uncorrectable sectors
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack,disk)({__name__=~"smartmon_(current_pending_sector|offline_uncorrectable)_raw_value",job="node_exporter_hw"})'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [0]}
+          for: 5m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: critical, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
+
+        - uid: hw-sata-counters-rising
+          title: SATA disk error counters rising
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack,disk)(increase({__name__=~"smartmon_(reallocated_sector_ct|reported_uncorrect|runtime_bad_block|end_to_end_error|program_fail_cnt_total|erase_fail_count_total)_raw_value",job="node_exporter_hw"}[24h]))'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [0]}
+          for: 5m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART error counters rose by {{ humanize $values.A.Value }} in 24h (reallocated, uncorrectable or bad blocks)'
+
+        - uid: hw-sata-crc-errors
+          title: SATA link CRC errors rising
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack,disk)(increase(smartmon_udma_crc_error_count_raw_value{job="node_exporter_hw"}[24h]))'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [0]}
+          for: 5m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} new CRC errors in 24h (suspect the SATA cable or backplane)'
+
+        - uid: hw-sata-temp-warning
+          title: SATA disk temperature above 55 C
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw"} < 120))'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [55]}
+          for: 15m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+        - uid: hw-sata-temp-critical
+          title: SATA disk temperature above 65 C
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw"} < 120))'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [65]}
+          for: 5m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: critical, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+        - uid: hw-sata-wear
+          title: SATA SSD wear leveling below 20%
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'smartmon_wear_leveling_count_value{job="node_exporter_hw"}'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: lt, params: [20]}
+          for: 1h
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }}% of rated life remains'
+
+        - uid: hw-smart-unreadable
+          title: SMART became unreadable on a disk
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: '(smartmon_device_smart_available{job="node_exporter_hw"} offset 1d) - smartmon_device_smart_available{job="node_exporter_hw"}'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [0]}
+          for: 30m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART was readable yesterday and is not now, so its health flag can no longer be trusted'
+
+        - uid: hw-smart-stale
+          title: SMART metrics stopped updating
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange: {from: 600, to: 0}
+              datasourceUid: vm-alerting
+              model:
+                refId: A
+                instant: true
+                expr: 'max by (stack)(time() - node_textfile_mtime_seconds{job="node_exporter_hw",file=~".*/(smartmon|nvme).prom"})'
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                refId: C
+                type: threshold
+                expression: A
+                conditions:
+                  - evaluator: {type: gt, params: [7200]}
+          for: 10m
+          noDataState: OK
+          execErrState: Error
+          labels: {severity: warning, category: hardware}
+          annotations:
+            summary: '{{ $labels.stack }}: the SMART/NVMe collector has not written metrics for {{ humanizeDuration $values.A.Value }}, so every disk rule is blind'
+
 scope:
   allowed_paths:
     - terraform/lxc/stacks/monitoring-stack/alerting/homelab-hardware.yml
@@ -841,13 +1049,13 @@ scope:
 gates:
   - id: parses
     cmd: >-
-      python3 -c "import yaml;d=yaml.safe_load(open('terraform/lxc/stacks/monitoring-stack/alerting/homelab-hardware.yml'));r=d['groups'][0]['rules'];assert len(r)==9 and all(x['data'][0]['datasourceUid']=='vm-alerting' and 'node_exporter_hw' in x['data'][0]['model']['expr'] for x in r);print('ok')"
+      python3 -c "import yaml;d=yaml.safe_load(open('terraform/lxc/stacks/monitoring-stack/alerting/homelab-hardware.yml'));r=d['groups'][0]['rules'];assert len(r)==17 and all(x['data'][0]['datasourceUid']=='vm-alerting' and 'node_exporter_hw' in x['data'][0]['model']['expr'] for x in r);print('ok')"
     expect: "prints ok"
     critical: true
   - id: queries-valid
     cmd: >-
       python3 -c "import yaml,json,urllib.request,urllib.parse;d=yaml.safe_load(open('terraform/lxc/stacks/monitoring-stack/alerting/homelab-hardware.yml'));[print(x['uid'],json.load(urllib.request.urlopen('http://192.168.20.12:8428/api/v1/query?'+urllib.parse.urlencode({'query':x['data'][0]['model']['expr']}),timeout=10))['status']) for x in d['groups'][0]['rules']]"
-    expect: "9 lines, each ending in 'success' (read-only query against VictoriaMetrics)"
+    expect: "17 lines, each ending in 'success' (read-only query against VictoriaMetrics)"
     critical: true
 ```
 
@@ -1018,8 +1226,8 @@ TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --sta
 
 Prove it:
 
-1. Grafana, Alerting, Alert rules: folder "Homelab alerts" with 16 rules
-   (7 baseline + 9 hardware), none in Error.
+1. Grafana, Alerting, Alert rules: folder "Homelab alerts" with 24 rules
+   (7 baseline + 17 hardware), none in Error.
 2. Contact points: Test each of the three. A message reaches the matching
    channel.
 3. Real fire: `ssh root@192.168.20.12 'docker stop cadvisor'`. Within about
