@@ -68,6 +68,13 @@
   when: not (rsyslog_inbound_enabled | bool)
   notify: Restart rsyslog
 
+# Validate the whole rsyslog config before the handler restarts it, so a
+# bad relay template stops the play instead of taking down log ingestion.
+- name: Validate rsyslog configuration
+  ansible.builtin.command: rsyslogd -N1
+  changed_when: false
+  when: rsyslog_inbound_enabled | bool
+
 - name: Flush handlers to apply inbound rsyslog config before port check
   ansible.builtin.meta: flush_handlers
 

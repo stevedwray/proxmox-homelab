@@ -70,6 +70,7 @@ Found while tuning (2026-10-13/14):
 | NetBox auto-push of discovered devices | **Later** (deferred, not in this plan) |
 | Grafana metrics for the scan host | **Later** (deferred; follow-up 8 in docs/gvm-coverage-cleanup/README.md) |
 | Where Greenbone runs | Stays on pve, scans only in the 22:00-07:00 window (pve-tiny survey: memory `project_pve_tiny_load_shifting`) |
+| Scanning pentest_seg (VLAN 70) | **Only on request, for a pentest** (decided 2026-10-24). Those scans run as a dedicated GVM user and their results are **not** part of the lab's findings. Not yet implemented: today's routine program still includes `pentest_seg` (`setup_scan_program.py` zone list and schedules), so its results sit in the lab findings |
 
 ## Target design
 
