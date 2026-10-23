@@ -1261,40 +1261,42 @@ To find before the steps are written: how Graylog 7.1.9's events API is
 driven from Ansible in this repo (event definitions are not provisioned
 anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
 
-## Phase 3 (outline): the alert relay on the OCI box
+## Phase 3: the alert relay on the OCI box
 
-**Do this straight after Phase 1, before Phase 2.** It is the piece that
-closes "nothing tells me when Grafana is down", and Phase 4 depends on it.
+**Status 2026-10-24: 3a built and tested, not deployed.** Deploy it with
+[relay-deploy.md](relay-deploy.md). Do this straight after Phase 1, before
+Phase 2: it closes "nothing tells me when Grafana is down", and Phase 4
+depends on it.
 
-Goal: one small self-hosted service on the OCI box that takes alerts and
-heartbeats, pages Telegram with Ack and Snooze buttons, and mirrors to
-Discord `#alerts-critical`. The contract is in the README. This is new
-software; its step packets will be literal code with unit tests.
+What exists, in the `~/git/oci` working tree (`roles/alert_relay/`; you commit
+it, my sandbox cannot):
 
-Decided: a single standard-library Python process (small enough for a micro
-instance), SQLite for state, run as its own compose project attached to the
-existing `pangolin` Docker network so Pangolin redeploys never touch it.
-Exposed through a new Traefik router on the OCI box (a hostname such as
-`alerts.gibbsgreatly.xyz`, certificate from the existing Let's Encrypt
-resolver), **without** the `badger` auth plugin: the relay does its own
-bearer-token check (constant-time compare), allows only `/v1/heartbeat/*`,
-`/v1/alerts` and `/healthz`, and is rate limited. Traffic is outbound from the
-lab only; the relay can reach nothing inside it. Secrets (Telegram token,
-chat id, ingest token) go in the `oci` repo's untracked mode-0600 `.env`.
+- `files/relay.py`: standard-library Python, SQLite state, about 30 MB.
+  `POST /v1/alerts` (Grafana webhook or a generic JSON body),
+  `POST /v1/heartbeat/<name>`, `GET /healthz` (open), `GET /metrics` (token).
+  Critical alerts go to Telegram with **Ack | Snooze 1h | 4h | 24h** buttons
+  and repeat every 30 minutes; heartbeat alerts are mirrored to Discord.
+  Ack = quiet until resolved; snooze = quiet, then back at once if still
+  firing. Only the configured chat can press buttons or send `/status` and
+  `/snoozed`.
+- `files/test_relay.py`: 39 tests (lifecycle, ack/snooze rules, heartbeats,
+  failing channels, persistence, the HTTP layer over a local socket).
+- The Ansible role, the Traefik route (no `badger`, only `/healthz`, `/metrics`
+  and `/v1/*` are routed) and the container settings: non-root, read-only
+  filesystem, all capabilities dropped, 128 MB limit, on the `pangolin`
+  Docker network.
 
-To find before the steps are written: the OCI instance's memory and CPU; how
-`oci-edge-reconcile.sh` creates DNS records (the repo holds a Cloudflare
-token); the exact router/service layout in `dynamic_config.yml.j2` so the new
-route is additive; and the `roles/pangolin` structure so the relay becomes a
-sibling role.
+Two bugs the tests found before deployment: a resolve during a snooze lost
+the all-clear message, and a restart gave stale heartbeat timestamps that
+would have paged immediately. Both are fixed and have regression tests.
 
-Operator tasks: create the bot with @BotFather and note the token; start a
-chat with it and note the chat id; add `RELAY_INGEST_TOKEN` to OpenBao
-`services/grafana` (same procedure as the Discord fields); approve the
-hostname.
+Not yet exercised against the real Telegram API from the relay (its own client
+is separate from `telegram_setup.py`'s): the fire drill in the runbook is that
+test.
 
-Then Grafana's critical route and Graylog's notification gain the relay as a
-second receiver. Discord stays as the mirror.
+**3b (next, after 3a is proven):** add a Grafana webhook contact point for the
+relay (bearer token from OpenBao) to the critical route, so Grafana's critical
+alerts also reach Telegram. Discord stays as it is.
 
 ## Phase 4 (outline): watching the watchers
 
