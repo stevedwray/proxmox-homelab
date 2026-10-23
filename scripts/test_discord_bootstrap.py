@@ -1,5 +1,6 @@
 """Tests for discord_bootstrap.py against an in-memory fake of the Discord API."""
 
+import base64
 import contextlib
 import importlib.util
 import io
@@ -28,6 +29,8 @@ class FakeDiscord:
         self.calls = []
         self.executed = []
         self.rate_limit_next = 0
+        self.reject_token = False
+        self.expected_token = TOKEN
         self._ids = iter(range(1000, 9999))
 
     def transport(self, method, url, headers, data):
@@ -41,9 +44,11 @@ class FakeDiscord:
             assert "Authorization" not in headers, "webhook execution must not send the bot token"
             self.executed.append((url, body))
             return 204, b""
-        assert headers["Authorization"] == f"Bot {TOKEN}"
+        assert headers["Authorization"] == f"Bot {self.expected_token}"
         assert headers["User-Agent"].startswith("DiscordBot")
         if path == "/users/@me":
+            if self.reject_token:
+                return 401, json.dumps({"message": "401: Unauthorized", "code": 0}).encode()
             return 200, json.dumps({"username": "Gibbs Greatly Lab Automation"}).encode()
         if path == "/guilds/111":
             if not self.in_guild:
@@ -194,6 +199,47 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("--rotate", err)
         self.assertEqual(fake.executed, [])
         self.assertNotIn("/api/webhooks/", err)
+
+
+class TokenDiagnosisTest(unittest.TestCase):
+    BOT_ID = "1234567890123456789"
+    REAL_SHAPE = base64.urlsafe_b64encode(BOT_ID.encode()).decode().rstrip("=") + ".AbCdEf.SECRETPART-xyz"
+
+    def test_401_reports_a_token_problem_not_an_invite_problem(self):
+        fake = FakeDiscord()
+        fake.reject_token = True
+        fake.expected_token = self.REAL_SHAPE
+        code, _o, err, writer = run(fake, env={**ENV, "DISCORD_BOT_TOKEN": self.REAL_SHAPE})
+        self.assertEqual(code, 1)
+        self.assertIn("rejected the bot token", err)
+        self.assertNotIn("invited", err)
+        self.assertIn(self.BOT_ID, err, "the non-secret bot id from part one is shown")
+        self.assertNotIn("AbCdEf", err)
+        self.assertNotIn("SECRETPART", err)
+        self.assertEqual(writer.calls, [])
+
+    def test_wrong_shape_is_called_out(self):
+        fake = FakeDiscord()
+        fake.reject_token = True
+        fake.expected_token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        code, _o, err, _w = run(fake, env={**ENV, "DISCORD_BOT_TOKEN": fake.expected_token})
+        self.assertEqual(code, 1)
+        self.assertIn("1 dot-separated part", err)
+        self.assertIn("Client Secret", err)
+        self.assertNotIn("0123456789abcdef", err)
+
+    def test_quotes_and_bot_prefix_are_stripped(self):
+        self.assertEqual(db.clean_token(' "Bot abc.def.ghi" \n'), "abc.def.ghi")
+        fake = FakeDiscord()
+        fake.expected_token = TOKEN
+        code, _o, err, _w = run(fake, env={**ENV, "DISCORD_BOT_TOKEN": f'"Bot {TOKEN}"'})
+        self.assertEqual(code, 0, err)
+
+    def test_other_http_errors_still_point_at_the_invite(self):
+        code, _o, err, _w = run(FakeDiscord(in_guild=False))
+        self.assertEqual(code, 1)
+        self.assertIn("invited", err)
+        self.assertNotIn("rejected the bot token", err)
 
 
 if __name__ == "__main__":

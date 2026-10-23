@@ -28,6 +28,8 @@ Developer Portal when this has finished.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import subprocess
@@ -58,7 +60,36 @@ Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]
 
 
 class DiscordError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def clean_token(raw: str) -> str:
+    """Strip whitespace, surrounding quotes and a pasted 'Bot ' prefix."""
+    token = raw.strip().strip("\"'").strip()
+    return token.removeprefix("Bot ").strip()
+
+
+def diagnose_token(token: str) -> str:
+    """Explain a rejected token without revealing it.
+
+    A bot token is three dot-separated parts and the first is the base64 of the
+    bot's user ID (equal to the Application ID), which is not secret. Parts two
+    and three are never shown.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return (f"The value has {len(parts)} dot-separated part(s) and is {len(token)} characters long; "
+                "a bot token has 3 parts and is about 70 characters. It is probably the Client Secret, "
+                "Public Key or Application ID. Use Bot tab, Reset Token, and copy that.")
+    try:
+        bot_id = base64.urlsafe_b64decode(parts[0] + "=" * (-len(parts[0]) % 4)).decode("ascii")
+    except (binascii.Error, UnicodeDecodeError):
+        return "The first part is not valid base64, so this is not a bot token. Copy it again from Bot tab, Reset Token."
+    return (f"This token belongs to bot/application ID {bot_id}. Compare that with the Application ID in "
+            "General Information. If it matches, the token was reset or revoked since you copied it: "
+            "Reset Token again and use the new one. If it differs, it is a token from another application.")
 
 
 def urllib_transport(method: str, url: str, headers: dict[str, str], data: bytes | None) -> tuple[int, bytes]:
@@ -92,9 +123,10 @@ class Client:
                 continue
             if status >= 400:
                 detail = parsed.get("message", "") if isinstance(parsed, dict) else ""
-                raise DiscordError(f"{method} {path.split('?')[0] if auth else 'webhook'} -> HTTP {status} {detail}".strip())
+                raise DiscordError(
+                    f"{method} {path.split('?')[0] if auth else 'webhook'} -> HTTP {status} {detail}".strip(), status)
             return parsed
-        raise DiscordError(f"{method} {path if auth else 'webhook'} -> still rate limited after retries")
+        raise DiscordError(f"{method} {path if auth else 'webhook'} -> still rate limited after retries", 429)
 
 
 def ensure_channels(client: Client, guild_id: str, dry_run: bool) -> dict[str, str]:
@@ -155,7 +187,7 @@ def main(argv: list[str], env: Mapping[str, str] = os.environ, transport: Transp
     parser.add_argument("--no-test", action="store_true")
     args = parser.parse_args(argv)
 
-    token, guild_id = env.get("DISCORD_BOT_TOKEN", "").strip(), env.get("DISCORD_GUILD_ID", "").strip()
+    token, guild_id = clean_token(env.get("DISCORD_BOT_TOKEN", "")), env.get("DISCORD_GUILD_ID", "").strip()
     if not token or not guild_id:
         print("ERROR: set DISCORD_BOT_TOKEN and DISCORD_GUILD_ID in this shell.", file=sys.stderr)
         return 2
@@ -174,8 +206,12 @@ def main(argv: list[str], env: Mapping[str, str] = os.environ, transport: Transp
         urls = [ensure_webhook(client, channel_ids[name], name, args.rotate, args.dry_run)
                 for name, _field, _topic in CHANNELS]
     except DiscordError as exc:
-        print(f"ERROR: {exc}\nIs the bot invited to the server with Manage Channels and Manage Webhooks?",
-              file=sys.stderr)
+        if exc.status == 401:
+            print(f"ERROR: {exc}\nDiscord rejected the bot token (this is not an invite problem). "
+                  f"{diagnose_token(token)}", file=sys.stderr)
+        else:
+            print(f"ERROR: {exc}\nIs the bot invited to the server with Manage Channels and Manage Webhooks, "
+                  "and is DISCORD_GUILD_ID the server ID?", file=sys.stderr)
         return 1
     if args.dry_run:
         print("Dry run complete; nothing was created.")
