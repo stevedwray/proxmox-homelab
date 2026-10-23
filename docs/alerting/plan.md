@@ -984,11 +984,22 @@ gates:
       bash -c 'f=terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml; for p in "grafana_discord_critical_url:" "grafana_discord_warning_url:" "grafana_discord_security_url:" "provisioning/alerting\", mode" "uid: vm-alerting" "register: grafana_alert_rules_provisioning" "register: grafana_contact_points_provisioning" "register: grafana_datasources_provisioning" "Restart Grafana after alerting" "homelab-hardware.yml"; do grep -qF "$p" $f || { echo "missing: $p"; exit 1; }; done; echo ok'
     expect: "prints ok"
     critical: true
+  - id: provisioning-render
+    cmd: "python3 scripts/check_grafana_provisioning.py"
+    expect: "prints ok (renders the inline datasources.yml and contact-points.yml, parses them, checks vm-alerting and that every policy receiver exists)"
+    critical: true
   - id: lint
     cmd: "cd terraform/lxc/ansible && ansible-lint playbooks/deploy-monitoring-stack.yml"
-    expect: "no new failures compared with the same command on the pre-edit file"
+    expect: "no new failures compared with the same command on the pre-edit file (the file already has 1 failure and 27 warnings)"
     critical: true
 ```
+
+Indentation trap, found for real when this step was first applied: the literal
+blocks above are shown 2 spaces deeper than they belong in the file, because
+the `change: |` block adds 2. Copy the indentation of the neighbouring lines
+in the playbook, not of this document. Neither `syntax-check` nor `grep`
+can see this mistake (the text is inside a `content: |` string); only
+`provisioning-render` can.
 
 ### Operator: deploy and prove Phase 1 (approval `alerting-monitoring`)
 

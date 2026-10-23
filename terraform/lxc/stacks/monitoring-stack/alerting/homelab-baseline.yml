@@ -1,0 +1,191 @@
+# Grafana file-provisioned alert rules (docs/catch-up/07-baseline-alerting.md).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+# Datasource vm-alerting is provisioned in the same playbook.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-baseline
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: homelab-target-down
+        title: Scrape target down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'up{job!~"minecraft-status|minecraft-jvm",instance!~"192.168.60.10:8080|pve-test.gibbsgreatly.xyz:9100|garuda.gibbsgreatly.xyz:9100"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: '{{ $labels.job }} target {{ $labels.instance }} ({{ $labels.stack }}) is down'
+
+      - uid: homelab-disk-high
+        title: Local disk above 85%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|zfs|xfs|btrfs"} / node_filesystem_size_bytes{fstype=~"ext4|zfs|xfs|btrfs"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.mountpoint }} is {{ humanize $values.A.Value }}% full'
+
+      - uid: homelab-nas-high
+        title: NAS above 90%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max(100 * (1 - node_filesystem_avail_bytes{fstype="nfs4"} / node_filesystem_size_bytes{fstype="nfs4"}))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'NAS (192.168.1.3) is {{ humanize $values.A.Value }}% full'
+
+      - uid: homelab-openbao-sealed
+        title: OpenBao sealed or unreachable
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'openbao_sealed'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 2m
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: 'OpenBao is sealed or its health endpoint is unreachable; every deploy wrapper will fail'
+
+      - uid: homelab-openbao-snapshot-stale
+        title: OpenBao snapshot older than 36h
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max(openbao_snapshot_last_success_timestamp_seconds)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [129600]}
+        for: 10m
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: 'Newest successful OpenBao snapshot is {{ humanizeDuration $values.A.Value }} old'
+
+      - uid: homelab-openbao-snapshot-failed
+        title: OpenBao snapshot run failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'openbao_snapshot_last_run_success'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical}
+        annotations:
+          summary: 'Last OpenBao {{ $labels.kind }} snapshot run failed'
+
+      - uid: homelab-openbao-manifest-drift
+        title: OpenBao manifest drift
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'sum(openbao_kv_manifest_drift)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: '{{ $values.A.Value }} secrets-manifest entries are missing from OpenBao or from the manifest'

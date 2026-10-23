@@ -1,0 +1,244 @@
+# Grafana file-provisioned hardware alert rules (docs/alerting/plan.md, Phase 1).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible, so the
+# {{ $labels.* }} parts are Grafana templates. Every expression selects
+# job="node_exporter_hw": LXC node_exporters repeat the host NVMe sensors.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-hardware
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: hw-nvme-media-errors
+        title: NVMe media errors increasing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'increase(nvme_media_errors_total{job="node_exporter_hw"}[1h])'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
+
+      - uid: hw-nvme-critical-warning
+        title: NVMe critical warning flag set
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'nvme_critical_warning{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
+
+      - uid: hw-nvme-spare-low
+        title: NVMe spare capacity near threshold
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: '(nvme_available_spare_threshold_ratio{job="node_exporter_hw"} + 0.05) - nvme_available_spare_ratio{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
+
+      - uid: hw-smart-unhealthy
+        title: SMART overall health failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'smartmon_device_smart_healthy{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
+
+      - uid: hw-nvme-wear
+        title: NVMe wear above 90%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'nvme_percentage_used_ratio{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.9]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} of rated endurance used'
+
+      - uid: hw-nvme-temp-warning
+        title: NVMe composite temperature above 70 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,chip)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~"nvme_nvme.*",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [70]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-nvme-temp-critical
+        title: NVMe composite temperature above 80 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,chip)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~"nvme_nvme.*",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [80]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-cpu-temp-warning
+        title: CPU temperature above 85 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~".*18_3",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
+
+      - uid: hw-cpu-temp-critical
+        title: CPU temperature above 95 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~".*18_3",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [95]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
