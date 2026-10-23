@@ -488,23 +488,13 @@ and `catchup-07-openbao-health-units` (steps in
 health exporter" block (approval `catchup-07b-openbao-health`). Also do its
 Part A check of why no nightly snapshot metric exists.
 
-**C. Create the Discord channels and webhooks, then store them.** Four
-channels (`#alerts-critical`, `#alerts-warning`, `#security`, `#events`), one
-webhook each (Edit Channel, Integrations, Webhooks). Store all four **before**
-the manifest step lands, because the wrappers fail closed on any manifest
-field that is empty in OpenBao:
-
-```bash
-export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
-export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"
-LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/grafana \
-  DISCORD_WEBHOOK_CRITICAL DISCORD_WEBHOOK_WARNING DISCORD_WEBHOOK_SECURITY DISCORD_WEBHOOK_EVENTS
-unset BAO_TOKEN
-```
-
-The script reads the four values one per line, in that order. Afterwards
-confirm the four existing Grafana fields still read back (`./with-secrets-prod
-env | grep -c GRAFANA_`).
+**C. Create the Discord channels and webhooks, then store them.** Follow
+[discord-setup.md](discord-setup.md): the manual server and bot setup, then
+`scripts/discord_bootstrap.py`, which creates the four channels and webhooks
+and writes the four URLs to OpenBao (`services/grafana`) itself. Do this
+**before** the manifest step lands, because the wrappers fail closed on any
+manifest field that is empty in OpenBao. Afterwards confirm the four existing
+Grafana fields still read back (`./with-secrets-prod env | grep -c GRAFANA_`).
 
 ### alerting-03-manifest-fields
 
