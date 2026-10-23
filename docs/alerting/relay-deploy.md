@@ -10,6 +10,43 @@ source and its 39 tests are `roles/alert_relay/files/relay.py` and
 Built and tested, **not yet deployed**. Phase 3b (pointing Grafana at it) and
 Phase 4 (the lab pingers) come after this is proven.
 
+## How the lab reaches the relay
+
+Grafana (and later the pingers) make an **outbound HTTPS POST** to
+`https://alerts.gibbsgreatly.xyz/v1/alerts`. Nothing connects into the lab and
+the Newt tunnel is not involved.
+
+```
+Grafana / pinger (lab) -> MikroTik (normal internet egress) -> OCI public IP :443
+   -> Gerbil/Traefik on the OCI box -> router "alert-relay" -> http://alert-relay:8080
+```
+
+Verified 2026-10-24 from the monitoring host, `pve` and `pve-tiny`: HTTPS to the
+OCI edge returns 200 with a valid certificate, both through public DNS
+(Cloudflare) and straight to the origin IP. The monitoring host also reaches
+`discord.com` and `api.telegram.org`.
+
+**DNS, which differs by resolver.** The MikroTik has static entries
+(`/ip dns static`) sending `pangolin.gibbsgreatly.xyz` and
+`oci.gibbsgreatly.xyz` to `192.9.191.163` directly, bypassing Cloudflare.
+The monitoring host, `pve` and `pve-tiny` all resolve through the MikroTik. The
+Technitium nodes are authoritative-looking for `gibbsgreatly.xyz` and return
+NXDOMAIN for names they do not hold, so a LAN client using Technitium would not
+see `alerts` until it is added there too. The servers that call the relay do
+not use Technitium, so this only matters for testing from a LAN client.
+
+Two ways to name the relay, both working:
+
+| | Cloudflare record only | plus a MikroTik static entry (matches `pangolin`/`oci`) |
+|---|---|---|
+| Lab path | via Cloudflare's proxy | straight to the OCI IP, **Cloudflare not in the path** |
+| Dependencies for the dead man's switch | Cloudflare, DNS, OCI | DNS, OCI |
+| Outside the lab | works | works (the Cloudflare record is still there) |
+
+The second is recommended: one fewer thing that can make the dead man's switch
+fail. Without the static entry nothing breaks; the lab just takes the Cloudflare
+route.
+
 ## Preflight
 
 | | |
