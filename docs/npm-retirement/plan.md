@@ -573,6 +573,16 @@ Steps (each is a separate production approval; none restarts a PBS service):
 5. Docs: update `docs/lxc-scan-and-monitoring-rollout/README.md` ("known gaps" list
    still names `proxmox-backup-server`) and record it in the P7 doc update.
 
+**Part 4 status (2026-10-23): applied and verified.** `deploy-pbs-enrolment.yml` with tags
+`pbs_rsyslog`, `pbs_wazuh`, `pbs_node_exporter` run (one approval each); `pbs_unattended` was
+applied by hand first and has not been re-run through the playbook (it should report no change).
+Monitoring: `provision.sh --stack monitoring-stack` added the `192.168.1.12:9100` scrape target
+(`up{stack="proxmox-backup-server"}=1`, no VictoriaMetrics restart needed). GVM: already in
+`EXTRA_HOSTS`/zone `lan`, nothing to do. Wazuh: 4.14.2 -> 4.14.9, manager `192.168.40.15`
+(the old install pointed at a dead `192.168.1.14`). Still to confirm by eye: Graylog shows
+`proxmox-backup-server`, Wazuh dashboard shows the agent Active in group `lan`. Open follow-up:
+PBS's own task/API logs under `/var/log/proxmox-backup/` are not shipped to Graylog.
+
 ## 6. Open questions / flagged risks
 
 1. **T-Pot IPv6 exposure (independent of this plan):** the Pi has a global IPv6

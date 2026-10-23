@@ -172,7 +172,11 @@ code, not run yet.
   this repo at all**. For **GVM** this gap is closed by
   docs/gvm-coverage-cleanup/ (`EXTRA_HOSTS` plus the standalone
   `deploy-gvm-scan-accounts.yml`, once executed). For **Wazuh** it
-  remains open.
+  remains open. **Update 2026-10-23:** `proxmox-backup-server` is no longer
+  part of this gap -- `deploy-pbs-enrolment.yml` (docs/npm-retirement/plan.md
+  Part 4) gives it a connected Wazuh agent (group `lan`), Graylog forwarding,
+  node_exporter (scraped by monitoring-stack) and the Proxmox apt origin for
+  unattended-upgrades.
 - pve-tiny stacks added after this rollout (`cse-panel-stack`,
   `technitium-tiny-stack`, `cse-controller`, `cse-code-eval`) were never in
   the GVM scope. They're added by docs/gvm-coverage-cleanup/.
