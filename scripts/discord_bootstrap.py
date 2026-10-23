@@ -3,7 +3,7 @@
 
 One-shot, run by the operator (agents never see the bot token or the URLs):
 
-  export DISCORD_BOT_TOKEN=...   # from the Developer Portal; reset it again afterwards
+  read -rs DISCORD_BOT_TOKEN; export DISCORD_BOT_TOKEN   # paste it; not echoed, not in history
   export DISCORD_GUILD_ID=...    # the private lab server
   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # opens a browser

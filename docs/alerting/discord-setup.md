@@ -45,7 +45,8 @@ secret, but the **bot token is**: it never goes in git, chat or a file.
 ## Part 2: run the script
 
 ```bash
-export DISCORD_BOT_TOKEN=...          # this shell only
+read -rs DISCORD_BOT_TOKEN; export DISCORD_BOT_TOKEN   # paste the token, press Enter (nothing is shown)
+echo ${#DISCORD_BOT_TOKEN}                              # its length: should be about 70
 export DISCORD_GUILD_ID=...           # the server ID (Copy Server ID, see Part 1)
 cd ~/git/proxmox-homelab
 export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
