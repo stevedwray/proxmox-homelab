@@ -73,3 +73,11 @@ operator group) replaces the NPM route `tpotce.gibbsgreatly.xyz`. Applied by
 3. `docker compose -f docker-compose.yml up -d --no-deps <service>` for each.
 4. Re-test from a LAN host (see the commands in this file's section above)
    and check `docker logs logstash | grep "Could not index"` is empty.
+
+## 2026-10-23: daily reboot PAUSED (resume when done)
+
+Root's crontab entry `9 4 * * * ... shutdown -r +1 "T-Pot Daily Reboot"` is commented out
+(no backup copy was kept; the `#` is the only change) so long SpiderFoot scans are not
+killed at 04:09. While paused: containers are not recreated daily and the Docker
+container/image/volume prune does not run. **Resume:**
+`ssh tpot 'sudo crontab -l | sed "s/^#\(9 4 \* \* \* bash -c\)/\1/" | sudo crontab -'`.
