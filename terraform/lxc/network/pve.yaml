@@ -239,6 +239,27 @@ attachments:
       gateway: "${lab_gw_ai}"
       snat: false
 
+  # Join the existing MikroTik VLAN 100 before relocating the CyberSecEval
+  # guests from pve-tiny. The router retains the default-deny inter-zone
+  # policy; this VNet only provides the pve-side L2 attachment.
+  cse_seg:
+    description: CyberSecEval compute/orchestration
+    type: sdn_vnet
+    bridge: tvcse
+    firewall: false
+    sdn:
+      zone: tvcse
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvcse
+      vlan_tag: 100
+      alias: pve CyberSecEval segment
+      subnet: "${lab_subnet_cse_cidr}"
+      gateway: "${lab_gw_cse}"
+      snat: false
+
   # connector_seg — Newt connector for the OCI Pangolin edge (VLAN 110, 192.168.110.0/24)
   #
   # Originally scoped for VLAN 100, changed 2026-09-23 after confirming on
@@ -320,6 +341,10 @@ zones:
     description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg
     containers: []  # mcp-utility/ai-services/secpipe relocated to pve-tiny at the same IPs (network/pve-tiny.yaml, docs/ai-stacks-pve-tiny/plan.md); tvai zone left in place
+  cse_seg:
+    description: CyberSecEval compute/orchestration — pve-side VLAN 100 attachment
+    attachment: cse_seg
+    containers: []  # Populate after each approved pve-tiny cutover.
   connector_seg:
     description: Newt connector — minimal host, no unrelated workloads, per newt-vlan-design-plan.md
     attachment: connector_seg
