@@ -30,6 +30,7 @@ itself going quiet.
 | Routine channel | **Discord**, four channels: `#alerts-critical` (a copy of every Telegram page), `#alerts-warning`, `#security` (Wazuh, GVM, Graylog, Harbor findings), `#events` (Proxmox, PBS, Harbor, informational) |
 | Emergency channel | **Telegram**, private chat with a bot. **Two-way: Ack and Snooze buttons.** Do Not Disturb is respected (no bypass); repeat-until-ack is the safety net instead |
 | Ack / snooze | Every repeating alert has both. Ack = quiet until it resolves. Snooze (1h / 4h / 24h) = quiet for N, then comes back if still firing. Applies to the dead man's switch too |
+| Service checks | **blackbox_exporter**, Nagios-style active checks, limited to the services the alert and notification chain depends on (7 probes, see plan Phase 4b). Not a general service monitor; additions only on the operator's request. **Icinga later**, if dependencies and escalations prove necessary |
 | Hosting | **Self-hosted only, no SaaS** (Healthchecks.io is dropped). Nothing new runs on `framework`: its memory and load must stay low |
 | Dead man's switch | A small service on the OCI box (`~/git/oci`), outside the lab, receives a heartbeat from `pve` and from `pve-tiny` every 5 minutes. A missing or failing heartbeat pages with the same Ack and Snooze buttons as everything else. The lab watches the OCI service in return, so neither side fails silently |
 | Routing | Proxmox and Harbor send to Discord directly. Anything that can be critical goes through Grafana or Graylog, then the OCI relay. Services with their own Discord/Telegram support are evaluated case by case (list below) |
@@ -133,8 +134,9 @@ Watching the watchers (no SaaS):
    a fault? If intentional it needs excluding from the target-down rule.
 2. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and
    whether SNMP is available. Needed before Phase 0 can close the NAS.
-3. **Telegram bot via @BotFather** (Phase 3), and the OCI box's memory and
-   CPU (`ssh oci 'free -m; nproc'`; the repo does not record its shape).
+3. **Telegram bot:** created. Run `scripts/telegram_setup.py` to connect it
+   (see [telegram-setup.md](telegram-setup.md)). The OCI box is sized for the
+   relay: aarch64, 8 GB RAM (about 6.9 GB free), 2 CPUs, load 0.03.
 4. **Two disks have no SMART health data at all:** pve `sdg` (an NVMe behind
    a USB bridge; `smartctl` cannot read it) and pve-tiny's NVMe via the generic
    collector (covered instead by the NVMe collector). `sdg` is a blind spot

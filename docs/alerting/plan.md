@@ -1318,6 +1318,42 @@ production node dies, you are told, with no SaaS and nothing on `framework`.
 Accepted residual risk: the lab and the OCI box failing at the same moment, or
 Telegram and Discord both being unreachable.
 
+## Phase 4b (outline): service checks for the alert chain (blackbox_exporter)
+
+The Nagios-style layer: active checks of services, with the same Discord
+routing, Ack and Snooze as everything else.
+
+**Scope rule, set by the operator: this monitors only the services the alert
+and notification path depends on. It is not a general service monitor. Do not
+add probes for other services unless the operator asks.** Icinga is the
+planned upgrade if richer Nagios semantics (dependencies, escalations) turn
+out to be needed.
+
+Runs as a small sidecar in monitoring-stack (about 20 MB, like the Omada
+exporter), scraped by VictoriaMetrics, with its rules in a new
+`homelab-alert-chain.yml` routed critical through the existing policy. It does
+not probe Grafana or VictoriaMetrics (the Phase 4 pingers and the existing
+`up` rules cover them), nor OpenBao, Authentik, Harbor or anything else.
+
+| # | Probe | Target | Success means |
+|---|---|---|---|
+| 1 | Relay health | `https://alerts.gibbsgreatly.xyz/healthz` | HTTP 200 |
+| 2 | Relay certificate | same | more than 14 days left |
+| 3 | Discord reachable | `https://discord.com/api/v10/gateway` | HTTP 200 (verified 2026-10-24, no auth) |
+| 4 | Telegram reachable | `https://api.telegram.org` | HTTP 302 (verified 2026-10-24; reachable, not logged in) |
+| 5 | DNS | resolve `discord.com` and `api.telegram.org` via Technitium `192.168.20.15` and `.17` | an answer from each |
+| 6 | Log path | TCP `192.168.20.14:514` | connection accepted |
+| 7 | Graylog API | `http://192.168.20.14:9000/api/system/lbstatus` | body `ALIVE` |
+
+Probes 3 and 4 were checked from both a workstation and the monitoring host.
+They matter because Grafana can be perfectly healthy and still unable to send
+a page (DNS or internet out); probe 5 catches the DNS half of that.
+
+To find before the steps are written: the monitoring-stack compose layout, how
+the `omada_exporter` sidecar and its scrape job are wired (to copy the pattern),
+and a pinned `prom/blackbox-exporter` image available through the Harbor
+`dockerhub/` proxy.
+
 ## Phase 5 (outline): new critical vulnerabilities
 
 Goal: a critical finding that **first appears** alerts, not the roughly 206
