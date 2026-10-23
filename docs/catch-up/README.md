@@ -29,7 +29,7 @@ command.
 | 05 | [Decommission old AI CTs on pve](05-decommission-pve-source-cts.md) | **not before 2026-10-04** | 45 min | Medium | 03 | not started |
 | 06 | [Run CI gates on PRs into `stable`](06-ci-gates-on-stable-prs.md) | this week | 30 min | Med-High | 02 | not started |
 | 08 | [PentAGI residue cleanup](08-pentagi-residue-cleanup.md) | this week, **before 07** | 1–1.5 h | Medium | — | not started |
-| 07 | [Baseline alerting (Discord)](07-baseline-alerting.md) | this week, after 08 | 1–2 sessions | **High** | 08 | not started |
+| 07 | [Baseline alerting (Discord)](07-baseline-alerting.md) | **superseded by [docs/alerting/](../alerting/README.md)** (2026-10-24) | — | **High** | 08 | Phase 0 groundwork live; rest planned |
 | 09 | [Rotate high-value secrets](09-secret-rotation.md) | following weeks | 2–3 h, staged | Med-High | 04 | not started |
 | 10 | [CI lint and policy cleanup](10-ci-lint-cleanup.md) | following weeks (soon after 06) | 2–3 h | Medium | 06 | not started |
 | 11 | [gaming-stack-lab Terraform drift](11-gaming-stack-lab-terraform-drift.md) | following weeks | 30 min | Low-Med | — | not started |
