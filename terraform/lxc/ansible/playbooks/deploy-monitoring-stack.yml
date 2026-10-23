@@ -278,6 +278,11 @@
                   labels: {stack: technitium-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}:9100"]
                   labels: {stack: technitium-tiny-stack}
+                # Hand-built PBS CT 105 (flat LAN), enrolled by deploy-pbs-enrolment.yml
+                # (docs/npm-retirement/plan.md Part 4). Add only after that play's
+                # pbs_node_exporter tag has run, or the target shows as down.
+                - targets: ["{{ lookup('env', 'LAB_IP_PBS') | default('192.168.1.12', true) }}:9100"]
+                  labels: {stack: proxmox-backup-server}
 
             # Bare-metal host hardware sensors, docs/hw-monitoring/plan.md.
             # Targets and sensor names: stacks/monitoring-stack/hwmon-hosts.yml.
