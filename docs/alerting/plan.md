@@ -1263,35 +1263,60 @@ anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
 
 ## Phase 3 (outline): the alert relay on the OCI box
 
-Goal: Telegram pages with Ack and Snooze buttons. The contract is in the
-README. This is new software; its step packets will be literal code with unit
-tests.
+**Do this straight after Phase 1, before Phase 2.** It is the piece that
+closes "nothing tells me when Grafana is down", and Phase 4 depends on it.
 
-To find before the steps are written: how the `oci` repo's Traefik/Pangolin
-edge can expose one authenticated HTTPS path publicly (a Pangolin resource or
-a Traefik route), how its `.env` secret pattern adds the Telegram token, chat
-id and ingest token, and the `roles/pangolin` layout so the relay becomes a
-sibling role. Language and framework are chosen then (standard library plus
-one HTTP library, SQLite for state).
+Goal: one small self-hosted service on the OCI box that takes alerts and
+heartbeats, pages Telegram with Ack and Snooze buttons, and mirrors to
+Discord `#alerts-critical`. The contract is in the README. This is new
+software; its step packets will be literal code with unit tests.
+
+Decided: a single standard-library Python process (small enough for a micro
+instance), SQLite for state, run as its own compose project attached to the
+existing `pangolin` Docker network so Pangolin redeploys never touch it.
+Exposed through a new Traefik router on the OCI box (a hostname such as
+`alerts.gibbsgreatly.xyz`, certificate from the existing Let's Encrypt
+resolver), **without** the `badger` auth plugin: the relay does its own
+bearer-token check (constant-time compare), allows only `/v1/heartbeat/*`,
+`/v1/alerts` and `/healthz`, and is rate limited. Traffic is outbound from the
+lab only; the relay can reach nothing inside it. Secrets (Telegram token,
+chat id, ingest token) go in the `oci` repo's untracked mode-0600 `.env`.
+
+To find before the steps are written: the OCI instance's memory and CPU; how
+`oci-edge-reconcile.sh` creates DNS records (the repo holds a Cloudflare
+token); the exact router/service layout in `dynamic_config.yml.j2` so the new
+route is additive; and the `roles/pangolin` structure so the relay becomes a
+sibling role.
 
 Operator tasks: create the bot with @BotFather and note the token; start a
 chat with it and note the chat id; add `RELAY_INGEST_TOKEN` to OpenBao
-`services/grafana` with the same Phase 1 procedure.
+`services/grafana` (same procedure as the Discord fields); approve the
+hostname.
 
 Then Grafana's critical route and Graylog's notification gain the relay as a
 second receiver. Discord stays as the mirror.
 
-## Phase 4 (outline): dead man's switch
+## Phase 4 (outline): watching the watchers
 
-Decided: a Grafana always-firing `watchdog` rule, routed to a webhook
-receiver with a 5-minute repeat interval, is the heartbeat; a systemd timer on
-`pve` is a second, independent heartbeat. The relay raises "lab silent" if
-either is missing past a deadline (about 12 minutes), and that alert has the
-same Ack and Snooze buttons. The relay pings Healthchecks.io every 5 minutes
-so something outside the OCI box notices if the relay itself dies.
+Goal: if Grafana, VictoriaMetrics, Graylog, the monitoring host or a whole
+production node dies, you are told, with no SaaS and nothing on `framework`.
 
-Operator tasks: create the Healthchecks.io account and check, with the
-operator's email and the Telegram bot as its notification targets.
+- **Pinger:** a systemd timer on `pve` and on `pve-tiny`, every 5 minutes. It
+  checks Grafana `/api/health`, VictoriaMetrics `/health` and Graylog
+  `/api/system/lbstatus`, then POSTs a heartbeat named after the node to the
+  relay with the per-component results (so a Grafana outage names Grafana). A
+  few `curl` calls every five minutes; negligible load.
+- **Relay behaviour:** a failed component alerts at once; no heartbeat from a
+  node for about 12 minutes raises "node silent"; both silent raises "lab
+  silent". All have Ack and Snooze buttons.
+- **Lab watches OCI:** the relay serves `/metrics` (a heartbeat-age gauge and a
+  version); VictoriaMetrics scrapes it; the Phase 1 target-down rule covers it.
+- **Grafana watchdog (optional):** an always-firing rule routed to the relay
+  with a 5-minute repeat proves the alert engine itself works end to end, not
+  just that it is up.
+
+Accepted residual risk: the lab and the OCI box failing at the same moment, or
+Telegram and Discord both being unreachable.
 
 ## Phase 5 (outline): new critical vulnerabilities
 

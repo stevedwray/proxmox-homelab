@@ -30,7 +30,8 @@ itself going quiet.
 | Routine channel | **Discord**, four channels: `#alerts-critical` (a copy of every Telegram page), `#alerts-warning`, `#security` (Wazuh, GVM, Graylog, Harbor findings), `#events` (Proxmox, PBS, Harbor, informational) |
 | Emergency channel | **Telegram**, private chat with a bot. **Two-way: Ack and Snooze buttons.** Do Not Disturb is respected (no bypass); repeat-until-ack is the safety net instead |
 | Ack / snooze | Every repeating alert has both. Ack = quiet until it resolves. Snooze (1h / 4h / 24h) = quiet for N, then comes back if still firing. Applies to the dead man's switch too |
-| Dead man's switch | Lives on the OCI box (`~/git/oci`), outside the lab. Healthchecks.io watches the OCI box |
+| Hosting | **Self-hosted only, no SaaS** (Healthchecks.io is dropped). Nothing new runs on `framework`: its memory and load must stay low |
+| Dead man's switch | A small service on the OCI box (`~/git/oci`), outside the lab, receives a heartbeat from `pve` and from `pve-tiny` every 5 minutes. A missing or failing heartbeat pages with the same Ack and Snooze buttons as everything else. The lab watches the OCI service in return, so neither side fails silently |
 | Routing | Proxmox and Harbor send to Discord directly. Anything that can be critical goes through Grafana or Graylog, then the OCI relay. Services with their own Discord/Telegram support are evaluated case by case (list below) |
 | Log alerts | Come from **Graylog**, on exact message patterns, never on log level |
 | Hardware | Faults, temperatures and firmware-update-available are in scope for every device, including workstation, MikroTik, Omada switches, NAS and Pis |
@@ -79,7 +80,8 @@ Lab heartbeats ────────────┘      state: ack / snooze 
                                        │
 Proxmox, PBS, Harbor ─────────────────►│──────────────────► Discord #events (direct)
                                        ▼
-                        Healthchecks.io watches the relay
+                        the lab watches the relay (VictoriaMetrics scrapes it;
+                        Grafana alerts if it is down)
 ```
 
 Relay contract (Phase 3 writes the steps; this is the agreed shape):
@@ -95,6 +97,21 @@ Relay contract (Phase 3 writes the steps; this is the agreed shape):
 - Secrets live in the OCI repo's untracked, mode-0600 `.env` (the pangolin
   role's existing pattern), not OpenBao. The lab side gets only the ingest
   token, via OpenBao.
+
+Watching the watchers (no SaaS):
+
+- `pve` and `pve-tiny` each run a systemd timer every 5 minutes. It checks
+  Grafana (`/api/health`), VictoriaMetrics (`/health`) and Graylog
+  (`/api/system/lbstatus`), then POSTs a heartbeat named after the node to the
+  relay, including the per-component results. A failed component alerts at
+  once; silence for about 12 minutes alerts as "node silent". Because the
+  heartbeat is per node, this also detects a production node dying without
+  Grafana's help. The pinger is deliberately not on `framework`.
+- The relay serves `/metrics`; VictoriaMetrics scrapes it, so the ordinary
+  target-down rule tells Discord if the OCI service stops.
+- **Residual risk, accepted by the no-SaaS decision:** if the lab and the OCI
+  box both fail at the same moment, or both Telegram and Discord are
+  unreachable, nothing notices.
 
 ## What exists today (verified 2026-10-24)
 
@@ -116,8 +133,8 @@ Relay contract (Phase 3 writes the steps; this is the agreed shape):
    a fault? If intentional it needs excluding from the target-down rule.
 2. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and
    whether SNMP is available. Needed before Phase 0 can close the NAS.
-3. **Healthchecks.io account** (Phase 4) and **Telegram bot via @BotFather**
-   (Phase 3).
+3. **Telegram bot via @BotFather** (Phase 3), and the OCI box's memory and
+   CPU (`ssh oci 'free -m; nproc'`; the repo does not record its shape).
 4. **Two disks have no SMART health data at all:** pve `sdg` (an NVMe behind
    a USB bridge; `smartctl` cannot read it) and pve-tiny's NVMe via the generic
    collector (covered instead by the NVMe collector). `sdg` is a blind spot
