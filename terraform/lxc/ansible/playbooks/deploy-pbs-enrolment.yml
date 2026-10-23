@@ -1,0 +1,93 @@
+# deploy-pbs-enrolment.yml -- enrol the hand-built Proxmox Backup Server CT
+# (105, 192.168.1.12) in the lab's monitoring/patching. docs/npm-retirement/plan.md
+# Part 4. Native PBS, no Docker.
+#
+# Deliberately NOT lxc_base: that role would reconfigure a hand-built CT. Only the
+# roles below run, each in its own tagged play so each is a separate approval:
+#   pbs_unattended    apt drop-in so unattended-upgrades also installs PBS packages
+#                     (nobody logs into this CT; the fleet unattended_upgrades role is
+#                     NOT used -- its template is Debian-Security only and would replace
+#                     the CT's own 50unattended-upgrades)
+#   pbs_rsyslog       forward syslog/journal to Graylog (rsyslog_forward)
+#   pbs_wazuh         (re-)enrol the Wazuh agent (already installed, not connected)
+#   pbs_node_exporter node_exporter with step-ca TLS (monitoring-stack scrapes it)
+# Order: unattended, rsyslog (creates /var/log/auth.log for Wazuh), wazuh, node_exporter.
+#
+# Nothing here restarts a PBS service. Run (repo root, prod wrapper, one tag per run):
+#   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook \
+#     -i terraform/lxc/stacks/proxmox-backup-server/inventory.yml \
+#     terraform/lxc/ansible/playbooks/deploy-pbs-enrolment.yml --tags pbs_wazuh
+# Required env: LAB_IP_GRAYLOG (rsyslog); LAB_IP_WAZUH, WAZUH_AGENT_AUTHD_PASSWORD,
+# WAZUH_API_PASSWORD (wazuh); LAB_IP_STEP_CA, STEP_CA_PROVISIONER_PASSWORD,
+# NODE_EXPORTER_SCRAPE_PASSWORD[_HASH] (node_exporter).
+
+- name: Let unattended-upgrades install Proxmox Backup Server packages
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [pbs_unattended]
+  tasks:
+    # Appends to Origins-Pattern from 50unattended-upgrades (apt merges `::` lists).
+    # Applied by hand on 2026-10-23 with exactly this content; this keeps a rebuild honest.
+    - name: Allow the Proxmox Backup origin
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/52unattended-upgrades-proxmox
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Auto-update PBS packages too (nobody logs into this CT). docs/npm-retirement/plan.md Part 4.
+          Unattended-Upgrade::Origins-Pattern:: "origin=Proxmox,codename=${distro_codename},label=Proxmox Backup System Debian Repository";
+
+    - name: Make sure the apt timers that drive unattended-upgrades are enabled
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+
+- name: Forward PBS logs to Graylog
+  hosts: all
+  become: true
+  gather_facts: false
+  tags: [pbs_rsyslog]
+  # LXC has no /proc/kmsg: rsyslog_forward_disable_imklog stays at its default (true).
+  roles:
+    - rsyslog_forward
+
+- name: Enrol PBS as a Wazuh agent
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [pbs_wazuh]
+  vars:
+    # Flat LAN has no zone name; same as omada-controller (docs/omada-controller/).
+    wazuh_agent_group: lan
+    # No Docker on this CT.
+    wazuh_agent_docker_monitoring_enabled: false
+    # PBS config only (never *.key / authkey / csrf.key). The TLS certs are left out on
+    # purpose: they change at every renewal (pbs-tls-renew.timer) and would just alert.
+    wazuh_agent_fim_paths:
+      - /etc/proxmox-backup/datastore.cfg
+      - /etc/proxmox-backup/user.cfg
+      - /etc/proxmox-backup/acl.cfg
+      - /etc/proxmox-backup/domains.cfg
+      - /etc/proxmox-backup/remote.cfg
+      - /etc/proxmox-backup/sync.cfg
+      - /etc/proxmox-backup/verification.cfg
+      - /etc/proxmox-backup/prune.cfg
+      - /etc/proxmox-backup/traffic-control.cfg
+      - /etc/apt/apt.conf.d/52unattended-upgrades-proxmox
+  roles:
+    - wazuh_agent
+
+- name: Install node_exporter on PBS
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [pbs_node_exporter]
+  roles:
+    - node_exporter
