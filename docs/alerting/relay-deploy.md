@@ -1,5 +1,13 @@
 # Alert relay: deploy runbook (Phase 3a)
 
+> **Superseded design (2026-10-24): do not follow this runbook yet.** The operator
+> ruled out serving the relay on port 443 behind Pangolin's Traefik, and wants
+> mutual TLS on a dedicated port, restricted to the home IP at the OCI firewall.
+> The Traefik route and Cloudflare-record steps below have been removed from the
+> `oci` working tree and will be rewritten once the design is settled (see the
+> mTLS discussion in the plan). The secrets, drills and rollback sections still
+> describe the right ideas.
+
 The relay is a single standard-library Python service on the OCI box. It takes
 alerts and heartbeats, pages Telegram with Ack and Snooze buttons, and mirrors
 heartbeat alerts to Discord `#alerts-critical`. It lives in the **`~/git/oci`**
