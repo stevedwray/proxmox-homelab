@@ -10,6 +10,22 @@ or unverified local state file.
 
 ## 0. Prepare the worktree and a recovery record (no production mutation)
 
+### Completed recovery evidence
+
+On 2026-10-24, `pbs-iscsi:backup/ct/40072/2026-10-23T05:31:48Z`
+was restored on pve as temporary stopped CT 940072 with root and Docker
+volumes on `apps-containers`. The restore completed successfully (4.266 GiB
+read), and offline inspection found a populated Docker tree including
+`overlay2`, `containers`, `image`, `volumes`, and `swarm`. The temporary CT,
+its temporary pve-only PBS mapping, and its copied mapping credential were
+then removed successfully. No source CT was stopped or modified.
+
+The temporary CT could not mount with its restored `tvcse` network config
+because pve does not yet have that bridge. It was kept stopped, its autostart
+was disabled, and its bridge was changed temporarily to `vmbr0` solely for
+the offline filesystem check. Complete the separate `tvcse` task before
+any real CSE or pentest-runner cutover.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
