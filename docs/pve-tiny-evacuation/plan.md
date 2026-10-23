@@ -44,7 +44,8 @@ at baseline. Choose target pools per volume; do not sum storage aliases that
 refer to the same backing pool.
 
 A read-only pve API check on 2026-10-24 found no `tvcse` zone or VNet and
-no pending zone/VNet changes. `vmbr0` is VLAN-aware with bridge VID range
+no pending zone/VNet/subnet changes (all 10 current VNets checked).
+`vmbr0` is VLAN-aware with bridge VID range
 2–4094. This does not prove the external switch path for VLAN 100; test it
 after creating the pve-side VNet and before moving CSE guests.
 
@@ -92,6 +93,37 @@ Avoid a simultaneous management claim over the same VMID on one node. The
 three stale pve copies need an explicit choice: refresh them from the live
 source or create replacement guests after preserving/decommissioning the
 stale copies. Test each resulting plan for unexpected changes or deletions.
+
+### First production mutation: pve-side `tvcse` only
+
+Preflight target: `pve`. Mutating objects: one `tvcse` VLAN zone on `vmbr0`
+for node `pve`, one `tvcse` VNet tagged 100, subnet `192.168.100.0/24` with
+gateway `192.168.100.1` and SNAT disabled, followed by SDN apply. Existing
+VNets, firewall configuration, guests and `pve-tiny` are out of scope.
+
+After a fresh read-only SDN check, operator approval and setting
+`TASK_APPROVAL=pve-tiny-evacuation-sdn`, run from this worktree:
+
+```bash
+./with-secrets-prod ansible-playbook -i 'pve.gibbsgreatly.xyz,' -u root \
+  -e '{"target_hosts":"all","requested_sdn_vnets":["tvcse"],"reject_pending_sdn_changes":true,"manage_cluster_firewall":false}' \
+  ansible/00-initial-setup/proxmox-sdn-setup.yml
+```
+
+Require zero failed tasks, `tvcse` only among changes, and unchanged
+existing zones/VNets. Before a CSE guest moves, confirm the VLAN 100 route
+to `192.168.100.1` from a temporary pve-side source after checking that its
+test IP is unused; then check the intended CSE-to-Harbor, Framework and
+panel paths plus one adjacent pve network consumer. The temporary IP action
+requires its own scoped approval if performed separately.
+
+Rollback before any guest attaches: on `pve`, read the actual `tvcse` subnet
+identifier from `/cluster/sdn/vnets/tvcse/subnets`, delete that subnet,
+delete `/cluster/sdn/vnets/tvcse`, delete `/cluster/sdn/zones/tvcse`, and
+apply `/cluster/sdn`. Do not run rollback if a guest is attached; stop and
+move it first under its own approval. Preserve the preflight SDN inventory
+for comparison. These rollback commands are production mutations and require
+the task approval, too.
 
 ## Phase 2: approved cold cutovers, one service at a time
 
