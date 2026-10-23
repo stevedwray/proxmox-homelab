@@ -379,6 +379,19 @@
         creates: "{{ tpot_local_dir }}/tpotweb.conf"
       tags: [noauth]
 
+    # T-Pot's stock config is `satisfy any` + `allow 127.0.0.1/::1` + `deny all`: a
+    # request passes if the IP is allowed OR basic auth succeeds. With auth_basic
+    # removed only localhost passes, so every app path 403s. Allow Traefik's address
+    # (the host firewall already limits :{{ tpot_ui_port }} to it).
+    - name: Allow the Traefik address in the nginx override (replaces basic auth)
+      ansible.builtin.lineinfile:
+        path: "{{ tpot_local_dir }}/tpotweb.conf"
+        insertafter: '^\s*allow ::1;'
+        line: "    allow {{ tpot_traefik_ip }};"
+        regexp: '^\s*allow {{ tpot_traefik_ip | regex_escape }};'
+      register: tpot_nginx_allow
+      tags: [noauth]
+
     - name: Bind-mount the override into the nginx service (compose backed up first)
       ansible.builtin.lineinfile:
         path: "{{ tpot_dir }}/docker-compose.yml"
@@ -393,4 +406,10 @@
       args:
         chdir: "{{ tpot_dir }}"
       when: tpot_compose_edit.changed
+
+    # lineinfile replaces the file (new inode), which a single-file bind mount does
+    # not follow; a restart re-resolves it. Skipped when the recreate above ran.
+    - name: Restart nginx to pick up the allow-list edit
+      ansible.builtin.command: docker restart nginx
+      when: tpot_nginx_allow.changed and not tpot_compose_edit.changed
       tags: [noauth]
