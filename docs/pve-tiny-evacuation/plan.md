@@ -4,6 +4,10 @@ Status: **not yet execution-ready for guest cutovers**. No production changes
 authorized or executed under this plan. Resolve the open gates below before
 requesting a guest cutover approval.
 
+The [execution runbook](runbook.md) defines the per-guest sequence, storage
+profiles, data to preserve, verification, and rollback. Its restore and
+inventory gates must be completed before any guest approval.
+
 ## Objective and scope
 
 Move the eight currently running LXCs from standalone `pve-tiny` to `pve`
@@ -115,7 +119,7 @@ after creating the pve-side VNet and before moving CSE guests.
 | 40070, 100071 CSE | New root/Docker on `apps-containers`; data mounts on `storage-containers` | Confirm both pools' physical free space and create pve Terraform state; code-eval's data may be rebuilt only if no needed run state remains |
 | 20030 panel | New root/Docker on `apps-containers` | Preserve Redis AOF and queue state after draining jobs |
 | 20017 Technitium secondary | New root/Docker on `monitoring-containers` | Keep the distinct `.17` IP; confirm cluster state and DNS client paths |
-| 40072 pentest runner | Undecided | No tracked source definition or state; specify restore method before approval |
+| 40072 pentest runner | Whole-CT PBS restore to `apps-containers`, subject to a successful isolated test restore | No tracked source definition or state; retain manual ownership and verify root plus Docker recovery |
 
 These are candidates, not permissions to resize or overwrite volumes. Check
 the actual backend allocations and ZFS headroom immediately before each
@@ -136,8 +140,8 @@ plan or its runbook:
    config and volume layout, and an independently retained rollback copy.
 3. A private, verified Terraform state handoff or import plan for that VMID,
    with a reviewed `terragrunt plan` that shows no unapproved replacement or
-   destruction. For 40072, establish its actual provisioning and ownership
-   method first.
+   destruction. For 40072, validate the whole-CT restore and retain manual
+   ownership pending a separate IaC project.
 4. Exact source stop, transfer/restore, target start, service verification,
    backup, and rollback commands. Include the timeout and trigger for
    returning the original source online, and account for any writes made on
