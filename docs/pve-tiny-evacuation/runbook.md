@@ -64,6 +64,16 @@ CSE-to-Framework route and service path now work. No MikroTik rule change is
 required. Repeat the brief pve-side test using the corrected Harbor hostname
 and the now-live Framework endpoint before moving a CSE guest.
 
+The approved `pve-tiny-evacuation-cse-network-retest` repeated that pve-side
+test with temporary address `192.168.100.250/24`. The address reached the
+gateway with 3/3 replies, Harbor's health API returned a healthy response via
+the correct hostname, and Framework's model endpoint returned `401` as
+expected without credentials. The cleanup trap removed the address, and a
+post-test address check confirmed it was absent. VLAN 100's pve-side CSE
+paths are therefore ready for guest cutover; panel Redis remains separately
+covered by the successful controller `.70` check because the router rule is
+source-address-specific.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
