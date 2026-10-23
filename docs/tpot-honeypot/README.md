@@ -63,6 +63,16 @@ agent) is in [monitoring-plan.md](monitoring-plan.md) -- deployed 2026-10-15
 central OpenSearch: [opensearch-grafana-plan.md](opensearch-grafana-plan.md)
 -- planned, not built.
 
+**Update 2026-10-24**: tripwire alerting built (not yet deployed): a Grafana rule pages Telegram and Discord
+`#security` when any host outside the allowlist opens a connection to a T-Pot service port (`docs/alerting/`,
+rule `alerting/homelab-honeypot.yml`). Two findings that shape it. **(1) The honeypot sensors (Cowrie, Dionaea,
+Honeytrap) record Docker-internal source addresses** (`192.168.112.1`, `172.29.0.1`, `172.24.0.2`) for LAN
+connections, so they cannot tell Greenbone from a stranger; Suricata sees the wire and keeps the real source, so
+the alert reads Suricata `flow` records. **(2) The sensors do log now** (17 events in 7 days, all one Greenbone
+sweep), which resolves the 2026-10-15 "no sensor has ever logged" finding. The `tpot-events-*` copy is now synced
+every 10 minutes instead of hourly. In 30 days the only non-allowlisted visitor to its service ports was the Kali
+test host (2026-10-15, 81 flows).
+
 ## What this is
 
 - **Host**: `raspberrypi` / `tpot.gibbsgreatly.xyz`, `192.168.1.28`,

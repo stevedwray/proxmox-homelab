@@ -85,5 +85,5 @@ targets (`scripts/gvm_fleet_targets_generate.py`), so there are no hand lists.
 
 ## Out of scope
 
-NetBox push, Grafana metrics, Discord alerting, moving anything to pve-tiny, the
+NetBox push, Grafana metrics, Discord alerting (now `docs/alerting/`), moving anything to pve-tiny, the
 workstation (192.168.1.104) sshd decision.

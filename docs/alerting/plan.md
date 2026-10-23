@@ -4,20 +4,48 @@ Workspace README (decisions, design rules, hand-backs): [README.md](README.md).
 Replaces `docs/catch-up/07-baseline-alerting.md`, whose OpenBao-health and
 alert-rule steps are reused below by id.
 
+## Status (2026-10-24)
+
+Everything below is on branch `work/graylog-sender-ip-pentest-stream`, **not pushed or merged**: the alerting
+work (about 17 commits) sits on top of one **unrelated** commit, `2fd7175d` (mcp-utility-stack moved back to
+`pve`), which is also not on `stable`. A PR from this branch would carry that commit too; decide whether to
+land it first, or cherry-pick the alerting commits onto a fresh branch from `stable`. Only the Phase 0
+groundwork touches live systems.
+
+| Phase | What | State |
+|---|---|---|
+| 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
+| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | Step packets `alerting-00` to `02` written, **not executed** (the playbooks do not exist in the repo yet) |
+| 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
+| 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Built and committed, not deployed.** Discord channels, webhooks and OpenBao fields are live |
+| 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync | **Built and committed, not deployed** |
+| prereq | OpenBao seal-status metric | **Built and committed, not deployed** |
+| prereq | node_exporter fleet repair | Script on `stable`, **never run** |
+| 2 | Graylog log alerts | Outline |
+| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
+| 5, 6 | New critical vulnerabilities; digest, fire drill, native integrations | Outline |
+
+**Order from here:** the Phase 1c checklist (prerequisites, secrets, deploys, drills), then the
+Phase 0 enrolment steps and the remaining outlines (2, 5, 6). Phases 3, 4 and 4b wait for a decision.
+
 ## How to read this
 
 - Steps are fenced YAML blocks under their own heading, per
   `docs/agent-design/step-packet-schema.md`. A step is local-model work: edit
-  files, run its gates, stop. **No step deploys anything.**
+  files, run its gates, stop. **No step deploys anything.** Steps `03` to `06` were executed
+  directly by the planner (their literal content is kept as the record; where a step and the
+  repo disagree, **the repo is right**, and Phase 1c says what superseded what).
 - Anything that touches a running system is plain prose under an "Operator"
   heading. The operator runs it; production runs go through
   `./with-secrets-prod*` with a named `TASK_APPROVAL`.
-- **Phases 0 and 1 are fully written.** Phases 2 to 6 are outlines on purpose:
-  each depends on facts that only exist after the phase before it lands, and
-  its first task is to find them. Their step packets get written when the
-  previous phase's hand-back is in. Do not run an outline.
-- Branch: cut `work/alerting-*` from current `stable`. Phase 0 and 1 only add
-  files and edit the playbooks named in each step.
+- Outlines are on purpose: each depends on facts that only exist after the phase before it
+  lands, and its first task is to find them. Do not run an outline.
+- **Two traps found for real, both worth a gate:** a literal block shown in a step is 2 spaces
+  deeper than it belongs in the file (the `change: |` block adds them), and `syntax-check`
+  cannot see inside a `content: |` string. `scripts/check_grafana_provisioning.py` renders and
+  parses the inline Grafana files for that reason.
+- Branch: `work/graylog-sender-ip-pentest-stream` carries all of this; the usual path is
+  PR to `stable` once the deploy and drills pass.
 
 ## Phase 0: log and metrics coverage
 
@@ -29,10 +57,10 @@ the 2026-10-24 sweep.
 | 0.1 Relay stamps the real sender IP (`relay_src_ip`) | **Done**, live |
 | 0.3 `pentest_seg` in its own stream; MikroTik 514/443 rules narrowed | **Done**, live |
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
-| 0.4 Workstation `garuda` into Graylog, warning and above | Steps 00 and 01 below |
-| 0.5 argon-01 / argon-02 into Graylog | Step 02 below |
+| 0.4 Workstation `garuda` into Graylog, warning and above | Steps 00 and 01 below: **written, not executed** |
+| 0.5 argon-01 / argon-02 into Graylog | Step 02 below: **written, not executed** |
 | 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
-| 0.7 Omada metrics missing from VictoriaMetrics | Closed by the Phase 1 monitoring-stack deploy |
+| 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
 | 0.8 NAS (Asustor Drivestor) | Operator, below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
 
@@ -455,46 +483,23 @@ option; whether RouterOS REST/API access from monitoring-stack
 
 ## Phase 1: Discord baseline and hardware rules
 
-Result: a real Discord alert for the failure classes found on 2026-10-24.
-Telegram is not involved yet. Critical alerts go to `#alerts-critical`,
-warnings to `#alerts-warning`, vulnerability findings to `#security`.
+**State: built and committed, not deployed.** Result once deployed: a Discord alert for the
+failure classes found on 2026-10-24. Critical alerts go to `#alerts-critical`, warnings to
+`#alerts-warning`, security items to `#security`. The Telegram paging layered on top is Phase 1c,
+and **both are deployed together** with the checklist in Phase 1c.
 
-### Operator: prerequisites, in order
+What is in the repo (`terraform/lxc/stacks/monitoring-stack/alerting/`): `homelab-baseline.yml`
+(9 rules), `homelab-hardware.yml` (17 rules: NVMe and SATA faults, temperatures, SMART going
+blind) and `homelab-honeypot.yml` (1 rule, Phase 1c); wired into
+`deploy-monitoring-stack.yml`, which also adds the `vm-alerting` datasource.
 
-**A. Repair the node_exporter fleet.** Without this, the target-down rule
-fires for seven stacks the moment it is switched on.
+### Prerequisites
 
-Preflight: targets every pve LXC, every pve-tiny LXC and the bare-metal
-hosts; mutating (restarts node_exporter, installs a systemd drop-in); out of
-scope: anything else. Confirm the checkout has the fix, then dry-run:
-
-```bash
-git merge-base --is-ancestor 56c611bb HEAD && echo has-fix
-export TASK_APPROVAL=node-exporter-renew-fix
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh --check
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh
-./with-secrets-prod-tiny  scripts/node-exporter-renew-fix.sh
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh --hw-hosts
-```
-
-Verify: `curl -s --data-urlencode 'query=up==0' http://192.168.20.12:8428/api/v1/query`
-should list only the PentAGI targets (`192.168.70.10`, plan 08), `pve-test`
-(laptop, off on purpose) and possibly `llamacpp` on framework (open item 1 in
-the README).
-
-**B. OpenBao health metric.** Run plan 07's `catchup-07-openbao-health-script`
-and `catchup-07-openbao-health-units` (steps in
-`docs/catch-up/07-baseline-alerting.md`), then its "Operator: deploy the
-health exporter" block (approval `catchup-07b-openbao-health`). Also do its
-Part A check of why no nightly snapshot metric exists.
-
-**C. Create the Discord channels and webhooks, then store them.** Follow
-[discord-setup.md](discord-setup.md): the manual server and bot setup, then
-`scripts/discord_bootstrap.py`, which creates the four channels and webhooks
-and writes the four URLs to OpenBao (`services/grafana`) itself. Do this
-**before** the manifest step lands, because the wrappers fail closed on any
-manifest field that is empty in OpenBao. Afterwards confirm the four existing
-Grafana fields still read back (`./with-secrets-prod env | grep -c GRAFANA_`).
+| | State |
+|---|---|
+| **A.** node_exporter fleet repair (seven stacks have had no host metrics since 2026-10-21) | **Pending**, operator. Commands: Phase 1c checklist, item 1a |
+| **B.** OpenBao seal-status metric | **Built, pending deploy**, operator. Commands: item 1b |
+| **C.** Discord channels, webhooks, OpenBao fields, manifest | **Done 2026-10-24.** `scripts/discord_bootstrap.py` created `homelab-alerts` with four channels and webhooks; four URLs are in OpenBao `services/grafana` (v2) and declared in the manifest; read back through the wrapper; test messages arrived. One thing left: reset the bot token in the Developer Portal |
 
 ### alerting-03-manifest-fields
 
@@ -1209,37 +1214,12 @@ in the playbook, not of this document. Neither `syntax-check` nor `grep`
 can see this mistake (the text is inside a `content: |` string); only
 `provisioning-render` can.
 
-### Operator: deploy and prove Phase 1 (approval `alerting-monitoring`)
+### Operator: deploy and prove Phase 1
 
-Prerequisites: A, B and C above done, and the manifest step on the branch
-being deployed.
-
-Preflight: target `monitoring-stack` (`192.168.20.12`, `pve`); mutating
-(provisioning files, scrape config, one Grafana restart). This **also
-restores the Omada scrape jobs**, which are on stable but missing from the
-running stack. Out of scope: dashboards and every other stack.
-
-```bash
-./with-secrets-prod bash -c 'for v in DISCORD_WEBHOOK_CRITICAL DISCORD_WEBHOOK_WARNING DISCORD_WEBHOOK_SECURITY; do test -n "${!v}" && echo "$v loaded"; done'
-TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack
-```
-
-Prove it:
-
-1. Grafana, Alerting, Alert rules: folder "Homelab alerts" with 24 rules
-   (7 baseline + 17 hardware), none in Error.
-2. Contact points: Test each of the three. A message reaches the matching
-   channel.
-3. Real fire: `ssh root@192.168.20.12 'docker stop cadvisor'`. Within about
-   7 minutes "Scrape target down" reaches `#alerts-critical`, and again every
-   30 minutes while it stays down. `docker start cadvisor` brings the
-   resolved message.
-4. `curl -s --data-urlencode 'query=count({__name__=~"omada_.*"})' http://192.168.20.12:8428/api/v1/query`
-   returns a non-zero count (closes Phase 0.7).
-5. Hardware replay: `increase(nvme_media_errors_total{job="node_exporter_hw"}[24h])`
-   for pve-tiny shows the real failure the rule exists for. The rule itself
-   fires on any burst; pve-tiny's drive is awaiting RMA, so expect it to page
-   while it keeps erroring. Ack it in Grafana until the Phase 3 buttons exist.
+Superseded by the single checklist under **Phase 1c**, because the Discord and Telegram routing
+ship in one Grafana provisioning change and one monitoring-stack deploy. The Phase 1 proof
+steps are folded into it (rule and contact-point counts, the real fire test with `docker stop
+cadvisor`, the Omada check, the NVMe replay).
 
 ## Phase 1c: Telegram paging and the honeypot tripwire
 
@@ -1293,6 +1273,11 @@ Order matters.
    ./with-secrets-prod       scripts/node-exporter-renew-fix.sh --hw-hosts
    ```
 
+   Verify with `curl -s --data-urlencode 'query=up==0' http://192.168.20.12:8428/api/v1/query`.
+   It should list only the PentAGI targets (`192.168.70.10`, plan 08), `pve-test` (the laptop, off on
+   purpose) and possibly `llamacpp` on framework (README open item 1). Anything else is a real
+   target that is down.
+
    **b. Deploy the OpenBao seal-status metric.** Built and tested 2026-10-24
    (`files/openbao/openbao_health.py`, 5 tests, plus a timer in `deploy-openbao.yml`). **Without
    it `openbao_sealed` has no data, that rule treats "no data" as firing, and it would page
@@ -1331,16 +1316,33 @@ Order matters.
 4. **Make the honeypot sync faster** (approval `tpot-sync-10min`; `secpipe-stack` now lives on
    `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
    timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
-5. **Prove it:**
-   - Grafana, Alerting: rules present in the `Homelab alerts` folder, none in Error. Contact
-     points: **Test** each of `homelab-page` and `homelab-tripwire`. A Telegram message and a
-     Discord message should both arrive.
-   - **Honeypot drill, from the Kali VM (`192.168.1.114`)**: connect to a honeypot port, for
-     example `nc -vz 192.168.1.28 445` and `nc -vz 192.168.1.28 23`. Within about 12 minutes a
-     Telegram message and a `#security` message should name `192.168.1.114`. Your own browsing of
-     the T-Pot web UI, the router, and Greenbone must **not** alert.
-   - If the alert shows an unnamed source, the label name `src_ip.keyword` did not survive
-     Grafana's notification stage; tell me and I will switch the rule to a plain count.
+5. **Prove it** (each line is a thing that can be seen; do them in this order):
+   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **27 rules** (9 baseline, 17 hardware,
+      1 honeypot), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
+      `-critical`, `homelab-page`, `homelab-tripwire`).
+   2. **Test** `homelab-page` and `homelab-tripwire` from Grafana. Each must deliver **both** a
+      Telegram message and a Discord message. This is the check on the Telegram field names.
+   3. **A Discord-only fire**: `ssh root@192.168.20.12 'docker stop cadvisor'`. Within about 7 minutes
+      "Scrape target down" reaches Discord `#alerts-critical` and **not** Telegram (it is critical
+      but not a page), and repeats every 30 minutes. `docker start cadvisor` sends the resolved
+      message.
+   4. **The honeypot drill**, from the Kali VM (`192.168.1.114`): `nc -vz 192.168.1.28 445` and
+      `nc -vz 192.168.1.28 23`. Within about 12 minutes a Telegram message and a `#security`
+      message should name `192.168.1.114`. Your own browsing of the T-Pot web UI, the router and
+      Greenbone must **not** alert. If the source shows blank, the label name `src_ip.keyword` did not
+      survive Grafana's notification stage; tell me and I will switch the rule to a plain count.
+   5. `curl -s --data-urlencode 'query=count({__name__=~"omada_.*"})' http://192.168.20.12:8428/api/v1/query`
+      returns a non-zero count (closes Phase 0.7).
+   6. Hardware replay: `increase(nvme_media_errors_total{job="node_exporter_hw"}[24h])` for pve-tiny
+      shows the real failure the rule exists for; see the silence note below.
+6. **Afterwards:** reset the Discord bot token in the Developer Portal (Bot, Reset Token; do not copy
+   the new one); then PR the branch to `stable`.
+
+**Rollback.** The alerting is file-provisioned, so removing the three rule files and
+`contact-points.yml` from the monitoring host's `grafana/provisioning/alerting/` and restarting
+Grafana removes everything; reverting the commits and redeploying does the same properly. The
+OpenBao metric is one timer to disable (`systemctl disable --now openbao-health.timer`). The
+T-Pot timer is `tpot_findings_ingest_on_calendar` in the role defaults.
 
 **Silencing the NVMe alert while the pve-tiny drive is awaiting RMA.** `NVMe media errors
 increasing` will page whenever the failing drive logs a burst. In Grafana, Alerting, Silences,

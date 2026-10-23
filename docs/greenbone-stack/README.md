@@ -549,5 +549,7 @@ without `/tasks/summary`**, so the task panels would go empty (`gvm_metrics_sour
 {source="bridge"}` drops to 0). Steps used, for a rebuild: rebuild only the `gvm-bridge`
 service (`docker compose up -d --build --no-deps gvm-bridge`), re-run the `node_exporter`
 role with `node_exporter_textfile_dir` set, run the greenbone playbook with
-`--tags monitoring-integration`, then the monitoring-stack playbook. Alerts are not
-configured yet (Discord is a separate plan).
+`--tags monitoring-integration`, then the monitoring-stack playbook. Alerts for the
+GVM exporter are not configured yet. Lab-wide alerting (Discord, plus Telegram for pages) is planned and built,
+not yet deployed, in `docs/alerting/`; GVM findings reach it through Grafana (its Phase 5). Scans of
+`pentest_seg` are to run only on request and stay out of lab findings (see `docs/gvm-scan-redesign/README.md`).

@@ -138,8 +138,11 @@ Grafana/Graylog — **without re-platforming it**.
   (`terraform/lxc/stacks/monitoring-stack/dashboards/omada.json`, uid
   `omada-network`, 27 panels, all queries tested against live VictoriaMetrics)
   deployed via `provision.sh --stack monitoring-stack` (141 tasks OK, smoke test
-  passed). No alerting exists in monitoring-stack, so alerts are not done —
-  needs a decision on Grafana alert rules vs vmalert and a notification channel.
+  passed). Alerting is decided and built in the repo
+  (2026-10-24, `docs/alerting/`: Grafana alert rules, Discord and Telegram), not yet deployed. **As of that date the
+  running monitoring-stack had no `omada_*` series at all** (it was redeployed without the scrape job that is on
+  `stable`); the alerting deploy restores it. No Omada-specific rule yet; a firmware-update-available alert
+  (`omada_device_need_upgrade`) is planned in Phase 6.
 - Wazuh agent (2026-10-23): `wazuh_agent` role added to `deploy-omada-controller.yml`
   (group `lan` — the zone name GVM uses for the flat LAN; docker monitoring on,
   accepted root-equivalent docker.sock access for `wazuh` on this unprivileged

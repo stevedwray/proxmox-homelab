@@ -4,7 +4,7 @@ Test and tune the Wazuh SIEM stack and its agents with the method used for Green
 ([docs/gvm-scan-redesign/](../gvm-scan-redesign/)): baseline first, one supervised change at a
 time, numeric decision gates, tooling and config in the repo, docs and memory kept current.
 Scope (operator, 2026-10-15): Wazuh and agent configuration only. Host patching, package removal
-and alert delivery (Discord) are out of scope.
+and alert delivery (Discord) are out of scope here; alert delivery is now planned in `docs/alerting/`.
 
 ## Status (2026-10-15)
 
@@ -347,7 +347,8 @@ Now:
 
 ## Out of scope (separate plans)
 
-- Discord or other alert delivery (separate plan, same as Greenbone).
+- Discord or other alert delivery (separate plan, same as Greenbone: now `docs/alerting/`, built 2026-10-24,
+  not yet deployed).
 - Moving the Wazuh stack to pve-tiny (see memory `project_pve_tiny_load_shifting`;
   tuning first makes that move cheaper: much less data and indexing load).
 - Feeding Wazuh findings into secpipe (already tracked in docs/wazuh-stack/).
