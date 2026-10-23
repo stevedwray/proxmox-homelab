@@ -68,6 +68,7 @@
 
   vars_files:
     - "{{ playbook_dir }}/../../stacks/monitoring-stack/hwmon-hosts.yml"
+    - "{{ playbook_dir }}/../../stacks/omada-controller/switches.yml"
   vars:
     monitoring_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     monitoring_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ monitoring_lab_domain, true) }}"
@@ -260,6 +261,8 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
+                - targets: ["{{ omada_controller_host }}:9100"]
+                  labels: {stack: omada-controller}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
@@ -318,6 +321,14 @@
                   labels: {stack: framework, server: chat}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:8085"]
                   labels: {stack: framework, server: embeddings}
+
+            # Omada controller API (omada_exporter sidecar, deploy-omada-monitoring.yml).
+            - job_name: omada_exporter
+              scrape_interval: 60s
+              scrape_timeout: 30s
+              static_configs:
+                - targets: ["{{ omada_controller_host }}:9202"]
+                  labels: {stack: omada-controller}
 
             - job_name: cadvisor
               static_configs:
