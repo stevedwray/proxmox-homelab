@@ -40,4 +40,18 @@ here.)
   one passed. Do not push that dir (T4b would overwrite all routes). Render the single
   manifest with `render-edge-traefik.py` into a clean dir instead (identical tpot file).
 - **T-Pot Part 1 progress (2026-10-23):** T2 (cert), T3, T4a-c (Authentik app, Traefik
-  route, DNS) done and verified; `tpot.lab` returns 302 to Authentik. T5-T8 pending.
+  route, DNS) done and verified; `tpot.lab` returns 302 to Authentik. T5 (firewall) and T6/T6b (basic auth removed, Traefik allowed in nginx) done; T8 docs
+  written. T7 (check after the 04:09 reboot) still to confirm.
+
+## PBS (Part 2) state, 2026-10-23
+
+- `https://pbs.lab.gibbsgreatly.xyz` -> Traefik -> `https://192.168.1.12:8007` (no Authentik; PBS login).
+- CT 105 serves a step-ca cert (90 days, SANs `pbs.lab…`, `proxmox-backup.gibbsgreatly.xyz`,
+  `proxmox-backup-server`, `192.168.1.12`), renewed by `pbs-tls-renew.timer` (03:40).
+  Stock cert kept as `/etc/proxmox-backup/proxy.{pem,key}.selfsigned`.
+- `pve` and `pve-tiny` **no longer pin a PBS fingerprint** on `pbs-iscsi`; they validate via the
+  homelab CA (a pin would break at every renewal). Backups use `192.168.1.12:8007` directly (never
+  via NPM). Original pin, for rollback: `2B:44:AB:DF:D2:36:D5:BE:6D:4D:E3:9B:4F:A8:CB:42:F8:2D:AB:48:61:A4:8E:A7:08:0D:D8:DA:BA:54:00:FD`.
+- P4 (test backups) skipped by decision; confirm the scheduled jobs (pve 11:00 UTC, pve-tiny
+  12:30 NZDT) succeeded before Part 3.
+- Part 4 (enrol CT 105 in Wazuh/Graylog/Grafana) is planned in plan.md section 5a.

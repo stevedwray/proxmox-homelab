@@ -39,6 +39,30 @@ Findings still open: `ip6`/UDP sensors not tested; Suricata stays very noisy
 ("Ethertype unknown" is ~99% of events -- filtered in the Grafana queries, see
 `opensearch-grafana-plan.md`).
 
+## 2026-10-23: web UI behind Traefik (docs/npm-retirement/)
+
+`https://tpot.lab.gibbsgreatly.xyz` (Traefik + Authentik forwardAuth, app bound to the
+operator group) replaces the NPM route `tpotce.gibbsgreatly.xyz`. Applied by
+`ansible/00-initial-setup/tpot-web-behind-traefik.yml` (tags `tls`, `firewall`, `noauth`):
+
+- **TLS**: step-ca cert (SANs `tpot.lab…`, `tpot.gibbsgreatly.xyz`, `192.168.1.28`) in
+  `data/nginx/cert/nginx.{crt,key}`; stock files kept as `*.selfsigned`; renewal via
+  `tpot-tls-renew.timer` (03:20 daily, renews under 15 days).
+- **nginx override**: `local/nginx/tpotweb.conf` (bind-mounted read-only over
+  `/etc/nginx/conf.d/tpotweb.conf`) = the stock file with every `auth_basic*` line removed
+  **plus `allow 192.168.30.10;`** (Traefik). T-Pot's stock config is `satisfy any` +
+  `allow 127.0.0.1/::1` + `deny all`, so removing basic auth alone 403s every path.
+  Compose line added to the `nginx` service (timestamped backup kept next to it).
+- **Firewall** (the only gate besides Authentik now): `DOCKER-USER` DROP tcp/64297 from
+  anything but `192.168.30.10` on `eth0`, `ip6tables INPUT` DROP tcp/64297, applied by
+  `tpot-ui-firewall.service`; `tpot.service.d/10-ui-firewall.conf` makes T-Pot
+  `Requires=` it (fail closed).
+- **After a T-Pot `update.sh`** (may reset `docker-compose.yml` and the cert dir): re-run
+  the playbook tags `tls` then `noauth`. The firewall unit survives.
+- Rollback: copy the `.selfsigned` files back and `docker exec nginx nginx -s reload`; restore the
+  compose backup and `docker compose up -d --no-deps nginx`; remove the two firewall rules.
+- Not yet confirmed: the first daily reboot (04:09 Europe/London) with this config (T7).
+
 ## Re-applying after an update/reinstall
 
 1. Copy `local/` back (or regenerate: `docker cp <container>:/opt/<sensor>/etc/honeypot.cfg`

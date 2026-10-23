@@ -72,7 +72,9 @@ central OpenSearch: [opensearch-grafana-plan.md](opensearch-grafana-plan.md)
   attackers.
 - **Access**: SSH alias `tpot` (`~/.ssh/config`), port 64295, user
   `steve`, key-only auth, full passwordless sudo. Web UI is on
-  `:64297` (LAN-exposed) — `:64294` is a separate vhost for Logstash
+  `:64297` (reachable only from Traefik since 2026-10-23; browse to
+  `https://tpot.lab.gibbsgreatly.xyz`, Authentik login, no basic auth -- see
+  `local-changes.md`) — `:64294` is a separate vhost for Logstash
   sensor ingest, not the browser UI (corrected 2026-09-30, see
   `plan.md` Phase 6). Internal Elasticsearch (`:64298`) and Kibana
   (`:64296`) are bound to `127.0.0.1` only — reachable exclusively via
