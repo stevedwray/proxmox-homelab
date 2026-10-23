@@ -44,6 +44,7 @@ API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/stevedwray/proxmox-homelab, 1)"
 CATEGORY = "homelab-alerts"
 OPENBAO_ENTRY = "services/grafana"
+SNAPSHOT_FAILED = 3
 WRITER = Path(__file__).resolve().parent / "openbao_write.py"
 
 GUILD_TEXT, GUILD_CATEGORY = 0, 4
@@ -218,7 +219,11 @@ def main(argv: list[str], env: Mapping[str, str] = os.environ, transport: Transp
         return 0
 
     code = writer(OPENBAO_ENTRY, [field for _n, field, _t in CHANNELS], urls, env)
-    if code != 0:
+    if code == SNAPSHOT_FAILED:
+        # openbao_write.py exits 3 when the values were written but its follow-up snapshot failed.
+        print("WARNING: the URLs were stored, but OpenBao's post-write snapshot failed. Run the snapshot "
+              "command printed above by hand.", file=sys.stderr)
+    elif code != 0:
         print("ERROR: OpenBao write failed (exit %d). The webhooks now exist but their URLs were not stored; "
               "re-run with --rotate to replace them." % code, file=sys.stderr)
         return 1

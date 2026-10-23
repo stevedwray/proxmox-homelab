@@ -192,9 +192,17 @@ class BootstrapTest(unittest.TestCase):
         self.assertNotIn(TOKEN, err)
         self.assertEqual(writer.calls, [])
 
-    def test_openbao_failure_is_reported_and_no_test_messages_sent(self):
+    def test_snapshot_failure_is_a_warning_not_a_rotate_instruction(self):
         fake = FakeDiscord()
         code, _o, err, _w = run(fake, writer=Writer(code=3))
+        self.assertEqual(code, 0)
+        self.assertIn("snapshot failed", err)
+        self.assertNotIn("--rotate", err)
+        self.assertEqual(len(fake.executed), 4, "values were stored, so the test messages still go out")
+
+    def test_openbao_failure_is_reported_and_no_test_messages_sent(self):
+        fake = FakeDiscord()
+        code, _o, err, _w = run(fake, writer=Writer(code=1))
         self.assertEqual(code, 1)
         self.assertIn("--rotate", err)
         self.assertEqual(fake.executed, [])
