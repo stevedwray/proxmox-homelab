@@ -271,8 +271,6 @@
                   labels: {stack: omada-controller}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
-                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
-                  labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:9100"]
                   labels: {stack: greenbone-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}:9100"]
@@ -356,8 +354,6 @@
                   labels: {stack: framework}
                 - targets: ["tpot.gibbsgreatly.xyz:8083"]
                   labels: {stack: tpot-honeypot}
-                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
-                  labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:8082"]
                   labels: {stack: greenbone-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}:8080"]
@@ -499,13 +495,6 @@
                   labels:
                     stack: step-ca-stack
 
-            - job_name: pentagi-postgres
-              static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_PENTAGI') }}:9187"
-                  labels:
-                    stack: pentagi-stack
-                    component: pgexporter
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning

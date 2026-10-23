@@ -1184,7 +1184,7 @@ scope:
     - terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Removing any scrape job or target (PentAGI targets belong to plan 08)"
+    - "Removing any scrape job or target"
     - "Running the playbook or provision.sh"
 
 gates:
@@ -1274,7 +1274,7 @@ Order matters.
    ```
 
    Verify with `curl -s --data-urlencode 'query=up==0' http://192.168.20.12:8428/api/v1/query`.
-   It should list only the PentAGI targets (`192.168.70.10`, plan 08), `pve-test` (the laptop, off on
+   It should list only `pve-test` (the laptop, off on
    purpose) and possibly `llamacpp` on framework (README open item 1). Anything else is a real
    target that is down.
 
