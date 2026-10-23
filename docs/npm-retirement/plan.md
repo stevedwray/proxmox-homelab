@@ -542,6 +542,37 @@ workstation `192.168.1.104`.) Then, with the operator:
    `192.168.1.105`, a Windows PC, playing from the legacy Jellyfin on
    `192.168.1.6`). That is a separate move to the media-stack-lab Jellyfin.
 
+## 5a. Part 4 — enrol PBS (CT 105) in lab infra (do last, after Part 2 is verified)
+
+Added 2026-10-23 at the operator's request. **Research only (read-only, 2026-10-23);
+nothing applied.** CT 105 is hand-built (never Ansible-managed), Debian 12, 4 vCPU,
+4 GiB RAM (~3 GiB free), 70% of a 10 GiB root. Do **not** use the `lxc_base` role
+here (it would reconfigure a hand-built CT); include only the roles below.
+
+| Capability | State today | Needed |
+|---|---|---|
+| Wazuh | `wazuh-agent` 4.14.2 **installed and running but not connected**: it points at a stale manager `192.168.1.14:1514` ("Transport endpoint is not connected") | Re-enrol through the `wazuh_agent` role (pins 4.14.9, group `lan` like Omada, FIM on `/etc/proxmox-backup` config but **not** `*.key`/`authkey*`, and the TLS dir). Decide whether the stale install is removed first. |
+| Automatic updates | `unattended-upgrades` installed and active (`20auto-upgrades` on) | Compare with the fleet `unattended_upgrades` role (security-only, no auto-reboot). The default origins cover Debian only: **Proxmox PBS packages (`download.proxmox.com … pbs-no-subscription`) are not auto-updated.** Operator decision: leave PBS manual (recommended, a PBS upgrade restarts the backup proxy) or add the origin. |
+| Grafana / VictoriaMetrics | no `node_exporter`, nothing on `:9100` | `node_exporter` role (step-ca TLS cert + scrape basic auth, needs `LAB_IP_STEP_CA`, `STEP_CA_PROVISIONER_PASSWORD`, `NODE_EXPORTER_SCRAPE_PASSWORD*`), then add `192.168.1.12:9100` to the scrape list in `deploy-monitoring-stack.yml` and redeploy `monitoring-stack`. Optional later: PBS's own metric-server push (datastore usage). |
+| Graylog | `rsyslog` not installed; journald only | `rsyslog_forward` role (target `LAB_IP_GRAYLOG:514`; `rsyslog_forward_disable_imklog: true` as for any LXC). PBS task/API logs under `/var/log/proxmox-backup/` are files, so add an `imfile` input if wanted (operator decision). |
+| GVM | The scanner already reaches the PBS UI (it was in NPM's logs) | Check whether `192.168.1.12` is in `EXTRA_HOSTS`/the VLAN scan scope (`docs/gvm-coverage-cleanup/`); add a credentialed-scan account only if wanted. |
+
+Steps (each is a separate production approval; none restarts a PBS service):
+1. Write `terraform/lxc/ansible/playbooks/deploy-pbs-enrolment.yml` (hosts: the existing
+   `proxmox-backup-server/inventory.yml`, roles: `wazuh_agent`, `node_exporter`,
+   `rsyslog_forward`, `unattended_upgrades`, each tagged so they run separately).
+   Syntax-check; commit. Model it on the Omada playbook (commit `585ced50` on
+   `work/omada-controller-adoption`).
+2. Wazuh first (lowest risk, fixes the already-broken agent), verify the agent is
+   `Active` in the manager with group `lan`.
+3. `unattended_upgrades` (after the origins decision), then `rsyslog_forward`
+   (verify lines arrive in Graylog), then `node_exporter` + the monitoring scrape edit
+   (verify the target is `up` in Grafana/VictoriaMetrics).
+4. Run in the daily backup-free time (agents do not touch the PBS services, but keep
+   clear of the 03:00 UTC GC and the `pve` 11:00 UTC / `pve-tiny` 12:30 NZDT jobs).
+5. Docs: update `docs/lxc-scan-and-monitoring-rollout/README.md` ("known gaps" list
+   still names `proxmox-backup-server`) and record it in the P7 doc update.
+
 ## 6. Open questions / flagged risks
 
 1. **T-Pot IPv6 exposure (independent of this plan):** the Pi has a global IPv6
