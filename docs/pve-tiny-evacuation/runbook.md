@@ -54,9 +54,15 @@ The running source controller verified Harbor health (HTTP 200 via
 connection still failed because Framework had no port 8080 listener.
 `llama-swap.service` was active but no managed llama-server model was loaded.
 
-Do not move CSE guests until the Framework operator restores an intended
-llama-server model on port 8080 and the controller's model endpoint check
-passes. No MikroTik rule change is required from the evidence above.
+The approved `pve-tiny-evacuation-framework-model-start` task then started
+`llama-swap-preload.service` on Framework. The normal one-shot preload
+completed, `llama-swap.service` remained active, and the intended model
+listener appeared on `0.0.0.0:8080`. Framework's local `/v1/models` and the
+source controller's request to `http://framework.gibbsgreatly.xyz:8080/v1/models`
+both returned the expected unauthenticated `401`, which confirms the actual
+CSE-to-Framework route and service path now work. No MikroTik rule change is
+required. Repeat the brief pve-side test using the corrected Harbor hostname
+and the now-live Framework endpoint before moving a CSE guest.
 
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
