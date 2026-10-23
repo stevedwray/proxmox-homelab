@@ -37,6 +37,23 @@ that Linux bridge `tvcse` is up and its Proxmox subnet matches the declared
 configuration. Network reachability still requires the separate temporary
 source test below before a CSE guest can move.
 
+### Failed CSE path validation — migration hard gate
+
+On 2026-10-24, temporary address `192.168.100.250/24` was attached to
+`tvcse` on pve after confirming no Proxmox guest claimed it. It reached the
+gateway (`192.168.100.1`, 3/3 ICMP replies), proving VLAN 100 reaches the
+MikroTik. Harbor's Traefik endpoint accepted the TCP/TLS connection but
+returned HTTP 404 for the tested host/path. Framework's llama-server
+(`192.168.1.18:8080`) and panel health endpoint
+(`192.168.20.30:8000/healthz`) both timed out from the temporary CSE source.
+The address was removed in the same task and verified absent.
+
+Do not move `cse-controller`, `cse-code-eval`, `cse-panel-stack`, or
+`pentest-runner` until the intended MikroTik cross-zone rules have been
+reviewed and corrected, then this test is rerun successfully. Diagnose the
+Harbor 404 separately from routing: it proves reachability to Traefik but
+not a usable Harbor route for the test hostname/path.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
