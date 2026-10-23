@@ -1,6 +1,8 @@
 # pve-tiny temporary evacuation to pve
 
-Status: preparation. No production changes authorized or executed under this plan.
+Status: **not yet execution-ready for guest cutovers**. No production changes
+authorized or executed under this plan. Resolve the open gates below before
+requesting a guest cutover approval.
 
 ## Objective and scope
 
@@ -37,11 +39,39 @@ the latest backup result and perform a test restore or verified cold copy
 for each stateful guest. Stop if reads or integrity checks fail; determine a
 salvage path before overwriting the last good copy.
 
+The latest `pve-tiny` vzdump task, at 18:30 NZDT on 2026-10-23, reports
+success for all eight running guests. The preceding daily tasks failed on
+the stopped CT 50011's NVMe Docker volume, while the eight running guests
+completed. The read-only PVE token returned an empty PBS content listing,
+so these logs establish backup task success but **not** that snapshots can be
+listed or restored from `pve`. A test restore remains a hard gate.
+
+`pve`'s current daily PBS job is `all=1` but explicitly excludes VMIDs
+40014, 50012 and 50013, the old pve copies. It also excludes 50011, now
+running on pve, which is a separate existing backup gap. Before the three
+returning stacks are considered migrated, remove their exclusions under a
+scoped backup-job approval and verify one successful new backup of each.
+
 `pve` has stopped copies of VMIDs 40014, 50012 and 50013 from the earlier
 move. Their data is stale. Never start them before source shutdown and state
 refresh. The `pve` default infrastructure pool had only about 92 GiB free
 at baseline. Choose target pools per volume; do not sum storage aliases that
 refer to the same backing pool.
+
+Terragrunt uses local state in each stack's environment directory. The
+original checkout has state for the three stopped pve copies and the seven
+managed pve-tiny guests; the isolated worktree does not. Before any plan or
+apply, copy the exact state files and workspace directories into this
+worktree as ignored, access-restricted local files, record checksums, and
+confirm the copied state corresponds to the live VMIDs. Never plan a live
+guest from an empty state directory, and never symlink writable state back
+into the other checkout. Refresh each state copy immediately before that
+guest's cutover; stop if its checksum changed unexpectedly.
+
+`pentest-runner` has no tracked stack definition or usable state in either
+checkout. The local original-checkout directory contains inventory and
+cache files, but its `pve-tiny` state directory is empty. Treat VMID 40072
+as manually managed until its creation and restore path is established.
 
 A read-only pve API check on 2026-10-24 found no `tvcse` zone or VNet and
 no pending zone/VNet/subnet changes (all 10 current VNets checked).
@@ -75,6 +105,48 @@ after creating the pve-side VNet and before moving CSE guests.
 7. Baseline service-level checks and decide a cutover window with no PBS
    backup/verify or CSE job in progress. Record the exact rollback trigger for
    each service.
+
+### Target storage candidates; confirm with plans and free-space checks
+
+| Guest | Proposed pve placement | Reason / gate |
+|---|---|---|
+| 40014 opensearch | Reuse existing stopped pve root and Docker on `monitoring-containers`, data mount on `storage-containers` | Refresh the data mount from a verified current source; retain old data separately until validated |
+| 50012 secpipe, 50013 ai-services | Reuse existing stopped pve volumes on `infrastructure-containers` | Ensure the 92 GiB pool headroom remains adequate; refresh AI named volumes, provision current code |
+| 40070, 100071 CSE | New root/Docker on `apps-containers`; data mounts on `storage-containers` | Confirm both pools' physical free space and create pve Terraform state; code-eval's data may be rebuilt only if no needed run state remains |
+| 20030 panel | New root/Docker on `apps-containers` | Preserve Redis AOF and queue state after draining jobs |
+| 20017 Technitium secondary | New root/Docker on `monitoring-containers` | Keep the distinct `.17` IP; confirm cluster state and DNS client paths |
+| 40072 pentest runner | Undecided | No tracked source definition or state; specify restore method before approval |
+
+These are candidates, not permissions to resize or overwrite volumes. Check
+the actual backend allocations and ZFS headroom immediately before each
+cutover. Restore/copy methods and Terraform plans must match the selected
+pool; otherwise stop and revise this table.
+
+### Cutover readiness gates
+
+The pve-side `tvcse` SDN change has a scoped preflight and rollback above.
+The guest cutovers do **not** yet have an approved, executable command set.
+Before seeking approval for any guest, record all of the following in this
+plan or its runbook:
+
+1. A restorable source backup (including every persistent mount) or a
+   verified cold-copy procedure, with the exact snapshot/volume identifier
+   and a test restore. State which mounts are intentionally disposable.
+2. The selected target storage IDs and required free bytes, the exact guest
+   config and volume layout, and an independently retained rollback copy.
+3. A private, verified Terraform state handoff or import plan for that VMID,
+   with a reviewed `terragrunt plan` that shows no unapproved replacement or
+   destruction. For 40072, establish its actual provisioning and ownership
+   method first.
+4. Exact source stop, transfer/restore, target start, service verification,
+   backup, and rollback commands. Include the timeout and trigger for
+   returning the original source online, and account for any writes made on
+   pve before reversal.
+5. For 40014, 50012 and 50013, reconcile the stopped target copies and
+   remove their backup-job exclusions before accepting the cutover. Confirm
+   the first new backup completes.
+
+Do not shut down `pve-tiny` while any of these gates remains open.
 
 ## Phase 1: prepare source-controlled target definitions
 
