@@ -31,7 +31,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
 
@@ -57,7 +57,7 @@ groups:
         for: 2m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
 
@@ -83,7 +83,7 @@ groups:
         for: 10m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
 
@@ -109,7 +109,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
 
@@ -187,7 +187,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
 
@@ -239,7 +239,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
 
@@ -265,7 +265,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
 
@@ -369,7 +369,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
 

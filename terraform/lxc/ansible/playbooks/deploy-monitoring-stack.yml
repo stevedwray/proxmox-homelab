@@ -107,6 +107,8 @@
     grafana_discord_critical_url: "{{ lookup('env', 'DISCORD_WEBHOOK_CRITICAL') | mandatory('DISCORD_WEBHOOK_CRITICAL env var is not set') }}"
     grafana_discord_warning_url: "{{ lookup('env', 'DISCORD_WEBHOOK_WARNING') | mandatory('DISCORD_WEBHOOK_WARNING env var is not set') }}"
     grafana_discord_security_url: "{{ lookup('env', 'DISCORD_WEBHOOK_SECURITY') | mandatory('DISCORD_WEBHOOK_SECURITY env var is not set') }}"
+    grafana_telegram_bot_token: "{{ lookup('env', 'TELEGRAM_BOT_TOKEN') | mandatory('TELEGRAM_BOT_TOKEN env var is not set') }}"
+    grafana_telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | mandatory('TELEGRAM_CHAT_ID env var is not set') }}"
     # Use public Authentik URL for browser-facing authorize endpoint so existing cookies are used,
     # while keeping token/api endpoints on a dedicated internal Authentik backchannel for server-to-server calls.
     grafana_oauth_auth_url: "{{ lookup('env', 'GRAFANA_OAUTH_AUTH_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
@@ -568,6 +570,7 @@
       loop:
         - homelab-baseline.yml
         - homelab-hardware.yml
+        - homelab-honeypot.yml
       register: grafana_alert_rules_provisioning
 
     - name: Write Grafana Discord contact points and notification policy
@@ -577,15 +580,6 @@
         content: |
           apiVersion: 1
           contactPoints:
-            - orgId: 1
-              name: homelab-discord-critical
-              receivers:
-                - uid: homelab-discord-critical
-                  type: discord
-                  settings:
-                    url: "{{ grafana_discord_critical_url }}"
-                    use_discord_username: false
-                  disableResolveMessage: false
             - orgId: 1
               name: homelab-discord-warning
               receivers:
@@ -604,6 +598,47 @@
                     url: "{{ grafana_discord_security_url }}"
                     use_discord_username: false
                   disableResolveMessage: false
+            - orgId: 1
+              name: homelab-discord-critical
+              receivers:
+                - uid: homelab-discord-critical
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_critical_url }}"
+                    use_discord_username: false
+                  disableResolveMessage: false
+            - orgId: 1
+              name: homelab-page
+              receivers:
+                - uid: homelab-page-discord
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_critical_url }}"
+                    use_discord_username: false
+                  disableResolveMessage: false
+                - uid: homelab-page-telegram
+                  type: telegram
+                  settings:
+                    bottoken: "{{ grafana_telegram_bot_token }}"
+                    chatid: "{{ grafana_telegram_chat_id }}"
+                    parse_mode: None
+                  disableResolveMessage: false
+            - orgId: 1
+              name: homelab-tripwire
+              receivers:
+                - uid: homelab-tripwire-discord
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_security_url }}"
+                    use_discord_username: false
+                  disableResolveMessage: false
+                - uid: homelab-tripwire-telegram
+                  type: telegram
+                  settings:
+                    bottoken: "{{ grafana_telegram_bot_token }}"
+                    chatid: "{{ grafana_telegram_chat_id }}"
+                    parse_mode: None
+                  disableResolveMessage: false
           policies:
             - orgId: 1
               receiver: homelab-discord-warning
@@ -612,10 +647,22 @@
               group_interval: 5m
               repeat_interval: 4h
               routes:
+                # Honeypot tripwire: Discord #security plus Telegram. Stops here.
+                - receiver: homelab-tripwire
+                  object_matchers:
+                    - ['tripwire', '=', 'honeypot']
+                  repeat_interval: 12h
+                # Everything security-related is also posted to #security.
                 - receiver: homelab-discord-security
                   object_matchers:
                     - ['category', '=', 'security']
                   continue: true
+                # Pages: Discord #alerts-critical plus Telegram.
+                - receiver: homelab-page
+                  object_matchers:
+                    - ['page', '=', 'true']
+                  repeat_interval: 30m
+                # Other critical alerts: Discord #alerts-critical only.
                 - receiver: homelab-discord-critical
                   object_matchers:
                     - ['severity', '=', 'critical']

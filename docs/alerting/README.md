@@ -23,16 +23,39 @@ The goal is the things that **fail silently or semi-silently**: hardware
 faults, temperatures, new critical vulnerabilities, backups, and the monitoring
 itself going quiet.
 
+## Scope: now, and future state
+
+**Now (operator decision 2026-10-24: step back and keep it simple):**
+
+- Everything that matters goes to **Discord**, in four channels.
+- The few alerts that need a human **now** also go to **Telegram**, through Grafana's
+  own Telegram contact point: no custom service. The "page set" is: critical hardware
+  faults, OpenBao sealed or snapshot problems, a production node unreachable, a local
+  disk above 95%, and the **honeypot tripwire**.
+- Silencing is done in Grafana (Alerting, Silences), which is time-boxed and works as a
+  snooze. Telegram has no buttons.
+
+**Future state, deliberately deferred** (all designed, none deployed):
+
+- The OCI alert relay with Ack and Snooze buttons (built and tested, parked in
+  `~/git/oci`, not deployed; whether to keep it or use off-the-shelf software is
+  undecided).
+- A dead man's switch on the OCI box, reached over mutual TLS on a dedicated port
+  (not 443), firewalled to the home IP.
+- blackbox_exporter service checks of the alert chain, then Icinga.
+
 ## Decisions (operator, 2026-10-24)
 
 | Question | Decision |
 |---|---|
 | Routine channel | **Discord**, four channels: `#alerts-critical` (a copy of every Telegram page), `#alerts-warning`, `#security` (Wazuh, GVM, Graylog, Harbor findings), `#events` (Proxmox, PBS, Harbor, informational) |
-| Emergency channel | **Telegram**, private chat with a bot. **Two-way: Ack and Snooze buttons.** Do Not Disturb is respected (no bypass); repeat-until-ack is the safety net instead |
-| Ack / snooze | Every repeating alert has both. Ack = quiet until it resolves. Snooze (1h / 4h / 24h) = quiet for N, then comes back if still firing. Applies to the dead man's switch too |
+| Emergency channel | **Telegram**, a private chat with the bot, through **Grafana's built-in Telegram contact point**. No Ack/Snooze buttons for now (that is the deferred relay); snooze with a Grafana silence. Do Not Disturb is respected (no bypass) |
+| Ack / snooze | Now: a time-boxed Grafana silence. Future: Ack and Snooze buttons in Telegram via the relay, which also covers the dead man's switch |
 | Service checks | **blackbox_exporter**, Nagios-style active checks, limited to the services the alert and notification chain depends on (7 probes, see plan Phase 4b). Not a general service monitor; additions only on the operator's request. **Icinga later**, if dependencies and escalations prove necessary |
+| Paging (Telegram) | Critical hardware faults (NVMe media errors rising, NVMe critical warning, spare low, SMART health failed, SATA pending or uncorrectable sectors, NVMe 80 C, SATA 65 C, CPU 95 C); OpenBao sealed, snapshot stale or failed; a production node (`pve`, `pve-tiny`) unreachable; a local disk above 95%; the honeypot tripwire. Everything else is Discord only |
+| Honeypot tripwire | Telegram **and** Discord `#security` when any host not on the allowlist opens a connection to a T-Pot service port. Greenbone (`192.168.70.11`) and the known hosts are the allowlist. Read from Suricata flow records, because the honeypot sensors lose the real source address (see below) |
 | Hosting | **Self-hosted only, no SaaS** (Healthchecks.io is dropped). Nothing new runs on `framework`: its memory and load must stay low |
-| Dead man's switch | A small service on the OCI box (**built, tested, not deployed**: [relay-deploy.md](relay-deploy.md)) (`~/git/oci`), outside the lab, receives a heartbeat from `pve` and from `pve-tiny` every 5 minutes. A missing or failing heartbeat pages with the same Ack and Snooze buttons as everything else. The lab watches the OCI service in return, so neither side fails silently |
+| Dead man's switch | **Future state.** A small service on the OCI box receiving per-node heartbeats; the lab watches it in return. Until then nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host |
 | Routing | Proxmox and Harbor send to Discord directly. Anything that can be critical goes through Grafana or Graylog, then the OCI relay. Services with their own Discord/Telegram support are evaluated case by case (list below) |
 | Log alerts | Come from **Graylog**, on exact message patterns, never on log level |
 | Hardware | Faults, temperatures and firmware-update-available are in scope for every device, including workstation, MikroTik, Omada switches, NAS and Pis |
@@ -113,6 +136,26 @@ Watching the watchers (no SaaS):
 - **Residual risk, accepted by the no-SaaS decision:** if the lab and the OCI
   box both fail at the same moment, or both Telegram and Discord are
   unreachable, nothing notices.
+
+## Honeypot findings (2026-10-24)
+
+- T-Pot is a **LAN tripwire**, not internet-facing. Over 30 days the only
+  non-allowlisted source touching its service ports was your Kali test host on
+  2026-10-15 (81 flows). In the last 7 days: none.
+- **The honeypot sensors lose the real source address.** Cowrie, Dionaea and
+  Honeytrap record Docker-internal addresses (`192.168.112.1`, `172.29.0.1`,
+  `172.24.0.2`) for LAN-originated connections, so every Greenbone sweep looks
+  like a stranger in those events. **Suricata sees the wire and records the real
+  source**, so the alert reads Suricata `flow` records instead.
+- A flow only counts as inbound when it has a service destination port
+  (`<= 32767`) and an ephemeral source port (`>= 1024`). The opposite shape
+  (source port 443 or 53) is the Pi's own outbound traffic, seen mid-stream,
+  and caused most of the apparent noise.
+- The existing dashboard panels "Sensor events from UNEXPECTED sources" and
+  "Distinct unexpected sources" are therefore misleading (they count Docker
+  addresses). Worth rebuilding on the Suricata-flow query; not done yet.
+- Latency: the central OpenSearch copy is synced by a timer; it was hourly and is
+  now every 10 minutes (worst case about 12 minutes from a probe to a page).
 
 ## What exists today (verified 2026-10-24)
 

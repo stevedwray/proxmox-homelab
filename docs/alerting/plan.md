@@ -620,7 +620,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
 
@@ -646,7 +646,7 @@ change: |
           for: 2m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
 
@@ -672,7 +672,7 @@ change: |
           for: 10m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
 
@@ -698,7 +698,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
 
@@ -776,7 +776,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
 
@@ -828,7 +828,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
 
@@ -854,7 +854,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
 
@@ -958,7 +958,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
 
@@ -1241,6 +1241,88 @@ Prove it:
    fires on any burst; pve-tiny's drive is awaiting RMA, so expect it to page
    while it keeps erroring. Ack it in Grafana until the Phase 3 buttons exist.
 
+## Phase 1c: Telegram paging and the honeypot tripwire
+
+Built by the planner directly (not as local-model steps), with every query and the
+tripwire rule itself evaluated against live data before it was written down. Nothing here
+is deployed yet. This **replaces the contact points and policy** that step
+`alerting-06-monitoring-playbook` wrote (that step's literal block is out of date); the
+files in the repo are the source of truth.
+
+**Who gets paged.** A rule pages Telegram when it carries the label `page: "true"` (or
+`tripwire: honeypot`). Nothing else does.
+
+| Goes to | Alerts |
+|---|---|
+| Telegram **and** Discord `#alerts-critical` | the 8 critical hardware rules; OpenBao sealed, snapshot stale, snapshot failed; production node unreachable; local disk above 95% |
+| Telegram **and** Discord `#security` | the honeypot tripwire |
+| Discord `#alerts-critical` only | other critical alerts (any scrape target down) |
+| Discord `#alerts-warning` | warnings (disk 85%, NAS 90%, counters rising, wear, SMART unreadable or stale, temperatures) |
+| plus Discord `#security` | anything labelled `category: security` |
+
+Repeats: pages every 30 minutes until resolved or silenced; the tripwire once per 12 hours.
+
+**The tripwire** (`alerting/homelab-honeypot.yml`): Grafana queries the `T-Pot Events`
+OpenSearch datasource for Suricata flows into the Pi (`192.168.1.28`) on a service port from an
+ephemeral source port, excluding the Pi's management ports and the allowlist (the same
+`expected sources` list as the dashboard, which includes Greenbone `192.168.70.11`). One alert
+instance per source address, looking back 2 hours so a probe stays visible while the hourly
+(now 10-minute) sync catches up. Evaluated through Grafana's own engine against live data:
+silent for the last 2 hours, and firing for `192.168.1.114` (81 flows) over 30 days.
+
+**Checks** (`scripts/check_grafana_provisioning.py`, a gate for this phase): the inline
+Grafana files parse; every rule's datasource exists; every rule marked `page` reaches a Telegram
+receiver and nothing unmarked does; every critical hardware rule pages; the tripwire routes only
+to its own contact point. Each of those was proven by breaking it on a copy.
+
+### Operator: Phase 1c
+
+Order matters.
+
+1. **Prerequisites from Phase 1** (still needed): the node_exporter repair, and the OpenBao
+   health metric. **Without the health metric `openbao_sealed` has no data, that rule treats
+   "no data" as firing, and it would page Telegram the moment this is deployed.**
+2. **Telegram credentials into OpenBao.** They are already in `~/git/oci/.env`; this copies
+   them without showing them. Do it **before** I add the manifest fields, or every production
+   wrapper fails closed.
+
+   ```bash
+   cd ~/git/proxmox-homelab
+   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # opens a browser
+   { grep '^TELEGRAM_BOT_TOKEN=' ~/git/oci/.env | cut -d= -f2-; grep '^TELEGRAM_CHAT_ID=' ~/git/oci/.env | cut -d= -f2-; } \
+     | LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/grafana TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+   unset BAO_TOKEN
+   ```
+
+   Tell me when it succeeds and I will add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to the
+   `services/grafana` manifest entry and read them back.
+3. **Deploy monitoring-stack** (approval `alerting-monitoring`):
+   `./with-secrets-prod scripts/provision.sh --stack monitoring-stack`. This adds the
+   alerting provisioning and also restores the missing Omada scrape jobs.
+4. **Make the honeypot sync faster** (approval `tpot-sync-10min`; `secpipe-stack` now lives on
+   `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
+   timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
+5. **Prove it:**
+   - Grafana, Alerting: rules present in the `Homelab alerts` folder, none in Error. Contact
+     points: **Test** each of `homelab-page` and `homelab-tripwire`. A Telegram message and a
+     Discord message should both arrive.
+   - **Honeypot drill, from the Kali VM (`192.168.1.114`)**: connect to a honeypot port, for
+     example `nc -vz 192.168.1.28 445` and `nc -vz 192.168.1.28 23`. Within about 12 minutes a
+     Telegram message and a `#security` message should name `192.168.1.114`. Your own browsing of
+     the T-Pot web UI, the router, and Greenbone must **not** alert.
+   - If the alert shows an unnamed source, the label name `src_ip.keyword` did not survive
+     Grafana's notification stage; tell me and I will switch the rule to a plain count.
+
+**Silencing the NVMe alert while the pve-tiny drive is awaiting RMA.** `NVMe media errors
+increasing` will page whenever the failing drive logs a burst. In Grafana, Alerting, Silences,
+add one for `alertname = NVMe media errors increasing` and `stack = pve-tiny`, set to end when
+the replacement is in. Unsilenced, it would be doing its job.
+
+**Not verified until the deploy:** Grafana 13's exact provisioning field names for Telegram
+(`bottoken`, `chatid`, `parse_mode`) were not in the docs I could reach and come from the source
+as I know it; the contact-point **Test** button is the check.
+
 ## Phase 2 (outline): Graylog log alerts
 
 Goal: the pve-tiny drive failure would have paged from the logs alone.
@@ -1262,6 +1344,10 @@ driven from Ansible in this repo (event definitions are not provisioned
 anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
 
 ## Phase 3: the alert relay on the OCI box
+
+> **FUTURE STATE (operator decision 2026-10-24).** Parked. The relay is built and tested but
+> will not be deployed now, and whether it is the right tool (versus Uptime Kuma, or Grafana's own
+> contact points plus silences) is undecided. The status text below is kept for when this resumes.
 
 **Status 2026-10-24: 3a built and tested, not deployed.** Deploy it with
 [relay-deploy.md](relay-deploy.md). Do this straight after Phase 1, before
@@ -1300,6 +1386,9 @@ alerts also reach Telegram. Discord stays as it is.
 
 ## Phase 4 (outline): watching the watchers
 
+> **FUTURE STATE.** Depends on Phase 3 or an off-the-shelf equivalent. Until then nothing watches
+> Grafana, VictoriaMetrics, Graylog or the monitoring host.
+
 Goal: if Grafana, VictoriaMetrics, Graylog, the monitoring host or a whole
 production node dies, you are told, with no SaaS and nothing on `framework`.
 
@@ -1321,6 +1410,9 @@ Accepted residual risk: the lab and the OCI box failing at the same moment, or
 Telegram and Discord both being unreachable.
 
 ## Phase 4b (outline): service checks for the alert chain (blackbox_exporter)
+
+> **FUTURE STATE.** Probes 1 and 2 (the relay's health and certificate) wait for the relay; probes
+> 3 to 7 do not depend on it.
 
 The Nagios-style layer: active checks of services, with the same Discord
 routing, Ack and Snooze as everything else.
