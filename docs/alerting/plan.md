@@ -1279,9 +1279,37 @@ to its own contact point. Each of those was proven by breaking it on a copy.
 
 Order matters.
 
-1. **Prerequisites from Phase 1** (still needed): the node_exporter repair, and the OpenBao
-   health metric. **Without the health metric `openbao_sealed` has no data, that rule treats
-   "no data" as firing, and it would page Telegram the moment this is deployed.**
+1. **Two prerequisites** (both are things the new alerts depend on):
+
+   **a. Repair the node_exporter fleet.** Without it the target-down rule would fire for seven
+   stacks the moment alerting is on. Dry run first:
+
+   ```bash
+   git merge-base --is-ancestor 56c611bb HEAD && echo has-fix
+   export TASK_APPROVAL=node-exporter-renew-fix
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh --check
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh
+   ./with-secrets-prod-tiny  scripts/node-exporter-renew-fix.sh
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh --hw-hosts
+   ```
+
+   **b. Deploy the OpenBao seal-status metric.** Built and tested 2026-10-24
+   (`files/openbao/openbao_health.py`, 5 tests, plus a timer in `deploy-openbao.yml`). **Without
+   it `openbao_sealed` has no data, that rule treats "no data" as firing, and it would page
+   Telegram the moment this is deployed.** Read the dry run first: only the new health tasks and
+   "Enable timers" should change; anything else, stop and look.
+
+   ```bash
+   ./with-secrets-prod ansible-playbook -i terraform/lxc/stacks/openbao-stack/inventory.yml -u root \
+     terraform/lxc/ansible/playbooks/deploy-openbao.yml --check --diff
+   TASK_APPROVAL=catchup-07b-openbao-health ./with-secrets-prod ansible-playbook \
+     -i terraform/lxc/stacks/openbao-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-openbao.yml
+   sleep 90; curl -s --data-urlencode 'query=openbao_sealed' http://192.168.20.12:8428/api/v1/query
+   ```
+
+   Expect one series with value `0`. Read-only checks on 2026-10-24 found OpenBao unsealed and
+   its nightly snapshot succeeding every night at 03:30 (both `nightly` and `postwrite` series are
+   in VictoriaMetrics), so the other OpenBao rules have good data.
 2. **Telegram credentials into OpenBao.** They are already in `~/git/oci/.env`; this copies
    them without showing them. Do it **before** I add the manifest fields, or every production
    wrapper fails closed.

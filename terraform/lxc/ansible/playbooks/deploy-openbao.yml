@@ -401,6 +401,45 @@
             [Install]
             WantedBy=timers.target
 
+    # ---- Seal-status metric for alerting (docs/catch-up/07) -----------
+    - name: Install health exporter script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/openbao/openbao_health.py"
+        dest: /usr/local/sbin/openbao_health.py
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Write health exporter service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: "{{ item.content }}"
+      loop:
+        - name: openbao-health.service
+          content: |
+            [Unit]
+            Description=OpenBao seal status for node_exporter (textfile)
+            After=openbao.service network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/bin/python3 /usr/local/sbin/openbao_health.py
+        - name: openbao-health.timer
+          content: |
+            [Unit]
+            Description=Refresh the OpenBao seal-status metric every minute
+
+            [Timer]
+            OnCalendar=*:*:00
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+
     - name: Reload systemd units
       ansible.builtin.systemd:
         daemon_reload: true
@@ -414,6 +453,7 @@
         - openbao-tls-renew.timer
         - openbao-snapshot-nightly.timer
         - openbao-inventory.timer
+        - openbao-health.timer
 
     # ---- Start only when the seal key is present --------------------------
     - name: Check for the seal key (bind-mounted from the USB on pve)
