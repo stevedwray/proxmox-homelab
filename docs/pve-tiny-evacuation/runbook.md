@@ -26,6 +26,17 @@ was disabled, and its bridge was changed temporarily to `vmbr0` solely for
 the offline filesystem check. Complete the separate `tvcse` task before
 any real CSE or pentest-runner cutover.
 
+### Completed pve VLAN 100 provisioning
+
+On 2026-10-24, the approved `pve-tiny-evacuation-sdn` task created and
+applied the pve-only `tvcse` VLAN zone/VNet on `vmbr0`, VLAN tag 100, with
+subnet `192.168.100.0/24`, gateway `192.168.100.1`, and SNAT disabled.
+The playbook made only those three intended changes and did not alter the
+cluster firewall or any existing SDN object. Post-change inspection confirmed
+that Linux bridge `tvcse` is up and its Proxmox subnet matches the declared
+configuration. Network reachability still requires the separate temporary
+source test below before a CSE guest can move.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
