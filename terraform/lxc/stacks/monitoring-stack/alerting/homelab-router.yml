@@ -168,6 +168,12 @@ groups:
         annotations:
           summary: 'Router {{ $labels.name }} dropped its link {{ humanize $values.A.Value }} times in the last hour'
 
+      # A restart is an EVENT. Two things made the first version of this rule send a firing/resolved pair every
+      # 16 minutes after a single power cycle (2026-10-24): it used `uptime < 3600`, so it stayed "firing" for an
+      # hour, and any gap in the router's metrics (mktxp briefly loses its API session) made the series vanish,
+      # which resolved it, and it re-fired when the series came back. Now: last_over_time bridges gaps of up to 30
+      # minutes, the window is 15 minutes, and the event=true label routes it to a contact point that sends no
+      # "Resolved" message.
       - uid: router-rebooted
         title: Router has restarted
         condition: C
@@ -178,7 +184,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'mktxp_system_uptime < 3600'
+              expr: 'last_over_time(mktxp_system_uptime[30m]) < 900'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -190,9 +196,9 @@ groups:
         for: 2m
         noDataState: OK
         execErrState: Error
-        labels: {severity: warning, category: hardware}
+        labels: {severity: warning, category: hardware, event: "true"}
         annotations:
-          summary: 'The router restarted less than an hour ago: it nearly always means a power cut, a crash or an upgrade nobody mentioned.'
+          summary: 'The router restarted {{ humanize $values.A.Value }} seconds ago (uptime): it nearly always means a power cut, a crash or an upgrade nobody mentioned.'
 
       - uid: router-metrics-missing
         title: Router metrics have stopped arriving

@@ -128,6 +128,12 @@ def check(playbook_path: str, rules_dir: str = RULES_DIR) -> list[str]:
                     # Grafana's own "this rule cannot query" alert inherits the rule's labels (page=true included).
                     if any(has_telegram(r) for r in receivers_for(policy, {**labels, "alertname": synthetic})):
                         problems.append(f"{rule['uid']}: a {synthetic} alert would page Telegram")
+                if labels.get("event") == "true":
+                    # An event ages out; it does not recover. A "Resolved" message for it is noise.
+                    for name in receivers_for(policy, labels):
+                        for rec in points[name]:
+                            if rec.get("disableResolveMessage") is not True:
+                                problems.append(f"{rule['uid']}: event=true must not send a resolve message, but {name}/{rec['uid']} does")
                 if labels.get("category") == "hardware" and labels.get("severity") == "critical" and not paged:
                     problems.append(f"{rule['uid']}: a critical hardware fault must page Telegram")
                 if labels.get("tripwire") == "honeypot" and receivers_for(policy, labels) != ["homelab-tripwire"]:

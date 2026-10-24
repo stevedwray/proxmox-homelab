@@ -278,3 +278,9 @@ into OpenBao, then the manifest, monitoring-stack (three times: rules, templates
 - **The scrape of framework `llamacpp :8080` was down for lack of the API key** in the old config; the monitoring
   deploy added it and it came up. (The CSE panel's separate "unreachable" report was investigated in another session.)
 - **A critical alert that is not a page must be proven not to page** (drill A checks both halves).
+- **An event rule on a gauge threshold flaps when the series has gaps** (2026-10-24, after an accidental router power cycle).
+  "Router has restarted" was `uptime < 3600`, so it stayed firing for an hour, and every time mktxp's session to the router dropped
+  (every 15 minutes after the reboot) the series vanished for about two minutes, the alert resolved, and it re-fired when the series
+  returned: four firing episodes and eight Discord messages for one restart. An event ages out, it does not recover. Fix: bridge gaps with
+  `last_over_time(...[30m])`, keep the window short (15 minutes), and label the rule `event: "true"`, which routes to a contact point with no
+  resolve message. The checker fails an `event` rule that can send a resolve message. Replayed against the real data: 4 episodes became 1.

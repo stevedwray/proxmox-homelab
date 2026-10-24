@@ -647,6 +647,19 @@
                     title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
                     message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
+            # Events (a router restart, a one-off notice): same channel as warnings, but no "Resolved" message.
+            # An event does not recover, it simply ages out, so the all-clear is noise (as for the honeypot tripwire).
+            - orgId: 1
+              name: homelab-discord-event
+              receivers:
+                - uid: homelab-discord-event
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_warning_url }}"
+                    use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
+                  disableResolveMessage: true
             - orgId: 1
               name: homelab-discord-security
               receivers:
@@ -727,6 +740,11 @@
                 - receiver: homelab-discord-warning
                   object_matchers:
                     - ['alertname', '=', 'DatasourceNoData']
+                # One-off events (a router restart): one message, no "Resolved", not repeated for a day.
+                - receiver: homelab-discord-event
+                  object_matchers:
+                    - ['event', '=', 'true']
+                  repeat_interval: 24h
                 # Honeypot tripwire: Discord #security plus Telegram. Stops here.
                 - receiver: homelab-tripwire
                   object_matchers:
