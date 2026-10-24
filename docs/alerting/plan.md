@@ -62,7 +62,7 @@ the 2026-10-24 sweep.
 | 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
 | 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
-| 0.8 NAS (Asustor Drivestor) | Operator, below |
+| 0.8 NAS (Asustor Drivestor) | **Built, not yet deployed**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
 
 ### alerting-00-journal-forwarder
@@ -463,16 +463,37 @@ not reading `/proc/kmsg` and that needs a look.
 
 ### Operator: NAS (Asustor Drivestor)
 
-No step can be written until two facts are known. In ADM check:
+**Status 2026-10-24: built, not yet deployed.** The NAS has no syslog hardware events worth the name (45 log messages a month, System and
+Connection only), so SNMP is how it is monitored. ADM was set up by the operator: SNMP service on, **SNMPv3 only** (v1/v2 off), a read
+user, trap level warning (no trap receiver exists; polling is what is used).
 
-1. Which log categories and severity the syslog sender includes (System,
-   Connection, File access, and anything covering disk, SMART, fan and
-   temperature events).
-2. Whether SNMP can be enabled. SNMP would give disk health and temperature as
-   metrics, which logs alone won't.
+- **Auth:** the NAS accepts **authNoPriv with MD5 and nothing else** (all 16 MD5/SHA/SHA256 by DES/AES combinations were tried; the
+  unauthenticated request returns no data). Requests are signed, replies are not encrypted: acceptable for read-only hardware stats on
+  the LAN, and ADM offers nothing stronger. Credentials: OpenBao `services/nas` (`NAS_SNMP_USER`, `NAS_SNMP_PASSWORD`), loaded by the
+  `pve` profile only.
+- **Data:** ASUSTOR's own MIBs (enterprise `1.3.6.1.4.1.44738`), hand-written into `terraform/lxc/stacks/monitoring-stack/snmp/snmp.yml`
+  (no secrets) and `auth.yml` (environment placeholders), run by `snmp-exporter` v0.30.1 in the monitoring compose with no published port;
+  VictoriaMetrics scrapes job `asustor-nas` every 60 s.
+- **Read from the live NAS:** 2 x WDC WD40EFPX 4 TB (status `Good`, SMART `Healthy`, 40 C), `Volume1` EXT4 status `healthy`, 7,443 GB
+  with 1,403 GB free, CPU 44 C, fan 1,231 rpm, ADM 5.1.4.RM62 ("The ADM is latest version"). The `system` temperature sensor reports
+  -2147483648 (no value) and is not used.
+- **`Volume1` is `linear`: two disks concatenated, no redundancy.** Losing either disk loses data, which is why a disk or volume fault pages.
 
-Record both in the README hand-back log. The NAS step packets (enable the
-categories, add an SNMP scrape if available) are written from the answer.
+| Rule | Fires when | Goes to |
+|---|---|---|
+| NAS disk is not healthy | a disk's status is not `Good` or its SMART status is not `Healthy` | page |
+| NAS volume is not healthy | a volume's status is not `healthy` | page |
+| NAS fan has stopped | a fan reads under 200 rpm for 10 minutes | page |
+| NAS disk temperature above 50 C | 15 minutes (normal 40) | `#alerts-warning` |
+| NAS CPU temperature above 85 C | 15 minutes (normal 44) | `#alerts-warning` |
+| NAS firmware update is available | the upgrade text is not "The ADM is latest version", for an hour | `#alerts-warning`, **repeated weekly** (new `category: maintenance` route) |
+
+An unreachable NAS is caught by the generic "Scrape target down" rule. The monitoring host was confirmed to reach the NAS on UDP 161
+(no firewall change). The `NAS above 90%` rule is separate: it reads the NFS mounts from the clients' side.
+
+**Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack` (pulls
+`dockerhub/prom/snmp_exporter:v0.30.1` through Harbor). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
+`count({__name__=~"asustor_.*"})` is about 30.
 
 ### Phase 0b (outline): MikroTik hardware and firmware metrics
 

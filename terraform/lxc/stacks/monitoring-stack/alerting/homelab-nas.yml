@@ -1,0 +1,171 @@
+# Grafana file-provisioned alerts for the ASUSTOR NAS, read over SNMPv3 (docs/alerting/plan.md, Phase 0.8).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# Values were read from the live NAS on 2026-10-24: disks "Good" / SMART "Healthy", volume "healthy",
+# upgrade text "The ADM is latest version". The *_info metrics carry the value as a label, so each
+# rule matches "anything that is not the healthy wording": a new or odd status also alerts.
+# Volume1 is "linear" (two 4 TB disks concatenated, no redundancy), so losing either disk loses data:
+# disk and volume faults page. If the NAS is unreachable the generic "Scrape target down" rule fires.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-nas
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: nas-disk-fault
+        title: NAS disk is not healthy
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (bay,asustor_disk_status_info)(asustor_disk_status_info{asustor_disk_status_info!="Good"}) or max by (bay,asustor_disk_smart_status_info)(asustor_disk_smart_status_info{asustor_disk_smart_status_info!="Healthy"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: 'NAS {{ $labels.bay }}: ADM reports status "{{ $labels.asustor_disk_status_info }}{{ $labels.asustor_disk_smart_status_info }}". Volume1 has no redundancy.'
+
+      - uid: nas-volume-fault
+        title: NAS volume is not healthy
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (volume,asustor_volume_status_info)(asustor_volume_status_info{asustor_volume_status_info!="healthy"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: 'NAS {{ $labels.volume }}: ADM reports status "{{ $labels.asustor_volume_status_info }}".'
+
+      - uid: nas-fan-stopped
+        title: NAS fan has stopped
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'min by (fan)(asustor_fan_speed_rpm)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [200]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: 'NAS fan {{ $labels.fan }} reads {{ humanize $values.A.Value }} rpm (normally about 1,200); the disks will overheat.'
+
+      - uid: nas-disk-temp
+        title: NAS disk temperature above 50 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (bay)(asustor_disk_temperature_celsius)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [50]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'NAS {{ $labels.bay }}: {{ humanize $values.A.Value }} C (normally about 40)'
+
+      - uid: nas-cpu-temp
+        title: NAS CPU temperature above 85 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              # The "system" sensor reads -2147483648 (no value) and is deliberately not used.
+              expr: 'max(asustor_temperature_cpu_celsius)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'NAS CPU: {{ humanize $values.A.Value }} C (normally about 44)'
+
+      - uid: nas-adm-upgrade
+        title: NAS firmware update is available
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (asustor_adm_upgrade_available_info)(asustor_adm_upgrade_available_info{asustor_adm_upgrade_available_info!="The ADM is latest version"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: maintenance}
+        annotations:
+          summary: 'NAS: ADM reports "{{ $labels.asustor_adm_upgrade_available_info }}" (installed 5.1.4.RM62 on 2026-10-24). Reminded weekly.'
