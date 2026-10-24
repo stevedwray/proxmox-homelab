@@ -53,6 +53,47 @@ Cross-zone reachability to `cse-kali`'s agent (`pentest_seg` on
 this is the first genuinely cross-zone rule this stack needed, since
 `infra_seg` never required one (nothing was restricted).
 
+The `pentest_tasks.py` Celery worker and `viewer_proxy.py` reverse proxy
+live in `cse-controller/pentest-worker-config/`. The worker needs a
+dedicated SSH identity to
+`pentest-runner`/`pentest-fixture` (never a fleet-wide key) — same zone as
+`pentest-runner`, so that leg needs no new firewall rule, only the
+identity. `viewer_proxy.py` binds port 18810 for the panel's existing
+narrow `mgmt_seg` → `cse_seg` rule. It is stateless: control and viewer
+requests go to the runner's supervisor at `192.168.100.72:18820` on the
+same subnet. Only the worker retains SSH; the proxy does not hold a tunnel.
+
+**Live since 2026-10-20** —
+`docs/autonomous-pentesting-lab/research-snapshot-plan.md` added a second,
+separate Celery worker, `pentest-research-worker`, with its own dedicated
+SSH identity (`GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY`) to
+`greenbone-stack`'s research gateway — a genuinely new cross-zone path
+(`cse_seg → pentest_seg tcp/22`, same `mikrotik-firewall-cse-seg.yml` file
+as the existing `cse-kali` rule above). Its own `/srv/pentest-research`
+mount is deliberately kept separate from `pentest_worker_dir`
+(`/srv/pentest-worker`), since that directory is mounted whole into
+`pentest-viewer-proxy` and the new key must never be reachable there.
+`pentest-worker` and `pentest-viewer-proxy` each get a new read-only mount
+scoped to just `/srv/pentest-research/snapshots` (the per-target snapshot
+tree, not the key). A third shared mount, `/srv/pentest-target-guard`, is
+mounted at the identical host path into both `pentest-worker` and
+`pentest-research-worker` — `research_target_guard.py`'s `fcntl` locking
+only provides real cross-container mutual exclusion when both containers
+see the same underlying inode, not two separate bind mounts.
+
+**Generalized 2026-10-21** (`docs/autonomous-pentesting-lab/
+pipeline-generalization-plan.md`) — the research pipeline above, and
+Strix's own launch path, both accept any host in `pentest_seg`
+(`192.168.70.0/24`, CIDR-validated), not one hardcoded target. `pentest_tasks.py`
+gained `run_target_job(target_ip)`, a free-target Celery task alongside the
+fixed `TASK_CATALOG` entries — same no-fixture-reset/no-automated-verdict
+contract as `metasploitable3-linux`, same `research_target_guard` single-flight
+lock (still global across all targets, not per-target — a deliberate
+simplicity choice for this lab's scale, not an oversight). Snapshot storage
+is `/srv/pentest-research/snapshots/<target-slug>/` where `<target-slug>` is
+the target's dotted IP with `.` replaced by `-`; there is no longer a
+target-named subdirectory.
+
 ## Inputs
 
 None yet. No secrets, no `.env`-sourced template variables — Phase 1 is
@@ -60,9 +101,8 @@ infrastructure-only.
 
 ## Provides
 
-None yet. No persistent service is exposed — the container makes outbound
-calls only (once the Framework side exists). A later phase may add an
-API for CI/webhook-triggered runs; update this table then.
+The pentest viewer proxy exposes `18810/tcp` to panel-web through the
+existing narrow firewall rule. It does not expose raw Strix child ports.
 
 ## Dependencies
 
@@ -71,6 +111,8 @@ API for CI/webhook-triggered runs; update this table then.
 | Harbor, via Traefik/`edge_seg` (on `pve`, reached cross-node) | Docker image pull (`python:3.10-slim` via Harbor's `dockerhub` proxy-cache) |
 | Framework's `llama-server` (live — `qwen38-flash-next-q4`, port 8080, see `current-state.md`) | Model inference calls once CyberSecEval code lands (Phase 2+) |
 | `github.com/meta-llama/PurpleLlama` (direct outbound HTTPS, not proxied through Harbor) | One-time repo clone (plan §6) |
+| `greenbone-stack` (design only as of 2026-10-20) | `pentest-research-worker` → its research gateway, `cse_seg → pentest_seg tcp/22` |
+| `cve-mcp.${LAB_DOMAIN}` (`mcp-utility-stack`, design only) | CVE triage via `triage_cve` — reachability from a real `pentest-research-worker` container is an explicit open validation gate, not assumed |
 
 ## Persistent State
 
@@ -123,6 +165,16 @@ everything else in the compute track runs from.
   not ZFS on `pve-tiny` — see `terraform/lxc/storage/pve-tiny.yaml`), and
   that same check block only allows `operational` for a zfs-backed
   backend. `provider` is correct here, not a typo.
+- `/srv/pentest-research` must stay a separate mount from
+  `/srv/pentest-worker` (design only as of 2026-10-20) — the latter is
+  bind-mounted whole into `pentest-viewer-proxy`, so putting the research
+  gateway's private key anywhere under it would make the key reachable
+  from a container that has no legitimate need for it.
+- `/srv/pentest-target-guard` must be mounted at the *identical* host
+  path in both `pentest-worker` and `pentest-research-worker` — a
+  different path on either side defeats `research_target_guard.py`'s
+  `fcntl`-based mutual exclusion entirely (two different host directories
+  are two different inodes, so the lock would never actually conflict).
 
 ## Playbook
 

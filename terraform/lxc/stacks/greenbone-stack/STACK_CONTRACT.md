@@ -49,6 +49,7 @@ would need to change for PentAGI (or anything else) to call in.
 | `gvm-https` | 443  | tcp      | GSA UI over nginx's self-signed TLS — in-zone/direct access only, not the Traefik route |
 | `gvm-http`  | 8080 | tcp      | Custom plain-HTTP nginx server block added by `deploy-greenbone-stack.yml` (not part of upstream's compose) — this is what Traefik's `edge.yaml` route targets. Port 9392 exists but is NOT usable for this: upstream's own generated nginx config redirects it straight to 443/self-signed-TLS (see "What Must Not Be Edited Casually") |
 | `gvm-bridge` | 8010 | tcp     | First-party Flask GMP bridge (`terraform/lxc/ansible/files/gvm-bridge/app.py`): `/scan/*` (PentAGI-era), `/findings/all` and `/tasks/credentialed` for `gvm_findings_ingest`. It has no authentication and acts as GVM admin, so it's published on **127.0.0.1 only** (2026-10-12); before that it was reachable from the whole LAN. Reach it from elsewhere with an SSH tunnel |
+| `research-gateway` | 22 (SSH, forced-command) | tcp | `docs/autonomous-pentesting-lab/research-snapshot-plan.md`: a narrowly scoped alternative to a bare SSH tunnel into `gvm-bridge`. The `pentest-research` account's `authorized_keys` entry is `restrict,command="/usr/bin/python3 /usr/local/lib/gvm-research/research_gateway.py"` — every connection with its dedicated key runs *only* that script (fixed target `192.168.70.214`, fixed port list, three fixed operations), regardless of what the client asks to run. No port forwarding, PTY, or shell access. An SSH key scoped only to port-forwarding `:8010` would still reach `gvm-bridge`'s unauthenticated admin-scope endpoints directly; this is why a forced command exists instead of a narrower tunnel. **Design only as of 2026-10-20 — not yet deployed.** |
 
 ## Dependencies
 
@@ -67,6 +68,11 @@ prior rule let this zone reach `mgmt_seg` at all). No new egress rule is
 needed for feed sync or Harbor image pulls — both are already covered by
 `pentest_seg`'s existing internet-egress and
 `pentest_seg → 192.168.30.110:80/443` (Harbor via Traefik) policies.
+`cse_seg → pentest_seg tcp/22` (`cse-controller` → this stack's research
+gateway only, port 22 — never `gvm-bridge`'s own loopback-only `:8010` — in
+`ansible/00-initial-setup/mikrotik-firewall-cse-seg.yml`, same file/pattern as
+every other `pentest_seg` cross-node rule). **Drafted, not yet applied as of
+2026-10-20.**
 
 ## Persistent State
 
@@ -80,7 +86,14 @@ sync is large and can take a long time — do not casually wipe these volumes.
 
 ## What May Depend on This Stack
 
-Nothing yet. Future PentAGI GMP/`gvm-tools` integration (out of scope for this
+`cse-controller`'s `pentest-research-worker` (design only as of 2026-10-20,
+see `docs/autonomous-pentesting-lab/research-snapshot-plan.md`) is the first
+real consumer of this stack's scan capability, reached through the research
+gateway above rather than GMP directly — it never touches `gvmd`/GMP itself,
+only `gvm-bridge`'s fixed `/scan/*` operations relayed by the forced-command
+gateway.
+
+Future PentAGI GMP/`gvm-tools` integration (out of scope for this
 pass) would make `pentagi-stack` a consumer of this stack's GMP API — see
 `docs/greenbone-stack/pentagi-integration.md` for what that would actually
 require (GMP is Unix-socket-only today; a TCP listener would need to be
@@ -141,6 +154,23 @@ PentAGI's worker image).
   resolved by a later retry with no config changes) — if this recurs,
   it's known upstream outpost flakiness, not a regression in this stack's
   config. See `docs/greenbone-stack/README.md`'s "LDAP login" section.
+- The `pentest-research` account's shell must stay SSH-compatible (e.g.
+  `/bin/sh`) — not `/usr/sbin/nologin`. sshd invokes a forced command
+  through the account's own configured shell (`shell -c command`);
+  `nologin` just prints a message and exits, which would silently break
+  every gateway invocation. The `restrict` keyword in `authorized_keys`,
+  not the shell, is what actually prevents interactive access for this
+  account.
+- `/var/lib/gvm-research` is pre-created by Ansible, owned by
+  `pentest-research`, before the gateway script ever runs — a non-root
+  account cannot create a new directory entry under root-owned `/var/lib`
+  itself, so if this task is ever removed, the gateway's own
+  `registry.mkdir(parents=True, exist_ok=True)` call will fail closed with
+  a permission error on a fresh host, not silently recover.
+- Rebuilding `gvm-bridge` for a research-gateway change must stay scoped to
+  that one container (`--tags research-bridge`, `services: [gvm-bridge]` in
+  the compose task) — never run the full `deploy-greenbone-stack` play for
+  this, which would interrupt gvmd/ospd-openvas and any in-flight scan.
 
 ## Playbook
 
@@ -162,5 +192,6 @@ file.
 | `terraform/lxc/stacks/greenbone-stack/edge.yaml` | Traefik/Authentik ingress intent for the GSA UI |
 | `terraform/lxc/environments/pve-test-vm/greenbone-stack/terragrunt.hcl` | Terragrunt entrypoint (validation) |
 | `terraform/lxc/environments/pve/greenbone-stack/terragrunt.hcl` | Terragrunt entrypoint (production) |
-| `terraform/lxc/ansible/playbooks/deploy-greenbone-stack.yml` | Stack playbook |
+| `terraform/lxc/ansible/playbooks/deploy-greenbone-stack.yml` | Stack playbook (its `research-bridge`-tagged section is design-only as of 2026-10-20, see `docs/autonomous-pentesting-lab/research-snapshot-plan.md`) |
 | `terraform/lxc/ansible/roles/harbor_postconfigure/defaults/main.yml` | Shared platform file — declares the `greenbone` Harbor proxy-cache project this stack depends on |
+| `terraform/lxc/ansible/files/gvm-bridge/research_gateway.py` | The SSH forced-command gateway script — design only, not yet installed |

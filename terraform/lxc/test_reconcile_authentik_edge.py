@@ -564,6 +564,25 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any(issue.code == "AKR004" for issue in result.issues))
 
+    def test_dry_run_defers_probe_for_provider_not_yet_created(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "viewer.yaml"
+            _write_manifest(
+                manifest, stack="cse-panel-stack", route="cse-pentest-viewer-1",
+                host="cse-pentest-viewer-1.lab.gibbsgreatly.xyz", mode="forwardAuth",
+            )
+            client = FakeClient()
+            client.base_url = "http://auth.local"
+            client.verify_tls = True
+
+            with patch.object(MODULE, "_probe_forwardauth_endpoint") as probe:
+                result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertTrue(result.ok)
+        self.assertIn(("provider", "create"),
+                      [(action.object_kind, action.operation) for action in result.actions])
+        probe.assert_not_called()
+
     def test_dry_run_accepts_forwardauth_redirect_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "netbox.yaml"

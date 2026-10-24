@@ -52,7 +52,8 @@ class LayoutTest(unittest.TestCase):
         found = ids(panel_ui.app.layout)
         self.assertEqual(len(found), len(set(found)), sorted(i for i in found if found.count(i) > 1))
         for needed in ("family", "cse-section", "eval-section", "eval-run-section", "eval-runs-section",
-                       "framework-status", "jobs-table", "eval-jobs-table", "eval-cancel-btn"):
+                       "framework-status", "jobs-table", "eval-jobs-table", "eval-cancel-btn",
+                       "pentest-runs", "pentest-detail", "pentest-poll"):
             self.assertIn(needed, found)
 
     def test_section_switches(self):
