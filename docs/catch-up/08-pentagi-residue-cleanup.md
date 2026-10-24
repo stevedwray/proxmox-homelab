@@ -18,7 +18,11 @@ as soon as alerting goes live) · **Effort:** 1–1.5 h · **Value:** Medium
 | D5, framework | `pentagi-test-harness` key removed from `~steve/.ssh/authorized_keys` (backup `authorized_keys.bak-pentagi` beside it) |
 
 Still in place on purpose (plan 13): the Harbor project `pentagi` and its CVE allowlist, `GREENBONE_PENTAGI_PASSWORD`,
-`docs/pentagi-stack/`, `pve-test-vm`'s own copy, `harness-target-pve`.
+`docs/pentagi-stack/`, `pve-test-vm`'s own copy.
+
+`harness-target-pve` (CT 70012, a PentAGI comparison target) was removed the same day: nothing existed live (no guest, no router rule,
+no DNS, no monitoring target), so it was a repo-only change. Its `192.168.70.12` stays in the GVM exclusion lists on purpose
+(`setup_scan_program.py`, `gvm_findings_sync.py`): excluding an address nothing uses is harmless, and it keeps a future host there out of lab findings.
 
 Lessons: read the live state before each step (rules, files and robots all differed from the plan's snapshot); a "0 results"
 from a list API deserves a second query before it is believed; and the generated-file publish path is add-only, so removing
