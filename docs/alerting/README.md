@@ -17,7 +17,7 @@ Nothing in the lab told the operator when something broke. Verified 2026-10-24:
   every night. Nobody was told. (An RMA is in progress.) **Now it pages**: the NVMe media-errors rule fired on it within hours of the deploy.
 - **Seven stacks have had no host metrics** since 2026-10-21 (portainer since 10-23): the cert-renewal
   timer sends SIGHUP and node_exporter exits. The fix, `scripts/node-exporter-renew-fix.sh`, was run on 2026-10-24 and all seven report again.
-- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 28 rules and five contact points.
+- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 30 rules and five contact points.
 
 The target is what **fails silently or semi-silently**: hardware faults, temperatures, new
 critical vulnerabilities, backups, and the monitoring going quiet.
@@ -136,7 +136,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | MikroTik: pentest_seg may reach only Graylog (514) and step-ca (443) | **Live** |
 | Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token still to be reset in the Developer Portal |
 | Telegram bot, credentials in OpenBao `services/grafana` (v3) and the manifest | **Live** |
-| Grafana alerting: 28 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, three times). The 28th, a 60 C SATA temperature rule for the Pis, is in the repo and goes live with the next monitoring-stack deploy |
+| Grafana alerting: 28 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, four times). Two more, the vulnerability rules (Phase 5), are in the repo and go live with the next monitoring-stack deploy |
 | OpenBao seal-status metric (`openbao_sealed`) | **Live**, value 0; the nightly snapshot succeeds at 03:30 |
 | T-Pot to OpenSearch sync | **Live**, every 10 minutes (`tpot_findings_ingest_on_calendar`) |
 | node_exporter fleet repair (SIGHUP bug) | **Done** 2026-10-24; seven stacks reporting again |
@@ -186,7 +186,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
 5. **mktxp for the MikroTik** (Phase 0b). The workstation and Pis are enrolled.
 6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
-7. **Phase 5 new critical vulnerabilities and Phase 6** digest and native integrations (Phase 2, the Graylog log alerts, is applied and drilled).
+7. **Deploy the Phase 5 vulnerability rules** (next monitoring-stack deploy), then **Phase 6** digest and native integrations. Phase 2, the Graylog log alerts, is applied and drilled.
 8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
 9. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
 
