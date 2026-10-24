@@ -209,7 +209,7 @@ In order of urgency. Phase 7 (the plan, [plan.md](plan.md)) is the work list for
    anyone between the monitoring access change (16:47) and the power cycle, and the one session before it lasted 1 h 44 min.
    **First two-way capture (2026-10-25 08:07:34):** the router acked everything and sent a short 67-byte reply, then **the monitoring
    host's side sent the RST** 1.7 ms later. There were no ping gaps. A session held open from the workstation as `api-user`
-   survived past 9 minutes while mktxp's died. So the router and the path did not close it; the mktxp container did, and its
+   survived the full 18 minutes while mktxp's died four times; detail in [router-api-session-drops.md](router-api-session-drops.md). So the router and the path did not close it; the mktxp container did, and its
    `Errno 110` message does not match what the wire shows. **Not established:** why mktxp resets (suspect mktxp or librouteros read
    handling). An earlier note here said the router sends the FIN; that was an overreach from a one-direction capture (see
    *Lessons learned*). Next: read mktxp's code path around that error, or run it with debug logging. The alerts no longer depend on

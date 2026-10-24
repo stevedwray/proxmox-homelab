@@ -499,7 +499,7 @@ it ends every few minutes, which causes a scrape error and a reconnect. Establis
 | Observation | Meaning |
 |---|---|
 | Sessions ended after 15.0 min (x49) following the power cycle, then 8.0 min and 6.0 min after the reboot | not a fixed router timer |
-| A second session held by `api-user` from the workstation survived past 9 min while mktxp's died | the router does not drop every API session on a schedule |
+| A second session held by `api-user` from the workstation survived 18 min while mktxp's died four times (full brief: [router-api-session-drops.md](router-api-session-drops.md)) | the router does not drop every API session on a schedule |
 | Capture on the monitoring host at 08:07:34: the router acked everything and sent a 67-byte reply; the host side sent the RST 1.7 ms later | the close was initiated on the monitoring-host side (mktxp container), not by the router or the path |
 | No ping gaps to the router during the capture | not a network outage |
 | mktxp logs `[Errno 110] Operation timed out` at the same instant | does not match the wire; suspect mktxp or librouteros read handling, not yet proven |
