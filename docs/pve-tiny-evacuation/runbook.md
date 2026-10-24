@@ -90,8 +90,21 @@ requests to local port 9200 returned an empty reply, so they do not provide a
 valid cluster/index or authenticated-login baseline. A best-effort live
 filesystem size scan also raced active OpenSearch writes and encountered one
 vanished segment; it is not a final cold-copy manifest. No workload was
-stopped and no files were changed. Do not start the 40014 cutover until the
-Dashboards health failure is diagnosed and the full service baseline passes.
+stopped and no files were changed.
+
+Diagnosis established that OIDC deliberately makes Dashboards return `401`
+for an unauthenticated `/api/status` request, while its managed health check
+accepted only `200` or `302`. The health check was corrected in
+`deploy-opensearch-stack.yml` and syntax-checked. The normal single-stack
+orchestrator could not apply it because this worktree has no generated stack
+inventory. A direct managed playbook run rendered the corrected Compose file
+but did not recreate the existing Dashboards container. The approved scoped
+`pve-tiny-evacuation-opensearch-dashboard-compose-recreate` task then recreated
+only that service from `/opt/opensearch-stack/docker-compose.yml`. OpenSearch
+and Dashboards both reported healthy afterwards, and Dashboards' status
+endpoint returned the expected `401`. Repeat the authenticated service and
+consumer baseline before starting the 40014 cutover; the live filesystem scan
+is still not a final cold-copy manifest.
 
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
