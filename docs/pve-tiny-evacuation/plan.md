@@ -1,8 +1,19 @@
 # pve-tiny temporary evacuation to pve
 
-Status: **not yet execution-ready for guest cutovers**. No production changes
-authorized or executed under this plan. Resolve the open gates below before
-requesting a guest cutover approval.
+Status: **execution in progress.** OpenSearch CT 40014 is fully migrated to
+`pve`, backed up there, and retained stopped on `pve-tiny` for rollback.
+Secpipe CT 50012 is running only on `pve` after its managed roles were
+reconciled, but its final bounded service test, target autostart, and backup
+enrollment are blocked by a failing production-secret profile. The remaining
+six guests have not started cutover.
+
+The production wrapper currently fails closed because OpenBao returns HTTP 404
+for `kv/data/services/pentagi`, an entry required by the pve profile. A human
+with secret-store write access must restore that entry and its manifest-required
+fields before the Secpipe finalization or another production task can proceed.
+No Terraform state was changed during these cold-copy/reconciliation actions;
+the target CT runtime state must be reconciled with reviewed Terraform plans
+before later infrastructure changes.
 
 The [execution runbook](runbook.md) defines the per-guest sequence, storage
 profiles, data to preserve, verification, and rollback. Its restore and
@@ -28,9 +39,9 @@ level. This is a point-in-time capacity check, not a peak guarantee.
 
 | VMID | Guest | IP / zone | Live memory | Source disks | Target preparation |
 |---|---|---|---:|---|---|
-| 40014 | opensearch-stack | 192.168.40.14 / infra_seg | 4.53 GiB | NVMe root, Docker, 150G data mount | Stopped pve copy exists; refresh all state, verify indices/security and consumers |
+| 40014 | opensearch-stack | 192.168.40.14 / infra_seg | 4.53 GiB | NVMe root, Docker, 150G data mount | Completed 2026-10-24: target running/onboot, service and consumer checks passed, fresh pve PBS backup; source stopped/onboot disabled |
 | 50013 | ai-services-stack | 192.168.50.11 / ai_seg | 1.90 GiB | NVMe root and Docker | Stopped pve copy exists; refresh OpenWebUI, SearXNG, research volumes |
-| 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Stopped pve copy exists; verify pipeline after OpenSearch |
+| 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Active cutover: source stopped/onboot disabled; target running and managed roles reconciled; final validation, target autostart and backup blocked by OpenBao profile failure |
 | 40072 | pentest-runner | 192.168.100.72 / cse_seg | 0.32 GiB | NVMe root and Docker | No stack definition found; establish owner and restore method |
 | 40070 | cse-controller | 192.168.100.70 / cse_seg | 0.41 GiB | Boot SSD root/Docker; NVMe 100G data mount | Preserve run state and private cse-kali SSH key |
 | 100071 | cse-code-eval | 192.168.100.71 / cse_seg | 0.25 GiB | Boot SSD root/Docker; NVMe 50G data mount | Data mount has backup=0; decide whether scratch may be rebuilt |
@@ -50,17 +61,20 @@ completed. The read-only PVE token returned an empty PBS content listing,
 so these logs establish backup task success but **not** that snapshots can be
 listed or restored from `pve`. A test restore remains a hard gate.
 
-`pve`'s current daily PBS job is `all=1` but explicitly excludes VMIDs
-40014, 50012 and 50013, the old pve copies. It also excludes 50011, now
-running on pve, which is a separate existing backup gap. Before the three
-returning stacks are considered migrated, remove their exclusions under a
-scoped backup-job approval and verify one successful new backup of each.
+`pve`'s current daily PBS job is `all=1`. The completed 40014 cutover removed
+only 40014 from its exclusion list and recorded a successful fresh backup.
+It still excludes 50011, 50012 and 50013. VMID 50011 is a separate existing
+backup gap; keep it out of this migration scope. Do not remove 50012's
+exclusion until its bounded Secpipe validation succeeds, and then require a
+fresh backup under its own scoped approval.
 
-`pve` has stopped copies of VMIDs 40014, 50012 and 50013 from the earlier
-move. Their data is stale. Never start them before source shutdown and state
-refresh. The `pve` default infrastructure pool had only about 92 GiB free
-at baseline. Choose target pools per volume; do not sum storage aliases that
-refer to the same backing pool.
+`pve` retains stopped stale copies of VMIDs 50012 and 50013 from the earlier
+move. Do not start 50013 before source shutdown and state refresh. CT 50012
+is now the sole running instance while its final validation remains pending.
+CT 40014 has been refreshed and is running on pve. The `pve` default
+infrastructure pool had only about 92 GiB free at baseline. Choose target
+pools per volume; do not sum storage aliases that refer to the same backing
+pool.
 
 Terragrunt uses local state in each stack's environment directory. The
 original checkout has state for the three stopped pve copies and the seven
@@ -150,7 +164,9 @@ plan or its runbook:
    remove their backup-job exclusions before accepting the cutover. Confirm
    the first new backup completes.
 
-Do not shut down `pve-tiny` while any of these gates remains open.
+Do not shut down `pve-tiny` while any of these gates remains open. In
+particular, the missing `services/pentagi` OpenBao entry blocks finalizing
+50012 and prevents further production-wrapper commands.
 
 ## Phase 1: prepare source-controlled target definitions
 
@@ -231,6 +247,14 @@ Suggested order, respecting dependencies and the failing NVMe:
    DHCP's two resolver addresses and actual client resolution. Both DNS
    instances will then reside on pve, so node-level redundancy is lost
    during the shutdown period.
+
+### Current execution state
+
+| Guest | State | Remaining gate |
+|---|---|---|
+| 40014 OpenSearch | Complete on `pve`; source retained stopped | Soak and later Terraform reconciliation only |
+| 50012 Secpipe | Target running alone on `pve`; source stopped/onboot disabled; managed roles reconciled | Restore `services/pentagi`, then run bounded enrichment, verify timers, set target onboot, enroll and verify pve backup |
+| 50013, 40072, 40070, 100071, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
 
 ## Phase 3: shutdown and RMA gate
 
