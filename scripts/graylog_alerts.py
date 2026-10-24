@@ -153,7 +153,8 @@ def run(call: Call, data: dict, env: dict[str, str], mode: str) -> int:
         ids[key] = found["id"] if found else PLACEHOLDER_ID
         if mode == "apply":
             body = notification_body(spec, env)
-            status, resp = call("PUT", f"/events/notifications/{found['id']}", body) if found else call("POST", "/events/notifications", body)
+            # Graylog 7: creates take {"entity": ...}; updates take the bare object.
+            status, resp = call("PUT", f"/events/notifications/{found['id']}", body) if found else call("POST", "/events/notifications", {"entity": body})
             ok = status in (200, 201)
             if ok and not found:
                 ids[key] = resp["id"]
@@ -164,7 +165,7 @@ def run(call: Call, data: dict, env: dict[str, str], mode: str) -> int:
                 print(f"  {spec['title']}: not created yet, run --apply first")
                 failures += 1
                 continue
-            status, resp = call("POST", f"/events/notifications/{found['id']}", {})
+            status, resp = call("POST", f"/events/notifications/{found['id']}/test")
             print(f"  test message to {spec['title']}: {status}" + ("" if status in (200, 202, 204) else f" {resp}"))
             failures += status not in (200, 202, 204)
         else:
@@ -189,7 +190,7 @@ def run(call: Call, data: dict, env: dict[str, str], mode: str) -> int:
             failures += not ok
         elif mode == "apply":
             suffix = "?schedule=true"
-            status, resp = call("PUT", f"/events/definitions/{found['id']}{suffix}", body) if found else call("POST", f"/events/definitions{suffix}", body)
+            status, resp = call("PUT", f"/events/definitions/{found['id']}{suffix}", body) if found else call("POST", f"/events/definitions{suffix}", {"entity": body})
             ok = status in (200, 201)
             print(f"  {'updated' if found else 'created'} {spec['title']}: {status}" + ("" if ok else f" {json.dumps(resp)[:400]}"))
             failures += not ok

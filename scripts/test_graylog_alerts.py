@@ -27,6 +27,9 @@ class FakeGraylog:
         if method == "GET" and path.startswith("/events/definitions"):
             return 200, {"event_definitions": list(self.defs.values())}
         if method == "POST" and path == "/events/notifications":
+            if "entity" not in body:  # what the real endpoint does
+                return 400, "entity cannot be null"
+            body = body["entity"]
             self.notes[body["title"]] = {"id": f"new{len(self.notes)}", "title": body["title"]}
             return 200, self.notes[body["title"]]
         if method == "POST" and path.startswith("/events/definitions/validate"):
@@ -34,6 +37,9 @@ class FakeGraylog:
                 return 500, "hexString can not be null"
             return self.validate_status, {"errors": {}, "failed": False} if self.validate_status == 200 else "bad"
         if method == "POST" and path.startswith("/events/definitions"):
+            if "entity" not in body:
+                return 400, "entity cannot be null"
+            body = body["entity"]
             self.defs[body["title"]] = {"id": f"newd{len(self.defs)}", "title": body["title"]}
             return 200, self.defs[body["title"]]
         return 200, {}
@@ -111,7 +117,7 @@ class RunTests(unittest.TestCase):
         methods = [(m, p.split("?")[0]) for m, p, _ in fake.writes()]
         self.assertEqual(methods[:2], [("POST", "/events/notifications")] * 2)
         self.assertTrue(all(c == ("POST", "/events/definitions") for c in methods[2:]))
-        first = next(b for _, p, b in fake.writes() if p.startswith("/events/definitions"))
+        first = next(b for _, p, b in fake.writes() if p.startswith("/events/definitions"))["entity"]
         self.assertNotEqual(first["notifications"][0]["notification_id"], g.PLACEHOLDER_ID)
 
     def test_apply_twice_updates_in_place_and_does_not_duplicate(self):
@@ -154,7 +160,7 @@ class RunTests(unittest.TestCase):
         fake = FakeGraylog(notes=list(data["notifications"].values()))
         failures, _ = run_quiet(fake, "test")
         self.assertEqual(failures, 0)
-        self.assertEqual({p for _, p, _ in fake.writes()}, {"/events/notifications/n0", "/events/notifications/n1"})
+        self.assertEqual({p for _, p, _ in fake.writes()}, {"/events/notifications/n0/test", "/events/notifications/n1/test"})
         failures, out = run_quiet(FakeGraylog(), "test")
         self.assertEqual(failures, 2)
         self.assertIn("run --apply first", out)
