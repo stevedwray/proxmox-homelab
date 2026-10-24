@@ -1,0 +1,104 @@
+---
+# Enrol the operator workstation (Garuda/Arch) in Graylog log shipping, warning
+# and above only (docs/alerting/plan.md, Phase 0.4; operator decisions 2026-10-24).
+#
+# Standard syslog-ng from Arch's official extra repo: the systemd-journal source
+# reads the journal (Arch has no /var/log/syslog), one filter keeps severity
+# warning and above, and the network destination sends RFC 5424 over TCP to
+# Graylog with a disk buffer so a Graylog restart loses nothing. The wire format
+# is the one the fleet's rsyslog sends, so Graylog treats it identically.
+#
+# Why not rsyslog (the operator's first choice): the only Arch build is
+# chaotic-aur's, and its libfastjson (built July 2025) crashes rsyslogd against
+# glibc 2.44 ("Relink libfastjson.so.4 with libm.so.6 for IFUNC symbol modf").
+#
+# Run (asks for the sudo password):
+#   ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/graylog-workstation-syslog-ng.yml --limit garuda --ask-become-pass
+#
+# Verify: logger -p user.warning 'WORKSTATION_FWD_PROOF', then in Graylog
+#   relay_src_ip:192.168.1.104 AND message:WORKSTATION_FWD_PROOF
+#   (an info-level logger line must NOT arrive: that is the filter working)
+# Rollback: restore /etc/syslog-ng/syslog-ng.conf from the timestamped backup
+#   beside it, or systemctl disable --now syslog-ng@default && pacman -Rns syslog-ng
+
+- name: Ship the workstation journal (warning and above) to Graylog
+  hosts: garuda
+  become: true
+  gather_facts: false
+
+  vars:
+    graylog_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
+    graylog_port: "514"
+    buffer_dir: /var/lib/syslog-ng/graylog-buffer
+
+  tasks:
+    # A first attempt installed the chaotic-aur rsyslog, which cannot run (see
+    # above). Remove it, and the dependencies only it needed; a no-op otherwise.
+    - name: Remove the broken chaotic-aur rsyslog
+      community.general.pacman:
+        name: rsyslog
+        state: absent
+        extra_args: --recursive
+
+    - name: Install syslog-ng
+      community.general.pacman:
+        name: syslog-ng
+        state: present
+
+    - name: Create the disk-buffer directory
+      ansible.builtin.file:
+        path: "{{ buffer_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # backup keeps the packaged default. validate refuses to install a config that
+    # syslog-ng itself rejects (a bad option, a missing module).
+    - name: Write syslog-ng.conf (journal in, warning and above out)
+      ansible.builtin.copy:
+        dest: /etc/syslog-ng/syslog-ng.conf
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+        validate: syslog-ng --syntax-only -f %s
+        content: |
+          # Managed by ansible/00-initial-setup/graylog-workstation-syslog-ng.yml
+          @version: 4.2
+
+          options {
+            stats(freq(0));
+            keep-hostname(yes);
+            use-dns(no);
+            flush-lines(0);
+          };
+
+          # read-old-records(no): do not replay the whole journal at first start.
+          source s_journal { systemd-journal(read-old-records(no)); };
+
+          # warning (4) and more severe: emerg, alert, crit, err, warning.
+          filter f_warning_and_above { level(warning..emerg); };
+
+          # RFC 5424, newline-framed, with a clean APPNAME and "-" for an empty PID.
+          destination d_graylog {
+            network("{{ graylog_host }}" port({{ graylog_port }}) transport("tcp")
+              template("<${PRI}>1 ${ISODATE} ${HOST} ${PROGRAM:--} ${PID:--} - - ${MESSAGE}\n")
+              disk-buffer(mem-buf-length(10000) disk-buf-size(67108864) reliable(no) dir("{{ buffer_dir }}")));
+          };
+
+          log { source(s_journal); filter(f_warning_and_above); destination(d_graylog); };
+      notify: Restart syslog-ng
+
+    - name: Enable and start syslog-ng
+      ansible.builtin.systemd:
+        name: syslog-ng@default
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart syslog-ng
+      ansible.builtin.systemd:
+        name: syslog-ng@default
+        state: restarted

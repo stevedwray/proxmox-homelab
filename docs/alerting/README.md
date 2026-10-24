@@ -77,7 +77,7 @@ only and never page (found the hard way: see *Lessons learned*).
 | Email | Not an alert channel; at most a weekly digest, Monday 07:00 `Pacific/Auckland` (Phase 6, undecided) |
 | `pentest_seg` | GVM scans it **only on request for a pentest**, as a dedicated GVM user, results kept **out of lab findings and alerts**; its logs have their own Graylog stream. Not yet implemented for the scan program (`docs/gvm-scan-redesign/README.md`) |
 | T-Pot Pi | **No relabel**: its source name is already the generic `raspberrypi` (deliberate) and its own logs never say "tpot" |
-| Workstation forwarder | **Standard rsyslog** (operator, 2026-10-24: more maintainable and standard). `rsyslog` 8.2608.0 is in chaotic-aur; imjournal in, warning and above out. Replaces the planned journal-following script |
+| Workstation forwarder | **syslog-ng from Arch's official repo** (operator, 2026-10-24: a standard daemon, not a script). rsyslog was the first choice but the only Arch build (chaotic-aur) crashes against glibc 2.44 (stale libfastjson, `Relink ... IFUNC symbol modf`). Journal in, warning and above out, RFC 5424 over TCP with a disk buffer; wire format tested against the real 4.12 binary |
 | UPS | None, so no power alerts |
 | Message format | One headline, the rule's own `summary`, a silence link. Telegram is **plain text** (`parse_mode: None`): Markdown would drop a page on a stray `_`. Discord gets a title plus a `[silence]` link. Templates: `alerting/templates/homelab-templates.yml` |
 
@@ -144,7 +144,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Temperatures | Live; pve NVMe composites read about 67 C against a 70 C warning |
 | MikroTik hardware | Only `cpu-temperature`; RouterOS 7.24.2 (7.24.5 out), RouterBOARD firmware 7.19.6 (7.24.2 pending); no exporter yet |
 | NAS (Asustor Drivestor) | 45 log messages a month, System and Connection only; hardware events unknown |
-| Workstation `garuda`, argon-01/02 | **Not in Graylog yet**: playbooks written and checked (`graylog-workstation-rsyslog.yml`, `graylog-pi-syslog.yml`), not run |
+| Workstation `garuda`, argon-01/02 | **Not in Graylog yet**: playbooks written and checked (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`), not run |
 | `pve-test` laptop (and the Kali VM on it) | Off on purpose (heatsinks being reseated) |
 | pentagi | Decommissioned; its scrape jobs were removed from the monitoring deploy |
 | OCI box | aarch64, 8 GB RAM (about 6.9 GB free), 2 CPUs, load 0.03; Pangolin, Traefik and Gerbil use under 700 MB |
