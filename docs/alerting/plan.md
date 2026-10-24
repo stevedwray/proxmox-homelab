@@ -574,15 +574,27 @@ no empty half-hour in the history); `pve` capacity (60% of 126 GiB memory, load 
 
 **W1: honeypot cadence (F1). Small, urgent. Operator, migration owner.**
 
-1. Merge `stable` into the evacuation branch (resolve its conflicts; `stable` wins for alerting files) so its role default is
-   `*:0/10:00` and its manifest has no `services/pentagi`. This is the migration owner's branch.
-2. Re-provision `secpipe-stack` from that result: `TASK_APPROVAL=tpot-sync-10min ./with-secrets-prod scripts/provision.sh --stack secpipe-stack`.
-   Check `systemctl show tpot-findings-ingest.timer -p TimersCalendar` on the container says `*:0/10:00`.
-3. Refresh `~/.ssh/known_hosts.lab` for `192.168.50.12` (the container was recreated: `ssh-keygen -R`).
-4. Re-run the honeypot drill from `argon-01` (see README, *Proven live*): a message naming `192.168.1.22` within about 12 minutes.
+**Correction (2026-10-24):** an earlier version of this step said "re-provision `secpipe-stack` from `stable`". That is wrong and
+would have been harmful: both `stable` and the evacuation branch still define `secpipe-stack` under
+`terraform/lxc/environments/pve-tiny/`, so `provision.sh --stack secpipe-stack` aims at `pve-tiny`'s stopped copy. The migration did not
+use it either: it ran a **temporary, scoped role reconciliation** against the new container
+(`docs/pve-tiny-evacuation/runbook.md`, *Secpipe CT 50012 cutover*; `ok=38 changed=13`). The container's timer is
+`OnCalendar=*:00:00` because that reconciliation ran from the evacuation branch, whose role default predates the 10-minute change.
 
-Done when the timer is 10-minute, the drill passes, and "Honeypot data has stopped arriving" stays Normal across two hourly boundaries.
-No code change on my side: the freshness rule is correct for a 10-minute sync.
+A second dependency: `stable`'s `pve` secrets profile has **no `services/tpot`** (the T-Pot SSH key), so the T-Pot role cannot run
+from `stable` under the `pve` wrapper; the evacuation branch already has it.
+
+| Option | What it is | Cost / risk |
+|---|---|---|
+| **A. Merge `stable` into the evacuation branch, then repeat the scoped reconciliation (the real fix)** | Picks up the 10-minute default and keeps the branch's `services/tpot` manifest fix; conflicts to resolve in `secrets/manifest.json`, two playbooks and the autonomous-pentest docs | The migration owner's branch and the slowest path; no drift once done |
+| **B. Stopgap on the container** | One systemd drop-in on CT 50012 (`OnCalendar=` then `OnCalendar=*:0/10:00`), via `pct exec` from `pve` | Five minutes and reversible, but **drift from the IaC**: the next role run puts the hourly timer back until A is done |
+| **C. Run the scoped reconciliation from `stable`** | Needs `services/tpot` added to `stable`'s `pve` profile first (correct on its own), then the same temporary playbook the migration used | Fixes it without waiting for the branch merge, but writes a second throwaway playbook and re-touches a guest the migration owner has just finished |
+| **D. Mitigate only** | Widen my freshness rule so an hourly sync does not flap it | Stops false alarms but leaves the tripwire up to about 70 minutes late; not a fix |
+| **Do not** | `provision.sh --stack secpipe-stack` from either branch | Targets `pve-tiny`'s stopped copy |
+
+Recommended: **B now, A as the real fix**, and add `services/tpot` to `stable`'s `pve` profile regardless (it is needed by A and C).
+Done when the timer reads `*:0/10:00` on the container, the honeypot drill from `argon-01` passes (README, *Proven live*), and "Honeypot
+data has stopped arriving" stays Normal across two hourly boundaries.
 
 **W2: close the coverage gap (F2, F3). Medium. Firewall by the operator, the rest by me.**
 
