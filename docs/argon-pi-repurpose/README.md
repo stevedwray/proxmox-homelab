@@ -362,3 +362,72 @@ irreversible; a failed SSD boot may require hands-on recovery.
 - Harbor and Portainer names resolve to `192.168.30.10`; the direct Portainer
   API at `192.168.20.20:9000` reports version `2.39.8`. Central registration
   and firewall policy remain pending the required production approval flow.
+
+### 2026-10-25 — argon-02 stage 1: preflight passed
+
+- Confirmed hostname/IP `argon-02` / `192.168.1.23`, root `/dev/sda2`, boot
+  `/dev/sda1`, both on the expected local 128 GB SSSTC SSD. SMART overall
+  health remains `PASSED`; root is ext4 and boot is vfat.
+- SSH/sudo, network route, Technitium resolvers, Argon fan, Docker/containerd,
+  node_exporter, rsyslog, SMART and Wazuh are active. The Pi runs
+  `6.1.21-v8+`. Its kernel follows the same legacy `/boot` layout and is not
+  modified in this user-space cleanup pass.
+- The approved workload scope includes Pi-hole, NPM, Portainer, registry,
+  Deluge, Crawl4AI, Neo4j, Elasticsearch, Minecraft, AttackIQ, old NAS CIFS
+  configuration/mount points and historical `ansible` user workload data.
+
+### 2026-10-25 — argon-02 stage 2a: workload data retired
+
+- Stopped Docker/containerd and removed the approved local Docker state,
+  retired Compose/project data, database/search data, application trees and
+  historical user workload files. Docker/containerd were restarted empty.
+  Root use fell from 30 GB (27%) to 12 GB (10%); Docker has no containers.
+- Removed the seven obsolete `192.168.1.8` CIFS entries from `/etc/fstab` and
+  their empty mount-point tree. The old generated mount units remain marked
+  failed until `systemctl daemon-reload` and `reset-failed`, which is the next
+  cleanup action. Legacy DNS, web, proxy, database and Portainer listeners
+  are absent.
+
+### 2026-10-25 — argon-02 stage 2b: legacy packages purged
+
+- Reloaded systemd and cleared the seven retired CIFS mount failures. Purged
+  the reviewed legacy mail, CIFS/NFS, discovery, modem, IPMI, `rpi-update` and
+  residual MariaDB packages. No failed units remain and `dpkg --audit` is
+  clean.
+- 53 ordinary package updates remain. As on argon-01, automatic removal is
+  deferred because it includes boot-adjacent initramfs components while this
+  Pi still uses the legacy `/boot` kernel layout.
+
+### 2026-10-25 — argon-02 stage 3a: safe update gate passed
+
+- Refreshed apt indexes and reviewed the final `full-upgrade` simulation:
+  53 upgrades, zero new packages, zero removals. It does not install a kernel
+  image or `raspi-firmware`; the legacy `6.1.21-v8+` boot migration remains
+  deferred for a dedicated, tested change.
+
+### 2026-10-25 — argon-02 stage 3b: user-space update applied
+
+- Applied all 53 reviewed upgrades. Docker Engine is now `29.9.2`, Compose is
+  `v5.6.1`, `dpkg --audit` is clean, no package upgrades remain, and no units
+  are failed. No kernel image or boot firmware package was installed.
+- Ready for the one-host reboot gate. The expected kernel after return is
+  still `6.1.21-v8+`; a failed SSD return or unexpected boot state stops
+  further execution.
+
+### 2026-10-25 — argon-02 stage 3c: reboot recovery in progress
+
+- Reboot was requested after the user-space upgrade. SSH first refused
+  connections, then the Pi ceased answering ICMP and the workstation reported
+  `No route to host`. No post-reboot mutation has been attempted. Continue
+  network/SSH recovery checks; if it does not return, use the available local
+  console/power path and stop central-management work for this host.
+
+### 2026-10-25 — argon-02 stage 3d: SSD reboot gate passed
+
+- The temporary network loss resolved without intervention. argon-02 returned
+  over SSH with the expected `6.1.21-v8+` kernel, root `/dev/sda2` ext4 and
+  boot `/dev/sda1` vfat.
+- Argon fan, Docker/containerd, node_exporter, rsyslog, SMART and Wazuh are
+  active; Docker has no containers; no upgrades or failed units remain; SMART
+  overall health remains `PASSED`. The central management-plane work can now
+  proceed after its production approval.
