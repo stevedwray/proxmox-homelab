@@ -140,7 +140,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | MikroTik: pentest_seg may reach only Graylog (514) and step-ca (443) | **Live** |
 | Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token still to be reset in the Developer Portal |
 | Telegram bot, credentials in OpenBao `services/grafana` (v3) and the manifest | **Live** |
-| Grafana alerting: 30 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, five times, including the two Phase 5 vulnerability rules). A 31st, the honeypot data-freshness rule, is in the repo and goes live with the next monitoring-stack deploy |
+| Grafana alerting: 31 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, six times, including the Phase 5 vulnerability rules and the honeypot data-freshness rule). Six NAS rules (SNMP) are in the repo and go live with the next monitoring-stack deploy |
 | OpenBao seal-status metric (`openbao_sealed`) | **Live**, value 0; the nightly snapshot succeeds at 03:30 |
 | T-Pot to OpenSearch sync | **Live**, every 10 minutes (`tpot_findings_ingest_on_calendar`) |
 | node_exporter fleet repair (SIGHUP bug) | **Done** 2026-10-24; seven stacks reporting again |
@@ -148,7 +148,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | NVMe/SMART metrics for pve, pve-tiny, argon-01/02 | Live. `smartctl` cannot read pve `sdg` (NVMe in a USB bridge) or pve-tiny's NVMe |
 | Temperatures | Live; pve NVMe composites read about 67 C against a 70 C warning |
 | MikroTik hardware | Only `cpu-temperature`; RouterOS 7.24.2 (7.24.5 out), RouterBOARD firmware 7.19.6 (7.24.2 pending); no exporter yet |
-| NAS (Asustor Drivestor) | 45 log messages a month, System and Connection only; hardware events unknown |
+| NAS (Asustor Drivestor) | SNMPv3 enabled by the operator (authNoPriv/MD5); `snmp-exporter` and six rules built, **not yet deployed**. `Volume1` is `linear` (no redundancy) |
 | Workstation `garuda`, argon-01/02 | **In Graylog** (2026-10-24, proven by a proof message and its `relay_src_ip` from each): workstation warning and above via syslog-ng, the Pis via the `rsyslog_forward` role with kernel logging kept |
 | `pve-test` laptop (and the Kali VM on it) | Off on purpose (heatsinks being reseated) |
 | pentagi | Decommissioned; its scrape jobs were removed from the monitoring deploy |
@@ -187,7 +187,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences). **Set 2026-10-24, ends 2026-10-26 13:46: extend it when the RMA date is known, nothing reminds you when it lapses**. The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves. The operator is managing the expiry (2026-10-26 13:46).
 2. ~~Reset the Discord bot token~~ Done 2026-10-24.
 3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
-4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
+4. **Deploy the NAS monitoring** (SNMPv3, built; plan *Operator: NAS*). `Volume1` is a `linear` volume with no redundancy: decide whether that is intended.
 5. **mktxp for the MikroTik** (Phase 0b). The workstation and Pis are enrolled.
 6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
 7. **Deploy the Phase 5 vulnerability rules** (next monitoring-stack deploy), then **Phase 6** digest and native integrations. Phase 2, the Graylog log alerts, is applied and drilled.

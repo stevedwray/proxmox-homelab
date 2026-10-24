@@ -92,6 +92,11 @@
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.60.5"
     cadvisor_image: "{{ monitoring_registry_host }}/ghcr/google/cadvisor:{{ cadvisor_version }}"
+    # ASUSTOR NAS over SNMPv3 (docs/alerting/plan.md, Phase 0.8). Credentials: OpenBao services/nas.
+    snmp_exporter_version: "v0.30.1"
+    snmp_exporter_image: "{{ monitoring_registry_host }}/dockerhub/prom/snmp_exporter:{{ snmp_exporter_version }}"
+    nas_snmp_user: "{{ lookup('env', 'NAS_SNMP_USER') | mandatory('NAS_SNMP_USER env var is required') }}"
+    nas_snmp_password: "{{ lookup('env', 'NAS_SNMP_PASSWORD') | mandatory('NAS_SNMP_PASSWORD env var is required') }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -191,6 +196,7 @@
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/alerting", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/harbor-findings-exporter", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/snmp-exporter", mode: "0755" }
         - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
@@ -495,6 +501,28 @@
                   labels:
                     stack: step-ca-stack
 
+            # ASUSTOR NAS over SNMPv3 through snmp-exporter (same compose network). The target is passed
+            # to the exporter as a parameter; `instance` stays the NAS address. The NAS has no
+            # LAB_IP variable (the NAS rules in alerting/ hardcode 192.168.1.3 too).
+            - job_name: asustor-nas
+              metrics_path: /snmp
+              scrape_interval: 60s
+              scrape_timeout: 30s
+              params:
+                module: [asustor]
+                auth: [nas]
+              static_configs:
+                - targets: ["192.168.1.3"]
+                  labels:
+                    stack: nas
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - source_labels: [__param_target]
+                  target_label: instance
+                - target_label: __address__
+                  replacement: snmp-exporter:9116
+
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning
@@ -561,6 +589,7 @@
         - homelab-hardware.yml
         - homelab-honeypot.yml
         - homelab-vulnerabilities.yml
+        - homelab-nas.yml
       register: grafana_alert_rules_provisioning
 
     - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)
@@ -673,6 +702,12 @@
                   object_matchers:
                     - ['tripwire', '=', 'honeypot']
                   repeat_interval: 12h
+                # Maintenance notices (a firmware update is available) are not urgent and do not
+                # clear until acted on: once a week, not every four hours.
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['category', '=', 'maintenance']
+                  repeat_interval: 168h
                 # Everything security-related is also posted to #security.
                 - receiver: homelab-discord-security
                   object_matchers:
@@ -959,7 +994,19 @@
           GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET={{ grafana_oauth_client_secret }}
           HARBOR_API_PASSWORD={{ harbor_api_password }}
           TPOT_EVENTS_ES_PASSWORD={{ tpot_events_es_password_resolved }}
+          NAS_SNMP_USER={{ nas_snmp_user }}
+          NAS_SNMP_PASSWORD={{ nas_snmp_password }}
       no_log: true
+
+    - name: Copy snmp_exporter module and auth files (static; credentials come from the container environment)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/monitoring-stack/snmp/{{ item }}"
+        dest: "{{ monitoring_compose_dir }}/snmp-exporter/{{ item }}"
+        mode: "0644"
+      loop:
+        - snmp.yml
+        - auth.yml
+      register: snmp_exporter_config
 
     - name: Write monitoring compose definition
       ansible.builtin.copy:
@@ -1018,6 +1065,21 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
+
+            # ASUSTOR NAS over SNMPv3. No published port: VictoriaMetrics reaches it on the compose network.
+            snmp-exporter:
+              image: {{ snmp_exporter_image }}
+              container_name: snmp-exporter
+              restart: unless-stopped
+              env_file:
+                - .env
+              command:
+                - "--config.file=/etc/snmp_exporter/snmp.yml"
+                - "--config.file=/etc/snmp_exporter/auth.yml"
+                - "--config.expand-environment-variables"
+              volumes:
+                - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+                - ./snmp-exporter/auth.yml:/etc/snmp_exporter/auth.yml:ro
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}
@@ -1190,6 +1252,14 @@
             else 'auto'
           }}
       when: not ansible_check_mode
+
+    - name: Restart snmp-exporter after its module or auth file changed
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart snmp-exporter
+      when:
+        - not ansible_check_mode
+        - snmp_exporter_config.changed and not monitoring_compose_definition.changed
+      changed_when: true
 
     - name: Restart Harbor findings exporter after script updates
       ansible.builtin.command:
