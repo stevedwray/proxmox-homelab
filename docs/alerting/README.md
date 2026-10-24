@@ -155,7 +155,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Graylog sender IP and pentest stream | `roles/rsyslog_forward/templates/graylog_inbound.conf.j2`, `playbooks/configure-graylog-pentest-seg.yml` |
 | MikroTik narrowing | `ansible/00-initial-setup/mikrotik-firewall-pentest-seg-narrow.yml`, `terraform/lxc/network/pve.yaml` |
 | Workstation and Pi enrolment (written, not run) | plan steps `alerting-00` to `02` |
-| **Parked relay** | `~/git/oci/roles/alert_relay/` (uncommitted; the oci `.git` is invisible to my sandbox). `site.yml` has the role commented out. Superseded runbook: [relay-deploy.md](relay-deploy.md) |
+| **Parked relay** | `~/git/oci/roles/alert_relay/` (not in any git repo I can see: the Pangolin source was copied into this repo's `oci/` on `task/oci-security-prs-integration`, unmerged, and `~/git/oci` stays the operational source until that cutover; when the import merges, carry `roles/alert_relay/` into `oci/roles/`). `site.yml` has the role commented out. Superseded runbook: [relay-deploy.md](relay-deploy.md) |
 
 ## Open items for the operator
 

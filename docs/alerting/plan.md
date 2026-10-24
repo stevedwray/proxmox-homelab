@@ -1384,8 +1384,10 @@ anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
 Phase 2: it closes "nothing tells me when Grafana is down", and Phase 4
 depends on it.
 
-What exists, in the `~/git/oci` working tree (`roles/alert_relay/`; you commit
-it, my sandbox cannot):
+What exists, in the `~/git/oci` working tree (`roles/alert_relay/`). Nothing to commit
+there: the Pangolin source is being moved into this repo's `oci/`
+(`task/oci-security-prs-integration`, unmerged), and `roles/alert_relay/` is carried across
+when that merges:
 
 - `files/relay.py`: standard-library Python, SQLite state, about 30 MB.
   `POST /v1/alerts` (Grafana webhook or a generic JSON body),

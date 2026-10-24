@@ -66,7 +66,7 @@ route.
 
 ## 0. Commit the oci changes
 
-Only you can commit in `~/git/oci` (the checkout looks empty to my sandbox).
+Do not commit in `~/git/oci`: the Pangolin source is moving into this repo's `oci/` (`task/oci-security-prs-integration`, unmerged, see docs/oci-integration/plan.md). When that import merges, copy `roles/alert_relay/` into `oci/roles/`.
 These files are new or changed:
 
 ```
