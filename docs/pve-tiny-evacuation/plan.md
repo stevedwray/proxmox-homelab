@@ -7,10 +7,10 @@ reconciled, but its final bounded service test, target autostart, and backup
 enrollment are blocked by a failing production-secret profile. The remaining
 six guests have not started cutover.
 
-The production wrapper currently fails closed because OpenBao returns HTTP 404
-for `kv/data/services/pentagi`, an entry required by the pve profile. A human
-with secret-store write access must restore that entry and its manifest-required
-fields before the Secpipe finalization or another production task can proceed.
+The production wrapper currently fails closed because this worktree's pve
+profile still requests retired `services/pentagi`, which was correctly removed
+from OpenBao during the PentAGI teardown. This branch removes that stale
+manifest entry and profile references before Secpipe finalization resumes.
 No Terraform state was changed during these cold-copy/reconciliation actions;
 the target CT runtime state must be reconciled with reviewed Terraform plans
 before later infrastructure changes.
@@ -165,8 +165,8 @@ plan or its runbook:
    the first new backup completes.
 
 Do not shut down `pve-tiny` while any of these gates remains open. In
-particular, the missing `services/pentagi` OpenBao entry blocks finalizing
-50012 and prevents further production-wrapper commands.
+particular, do not finalize 50012 until this branch's stale `services/pentagi`
+profile reference is removed and the wrapper is rechecked.
 
 ## Phase 1: prepare source-controlled target definitions
 
@@ -253,7 +253,7 @@ Suggested order, respecting dependencies and the failing NVMe:
 | Guest | State | Remaining gate |
 |---|---|---|
 | 40014 OpenSearch | Complete on `pve`; source retained stopped | Soak and later Terraform reconciliation only |
-| 50012 Secpipe | Target running alone on `pve`; source stopped/onboot disabled; managed roles reconciled | Restore `services/pentagi`, then run bounded enrichment, verify timers, set target onboot, enroll and verify pve backup |
+| 50012 Secpipe | Target running alone on `pve`; source stopped/onboot disabled; managed roles reconciled | Recheck the corrected production profile, then run bounded enrichment, verify timers, set target onboot, enroll and verify pve backup |
 | 50013, 40072, 40070, 100071, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
 
 ## Phase 3: shutdown and RMA gate

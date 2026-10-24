@@ -178,15 +178,16 @@ deep-dive, and T-Pot-ingest managed services and timers, including their
 managed credentials. The temporary reconciliation playbook was removed after
 the successful run.
 
-Final validation could not begin because `./with-secrets-prod` now fails
-closed before contacting pve: OpenBao returns HTTP 404 for
-`kv/data/services/pentagi`, which is required by the pve production profile.
+Final validation could not begin because `./with-secrets-prod` fails closed
+before contacting pve: this worktree's pve profile still requests retired
+`services/pentagi`, which was correctly removed from OpenBao during the
+PentAGI teardown.
 Consequently, no bounded enrichment run, target `onboot=1` change, backup-job
 enrollment, or fresh pve PBS backup has been performed for 50012. Leave the
 source stopped with `onboot=0`, keep the target as the sole running instance,
-and retain both CTs for rollback. A human with OpenBao write access must
-restore the missing `services/pentagi` entry and its manifest-required fields.
-Then obtain a new finalization approval, verify both target timers and a
+and retain both CTs for rollback. Remove the obsolete manifest entry and its
+profile references, recheck the production wrapper, then obtain a new
+finalization approval. Verify both target timers and a
 bounded enrichment write to OpenSearch, set target autostart, remove only 50012
 from the pve backup-job exclusions, and verify a new PBS backup before marking
 this cutover complete.
