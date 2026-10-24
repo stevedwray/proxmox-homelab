@@ -14,7 +14,8 @@ are still to do. Phases 3, 4 and 4b are future state.
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
 | 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
-| 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
+| 0.6 | MikroTik metrics (mktxp) | Router access live; exporter and eight rules built, not yet deployed |
+| 0.8 | NAS (SNMPv3) | **Live and verified** |
 | 1 | Discord channels, 9 baseline + 18 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
@@ -60,7 +61,7 @@ the 2026-10-24 sweep.
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
 | 0.4 Workstation `garuda` into Graylog, warning and above | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
 | 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
-| 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
+| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Router access live; exporter and eight rules built, not yet deployed** (Phase 0b below) |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
 | 0.8 NAS (Asustor Drivestor) | **Built, not yet deployed**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
@@ -463,7 +464,7 @@ not reading `/proc/kmsg` and that needs a look.
 
 ### Operator: NAS (Asustor Drivestor)
 
-**Status 2026-10-24: built, not yet deployed.** The NAS has no syslog hardware events worth the name (45 log messages a month, System and
+**Status 2026-10-24: deployed and verified** (first deploy failed on the image name: it is `prom/snmp-exporter`, with a hyphen). The NAS has no syslog hardware events worth the name (45 log messages a month, System and
 Connection only), so SNMP is how it is monitored. ADM was set up by the operator: SNMP service on, **SNMPv3 only** (v1/v2 off), a read
 user, trap level warning (no trap receiver exists; polling is what is used).
 
@@ -495,21 +496,48 @@ An unreachable NAS is caught by the generic "Scrape target down" rule. The monit
 `dockerhub/prom/snmp-exporter:v0.30.1` through Harbor; the image name has a hyphen though the binary has an underscore, and the first deploy failed on `repository dockerhub/prom/snmp_exporter not found` until that was fixed). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
 `count({__name__=~"asustor_.*"})` is about 30.
 
-### Phase 0b (outline): MikroTik hardware and firmware metrics
+### Phase 0b: MikroTik hardware and firmware metrics
 
-Findings: the hAP ax3 has one health sensor (`cpu-temperature`, 64 C), plus
-CPU load, memory and flash. RouterOS 7.24.2 is installed with 7.24.5
-available; the RouterBOARD firmware (7.19.6) is behind RouterOS and 7.24.2 is
-pending. A read-only account already exists (`MIKROTIK_READONLY_USER` /
-`_PASSWORD` in `services/mikrotik`).
+**Status 2026-10-24: router access is live and verified; mktxp and eight rules are built, not yet deployed.**
 
-Decided: run **mktxp** as a sidecar in monitoring-stack, using the read-only
-account, scraped by VictoriaMetrics.
+**Router side (applied by the operator, `ansible/00-initial-setup/mikrotik-monitoring-access.yml`):**
 
-To find before the steps are written: the monitoring-stack compose layout and
-how a sidecar is added there; mktxp's config format and its update-check
-option; whether RouterOS REST/API access from monitoring-stack
-(`192.168.20.12`) to the router is allowed by the firewall.
+- A new group `monitoring` with `read` and `api` only. The existing `api-ro` account is in the built-in `read` group, which also
+  carries `reboot`, `sniff`, `ssh`, `sensitive` and `test`, so it was not reused. The new account `mktxp` is restricted to the monitoring
+  host and the LAN. Its password was generated into OpenBao (`services/mikrotik`, `MIKROTIK_MONITOR_USER` / `MIKROTIK_MONITOR_PASSWORD`).
+- `api-ssl` had **no certificate** (`certificate: none`), so every modern TLS client failed the handshake. It now uses `www-ssl-cert`, TLS
+  1.2 only, and is limited to the monitoring host and the LAN. RouterOS 7.24 calls that list `available-from`, not `address`.
+- An input-chain rule lets the monitoring host reach the router on tcp/8729, placed ahead of the final drop. The management VLAN had
+  only ICMP and DNS to the router before.
+- Verified from the router: the group policy, the user, the service settings and the rule order; and by logging in as the new account
+  over API-SSL: it reads resource, health, RouterBOARD, interfaces and packages, and **a write is refused** (`not enough permissions`).
+
+**Exporter (`terraform/lxc/stacks/monitoring-stack/mktxp/`, in monitoring-stack):** mktxp 2.1.0 (`ghcr.io/akpw/mktxp`, runs as uid 1000,
+no published port). Deliberately small: health, RouterBOARD firmware, the RouterOS update check (done from the monitoring host, which
+reaches MikroTik's update server), and interface counters; DHCP, wireless, connections, routes, queues and firewall counters are off.
+The real mktxp was run against the router with the monitoring account before any deploy: 450 lines, 41 metric names, no errors, and it
+did not rewrite its config (so the files mount read-only). The config in Git has placeholders; the deploy writes a 0600 copy owned by
+uid 1000 with the credentials.
+
+**What the router reported on 2026-10-24:** CPU 63 C (its only health sensor), RouterOS **7.25** (upgraded that morning from 7.24.2),
+RouterBOARD firmware **7.19.6 with 7.25 ready** (so the firmware-update notice fires on the first deploy, and is real).
+
+| Rule | Fires when | Goes to |
+|---|---|---|
+| Router CPU temperature above 80 C | 15 minutes | `#alerts-warning` |
+| Router CPU temperature above 90 C | 10 minutes | page |
+| Router RouterBOARD firmware update is available | for an hour | `#alerts-warning`, weekly |
+| Router RouterOS update is available | for an hour | `#alerts-warning`, weekly |
+| Router interface errors rising | more than 5 in an hour on a port | `#alerts-warning` |
+| Router port link is flapping | more than 3 drops in an hour | `#alerts-warning` |
+| Router has restarted | uptime under an hour | `#alerts-warning` |
+| Router metrics have stopped arriving | for 10 minutes | `#alerts-warning` |
+
+The last one matters: **mktxp keeps answering when it cannot reach the router**, so the generic "Scrape target down" rule would stay quiet
+if the account, certificate or firewall rule broke. Not yet verified until deploy: the image pull through Harbor (`ghcr/akpw/mktxp`)
+and the rules against real series.
+
+**Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack`.
 
 ## Phase 1: Discord baseline and hardware rules
 
