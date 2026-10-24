@@ -492,7 +492,7 @@ An unreachable NAS is caught by the generic "Scrape target down" rule. The monit
 (no firewall change). The `NAS above 90%` rule is separate: it reads the NFS mounts from the clients' side.
 
 **Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack` (pulls
-`dockerhub/prom/snmp_exporter:v0.30.1` through Harbor). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
+`dockerhub/prom/snmp-exporter:v0.30.1` through Harbor; the image name has a hyphen though the binary has an underscore, and the first deploy failed on `repository dockerhub/prom/snmp_exporter not found` until that was fixed). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
 `count({__name__=~"asustor_.*"})` is about 30.
 
 ### Phase 0b (outline): MikroTik hardware and firmware metrics

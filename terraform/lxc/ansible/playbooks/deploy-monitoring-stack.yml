@@ -94,7 +94,7 @@
     cadvisor_image: "{{ monitoring_registry_host }}/ghcr/google/cadvisor:{{ cadvisor_version }}"
     # ASUSTOR NAS over SNMPv3 (docs/alerting/plan.md, Phase 0.8). Credentials: OpenBao services/nas.
     snmp_exporter_version: "v0.30.1"
-    snmp_exporter_image: "{{ monitoring_registry_host }}/dockerhub/prom/snmp_exporter:{{ snmp_exporter_version }}"
+    snmp_exporter_image: "{{ monitoring_registry_host }}/dockerhub/prom/snmp-exporter:{{ snmp_exporter_version }}"
     nas_snmp_user: "{{ lookup('env', 'NAS_SNMP_USER') | mandatory('NAS_SNMP_USER env var is required') }}"
     nas_snmp_password: "{{ lookup('env', 'NAS_SNMP_PASSWORD') | mandatory('NAS_SNMP_PASSWORD env var is required') }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
