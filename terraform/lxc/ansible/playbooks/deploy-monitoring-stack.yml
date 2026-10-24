@@ -628,6 +628,8 @@
                     parse_mode: None
                     message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
                   disableResolveMessage: false
+            # A honeypot hit is an event, not a condition that recovers: the rule looks back 2h, so
+            # "Resolved" only means the last probe is now over 2h old. No resolve message, either channel.
             - orgId: 1
               name: homelab-tripwire
               receivers:
@@ -638,7 +640,7 @@
                     use_discord_username: false
                     title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
                     message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
-                  disableResolveMessage: false
+                  disableResolveMessage: true
                 - uid: homelab-tripwire-telegram
                   type: telegram
                   settings:
@@ -646,7 +648,7 @@
                     chatid: "{{ grafana_telegram_chat_id }}"
                     parse_mode: None
                     message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
-                  disableResolveMessage: false
+                  disableResolveMessage: true
           policies:
             - orgId: 1
               receiver: homelab-discord-warning

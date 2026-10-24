@@ -104,6 +104,10 @@ def check(playbook_path: str, rules_dir: str = RULES_DIR) -> list[str]:
         if match.group(1) not in defined:
             problems.append(f"contact points use template {match.group(1)!r}, which {TEMPLATES_FILE} does not define")
 
+    for rec in points.get("homelab-tripwire", []):
+        if rec.get("disableResolveMessage") is not True:
+            problems.append(f"homelab-tripwire/{rec['uid']}: a honeypot hit is an event, so resolve messages must be disabled")
+
     def has_telegram(point: str) -> bool:
         return any(r["type"] == "telegram" for r in points[point])
 
