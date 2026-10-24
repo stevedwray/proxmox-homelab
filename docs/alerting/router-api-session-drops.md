@@ -1,6 +1,6 @@
 # Research brief: mktxp's RouterOS API-SSL session keeps ending
 
-Status 2026-10-25: **open, root cause not found.** This brief is written so someone with no access to the lab can research it.
+Status 2026-10-25: **open, root cause not found; the mechanism is narrowed to "the exporter closes its own socket" (section 4.5).** This brief is written so someone with no access to the lab can research it.
 It lists every symptom, every measurement, what was ruled out, what was wrongly claimed and retracted, and the questions worth
 answering. Parent docs: [README.md](README.md) (open item 1), [plan.md](plan.md) (Phase 0b).
 
@@ -19,12 +19,12 @@ TCP RST**. That contradicts the exporter's own error message, and nobody has yet
 | Router | MikroTik hAP ax3 (`C53UiG+5HPaxD2HPaxD`, arm64, 1 GiB RAM), RouterOS **7.25** (upgraded 2026-10-24 morning; RouterBOARD firmware 7.19.6, upgrade to 7.25 offered, not applied) |
 | Exporter | **mktxp 2.1.0**, image `ghcr.io/akpw/mktxp:2.1.0` (pulled via a Harbor proxy-cache), Python **3.14.8**, API library **RouterOS-api 0.21.0**, `prometheus_client` 0.26.0 |
 | Exporter host | Docker container `mktxp` (compose service, `restart: unless-stopped`, no published port) inside an unprivileged Proxmox LXC `monitoring-stack`, 192.168.20.12, Linux 7.0.14-15-pve, Docker bridge network |
-| Path | container → Docker bridge → LXC `eth0` → Proxmox bridge/VLAN 20 → router's VLAN-20 address **192.168.20.1** (the router is the L3 gateway; traffic is router-local, not forwarded) |
-| Scraper | VictoriaMetrics scrapes `mktxp:49090` (`scrape_timeout: 30s`); sessions are logged in and out on the **minute :34** boundary, so the scrape period is probably 60 s (not re-verified) |
+| Path | container → Docker bridge → LXC `eth0` → Proxmox bridge/VLAN 20 → router's VLAN-20 address **192.168.20.1** (the router is the L3 gateway). The container is 172.20.0.6 on a Docker bridge, so its traffic is **source-NATted (masqueraded)** to 192.168.20.12 on the way out |
+| Scraper | VictoriaMetrics scrapes `mktxp:49090` (`scrape_timeout: 30s`); sessions are logged in and out on the **minute :34** boundary, `scrape_interval: 60s`, one scraper only (confirmed) |
 | Account | RouterOS user in a custom group `monitoring`: policies `read,api` only (no `write`, `reboot`, `sensitive`, `rest-api`, ...), login allowed from the monitoring host and the flat LAN (`address` list) |
 | Service config | `/ip service api-ssl`: certificate `www-ssl-cert`, `tls-version=only-1.2`, `available-from` limited to the monitoring host and 192.168.1.0/24 |
 | Router firewall | input-chain accept for 192.168.20.12 → tcp/8729 on `vlan20-mgmt`, placed ahead of the final "Drop all other unhandled input traffic" |
-| TCP keep-alive (host) | `tcp_keepalive_time=7200`, `intvl=75`, `probes=9` (kernel defaults) |
+| TCP keep-alive | host defaults are 7200/75/9, but **RouterOS-api sets per-socket keep-alive of 10 s idle, 3 s interval, 5 probes** (verified in the installed `api_socket.py`), so the host defaults do not apply to this socket. OpenSSL 3.5.9 in the image; image digest `sha256:dfd7269dadfe8789e3c8386eedb7b056caa2c6ec243cd610caaf455274efeec5` |
 
 ### mktxp settings that matter (`mktxp.conf`, `_mktxp.conf`)
 
@@ -45,7 +45,7 @@ TCP RST**. That contradicts the exporter's own error message, and nobody has yet
    socket timeout. A genuine ETIMEDOUT after retransmissions would take far longer.
 4. **Metric gap.** Router metrics are missing for about 1 to 2 minutes around each death. This made the original "router has
    restarted" alert flap (`uptime < 3600` with gaps) and was fixed in the alert rules (PRs #536, #537).
-5. **Session lifetimes are regular, not random** (all are whole minutes).
+5. **Session lifetimes are regular, not random** (all are whole minutes, because deaths are detected on a 60 s scrape).
 
 ## 4. Measurements
 
@@ -58,7 +58,7 @@ TCP RST**. That contradicts the exporter's own error message, and nobody has yet
 | Deliberate reboot 2026-10-25 07:50, sessions after it | **8:00, 6:00, 8:00, 6:00** (07:52:34 to 08:00:34, 08:01:34 to 08:07:34, 08:08:34 to 08:16:34, 08:17:34 to 08:23:34) |
 | Reconnect delay | next login exactly 60 s after each logout |
 
-So the lifetime changed after each reboot (long, then 15, then an 8/6 alternation), and is always a multiple of 2 minutes.
+So the lifetime changed after each reboot (long, then 15, then an 8/6 alternation). Earlier drafts said "always a multiple of 2 minutes"; that was wrong (15 is not).
 
 ### 4.2 Two-way capture of one death (2026-10-25 08:07:34, `tcpdump` on the container host's `eth0` and the Docker bridge)
 
@@ -68,7 +68,7 @@ Router = 192.168.20.1:8729, client = 192.168.20.12:57186. Times are seconds past
 :25.43  client ACK   (idle keep-alive-style ACK exchange, router answers)
 :34.2859 client PSH 52 bytes   (request)
 :34.2860 router ACK
-:34.2860 client PSH 67 bytes   (second request, same scrape)
+:34.2860 client PSH 67 bytes   (second client data segment, same scrape)
 :34.2862 router ACK
 :34.2878 router PSH 67 bytes   (the router's reply)
 :34.2878 client ACK
@@ -79,15 +79,17 @@ Router = 192.168.20.1:8729, client = 192.168.20.12:57186. Times are seconds past
 - Ping to 192.168.20.1 from the host ran every 0.5 s through the capture: **no gaps**.
 - Both captures were taken on the client side of the router, so they show what the client received. They cannot show what the
   router does internally. They do show the **RST originates at the client**.
-- The router's 67-byte reply is much smaller than a normal `/system/identity` reply would be if it carried data in the usual way
-  over TLS; the content is encrypted and was not inspected. A TLS alert or an API `!fatal`/`!trap` reply of that size is plausible.
-  This has not been decoded.
+- **The 67-byte reply is normal.** Every healthy scrape in the capture starts with the same client 52 + 67 bytes and the same
+  67-byte router reply (the `/system/identity` exchange), then continues. TLS record headers (parsed from the pcap without
+  decrypting) show the reply is one record of type 23 (application data), not a TLS alert (type 21). The sizes fit TLS 1.2
+  AES-GCM exactly: the 52 bytes are one record, the 67 bytes are two records (37 + 30; the capture snaplen of 100 cut off the
+  second header). So 52 + 67 is one ordinary command, not "request, then second request". Earlier drafts here wrongly treated
+  67 bytes as a possible error.
 
 ### 4.3 Control session
 
 A session held open from the **workstation** (192.168.1.104, different VLAN, routed through the router) as the full-access
-`api-user`, using `librouteros` and requesting `/system/resource` every 30 s: **still alive after the full 18 minutes (36 good requests, 07:58:38 to 08:16:38)**, while four mktxp sessions died in the same
-window at 8, 6, 8 and 6 minutes. Run again for longer to be sure. Differences from mktxp: different library, different account/group, different source VLAN, 30 s cadence.
+`api-user`, using `librouteros` and requesting `/system/resource` every 30 s: **still alive after the full 18 minutes (36 good requests, 07:58:38 to 08:16:38)**, while mktxp sessions ended at 08:00:34, 08:07:34 and 08:16:34 inside that window (a fourth, 08:23:34, fell just after it). Run again for longer to be sure. Differences from mktxp: different library, different account/group, different source VLAN, 30 s cadence.
 
 ### 4.4 Kernel-level socket state
 
@@ -95,12 +97,31 @@ A sampler (`ss -tnoi`) on the exporter's host showed the mktxp socket carrying a
 shares the LXC's network namespace via the Docker bridge, so `ss` in the LXC does not show the container's own bridge-namespace
 socket; the container's namespace must be inspected with `nsenter`.
 
+### 4.5 The three deaths in the capture are not identical, but all are closed by the client
+
+| Death (NZ time) | Session age | What the wire shows |
+|---|---|---|
+| 08:07:34 | 6 min | client sends the usual 52 + 67 bytes; the router sends its normal 67-byte reply and the client ACKs it; then the client sends **RST+ACK** 1.7 ms later |
+| 08:16:34 | 8 min | client sends 52 + 67 bytes and, **in the same millisecond, FIN+ACK**; the router answers FIN+ACK; no reply data at all |
+| 08:23:34 | 6 min | identical to 08:16:34 |
+
+In each case the exporter closes the socket within a millisecond of writing the **first request of a scrape** (`/system/identity`),
+without waiting for a normal reply. A FIN means close with nothing unread; the RST at 08:07:34 is what Linux sends on `close()`
+when unread data (the reply that had just arrived) is still in the receive buffer. So the router did not drop these sessions: the
+exporter's own `close()` ended them, and the router's "logged out" line is the consequence.
+
+What the code says about who closes: in persistent-pool mode the only call to `disconnect()` is RouterOS-api's
+`CloseConnectionExceptionHandler`, which runs when a socket error or `!fatal` is raised. So some exception is raised immediately
+after the first write. The logged `[Errno 110]` would then be a real OSError(ETIMEDOUT) from the socket read. That is the
+remaining puzzle: a kernel ETIMEDOUT on a socket that has just carried a write successfully and has recent keep-alive replies is
+unexpected. mktxp's `identity_ds` prints only the message, not a traceback, and `verbose_mode` does not add one.
+
 ## 5. What has been ruled out or weakened
 
 | Idea | Why it is weak or ruled out |
 |---|---|
-| Router sends a FIN or RST after a fixed 15 min idle timer | **Retracted.** Came from a capture that saw only router→container packets, so it could not show who closed. Lifetimes are not fixed (15, 8, 6), and the 4.2 capture shows a client RST |
-| Network path loss, NAT or conntrack timeout | Router-local traffic, no NAT; no ping gaps; acks flow normally in the capture |
+| Router sends a FIN or RST after a fixed 15 min idle timer | **Retracted.** Came from a capture that saw only router→container packets, so it could not show who closed. Lifetimes are not fixed (15, 8, 6), and the full capture (4.5) shows the client closing first in all three deaths |
+| Network path loss or a conntrack timeout | No ping gaps (note: pings come from the LXC, not the container's NAT path); acks flow normally in the capture. The container's traffic is masqueraded by Docker, so conntrack is not formally excluded |
 | Router resource exhaustion | CPU 0 %, ~690 MB free of 1 GiB, uptime stable |
 | A scheduler or script on the router | None exists; router config checked |
 | Someone changing the router | The router's change log (kept in Graylog across reboots) shows no changes between the 16:47 access change and the power cycle |
@@ -112,16 +133,11 @@ socket; the container's namespace must be inspected with `nsenter`.
 
 Ordered by how well they fit the evidence.
 
-1. **mktxp or RouterOS-api closes the socket itself after receiving an unexpected reply.** The 67-byte reply followed by an
-   immediate client RST looks like an application-level abort (for example `SO_LINGER 0`, an exception path calling
-   `socket.close()` with unread data, or a TLS alert handled badly). Questions: what does RouterOS-api 0.21.0 do on a `!fatal`,
-   `!trap`, or a reply it cannot parse? Does mktxp's connection-pool health check or its `socket_timeout = 5` path wrap the
-   exception as `Errno 110`? Does Python 3.14's `ssl` module treat something differently (for example `SSLWantReadError`,
-   `unexpected_eof_while_reading`, TLS 1.2 close_notify, TLS session tickets)?
-2. **The router closes the session at the application level and the client then resets.** RouterOS 7.25 could send `!fatal` with a
-   reason (for example "session closed" or "too many sessions") before dropping, and mktxp reacts by resetting. This fits "router
-   logs `logged out` on the same second" and the 67-byte reply. The `:34` alignment and the 2-minute multiples would then be a
-   router-side counter checked at each request.
+1. **A socket or TLS error is raised on the first read of a scrape and normal cleanup closes the socket.** Fits 4.5 and the
+   code. The unknown is what raised it: the original exception chain is not logged. Needed: a traceback and a syscall trace.
+2. **Concurrent use of one non-thread-safe API connection** (mktxp serves HTTP from 16 threads; RouterOS-api has an open issue
+   about thread safety). Weak on its face: there is one scraper at 60 s intervals and a 5 s minimum collect interval. Check that
+   nothing else (a manual `curl`, a second scrape job) calls `:49090`.
 3. **A per-account, per-group or per-session limit in RouterOS.** The lifetime changed with each reboot. Is there an API-SSL
    session budget, certificate-handling quirk, or `monitoring`-group policy interaction (the group lacks `sensitive`, `rest-api`
    and others) that ends a session after N requests or N bytes? 15 min at 60 s is 15 scrapes; 8 min is 8; 6 min is 6.
@@ -134,14 +150,16 @@ Ordered by how well they fit the evidence.
 
 ## 7. Experiments that would separate the hypotheses
 
-1. **Decode the dying exchange.** Capture inside the container's network namespace and either terminate TLS with a debugging
-   proxy or set `SSLKEYLOGFILE` in the mktxp container to log TLS 1.2 secrets, then read the 67-byte reply in Wireshark. This
-   directly tests hypotheses 1 and 2. (Do not publish the key log; it contains session secrets.)
-2. **Run mktxp with `verbose_mode = True`** and read the stack trace around `Errno 110`.
+1. **Capture the original exception.** Add `traceback.print_exc()` to the handler in `mktxp/datasource/identity_ds.py` (verbose
+   mode does not print one), and log class, errno, thread and file descriptor where RouterOS-api wraps the socket error.
+2. **Correlate a syscall trace with a packet capture of one death**: `nsenter -t <container pid> -n tcpdump ...` plus
+   `strace -ff -ttt -T -yy -e trace=network,read,write,close,poll` on the process. Does a `recv` return ETIMEDOUT before
+   `close`? Do not poll `SO_ERROR` (reading it clears it). Optionally set `SSLKEYLOGFILE` before the container starts so the
+   TLS stream can be decrypted (the log contains session secrets; do not share it).
 3. **Count requests per session**, then see whether sessions end after a fixed number of requests (hypothesis 3).
 4. **Replicate with a script** in the same container (RouterOS-api 0.21.0, the same account) issuing mktxp's exact call set
    every 60 s, then each call alone. Do the same with `librouteros` from the same host.
-5. **Swap one variable at a time:** run the control script with the `monitoring` account; with the `api-user` account from the
+5. **Swap one variable at a time** (also try `http_server_threads = 1`): run the control script with the `monitoring` account; with the `api-user` account from the
    monitoring host; mktxp with `persistent_router_connection_pool = False` (new session each scrape, which sidesteps the fault
    and tells you whether the cost is only the login churn); `tls-version` left at default; Python version (an older mktxp image).
 6. **Router-side:** `/log` with `topics=api,debug` enabled temporarily (the router forwards logs to Graylog) to see its view of
@@ -164,8 +182,10 @@ burst per death; it does not currently hide a router failure for longer than the
 - Configuration: `terraform/lxc/stacks/monitoring-stack/mktxp/{mktxp.conf,_mktxp.conf}`; router access change:
   `ansible/00-initial-setup/mikrotik-monitoring-access.yml`; compose service in
   `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`.
-- Capture files from 2026-10-25 08:03 to 08:25 are in `/tmp/obs/` on 192.168.20.12 and are lost at reboot; copy them if they are
-  needed for analysis.
+- Capture files from 2026-10-25 08:03 to 08:25 were in `/tmp/obs/` on 192.168.20.12 (lost at reboot) and have been copied to the
+  session scratchpad; copy them somewhere durable if you need them.
+- Independent source audit and test plan: `~/Downloads/mktxp-api-ssl-research-2026-10-25.md` (mktxp v2.1.0 and RouterOS-api
+  0.21.0 at pinned commits). Its main points are folded into sections 4.2, 4.5, 6 and 7.
 
 ## 10. Lessons already learned about this fault
 
