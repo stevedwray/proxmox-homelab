@@ -1,10 +1,11 @@
 # alerting
 
-Status as of **2026-10-24**: the alerting is **live and proven end to end.** Discord carries everything;
-Telegram carries the pages; both were driven by real faults and by drills (see *Proven live* below). What
-remains is operator housekeeping and the future-state items. This file is the current-state summary: what it
-does, what was decided, what was found, where things live, what went wrong on the way. The plan
-([plan.md](plan.md)) holds the steps and its own status table.
+Status as of **2026-10-25**: the alerting is **live and proven end to end**, and has grown from the original plan
+to cover the NAS, the router, the workstation and Pis, vulnerabilities, and the honeypot's own data. 45 Grafana rules
+and four Graylog rules are deployed; Discord carries everything and Telegram carries the pages. **One fault is under
+investigation** (the router's API session to mktxp keeps dropping; see *Open items* item 1 and *Lessons learned*), and the
+alerts are built to survive it. This file is the current-state summary: what it does, what was decided, what was found,
+where things live, what went wrong on the way. The plan ([plan.md](plan.md)) holds the steps and its own status table.
 
 Supersedes `docs/catch-up/07-baseline-alerting.md` (Discord only).
 
@@ -132,29 +133,33 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
   7,200 to 10,000, and no hour in 14 days was below 7,231. It also fires if OpenSearch or the T-Pot sync is down for over an hour, for any
   reason, including a planned move of `opensearch-stack` or `secpipe-stack`: that is the rule working, and the tripwire is blind then.
 
-## What exists today (verified 2026-10-24)
+## What exists today (verified 2026-10-25)
 
 | Piece | State |
 |---|---|
 | Graylog stamps `relay_src_ip`; "Pentest Segment" stream (14-day index) | **Live** (commit `e8b0b4ef`) |
 | MikroTik: pentest_seg may reach only Graylog (514) and step-ca (443) | **Live** |
-| Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token still to be reset in the Developer Portal |
+| Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token reset done |
 | Telegram bot, credentials in OpenBao `services/grafana` (v3) and the manifest | **Live** |
-| Grafana alerting: 37 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, nine times, including the vulnerability, honeypot-freshness and six NAS rules). Eight router rules (mktxp) are in the repo and go live with the next monitoring-stack deploy |
+| Grafana alerting: **45 rules**, 7 contact points, policy, message templates | **Live** (deployed 2026-10-24 and 25, eleven times). Baseline 9, hardware 18, honeypot 2, vulnerabilities 2, NAS 6, router 8. One contact point (`homelab-discord-event`) sends no resolve message, for event-style rules. 67 scrape targets, none down |
 | OpenBao seal-status metric (`openbao_sealed`) | **Live**, value 0; the nightly snapshot succeeds at 03:30 |
 | T-Pot to OpenSearch sync | **Live**, every 10 minutes (`tpot_findings_ingest_on_calendar`) |
 | node_exporter fleet repair (SIGHUP bug) | **Done** 2026-10-24; seven stacks reporting again |
 | Omada metrics in VictoriaMetrics | **Restored** by the monitoring-stack deploy |
 | NVMe/SMART metrics for pve, pve-tiny, argon-01/02 | Live. `smartctl` cannot read pve `sdg` (NVMe in a USB bridge) or pve-tiny's NVMe |
 | Temperatures | Live; pve NVMe composites read about 67 C against a 70 C warning |
-| MikroTik hardware | One health sensor, `cpu-temperature` (63 C). RouterOS 7.25 (upgraded 2026-10-24), RouterBOARD firmware 7.19.6 with 7.25 ready. Least-privilege API access is **live**; mktxp and eight rules are built, **not yet deployed** |
-| NAS (Asustor Drivestor) | SNMPv3 (authNoPriv/MD5) through `snmp-exporter`; six rules **live and verified** 2026-10-24. `Volume1` is `linear` (no redundancy) |
+| MikroTik hardware | **Live.** One health sensor (`cpu-temperature`, about 63 C), RouterOS 7.25, RouterBOARD firmware 7.19.6 with 7.25 ready (the notice is queued). Read through mktxp over API-SSL with a least-privilege `monitoring` account; eight rules. **The API session to the router keeps dropping** (item 1 below); the rules are written to survive it |
+| NAS (Asustor Drivestor) | SNMPv3 (authNoPriv/MD5) through `snmp-exporter`; six rules **live and verified**. `Volume1` is `linear` (no redundancy) |
+| Graylog log alerts (Phase 2) | **Live and drilled**: four rules (storage fault, machine check, lockup/thermal, OOM kill), Discord only, applied with `scripts/graylog_alerts.py` |
+| New critical vulnerabilities (Phase 5) | **Live**: Harbor and Greenbone, Discord `#security`, never a page |
+| Honeypot data freshness | **Live**: fires when fewer than 1,000 Suricata events arrive in an hour; the T-Pot sync is back to every 10 minutes after the migration left it hourly |
+| Scrape coverage | 5 more guests scraped (OpenSearch, CSE panel, Nextcloud, torrent-stack-lab, pangolin-proxy). **10 running guests are still unscraped**: eight serve exporters in plain HTTP (the `step-ca` firewall rules for their zones are written, not applied), plus legacy `media-stack` (no exporter) and `management-stack` (not monitored by decision) |
 | Workstation `garuda`, argon-01/02 | **In Graylog** (2026-10-24, proven by a proof message and its `relay_src_ip` from each): workstation warning and above via syslog-ng, the Pis via the `rsyslog_forward` role with kernel logging kept |
 | `pve-test` laptop (and the Kali VM on it) | Off on purpose (heatsinks being reseated) |
 | pentagi | Decommissioned; its scrape jobs were removed from the monitoring deploy |
 | OCI box | aarch64, 8 GB RAM (about 6.9 GB free), 2 CPUs, load 0.03; Pangolin, Traefik and Gerbil use under 700 MB |
 
-## Proven live (2026-10-24)
+## Proven live (2026-10-24 and 25)
 
 | Check | Result |
 |---|---|
@@ -164,12 +169,21 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Allowlist: the same probes from the workstation (192.168.1.104) | Recorded as flows, correctly **not** alerted |
 | First real page: pve-tiny `nvme0n1`, 7 new media errors in an hour | Telegram, as designed. Silenced until the RMA drive is in |
 | Grafana restart | Rule states reset; a `DatasourceError` for the tripwire paged once (fixed, see lessons) |
+| Graylog log alerts | A synthetic storage-error line from the workstation reached `#alerts-critical` as "Storage fault in a kernel log" about four minutes later, with the template rendered |
+| NAS rules | Queries return nothing on a healthy NAS and find the real disk, volume and upgrade series when the condition is flipped |
+| Router restart (an accidental power cycle, then a deliberate reboot) | After the fix, **one** message per restart and no "Resolved". Before it, one power cycle gave four firing episodes and eight messages |
+| Honeypot data freshness | Fired correctly when the migration left the sync hourly; went Normal after the sync was repaired |
+| Honeypot sync after the migration | Backfilled every event across the outage (no empty half-hour); now every 10 minutes (timer `*:00/10:00`) |
 
 ## Where things live
 
 | What | Where |
 |---|---|
-| Alert rules | `terraform/lxc/stacks/monitoring-stack/alerting/homelab-{baseline,hardware,honeypot}.yml` |
+| Alert rules | `terraform/lxc/stacks/monitoring-stack/alerting/homelab-{baseline,hardware,honeypot,vulnerabilities,nas,router}.yml` |
+| Graylog log alerts | `terraform/lxc/stacks/graylog-stack/alerting/log-alerts.yml`, applied by `scripts/graylog_alerts.py` (13 tests) |
+| NAS exporter | `terraform/lxc/stacks/monitoring-stack/snmp/{snmp.yml,auth.yml}` (credentials by environment placeholder) |
+| Router exporter | `terraform/lxc/stacks/monitoring-stack/mktxp/`; router access `ansible/00-initial-setup/mikrotik-monitoring-access.yml` |
+| step-ca reach for four zones (written, not applied) | `ansible/00-initial-setup/mikrotik-firewall-step-ca-node-exporter.yml` |
 | Wiring (datasource, copy, contact points, policy, Telegram vars, restart) | `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml` |
 | Message templates | `terraform/lxc/stacks/monitoring-stack/alerting/templates/homelab-templates.yml` |
 | Routing and config check | `scripts/check_grafana_provisioning.py` (rules, routing, templates, synthetic error alerts) |
@@ -179,21 +193,44 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | T-Pot sync cadence | `terraform/lxc/ansible/roles/tpot_findings_ingest/` (defaults, timer) |
 | Graylog sender IP and pentest stream | `roles/rsyslog_forward/templates/graylog_inbound.conf.j2`, `playbooks/configure-graylog-pentest-seg.yml` |
 | MikroTik narrowing | `ansible/00-initial-setup/mikrotik-firewall-pentest-seg-narrow.yml`, `terraform/lxc/network/pve.yaml` |
-| Workstation and Pi enrolment (written, not run) | plan steps `alerting-00` to `02` |
+| Workstation and Pi enrolment | `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml` (run with `./with-secrets-prod`, never the dev wrapper) |
 | **Parked relay** | `~/git/oci/roles/alert_relay/` (not in any git repo I can see: the Pangolin source was copied into this repo's `oci/` on `task/oci-security-prs-integration`, unmerged, and `~/git/oci` stays the operational source until that cutover; when the import merges, carry `roles/alert_relay/` into `oci/roles/`). `site.yml` has the role commented out. Superseded runbook: [relay-deploy.md](relay-deploy.md) |
 
 ## Open items for the operator
 
-1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences). **Set 2026-10-24, ends 2026-10-26 13:46: extend it when the RMA date is known, nothing reminds you when it lapses**. The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves. The operator is managing the expiry (2026-10-26 13:46).
-2. ~~Reset the Discord bot token~~ Done 2026-10-24.
-3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
-4. **NAS monitoring is live** (SNMPv3). `Volume1` is a `linear` volume with no redundancy: decide whether that is intended.
-5. **Deploy the MikroTik monitoring** (mktxp, built; plan Phase 0b). The firmware-update notice will fire at once: RouterBOARD firmware 7.19.6 is installed and 7.25 is ready. The workstation and Pis are enrolled.
-6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
-7. **Deploy the Phase 5 vulnerability rules** (next monitoring-stack deploy), then **Phase 6** digest and native integrations. Phase 2, the Graylog log alerts, is applied and drilled.
-8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
-9. **Phase 7: align monitoring with the post-migration lab** (plan.md). The honeypot sync cadence is fixed (W1, drill outstanding); the `pve-tiny` silence needed before it is powered off (W3); 15 running guests, including `opensearch-stack`, have no metrics (W2); nothing alerts on a failed backup (W5).
-10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
+In order of urgency. Phase 7 (the plan, [plan.md](plan.md)) is the work list for most of these.
+
+1. **The router's API session to mktxp keeps dying (under investigation).** Since an accidental power cycle on 2026-10-24 18:40, every
+   mktxp session ends after 15 minutes (49 times in a row), and 8 minutes after a deliberate reboot on 2026-10-25. Each death leaves
+   about two minutes of missing router metrics. **What is established:** mktxp logs `[Errno 110] Operation timed out` within a
+   millisecond of the scrape starting, so the connection was already dead at the kernel level; its socket carries a TCP keep-alive
+   timer; the router logs `logged out` on the same second; the limit is not a fixed 15 minutes (the post-reboot session lasted 8);
+   there is no scheduler or script on the router; the router's change history (kept in Graylog across the reboot) shows no changes by
+   anyone between the monitoring access change (16:47) and the power cycle, and the one session before it lasted 1 h 44 min.
+   **First two-way capture (2026-10-25 08:07:34):** the router acked everything and sent a short 67-byte reply, then **the monitoring
+   host's side sent the RST** 1.7 ms later. There were no ping gaps. A session held open from the workstation as `api-user`
+   survived past 9 minutes while mktxp's died. So the router and the path did not close it; the mktxp container did, and its
+   `Errno 110` message does not match what the wire shows. **Not established:** why mktxp resets (suspect mktxp or librouteros read
+   handling). An earlier note here said the router sends the FIN; that was an overreach from a one-direction capture (see
+   *Lessons learned*). Next: read mktxp's code path around that error, or run it with debug logging. The alerts no longer depend on
+   the answer.
+2. **`pve-tiny` comes back with a new NVMe drive.** Create one Grafana silence for `stack = pve-tiny` **just before the power-off**
+   (see plan W3). The existing NVMe-only silence **ends 2026-10-26 13:46 NZ**, and the page returns when it does.
+3. **Phase 7 workstreams still to do:** W2 (apply the `step-ca` firewall playbook, give the eight plain-HTTP exporters TLS, then scrape
+   them), W4 (`pve` host and storage alerts, `prometheus-pve-exporter`), W5 (PBS and `vzdump` failure notifications to Discord: nothing
+   alerts on a failed backup yet, which was the original incident).
+4. **`media-stack` (legacy CT 102) has no exporter** and no Terraform environment on `pve`; decide whether to install one by hand with an
+   explicit inventory, or treat it as decommission-pending like `management-stack` (not monitored, by decision).
+5. **NAS `Volume1` is `linear`** (two 4 TB disks, no redundancy, 81% full): decide whether that is intended.
+6. **Both argon Pis run crash-looping Portainer containers** (67k+ restarts each); probably obsolete and noisy.
+7. **Open PRs:** #517 (remove `harness-target-pve`, repo-only) and #471 (agent instruction sync), both unmerged.
+8. **The evacuation branch can now merge into `stable` with no conflicts** (PR #533 brought it up to date); that is the migration owner's
+   call. The new `secpipe-stack` also has a stale OpenSearch credential for its CVE-enrichment job (401), recorded by the migration and
+   not repaired.
+9. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma; the dedicated port (9443 proposed) and who terminates mTLS.
+   The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
+10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.** Phase 6 (a weekly
+    digest and native integrations) is lower value and unstarted.
 
 ## Future-state design notes (parked)
 
@@ -241,6 +278,14 @@ Deploy order on the day (each run by the operator): node_exporter repair, OpenBa
 into OpenBao, then the manifest, monitoring-stack (three times: rules, templates, error routing), secpipe-stack
 (10-minute sync), then the drills.
 
+**2026-10-24 to 25, merged to `stable`** (the original build is #511; later work, in order):
+#518 workstation (syslog-ng) and Pis into Graylog; #519 no resolve message for the honeypot tripwire; #520 Graylog log alerts (Phase 2);
+#521 60 C SATA threshold for the Pis; #522 new critical vulnerabilities (Phase 5); #523 honeypot data freshness; #524, #525, #526 NAS over
+SNMPv3 (secret entry, rules, the image-name fix); #527, #528 MikroTik access and mktxp (Phase 0b); #530, #532, #535 the Phase 7 plan and W1;
+#531 `step-ca` firewall playbook and five more scraped guests; #533 `stable` merged into the evacuation branch; #534 the `pve` secrets
+profile gap; #536, #537 the router restart and gap fixes. Security: #513 to #515 (a committed Terraform plan file with a token: removed,
+token rotated, plan and state files now blocked by a hook, TruffleHog now scans every push).
+
 ## Lessons learned
 
 **Process**
@@ -284,12 +329,20 @@ into OpenBao, then the manifest, monitoring-stack (three times: rules, templates
   returned: four firing episodes and eight Discord messages for one restart. An event ages out, it does not recover. Fix: bridge gaps with
   `last_over_time(...[30m])`, keep the window short (15 minutes), and label the rule `event: "true"`, which routes to a contact point with no
   resolve message. The checker fails an `event` rule that can send a resolve message. Replayed against the real data: 4 episodes became 1.
-- **A gap in the data also stops every rule that has a `for`.** The same fault (the router closes mktxp's API session every 15
-  minutes, cause not found: a packet capture showed the router sending the FIN, there is no scheduler or script on it, and
-  before the power cycle one session lasted 1 h 44 min) removes the router's metrics for about two minutes each time. Grafana
-  restarts a rule's `for` from zero when its data vanishes, so with 14-minute unbroken stretches the 15-minute temperature rule and the
-  one-hour update notices could not fire at all. Router gauge rules now use `last_over_time(...[5m])` (replayed since the power
-  cycle: the firmware notice's longest unbroken run went from 15 to 65 minutes) and the "metrics have stopped arriving" rule uses
-  `absent_over_time(...[5m])`. Turning off mktxp's persistent connection was rejected: it would add a login and logout every minute,
-  about 2,900 Graylog messages a day, and push the router's useful history out of its 1,000-line memory log in eight hours.
-  **Open:** why the router now ends API sessions after exactly 15 minutes. Worth a router restart or a look at RouterOS 7.25 release notes.
+- **A gap in the data also stops every rule that has a `for`.** The router's metrics vanish for about two minutes each time mktxp's
+  session dies, and Grafana restarts a rule's `for` from zero when its data disappears. With 14-minute unbroken stretches, the 15-minute
+  temperature rule and the one-hour update notices could not fire at all. Router gauge rules now use `last_over_time(...[5m])` (replayed
+  since the power cycle: the firmware notice's longest unbroken run went from 15 to 65 minutes) and the "metrics have stopped arriving"
+  rule uses `absent_over_time(...[5m])`. Turning off mktxp's persistent connection was rejected: a login and logout every minute is about
+  2,900 Graylog messages a day, and the router's 1,000-line memory log would roll in eight hours.
+- **A one-directional packet capture cannot show who closed a connection.** I concluded "the router sends the FIN" from a capture that only
+  recorded packets going router to container; a FIN from the router is also what the router sends in *reply* to the client closing. I
+  presented it as proven, then had to retract it. Capture both directions on both interfaces before attributing a close.
+- **One number repeated 49 times is not a law.** "Exactly 15.0 minutes" looked like a fixed limit until the next session, after a
+  reboot, lasted 8.0 minutes. Both ended on a scrape boundary (a whole minute), which says the failure is *noticed* at scrape time, not
+  that a timer fired. An instant `[Errno 110]` means the kernel had already killed the socket (a TCP keep-alive probe went unanswered).
+- **Check the device's own change history before saying "nothing else changed".** The router forwards its log to Graylog, which kept the
+  complete history across the reboot that wiped the router's memory log: six rule removals (14:30), the monitoring access change (16:47)
+  and nothing else before the power cycle. That ruled out most "something else we did" theories in one query.
+- **Do not let a scratch directory outlive the session that needs it.** The mktxp venv I used to read the source was cleaned up with the
+  previous session; rebuild what the next question needs rather than assuming it exists.
