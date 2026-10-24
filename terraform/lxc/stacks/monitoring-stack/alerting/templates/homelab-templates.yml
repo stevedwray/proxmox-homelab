@@ -12,7 +12,17 @@ templates:
     name: homelab
     template: |
       {{ define "homelab.icon" -}}
-      {{- if eq .Status "resolved" }}✅{{ else if eq .CommonLabels.severity "critical" }}🔴{{ else }}🟠{{ end -}}
+      {{- if eq .Status "resolved" }}✅{{ else if eq .CommonLabels.alertname "DatasourceError" }}🟠{{ else if eq .CommonLabels.alertname "DatasourceNoData" }}🟠{{ else if eq .CommonLabels.severity "critical" }}🔴{{ else }}🟠{{ end -}}
+      {{- end }}
+
+      {{ define "homelab.line" -}}
+      {{- if eq .Labels.alertname "DatasourceError" -}}
+      The rule "{{ .Labels.rulename }}" cannot query its datasource ({{ .Labels.datasource_uid }}), so it is not checking anything. {{ .Annotations.Error }}
+      {{- else if eq .Labels.alertname "DatasourceNoData" -}}
+      The rule "{{ .Labels.rulename }}" got no data from its datasource ({{ .Labels.datasource_uid }}).
+      {{- else -}}
+      {{ .Annotations.summary }}
+      {{- end -}}
       {{- end }}
 
       {{ define "homelab.title" -}}
@@ -20,17 +30,17 @@ templates:
       {{- end }}
 
       {{ define "homelab.discord" -}}
-      {{ range .Alerts.Firing }}{{ .Annotations.summary }} · [silence]({{ .SilenceURL }})
-      {{ end }}{{ range .Alerts.Resolved }}{{ .Annotations.summary }}
+      {{ range .Alerts.Firing }}{{ template "homelab.line" . }} · [silence]({{ .SilenceURL }})
+      {{ end }}{{ range .Alerts.Resolved }}{{ template "homelab.line" . }}
       {{ end }}
       {{- end }}
 
       {{ define "homelab.telegram" -}}
       {{ template "homelab.title" . }}
       {{ range .Alerts.Firing }}
-      {{ .Annotations.summary }}
+      {{ template "homelab.line" . }}
       {{ end }}{{ if eq (len .Alerts.Firing) 1 }}{{ with index .Alerts.Firing 0 }}Silence: {{ .SilenceURL }}
       {{ end }}{{ end }}{{ range .Alerts.Resolved }}
-      {{ .Annotations.summary }}
+      {{ template "homelab.line" . }}
       {{ end }}
       {{- end }}

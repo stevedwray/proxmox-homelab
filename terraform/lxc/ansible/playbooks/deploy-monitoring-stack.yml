@@ -655,6 +655,16 @@
               group_interval: 5m
               repeat_interval: 4h
               routes:
+                # A rule that cannot query its datasource (Grafana raises DatasourceError, or
+                # DatasourceNoData) inherits that rule's labels, including page=true. It must
+                # never page: it is a "this check is blind" notice, and it fires briefly every
+                # time Grafana restarts. Discord warning only; stops here.
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['alertname', '=', 'DatasourceError']
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['alertname', '=', 'DatasourceNoData']
                 # Honeypot tripwire: Discord #security plus Telegram. Stops here.
                 - receiver: homelab-tripwire
                   object_matchers:

@@ -120,6 +120,10 @@ def check(playbook_path: str, rules_dir: str = RULES_DIR) -> list[str]:
                     problems.append(f"{rule['uid']}: labelled page=true but does not reach Telegram")
                 if labels.get("page") != "true" and paged:
                     problems.append(f"{rule['uid']}: reaches Telegram without page=true")
+                for synthetic in ("DatasourceError", "DatasourceNoData"):
+                    # Grafana's own "this rule cannot query" alert inherits the rule's labels (page=true included).
+                    if any(has_telegram(r) for r in receivers_for(policy, {**labels, "alertname": synthetic})):
+                        problems.append(f"{rule['uid']}: a {synthetic} alert would page Telegram")
                 if labels.get("category") == "hardware" and labels.get("severity") == "critical" and not paged:
                     problems.append(f"{rule['uid']}: a critical hardware fault must page Telegram")
                 if labels.get("tripwire") == "honeypot" and receivers_for(policy, labels) != ["homelab-tripwire"]:
