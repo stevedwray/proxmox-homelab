@@ -258,6 +258,16 @@ Suggested order, respecting dependencies and the failing NVMe:
 
 ### Current execution state
 
+On 2026-10-24, a consolidated read-only pve smoke check confirmed all eight
+evacuated CTs running with `onboot=1`. OpenSearch's two application containers
+were healthy; Secpipe's CVE-enrichment and T-Pot timers were active; AI
+Services' OpenWebUI and SearXNG returned HTTP 200; CSE controller, code-eval
+and panel containers were running and the panel returned HTTP 200;
+Technitium returned a recursive `github.com` answer and API HTTP 200; and the
+pentest-runner viewer health endpoint returned `{"ok": true}` with its
+Portainer agent running. This is a smoke check, with rollback soak and the
+separate node shutdown/RMA gate still pending.
+
 | Guest | State | Remaining gate |
 |---|---|---|
 | 40014 OpenSearch | Complete on `pve`; source retained stopped | Soak and later Terraform reconciliation only |
