@@ -1,0 +1,34 @@
+---
+# Enrol the argon-01/argon-02 Raspberry Pi 4 hosts (Debian 13) in Graylog log
+# shipping (docs/alerting/plan.md, Phase 0). Same rsyslog_forward role as
+# tpot-monitoring.yml; real hardware keeps imklog so kernel and disk errors
+# are forwarded. They sit on the LAN, which MikroTik's shared Graylog rule
+# already admits. Run one host at a time:
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets ansible-playbook \
+#     -i ansible/inventory/inventory.yml ansible/00-initial-setup/graylog-pi-syslog.yml \
+#     --limit argon-01
+#
+# Verify: logger 'PI_FWD_PROOF' on the Pi, then in Graylog
+#   relay_src_ip:192.168.1.22 AND message:PI_FWD_PROOF
+# Rollback: rm /etc/rsyslog.d/90-log-forwarding.conf && systemctl restart rsyslog
+
+- name: Enrol Raspberry Pi hosts in Graylog log shipping
+  hosts: hw_hosts
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    # hw_hosts also holds pve, pve-tiny, pve-test and the workstation; they
+    # have their own log shipping and a second forward file would duplicate
+    # every message.
+    - name: Refuse to run on anything but the Raspberry Pi hosts
+      ansible.builtin.assert:
+        that: inventory_hostname in ['argon-01', 'argon-02']
+        fail_msg: "graylog-pi-syslog.yml is only for argon-01/argon-02; use --limit."
+
+  tasks:
+    - name: Install rsyslog_forward for Graylog log shipping
+      ansible.builtin.include_role:
+        name: rsyslog_forward
+      vars:
+        rsyslog_forward_disable_imklog: false

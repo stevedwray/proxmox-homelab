@@ -13,7 +13,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | Phase | What | State |
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
-| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | Step packets `alerting-00` to `02` written, **not executed** (the playbooks do not exist in the repo yet) |
+| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | Playbooks written and checked (`graylog-workstation-rsyslog.yml`, `graylog-pi-syslog.yml`), **not yet run** |
 | 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
 | 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
@@ -57,14 +57,17 @@ the 2026-10-24 sweep.
 | 0.1 Relay stamps the real sender IP (`relay_src_ip`) | **Done**, live |
 | 0.3 `pentest_seg` in its own stream; MikroTik 514/443 rules narrowed | **Done**, live |
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
-| 0.4 Workstation `garuda` into Graylog, warning and above | Steps 00 and 01 below: **written, not executed** |
-| 0.5 argon-01 / argon-02 into Graylog | Step 02 below: **written, not executed** |
+| 0.4 Workstation `garuda` into Graylog, warning and above | **Playbook written, not run**: `ansible/00-initial-setup/graylog-workstation-rsyslog.yml` (rsyslog + imjournal, operator choice 2026-10-24). Steps 00 and 01 below are **superseded** |
+| 0.5 argon-01 / argon-02 into Graylog | **Playbook written, not run**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
 | 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
 | 0.8 NAS (Asustor Drivestor) | Operator, below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
 
 ### alerting-00-journal-forwarder
+
+> **SUPERSEDED 2026-10-24.** The operator chose standard rsyslog for the workstation (more maintainable, and `rsyslog` 8.2608.0 is
+> available in chaotic-aur), so this script and `alerting-01` were never written. See `graylog-workstation-rsyslog.yml`.
 
 ```yaml
 id: alerting-00-journal-forwarder
@@ -238,6 +241,8 @@ gates:
 
 ### alerting-01-workstation-playbook
 
+> **SUPERSEDED 2026-10-24** by `ansible/00-initial-setup/graylog-workstation-rsyslog.yml` (see alerting-00).
+
 ```yaml
 id: alerting-01-workstation-playbook
 title: Add the playbook that installs the forwarder as a systemd service on the workstation
@@ -359,6 +364,8 @@ gates:
 
 ### alerting-02-pi-playbook
 
+> **Written as `ansible/00-initial-setup/graylog-pi-syslog.yml`** (this step's content, dedented), not yet run.
+
 ```yaml
 id: alerting-02-pi-playbook
 title: Add the playbook that enrols argon-01 and argon-02 in Graylog log shipping
@@ -433,7 +440,7 @@ scope: everything else on those hosts.
 
 ```bash
 ./with-secrets ansible-playbook -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/graylog-workstation-forwarder.yml --limit garuda --ask-become-pass
+  ansible/00-initial-setup/graylog-workstation-rsyslog.yml --limit garuda --ask-become-pass
 
 ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets ansible-playbook \
   -i ansible/inventory/inventory.yml ansible/00-initial-setup/graylog-pi-syslog.yml --limit argon-01
