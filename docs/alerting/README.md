@@ -179,8 +179,8 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 
 ## Open items for the operator
 
-1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences; it ends on its own). The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves.
-2. **Reset the Discord bot token** in the Developer Portal (Bot, Reset Token; do not copy the new one). It was visible in a session.
+1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences). **Set 2026-10-24, ends 2026-10-26 13:46: extend it when the RMA date is known, nothing reminds you when it lapses**. The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves.
+2. ~~Reset the Discord bot token~~ Done 2026-10-24.
 3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
 4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
 5. **Phase 0 enrolment:** workstation `garuda` and argon-01/02 into Graylog (steps written, not run); mktxp for the MikroTik.

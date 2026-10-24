@@ -5,6 +5,10 @@ as soon as alerting goes live) · **Effort:** 1–1.5 h · **Value:** Medium
 **Approval names:** `catchup-08a-pentagi-firewall`, `catchup-08b-pentagi-edge`,
 `catchup-08c-monitoring-targets`
 
+**Status 2026-10-24:** Part C (repo) is **done** (`catchup-08-monitoring-targets` in `b3708f47`,
+`catchup-08-remove-iac` on `task/remove-pentagi`). Parts A, B and D (router, edge route, OpenBao entry,
+Harbor robot, framework key) are the operator's and **not yet run**.
+
 ## State on 2026-09-28 (verified)
 
 PentAGI was deprecated 2026-09-06 (`docs/pentagi-stack/README.md`). Both CTs
