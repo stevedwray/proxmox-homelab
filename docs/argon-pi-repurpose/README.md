@@ -431,3 +431,30 @@ irreversible; a failed SSD boot may require hands-on recovery.
   active; Docker has no containers; no upgrades or failed units remain; SMART
   overall health remains `PASSED`. The central management-plane work can now
   proceed after its production approval.
+
+### 2026-10-25 — production stage: Wazuh re-enrolment
+
+- With the approved production credentials, re-enrolled `argon-01` through
+  the repository Wazuh-agent role. Its configuration now targets
+  `192.168.40.15:1514`; the service is active and its agent state is
+  `connected`.
+- The corresponding `argon-02` role execution was initiated, but its first
+  verification still shows the obsolete `192.168.1.119` manager and a
+  `pending` state. Do not count it as complete; capture the playbook result
+  and correct this host before closing the production stage.
+
+### 2026-10-25 — production stage: Wazuh and Portainer complete
+
+- Retried `argon-02` Wazuh enrolment with the production role. Both Pis now
+  target `192.168.40.15:1514`, have active Wazuh services, and report
+  `status='connected'`.
+- Replaced each Pi's legacy Docker daemon configuration with the lab syslog
+  configuration, deployed `harbor.lab.gibbsgreatly.xyz/dockerhub/portainer/agent:2.39.8`
+  under `/opt/portainer-agent`, and verified local HTTPS `/ping` returns 204.
+- Registered the new regular-agent endpoints in production Portainer:
+  `argon-01` ID 16 and `argon-02` ID 17. The initial registration command
+  was rejected because the standalone playbook lacked `ANSIBLE_ROLES_PATH`;
+  the corrected command completed without failures.
+- Added persistent `DOCKER-USER` firewall policy on both Pis: only
+  `192.168.20.20` may reach TCP 9001; all other IPv4 sources are dropped.
+  The policy is reapplied by `portainer-agent-firewall.service` after Docker.
