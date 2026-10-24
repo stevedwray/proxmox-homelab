@@ -262,6 +262,9 @@ directories remain present, and the Framework port 8080 route succeeds. The
 source remains stopped with `onboot=0`; target state has a zero-change
 Terraform plan. A new backup completed successfully as
 `pbs-iscsi:ct/40072/2026-10-24T04:36:03Z`, including root and Docker.
+The temporary workstation and pve transfer archives were removed after that
+backup and verification; the stopped source and PBS snapshot remain recovery
+copies for the soak period.
 
 ### Secpipe CT 50012 preflight — passed
 
