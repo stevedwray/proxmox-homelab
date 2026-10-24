@@ -548,6 +548,14 @@ conflicts with `stable` in at least `secrets/manifest.json`, `deploy-cse-control
 autonomous-pentest docs). Reviewing the monitoring against the new layout found five problems. Evidence is from read-only checks on
 2026-10-24 and is repeated below so the plan can be checked.
 
+### Decisions (operator, 2026-10-24)
+
+| Question | Decision |
+|---|---|
+| Does `pve-tiny` come back? | **Yes, with a new NVMe drive.** It stays in the alerting; W3 is a silence, not a removal |
+| Build `prometheus-pve-exporter`? | **Yes** (W4 step 2) |
+| The six guests with no exporter | **Monitor each, except the legacy `management-stack`**, which stays unmonitored |
+
 ### What was found
 
 | # | Finding | Evidence | Effect today |
@@ -578,16 +586,25 @@ No code change on my side: the freshness rule is correct for a 10-minute sync.
 
 **W2: close the coverage gap (F2, F3). Medium. Firewall by the operator, the rest by me.**
 
-1. **Firewall (operator, narrow):** two input-style `forward` rules, `ai_seg` (192.168.50.0/24) and `cse_seg` (192.168.100.0/24) to
-   `step-ca` 192.168.20.11 tcp/443, in the same style as the existing `*AB` (apps_seg) and `*8D` (media_seg) rules. A playbook
-   `ansible/00-initial-setup/mikrotik-firewall-step-ca-ai-cse.yml` with `--check` preview, like `mikrotik-monitoring-access.yml`.
-2. **TLS the six exporters (operator):** re-run the node_exporter role against `secpipe`, `ai-services`, `mcp-utility`,
-   `cse-controller`, `cse-code-eval` and `pentest-runner` with `scripts/provision.sh --stack <name>` (one at a time; it now succeeds
-   because `step-ca` is reachable). Check `http://:9100` now refuses and `https` answers 401.
-3. **Scrape them (me):** add the nine guests that have a working exporter (the six above plus `opensearch-stack`, `cse-panel-stack`,
-   `nextcloud-stack`) to the node_exporter job, with the stack label the other rules expect. Then "Scrape target down" and the disk rules cover
-   them for free. Verify against live VictoriaMetrics before merging, as for the NAS.
-4. **Decide the remaining six (operator):** `pterodactyl-lab`, `torrent-stack-lab`, `newt-connector`, `pangolin-proxy`, and the legacy `management-stack` and `media-stack` (both labelled legacy in the repo): monitor, or decommission.
+1. **Firewall (operator, narrow):** four `forward` rules to `step-ca` 192.168.20.11 tcp/443, each placed before its zone's own
+   default-deny: `ai_seg` (192.168.50.0/24), `cse_seg` (192.168.100.0/24), `connector_seg` (192.168.110.0/24) and the single host
+   `pterodactyl-lab` (192.168.60.20), whose zone's existing rule `*65` covers only `.60.10`. Written as
+   `ansible/00-initial-setup/mikrotik-firewall-step-ca-node-exporter.yml` (previewed against the live router: all four deny rules
+   found, all four accept rules missing), approval `mikrotik-step-ca-ai-cse`.
+2. **TLS the eight plain-HTTP exporters (operator):** re-run the node_exporter role against `secpipe`, `ai-services`, `mcp-utility`,
+   `cse-controller`, `cse-code-eval`, `pentest-runner`, **`pterodactyl-lab` and `newt-connector`** with
+   `scripts/provision.sh --stack <name>` (one at a time; it succeeds once step 1 is applied). Check `http://:9100` now refuses and
+   `https` answers 401. (A survey on 2026-10-24 found `pterodactyl-lab` 192.168.60.20 and `newt-connector` 192.168.110.10 also on plain HTTP.)
+3. **Scrape them (me), in two batches.** *Batch 1 (built, PR #531):* `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack`,
+   `torrent-stack-lab` and `pangolin-proxy`, whose exporters already answer over TLS (401 without the scrape login). *Batch 2 (after
+   step 2):* the eight guests above. Adding a plain-HTTP guest to an `https` job would just fire "Scrape target down" for it. Then
+   "Scrape target down" and the disk rules cover them for free.
+4. **The remaining guests (decided):** monitor all except the legacy `management-stack` (CT 101, 192.168.1.4, which stays unmonitored).
+   `pangolin-proxy` and `torrent-stack-lab` are batch 1; `pterodactyl-lab` and `newt-connector` are batch 2. **`media-stack`** (legacy CT 102,
+   192.168.1.6, Debian 12, Jellyfin and a Portainer agent) has **no exporter and no Terraform environment on `pve`**, so it cannot be
+   scraped until `node_exporter` is installed on it. That needs its own approach (an explicit inventory with `-u root` and only the
+   exporter role; not `provision.sh --stack media-stack`, which has no environment to apply). Open: do that, or treat it as
+   decommission-pending like `management-stack`.
 5. **OpenSearch's own health (me, optional):** disk is covered by step 3; cluster status (`red` and `yellow`) and the disk
    watermark are not. Prefer a Grafana query over a new exporter; propose an exporter only if that is not possible.
 
@@ -601,8 +618,11 @@ Done when every running guest is either scraped over TLS or on a written "not mo
 2. **After the new drive:** delete the silence; confirm `up{job="node_exporter_hw",stack="pve-tiny"}` is 1, the new NVMe reports
    `nvme_media_errors_total` near zero, and `pve-tiny` appears in Graylog again; if the device name changed, update the rule label if it is
    named anywhere (it is not: the rules select by `stack`).
-3. **Decision for the operator:** does `pve-tiny` come back into service or stay off? If it stays off, remove it from "Production node
-   unreachable" instead of silencing it, and from the hardware scrape list (`hwmon-hosts.yml`).
+3. **Decided: `pve-tiny` comes back with a new NVMe drive**, so it stays in "Production node unreachable" and the hardware scrape
+   list, and the silence is the whole mechanism. **Timing:** create the silence immediately before the power-off, not now, or it would
+   hide real `pve-tiny` alerts in the meantime; the existing NVMe silence runs to 2026-10-26 13:46 NZ and still covers it until then.
+   In Grafana, Alerting, Silences, New silence: matcher `stack = pve-tiny`, end date a day past the expected replacement, comment
+   "pve-tiny offline for NVMe RMA". It is one object and ends on its own.
 
 **W4: `pve` is now the single large host. Medium. Me, with one operator deploy.**
 
@@ -614,7 +634,7 @@ Everything runs on one machine, so the host needs its own alerts. Today only the
    token (`PROXMOX_READONLY_TOKEN_*`). It exposes thin-pool and storage usage (the `monitoring-containers`, `storage-containers`,
    `apps-containers` and `infrastructure-containers` pools, which node_exporter cannot see) and whether each guest is running, which
    catches a stopped guest even when it has no exporter. Rules: a pool above 80%, a guest with autostart on that is not running.
-   This is one small sidecar, in the same shape as `snmp-exporter` and `mktxp`. **Decision for the operator** before it is built.
+   This is one small sidecar, in the same shape as `snmp-exporter` and `mktxp`. **Decided: yes.** It needs a read-only token per node (`PROXMOX_READONLY_TOKEN_*` for `pve`; `pve-tiny` has `PVE_TINY_READONLY_TOKEN_*` in `services/netbox`).
 
 **W5: backups (F5). Small, high value. Operator configures, I write the steps.**
 
