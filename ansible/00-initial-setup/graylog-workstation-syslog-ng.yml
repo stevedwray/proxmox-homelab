@@ -55,7 +55,9 @@
         mode: "0700"
 
     # backup keeps the packaged default. validate refuses to install a config that
-    # syslog-ng itself rejects (a bad option, a missing module).
+    # syslog-ng itself rejects (a bad option, a missing module). --no-caps: Ansible
+    # stages the candidate in the operator's 0700 ~/.ansible/tmp, and syslog-ng drops
+    # root's DAC-override capability at start, so without it the file cannot be opened.
     - name: Write syslog-ng.conf (journal in, warning and above out)
       ansible.builtin.copy:
         dest: /etc/syslog-ng/syslog-ng.conf
@@ -63,7 +65,7 @@
         group: root
         mode: "0644"
         backup: true
-        validate: syslog-ng --syntax-only -f %s
+        validate: syslog-ng --no-caps --syntax-only -f %s
         content: |
           # Managed by ansible/00-initial-setup/graylog-workstation-syslog-ng.yml
           @version: 4.2
