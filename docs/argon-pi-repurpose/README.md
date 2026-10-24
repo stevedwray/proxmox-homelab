@@ -1,0 +1,262 @@
+# Argon Pi repurpose plan
+
+Status: planned, no host changes made. Survey: 2026-10-25. Execute one host at a
+time, beginning with `argon-01` (`192.168.1.22`), then `argon-02`
+(`192.168.1.23`). The first host already runs a 6.18 kernel; the second needs
+the more difficult 2023-kernel migration. Both are Raspberry Pi 4 systems
+running Debian 13 arm64
+from an SSD exposed as `/dev/sda` through an Argon USB bridge. Keep the
+existing SSD boot path; no reimage and no backup are requested.
+
+## Intended end state
+
+- Debian 13, patched and bootable from the existing SSD, with the current
+  hostname/IP, `ansible` SSH access, passwordless sudo, working network and
+  Technitium resolvers (`192.168.20.15`, `192.168.20.17`).
+- Argon case fan/button service and the Raspberry Pi boot/firmware components
+  needed for SSD boot. Do not remove these as generic legacy packages.
+- Docker Engine and Compose plugin from the existing official Docker Debian
+  repository. No application containers, images, volumes, or Compose projects
+  except a newly deployed Portainer Agent. No local Portainer Server.
+- Each Pi registered as a distinct Docker Standalone *Agent* environment in
+  the existing infrastructure Portainer. Use its pinned agent version, currently
+  `2.39.8`, and expose TCP 9001 only to that server. Do not expose Docker's TCP
+  API or mount `/` into the agent.
+- Existing lab host monitoring: node_exporter with hardware sensors and
+  step-ca TLS/basic auth; SMART and apt metrics; Graylog forwarding; Wazuh;
+  unattended security updates; Greenbone credentialed scan account. Verify
+  these components after cleanup. Retain the root CA and certificate renewal
+  timer. Remove old application-specific monitors and agents that are not part
+  of this set, including runZero discovery and AttackIQ agents.
+- No Pi-hole DNS/DHCP, Nginx Proxy Manager, Deluge, registry, Minecraft,
+  MariaDB, Elasticsearch, Crawl4AI, Neo4j, AttackIQ, or local Portainer state.
+  The Pi-hole query history is disposable. Greenbone's occasional Pi-hole
+  queries do not block retirement (operator decision, 2026-10-25).
+
+The Pis are not listed in `terraform/PRODUCTION_NODES`; direct Pi cleanup is a
+separate host task. Any mutation of Portainer, monitoring, firewall/router, or
+other services on a listed production node follows the repo's production
+credential approval flow. Do not use `pve-test-vm` for validation.
+
+## Survey facts and execution risks
+
+| Item | argon-01 | argon-02 |
+|---|---|---|
+| SSD / use | Lexar 512 GB / 127 GB used | SSSTC 128 GB / 30 GB used |
+| Running kernel | `6.18.23-v8+` | `6.1.21-v8+` built in 2023 |
+| Apt updates at survey | 25 | 56, including security packages |
+| SMART | passed, 48 °C, no logged errors | passed, 56 °C, no logged errors |
+| Main residue | ~59 GB `/srv/minecraft`; ~22 GB `/var/lib/elasticsearch`; MariaDB; two live Pi-hole containers sharing storage | ~3.9 GB `/srv/docker` including a 3.5 GB Pi-hole query DB; NPM, Deluge, registry; seven failed NAS CIFS mounts |
+| Failed services | Wazuh agent | seven media mount units |
+
+Both hosts have obsolete Portainer Server and Agent containers in restart
+loops. Their logs report an API client version too old for Docker 29.8.
+The local `pihole` containers still publish TCP/UDP 53, but their recent daily
+query logs contain only localhost. `argon-02`'s last recorded non-local
+queries came from Greenbone (`192.168.70.11`) on 2026-10-23. The repo's
+[LAN DNS cutover](../lan-dns-technitium/README.md) records DHCP pointing to
+Technitium; check live DHCP/RA and static-client exceptions immediately before
+removing Pi-hole.
+
+The installed `raspberrypi-kernel` package is `1:1.20230405-1` on both and
+has **no apt candidate newer than itself** in current sources. `argon-01`'s
+running 6.18 kernel was installed by another path; `argon-02` still runs the
+2023 kernel. The configured Raspberry Pi `trixie` repo does offer
+`linux-image-rpi-v8` (`6.18.50` at survey) and `raspi-firmware`. A read-only
+`apt-get -s install linux-image-rpi-v8 raspi-firmware` on `argon-02` proposed
+five new packages, one upgrade, and no removals. This is the **candidate**
+maintained kernel path, not yet a proven SSD-boot migration. A plain
+`apt full-upgrade` will not replace the orphaned 2023 kernel package.
+Resolve boot-file ownership, `/boot` versus `/boot/firmware` layout, package
+maintainer-script effects, and recovery access before the first kernel or
+EEPROM change. Raspberry Pi advises routine APT updates over `rpi-update`;
+do not use `rpi-update` as a shortcut. See
+[Raspberry Pi OS update guidance](https://www.raspberrypi.com/documentation/computers/os.html)
+and [USB/EEPROM boot guidance](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html).
+
+## Preparation in the development branch
+
+1. Add `argon-01` and `argon-02` to a dedicated bare-metal Ansible group with
+   `ansible_user: ansible`. Reuse their existing `hw_hosts` entries rather than
+   inventing new host identities. Build a **Pi-specific** cleanup/bootstrap
+   playbook, split into separately tagged `inspect`, `retire`, `base`, `agent`,
+   and `verify` phases. Run `ansible-playbook --syntax-check` on every affected
+   playbook. Do not call `deploy-portainer-agent.yml`: it applies `lxc_base`
+   and requires a service unit baked into the LXC template.
+2. Make the cleanup declarative and allowlist-based. Enumerate named Compose
+   projects and containers before stopping them; define the exact paths to
+   remove in host variables. Assert the hostname and root/boot disk identity
+   before each destructive task. Never glob `/opt`, `/srv`, `/home`, `/etc`,
+   `/var/lib`, `/boot`, or `/var/lib/docker` while Docker is running.
+3. Provide a bare-metal Portainer Agent Compose file and systemd unit under
+   `/opt/portainer-agent`, using the Harbor mirror of the *same pinned version*
+   as `deploy-portainer-stack.yml`. If Harbor is unavailable, resolve a
+   reviewed official-image fallback before execution. Reuse the repo's
+   `portainer_api` role for registration only after checking its credentials
+   and its behavior against existing endpoint names. Do not install a second
+   Portainer Server on either Pi.
+4. Review the source IP of the infrastructure Portainer and the network path
+   to each Pi. The regular agent requires server-to-Pi TCP 9001. Restrict that
+   published port at the router and/or Docker's `DOCKER-USER` chain, testing
+   IPv4 and IPv6; Docker-published ports can bypass ufw rules. Do not assume
+   `INPUT` rules alone protect it. The agent has Docker socket access and is a
+   high-trust service. Check whether the server uses `AGENT_SECRET` and pass it
+   via OpenBao if so. See [Portainer Agent](https://docs.portainer.io/admin/environments/add/docker/agent)
+   and [Docker's Debian/firewall guidance](https://docs.docker.com/engine/install/debian/).
+5. Compare the existing monitoring inventory with the desired state. Both
+   hosts are already in `ansible/inventory/inventory.yml` and
+   `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`; their TLS
+   node_exporter and hardware sensor setup was deployed on 2026-10-17.
+   Reuse `hw-monitoring-node-exporter.yml` and the existing Graylog/Wazuh
+   roles, fixing `argon-01`'s Wazuh failure. Check SMART, apt and certificate
+   renewal timers. Keep the `gvm-scan` account and authorized key while
+   credentialed Greenbone scans remain configured.
+
+## Per-host execution sequence
+
+Run the following on **one host at a time**. Collect transient command output
+under ignored `docs/argon-pi-repurpose/artifacts/`; update this file with
+durable results and delete stale artifacts at closeout. No backup or image
+capture is part of this plan. Deletion of old workload data is intentional and
+irreversible; a failed SSD boot may require hands-on recovery.
+
+### 1. Preflight and reachability gate
+
+- Confirm host identity and expected `/dev/sda` model/size with `hostname`,
+  `lsblk`, `findmnt / /boot`, `blkid`, `df -h`, and `smartctl -a /dev/sda`.
+  Check SMART errors and temperature again; investigate new errors before
+  any large apt transaction.
+- Record `uname -a`, `/boot/config.txt` boot-critical lines, boot partition
+  files and ownership (`dpkg -S`), active kernel modules, EEPROM boot order,
+  `apt-cache policy` for the kernel/firmware packages, `apt-mark showhold`,
+  all apt sources, and `apt-get -s full-upgrade`. Resolve the 2023 kernel
+  path for `argon-02` before scheduling a reboot.
+- Confirm `ansible` SSH/sudo, a known host key, link/IP/default route, both
+  Technitium resolvers, time sync, Argon fan service, and a reachable
+  out-of-band power/console recovery method. Have an operator available for
+  a failed SSD boot. Do not change EEPROM boot order as part of routine
+  cleanup.
+- Confirm live router DHCP DNS option and IPv6 RA DNS, plus any static DNS
+  inventory. Greenbone queries can be ignored. Ensure neither Pi is a
+  configured resolver before stopping Pi-hole.
+- Capture container names, Compose labels, mounts, restart policies, listener
+  ports, custom systemd units, scheduled jobs, apt manual packages, and
+  directory sizes. Review the manifest against the allowlist in this plan.
+
+### 2. Retire application services and data
+
+- Stop and disable each legacy Compose/systemd owner first. Retire Pi-hole
+  (both instances on `argon-01`), old Portainer Servers/Agents, NPM, Deluge,
+  registry, Crawl4AI, Neo4j, and Kibana. Since **all** existing containers,
+  images, volumes and networks are disposable, stop Docker and containerd,
+  verify they are inactive, remove `/var/lib/docker` and
+  `/var/lib/containerd`, then restart the installed Docker Engine with empty
+  storage. This also clears stale Portainer agent pairing state. Do not run
+  this reset while either daemon is running. Keep the Docker packages and
+  `/var/run/docker.sock`.
+- Remove associated data only after `findmnt` shows the target is a local
+  filesystem and `systemctl`/`docker inspect` show no owner. On `argon-01`,
+  candidates include `/srv/minecraft`, `/var/lib/elasticsearch`,
+  `/srv/elasticsearch`, old Minecraft trees in `/opt`, and retired
+  `/srv/docker/volumes` entries. On `argon-02`, candidates include retired
+  `/srv/docker/volumes`, `/opt/docker/npm`, Minecraft trees and old NPM data.
+  Remove corresponding user workspace data only after listing its exact
+  contents; preserve the `ansible` account, SSH keys, and automation files.
+- Remove application-specific systemd units (`authserver`, `worldserver` on
+  `argon-01`), stale mounts and credentials for the seven NAS CIFS mounts on
+  `argon-02`, application cron jobs, and unused apt packages such as MariaDB,
+  CIFS/NFS clients, and old application agents, **after** a simulated apt
+  removal shows it will not remove boot, network, SSH, Docker, fan, or
+  monitoring dependencies. Remove obsolete Wazuh Docker integration only if
+  Wazuh is retained and the integration is no longer needed.
+- Review the remaining `apt-mark showmanual` list against a small host
+  profile: boot/network/SSH, Argon fan, Docker, monitoring/security, and
+  admin tools. Consider purging unused mail, desktop, discovery, modem,
+  storage-client and development packages (for example Exim, Avahi,
+  ModemManager and graphical/audio libraries) only after checking reverse
+  dependencies and live service requirements. Run `apt-get -s purge` and
+  `apt-get -s autoremove --purge` before acting; these simulations are gates,
+  not instructions to accept every proposed removal.
+- Disable and remove the `runZero` discovery and AttackIQ agents and their
+  data. Check their central inventories for stale host registrations during
+  closeout. Do not delete the Graylog, Wazuh, node_exporter, SMART, step-ca,
+  or Greenbone configurations as historical workload residue.
+- Recheck listening ports. DNS 53, HTTP 80/81/443/8080, local MariaDB 3306,
+  and old Portainer ports should be gone. SSH 22, monitoring 9100, and the
+  local syslog relay (10514) should remain; TCP 9001 appears in phase 4.
+
+### 3. Patch Debian and prove SSD boot
+
+- Refresh apt indexes; review simulated `full-upgrade` removals; apply the
+  approved Debian, Raspberry Pi and Docker package updates. Keep the Docker
+  repository consistent with Debian 13 arm64. `rpi-eeprom` currently has
+  only residual configuration (`deinstall ok config-files`), so inspect the
+  actual EEPROM bootloader/config before deciding whether to reinstall the
+  package or update the EEPROM. Neither action follows automatically from
+  a package update count.
+- Treat kernel/firmware as a separate change. Start with the configured
+  Raspberry Pi `trixie` repo's `linux-image-rpi-v8` and `raspi-firmware`
+  candidate. Re-run the apt simulation after `apt update`, inspect downloaded
+  package file lists and maintainer scripts, and prove where the booted Pi
+  reads its kernel, initramfs and firmware; the current systems mount the
+  FAT partition at `/boot`, not `/boot/firmware`. Check how the new package
+  handles that layout before installing it. Verify that `argononed` supports
+  the selected kernel and that USB storage modules are available for boot.
+  Do not remove `raspberrypi-kernel`, overwrite `/boot/kernel8.img`, run
+  `rpi-update`, or flash EEPROM based solely on an apt upgrade count. If a
+  maintainable packaged kernel path cannot be proven, finish user-space
+  updates and record kernel modernization as a blocked follow-up; do not
+  claim the host is fully updated.
+- Reboot **one** Pi. Verify SSH return, same host key/IP, root and `/boot`
+  mounted from the SSD, expected kernel, Docker, Argon fan, DNS resolution,
+  time sync, no failed boot-critical units, and no new SMART/USB errors.
+  Stop before touching the second Pi if this gate fails.
+
+### 4. Join the lab management plane
+
+- Ensure Docker and Compose work, daemon logging reaches the local rsyslog
+  TCP 10514 listener, and only the reviewed daemon settings are present.
+  Freshly deploy the matching Portainer Agent; do not reuse the crash-looping
+  agent's writable layer. Confirm `https://<pi-ip>:9001/ping` returns 204
+  from an allowed source, and is unreachable from a disallowed source.
+- Under the **production approval flow** for the infrastructure Portainer,
+  register/update endpoint `argon-01` or `argon-02` with URL
+  `tcp://<pi-ip>:9001`. Verify it is online and can list containers/images;
+  confirm only the new agent container remains. Do not allow an endpoint name
+  collision to silently repoint a different host.
+- Reapply/verify node_exporter TLS, the hardware dashboard labels, SMART and
+  apt collectors, Graylog rsyslog forwarding, Wazuh, unattended upgrades and
+  certificate renewal. The existing `hw_hosts` and `hwmon-hosts.yml` entries
+  should remain. Production changes to `monitoring-stack`, Graylog, Wazuh,
+  router rules, or Portainer follow their own approval/preflight gates.
+
+### 5. Acceptance and closeout
+
+- `docker ps -a` lists only the healthy Portainer Agent; `docker system df`
+  shows no old Pi-hole/application data. `ss -lntup` contains only intended
+  listeners. `systemctl --failed` is empty or has a documented noncritical
+  exception. Check one more reboot for agent and monitoring persistence.
+- Portainer shows both endpoint names online and distinct. Grafana's hardware
+  dashboard shows fresh CPU temperature and undervoltage status for both;
+  SMART and apt metrics are fresh; Graylog receives a benign proof message;
+  Wazuh reports both agents active; Greenbone credentialed scan works.
+- Query both Technitium servers from each Pi; confirm neither Pi answers
+  TCP/UDP 53. Confirm live router DHCP/RA still advertises only Technitium.
+- Check `df -h`, SMART temperature/error counters, apt upgrades/holds,
+  journal errors, Argon fan behavior, and SSH after at least one scheduled
+  update/monitoring cycle. Update inventory and DNS migration docs to mark
+  the Pis as repurposed Docker hosts. Remove stale `artifacts/` contents.
+
+## Stop and recovery rules
+
+- If DNS or a remaining consumer still depends on a Pi, pause Pi-hole
+  retirement and identify that client. Do not change router DNS as an
+  incidental cleanup action.
+- If a simulated apt operation would remove SSH, NetworkManager, boot files,
+  Argon control, Docker, or host monitoring, revise the package list first.
+- If a Pi fails to return after reboot, stop the second host. Use the agreed
+  console/power recovery path and the recorded boot/package state. With no
+  backup, deleted workload data cannot be restored by this plan.
+- If Portainer/monitoring registration fails, keep SSH, Docker and the agent
+  working locally, then resolve central connectivity under the appropriate
+  production approval; do not remove further management access.
