@@ -1,0 +1,245 @@
+---
+# Give monitoring-stack's mktxp exporter least-privilege API access to the MikroTik
+# (docs/alerting/plan.md, Phase 0b). Four idempotent changes, each a read-check-then-add:
+#
+#   1. user group "monitoring": read + api ONLY. The existing api-ro account is in the built-in
+#      "read" group, which also carries reboot, sniff, ssh, sensitive and test; a monitoring
+#      credential on the monitoring host should not be able to reboot the router.
+#   2. user (default name "mktxp") in that group, login allowed only from the monitoring host
+#      and the flat LAN. Created once; an existing user's password is never touched (rotate by hand).
+#   3. /ip service api-ssl: give it a certificate (it had none, so every modern TLS client fails
+#      the handshake), TLS 1.2 only, reachable only from the monitoring host and the LAN.
+#   4. input-chain rule: monitoring-stack (192.168.20.12) -> router tcp/8729 on vlan20-mgmt, placed
+#      before the final "Drop all other unhandled input traffic". The input chain gives mgmt_seg
+#      ICMP and DNS only, so without this the exporter cannot connect.
+#
+# Preview (read-only, changes nothing; also what --check does):
+#   ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-monitoring-access.yml --check
+# Apply:
+#   TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-monitoring-access.yml
+#
+# Needs the monitor user's password in OpenBao first (services/mikrotik, MIKROTIK_MONITOR_PASSWORD)
+# and the manifest field, or this fails closed. Uses MIKROTIK_USER/MIKROTIK_PASSWORD (full-access
+# api-user) to make the change.
+#
+# Rollback: remove the firewall rule by its comment, remove the user, remove the group, and
+#   /ip service set api-ssl certificate=none (or disable it).
+
+- name: Give mktxp least-privilege API access to the MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+
+    monitor_user: "{{ lookup('env', 'MIKROTIK_MONITOR_USER') | default('mktxp', true) }}"
+    monitor_password: "{{ lookup('env', 'MIKROTIK_MONITOR_PASSWORD') }}"
+    monitor_group: "monitoring"
+    monitor_group_policy: "read,api,!local,!telnet,!ssh,!ftp,!reboot,!write,!policy,!test,!winbox,!password,!web,!sniff,!sensitive,!romon,!rest-api"
+    monitoring_host_ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+    allowed_sources: "{{ monitoring_host_ip }}/32,192.168.1.0/24"
+    api_ssl_certificate: "www-ssl-cert"
+    api_firewall_comment: "monitoring-stack: mktxp API-SSL to router"
+    input_chain_final_drop_comment: "Drop all other unhandled input traffic"
+
+  pre_tasks:
+    - name: Assert credentials are present
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'PVE_ENV') == 'pve'
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+          - monitor_password | length >= 16
+        fail_msg: >-
+          Run through ./with-secrets-prod (PVE_ENV=pve; the dev wrapper loads the retired test profile, whose
+          monitoring address is wrong). MIKROTIK_MONITOR_PASSWORD (16+ characters) must be in OpenBao
+          services/mikrotik and in the manifest first.
+
+  tasks:
+    - name: Read the router's user groups
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/group"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: router_groups
+      check_mode: false
+      no_log: true
+
+    - name: Read the router's users
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: router_users
+      check_mode: false
+      no_log: true
+
+    - name: Read the router's services
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/service"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: router_services
+      check_mode: false
+      no_log: true
+
+    - name: Read the router's input-chain firewall rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter?chain=input"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: input_filters
+      check_mode: false
+      no_log: true
+
+    - name: Work out what is missing
+      ansible.builtin.set_fact:
+        group_missing: "{{ (router_groups.json | selectattr('name', 'equalto', monitor_group) | list) | length == 0 }}"
+        user_missing: "{{ (router_users.json | selectattr('name', 'equalto', monitor_user) | list) | length == 0 }}"
+        api_ssl: "{{ (router_services.json | selectattr('name', 'equalto', 'api-ssl') | list) | first }}"
+        firewall_missing: >-
+          {{ (input_filters.json | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', api_firewall_comment) | list) | length == 0 }}
+        drop_anchor: >-
+          {{ (input_filters.json | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', input_chain_final_drop_comment) | list) | first | default({}) }}
+
+    - name: Assert the input-chain anchor exists and api-ssl is present
+      ansible.builtin.assert:
+        that:
+          - drop_anchor != {}
+          - api_ssl is mapping
+        fail_msg: >-
+          Expected the input-chain rule '{{ input_chain_final_drop_comment }}' and an api-ssl service; the
+          router differs from what this playbook was written against (2026-10-24). Stop and look.
+
+    - name: Show what will change
+      ansible.builtin.debug:
+        msg:
+          - "group '{{ monitor_group }}': {{ 'WILL BE CREATED' if group_missing else 'exists' }}"
+          - "user '{{ monitor_user }}': {{ 'WILL BE CREATED' if user_missing else 'exists (password untouched)' }}"
+          - "api-ssl: certificate is '{{ api_ssl.certificate | default('none') }}', tls-version '{{ api_ssl['tls-version'] | default('?') }}', address '{{ api_ssl.address | default('any') }}' -> certificate '{{ api_ssl_certificate }}', only-1.2, '{{ allowed_sources }}'"
+          - "firewall rule: {{ 'WILL BE ADDED before the final input drop' if firewall_missing else 'exists' }}"
+
+    - name: Create the least-privilege group
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/group/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        body_format: json
+        body:
+          name: "{{ monitor_group }}"
+          policy: "{{ monitor_group_policy }}"
+        status_code: [200, 201]
+      when: group_missing and not ansible_check_mode
+      no_log: true
+
+    - name: Create the monitoring user
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/user/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        body_format: json
+        body:
+          name: "{{ monitor_user }}"
+          group: "{{ monitor_group }}"
+          password: "{{ monitor_password }}"
+          address: "{{ allowed_sources }}"
+          comment: "mktxp exporter in monitoring-stack (read + api only)"
+        status_code: [200, 201]
+      when: user_missing and not ansible_check_mode
+      no_log: true
+
+    - name: Give api-ssl a certificate, TLS 1.2 only, and restrict who can reach it
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/service/{{ api_ssl['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        body_format: json
+        body:
+          certificate: "{{ api_ssl_certificate }}"
+          tls-version: "only-1.2"
+          address: "{{ allowed_sources }}"
+        status_code: [200, 201]
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Allow monitoring-stack to reach the router's API-SSL port
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        body_format: json
+        body:
+          comment: "{{ api_firewall_comment }}"
+          chain: "input"
+          action: "accept"
+          in-interface: "vlan20-mgmt"
+          src-address: "{{ monitoring_host_ip }}"
+          protocol: "tcp"
+          dst-port: "8729"
+          place-before: "{{ drop_anchor['.id'] }}"
+        status_code: [200, 201]
+      when: firewall_missing and not ansible_check_mode
+      no_log: true
+
+    - name: Re-read the result
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/{{ item }}"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      loop:
+        - user/group
+        - user
+        - ip/service
+        - ip/firewall/filter?chain=input
+      register: after
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Assert every change is in place
+      ansible.builtin.assert:
+        that:
+          - (after.results[0].json | selectattr('name', 'equalto', monitor_group) | list) | length == 1
+          - (after.results[1].json | selectattr('name', 'equalto', monitor_user) | selectattr('group', 'equalto', monitor_group) | list) | length == 1
+          - (after.results[2].json | selectattr('name', 'equalto', 'api-ssl') | selectattr('certificate', 'defined') | selectattr('certificate', 'equalto', api_ssl_certificate) | list) | length == 1
+          - (after.results[3].json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', api_firewall_comment) | selectattr('dst-port', 'equalto', '8729') | list) | length == 1
+        fail_msg: "A change did not take effect; the router differs from what was requested."
+      when: not ansible_check_mode
+
+    - name: Remind about rule ORDER
+      ansible.builtin.debug:
+        msg: >-
+          Rule order matters on RouterOS: confirm '{{ api_firewall_comment }}' sits ahead of
+          '{{ input_chain_final_drop_comment }}' before trusting it, as with every mikrotik-firewall-*.yml.
+      when: not ansible_check_mode
