@@ -144,7 +144,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Temperatures | Live; pve NVMe composites read about 67 C against a 70 C warning |
 | MikroTik hardware | Only `cpu-temperature`; RouterOS 7.24.2 (7.24.5 out), RouterBOARD firmware 7.19.6 (7.24.2 pending); no exporter yet |
 | NAS (Asustor Drivestor) | 45 log messages a month, System and Connection only; hardware events unknown |
-| Workstation `garuda`, argon-01/02 | **Not in Graylog yet**: playbooks written and checked (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`), not run |
+| Workstation `garuda`, argon-01/02 | **In Graylog** (2026-10-24, proven by a proof message and its `relay_src_ip` from each): workstation warning and above via syslog-ng, the Pis via the `rsyslog_forward` role with kernel logging kept |
 | `pve-test` laptop (and the Kali VM on it) | Off on purpose (heatsinks being reseated) |
 | pentagi | Decommissioned; its scrape jobs were removed from the monitoring deploy |
 | OCI box | aarch64, 8 GB RAM (about 6.9 GB free), 2 CPUs, load 0.03; Pangolin, Traefik and Gerbil use under 700 MB |
@@ -183,10 +183,11 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 2. ~~Reset the Discord bot token~~ Done 2026-10-24.
 3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
 4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
-5. **Phase 0 enrolment:** run the two playbooks for the workstation and argon-01/02 (plan, *Operator: enrol the workstation and the Pis*); mktxp for the MikroTik.
-6. **Phase 2 Graylog log alerts**, Phase 5 new critical vulnerabilities, Phase 6 digest and native integrations.
-7. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
-8. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
+5. **mktxp for the MikroTik** (Phase 0b). The workstation and Pis are enrolled.
+6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
+7. **Phase 2 Graylog log alerts**, Phase 5 new critical vulnerabilities, Phase 6 digest and native integrations.
+8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
+9. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
 
 ## Future-state design notes (parked)
 

@@ -13,7 +13,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | Phase | What | State |
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
-| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | Playbooks written and checked (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`), **not yet run** |
+| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
 | 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
 | 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
@@ -57,8 +57,8 @@ the 2026-10-24 sweep.
 | 0.1 Relay stamps the real sender IP (`relay_src_ip`) | **Done**, live |
 | 0.3 `pentest_seg` in its own stream; MikroTik 514/443 rules narrowed | **Done**, live |
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
-| 0.4 Workstation `garuda` into Graylog, warning and above | **Playbook written, not run**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
-| 0.5 argon-01 / argon-02 into Graylog | **Playbook written, not run**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
+| 0.4 Workstation `garuda` into Graylog, warning and above | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
+| 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
 | 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
 | 0.8 NAS (Asustor Drivestor) | Operator, below |
