@@ -24,6 +24,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
 | 5 | New critical vulnerabilities (Harbor, Greenbone) | **Built, not yet deployed** (`homelab-vulnerabilities.yml`) |
 | 6 | Digest, fire drill, native integrations | Outline |
+| 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **Planned** (see Phase 7) |
 
 **Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
 would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
@@ -538,6 +539,112 @@ if the account, certificate or firewall rule broke. Not yet verified until deplo
 and the rules against real series.
 
 **Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack`.
+
+## Phase 7: align monitoring with the post-migration lab
+
+**Status 2026-10-24: planned, nothing built.** The pve-tiny evacuation is finished on the ground (all eight guests run on `pve`,
+`pve-tiny` has no running guests, 34 containers run on `pve`) but the evacuation branch is **not merged** (31 commits, and it now
+conflicts with `stable` in at least `secrets/manifest.json`, `deploy-cse-controller.yml`, `deploy-pentest-runner.yml` and the
+autonomous-pentest docs). Reviewing the monitoring against the new layout found five problems. Evidence is from read-only checks on
+2026-10-24 and is repeated below so the plan can be checked.
+
+### What was found
+
+| # | Finding | Evidence | Effect today |
+|---|---|---|---|
+| F1 | The new `secpipe-stack` syncs the honeypot **hourly**, not every 10 minutes | its timer is `OnCalendar=*:00:00`; the container was deployed from the evacuation branch, which carries the old role default (`stable` has `*:0/10:00`); runs at 15:01, 15:45, 16:01, 17:02 | Honeypot data is up to an hour old, so a probe can take about 70 minutes to alert; the freshness rule fired at 17:00 and will sit near its threshold before each sync |
+| F2 | **15 running guests have no `node_exporter` series at all**: nobody is told if they run out of disk or stop | 19 of 34 running containers are scraped; the 15 that are not: `opensearch-stack`, `secpipe-stack`, `ai-services-stack`, `mcp-utility-stack`, `cse-panel-stack`, `cse-controller`, `cse-code-eval`, `pentest-runner`, `nextcloud-stack`, `pterodactyl-lab`, `torrent-stack-lab`, `newt-connector`, `pangolin-proxy`, plus the legacy `management-stack` and `media-stack` | The SIEM store (`opensearch-stack`) and Nextcloud have no disk, memory or liveness alert. The two rules that would cover them ("Scrape target down", disk 85%) only see scraped hosts |
+| F3 | Six exporters run in **plain HTTP with no password** | `secpipe`, `ai-services`, `mcp-utility`, `cse-controller`, `cse-code-eval`, `pentest-runner` answer `http://:9100/metrics` with 200 and no auth; their `ARGS` are empty; `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack` are correctly TLS + auth | Anyone on those VLANs can read host metrics. Cause: the router has rules letting the game, apps, media and pentest zones reach `step-ca` on 443 but **none for the AI zone (vlan50) or the CSE zone (vlan100)**; the exporter role skipped TLS when `step-ca` was unreachable (`secpipe` confirms: no answer) |
+| F4 | Alerts keyed on `pve-tiny` will misfire when it is powered down for the RMA | "Production node unreachable" matches `stack=~"pve\|pve-tiny"` **and pages Telegram every 30 minutes**; "Scrape target down" will fire for its hardware exporter; the NVMe silence ends **2026-10-26 13:46 NZ** (`pve-tiny` still shows 7 new media errors in 24 h) | A planned shutdown becomes a page, and the NVMe alert returns before the drive is swapped |
+| F5 | **Nothing alerts on a failed backup**, the original incident | No PBS or vzdump alert exists; the evacuation plan enrolls moved guests in the backup job; Phase 6 (native integrations) was never built | A backup can fail every night unseen, as it did on `pve-tiny` |
+
+Also confirmed healthy, so **no work**: the honeypot path itself (the T-Pot tunnel, the OpenSearch writer account and the unchanged
+addresses all work; the 15:01 failure was a corrupt SSH key file, fixed at 15:45, and the cursor-based sync backfilled every event:
+no empty half-hour in the history); `pve` capacity (60% of 126 GiB memory, load 3.3, root disk 13%, no OOM kill in five days).
+
+### Workstreams, in order
+
+**W1: honeypot cadence (F1). Small, urgent. Operator, migration owner.**
+
+1. Merge `stable` into the evacuation branch (resolve its conflicts; `stable` wins for alerting files) so its role default is
+   `*:0/10:00` and its manifest has no `services/pentagi`. This is the migration owner's branch.
+2. Re-provision `secpipe-stack` from that result: `TASK_APPROVAL=tpot-sync-10min ./with-secrets-prod scripts/provision.sh --stack secpipe-stack`.
+   Check `systemctl show tpot-findings-ingest.timer -p TimersCalendar` on the container says `*:0/10:00`.
+3. Refresh `~/.ssh/known_hosts.lab` for `192.168.50.12` (the container was recreated: `ssh-keygen -R`).
+4. Re-run the honeypot drill from `argon-01` (see README, *Proven live*): a message naming `192.168.1.22` within about 12 minutes.
+
+Done when the timer is 10-minute, the drill passes, and "Honeypot data has stopped arriving" stays Normal across two hourly boundaries.
+No code change on my side: the freshness rule is correct for a 10-minute sync.
+
+**W2: close the coverage gap (F2, F3). Medium. Firewall by the operator, the rest by me.**
+
+1. **Firewall (operator, narrow):** two input-style `forward` rules, `ai_seg` (192.168.50.0/24) and `cse_seg` (192.168.100.0/24) to
+   `step-ca` 192.168.20.11 tcp/443, in the same style as the existing `*AB` (apps_seg) and `*8D` (media_seg) rules. A playbook
+   `ansible/00-initial-setup/mikrotik-firewall-step-ca-ai-cse.yml` with `--check` preview, like `mikrotik-monitoring-access.yml`.
+2. **TLS the six exporters (operator):** re-run the node_exporter role against `secpipe`, `ai-services`, `mcp-utility`,
+   `cse-controller`, `cse-code-eval` and `pentest-runner` with `scripts/provision.sh --stack <name>` (one at a time; it now succeeds
+   because `step-ca` is reachable). Check `http://:9100` now refuses and `https` answers 401.
+3. **Scrape them (me):** add the nine guests that have a working exporter (the six above plus `opensearch-stack`, `cse-panel-stack`,
+   `nextcloud-stack`) to the node_exporter job, with the stack label the other rules expect. Then "Scrape target down" and the disk rules cover
+   them for free. Verify against live VictoriaMetrics before merging, as for the NAS.
+4. **Decide the remaining six (operator):** `pterodactyl-lab`, `torrent-stack-lab`, `newt-connector`, `pangolin-proxy`, and the legacy `management-stack` and `media-stack` (both labelled legacy in the repo): monitor, or decommission.
+5. **OpenSearch's own health (me, optional):** disk is covered by step 3; cluster status (`red` and `yellow`) and the disk
+   watermark are not. Prefer a Grafana query over a new exporter; propose an exporter only if that is not possible.
+
+Done when every running guest is either scraped over TLS or on a written "not monitored, because" list, and no exporter answers plain HTTP.
+
+**W3: `pve-tiny` lifecycle (F4). Small, time-boxed by the RMA date. Operator, with my text.**
+
+1. **Before power-off:** one Grafana silence for `stack = pve-tiny` (all alerts), ending the day after the expected replacement. It
+   covers "Production node unreachable" (the page), "Scrape target down" and the NVMe rules in one object. Replace the current NVMe-only
+   silence, which ends **2026-10-26 13:46 NZ**. Graylog has no silence: its storage rule will stop on its own once the host is off.
+2. **After the new drive:** delete the silence; confirm `up{job="node_exporter_hw",stack="pve-tiny"}` is 1, the new NVMe reports
+   `nvme_media_errors_total` near zero, and `pve-tiny` appears in Graylog again; if the device name changed, update the rule label if it is
+   named anywhere (it is not: the rules select by `stack`).
+3. **Decision for the operator:** does `pve-tiny` come back into service or stay off? If it stays off, remove it from "Production node
+   unreachable" instead of silencing it, and from the hardware scrape list (`hwmon-hosts.yml`).
+
+**W4: `pve` is now the single large host. Medium. Me, with one operator deploy.**
+
+Everything runs on one machine, so the host needs its own alerts. Today only the root filesystem is watched.
+
+1. Add node rules on `job="node_exporter_hw"`: memory available under 10% for 15 minutes, swap in use, and load5 above the core count. All
+   warnings (the existing OOM-kill rule already catches the aftermath).
+2. **Proxmox storage and guest state (recommended):** deploy `prometheus-pve-exporter` in monitoring-stack using the existing read-only API
+   token (`PROXMOX_READONLY_TOKEN_*`). It exposes thin-pool and storage usage (the `monitoring-containers`, `storage-containers`,
+   `apps-containers` and `infrastructure-containers` pools, which node_exporter cannot see) and whether each guest is running, which
+   catches a stopped guest even when it has no exporter. Rules: a pool above 80%, a guest with autostart on that is not running.
+   This is one small sidecar, in the same shape as `snmp-exporter` and `mktxp`. **Decision for the operator** before it is built.
+
+**W5: backups (F5). Small, high value. Operator configures, I write the steps.**
+
+1. **PBS notifications (native, no new service):** a Discord webhook notification target on the Proxmox Backup Server
+   (`proxmox-backup-server` CT 105) for failed backup, verify and garbage-collection jobs, using the `#events` webhook
+   already in OpenBao (`DISCORD_WEBHOOK_EVENTS`). Same on `pve` for vzdump job failures.
+2. **Backup enrolment check (me):** list every guest and whether it is in the backup job on `pve`, so the evacuated guests are not
+   silently excluded (the evacuation notes record backup-job exclusions for guests that were not backing up; `secpipe` was one of them). A one-off read-only report in the README.
+3. **Later, optional:** a "no successful backup in 48 hours" rule from a PBS exporter, if the native notifications turn out to be too
+   quiet (a job that never runs sends nothing).
+
+Done when a deliberately failed test backup produces a Discord message.
+
+**W6: housekeeping.** Reconcile docs that name `pve-tiny` hosts or `./with-secrets-prod-tiny` for stacks that moved; the two Pis'
+crash-looping Portainer containers; `Volume1` on the NAS is `linear` (no redundancy: the operator's call); RouterBOARD firmware 7.19.6
+with 7.25 ready (the notice is live); the unmerged evacuation branch (W1 step 1).
+
+### Order and ownership
+
+| Order | Workstream | Who | Why now |
+|---|---|---|---|
+| 1 | W1 honeypot cadence | operator (migration owner) | the tripwire is up to an hour late today |
+| 2 | W3 `pve-tiny` silence | operator | must exist before it is powered off, or it pages |
+| 3 | W5 backup notifications | operator, my steps | the original incident has no alert |
+| 4 | W2 coverage | operator (firewall, TLS) then me | largest gap, but nothing is failing right now |
+| 5 | W4 host and storage alerts | me, one decision | the host is now a single point of failure |
+| 6 | W6 housekeeping | mixed | as time allows |
+
+Nothing here touches the migration's own work: W1 step 1 is the migration owner's branch, and the rest is monitoring-side. Approvals are
+named per task as before (`tpot-sync-10min`, `mikrotik-step-ca-ai-cse`, `alerting-monitoring`).
 
 ## Phase 1: Discord baseline and hardware rules
 

@@ -192,7 +192,8 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
 7. **Deploy the Phase 5 vulnerability rules** (next monitoring-stack deploy), then **Phase 6** digest and native integrations. Phase 2, the Graylog log alerts, is applied and drilled.
 8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
-9. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
+9. **Phase 7: align monitoring with the post-migration lab** (plan.md). Urgent: the new `secpipe-stack` syncs the honeypot hourly, not every 10 minutes (W1); the `pve-tiny` silence needed before it is powered off (W3); 15 running guests, including `opensearch-stack`, have no metrics (W2); nothing alerts on a failed backup (W5).
+10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
 
 ## Future-state design notes (parked)
 
