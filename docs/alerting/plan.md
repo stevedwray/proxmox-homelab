@@ -531,7 +531,7 @@ RouterBOARD firmware **7.19.6 with 7.25 ready** (so the firmware-update notice f
 | Router RouterOS update is available | for an hour | `#alerts-warning`, weekly |
 | Router interface errors rising | more than 5 in an hour on a port | `#alerts-warning` |
 | Router port link is flapping | more than 3 drops in an hour | `#alerts-warning` |
-| Router has restarted | uptime under an hour | `#alerts-warning` |
+| Router has restarted | uptime under 15 minutes (`last_over_time` over 30 minutes, so gaps in the metrics cannot re-fire it); **no "Resolved" message** (`event: "true"` routes to `homelab-discord-event`) | `#alerts-warning`, once |
 | Router metrics have stopped arriving | for 10 minutes | `#alerts-warning` |
 
 The last one matters: **mktxp keeps answering when it cannot reach the router**, so the generic "Scrape target down" rule would stay quiet
