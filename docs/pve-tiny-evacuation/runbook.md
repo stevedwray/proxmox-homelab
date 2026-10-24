@@ -161,7 +161,7 @@ No persistent application data needs a cold copy. Re-provision the target
 from managed secrets/configuration before enabling its timers, and run one
 bounded enrichment only after the source stays stopped.
 
-### Secpipe CT 50012 cutover — active; finalization blocked
+### Secpipe CT 50012 cutover — completed with recorded pre-existing issue
 
 On 2026-10-24, the approved `pve-tiny-evacuation-secpipe-cutover` task stopped
 the source CVE-enrichment and T-Pot-ingest timers, stopped source CT 50012,
@@ -178,19 +178,28 @@ deep-dive, and T-Pot-ingest managed services and timers, including their
 managed credentials. The temporary reconciliation playbook was removed after
 the successful run.
 
-Final validation could not begin because `./with-secrets-prod` fails closed
-before contacting pve: this worktree's pve profile still requests retired
-`services/pentagi`, which was correctly removed from OpenBao during the
-PentAGI teardown.
-Consequently, no bounded enrichment run, target `onboot=1` change, backup-job
-enrollment, or fresh pve PBS backup has been performed for 50012. Leave the
-source stopped with `onboot=0`, keep the target as the sole running instance,
-and retain both CTs for rollback. Remove the obsolete manifest entry and its
-profile references, recheck the production wrapper, then obtain a new
-finalization approval. Verify both target timers and a
-bounded enrichment write to OpenSearch, set target autostart, remove only 50012
-from the pve backup-job exclusions, and verify a new PBS backup before marking
-this cutover complete.
+The initial finalization attempt found the obsolete `services/pentagi` profile
+reference, not a missing OpenBao secret. That stale entry was removed from the
+manifest and profiles, and the pve production wrapper then loaded normally.
+The target's T-Pot tunnel key was initially empty because `services/tpot` was
+also absent from the pve profile. Adding the required profile entry and
+reconciling only the T-Pot role restored it. A manual T-Pot run established its
+tunnel, processed and indexed 16,590 events with zero errors, and advanced its
+cursor.
+
+The bounded, non-writing CVE check reached the target OpenSearch but received
+401 responses while aggregating the Harbor, GVM and Wazuh findings indices.
+The OpenSearch role exists and is assigned to the service account; the target
+has a stale credential file from its prior stopped copy. Per operator
+direction, this pre-existing credential issue was recorded and was not rotated
+or otherwise repaired during migration. A proposed live capped enrichment was
+not run because it could send derived vulnerability findings to Anthropic.
+
+The target now runs with `onboot=1`; source remains stopped with `onboot=0`.
+Only 50012 was removed from pve backup job `backup-8b90fc3e-c3a5`'s exclusion
+list, retaining 50011 and 50013. A new snapshot backup completed successfully
+as `pbs-iscsi:ct/50012/2026-10-24T02:48:01Z`. Retain both CTs for rollback and
+track the CVE credential issue separately from this evacuation.
 
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from

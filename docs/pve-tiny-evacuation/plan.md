@@ -2,15 +2,16 @@
 
 Status: **execution in progress.** OpenSearch CT 40014 is fully migrated to
 `pve`, backed up there, and retained stopped on `pve-tiny` for rollback.
-Secpipe CT 50012 is running only on `pve` after its managed roles were
-reconciled, but its final bounded service test, target autostart, and backup
-enrollment are blocked by a failing production-secret profile. The remaining
-six guests have not started cutover.
+Secpipe CT 50012 is running only on `pve`, has target autostart and a fresh
+PBS backup, and its managed roles were reconciled. Its CVE enrichment has a
+recorded pre-existing stale target credential issue; it was observed but not
+changed during this migration. The remaining six guests have not started
+cutover.
 
-The production wrapper currently fails closed because this worktree's pve
-profile still requests retired `services/pentagi`, which was correctly removed
-from OpenBao during the PentAGI teardown. This branch removes that stale
-manifest entry and profile references before Secpipe finalization resumes.
+This worktree's pve profile formerly requested retired `services/pentagi`,
+which was correctly removed from OpenBao during the PentAGI teardown. The
+stale manifest entry and profile references have been removed; the production
+wrapper now loads successfully.
 No Terraform state was changed during these cold-copy/reconciliation actions;
 the target CT runtime state must be reconciled with reviewed Terraform plans
 before later infrastructure changes.
@@ -41,7 +42,7 @@ level. This is a point-in-time capacity check, not a peak guarantee.
 |---|---|---|---:|---|---|
 | 40014 | opensearch-stack | 192.168.40.14 / infra_seg | 4.53 GiB | NVMe root, Docker, 150G data mount | Completed 2026-10-24: target running/onboot, service and consumer checks passed, fresh pve PBS backup; source stopped/onboot disabled |
 | 50013 | ai-services-stack | 192.168.50.11 / ai_seg | 1.90 GiB | NVMe root and Docker | Stopped pve copy exists; refresh OpenWebUI, SearXNG, research volumes |
-| 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Active cutover: source stopped/onboot disabled; target running and managed roles reconciled; final validation, target autostart and backup blocked by OpenBao profile failure |
+| 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot and freshly backed up; T-Pot ingestion passed; pre-existing stale CVE credential issue recorded, not changed |
 | 40072 | pentest-runner | 192.168.100.72 / cse_seg | 0.32 GiB | NVMe root and Docker | No stack definition found; establish owner and restore method |
 | 40070 | cse-controller | 192.168.100.70 / cse_seg | 0.41 GiB | Boot SSD root/Docker; NVMe 100G data mount | Preserve run state and private cse-kali SSH key |
 | 100071 | cse-code-eval | 192.168.100.71 / cse_seg | 0.25 GiB | Boot SSD root/Docker; NVMe 50G data mount | Data mount has backup=0; decide whether scratch may be rebuilt |
@@ -164,9 +165,7 @@ plan or its runbook:
    remove their backup-job exclusions before accepting the cutover. Confirm
    the first new backup completes.
 
-Do not shut down `pve-tiny` while any of these gates remains open. In
-particular, do not finalize 50012 until this branch's stale `services/pentagi`
-profile reference is removed and the wrapper is rechecked.
+Do not shut down `pve-tiny` while any of these gates remains open.
 
 ## Phase 1: prepare source-controlled target definitions
 
@@ -253,7 +252,7 @@ Suggested order, respecting dependencies and the failing NVMe:
 | Guest | State | Remaining gate |
 |---|---|---|
 | 40014 OpenSearch | Complete on `pve`; source retained stopped | Soak and later Terraform reconciliation only |
-| 50012 Secpipe | Target running alone on `pve`; source stopped/onboot disabled; managed roles reconciled | Recheck the corrected production profile, then run bounded enrichment, verify timers, set target onboot, enroll and verify pve backup |
+| 50012 Secpipe | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; fresh PBS backup | Track the observed pre-existing stale CVE credential separately; do not change it as part of migration |
 | 50013, 40072, 40070, 100071, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
 
 ## Phase 3: shutdown and RMA gate
