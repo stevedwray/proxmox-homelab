@@ -1,5 +1,13 @@
 # 07 — Baseline alerting to Discord
 
+> **Superseded 2026-10-24 by [docs/alerting/](../alerting/README.md).** The
+> operator moved from Discord-only to Discord plus a Telegram emergency tier
+> with ack/snooze and an off-site dead man's switch, and widened the scope to
+> hardware faults and logs. Do not run this plan top to bottom. Its OpenBao
+> health steps (`catchup-07-openbao-health-script`, `-units`) and baseline
+> rules step (`catchup-07-alert-rules-file`) are reused by the new plan by id;
+> its manifest, monitoring-playbook and single-webhook steps are replaced.
+
 **When:** this week, **after plan 08** (08 removes the PentAGI scrape targets,
 which are down and would page immediately) · **Effort:** 1–2 sessions ·
 **Value:** High
