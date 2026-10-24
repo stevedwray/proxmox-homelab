@@ -117,6 +117,28 @@ under `/var/lib/opensearch-data` and 6.25 GiB under `/var/lib/docker`. These
 are the service baseline and planning figures only: take the exact cold-copy
 manifest after writers are quiesced and the source is stopped.
 
+### OpenSearch CT 40014 cutover — completed
+
+On 2026-10-24, `pve-tiny-evacuation-opensearch-cutover` created pve snapshot
+`pre-evacuation-20261024` of the stopped target before source downtime. The
+source CT was then stopped and set to `onboot=0`. Its cold
+`/var/lib/opensearch-data` archive preserved numeric ownership, ACLs and
+xattrs. A temporary extraction on pve contained 6,387 regular files and its
+per-file SHA-256 manifest matched the stopped source:
+`981cdd388f570dc4b8befef51a4965b00c9ed75c2ee3174e25a0e68c4042febe`.
+The restored target had the same count, manifest and `101000:101000` top-level
+ownership. The staged archive remains on the target root volume alongside the
+pve snapshot and untouched stopped source as rollback/recovery evidence.
+
+The target started alone on pve and was reconciled with the managed Dashboards
+health-check fix. Both Docker services are healthy, OpenSearch is the expected
+single-node `yellow`, the preserved Harbor/Wazuh/GVM index counts match the
+baseline, and Dashboards is `green`. Target `onboot=1`; source remains stopped
+with `onboot=0`. The approved backup enrollment removed only 40014 from pve
+job `backup-8b90fc3e-c3a5`, retaining exclusions for 50011, 50012 and 50013.
+A fresh `pbs-iscsi` snapshot backup succeeded as
+`ct/40014/2026-10-24T01:05:16Z`.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
