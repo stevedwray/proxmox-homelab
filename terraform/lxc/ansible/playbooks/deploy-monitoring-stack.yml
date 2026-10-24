@@ -280,6 +280,19 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
+                # Added 2026-10-24 (docs/alerting/plan.md, Phase 7 W2): running guests that were never scraped.
+                # Only those whose exporter already speaks TLS; the rest are added after their exporters are fixed.
+                - targets: ["{{ lookup('env', 'LAB_IP_OPENSEARCH') }}:9100"]
+                  labels: {stack: opensearch-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_CSE_PANEL') }}:9100"]
+                  labels: {stack: cse-panel-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:9100"]
+                  labels: {stack: nextcloud-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TORRENT_STACK_LAB') }}:9100"]
+                  labels: {stack: torrent-stack-lab}
+                # pangolin-proxy has no LAB_IP_ variable; its address is in stacks/pangolin-proxy/stack.yaml.
+                - targets: ["192.168.30.11:9100"]
+                  labels: {stack: pangolin-proxy}
                 - targets: ["{{ omada_controller_host }}:9100"]
                   labels: {stack: omada-controller}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
