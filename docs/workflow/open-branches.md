@@ -35,6 +35,27 @@ merged or dropped from its own work session; update this list when one is.
   promotion #434, 2026-09-28). It waits on the pending ai-services-stack
   deploy (#464).
 
+## Sweep (2026-10-24)
+
+- **Merged to stable:** #511, the alerting work (`work/graylog-sender-ip-pentest-stream`), with a **merge
+  commit**, not a squash, so the commit IDs survive. It carried the operator's `2fd7175d` (mcp-utility-stack back
+  to pve), which `work/pve-tiny-evacuation` already holds. Simulated merges of the evacuation branch and of
+  `work/mcp-utility-back-to-pve` into the new stable are **clean**.
+- **Deleted (all fully merged into stable, none held by a worktree):** local
+  `work/graylog-sender-ip-pentest-stream`, `work/gvm-dashboard-oom-range`, `work/mcp-utility-back-to-pve`,
+  `work/omada-pr`, `work/portainer-2-39-8`, `work/pve-test-netbox`; remote
+  `work/graylog-sender-ip-pentest-stream`, `work/gvm-dashboard-oom-range`, `work/portainer-2-39-8`,
+  `work/pve-test-netbox`.
+- **Left alone:** every branch held by a worktree (`task/autonomous-pentest-design`, `task/ctx-bug-test`,
+  `work/gvm-nightly-credentialed`, `work/gvm-run-all-once`, `work/oci-pangolin-overrides`,
+  `work/pve-tiny-evacuation`), and `origin/claude/qwen-laguna-model-testing-v42x6x` (merged, not created in this sweep).
+- **Local only, not on GitHub:** `work/pve-tiny-evacuation` (14 commits ahead of stable, active, holds the
+  evacuation plan and evidence) and `task/oci-security-prs-integration` (97 commits ahead). Push them when the
+  owner is ready; until then a lost disk loses them.
+- **Known conflict, not caused by the alerting merge:** `task/oci-security-prs-integration` conflicts with stable on
+  `secrets/manifest.json` (it conflicted with the previous stable too). Resolve when that branch is next rebased or merged.
+- **stable to main:** stable is 383 commits ahead of main. Not promoted; it needs an incremental pve deploy and smoke test first.
+
 ## Still open
 
 | Branch | Where | Last commit | What | Next |
