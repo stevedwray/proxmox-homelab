@@ -21,7 +21,8 @@ are still to do. Phases 3, 4 and 4b are future state.
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
 | 2 | Graylog log alerts | **Applied and drilled** (`scripts/graylog_alerts.py`) |
 | 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
-| 5, 6 | New critical vulnerabilities; digest, fire drill, native integrations | Outline |
+| 5 | New critical vulnerabilities (Harbor, Greenbone) | **Built, not yet deployed** (`homelab-vulnerabilities.yml`) |
+| 6 | Digest, fire drill, native integrations | Outline |
 
 **Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
 would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
@@ -1327,8 +1328,8 @@ Order matters.
    `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
    timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
 5. **Prove it** (each line is a thing that can be seen; do them in this order):
-   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **28 rules** (9 baseline, 18 hardware,
-      1 honeypot), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
+   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **30 rules** (9 baseline, 18 hardware,
+      1 honeypot, 2 vulnerability), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
       `-critical`, `homelab-page`, `homelab-tripwire`).
    2. **Test** `homelab-page` and `homelab-tripwire` from Grafana. Each must deliver **both** a
       Telegram message and a Discord message. This is the check on the Telegram field names.
@@ -1532,19 +1533,30 @@ the `omada_exporter` sidecar and its scrape job are wired (to copy the pattern),
 and a pinned `prom/blackbox-exporter` image available through the Harbor
 `dockerhub/` proxy.
 
-## Phase 5 (outline): new critical vulnerabilities
+## Phase 5: new critical vulnerabilities
 
-Goal: a critical finding that **first appears** alerts, not the roughly 206
-that already exist.
+**Status 2026-10-24: built, not yet deployed.** Goal: a critical finding that **first appears** alerts, not the roughly 700
+that already exist. `terraform/lxc/stacks/monitoring-stack/alerting/homelab-vulnerabilities.yml`, two Grafana rules
+over VictoriaMetrics, copied by the monitoring-stack deploy.
 
-Sources already in Grafana: the "Harbor Findings" and "UVM Findings"
-Infinity datasources, the `harbor-findings-exporter` job in VictoriaMetrics,
-and GVM/Wazuh data in OpenSearch. Routing: `#security` immediately; Telegram
-only once known-exploited (KEV) enrichment exists. **GVM results from
-`pentest_seg` are excluded.**
+| Rule | Data | Fires when |
+|---|---|---|
+| New critical vulnerability in a Harbor image | `harbor_findings_vulnerabilities_total{severity="Critical"}` from the Harbor findings exporter (labels `project`, `repository`) | a repository's critical count is higher than 3 hours ago, or the repository is new |
+| New high-severity finding in a Greenbone scan | `gvm_task_last_results{severity="hole"}` (Greenbone's "high"), per task | a task's high count is higher than 3 hours ago, or the task is new |
 
-To find before the steps are written: which of these expose a first-seen
-timestamp, and what the Harbor exporter's metric labels are.
+- **Routing:** `category: security`, severity warning: Discord `#security` only. Never a page. Telegram waits for known-exploited (KEV)
+  enrichment, which does not exist yet.
+- **The window is 3 hours, shorter than the 4 h repeat interval**, so a finding gives one message and then clears. Comparing with a
+  day ago would repeat it six times.
+- **Replayed over 14 days of real data before encoding:** Harbor would have alerted for 21 repositories, in batches after the daily
+  scan around 16:00 (grouped, so about one message a day); the GVM rule would have been silent (its metric only started on 2026-10-15).
+- **Guard:** each rule also needs more than 10 series to have existed 3 hours ago. Without it an exporter outage would make every
+  repository look new at once; with it the metric's first day (27 series, 15 October) correctly produced nothing.
+- **Excluded on purpose:** GVM tasks that scan `pentest_seg` or were launched for a pentest (results are not lab findings), and the
+  decommissioned pentagi project and `vxcontrol/*` images.
+- **On the first deploy** anything that became new in the previous 3 hours fires once (two Harbor repositories at the time of writing).
+- **Limits:** "new" means a higher count, so a critical that is fixed while another appears in the same repository is not seen; a
+  first scan of an image that was never scanned counts as new; Wazuh and UVM findings are not covered yet.
 
 ## Phase 6 (outline): the rest
 

@@ -560,6 +560,7 @@
         - homelab-baseline.yml
         - homelab-hardware.yml
         - homelab-honeypot.yml
+        - homelab-vulnerabilities.yml
       register: grafana_alert_rules_provisioning
 
     - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)

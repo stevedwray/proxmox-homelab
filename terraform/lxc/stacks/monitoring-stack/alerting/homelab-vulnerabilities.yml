@@ -1,0 +1,82 @@
+# Grafana file-provisioned vulnerability alerts (docs/alerting/plan.md, Phase 5).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# Goal: a critical finding that FIRST APPEARS alerts, not the ~700 that already exist. Both rules
+# compare now against 3 hours ago (shorter than the 4 h repeat interval, so one message, then it
+# clears) and fire on a series that is higher than it was, or did not exist then.
+#
+# Guard: if the exporter had been down 3 h ago every series would look "new" at once, so each
+# rule also requires that plenty of series existed then (count(... offset 3h) > N).
+#
+# Excluded on purpose: GVM tasks that scan pentest_seg or were launched for a pentest
+# (results are not lab findings: docs/gvm-scan-redesign), and the decommissioned pentagi project
+# and vxcontrol images. Routing: category security, so #security plus #alerts-warning; never a
+# page. Telegram waits for known-exploited (KEV) enrichment, which does not exist yet.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-vulnerabilities
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: vuln-harbor-new-critical
+        title: New critical vulnerability in a Harbor image
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                ((harbor_findings_vulnerabilities_total{severity="Critical",project!="pentagi",repository!~"vxcontrol/.*"}
+                - (harbor_findings_vulnerabilities_total{severity="Critical",project!="pentagi",repository!~"vxcontrol/.*"} offset 3h)) > 0
+                or (harbor_findings_vulnerabilities_total{severity="Critical",project!="pentagi",repository!~"vxcontrol/.*"} > 0
+                unless harbor_findings_vulnerabilities_total{severity="Critical",project!="pentagi",repository!~"vxcontrol/.*"} offset 3h))
+                and on() (count(harbor_findings_vulnerabilities_total{severity="Critical"} offset 3h) > 10)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: security}
+        annotations:
+          summary: '{{ $labels.project }}/{{ $labels.repository }}: {{ humanize $values.A.Value }} new critical finding(s) in Harbor''s latest scan'
+
+      - uid: vuln-gvm-new-high
+        title: New high-severity finding in a Greenbone scan
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                ((gvm_task_last_results{severity="hole",task!~".*pentest.*|pentagi-.*"}
+                - (gvm_task_last_results{severity="hole",task!~".*pentest.*|pentagi-.*"} offset 3h)) > 0
+                or (gvm_task_last_results{severity="hole",task!~".*pentest.*|pentagi-.*"} > 0
+                unless gvm_task_last_results{severity="hole",task!~".*pentest.*|pentagi-.*"} offset 3h))
+                and on() (count(gvm_task_last_results{severity="hole"} offset 3h) > 10)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: security}
+        annotations:
+          summary: '{{ $labels.task }}: {{ humanize $values.A.Value }} more high-severity result(s) than the previous scan'
