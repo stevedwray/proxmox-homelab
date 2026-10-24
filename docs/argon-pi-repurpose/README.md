@@ -458,3 +458,68 @@ irreversible; a failed SSD boot may require hands-on recovery.
 - Added persistent `DOCKER-USER` firewall policy on both Pis: only
   `192.168.20.20` may reach TCP 9001; all other IPv4 sources are dropped.
   The policy is reapplied by `portainer-agent-firewall.service` after Docker.
+
+### 2026-10-25 — boot-layout investigation
+
+- Both systems use a conventional two-partition SSD scheme: the FAT partition
+  is `/dev/sda1`, currently mounted at `/boot`, and the root filesystem is
+  `/dev/sda2`. Raspberry Pi firmware files, `config.txt`, `cmdline.txt`,
+  `kernel8.img`, DTBs and overlays all reside on that FAT partition.
+- The maintained `raspi-firmware` package requires the *same* FAT partition
+  to be mounted at `/boot/firmware`; it does not require repartitioning or
+  different boot media. The safe migration is to unmount `/boot`, create the
+  root-filesystem directory `/boot/firmware`, change only the `/etc/fstab`
+  mount target, remount `/dev/sda1` there, validate all required files, then
+  install the maintained kernel/firmware packages and reboot one Pi at a time.
+- This is still a boot-critical change and needs a separate execution gate.
+  `argon-02` also has an intentional `over_voltage=6` and `arm_freq=2000` in
+  `config.txt`; retain and explicitly validate that setting during the first
+  migration rather than silently normalizing it.
+
+### 2026-10-25 — boot-layout migration approved
+
+- Operator approved the in-place migration of both Pis to the maintained
+  `/boot/firmware` layout. Execute one Pi at a time: first `argon-01`, then
+  `argon-02` after a successful SSD reboot and service verification.
+- No repartition, reimage, boot-order change or EEPROM flash is authorized.
+  The exact existing `/dev/sda1` FAT partition remains the boot partition;
+  only its Linux mount target changes.
+
+### 2026-10-25 — argon-01 boot-layout and kernel migration passed
+
+- Moved the existing `/dev/sda1` FAT mount from `/boot` to `/boot/firmware`.
+  Confirmed `config.txt`, `cmdline.txt` and `kernel8.img` remained present on
+  that same mounted partition.
+- Installed `linux-image-rpi-v8` and `raspi-firmware` version `6.18.50` /
+  `20260915`. The generated `/boot/firmware/kernel8.img` and versioned root
+  kernel image are present and `dpkg --audit` is clean.
+- Reboot verification passed: argon-01 is running `6.18.50+rpt-rpi-v8`, with
+  `/dev/sda1` mounted at `/boot/firmware`. Docker, the Portainer Agent and
+  its firewall service, Wazuh, and node_exporter are all active; the agent
+  `/ping` endpoint returns HTTP 204, SMART reports `PASSED`, and no failed or
+  upgradable packages remain. It is safe to begin the same one-host migration
+  on argon-02.
+
+### 2026-10-25 — argon-02 boot-layout and kernel migration passed
+
+- Moved the existing `/dev/sda1` FAT mount from `/boot` to `/boot/firmware`
+  without altering partitions, boot order, EEPROM, or the on-partition Pi
+  configuration. `config.txt`, `cmdline.txt`, and the active firmware kernel
+  image were validated before reboot.
+- Installed the maintained `linux-image-rpi-v8` and `raspi-firmware` packages
+  at `6.18.50` / `20260915`. The package transaction and its initramfs trigger
+  completed cleanly before reboot.
+- Reboot verification passed: argon-02 is running `6.18.50+rpt-rpi-v8`, with
+  `/dev/sda1` mounted at `/boot/firmware`. Its intentional `over_voltage=6`
+  and `arm_freq=2000` settings remain present. Docker, Portainer Agent and
+  firewall service, Wazuh, node_exporter, and Argon fan service are active;
+  Portainer Agent `/ping` returns HTTP 204, SMART is `PASSED`, and there are
+  no failed, unpacked, or upgradable packages.
+
+### 2026-10-25 — boot-layout remediation complete
+
+- Both SSD-booted Pis now use Debian's maintained Raspberry Pi firmware
+  layout: `/dev/sda1` is mounted at `/boot/firmware`, and both boot the
+  supported `6.18.50+rpt-rpi-v8` kernel. The migration preserved the existing
+  FAT partition and has passed an independent reboot and service-health gate
+  on each host.
