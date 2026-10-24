@@ -183,7 +183,7 @@ attachments:
   # else).
   # -------------------------------------------------------------------------
   pentest_seg:
-    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    description: Pentest segment — dedicated, contained zone
     type: sdn_vnet
     bridge: tvpent
     firewall: false
@@ -331,12 +331,10 @@ zones:
     containers:
       - "nextcloud-stack (VMID 120010) — 192.168.120.10 — live, deployed 2026-09-24"
   pentest_seg:
-    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    description: Pentest segment — dedicated, contained zone
     attachment: pentest_seg
     containers:
-      - "pentagi-stack — ${lab_ip_pentagi}"
       - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
-      - "pentagi-upstream-control (VMID 70013) — 192.168.70.13 — isolated upstream control for PentAGI model A/B testing"
   ai_seg:
     description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg

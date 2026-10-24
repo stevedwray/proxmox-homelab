@@ -15,12 +15,14 @@ tpot_findings_ingest_enabled: false
 tpot_findings_ingest_dir: /opt/tpot-findings-ingest
 tpot_findings_ingest_log_path: /var/log/tpot-findings-ingest.log
 
-# T-Pot's logstash-* indices accumulate at roughly one day's worth of
-# LAN-noise events per run; hourly keeps the lookback window small and
-# the operator's "what just happened" latency low -- unlike the
-# *-findings roles' daily current-state pulls, this is a real
-# incremental event stream.
-tpot_findings_ingest_on_calendar: "*:00:00"
+# A real incremental event stream (cursor kept in tpot-events-sync-state),
+# unlike the *-findings roles' daily current-state pulls, so running often is
+# cheap and a oneshot unit can never overlap itself. Every 10 minutes (was
+# hourly) because the honeypot tripwire alert (docs/alerting, Phase 1c) can only
+# fire once an event has reached the central OpenSearch: worst case delay is
+# this interval plus the timer's RandomizedDelaySec (60s) plus the 1m alert
+# evaluation.
+tpot_findings_ingest_on_calendar: "*:0/10:00"
 
 # --- T-Pot connection (source) --------------------------------------------
 # Non-secret connection details -- see docs/tpot-honeypot/README.md's

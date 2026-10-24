@@ -139,3 +139,19 @@ Deploy (operator, production approval flow):
 `TASK_APPROVAL=tpot-events-dashboard ./with-secrets-prod scripts/provision.sh --stack monitoring-stack`
 then Grafana -> Connections -> Data sources -> "T-Pot Events" -> Save & test,
 and open "T-Pot Honeypot Events" and "T-Pot Honeypot" dashboards.
+
+## Update 2026-10-24: tripwire alert, source-address finding, sync cadence
+
+- **The dashboard's "from UNEXPECTED sources" panels are misleading.** The sensor documents carry Docker
+  bridge addresses as `src_ip` for LAN-originated connections (Cowrie `192.168.112.1`, Dionaea `172.29.0.1`,
+  Honeytrap `172.24.0.2`), so every Greenbone sweep counts as an unexpected source and the allowlist can
+  never match. Rebuild those panels on the Suricata-flow query below. Not done yet.
+- **The query the alert uses** (Suricata sees the wire, so `src_ip` is the real client): `honeypot:suricata AND
+  event_type:flow AND dest_ip:"192.168.1.28" AND NOT dest_port:<management and broadcast ports> AND NOT
+  src_ip:<allowlist> AND dest_port:[1 TO 32767] AND src_port:[1024 TO 65535]`. The two port ranges keep only
+  inbound connections: the reverse shape (source port 443 or 53, ephemeral destination) is the Pi's own outbound
+  traffic seen mid-stream. 30 days: 81 flows, all from the Kali test host on 2026-10-15; 7 days: none.
+- **The sensor-coverage finding above is resolved:** sensors now log (17 events in 7 days, one Greenbone sweep).
+- **Sync cadence:** `tpot_findings_ingest_on_calendar` is now every 10 minutes (was hourly; a oneshot unit with
+  a stored cursor, so runs cannot overlap), so the alert's worst-case delay is about 12 minutes.
+- The alert and its routing are in `docs/alerting/` (rule file `homelab-honeypot.yml`, Phase 1c in its plan).

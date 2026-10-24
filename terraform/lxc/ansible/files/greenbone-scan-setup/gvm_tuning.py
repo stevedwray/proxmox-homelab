@@ -30,6 +30,8 @@ Read-only modes:
 
 Changing modes (the playbook asks for TASK_APPROVAL on production):
   start <task>            start one task
+  resume <exact task name>  resume a Stopped/Interrupted task by its exact name (no prefix
+                          mangling -- for one-off names like gvm-bridge's "pentagi-<ip>-<epoch>")
   stop <task>             stop one task and wait for it to leave Running/Stop Requested
   setprefs <task> k=v...  set task preferences (a live test only: the setup scripts reset them)
   unschedule <task>       remove one task's schedule
@@ -503,6 +505,24 @@ def main():
                 sys.exit(f"{name} already {t['status']}")
             gmp.start_task(t["id"])
             print(f"started {name}")
+            return
+        if mode == "resume":
+            # Exact-name lookup, bypassing find()'s "Credentialed scan: "/"LAN
+            # scan: " prefixing -- for one-off task names like the pentest
+            # research pipeline's "pentagi-<ip>-<epoch>" GVM tasks. Starting a
+            # Stopped/Interrupted task resumes from its last checkpoint rather
+            # than rescanning from the beginning (confirmed live 2026-10-21,
+            # after a greenbone-stack deploy restarted the scanner mid-scan).
+            name = sys.argv[2]
+            root = gmp.get_tasks(filter_string=f'name="{name}" rows=-1')
+            task = root.find("task")
+            if task is None:
+                sys.exit(f"no task named {name!r}")
+            task_id, status = task.get("id"), task.findtext("status")
+            if status in ("Running", "Requested", "Queued"):
+                sys.exit(f"{name} already {status}")
+            gmp.start_task(task_id)
+            print(f"resume requested for {name} (was {status})")
             return
         for t in tasks(gmp):
             i = info(t)

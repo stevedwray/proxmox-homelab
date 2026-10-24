@@ -690,7 +690,8 @@ are added after the first scrape, using the ASUS TUF B650-E board manual.
 
 ## Not in this plan
 
-- Alerting (over-temperature, fan stall, undervoltage). Add once the names
+- Alerting (over-temperature, fan stall, undervoltage). Over-temperature is built (`docs/alerting/`, 2026-10-24); fan
+  stall and undervoltage: add once the names
   and baselines exist.
 - Argon fan RPM (hardware has no tach).
 - Extending Node Detail / Lab Overview to the bare-metal hosts.
