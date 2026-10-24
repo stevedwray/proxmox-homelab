@@ -106,6 +106,17 @@ endpoint returned the expected `401`. Repeat the authenticated service and
 consumer baseline before starting the 40014 cutover; the live filesystem scan
 is still not a final cold-copy manifest.
 
+The approved `pve-tiny-evacuation-opensearch-final-baseline` task then passed
+the authenticated checks. OpenSearch was `yellow`, the acceptable baseline for
+its single-node topology: 121 active primary shards, no pending tasks, and 98
+unassigned replica shards. The data included current `tpot-events`, security
+audit, Harbor and Wazuh findings, CVE exposure, GVM findings, saved-object and
+security indices. Dashboards reported `green`; both OpenSearch and Dashboards
+Docker containers reported healthy. Used persistent storage was about 1.28 GiB
+under `/var/lib/opensearch-data` and 6.25 GiB under `/var/lib/docker`. These
+are the service baseline and planning figures only: take the exact cold-copy
+manifest after writers are quiesced and the source is stopped.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
