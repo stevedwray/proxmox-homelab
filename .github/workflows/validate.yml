@@ -99,7 +99,7 @@ jobs:
           #  - roles/app_stack/: confirmed zero live consumers (no
           #    stack.yaml points ansible_playbook at deploy-stack) — see
           #    docs/harbor-stack/image-sourcing-enforcement.md Finding 1.
-          #  - stacks/harness-target/ and stacks/harness-target-pve/:
+          #  - stacks/harness-target/:
           #    intentionally pinned to production Harbor's FQDN rather than
           #    ${REGISTRY_HOST}, confirmed by the operator — they only ever
           #    pull (read-only) through prod Harbor's proxy cache, never
@@ -155,7 +155,6 @@ jobs:
             --exclude-dir='media-stack' \
             --exclude-dir='app_stack' \
             --exclude-dir='harness-target' \
-            --exclude-dir='harness-target-pve' \
             --include='*.yml' \
             --include='*.yaml' \
             --include='*.j2' \
