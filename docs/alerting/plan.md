@@ -1328,8 +1328,8 @@ Order matters.
    `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
    timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
 5. **Prove it** (each line is a thing that can be seen; do them in this order):
-   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **30 rules** (9 baseline, 18 hardware,
-      1 honeypot, 2 vulnerability), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
+   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **31 rules** (9 baseline, 18 hardware,
+      2 honeypot, 2 vulnerability), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
       `-critical`, `homelab-page`, `homelab-tripwire`).
    2. **Test** `homelab-page` and `homelab-tripwire` from Grafana. Each must deliver **both** a
       Telegram message and a Discord message. This is the check on the Telegram field names.
