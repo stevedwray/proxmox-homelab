@@ -125,6 +125,20 @@ class RunTests(unittest.TestCase):
         self.assertTrue(all(m == "PUT" for m, _, _ in fake.writes()))
         self.assertIn("updated", out)
 
+    def test_a_failed_notification_stops_apply_before_any_definition(self):
+        class RejectsNotifications(FakeGraylog):
+            def __call__(self, method, path, body=None):
+                if method == "POST" and path == "/events/notifications":
+                    self.calls.append((method, path, body))
+                    return 400, "unknown field"
+                return super().__call__(method, path, body)
+
+        fake = RejectsNotifications()
+        failures, out = run_quiet(fake, "apply")
+        self.assertGreater(failures, 0)
+        self.assertFalse(any(p.startswith("/events/definitions") for _, p, _ in fake.writes()))
+        self.assertIn("no event definitions were touched", out)
+
     def test_validate_saves_nothing_and_reports_rejections(self):
         fake = FakeGraylog()
         failures, _ = run_quiet(fake, "validate")

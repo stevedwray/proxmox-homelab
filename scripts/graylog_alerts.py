@@ -172,6 +172,10 @@ def run(call: Call, data: dict, env: dict[str, str], mode: str) -> int:
 
     if mode == "test":
         return failures
+    if mode == "apply" and failures:
+        # Definitions would point at a notification that does not exist.
+        print("a notification failed, so no event definitions were touched; fix it and re-run")
+        return failures
 
     print("event definitions:")
     for spec in data["definitions"]:
