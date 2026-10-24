@@ -179,13 +179,13 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 
 ## Open items for the operator
 
-1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences). **Set 2026-10-24, ends 2026-10-26 13:46: extend it when the RMA date is known, nothing reminds you when it lapses**. The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves.
+1. **Silence the NVMe media-errors alert for pve-tiny** until the RMA drive is in (Grafana, Alerting, Silences). **Set 2026-10-24, ends 2026-10-26 13:46: extend it when the RMA date is known, nothing reminds you when it lapses**. The pve-tiny evacuation (a parallel stream, `work/pve-tiny-evacuation`) will move stacks off that host, so its `stack=pve-tiny` alerts and the secpipe/honeypot sync host change with it. Re-check the silence and the `node_exporter_hw` targets after each stack moves. The operator is managing the expiry (2026-10-26 13:46).
 2. ~~Reset the Discord bot token~~ Done 2026-10-24.
 3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
 4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
 5. **mktxp for the MikroTik** (Phase 0b). The workstation and Pis are enrolled.
 6. **Both argon Pis run crash-looping Portainer containers** (`portainer-ce` and `portainer-agent` on argon-01, 67k+ restarts each over weeks; a `portainer` and an agent on argon-02). Found by the enrolment; they are probably obsolete and add noise to the Pis' logs. Operator decision to remove.
-7. **Phase 2 Graylog log alerts**, Phase 5 new critical vulnerabilities, Phase 6 digest and native integrations.
+7. **Phase 5 new critical vulnerabilities and Phase 6** digest and native integrations (Phase 2, the Graylog log alerts, is applied and drilled).
 8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
 9. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
 
