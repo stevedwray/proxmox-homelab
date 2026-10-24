@@ -574,6 +574,28 @@ no empty half-hour in the history); `pve` capacity (60% of 126 GiB memory, load 
 
 **W1: honeypot cadence (F1). Small, urgent. Operator, migration owner.**
 
+**Status 2026-10-24: DONE except the final drill.** Option A was carried out in this order, and option B (the stopgap drop-in) was
+skipped because A made it redundant:
+
+1. `stable` merged into the evacuation branch (PR #533): 23 conflicts, 19 of them older copies of pentest-lab files (took `stable`),
+   the manifest resolved by hand (kept `stable`'s, added `services/cse-panel` and `services/tpot` to the `pve` profile), three
+   pentest-lab files superseded by `stable`'s versions. The branch now merges into `stable` with **0 conflicts**.
+2. `services/tpot` and `services/cse-panel` added to `stable`'s `pve` profile (#534), identical to the evacuation branch's.
+3. The host key of the recreated container was refreshed after checking its fingerprint matched the one read from inside the
+   container, then a **scoped reconciliation of only the T-Pot role** was run against CT 50012 (a temporary playbook, not committed;
+   it sets `tpot_findings_ingest_enabled: true` and asserts it, because the role *removes* the timer when that flag is false, and an
+   inline inventory does not carry the stack's flag). Preview first: exactly one change, the timer file. Result: `ok=10 changed=1 failed=0`.
+4. Verified from `pve`: timer `OnCalendar=*-*-* *:00/10:00`, enabled, active, no drop-in left; runs at 18:29:45 and 18:30:40, then
+   every 10 minutes; the first run indexed 6,113 events, 0 errors.
+
+**Still to do:** the honeypot drill (README, *Proven live*: from `argon-01`, `bash -c 'echo > /dev/tcp/192.168.1.28/445'`), and confirm
+"Honeypot data has stopped arriving" stays Normal across two hourly boundaries.
+
+**Known and separate:** the new container's CVE-enrichment job has a stale OpenSearch credential (401); the migration recorded it
+and did not repair it.
+
+*The options considered, kept for the record:*
+
 **Correction (2026-10-24):** an earlier version of this step said "re-provision `secpipe-stack` from `stable`". That is wrong and
 would have been harmful: both `stable` and the evacuation branch still define `secpipe-stack` under
 `terraform/lxc/environments/pve-tiny/`, so `provision.sh --stack secpipe-stack` aims at `pve-tiny`'s stopped copy. The migration did not
