@@ -184,7 +184,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 3. **`OpenBao manifest drift` is firing at warning level for `services/pentest-lab`**: it exists in OpenBao but not in `stable`'s manifest. It clears when the pentest-lab manifest change merges.
 4. **NAS (Asustor Drivestor):** which log categories ADM sends to syslog, and whether SNMP is available.
 5. **Phase 0 enrolment:** workstation `garuda` and argon-01/02 into Graylog (steps written, not run); mktxp for the MikroTik.
-6. **Phase 2 Graylog log alerts**, Phase 5 new critical vulnerabilities, Phase 6 digest and native integrations.
+6. **Apply Phase 2, the Graylog log alerts** (built and validated against live Graylog; plan, *Operator: apply and prove Phase 2*). Then Phase 5 new critical vulnerabilities and Phase 6 digest and native integrations.
 7. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
 8. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
 

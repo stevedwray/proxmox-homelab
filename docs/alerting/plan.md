@@ -19,7 +19,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
-| 2 | Graylog log alerts | Outline |
+| 2 | Graylog log alerts | **Built and validated against live Graylog, not yet applied** (`scripts/graylog_alerts.py`; operator steps in Phase 2) |
 | 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
 | 5, 6 | New critical vulnerabilities; digest, fire drill, native integrations | Outline |
 
@@ -1355,25 +1355,65 @@ the replacement is in. Unsilenced, it would be doing its job.
 (`bottoken`, `chatid`, `parse_mode`) were not in the docs I could reach and come from the source
 as I know it; the contact-point **Test** button is the check.
 
-## Phase 2 (outline): Graylog log alerts
+## Phase 2: Graylog log alerts
 
-Goal: the pve-tiny drive failure would have paged from the logs alone.
+**Status 2026-10-24: built and validated against live Graylog 7.1.9, not yet applied.** Goal: the pve-tiny drive failure
+would have paged from the logs alone. It would have: `pve-tiny` logged storage errors **every day from 2026-10-16**
+(8 to 11 a day, 55 on the 23rd), eight days before anyone noticed.
 
-Decided: Graylog event definitions on **exact message patterns**, never on
-level; notifications go to the relay (Phase 3), and to Discord directly until
-the relay exists.
+**What exists:** `terraform/lxc/stacks/graylog-stack/alerting/log-alerts.yml` (the rules, as data) and
+`scripts/graylog_alerts.py` (12 tests). The script matches by title and updates in place, so re-running is safe. It lists
+by default, `--validate` asks Graylog to check each definition (saves nothing), `--apply` creates or updates, `--test`
+sends Graylog's own test message to each Discord channel.
 
-Patterns to confirm first by counting 30-day hits for each in Graylog (so none
-is encoded unverified): `critical medium error`, `NVMe error count increased`
-(both verified present), `EXT4-fs error`, `Machine check` / `Hardware Error`
-(kernel), thermal throttling messages, `soft lockup`, and the OOM killer
-(warning, not critical). The `EDAC` keyword must not be used: it matches
-harmless node_exporter startup lines. Exclude the expected NAS
-`GazaarBackup` failure. Exclude the `Pentest Segment` stream.
+| Rule | Pattern (exact text, never level) | 30-day hits | Goes to |
+|---|---|---|---|
+| Storage fault in a kernel log | `critical medium error`, `I/O error, dev`, `Buffer I/O error`, `NVMe error count increased`, `EXT4-fs error` | 167 | `#alerts-critical` |
+| CPU machine check | `Machine check events logged` | 3 (pve, 10-03 to 10-05) | `#alerts-critical` |
+| Kernel lockup or CPU thermal throttling | `soft lockup`, `hard LOCKUP`, `temperature above threshold` | **0, unverified** | `#alerts-critical` |
+| Out-of-memory kill | `Out of memory: Killed process`, `Memory cgroup out of memory` | 21 | `#alerts-warning` |
 
-To find before the steps are written: how Graylog 7.1.9's events API is
-driven from Ansible in this repo (event definitions are not provisioned
-anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
+All four exclude VLAN 70 (`NOT relay_src_ip:192.168.70.*`, 2,648 messages a month that are not lab findings), group by host, and
+use a grace period (24 h; 12 h for OOM) so a failing disk gives at most one message per host per day. `EDAC` is not a pattern: it
+matched 58 harmless startup lines on healthy hosts. `blk_update_request` had 0 hits (modern kernels print `I/O error, dev`).
+The expected NAS `GazaarBackup` failure (15 hits) matches none of the four, so it needs no exclusion until a broader rule exists.
+
+**What the data showed (worth acting on, separately):** `pve` OOM-killed `redis-server` (once at 10.6 GB, Greenbone scans) nearly
+every night from 2026-09-29 to 10-16, and Grafana on 10-16; `pve-tiny` lost `dockerd` on 10-23. A second `pve-tiny` disk (`sdb`)
+had read errors on 10-23. `pve` logged CPU machine-check lines at 03:21 on 10-03, 04 and 05 ("Bank 21 is reserved", zero
+addresses: probably a bogus read, but flagged uncorrected).
+
+**Limits, stated plainly:**
+
+- **Discord only.** Graylog cannot post to Telegram and the relay that would is future state, so these never page. The Grafana
+  hardware rules still page for NVMe and SMART faults; the log rules add what metrics cannot see (I/O errors, machine checks, OOM).
+- **There is no Graylog silence.** The Grafana NVMe silence does not cover these. While the pve-tiny drive awaits its RMA the
+  storage rule re-notifies once a day (the 24 h grace period) until the host is retired or the drive replaced.
+- **`--validate` checks structure, not logic.** It rejects a zero-length window but accepts a wrong condition reference, so the
+  drill below is the real test. The lockup/thermal patterns have never matched here.
+- **Graylog keeps these in its database**, so a graylog-stack rebuild loses them: run `--apply` again afterwards.
+
+### Operator: apply and prove Phase 2
+
+Production wrapper, as for any Graylog change (`./with-secrets` loads the retired test profile). Each command is safe to
+repeat. Run from the repo root:
+
+```bash
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py           # read-only: expect both notifications MISSING
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --validate # expect four "ok"
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --apply    # creates 2 notifications and 4 definitions
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --test     # a test message in each Discord channel
+```
+
+Then the drill, which exercises the real rule: the workstation ships warning and above, so this synthetic line matches the
+storage rule. Within about 10 minutes `Storage fault in a kernel log` should reach Discord `#alerts-critical` naming `garuda`:
+
+```bash
+logger -p user.warning 'GRAYLOG_ALERT_DRILL critical medium error, dev nvme9n9 (synthetic)'
+```
+
+The notification message text uses Graylog's own `${...}` template variables, which cannot be checked offline: if the Discord
+message arrives with blank or literal fields, say so and the template line in `graylog_alerts.py` is the one to fix.
 
 ## Phase 3: the alert relay on the OCI box
 
