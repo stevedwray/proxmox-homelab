@@ -139,6 +139,28 @@ job `backup-8b90fc3e-c3a5`, retaining exclusions for 50011, 50012 and 50013.
 A fresh `pbs-iscsi` snapshot backup succeeded as
 `ct/40014/2026-10-24T01:05:16Z`.
 
+### Secpipe CT 50012 preflight — passed
+
+On 2026-10-24, `pve-tiny-evacuation-secpipe-preflight` found the source CVE
+enrichment and T-Pot ingest timers active and waiting, with successful last
+runs. The CVE service last ran successfully on the prior scheduled window;
+the T-Pot ingest service last ran successfully nine minutes before the check.
+The source's only inspected local state candidates were small managed
+`/opt/cve-enrichment-sync` (172,032 bytes) and
+`/opt/tpot-findings-ingest` (32,768 bytes) directories. The pve target is
+stopped and matches source CPU, memory, root/Docker mount sizes, unprivileged
+mode and `tvai` addressing; its `infrastructure-containers` pool had about
+92 GiB free.
+
+Using secpipe's scoped OpenSearch credential from the running source, a
+read-only request to the migrated pve OpenSearch returned the expected
+`unified-cve-exposure` count of 15,361. That scoped writer identity lacks
+cluster-monitor permission, so it does not return the cluster-health field;
+the permitted index read confirms the actual secpipe-to-OpenSearch path.
+No persistent application data needs a cold copy. Re-provision the target
+from managed secrets/configuration before enabling its timers, and run one
+bounded enrichment only after the source stays stopped.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
