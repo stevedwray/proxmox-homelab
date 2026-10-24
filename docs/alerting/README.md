@@ -17,7 +17,7 @@ Nothing in the lab told the operator when something broke. Verified 2026-10-24:
   every night. Nobody was told. (An RMA is in progress.) **Now it pages**: the NVMe media-errors rule fired on it within hours of the deploy.
 - **Seven stacks have had no host metrics** since 2026-10-21 (portainer since 10-23): the cert-renewal
   timer sends SIGHUP and node_exporter exits. The fix, `scripts/node-exporter-renew-fix.sh`, was run on 2026-10-24 and all seven report again.
-- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 27 rules and five contact points.
+- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 28 rules and five contact points.
 
 The target is what **fails silently or semi-silently**: hardware faults, temperatures, new
 critical vulnerabilities, backups, and the monitoring going quiet.
@@ -94,6 +94,7 @@ only and never page (found the hard way: see *Lessons learned*).
 9. **A rule's own error alert inherits its labels.** `DatasourceError` and `DatasourceNoData` carry `page: "true"`, so they would page with an unrendered annotation. They have their own route to Discord warning, and the checker simulates them for every rule.
 10. **Test a drill from a host that is not on the allowlist.** The workstation, the Pis' own tooling and Greenbone are allowlisted on purpose, so drilling from them proves the allowlist, not the alert. `argon-01` (192.168.1.22) is a convenient non-allowlisted LAN host while the Kali laptop is off.
 11. **A critical alert that is not a page must be proven not to page.** Drill A (`docker stop cadvisor`) checks both halves: it arrives in Discord and Telegram stays silent.
+12. **Thresholds follow the hardware, not a global default.** The Pis' SSDs run 48 to 56 C normally, so 55 C paged `argon-02` for nothing; the Pis have their own 60 C rule and everything else keeps 55 C (operator, 2026-10-24).
 
 ## How it works now
 
@@ -135,7 +136,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | MikroTik: pentest_seg may reach only Graylog (514) and step-ca (443) | **Live** |
 | Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token still to be reset in the Developer Portal |
 | Telegram bot, credentials in OpenBao `services/grafana` (v3) and the manifest | **Live** |
-| Grafana alerting: 27 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, three times) |
+| Grafana alerting: 28 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, three times). The 28th, a 60 C SATA temperature rule for the Pis, is in the repo and goes live with the next monitoring-stack deploy |
 | OpenBao seal-status metric (`openbao_sealed`) | **Live**, value 0; the nightly snapshot succeeds at 03:30 |
 | T-Pot to OpenSearch sync | **Live**, every 10 minutes (`tpot_findings_ingest_on_calendar`) |
 | node_exporter fleet repair (SIGHUP bug) | **Done** 2026-10-24; seven stacks reporting again |

@@ -15,7 +15,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
 | 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
 | 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
-| 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Live and proven** |
+| 1 | Discord channels, 9 baseline + 18 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
@@ -1327,7 +1327,7 @@ Order matters.
    `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
    timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
 5. **Prove it** (each line is a thing that can be seen; do them in this order):
-   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **27 rules** (9 baseline, 17 hardware,
+   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **28 rules** (9 baseline, 18 hardware,
       1 honeypot), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
       `-critical`, `homelab-page`, `homelab-tripwire`).
    2. **Test** `homelab-page` and `homelab-tripwire` from Grafana. Each must deliver **both** a
