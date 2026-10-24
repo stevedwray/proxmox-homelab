@@ -7,7 +7,7 @@
 #      credential on the monitoring host should not be able to reboot the router.
 #   2. user (default name "mktxp") in that group, login allowed only from the monitoring host
 #      and the flat LAN. Created once; an existing user's password is never touched (rotate by hand).
-#   3. /ip service api-ssl: give it a certificate (it had none, so every modern TLS client fails
+#   3. /ip service api-ssl (RouterOS 7.24+ calls the access list 'available-from'; 'address' is accepted as an alias): give it a certificate (it had none, so every modern TLS client fails
 #      the handshake), TLS 1.2 only, reachable only from the monitoring host and the LAN.
 #   4. input-chain rule: monitoring-stack (192.168.20.12) -> router tcp/8729 on vlan20-mgmt, placed
 #      before the final "Drop all other unhandled input traffic". The input chain gives mgmt_seg
@@ -133,7 +133,7 @@
         msg:
           - "group '{{ monitor_group }}': {{ 'WILL BE CREATED' if group_missing else 'exists' }}"
           - "user '{{ monitor_user }}': {{ 'WILL BE CREATED' if user_missing else 'exists (password untouched)' }}"
-          - "api-ssl: certificate is '{{ api_ssl.certificate | default('none') }}', tls-version '{{ api_ssl['tls-version'] | default('?') }}', address '{{ api_ssl.address | default('any') }}' -> certificate '{{ api_ssl_certificate }}', only-1.2, '{{ allowed_sources }}'"
+          - "api-ssl: certificate is '{{ api_ssl.certificate | default('none') }}', tls-version '{{ api_ssl['tls-version'] | default('?') }}', available-from '{{ api_ssl['available-from'] | default('any') }}' -> certificate '{{ api_ssl_certificate }}', only-1.2, '{{ allowed_sources }}'"
           - "firewall rule: {{ 'WILL BE ADDED before the final input drop' if firewall_missing else 'exists' }}"
 
     - name: Create the least-privilege group
