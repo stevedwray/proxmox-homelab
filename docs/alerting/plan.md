@@ -6,27 +6,28 @@ alert-rule steps are reused below by id.
 
 ## Status (2026-10-24)
 
-Everything below is on branch `work/graylog-sender-ip-pentest-stream`, **not pushed or merged**: the alerting
-work (about 17 commits) sits on top of one **unrelated** commit, `2fd7175d` (mcp-utility-stack moved back to
-`pve`), which is also not on `stable`. A PR from this branch would carry that commit too; decide whether to
-land it first, or cherry-pick the alerting commits onto a fresh branch from `stable`. Only the Phase 0
-groundwork touches live systems.
+**Phases 1, 1c and both prerequisites are deployed and proven** (drills and a real page: README, *Proven live*).
+The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`. Phase 0 enrolment, Phase 2, 5 and 6
+are still to do. Phases 3, 4 and 4b are future state.
 
 | Phase | What | State |
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
 | 0.4, 0.5 | Workstation and argon-01/02 into Graylog | Step packets `alerting-00` to `02` written, **not executed** (the playbooks do not exist in the repo yet) |
 | 0.6, 0.8 | MikroTik metrics (mktxp), NAS | Outline / waiting on the operator (Asustor log settings and SNMP) |
-| 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Built and committed, not deployed.** Discord channels, webhooks and OpenBao fields are live |
-| 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync | **Built and committed, not deployed** |
-| prereq | OpenBao seal-status metric | **Built and committed, not deployed** |
-| prereq | node_exporter fleet repair | Script on `stable`, **never run** |
+| 1 | Discord channels, 9 baseline + 17 hardware rules, routing | **Live and proven** |
+| 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
+| prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
+| prereq | node_exporter fleet repair | **Done** 2026-10-24 |
 | 2 | Graylog log alerts | Outline |
 | 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
 | 5, 6 | New critical vulnerabilities; digest, fire drill, native integrations | Outline |
 
-**Order from here:** the Phase 1c checklist (prerequisites, secrets, deploys, drills), then the
-Phase 0 enrolment steps and the remaining outlines (2, 5, 6). Phases 3, 4 and 4b wait for a decision.
+**Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
+would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
+(NVMe silence, Discord token reset) is in the README's open items. **Parallel work:** the pve-tiny evacuation
+(`work/pve-tiny-evacuation`) moves stacks off that host; re-check the `stack=pve-tiny` alerts, the NVMe silence and
+the secpipe/honeypot sync host as each stack moves.
 
 ## How to read this
 
@@ -44,8 +45,7 @@ Phase 0 enrolment steps and the remaining outlines (2, 5, 6). Phases 3, 4 and 4b
   deeper than it belongs in the file (the `change: |` block adds them), and `syntax-check`
   cannot see inside a `content: |` string. `scripts/check_grafana_provisioning.py` renders and
   parses the inline Grafana files for that reason.
-- Branch: `work/graylog-sender-ip-pentest-stream` carries all of this; the usual path is
-  PR to `stable` once the deploy and drills pass.
+- Branch: `work/graylog-sender-ip-pentest-stream` carried all of this and is merged to `stable`.
 
 ## Phase 0: log and metrics coverage
 
@@ -1256,6 +1256,8 @@ receiver and nothing unmarked does; every critical hardware rule pages; the trip
 to its own contact point. Each of those was proven by breaking it on a copy.
 
 ### Operator: Phase 1c
+
+**Done 2026-10-24**, in this order, all drills passed (README, *Proven live*). Kept as the runbook for a rebuild. Corrections found while running it: a manual `ansible-playbook` needs `ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg` and `ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles`; `--check` reports `Enable timers` as failed (the timer file is not written in a dry run); the honeypot drill must come from a host that is not on the allowlist (`argon-01`, `ssh ansible@192.168.1.22`, `bash -c 'echo > /dev/tcp/192.168.1.28/445'`); pentagi no longer exists, so ignore it in any `up==0` list.
 
 Order matters.
 

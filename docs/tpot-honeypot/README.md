@@ -63,7 +63,7 @@ agent) is in [monitoring-plan.md](monitoring-plan.md) -- deployed 2026-10-15
 central OpenSearch: [opensearch-grafana-plan.md](opensearch-grafana-plan.md)
 -- planned, not built.
 
-**Update 2026-10-24**: tripwire alerting built (not yet deployed): a Grafana rule pages Telegram and Discord
+**Update 2026-10-24**: tripwire alerting is **live and drilled** (a probe from a non-allowlisted LAN host paged Telegram and `#security` naming the source in about 11 minutes): a Grafana rule pages Telegram and Discord
 `#security` when any host outside the allowlist opens a connection to a T-Pot service port (`docs/alerting/`,
 rule `alerting/homelab-honeypot.yml`). Two findings that shape it. **(1) The honeypot sensors (Cowrie, Dionaea,
 Honeytrap) record Docker-internal source addresses** (`192.168.112.1`, `172.29.0.1`, `172.24.0.2`) for LAN

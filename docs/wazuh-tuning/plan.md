@@ -325,7 +325,7 @@ Ubuntu 26.04 findings:
 1. Done: Grafana via the Greenbone pattern (role `wazuh_metrics`, textfile exporter, dashboard `wazuh.json`, scrape
    targets, cAdvisor on the host). The host also appears in Node Detail, Docker Containers and Lab Overview.
 2. Open: Wazuh alert rules. A provisioned Grafana alert mechanism and Discord/Telegram delivery now exist in the repo
-   (`docs/alerting/`, built 2026-10-24, not yet deployed); no Wazuh-specific rules are written.
+   (`docs/alerting/`, live since 2026-10-24); no Wazuh-specific rules are written.
 3. Weekly noise review: the "noisiest rule share" stat on the dashboard covers it; `wazuh_tuning.py alerts` is the
    detail view. Not scheduled as a task.
 4. Done: docs pass (this workspace and `docs/wazuh-stack/README.md`) and memory.

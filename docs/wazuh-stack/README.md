@@ -63,8 +63,8 @@ Secrets are in OpenBao (`kv/services/wazuh`: `WAZUH_INDEXER_ADMIN_PASSWORD`, `WA
 
 - **Agents for `framework`, `pve-tiny`, `pentagi-stack` and the operator's desktop** (Phase 5 of the tuning plan, optional). The
   desktop is a different category (personal daily driver, not IaC-managed) and is the operator's call.
-- **Grafana alert rules for Wazuh.** Provisioned alerting now exists in the repo (built 2026-10-24, not yet
-  deployed: `docs/alerting/`, Discord plus Telegram pages), but it has no Wazuh-specific rules yet.
+- **Grafana alert rules for Wazuh.** Provisioned alerting is live (2026-10-24,
+  `docs/alerting/`, Discord plus Telegram pages), but it has no Wazuh-specific rules yet.
 - **The manager's `ossec.log` / `api.log` in Graylog** (proposed: an rsyslog `imfile` drop-in, not decided).
 - **Phase 4 sizing**: right-sizing the LXC and a one-shard-per-index template for new alert indices, after ~7 days of data.
 - Wazuh's own default `kibanaserver` password is still at the vendor demo value (same precedent as `opensearch-stack`).
