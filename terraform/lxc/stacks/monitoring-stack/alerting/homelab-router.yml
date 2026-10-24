@@ -5,6 +5,12 @@
 # so only a very hot CPU pages; a firmware or RouterOS update notice repeats weekly (category: maintenance),
 # not every four hours. mktxp keeps answering when it cannot reach the router, so "Router metrics have stopped
 # arriving" is the rule that notices the monitoring account or its certificate breaking.
+#
+# GAPS: since the router's power cycle on 2026-10-24 the router closes mktxp's API session every 15 minutes (the router
+# sends the FIN; cause not found) and the metrics are missing for about two minutes each time. A Grafana rule with a `for`
+# starts again from zero whenever its data disappears, so every rule that needs 15 minutes or an hour of unbroken data
+# could never fire. Each gauge below is therefore wrapped in last_over_time([5m]), which carries the last value across a gap
+# of up to five minutes; the counter rules use increase([1h]), which already spans gaps.
 apiVersion: 1
 groups:
   - orgId: 1
@@ -22,7 +28,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max(mktxp_system_cpu_temperature)'
+              expr: 'max(last_over_time(mktxp_system_cpu_temperature[5m]))'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -48,7 +54,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max(mktxp_system_cpu_temperature)'
+              expr: 'max(last_over_time(mktxp_system_cpu_temperature[5m]))'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -74,7 +80,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (current_firmware,upgrade_firmware)(mktxp_routerboard_firmware_upgrade_available)'
+              expr: 'max by (current_firmware,upgrade_firmware)(last_over_time(mktxp_routerboard_firmware_upgrade_available[5m]))'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -100,7 +106,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (newest_version)(mktxp_system_update_available)'
+              expr: 'max by (newest_version)(last_over_time(mktxp_system_update_available[5m]))'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -210,7 +216,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'absent(mktxp_system_uptime)'
+              expr: 'absent_over_time(mktxp_system_uptime[5m])'
           - refId: C
             datasourceUid: __expr__
             model:

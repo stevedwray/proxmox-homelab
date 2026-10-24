@@ -284,3 +284,12 @@ into OpenBao, then the manifest, monitoring-stack (three times: rules, templates
   returned: four firing episodes and eight Discord messages for one restart. An event ages out, it does not recover. Fix: bridge gaps with
   `last_over_time(...[30m])`, keep the window short (15 minutes), and label the rule `event: "true"`, which routes to a contact point with no
   resolve message. The checker fails an `event` rule that can send a resolve message. Replayed against the real data: 4 episodes became 1.
+- **A gap in the data also stops every rule that has a `for`.** The same fault (the router closes mktxp's API session every 15
+  minutes, cause not found: a packet capture showed the router sending the FIN, there is no scheduler or script on it, and
+  before the power cycle one session lasted 1 h 44 min) removes the router's metrics for about two minutes each time. Grafana
+  restarts a rule's `for` from zero when its data vanishes, so with 14-minute unbroken stretches the 15-minute temperature rule and the
+  one-hour update notices could not fire at all. Router gauge rules now use `last_over_time(...[5m])` (replayed since the power
+  cycle: the firmware notice's longest unbroken run went from 15 to 65 minutes) and the "metrics have stopped arriving" rule uses
+  `absent_over_time(...[5m])`. Turning off mktxp's persistent connection was rejected: it would add a login and logout every minute,
+  about 2,900 Graylog messages a day, and push the router's useful history out of its 1,000-line memory log in eight hours.
+  **Open:** why the router now ends API sessions after exactly 15 minutes. Worth a router restart or a look at RouterOS 7.25 release notes.
