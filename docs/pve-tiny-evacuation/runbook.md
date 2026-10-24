@@ -139,6 +139,45 @@ job `backup-8b90fc3e-c3a5`, retaining exclusions for 50011, 50012 and 50013.
 A fresh `pbs-iscsi` snapshot backup succeeded as
 `ct/40014/2026-10-24T01:05:16Z`.
 
+### AI Services CT 50013 cutover — completed
+
+On 2026-10-24, the approved AI Services cutover stopped CT 50013 on
+`pve-tiny`, disabled source autostart, cold-copied the three persistent Docker
+volumes (OpenWebUI, SearXNG and deep-research configuration), and restored
+them on the existing pve target. The target is the sole running instance,
+has `onboot=1`, and its OpenWebUI (`:8081`) and SearXNG (`:8082`) endpoints
+returned HTTP 200. A new snapshot backup completed as
+`pbs-iscsi:ct/50013/2026-10-24T03:05:31Z`. The pve backup job now excludes
+only unrelated VMID 50011.
+
+### CSE code-eval CT 100071 cutover — completed
+
+On 2026-10-24, the approved CSE code-eval cutover drained the idle source,
+stopped CT 100071 on `pve-tiny`, and disabled source autostart. Its excluded
+`/srv/cyberseceval` mount was cold-archived with numeric ownership, ACLs and
+xattrs; the archive SHA-256 is
+`faac9cd7bb842ac96412553ccf2d97496b85f9bf01069ae737b5eb6c89faf31f`.
+The archive was relayed through the operator workstation because node-to-node
+SCP authentication was unavailable; no host authorization was changed.
+
+A reviewed pve Terraform plan created CT 100071 with root and Docker storage
+on `apps-containers`, the durable mount on `storage-containers`, and its
+original `tvcse` address `192.168.100.71`. The durable mount was restored,
+the target started alone, and `onboot=1` is set. The `cse-code-eval` and
+Portainer-agent containers are running. Direct checks confirmed gcc/g++, CMake,
+the pinned CybersecurityBenchmarks command-line runner, the restored durable
+mount, and the route to cse-controller. A TCP probe to cse-controller port
+8000 was refused because cse-controller intentionally exposes no listener on
+that port; this was an invalid validation assumption, recorded without a
+service or network change. The playbook's Step CA reachability check timed out
+and was skipped by the role; this pre-existing condition was observed but not
+changed.
+
+A new snapshot backup completed as
+`pbs-iscsi:ct/100071/2026-10-24T03:20:06Z`; it correctly excludes the durable
+mount, whose cold archive remains the recovery copy. The stopped source is
+retained for rollback soak.
+
 ### Secpipe CT 50012 preflight — passed
 
 On 2026-10-24, `pve-tiny-evacuation-secpipe-preflight` found the source CVE

@@ -10,7 +10,7 @@ cores: 2
 memory: 2048
 swap: 512
 rootfs_size: 8
-storage_profile: platform-default
+storage_profile: platform-apps-zfs
 docker_storage_size: 30G
 template_name: debian-13.1-2-docker-template.tar.gz
 tags: [docker, cyberseceval, code-eval, sandbox, execution, isolated]
@@ -18,12 +18,12 @@ depends_on: []
 provides: []
 extra_mount_path: "/srv/cyberseceval"
 extra_mount_size: "50G"
-extra_mount_profile: durable-nvme
+extra_mount_profile: durable-zfs
 extra_mount:
   logical_name: cse-code-eval-data
   path: /srv/cyberseceval
   size: "50G"
-  profile: durable-nvme
+  profile: durable-zfs
   backup_policy: exclude
   resize_control_plane: provider
 ansible_playbook: deploy-cse-code-eval
