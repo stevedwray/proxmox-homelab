@@ -74,6 +74,25 @@ paths are therefore ready for guest cutover; panel Redis remains separately
 covered by the successful controller `.70` check because the router rule is
 source-address-specific.
 
+### OpenSearch CT 40014 preflight — blocked
+
+On 2026-10-24, the approved `pve-tiny-evacuation-opensearch-preflight` task
+confirmed that source CT 40014 is running with its expected 16G root, 20G
+Docker mount, 150G OpenSearch-data mount, 6 GiB memory, two cores, `tvinfra`
+network, unprivileged mode and nesting. The stopped pve target matches those
+runtime settings and mount sizes, uses its intended `monitoring-containers`
+and `storage-containers` pools, and has `onboot=0`. At the check time those
+pve pools had about 437 GiB and 1.48 TiB free respectively.
+
+The source OpenSearch container reported healthy, but its Dashboards container
+reported unhealthy before any migration action. Direct unauthenticated HTTP
+requests to local port 9200 returned an empty reply, so they do not provide a
+valid cluster/index or authenticated-login baseline. A best-effort live
+filesystem size scan also raced active OpenSearch writes and encountered one
+vanished segment; it is not a final cold-copy manifest. No workload was
+stopped and no files were changed. Do not start the 40014 cutover until the
+Dashboards health failure is diagnosed and the full service baseline passes.
+
 1. Record branch/HEAD and freeze concurrent Terraform work on these eight
    VMIDs. Copy only the **real leaf** `terraform.tfstate.d` directories from
    the original checkout into the matching ignored worktree directories.
