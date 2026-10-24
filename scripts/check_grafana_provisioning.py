@@ -20,6 +20,7 @@ import yaml
 
 DEFAULT_PLAYBOOK = "terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
 RULES_DIR = "terraform/lxc/stacks/monitoring-stack/alerting"
+TEMPLATES_FILE = "templates/homelab-templates.yml"
 DATASOURCES_TASK = "Write Grafana datasource provisioning"
 CONTACTS_TASK = "Write Grafana Discord contact points and notification policy"
 
@@ -88,6 +89,20 @@ def check(playbook_path: str, rules_dir: str = RULES_DIR) -> list[str]:
                 problems.append(f"{name}/{rec['uid']}: telegram needs bottoken and chatid")
             if rec["type"] == "discord" and "url" not in settings:
                 problems.append(f"{name}/{rec['uid']}: discord needs url")
+
+    defined = set()
+    template_path = Path(rules_dir) / TEMPLATES_FILE
+    if not template_path.exists():
+        problems.append(f"{template_path} is missing")
+    else:
+        try:
+            body = yaml.safe_load(template_path.read_text())["templates"][0]["template"]
+            defined = set(re.findall(r'\{\{-?\s*define "([^"]+)"', body))
+        except (yaml.YAMLError, KeyError, IndexError, TypeError) as exc:
+            problems.append(f"{template_path} is not a valid Grafana templates file: {exc}")
+    for match in re.finditer(r'template \\?"([^"\\]+)\\?"', Path(playbook_path).read_text()):
+        if match.group(1) not in defined:
+            problems.append(f"contact points use template {match.group(1)!r}, which {TEMPLATES_FILE} does not define")
 
     def has_telegram(point: str) -> bool:
         return any(r["type"] == "telegram" for r in points[point])

@@ -562,6 +562,13 @@
         - homelab-honeypot.yml
       register: grafana_alert_rules_provisioning
 
+    - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/monitoring-stack/alerting/templates/homelab-templates.yml"
+        dest: "{{ monitoring_compose_dir }}/grafana/provisioning/alerting/templates.yml"
+        mode: "0640"
+      register: grafana_alert_templates_provisioning
+
     - name: Write Grafana Discord contact points and notification policy
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/grafana/provisioning/alerting/contact-points.yml"
@@ -577,6 +584,8 @@
                   settings:
                     url: "{{ grafana_discord_warning_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
             - orgId: 1
               name: homelab-discord-security
@@ -586,6 +595,8 @@
                   settings:
                     url: "{{ grafana_discord_security_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
             - orgId: 1
               name: homelab-discord-critical
@@ -595,6 +606,8 @@
                   settings:
                     url: "{{ grafana_discord_critical_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
             - orgId: 1
               name: homelab-page
@@ -604,6 +617,8 @@
                   settings:
                     url: "{{ grafana_discord_critical_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
                 - uid: homelab-page-telegram
                   type: telegram
@@ -611,6 +626,7 @@
                     bottoken: "{{ grafana_telegram_bot_token }}"
                     chatid: "{{ grafana_telegram_chat_id }}"
                     parse_mode: None
+                    message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
                   disableResolveMessage: false
             - orgId: 1
               name: homelab-tripwire
@@ -620,6 +636,8 @@
                   settings:
                     url: "{{ grafana_discord_security_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
                 - uid: homelab-tripwire-telegram
                   type: telegram
@@ -627,6 +645,7 @@
                     bottoken: "{{ grafana_telegram_bot_token }}"
                     chatid: "{{ grafana_telegram_chat_id }}"
                     parse_mode: None
+                    message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
                   disableResolveMessage: false
           policies:
             - orgId: 1
@@ -1187,7 +1206,7 @@
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart grafana
       when:
         - not ansible_check_mode
-        - grafana_alert_rules_provisioning.changed or grafana_contact_points_provisioning.changed or grafana_datasources_provisioning.changed
+        - grafana_alert_rules_provisioning.changed or grafana_alert_templates_provisioning.changed or grafana_contact_points_provisioning.changed or grafana_datasources_provisioning.changed
       changed_when: true
 
     - name: Wait for Grafana health endpoint

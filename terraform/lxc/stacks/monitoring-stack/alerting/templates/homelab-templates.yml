@@ -1,0 +1,36 @@
+# Message templates for the Discord and Telegram contact points. Grafana's own
+# templating, never Jinja: this file is copied as-is. The contact points
+# reference these by name (deploy-monitoring-stack.yml).
+#
+# Rules: one short headline, the rule's own `summary`, a way to snooze it.
+# Telegram is sent as plain text (parse_mode None), so no markup here: Telegram's
+# Markdown parser rejects a stray "_" or "*", and our labels are full of
+# underscores, which would silently lose a page.
+apiVersion: 1
+templates:
+  - orgId: 1
+    name: homelab
+    template: |
+      {{ define "homelab.icon" -}}
+      {{- if eq .Status "resolved" }}✅{{ else if eq .CommonLabels.severity "critical" }}🔴{{ else }}🟠{{ end -}}
+      {{- end }}
+
+      {{ define "homelab.title" -}}
+      {{ template "homelab.icon" . }} {{ if eq .Status "resolved" }}Resolved: {{ end }}{{ .CommonLabels.alertname }}{{ if gt (len .Alerts) 1 }} ({{ len .Alerts }}){{ end }}
+      {{- end }}
+
+      {{ define "homelab.discord" -}}
+      {{ range .Alerts.Firing }}{{ .Annotations.summary }} · [silence]({{ .SilenceURL }})
+      {{ end }}{{ range .Alerts.Resolved }}{{ .Annotations.summary }}
+      {{ end }}
+      {{- end }}
+
+      {{ define "homelab.telegram" -}}
+      {{ template "homelab.title" . }}
+      {{ range .Alerts.Firing }}
+      {{ .Annotations.summary }}
+      {{ end }}{{ if eq (len .Alerts.Firing) 1 }}{{ with index .Alerts.Firing 0 }}Silence: {{ .SilenceURL }}
+      {{ end }}{{ end }}{{ range .Alerts.Resolved }}
+      {{ .Annotations.summary }}
+      {{ end }}
+      {{- end }}
