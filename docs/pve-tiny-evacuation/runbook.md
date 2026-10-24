@@ -178,6 +178,27 @@ A new snapshot backup completed as
 mount, whose cold archive remains the recovery copy. The stopped source is
 retained for rollback soak.
 
+### CSE controller CT 40070 cutover — completed
+
+On 2026-10-24, the approved CSE controller cutover first confirmed all Celery
+queues had no active or reserved work. The source was gracefully stopped and
+set to `onboot=0`; its complete `/srv/cyberseceval` mount was cold-archived
+with numeric ownership, ACLs and xattrs (SHA-256
+`144151e007bb956ef18c5c4c0bf683ed72da6750eee9a8b32c30dec1a05820d0`).
+The pve target was created on `apps-containers` with its durable mount on
+`storage-containers`, restored through the operator workstation without
+changing node-to-node SSH authorization, and started as the sole owner of
+`192.168.100.70`.
+
+The target profile initially omitted the existing `services/cse-panel` secret
+reference required for the controller worker's Redis credential. That omission
+was introduced by target migration configuration and was corrected by adding
+the reference to the pve profile; the worker subsequently connected to Redis
+and became ready. Step CA's timeout was observed and skipped by the role, with
+no unrelated repair. The target has `onboot=1`; a fresh backup completed as
+`pbs-iscsi:ct/40070/2026-10-24T03:31:19Z`, including root, Docker and the
+durable mount. Retain the stopped source for rollback soak.
+
 ### Secpipe CT 50012 preflight — passed
 
 On 2026-10-24, `pve-tiny-evacuation-secpipe-preflight` found the source CVE

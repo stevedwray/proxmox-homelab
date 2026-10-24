@@ -8,7 +8,7 @@ recorded pre-existing stale target credential issue; it was observed but not
 changed during this migration. AI Services CT 50013 and CSE code-eval CT
 100071 are also running only on `pve`, have target autostart, and have fresh
 PBS backups. CSE's excluded durable data mount was cold-copied and verified.
-The remaining four guests have not started cutover.
+CSE controller CT 40070 is also running only on `pve`, with its full durable mount preserved and a fresh PBS backup. The remaining three guests have not started cutover.
 
 This worktree's pve profile formerly requested retired `services/pentagi`,
 which was correctly removed from OpenBao during the PentAGI teardown. The
@@ -46,7 +46,7 @@ level. This is a point-in-time capacity check, not a peak guarantee.
 | 50013 | ai-services-stack | 192.168.50.11 / ai_seg | 1.90 GiB | NVMe root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot with preserved OpenWebUI, SearXNG and research volumes; fresh PBS backup |
 | 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot and freshly backed up; T-Pot ingestion passed; pre-existing stale CVE credential issue recorded, not changed |
 | 40072 | pentest-runner | 192.168.100.72 / cse_seg | 0.32 GiB | NVMe root and Docker | No stack definition found; establish owner and restore method |
-| 40070 | cse-controller | 192.168.100.70 / cse_seg | 0.41 GiB | Boot SSD root/Docker; NVMe 100G data mount | Preserve run state and private cse-kali SSH key |
+| 40070 | cse-controller | 192.168.100.70 / cse_seg | 0.41 GiB | Boot SSD root/Docker; NVMe 100G data mount | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot with complete durable mount preserved; fresh PBS backup |
 | 100071 | cse-code-eval | 192.168.100.71 / cse_seg | 0.25 GiB | Boot SSD root/Docker; NVMe 50G data mount | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot on `tvcse`; cold-copied durable mount and fresh PBS backup (durable mount remains excluded by design) |
 | 20030 | cse-panel-stack | 192.168.20.30 / mgmt_seg | 0.42 GiB | Boot SSD root and Docker | Preserve Redis AOF and panel state |
 | 20017 | technitium-tiny-stack | 192.168.20.17 / mgmt_seg | 0.56 GiB | Boot SSD root and Docker | Secondary DNS; verify cluster and client resolution |
@@ -257,7 +257,8 @@ Suggested order, respecting dependencies and the failing NVMe:
 | 50012 Secpipe | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; fresh PBS backup | Track the observed pre-existing stale CVE credential separately; do not change it as part of migration |
 | 50013 AI Services | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; fresh PBS backup | Retain stopped source for rollback soak |
 | 100071 CSE code-eval | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; durable mount cold-copied and fresh PBS backup | Retain stopped source for rollback soak; no controller listener is expected on TCP 8000 |
-| 40072, 40070, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
+| 40070 CSE controller | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; durable mount cold-copied and fresh PBS backup | Retain stopped source for rollback soak |
+| 40072, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
 
 ## Phase 3: shutdown and RMA gate
 
