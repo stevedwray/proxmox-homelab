@@ -17,7 +17,7 @@ Nothing in the lab told the operator when something broke. Verified 2026-10-24:
   every night. Nobody was told. (An RMA is in progress.) **Now it pages**: the NVMe media-errors rule fired on it within hours of the deploy.
 - **Seven stacks have had no host metrics** since 2026-10-21 (portainer since 10-23): the cert-renewal
   timer sends SIGHUP and node_exporter exits. The fix, `scripts/node-exporter-renew-fix.sh`, was run on 2026-10-24 and all seven report again.
-- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 30 rules and five contact points.
+- **Live Grafana had only the default email receiver:** no contact point, no alert rule. It now has 31 rules and five contact points.
 
 The target is what **fails silently or semi-silently**: hardware faults, temperatures, new
 critical vulnerabilities, backups, and the monitoring going quiet.
@@ -127,6 +127,10 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
   misleading for the same reason (they count Docker addresses). Not yet rebuilt.
 - Latency: the OpenSearch copy was synced hourly; it is now every 10 minutes (worst case about 12 minutes
   from a probe to a page).
+- **Freshness:** the tripwire treats "no data" as fine, so a stalled sync would leave it blind without a word. The rule
+  `Honeypot data has stopped arriving` fires (Discord `#security`) when fewer than 1,000 Suricata events arrive in an hour; normal is
+  7,200 to 10,000, and no hour in 14 days was below 7,231. It also fires if OpenSearch or the T-Pot sync is down for over an hour, for any
+  reason, including a planned move of `opensearch-stack` or `secpipe-stack`: that is the rule working, and the tripwire is blind then.
 
 ## What exists today (verified 2026-10-24)
 
@@ -136,7 +140,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | MikroTik: pentest_seg may reach only Graylog (514) and step-ca (443) | **Live** |
 | Discord server, four channels, four webhooks, OpenBao `services/grafana`, manifest | **Live**; bot token still to be reset in the Developer Portal |
 | Telegram bot, credentials in OpenBao `services/grafana` (v3) and the manifest | **Live** |
-| Grafana alerting: 28 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, four times). Two more, the vulnerability rules (Phase 5), are in the repo and go live with the next monitoring-stack deploy |
+| Grafana alerting: 30 rules, 5 contact points, policy, message templates | **Live** (deployed 2026-10-24, five times, including the two Phase 5 vulnerability rules). A 31st, the honeypot data-freshness rule, is in the repo and goes live with the next monitoring-stack deploy |
 | OpenBao seal-status metric (`openbao_sealed`) | **Live**, value 0; the nightly snapshot succeeds at 03:30 |
 | T-Pot to OpenSearch sync | **Live**, every 10 minutes (`tpot_findings_ingest_on_calendar`) |
 | node_exporter fleet repair (SIGHUP bug) | **Done** 2026-10-24; seven stacks reporting again |
