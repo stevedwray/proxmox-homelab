@@ -631,6 +631,8 @@ module "lxc" {
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
   unprivileged = try(local.stack.unprivileged, true)
+  start        = coalesce(var.stack_start, try(local.stack.start, true))
+  onboot       = coalesce(var.stack_onboot, try(local.stack.onboot, true))
 
   cores                       = try(local.stack.cores, 2)
   memory                      = try(local.stack.memory, 2048)

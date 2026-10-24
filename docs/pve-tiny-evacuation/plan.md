@@ -8,7 +8,9 @@ recorded pre-existing stale target credential issue; it was observed but not
 changed during this migration. AI Services CT 50013 and CSE code-eval CT
 100071 are also running only on `pve`, have target autostart, and have fresh
 PBS backups. CSE's excluded durable data mount was cold-copied and verified.
-CSE controller CT 40070 is also running only on `pve`, with its full durable mount preserved and a fresh PBS backup. The remaining three guests have not started cutover.
+CSE controller CT 40070, CSE panel CT 20030, and Technitium CT 20017 are also
+running only on `pve`, with their required durable state preserved and fresh
+PBS backups. CT 40072 pentest-runner is the remaining cutover.
 
 This worktree's pve profile formerly requested retired `services/pentagi`,
 which was correctly removed from OpenBao during the PentAGI teardown. The
@@ -45,11 +47,11 @@ level. This is a point-in-time capacity check, not a peak guarantee.
 | 40014 | opensearch-stack | 192.168.40.14 / infra_seg | 4.53 GiB | NVMe root, Docker, 150G data mount | Completed 2026-10-24: target running/onboot, service and consumer checks passed, fresh pve PBS backup; source stopped/onboot disabled |
 | 50013 | ai-services-stack | 192.168.50.11 / ai_seg | 1.90 GiB | NVMe root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot with preserved OpenWebUI, SearXNG and research volumes; fresh PBS backup |
 | 50012 | secpipe-stack | 192.168.50.12 / ai_seg | 0.17 GiB | NVMe root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot and freshly backed up; T-Pot ingestion passed; pre-existing stale CVE credential issue recorded, not changed |
-| 40072 | pentest-runner | 192.168.100.72 / cse_seg | 0.32 GiB | NVMe root and Docker | No stack definition found; establish owner and restore method |
+| 40072 | pentest-runner | 192.168.100.72 / cse_seg | 0.32 GiB | NVMe root and Docker | Managed definition imported; pve target uses the `platform-nvme` compatibility mapping to `apps-containers`; preserve the full current root and Docker state |
 | 40070 | cse-controller | 192.168.100.70 / cse_seg | 0.41 GiB | Boot SSD root/Docker; NVMe 100G data mount | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot with complete durable mount preserved; fresh PBS backup |
 | 100071 | cse-code-eval | 192.168.100.71 / cse_seg | 0.25 GiB | Boot SSD root/Docker; NVMe 50G data mount | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot on `tvcse`; cold-copied durable mount and fresh PBS backup (durable mount remains excluded by design) |
-| 20030 | cse-panel-stack | 192.168.20.30 / mgmt_seg | 0.42 GiB | Boot SSD root and Docker | Preserve Redis AOF and panel state |
-| 20017 | technitium-tiny-stack | 192.168.20.17 / mgmt_seg | 0.56 GiB | Boot SSD root and Docker | Secondary DNS; verify cluster and client resolution |
+| 20030 | cse-panel-stack | 192.168.20.30 / mgmt_seg | 0.42 GiB | Boot SSD root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot with Redis AOF and panel state restored; fresh PBS backup |
+| 20017 | technitium-tiny-stack | 192.168.20.17 / mgmt_seg | 0.56 GiB | Boot SSD root and Docker | Completed 2026-10-24: source stopped/onboot disabled; target running/onboot; recursive DNS and HTTPS API checks passed; fresh PBS backup |
 
 The `pve-tiny` NVMe has documented media errors and already made CT 50011's
 PBS backup fail. A backup listing alone cannot prove recoverability. Check
@@ -89,10 +91,13 @@ guest from an empty state directory, and never symlink writable state back
 into the other checkout. Refresh each state copy immediately before that
 guest's cutover; stop if its checksum changed unexpectedly.
 
-`pentest-runner` has no tracked stack definition or usable state in either
-checkout. The local original-checkout directory contains inventory and
-cache files, but its `pve-tiny` state directory is empty. Treat VMID 40072
-as manually managed until its creation and restore path is established.
+`pentest-runner` now has its merged stack definition, deployment playbook and
+source-node entrypoint. This evacuation branch adds the pve entrypoint. The
+source state directory remains empty, so its current root and Docker contents
+are migration data: do not replace them with a fresh provisioned guest. The
+existing stack name `platform-nvme` maps to `apps-containers` on pve through a
+node-local compatibility profile, leaving the live source definition unchanged
+until cutover.
 
 A read-only pve API check on 2026-10-24 found no `tvcse` zone or VNet and
 no pending zone/VNet/subnet changes (all 10 current VNets checked).
@@ -237,8 +242,9 @@ Suggested order, respecting dependencies and the failing NVMe:
    with a bounded sample, not an unbounded full sync.
 3. `ai-services-stack`: compare OpenWebUI users/chats, verify SearXNG, research
    state, model route and real login/ingress.
-4. `pentest-runner`: use its confirmed owner/restore method; validate a
-   bounded real job. This remains blocked until Phase 0 establishes it.
+4. `pentest-runner`: use the managed pve target after preserving its current
+   root and Docker state with a verified cold copy; validate the viewer
+   supervisor and a bounded real job.
 5. Pause new CSE jobs and drain current work. Move `cse-code-eval`, then
    `cse-controller`, then `cse-panel-stack`; validate CSE isolation, worker,
    Redis queue, panel login and one small evaluation. Preserve the dedicated
@@ -258,7 +264,9 @@ Suggested order, respecting dependencies and the failing NVMe:
 | 50013 AI Services | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; fresh PBS backup | Retain stopped source for rollback soak |
 | 100071 CSE code-eval | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; durable mount cold-copied and fresh PBS backup | Retain stopped source for rollback soak; no controller listener is expected on TCP 8000 |
 | 40070 CSE controller | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; durable mount cold-copied and fresh PBS backup | Retain stopped source for rollback soak |
-| 40072, 20030, 20017 | Not started | Resolve normal per-guest gates after the production wrapper is restored |
+| 20030 CSE panel | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; Redis AOF restored and fresh PBS backup | Retain stopped source for rollback soak |
+| 20017 Technitium | Complete on `pve`; source stopped/onboot disabled; target `onboot=1`; recursive DNS and HTTPS API checks passed; fresh PBS backup | Wazuh-agent enrollment failed after the DNS service was healthy; record it as an existing ancillary deployment issue and do not repair it in this migration |
+| 40072 pentest-runner | Managed pve target definition prepared | Run target Terraform preflight and source workload/state inventory, then perform a cold root and Docker copy under the scoped cutover approval |
 
 ## Phase 3: shutdown and RMA gate
 

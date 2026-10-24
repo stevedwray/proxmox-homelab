@@ -101,6 +101,14 @@ profiles:
     docker_storage: apps-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
+  # pve-tiny stack definitions use this profile name for their NVMe-backed
+  # root and Docker volumes.  On pve, the evacuation target maps it to the
+  # apps ZFS pool without changing the source-node definition before cutover.
+  platform-nvme:
+    rootfs_storage: apps-containers
+    docker_storage: apps-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
   platform-monitoring-zfs:
     rootfs_storage: monitoring-containers
     docker_storage: monitoring-containers

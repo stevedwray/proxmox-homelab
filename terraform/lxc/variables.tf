@@ -81,6 +81,20 @@ variable "stack_ip_address" {
   default     = null
 }
 
+variable "stack_start" {
+  description = "Optional environment-specific override for starting the LXC after creation."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
+variable "stack_onboot" {
+  description = "Optional environment-specific override for LXC autostart."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
 variable "lxc_password" {
   description = "Root password for LXC containers"
   type        = string

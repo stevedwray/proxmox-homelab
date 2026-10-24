@@ -199,6 +199,53 @@ no unrelated repair. The target has `onboot=1`; a fresh backup completed as
 `pbs-iscsi:ct/40070/2026-10-24T03:31:19Z`, including root, Docker and the
 durable mount. Retain the stopped source for rollback soak.
 
+### CSE panel CT 20030 cutover — completed
+
+On 2026-10-24, the approved panel cutover stopped CT 20030 on `pve-tiny`,
+disabled source autostart, and cold-archived the complete root and Docker
+state. Archive SHA-256:
+`0abcd07e1fd46470c80483c2f064b0cc4df9ca031d9a30ed83a113959dc854e3`.
+The managed pve target on `apps-containers` had its Redis AOF and panel state
+restored before starting as sole owner of `192.168.20.30`. The panel UI on
+port 8050 returned HTTP 200 and Redis was ready. The root panel-web endpoint's
+HTTP 404 is existing route behaviour. Target `onboot=1`; source remains
+stopped with `onboot=0`. A fresh backup completed as
+`pbs-iscsi:ct/20030/2026-10-24T03:37:21Z`.
+
+### Technitium CT 20017 cutover — completed
+
+On 2026-10-24, the approved Technitium cutover stopped CT 20017 on
+`pve-tiny`, disabled source autostart, and restored its cold root and Docker
+archive on the managed pve target. Archive SHA-256:
+`ad70c5be77b19d40756a06ccbcd6c9b91e72293ca397118c3ccb455af44fcd4d`.
+An interrupted provision left `combined-ca.crt` as an empty target directory;
+that migration-created artifact was removed before the scoped role resumed.
+Technitium then served a recursive `github.com` A lookup and its HTTPS API
+returned HTTP 200 on port 53443. Target `onboot=1`; source remains stopped
+with `onboot=0`. A fresh backup completed as
+`pbs-iscsi:ct/20017/2026-10-24T04:23:55Z`.
+
+The resumed role later failed while enrolling the ancillary Wazuh agent. DNS
+service health was unaffected; this pre-existing ancillary issue was recorded
+without repair under the migration scope rule.
+
+### Pentest runner CT 40072 preflight — passed
+
+The imported stack definition, pve entrypoint and pve storage compatibility
+mapping produce a reviewed target plan: five creates, zero changes and zero
+destroys. It creates CT 40072 with four cores, 8192 MiB memory, 10G root and
+30G Docker storage on `apps-containers`, with `tvcse` address
+`192.168.100.72/24`. The migration entrypoint explicitly keeps it stopped and
+with autostart disabled for the cold restore. The VMID is absent from pve and
+`apps-containers` has about 382 GiB free.
+
+The live source has no active Strix or BoxPwnr workload. Its enabled viewer
+supervisor listens on port 18820; the observed Strix processes are old defunct
+children. Preserve the complete root filesystem and separate Docker mount,
+including about 676 MiB under `/opt/BoxPwnr`, 15 MiB under
+`/root/strix_runs`, and 413 MiB of Docker state. The prior PBS test restore
+remains the recovery fallback if a final cold read fails.
+
 ### Secpipe CT 50012 preflight — passed
 
 On 2026-10-24, `pve-tiny-evacuation-secpipe-preflight` found the source CVE
@@ -297,9 +344,8 @@ track the CVE credential issue separately from this evacuation.
 
 ## 1. Source definitions and capacity choices
 
-Create a pve `terragrunt.hcl` for each of the four managed guests absent on
-pve (`cse-controller`, `cse-code-eval`, `cse-panel-stack`,
-`technitium-tiny-stack`) by copying the shape of its pve-tiny entrypoint.
+Create a pve `terragrunt.hcl` for each managed guest absent on pve by copying
+the shape of its pve-tiny entrypoint. This now includes `pentest-runner`.
 Keep the pve-tiny entrypoints and state for rollback. Update stack storage
 profiles **one guest at a time immediately before its pve plan**: the
 pve-tiny-only `platform-nvme`/`durable-nvme` names do not exist in
@@ -314,7 +360,7 @@ pve-tiny-only `platform-nvme`/`durable-nvme` names do not exist in
 | 100071 | `platform-apps-zfs` | `durable-zfs` | Rebuild `/srv/cyberseceval` only after confirming no valuable current run data; its mount is excluded from PBS |
 | 20030 | `platform-apps-zfs` | none | Copy `/srv/cse-panel/redis-data` after stopping Redis and draining jobs |
 | 20017 | `platform-monitoring-zfs` | none | Re-provision and rejoin secondary to primary; verify whether local config needs a copy first |
-| 40072 | `apps-containers` for both volumes | none | Manual guest: restore the verified whole-CT PBS backup (10G root, 30G Docker) to pve; retain manual ownership pending a later IaC task |
+| 40072 | `platform-nvme` compatibility mapping to `apps-containers` for both volumes | none | Create the managed pve baseline, then restore the stopped source's full root and Docker contents; retain the verified PBS restore as recovery evidence |
 
 Confirm real free bytes and backend identity immediately before cutover.
 Do not count the same ZFS pool through two aliases. Reserve room for the
@@ -348,19 +394,19 @@ read-only; an apply is a separately approved production mutation. Do not
 import a pve-tiny state file into the pve workspace: it names another node
 and would make the pve plan try to relocate/replace a live source.
 
-For **40072**, the read-only source config confirms an unprivileged Debian
-LXC, 10G NVMe root, 30G NVMe Docker mount (included in backup), `tvcse`
-at `192.168.100.72/24`, 8192 MiB memory, 4 cores and no extra mount.
-Use a **whole-CT PBS restore** to an otherwise absent VMID 40072 on pve,
-mapping root and Docker to `apps-containers`, with its original network
-configuration and start disabled until inspected. First test that exact
-backup on an unused VMID and isolated interface, then destroy the test CT.
-For the real restore, stop/onboot-disable the source, restore on pve, compare
-`pct config` field by field with the saved source config, explicitly set the
-bridge to pve's `tvcse` if needed, then start and test. Do not use Terraform
-on this CT until a separately reviewed import/provisioning project defines
-it. If the PBS restore is unavailable or omits Docker, block this guest's
-cutover rather than improvising a manual `pct create` during downtime.
+For **40072**, the merged stack definition and playbook now provide the pve
+baseline. The read-only source config confirms an unprivileged Debian LXC,
+10G NVMe root, 30G NVMe Docker mount, `tvcse` at `192.168.100.72/24`, 8192
+MiB memory, 4 cores and no extra mount. The exact PBS snapshot was already
+test-restored successfully, but the real cutover preserves the current state:
+stop and disable source autostart, apply the reviewed pve plan with target
+autostart disabled, cold-archive the complete root filesystem and the Docker
+mount separately with numeric ownership, ACLs and xattrs, restore both into
+the stopped target, compare `pct config` field by field, then start and test.
+The `platform-nvme` stack profile maps to `apps-containers` only on pve, so
+the source definition remains valid until cutover. If either source archive
+has a read or integrity error, stop and restore the already-tested PBS backup
+instead of starting a partial target.
 
 ## 3. Per-guest approved cutover transaction
 
