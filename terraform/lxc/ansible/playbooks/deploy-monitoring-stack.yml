@@ -92,6 +92,17 @@
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.60.5"
     cadvisor_image: "{{ monitoring_registry_host }}/ghcr/google/cadvisor:{{ cadvisor_version }}"
+    # ASUSTOR NAS over SNMPv3 (docs/alerting/plan.md, Phase 0.8). Credentials: OpenBao services/nas.
+    snmp_exporter_version: "v0.30.1"
+    snmp_exporter_image: "{{ monitoring_registry_host }}/dockerhub/prom/snmp-exporter:{{ snmp_exporter_version }}"
+    nas_snmp_user: "{{ lookup('env', 'NAS_SNMP_USER') | mandatory('NAS_SNMP_USER env var is required') }}"
+    nas_snmp_password: "{{ lookup('env', 'NAS_SNMP_PASSWORD') | mandatory('NAS_SNMP_PASSWORD env var is required') }}"
+    # MikroTik hAP ax3 through mktxp over API-SSL (docs/alerting/plan.md, Phase 0b). Account: OpenBao services/mikrotik,
+    # the least-privilege "monitoring" group (ansible/00-initial-setup/mikrotik-monitoring-access.yml).
+    mktxp_version: "2.1.0"
+    mktxp_image: "{{ monitoring_registry_host }}/ghcr/akpw/mktxp:{{ mktxp_version }}"
+    mikrotik_monitor_user: "{{ lookup('env', 'MIKROTIK_MONITOR_USER') | mandatory('MIKROTIK_MONITOR_USER env var is required') }}"
+    mikrotik_monitor_password: "{{ lookup('env', 'MIKROTIK_MONITOR_PASSWORD') | mandatory('MIKROTIK_MONITOR_PASSWORD env var is required') }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -107,6 +118,8 @@
     grafana_discord_critical_url: "{{ lookup('env', 'DISCORD_WEBHOOK_CRITICAL') | mandatory('DISCORD_WEBHOOK_CRITICAL env var is not set') }}"
     grafana_discord_warning_url: "{{ lookup('env', 'DISCORD_WEBHOOK_WARNING') | mandatory('DISCORD_WEBHOOK_WARNING env var is not set') }}"
     grafana_discord_security_url: "{{ lookup('env', 'DISCORD_WEBHOOK_SECURITY') | mandatory('DISCORD_WEBHOOK_SECURITY env var is not set') }}"
+    grafana_telegram_bot_token: "{{ lookup('env', 'TELEGRAM_BOT_TOKEN') | mandatory('TELEGRAM_BOT_TOKEN env var is not set') }}"
+    grafana_telegram_chat_id: "{{ lookup('env', 'TELEGRAM_CHAT_ID') | mandatory('TELEGRAM_CHAT_ID env var is not set') }}"
     # Use public Authentik URL for browser-facing authorize endpoint so existing cookies are used,
     # while keeping token/api endpoints on a dedicated internal Authentik backchannel for server-to-server calls.
     grafana_oauth_auth_url: "{{ lookup('env', 'GRAFANA_OAUTH_AUTH_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
@@ -189,6 +202,8 @@
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/alerting", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/harbor-findings-exporter", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/snmp-exporter", mode: "0755" }
+        - { path: "{{ monitoring_compose_dir }}/mktxp", mode: "0755" }
         - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
@@ -265,12 +280,23 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
+                # Added 2026-10-24 (docs/alerting/plan.md, Phase 7 W2): running guests that were never scraped.
+                # Only those whose exporter already speaks TLS; the rest are added after their exporters are fixed.
+                - targets: ["{{ lookup('env', 'LAB_IP_OPENSEARCH') }}:9100"]
+                  labels: {stack: opensearch-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_CSE_PANEL') }}:9100"]
+                  labels: {stack: cse-panel-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_NEXTCLOUD_STACK') }}:9100"]
+                  labels: {stack: nextcloud-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_TORRENT_STACK_LAB') }}:9100"]
+                  labels: {stack: torrent-stack-lab}
+                # pangolin-proxy has no LAB_IP_ variable; its address is in stacks/pangolin-proxy/stack.yaml.
+                - targets: ["192.168.30.11:9100"]
+                  labels: {stack: pangolin-proxy}
                 - targets: ["{{ omada_controller_host }}:9100"]
                   labels: {stack: omada-controller}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
-                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
-                  labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:9100"]
                   labels: {stack: greenbone-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}:9100"]
@@ -354,8 +380,6 @@
                   labels: {stack: framework}
                 - targets: ["tpot.gibbsgreatly.xyz:8083"]
                   labels: {stack: tpot-honeypot}
-                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
-                  labels: {stack: pentagi-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GREENBONE') }}:8082"]
                   labels: {stack: greenbone-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}:8080"]
@@ -497,13 +521,37 @@
                   labels:
                     stack: step-ca-stack
 
-            - job_name: pentagi-postgres
+            # ASUSTOR NAS over SNMPv3 through snmp-exporter (same compose network). The target is passed
+            # to the exporter as a parameter; `instance` stays the NAS address. The NAS has no
+            # LAB_IP variable (the NAS rules in alerting/ hardcode 192.168.1.3 too).
+            - job_name: asustor-nas
+              metrics_path: /snmp
+              scrape_interval: 60s
+              scrape_timeout: 30s
+              params:
+                module: [asustor]
+                auth: [nas]
               static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_PENTAGI') }}:9187"
+                - targets: ["192.168.1.3"]
                   labels:
-                    stack: pentagi-stack
-                    component: pgexporter
+                    stack: nas
+              relabel_configs:
+                - source_labels: [__address__]
+                  target_label: __param_target
+                - source_labels: [__param_target]
+                  target_label: instance
+                - target_label: __address__
+                  replacement: snmp-exporter:9116
+
+            # MikroTik router through mktxp (same compose network).
+            - job_name: mktxp-router
+              scrape_interval: 60s
+              scrape_timeout: 30s
+              static_configs:
+                - targets: ["mktxp:49090"]
+                  labels:
+                    stack: router
+
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning
@@ -568,7 +616,18 @@
       loop:
         - homelab-baseline.yml
         - homelab-hardware.yml
+        - homelab-honeypot.yml
+        - homelab-vulnerabilities.yml
+        - homelab-nas.yml
+        - homelab-router.yml
       register: grafana_alert_rules_provisioning
+
+    - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/monitoring-stack/alerting/templates/homelab-templates.yml"
+        dest: "{{ monitoring_compose_dir }}/grafana/provisioning/alerting/templates.yml"
+        mode: "0640"
+      register: grafana_alert_templates_provisioning
 
     - name: Write Grafana Discord contact points and notification policy
       ansible.builtin.copy:
@@ -578,15 +637,6 @@
           apiVersion: 1
           contactPoints:
             - orgId: 1
-              name: homelab-discord-critical
-              receivers:
-                - uid: homelab-discord-critical
-                  type: discord
-                  settings:
-                    url: "{{ grafana_discord_critical_url }}"
-                    use_discord_username: false
-                  disableResolveMessage: false
-            - orgId: 1
               name: homelab-discord-warning
               receivers:
                 - uid: homelab-discord-warning
@@ -594,6 +644,8 @@
                   settings:
                     url: "{{ grafana_discord_warning_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
             - orgId: 1
               name: homelab-discord-security
@@ -603,7 +655,60 @@
                   settings:
                     url: "{{ grafana_discord_security_url }}"
                     use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
                   disableResolveMessage: false
+            - orgId: 1
+              name: homelab-discord-critical
+              receivers:
+                - uid: homelab-discord-critical
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_critical_url }}"
+                    use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
+                  disableResolveMessage: false
+            - orgId: 1
+              name: homelab-page
+              receivers:
+                - uid: homelab-page-discord
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_critical_url }}"
+                    use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
+                  disableResolveMessage: false
+                - uid: homelab-page-telegram
+                  type: telegram
+                  settings:
+                    bottoken: "{{ grafana_telegram_bot_token }}"
+                    chatid: "{{ grafana_telegram_chat_id }}"
+                    parse_mode: None
+                    message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
+                  disableResolveMessage: false
+            # A honeypot hit is an event, not a condition that recovers: the rule looks back 2h, so
+            # "Resolved" only means the last probe is now over 2h old. No resolve message, either channel.
+            - orgId: 1
+              name: homelab-tripwire
+              receivers:
+                - uid: homelab-tripwire-discord
+                  type: discord
+                  settings:
+                    url: "{{ grafana_discord_security_url }}"
+                    use_discord_username: false
+                    title: '{% raw %}{{ template "homelab.title" . }}{% endraw %}'
+                    message: '{% raw %}{{ template "homelab.discord" . }}{% endraw %}'
+                  disableResolveMessage: true
+                - uid: homelab-tripwire-telegram
+                  type: telegram
+                  settings:
+                    bottoken: "{{ grafana_telegram_bot_token }}"
+                    chatid: "{{ grafana_telegram_chat_id }}"
+                    parse_mode: None
+                    message: '{% raw %}{{ template "homelab.telegram" . }}{% endraw %}'
+                  disableResolveMessage: true
           policies:
             - orgId: 1
               receiver: homelab-discord-warning
@@ -612,10 +717,38 @@
               group_interval: 5m
               repeat_interval: 4h
               routes:
+                # A rule that cannot query its datasource (Grafana raises DatasourceError, or
+                # DatasourceNoData) inherits that rule's labels, including page=true. It must
+                # never page: it is a "this check is blind" notice, and it fires briefly every
+                # time Grafana restarts. Discord warning only; stops here.
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['alertname', '=', 'DatasourceError']
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['alertname', '=', 'DatasourceNoData']
+                # Honeypot tripwire: Discord #security plus Telegram. Stops here.
+                - receiver: homelab-tripwire
+                  object_matchers:
+                    - ['tripwire', '=', 'honeypot']
+                  repeat_interval: 12h
+                # Maintenance notices (a firmware update is available) are not urgent and do not
+                # clear until acted on: once a week, not every four hours.
+                - receiver: homelab-discord-warning
+                  object_matchers:
+                    - ['category', '=', 'maintenance']
+                  repeat_interval: 168h
+                # Everything security-related is also posted to #security.
                 - receiver: homelab-discord-security
                   object_matchers:
                     - ['category', '=', 'security']
                   continue: true
+                # Pages: Discord #alerts-critical plus Telegram.
+                - receiver: homelab-page
+                  object_matchers:
+                    - ['page', '=', 'true']
+                  repeat_interval: 30m
+                # Other critical alerts: Discord #alerts-critical only.
                 - receiver: homelab-discord-critical
                   object_matchers:
                     - ['severity', '=', 'critical']
@@ -891,7 +1024,43 @@
           GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET={{ grafana_oauth_client_secret }}
           HARBOR_API_PASSWORD={{ harbor_api_password }}
           TPOT_EVENTS_ES_PASSWORD={{ tpot_events_es_password_resolved }}
+          NAS_SNMP_USER={{ nas_snmp_user }}
+          NAS_SNMP_PASSWORD={{ nas_snmp_password }}
       no_log: true
+
+    - name: Copy snmp_exporter module and auth files (static; credentials come from the container environment)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/monitoring-stack/snmp/{{ item }}"
+        dest: "{{ monitoring_compose_dir }}/snmp-exporter/{{ item }}"
+        mode: "0644"
+      loop:
+        - snmp.yml
+        - auth.yml
+      register: snmp_exporter_config
+
+    # The repo file holds placeholders; the filled copy contains the router password, so it is 0600 and owned by
+    # uid 1000, the user the mktxp image runs as. It is mounted read-only (mktxp does not rewrite its config).
+    - name: Write mktxp router config with the monitoring account (secret)
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/mktxp/mktxp.conf"
+        owner: "1000"
+        group: "1000"
+        mode: "0600"
+        content: >-
+          {{ lookup('file', playbook_dir ~ '/../../stacks/monitoring-stack/mktxp/mktxp.conf')
+             | replace('@MIKROTIK_USER@', mikrotik_monitor_user)
+             | replace('@MIKROTIK_PASSWORD@', mikrotik_monitor_password) }}
+      register: mktxp_router_config
+      no_log: true
+
+    - name: Copy mktxp system config (static, no secrets)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../stacks/monitoring-stack/mktxp/_mktxp.conf"
+        dest: "{{ monitoring_compose_dir }}/mktxp/_mktxp.conf"
+        owner: "1000"
+        group: "1000"
+        mode: "0644"
+      register: mktxp_system_config
 
     - name: Write monitoring compose definition
       ansible.builtin.copy:
@@ -950,6 +1119,31 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
+
+            # ASUSTOR NAS over SNMPv3. No published port: VictoriaMetrics reaches it on the compose network.
+            snmp-exporter:
+              image: {{ snmp_exporter_image }}
+              container_name: snmp-exporter
+              restart: unless-stopped
+              env_file:
+                - .env
+              command:
+                - "--config.file=/etc/snmp_exporter/snmp.yml"
+                - "--config.file=/etc/snmp_exporter/auth.yml"
+                - "--config.expand-environment-variables"
+              volumes:
+                - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+                - ./snmp-exporter/auth.yml:/etc/snmp_exporter/auth.yml:ro
+
+            # MikroTik hAP ax3 health, firmware and interface counters. No published port; the user inside the
+            # image is uid 1000 and the 0600 config is owned by it.
+            mktxp:
+              image: {{ mktxp_image }}
+              container_name: mktxp
+              restart: unless-stopped
+              volumes:
+                - ./mktxp/mktxp.conf:/etc/mktxp/mktxp.conf:ro
+                - ./mktxp/_mktxp.conf:/etc/mktxp/_mktxp.conf:ro
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}
@@ -1123,6 +1317,22 @@
           }}
       when: not ansible_check_mode
 
+    - name: Restart mktxp after its config changed
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart mktxp
+      when:
+        - not ansible_check_mode
+        - (mktxp_router_config.changed or mktxp_system_config.changed) and not monitoring_compose_definition.changed
+      changed_when: true
+
+    - name: Restart snmp-exporter after its module or auth file changed
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart snmp-exporter
+      when:
+        - not ansible_check_mode
+        - snmp_exporter_config.changed and not monitoring_compose_definition.changed
+      changed_when: true
+
     - name: Restart Harbor findings exporter after script updates
       ansible.builtin.command:
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart harbor-findings-exporter
@@ -1151,7 +1361,7 @@
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart grafana
       when:
         - not ansible_check_mode
-        - grafana_alert_rules_provisioning.changed or grafana_contact_points_provisioning.changed or grafana_datasources_provisioning.changed
+        - grafana_alert_rules_provisioning.changed or grafana_alert_templates_provisioning.changed or grafana_contact_points_provisioning.changed or grafana_datasources_provisioning.changed
       changed_when: true
 
     - name: Wait for Grafana health endpoint

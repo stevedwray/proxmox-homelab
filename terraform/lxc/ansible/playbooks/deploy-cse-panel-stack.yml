@@ -79,6 +79,12 @@
         dest: "{{ cse_panel_app_dir }}/eval_battery.py"
         mode: "0644"
 
+    - name: Write panel-web's read-only pentest status API
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app/pentest.py"
+        dest: "{{ cse_panel_app_dir }}/pentest.py"
+        mode: "0644"
+
     - name: Write panel-web's requirements.txt
       ansible.builtin.copy:
         src: "../../stacks/{{ cse_panel_stack_name }}/app/requirements.txt"
@@ -101,6 +107,12 @@
       ansible.builtin.copy:
         src: "../../stacks/{{ cse_panel_stack_name }}/app-ui/eval_tab.py"
         dest: "{{ cse_panel_ui_app_dir }}/eval_tab.py"
+        mode: "0644"
+
+    - name: Write panel-ui's Pentest lab tab
+      ansible.builtin.copy:
+        src: "../../stacks/{{ cse_panel_stack_name }}/app-ui/pentest_tab.py"
+        dest: "{{ cse_panel_ui_app_dir }}/pentest_tab.py"
         mode: "0644"
 
     - name: Write panel-ui's Compare tab (compare_tab.py)

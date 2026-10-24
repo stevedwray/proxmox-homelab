@@ -1,0 +1,80 @@
+# Graylog log alerts (docs/alerting/plan.md, Phase 2). Applied by scripts/graylog_alerts.py.
+#
+# Exact message patterns, never log level (Docker sends container stderr as level 3).
+# Every query was counted against 30 days of real Graylog data on 2026-10-24; the counts
+# are in each description so the next reader can see what the rule would have caught.
+# EDAC is deliberately NOT a pattern: it matches harmless node_exporter startup lines.
+# VLAN 70 (pentest_seg) is excluded: its logs are not lab findings.
+#
+# Notifications go to Discord only. Graylog cannot post to Telegram, and the relay that
+# would is future state, so these never page. Grace periods stop a failing disk from
+# re-notifying every few minutes: at most one message per host per grace period.
+
+notifications:
+  critical:
+    title: "Discord #alerts-critical"
+    description: "Graylog log alerts to Discord #alerts-critical (webhook from OpenBao services/grafana)"
+    webhook_env: DISCORD_WEBHOOK_CRITICAL
+    color: "#D9534F"
+  warning:
+    title: "Discord #alerts-warning"
+    description: "Graylog log alerts to Discord #alerts-warning (webhook from OpenBao services/grafana)"
+    webhook_env: DISCORD_WEBHOOK_WARNING
+    color: "#F0AD4E"
+
+definitions:
+  - title: "Storage fault in a kernel log"
+    description: >-
+      A disk or NVMe is reporting read/write failures. 30-day check (2026-10-24): 167 hits, pve-tiny
+      every day since 2026-10-16 (nvme0n1 critical medium errors, and sdb on 10-23), pve sdf and sdg1
+      in September, the pve-test laptop's sda once on 10-18. Would have flagged pve-tiny eight days early.
+    priority: 3
+    notification: critical
+    query: >-
+      (message:"critical medium error" OR message:"I/O error, dev" OR message:"Buffer I/O error"
+      OR message:"NVMe error count increased" OR message:"EXT4-fs error")
+      AND NOT relay_src_ip:192.168.70.*
+    group_by: source
+    every_minutes: 5
+    grace_hours: 24
+
+  - title: "CPU machine check"
+    description: >-
+      The kernel logged a machine-check event (CPU or memory hardware error). 30-day check: 3 hits, all
+      on pve at 03:21 on 2026-10-03, 04 and 05, none since. The decoded line says "Bank 21 is reserved"
+      with zero addresses, which looks like a bogus read, but it is flagged uncorrected, so it is reported.
+    priority: 3
+    notification: critical
+    query: >-
+      message:"Machine check events logged" AND NOT relay_src_ip:192.168.70.*
+    group_by: source
+    every_minutes: 5
+    grace_hours: 24
+
+  - title: "Kernel lockup or CPU thermal throttling"
+    description: >-
+      UNVERIFIED: zero hits in 30 days, so these patterns have never been seen to match here. They are the
+      kernel's own wording ("soft lockup", "hard LOCKUP", "temperature above threshold" from the CPU
+      thermal driver). Temperatures are also watched by the Grafana hardware rules.
+    priority: 3
+    notification: critical
+    query: >-
+      (message:"soft lockup" OR message:"hard LOCKUP" OR message:"temperature above threshold")
+      AND NOT relay_src_ip:192.168.70.*
+    group_by: source
+    every_minutes: 5
+    grace_hours: 24
+
+  - title: "Out-of-memory kill"
+    description: >-
+      The kernel killed a process for lack of memory. 30-day check: 21 hits. pve killed redis-server (once at
+      10.6 GB; Greenbone scans) nearly every night from 2026-09-29 to 10-16, Grafana on 10-16; pve-tiny lost
+      dockerd on 10-23. These are memory-limit kills inside containers, so a warning, not a page.
+    priority: 2
+    notification: warning
+    query: >-
+      (message:"Out of memory: Killed process" OR message:"Memory cgroup out of memory")
+      AND NOT relay_src_ip:192.168.70.*
+    group_by: source
+    every_minutes: 5
+    grace_hours: 12

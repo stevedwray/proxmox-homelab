@@ -4,20 +4,51 @@ Workspace README (decisions, design rules, hand-backs): [README.md](README.md).
 Replaces `docs/catch-up/07-baseline-alerting.md`, whose OpenBao-health and
 alert-rule steps are reused below by id.
 
+## Status (2026-10-24)
+
+**Phases 1, 1c and both prerequisites are deployed and proven** (drills and a real page: README, *Proven live*).
+The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`. Phase 0 enrolment, Phase 2, 5 and 6
+are still to do. Phases 3, 4 and 4b are future state.
+
+| Phase | What | State |
+|---|---|---|
+| 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
+| 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
+| 0.6 | MikroTik metrics (mktxp) | Router access live; exporter and eight rules built, not yet deployed |
+| 0.8 | NAS (SNMPv3) | **Live and verified** |
+| 1 | Discord channels, 9 baseline + 18 hardware rules, routing | **Live and proven** |
+| 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
+| prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
+| prereq | node_exporter fleet repair | **Done** 2026-10-24 |
+| 2 | Graylog log alerts | **Applied and drilled** (`scripts/graylog_alerts.py`) |
+| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
+| 5 | New critical vulnerabilities (Harbor, Greenbone) | **Built, not yet deployed** (`homelab-vulnerabilities.yml`) |
+| 6 | Digest, fire drill, native integrations | Outline |
+| 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **Planned** (see Phase 7) |
+
+**Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
+would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
+(NVMe silence, Discord token reset) is in the README's open items. **Parallel work:** the pve-tiny evacuation
+(`work/pve-tiny-evacuation`) moves stacks off that host; re-check the `stack=pve-tiny` alerts, the NVMe silence and
+the secpipe/honeypot sync host as each stack moves.
+
 ## How to read this
 
 - Steps are fenced YAML blocks under their own heading, per
   `docs/agent-design/step-packet-schema.md`. A step is local-model work: edit
-  files, run its gates, stop. **No step deploys anything.**
+  files, run its gates, stop. **No step deploys anything.** Steps `03` to `06` were executed
+  directly by the planner (their literal content is kept as the record; where a step and the
+  repo disagree, **the repo is right**, and Phase 1c says what superseded what).
 - Anything that touches a running system is plain prose under an "Operator"
   heading. The operator runs it; production runs go through
   `./with-secrets-prod*` with a named `TASK_APPROVAL`.
-- **Phases 0 and 1 are fully written.** Phases 2 to 6 are outlines on purpose:
-  each depends on facts that only exist after the phase before it lands, and
-  its first task is to find them. Their step packets get written when the
-  previous phase's hand-back is in. Do not run an outline.
-- Branch: cut `work/alerting-*` from current `stable`. Phase 0 and 1 only add
-  files and edit the playbooks named in each step.
+- Outlines are on purpose: each depends on facts that only exist after the phase before it
+  lands, and its first task is to find them. Do not run an outline.
+- **Two traps found for real, both worth a gate:** a literal block shown in a step is 2 spaces
+  deeper than it belongs in the file (the `change: |` block adds them), and `syntax-check`
+  cannot see inside a `content: |` string. `scripts/check_grafana_provisioning.py` renders and
+  parses the inline Grafana files for that reason.
+- Branch: `work/graylog-sender-ip-pentest-stream` carried all of this and is merged to `stable`.
 
 ## Phase 0: log and metrics coverage
 
@@ -29,14 +60,18 @@ the 2026-10-24 sweep.
 | 0.1 Relay stamps the real sender IP (`relay_src_ip`) | **Done**, live |
 | 0.3 `pentest_seg` in its own stream; MikroTik 514/443 rules narrowed | **Done**, live |
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
-| 0.4 Workstation `garuda` into Graylog, warning and above | Steps 00 and 01 below |
-| 0.5 argon-01 / argon-02 into Graylog | Step 02 below |
-| 0.6 MikroTik hardware and firmware metrics (mktxp) | Outline, Phase 0b below |
-| 0.7 Omada metrics missing from VictoriaMetrics | Closed by the Phase 1 monitoring-stack deploy |
-| 0.8 NAS (Asustor Drivestor) | Operator, below |
+| 0.4 Workstation `garuda` into Graylog, warning and above | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
+| 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
+| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Router access live; exporter and eight rules built, not yet deployed** (Phase 0b below) |
+| 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
+| 0.8 NAS (Asustor Drivestor) | **Built, not yet deployed**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
 
 ### alerting-00-journal-forwarder
+
+> **SUPERSEDED 2026-10-24.** The operator wanted a standard daemon for the workstation, not a script, so this script and `alerting-01`
+> were never written. rsyslog was tried first and cannot run on this Arch install (chaotic-aur's libfastjson crashes against glibc 2.44),
+> so the workstation uses syslog-ng from the official repo: see `graylog-workstation-syslog-ng.yml`.
 
 ```yaml
 id: alerting-00-journal-forwarder
@@ -210,6 +245,8 @@ gates:
 
 ### alerting-01-workstation-playbook
 
+> **SUPERSEDED 2026-10-24** by `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (see alerting-00).
+
 ```yaml
 id: alerting-01-workstation-playbook
 title: Add the playbook that installs the forwarder as a systemd service on the workstation
@@ -331,6 +368,8 @@ gates:
 
 ### alerting-02-pi-playbook
 
+> **Written as `ansible/00-initial-setup/graylog-pi-syslog.yml`** (this step's content, dedented), not yet run.
+
 ```yaml
 id: alerting-02-pi-playbook
 title: Add the playbook that enrols argon-01 and argon-02 in Graylog log shipping
@@ -396,7 +435,7 @@ gates:
 
 ### Operator: enrol the workstation and the Pis
 
-No production-trust node is involved, so plain `./with-secrets` is right.
+Use **`./with-secrets-prod`** (as `tpot-monitoring.yml` does), not plain `./with-secrets`: the dev wrapper loads the retired `pve-test-vm` profile, whose `LAB_IP_GRAYLOG` is `192.168.20.114`, a dead address. Each playbook now refuses to continue unless Graylog answers. Found on the first workstation run, 2026-10-24.
 
 Preflight: targets are the workstation (this machine, `192.168.1.104`) and
 `argon-01` / `argon-02` (`192.168.1.22` / `.23`); mutating (a script, a
@@ -404,10 +443,10 @@ systemd unit, a package install on the Pis, one service restart each); out of
 scope: everything else on those hosts.
 
 ```bash
-./with-secrets ansible-playbook -i ansible/inventory/inventory.yml \
-  ansible/00-initial-setup/graylog-workstation-forwarder.yml --limit garuda --ask-become-pass
+TASK_APPROVAL=enrol-workstation-graylog ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+  ansible/00-initial-setup/graylog-workstation-syslog-ng.yml --limit garuda --ask-become-pass
 
-ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets ansible-playbook \
+ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=enrol-pis-graylog ./with-secrets-prod ansible-playbook \
   -i ansible/inventory/inventory.yml ansible/00-initial-setup/graylog-pi-syslog.yml --limit argon-01
 ```
 
@@ -426,75 +465,226 @@ not reading `/proc/kmsg` and that needs a look.
 
 ### Operator: NAS (Asustor Drivestor)
 
-No step can be written until two facts are known. In ADM check:
+**Status 2026-10-24: deployed and verified** (first deploy failed on the image name: it is `prom/snmp-exporter`, with a hyphen). The NAS has no syslog hardware events worth the name (45 log messages a month, System and
+Connection only), so SNMP is how it is monitored. ADM was set up by the operator: SNMP service on, **SNMPv3 only** (v1/v2 off), a read
+user, trap level warning (no trap receiver exists; polling is what is used).
 
-1. Which log categories and severity the syslog sender includes (System,
-   Connection, File access, and anything covering disk, SMART, fan and
-   temperature events).
-2. Whether SNMP can be enabled. SNMP would give disk health and temperature as
-   metrics, which logs alone won't.
+- **Auth:** the NAS accepts **authNoPriv with MD5 and nothing else** (all 16 MD5/SHA/SHA256 by DES/AES combinations were tried; the
+  unauthenticated request returns no data). Requests are signed, replies are not encrypted: acceptable for read-only hardware stats on
+  the LAN, and ADM offers nothing stronger. Credentials: OpenBao `services/nas` (`NAS_SNMP_USER`, `NAS_SNMP_PASSWORD`), loaded by the
+  `pve` profile only.
+- **Data:** ASUSTOR's own MIBs (enterprise `1.3.6.1.4.1.44738`), hand-written into `terraform/lxc/stacks/monitoring-stack/snmp/snmp.yml`
+  (no secrets) and `auth.yml` (environment placeholders), run by `snmp-exporter` v0.30.1 in the monitoring compose with no published port;
+  VictoriaMetrics scrapes job `asustor-nas` every 60 s.
+- **Read from the live NAS:** 2 x WDC WD40EFPX 4 TB (status `Good`, SMART `Healthy`, 40 C), `Volume1` EXT4 status `healthy`, 7,443 GB
+  with 1,403 GB free, CPU 44 C, fan 1,231 rpm, ADM 5.1.4.RM62 ("The ADM is latest version"). The `system` temperature sensor reports
+  -2147483648 (no value) and is not used.
+- **`Volume1` is `linear`: two disks concatenated, no redundancy.** Losing either disk loses data, which is why a disk or volume fault pages.
 
-Record both in the README hand-back log. The NAS step packets (enable the
-categories, add an SNMP scrape if available) are written from the answer.
+| Rule | Fires when | Goes to |
+|---|---|---|
+| NAS disk is not healthy | a disk's status is not `Good` or its SMART status is not `Healthy` | page |
+| NAS volume is not healthy | a volume's status is not `healthy` | page |
+| NAS fan has stopped | a fan reads under 200 rpm for 10 minutes | page |
+| NAS disk temperature above 50 C | 15 minutes (normal 40) | `#alerts-warning` |
+| NAS CPU temperature above 85 C | 15 minutes (normal 44) | `#alerts-warning` |
+| NAS firmware update is available | the upgrade text is not "The ADM is latest version", for an hour | `#alerts-warning`, **repeated weekly** (new `category: maintenance` route) |
 
-### Phase 0b (outline): MikroTik hardware and firmware metrics
+An unreachable NAS is caught by the generic "Scrape target down" rule. The monitoring host was confirmed to reach the NAS on UDP 161
+(no firewall change). The `NAS above 90%` rule is separate: it reads the NFS mounts from the clients' side.
 
-Findings: the hAP ax3 has one health sensor (`cpu-temperature`, 64 C), plus
-CPU load, memory and flash. RouterOS 7.24.2 is installed with 7.24.5
-available; the RouterBOARD firmware (7.19.6) is behind RouterOS and 7.24.2 is
-pending. A read-only account already exists (`MIKROTIK_READONLY_USER` /
-`_PASSWORD` in `services/mikrotik`).
+**Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack` (pulls
+`dockerhub/prom/snmp-exporter:v0.30.1` through Harbor; the image name has a hyphen though the binary has an underscore, and the first deploy failed on `repository dockerhub/prom/snmp_exporter not found` until that was fixed). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
+`count({__name__=~"asustor_.*"})` is about 30.
 
-Decided: run **mktxp** as a sidecar in monitoring-stack, using the read-only
-account, scraped by VictoriaMetrics.
+### Phase 0b: MikroTik hardware and firmware metrics
 
-To find before the steps are written: the monitoring-stack compose layout and
-how a sidecar is added there; mktxp's config format and its update-check
-option; whether RouterOS REST/API access from monitoring-stack
-(`192.168.20.12`) to the router is allowed by the firewall.
+**Status 2026-10-24: router access is live and verified; mktxp and eight rules are built, not yet deployed.**
+
+**Router side (applied by the operator, `ansible/00-initial-setup/mikrotik-monitoring-access.yml`):**
+
+- A new group `monitoring` with `read` and `api` only. The existing `api-ro` account is in the built-in `read` group, which also
+  carries `reboot`, `sniff`, `ssh`, `sensitive` and `test`, so it was not reused. The new account `mktxp` is restricted to the monitoring
+  host and the LAN. Its password was generated into OpenBao (`services/mikrotik`, `MIKROTIK_MONITOR_USER` / `MIKROTIK_MONITOR_PASSWORD`).
+- `api-ssl` had **no certificate** (`certificate: none`), so every modern TLS client failed the handshake. It now uses `www-ssl-cert`, TLS
+  1.2 only, and is limited to the monitoring host and the LAN. RouterOS 7.24 calls that list `available-from`, not `address`.
+- An input-chain rule lets the monitoring host reach the router on tcp/8729, placed ahead of the final drop. The management VLAN had
+  only ICMP and DNS to the router before.
+- Verified from the router: the group policy, the user, the service settings and the rule order; and by logging in as the new account
+  over API-SSL: it reads resource, health, RouterBOARD, interfaces and packages, and **a write is refused** (`not enough permissions`).
+
+**Exporter (`terraform/lxc/stacks/monitoring-stack/mktxp/`, in monitoring-stack):** mktxp 2.1.0 (`ghcr.io/akpw/mktxp`, runs as uid 1000,
+no published port). Deliberately small: health, RouterBOARD firmware, the RouterOS update check (done from the monitoring host, which
+reaches MikroTik's update server), and interface counters; DHCP, wireless, connections, routes, queues and firewall counters are off.
+The real mktxp was run against the router with the monitoring account before any deploy: 450 lines, 41 metric names, no errors, and it
+did not rewrite its config (so the files mount read-only). The config in Git has placeholders; the deploy writes a 0600 copy owned by
+uid 1000 with the credentials.
+
+**What the router reported on 2026-10-24:** CPU 63 C (its only health sensor), RouterOS **7.25** (upgraded that morning from 7.24.2),
+RouterBOARD firmware **7.19.6 with 7.25 ready** (so the firmware-update notice fires on the first deploy, and is real).
+
+| Rule | Fires when | Goes to |
+|---|---|---|
+| Router CPU temperature above 80 C | 15 minutes | `#alerts-warning` |
+| Router CPU temperature above 90 C | 10 minutes | page |
+| Router RouterBOARD firmware update is available | for an hour | `#alerts-warning`, weekly |
+| Router RouterOS update is available | for an hour | `#alerts-warning`, weekly |
+| Router interface errors rising | more than 5 in an hour on a port | `#alerts-warning` |
+| Router port link is flapping | more than 3 drops in an hour | `#alerts-warning` |
+| Router has restarted | uptime under an hour | `#alerts-warning` |
+| Router metrics have stopped arriving | for 10 minutes | `#alerts-warning` |
+
+The last one matters: **mktxp keeps answering when it cannot reach the router**, so the generic "Scrape target down" rule would stay quiet
+if the account, certificate or firewall rule broke. Not yet verified until deploy: the image pull through Harbor (`ghcr/akpw/mktxp`)
+and the rules against real series.
+
+**Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack`.
+
+## Phase 7: align monitoring with the post-migration lab
+
+**Status 2026-10-24: planned, nothing built.** The pve-tiny evacuation is finished on the ground (all eight guests run on `pve`,
+`pve-tiny` has no running guests, 34 containers run on `pve`) but the evacuation branch is **not merged** (31 commits, and it now
+conflicts with `stable` in at least `secrets/manifest.json`, `deploy-cse-controller.yml`, `deploy-pentest-runner.yml` and the
+autonomous-pentest docs). Reviewing the monitoring against the new layout found five problems. Evidence is from read-only checks on
+2026-10-24 and is repeated below so the plan can be checked.
+
+### Decisions (operator, 2026-10-24)
+
+| Question | Decision |
+|---|---|
+| Does `pve-tiny` come back? | **Yes, with a new NVMe drive.** It stays in the alerting; W3 is a silence, not a removal |
+| Build `prometheus-pve-exporter`? | **Yes** (W4 step 2) |
+| The six guests with no exporter | **Monitor each, except the legacy `management-stack`**, which stays unmonitored |
+
+### What was found
+
+| # | Finding | Evidence | Effect today |
+|---|---|---|---|
+| F1 | The new `secpipe-stack` syncs the honeypot **hourly**, not every 10 minutes | its timer is `OnCalendar=*:00:00`; the container was deployed from the evacuation branch, which carries the old role default (`stable` has `*:0/10:00`); runs at 15:01, 15:45, 16:01, 17:02 | Honeypot data is up to an hour old, so a probe can take about 70 minutes to alert; the freshness rule fired at 17:00 and will sit near its threshold before each sync |
+| F2 | **15 running guests have no `node_exporter` series at all**: nobody is told if they run out of disk or stop | 19 of 34 running containers are scraped; the 15 that are not: `opensearch-stack`, `secpipe-stack`, `ai-services-stack`, `mcp-utility-stack`, `cse-panel-stack`, `cse-controller`, `cse-code-eval`, `pentest-runner`, `nextcloud-stack`, `pterodactyl-lab`, `torrent-stack-lab`, `newt-connector`, `pangolin-proxy`, plus the legacy `management-stack` and `media-stack` | The SIEM store (`opensearch-stack`) and Nextcloud have no disk, memory or liveness alert. The two rules that would cover them ("Scrape target down", disk 85%) only see scraped hosts |
+| F3 | Six exporters run in **plain HTTP with no password** | `secpipe`, `ai-services`, `mcp-utility`, `cse-controller`, `cse-code-eval`, `pentest-runner` answer `http://:9100/metrics` with 200 and no auth; their `ARGS` are empty; `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack` are correctly TLS + auth | Anyone on those VLANs can read host metrics. Cause: the router has rules letting the game, apps, media and pentest zones reach `step-ca` on 443 but **none for the AI zone (vlan50) or the CSE zone (vlan100)**; the exporter role skipped TLS when `step-ca` was unreachable (`secpipe` confirms: no answer) |
+| F4 | Alerts keyed on `pve-tiny` will misfire when it is powered down for the RMA | "Production node unreachable" matches `stack=~"pve\|pve-tiny"` **and pages Telegram every 30 minutes**; "Scrape target down" will fire for its hardware exporter; the NVMe silence ends **2026-10-26 13:46 NZ** (`pve-tiny` still shows 7 new media errors in 24 h) | A planned shutdown becomes a page, and the NVMe alert returns before the drive is swapped |
+| F5 | **Nothing alerts on a failed backup**, the original incident | No PBS or vzdump alert exists; the evacuation plan enrolls moved guests in the backup job; Phase 6 (native integrations) was never built | A backup can fail every night unseen, as it did on `pve-tiny` |
+
+Also confirmed healthy, so **no work**: the honeypot path itself (the T-Pot tunnel, the OpenSearch writer account and the unchanged
+addresses all work; the 15:01 failure was a corrupt SSH key file, fixed at 15:45, and the cursor-based sync backfilled every event:
+no empty half-hour in the history); `pve` capacity (60% of 126 GiB memory, load 3.3, root disk 13%, no OOM kill in five days).
+
+### Workstreams, in order
+
+**W1: honeypot cadence (F1). Small, urgent. Operator, migration owner.**
+
+1. Merge `stable` into the evacuation branch (resolve its conflicts; `stable` wins for alerting files) so its role default is
+   `*:0/10:00` and its manifest has no `services/pentagi`. This is the migration owner's branch.
+2. Re-provision `secpipe-stack` from that result: `TASK_APPROVAL=tpot-sync-10min ./with-secrets-prod scripts/provision.sh --stack secpipe-stack`.
+   Check `systemctl show tpot-findings-ingest.timer -p TimersCalendar` on the container says `*:0/10:00`.
+3. Refresh `~/.ssh/known_hosts.lab` for `192.168.50.12` (the container was recreated: `ssh-keygen -R`).
+4. Re-run the honeypot drill from `argon-01` (see README, *Proven live*): a message naming `192.168.1.22` within about 12 minutes.
+
+Done when the timer is 10-minute, the drill passes, and "Honeypot data has stopped arriving" stays Normal across two hourly boundaries.
+No code change on my side: the freshness rule is correct for a 10-minute sync.
+
+**W2: close the coverage gap (F2, F3). Medium. Firewall by the operator, the rest by me.**
+
+1. **Firewall (operator, narrow):** four `forward` rules to `step-ca` 192.168.20.11 tcp/443, each placed before its zone's own
+   default-deny: `ai_seg` (192.168.50.0/24), `cse_seg` (192.168.100.0/24), `connector_seg` (192.168.110.0/24) and the single host
+   `pterodactyl-lab` (192.168.60.20), whose zone's existing rule `*65` covers only `.60.10`. Written as
+   `ansible/00-initial-setup/mikrotik-firewall-step-ca-node-exporter.yml` (previewed against the live router: all four deny rules
+   found, all four accept rules missing), approval `mikrotik-step-ca-ai-cse`.
+2. **TLS the eight plain-HTTP exporters (operator):** re-run the node_exporter role against `secpipe`, `ai-services`, `mcp-utility`,
+   `cse-controller`, `cse-code-eval`, `pentest-runner`, **`pterodactyl-lab` and `newt-connector`** with
+   `scripts/provision.sh --stack <name>` (one at a time; it succeeds once step 1 is applied). Check `http://:9100` now refuses and
+   `https` answers 401. (A survey on 2026-10-24 found `pterodactyl-lab` 192.168.60.20 and `newt-connector` 192.168.110.10 also on plain HTTP.)
+3. **Scrape them (me), in two batches.** *Batch 1 (built, PR #531):* `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack`,
+   `torrent-stack-lab` and `pangolin-proxy`, whose exporters already answer over TLS (401 without the scrape login). *Batch 2 (after
+   step 2):* the eight guests above. Adding a plain-HTTP guest to an `https` job would just fire "Scrape target down" for it. Then
+   "Scrape target down" and the disk rules cover them for free.
+4. **The remaining guests (decided):** monitor all except the legacy `management-stack` (CT 101, 192.168.1.4, which stays unmonitored).
+   `pangolin-proxy` and `torrent-stack-lab` are batch 1; `pterodactyl-lab` and `newt-connector` are batch 2. **`media-stack`** (legacy CT 102,
+   192.168.1.6, Debian 12, Jellyfin and a Portainer agent) has **no exporter and no Terraform environment on `pve`**, so it cannot be
+   scraped until `node_exporter` is installed on it. That needs its own approach (an explicit inventory with `-u root` and only the
+   exporter role; not `provision.sh --stack media-stack`, which has no environment to apply). Open: do that, or treat it as
+   decommission-pending like `management-stack`.
+5. **OpenSearch's own health (me, optional):** disk is covered by step 3; cluster status (`red` and `yellow`) and the disk
+   watermark are not. Prefer a Grafana query over a new exporter; propose an exporter only if that is not possible.
+
+Done when every running guest is either scraped over TLS or on a written "not monitored, because" list, and no exporter answers plain HTTP.
+
+**W3: `pve-tiny` lifecycle (F4). Small, time-boxed by the RMA date. Operator, with my text.**
+
+1. **Before power-off:** one Grafana silence for `stack = pve-tiny` (all alerts), ending the day after the expected replacement. It
+   covers "Production node unreachable" (the page), "Scrape target down" and the NVMe rules in one object. Replace the current NVMe-only
+   silence, which ends **2026-10-26 13:46 NZ**. Graylog has no silence: its storage rule will stop on its own once the host is off.
+2. **After the new drive:** delete the silence; confirm `up{job="node_exporter_hw",stack="pve-tiny"}` is 1, the new NVMe reports
+   `nvme_media_errors_total` near zero, and `pve-tiny` appears in Graylog again; if the device name changed, update the rule label if it is
+   named anywhere (it is not: the rules select by `stack`).
+3. **Decided: `pve-tiny` comes back with a new NVMe drive**, so it stays in "Production node unreachable" and the hardware scrape
+   list, and the silence is the whole mechanism. **Timing:** create the silence immediately before the power-off, not now, or it would
+   hide real `pve-tiny` alerts in the meantime; the existing NVMe silence runs to 2026-10-26 13:46 NZ and still covers it until then.
+   In Grafana, Alerting, Silences, New silence: matcher `stack = pve-tiny`, end date a day past the expected replacement, comment
+   "pve-tiny offline for NVMe RMA". It is one object and ends on its own.
+
+**W4: `pve` is now the single large host. Medium. Me, with one operator deploy.**
+
+Everything runs on one machine, so the host needs its own alerts. Today only the root filesystem is watched.
+
+1. Add node rules on `job="node_exporter_hw"`: memory available under 10% for 15 minutes, swap in use, and load5 above the core count. All
+   warnings (the existing OOM-kill rule already catches the aftermath).
+2. **Proxmox storage and guest state (recommended):** deploy `prometheus-pve-exporter` in monitoring-stack using the existing read-only API
+   token (`PROXMOX_READONLY_TOKEN_*`). It exposes thin-pool and storage usage (the `monitoring-containers`, `storage-containers`,
+   `apps-containers` and `infrastructure-containers` pools, which node_exporter cannot see) and whether each guest is running, which
+   catches a stopped guest even when it has no exporter. Rules: a pool above 80%, a guest with autostart on that is not running.
+   This is one small sidecar, in the same shape as `snmp-exporter` and `mktxp`. **Decided: yes.** It needs a read-only token per node (`PROXMOX_READONLY_TOKEN_*` for `pve`; `pve-tiny` has `PVE_TINY_READONLY_TOKEN_*` in `services/netbox`).
+
+**W5: backups (F5). Small, high value. Operator configures, I write the steps.**
+
+1. **PBS notifications (native, no new service):** a Discord webhook notification target on the Proxmox Backup Server
+   (`proxmox-backup-server` CT 105) for failed backup, verify and garbage-collection jobs, using the `#events` webhook
+   already in OpenBao (`DISCORD_WEBHOOK_EVENTS`). Same on `pve` for vzdump job failures.
+2. **Backup enrolment check (me):** list every guest and whether it is in the backup job on `pve`, so the evacuated guests are not
+   silently excluded (the evacuation notes record backup-job exclusions for guests that were not backing up; `secpipe` was one of them). A one-off read-only report in the README.
+3. **Later, optional:** a "no successful backup in 48 hours" rule from a PBS exporter, if the native notifications turn out to be too
+   quiet (a job that never runs sends nothing).
+
+Done when a deliberately failed test backup produces a Discord message.
+
+**W6: housekeeping.** Reconcile docs that name `pve-tiny` hosts or `./with-secrets-prod-tiny` for stacks that moved; the two Pis'
+crash-looping Portainer containers; `Volume1` on the NAS is `linear` (no redundancy: the operator's call); RouterBOARD firmware 7.19.6
+with 7.25 ready (the notice is live); the unmerged evacuation branch (W1 step 1).
+
+### Order and ownership
+
+| Order | Workstream | Who | Why now |
+|---|---|---|---|
+| 1 | W1 honeypot cadence | operator (migration owner) | the tripwire is up to an hour late today |
+| 2 | W3 `pve-tiny` silence | operator | must exist before it is powered off, or it pages |
+| 3 | W5 backup notifications | operator, my steps | the original incident has no alert |
+| 4 | W2 coverage | operator (firewall, TLS) then me | largest gap, but nothing is failing right now |
+| 5 | W4 host and storage alerts | me, one decision | the host is now a single point of failure |
+| 6 | W6 housekeeping | mixed | as time allows |
+
+Nothing here touches the migration's own work: W1 step 1 is the migration owner's branch, and the rest is monitoring-side. Approvals are
+named per task as before (`tpot-sync-10min`, `mikrotik-step-ca-ai-cse`, `alerting-monitoring`).
 
 ## Phase 1: Discord baseline and hardware rules
 
-Result: a real Discord alert for the failure classes found on 2026-10-24.
-Telegram is not involved yet. Critical alerts go to `#alerts-critical`,
-warnings to `#alerts-warning`, vulnerability findings to `#security`.
+**State: built and committed, not deployed.** Result once deployed: a Discord alert for the
+failure classes found on 2026-10-24. Critical alerts go to `#alerts-critical`, warnings to
+`#alerts-warning`, security items to `#security`. The Telegram paging layered on top is Phase 1c,
+and **both are deployed together** with the checklist in Phase 1c.
 
-### Operator: prerequisites, in order
+What is in the repo (`terraform/lxc/stacks/monitoring-stack/alerting/`): `homelab-baseline.yml`
+(9 rules), `homelab-hardware.yml` (17 rules: NVMe and SATA faults, temperatures, SMART going
+blind) and `homelab-honeypot.yml` (1 rule, Phase 1c); wired into
+`deploy-monitoring-stack.yml`, which also adds the `vm-alerting` datasource.
 
-**A. Repair the node_exporter fleet.** Without this, the target-down rule
-fires for seven stacks the moment it is switched on.
+### Prerequisites
 
-Preflight: targets every pve LXC, every pve-tiny LXC and the bare-metal
-hosts; mutating (restarts node_exporter, installs a systemd drop-in); out of
-scope: anything else. Confirm the checkout has the fix, then dry-run:
-
-```bash
-git merge-base --is-ancestor 56c611bb HEAD && echo has-fix
-export TASK_APPROVAL=node-exporter-renew-fix
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh --check
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh
-./with-secrets-prod-tiny  scripts/node-exporter-renew-fix.sh
-./with-secrets-prod       scripts/node-exporter-renew-fix.sh --hw-hosts
-```
-
-Verify: `curl -s --data-urlencode 'query=up==0' http://192.168.20.12:8428/api/v1/query`
-should list only the PentAGI targets (`192.168.70.10`, plan 08), `pve-test`
-(laptop, off on purpose) and possibly `llamacpp` on framework (open item 1 in
-the README).
-
-**B. OpenBao health metric.** Run plan 07's `catchup-07-openbao-health-script`
-and `catchup-07-openbao-health-units` (steps in
-`docs/catch-up/07-baseline-alerting.md`), then its "Operator: deploy the
-health exporter" block (approval `catchup-07b-openbao-health`). Also do its
-Part A check of why no nightly snapshot metric exists.
-
-**C. Create the Discord channels and webhooks, then store them.** Follow
-[discord-setup.md](discord-setup.md): the manual server and bot setup, then
-`scripts/discord_bootstrap.py`, which creates the four channels and webhooks
-and writes the four URLs to OpenBao (`services/grafana`) itself. Do this
-**before** the manifest step lands, because the wrappers fail closed on any
-manifest field that is empty in OpenBao. Afterwards confirm the four existing
-Grafana fields still read back (`./with-secrets-prod env | grep -c GRAFANA_`).
+| | State |
+|---|---|
+| **A.** node_exporter fleet repair (seven stacks have had no host metrics since 2026-10-21) | **Pending**, operator. Commands: Phase 1c checklist, item 1a |
+| **B.** OpenBao seal-status metric | **Built, pending deploy**, operator. Commands: item 1b |
+| **C.** Discord channels, webhooks, OpenBao fields, manifest | **Done 2026-10-24.** `scripts/discord_bootstrap.py` created `homelab-alerts` with four channels and webhooks; four URLs are in OpenBao `services/grafana` (v2) and declared in the manifest; read back through the wrapper; test messages arrived. One thing left: reset the bot token in the Developer Portal |
 
 ### alerting-03-manifest-fields
 
@@ -620,7 +810,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
 
@@ -646,7 +836,7 @@ change: |
           for: 2m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
 
@@ -672,7 +862,7 @@ change: |
           for: 10m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
 
@@ -698,7 +888,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
 
@@ -776,7 +966,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
 
@@ -828,7 +1018,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
 
@@ -854,7 +1044,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
 
@@ -958,7 +1148,7 @@ change: |
           for: 5m
           noDataState: OK
           execErrState: Error
-          labels: {severity: critical, category: hardware}
+          labels: {severity: critical, category: hardware, page: "true"}
           annotations:
             summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
 
@@ -1179,7 +1369,7 @@ scope:
     - terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
   forbidden_actions:
     - "Any change outside allowed_paths"
-    - "Removing any scrape job or target (PentAGI targets belong to plan 08)"
+    - "Removing any scrape job or target"
     - "Running the playbook or provision.sh"
 
 gates:
@@ -1209,67 +1399,224 @@ in the playbook, not of this document. Neither `syntax-check` nor `grep`
 can see this mistake (the text is inside a `content: |` string); only
 `provisioning-render` can.
 
-### Operator: deploy and prove Phase 1 (approval `alerting-monitoring`)
+### Operator: deploy and prove Phase 1
 
-Prerequisites: A, B and C above done, and the manifest step on the branch
-being deployed.
+Superseded by the single checklist under **Phase 1c**, because the Discord and Telegram routing
+ship in one Grafana provisioning change and one monitoring-stack deploy. The Phase 1 proof
+steps are folded into it (rule and contact-point counts, the real fire test with `docker stop
+cadvisor`, the Omada check, the NVMe replay).
 
-Preflight: target `monitoring-stack` (`192.168.20.12`, `pve`); mutating
-(provisioning files, scrape config, one Grafana restart). This **also
-restores the Omada scrape jobs**, which are on stable but missing from the
-running stack. Out of scope: dashboards and every other stack.
+## Phase 1c: Telegram paging and the honeypot tripwire
+
+Built by the planner directly (not as local-model steps), with every query and the
+tripwire rule itself evaluated against live data before it was written down. Nothing here
+is deployed yet. This **replaces the contact points and policy** that step
+`alerting-06-monitoring-playbook` wrote (that step's literal block is out of date); the
+files in the repo are the source of truth.
+
+**Who gets paged.** A rule pages Telegram when it carries the label `page: "true"` (or
+`tripwire: honeypot`). Nothing else does.
+
+| Goes to | Alerts |
+|---|---|
+| Telegram **and** Discord `#alerts-critical` | the 8 critical hardware rules; OpenBao sealed, snapshot stale, snapshot failed; production node unreachable; local disk above 95% |
+| Telegram **and** Discord `#security` | the honeypot tripwire |
+| Discord `#alerts-critical` only | other critical alerts (any scrape target down) |
+| Discord `#alerts-warning` | warnings (disk 85%, NAS 90%, counters rising, wear, SMART unreadable or stale, temperatures) |
+| plus Discord `#security` | anything labelled `category: security` |
+
+Repeats: pages every 30 minutes until resolved or silenced; the tripwire once per 12 hours.
+
+**The tripwire** (`alerting/homelab-honeypot.yml`): Grafana queries the `T-Pot Events`
+OpenSearch datasource for Suricata flows into the Pi (`192.168.1.28`) on a service port from an
+ephemeral source port, excluding the Pi's management ports and the allowlist (the same
+`expected sources` list as the dashboard, which includes Greenbone `192.168.70.11`). One alert
+instance per source address, looking back 2 hours so a probe stays visible while the hourly
+(now 10-minute) sync catches up. Evaluated through Grafana's own engine against live data:
+silent for the last 2 hours, and firing for `192.168.1.114` (81 flows) over 30 days.
+
+**Checks** (`scripts/check_grafana_provisioning.py`, a gate for this phase): the inline
+Grafana files parse; every rule's datasource exists; every rule marked `page` reaches a Telegram
+receiver and nothing unmarked does; every critical hardware rule pages; the tripwire routes only
+to its own contact point. Each of those was proven by breaking it on a copy.
+
+### Operator: Phase 1c
+
+**Done 2026-10-24**, in this order, all drills passed (README, *Proven live*). Kept as the runbook for a rebuild. Corrections found while running it: a manual `ansible-playbook` needs `ANSIBLE_CONFIG=terraform/lxc/ansible/ansible.cfg` and `ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles`; `--check` reports `Enable timers` as failed (the timer file is not written in a dry run); the honeypot drill must come from a host that is not on the allowlist (`argon-01`, `ssh ansible@192.168.1.22`, `bash -c 'echo > /dev/tcp/192.168.1.28/445'`); pentagi no longer exists, so ignore it in any `up==0` list.
+
+Order matters.
+
+1. **Two prerequisites** (both are things the new alerts depend on):
+
+   **a. Repair the node_exporter fleet.** Without it the target-down rule would fire for seven
+   stacks the moment alerting is on. Dry run first:
+
+   ```bash
+   git merge-base --is-ancestor 56c611bb HEAD && echo has-fix
+   export TASK_APPROVAL=node-exporter-renew-fix
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh --check
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh
+   ./with-secrets-prod-tiny  scripts/node-exporter-renew-fix.sh
+   ./with-secrets-prod       scripts/node-exporter-renew-fix.sh --hw-hosts
+   ```
+
+   Verify with `curl -s --data-urlencode 'query=up==0' http://192.168.20.12:8428/api/v1/query`.
+   It should list only `pve-test` (the laptop, off on
+   purpose) and possibly `llamacpp` on framework (README open item 1). Anything else is a real
+   target that is down.
+
+   **b. Deploy the OpenBao seal-status metric.** Built and tested 2026-10-24
+   (`files/openbao/openbao_health.py`, 5 tests, plus a timer in `deploy-openbao.yml`). **Without
+   it `openbao_sealed` has no data, that rule treats "no data" as firing, and it would page
+   Telegram the moment this is deployed.** Read the dry run first: only the new health tasks and
+   "Enable timers" should change; anything else, stop and look.
+
+   ```bash
+   ./with-secrets-prod ansible-playbook -i terraform/lxc/stacks/openbao-stack/inventory.yml -u root \
+     terraform/lxc/ansible/playbooks/deploy-openbao.yml --check --diff
+   TASK_APPROVAL=catchup-07b-openbao-health ./with-secrets-prod ansible-playbook \
+     -i terraform/lxc/stacks/openbao-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-openbao.yml
+   sleep 90; curl -s --data-urlencode 'query=openbao_sealed' http://192.168.20.12:8428/api/v1/query
+   ```
+
+   Expect one series with value `0`. Read-only checks on 2026-10-24 found OpenBao unsealed and
+   its nightly snapshot succeeding every night at 03:30 (both `nightly` and `postwrite` series are
+   in VictoriaMetrics), so the other OpenBao rules have good data.
+2. **Telegram credentials into OpenBao.** They are already in `~/git/oci/.env`; this copies
+   them without showing them. Do it **before** I add the manifest fields, or every production
+   wrapper fails closed.
+
+   ```bash
+   cd ~/git/proxmox-homelab
+   export BAO_ADDR=https://192.168.20.16:8200 BAO_CACERT=$PWD/certs/homelab-root.crt
+   export BAO_TOKEN="$(bao login -method=oidc -no-store -token-only)"   # opens a browser
+   { grep '^TELEGRAM_BOT_TOKEN=' ~/git/oci/.env | cut -d= -f2-; grep '^TELEGRAM_CHAT_ID=' ~/git/oci/.env | cut -d= -f2-; } \
+     | LAB_IP_OPENBAO=192.168.20.16 scripts/openbao_write.py services/grafana TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+   unset BAO_TOKEN
+   ```
+
+   Tell me when it succeeds and I will add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to the
+   `services/grafana` manifest entry and read them back.
+3. **Deploy monitoring-stack** (approval `alerting-monitoring`):
+   `./with-secrets-prod scripts/provision.sh --stack monitoring-stack`. This adds the
+   alerting provisioning and also restores the missing Omada scrape jobs.
+4. **Make the honeypot sync faster** (approval `tpot-sync-10min`; `secpipe-stack` now lives on
+   `pve-tiny`): `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`. Only the
+   timer changes. Check with `systemctl list-timers tpot-findings-ingest.timer` on the host.
+5. **Prove it** (each line is a thing that can be seen; do them in this order):
+   1. Grafana, Alerting, Alert rules: folder `Homelab alerts`, **31 rules** (9 baseline, 18 hardware,
+      2 honeypot, 2 vulnerability), none in Error. Contact points: five (`homelab-discord-warning`, `-security`,
+      `-critical`, `homelab-page`, `homelab-tripwire`).
+   2. **Test** `homelab-page` and `homelab-tripwire` from Grafana. Each must deliver **both** a
+      Telegram message and a Discord message. This is the check on the Telegram field names.
+   3. **A Discord-only fire**: `ssh root@192.168.20.12 'docker stop cadvisor'`. Within about 7 minutes
+      "Scrape target down" reaches Discord `#alerts-critical` and **not** Telegram (it is critical
+      but not a page), and repeats every 30 minutes. `docker start cadvisor` sends the resolved
+      message.
+   4. **The honeypot drill**, from the Kali VM (`192.168.1.114`): `nc -vz 192.168.1.28 445` and
+      `nc -vz 192.168.1.28 23`. Within about 12 minutes a Telegram message and a `#security`
+      message should name `192.168.1.114`. Your own browsing of the T-Pot web UI, the router and
+      Greenbone must **not** alert. If the source shows blank, the label name `src_ip.keyword` did not
+      survive Grafana's notification stage; tell me and I will switch the rule to a plain count.
+   5. `curl -s --data-urlencode 'query=count({__name__=~"omada_.*"})' http://192.168.20.12:8428/api/v1/query`
+      returns a non-zero count (closes Phase 0.7).
+   6. Hardware replay: `increase(nvme_media_errors_total{job="node_exporter_hw"}[24h])` for pve-tiny
+      shows the real failure the rule exists for; see the silence note below.
+6. **Afterwards:** reset the Discord bot token in the Developer Portal (Bot, Reset Token; do not copy
+   the new one); then PR the branch to `stable`.
+
+**Rollback.** The alerting is file-provisioned, so removing the three rule files and
+`contact-points.yml` from the monitoring host's `grafana/provisioning/alerting/` and restarting
+Grafana removes everything; reverting the commits and redeploying does the same properly. The
+OpenBao metric is one timer to disable (`systemctl disable --now openbao-health.timer`). The
+T-Pot timer is `tpot_findings_ingest_on_calendar` in the role defaults.
+
+**Silencing the NVMe alert while the pve-tiny drive is awaiting RMA.** `NVMe media errors
+increasing` will page whenever the failing drive logs a burst. In Grafana, Alerting, Silences,
+add one for `alertname = NVMe media errors increasing` and `stack = pve-tiny`, set to end when
+the replacement is in. Unsilenced, it would be doing its job.
+
+**Not verified until the deploy:** Grafana 13's exact provisioning field names for Telegram
+(`bottoken`, `chatid`, `parse_mode`) were not in the docs I could reach and come from the source
+as I know it; the contact-point **Test** button is the check.
+
+## Phase 2: Graylog log alerts
+
+**Status 2026-10-24: applied to live Graylog 7.1.9 and drilled.** The synthetic line `critical medium error, dev nvme9n9` logged from the workstation reached Discord `#alerts-critical` as "Storage fault in a kernel log" (grouped as `garuda`, backlog attached, template fields rendered) about four minutes later. Goal: the pve-tiny drive failure
+would have paged from the logs alone. It would have: `pve-tiny` logged storage errors **every day from 2026-10-16**
+(8 to 11 a day, 55 on the 23rd), eight days before anyone noticed.
+
+**What exists:** `terraform/lxc/stacks/graylog-stack/alerting/log-alerts.yml` (the rules, as data) and
+`scripts/graylog_alerts.py` (12 tests). The script matches by title and updates in place, so re-running is safe. It lists
+by default, `--validate` asks Graylog to check each definition (saves nothing), `--apply` creates or updates, `--test`
+sends Graylog's own test message to each Discord channel.
+
+| Rule | Pattern (exact text, never level) | 30-day hits | Goes to |
+|---|---|---|---|
+| Storage fault in a kernel log | `critical medium error`, `I/O error, dev`, `Buffer I/O error`, `NVMe error count increased`, `EXT4-fs error` | 167 | `#alerts-critical` |
+| CPU machine check | `Machine check events logged` | 3 (pve, 10-03 to 10-05) | `#alerts-critical` |
+| Kernel lockup or CPU thermal throttling | `soft lockup`, `hard LOCKUP`, `temperature above threshold` | **0, unverified** | `#alerts-critical` |
+| Out-of-memory kill | `Out of memory: Killed process`, `Memory cgroup out of memory` | 21 | `#alerts-warning` |
+
+All four exclude VLAN 70 (`NOT relay_src_ip:192.168.70.*`, 2,648 messages a month that are not lab findings), group by host, and
+use a grace period (24 h; 12 h for OOM) so a failing disk gives at most one message per host per day. `EDAC` is not a pattern: it
+matched 58 harmless startup lines on healthy hosts. `blk_update_request` had 0 hits (modern kernels print `I/O error, dev`).
+The expected NAS `GazaarBackup` failure (15 hits) matches none of the four, so it needs no exclusion until a broader rule exists.
+
+**What the data showed (worth acting on, separately):** `pve` OOM-killed `redis-server` (once at 10.6 GB, Greenbone scans) nearly
+every night from 2026-09-29 to 10-16, and Grafana on 10-16; `pve-tiny` lost `dockerd` on 10-23. A second `pve-tiny` disk (`sdb`)
+had read errors on 10-23. `pve` logged CPU machine-check lines at 03:21 on 10-03, 04 and 05 ("Bank 21 is reserved", zero
+addresses: probably a bogus read, but flagged uncorrected).
+
+**Limits, stated plainly:**
+
+- **Discord only.** Graylog cannot post to Telegram and the relay that would is future state, so these never page. The Grafana
+  hardware rules still page for NVMe and SMART faults; the log rules add what metrics cannot see (I/O errors, machine checks, OOM).
+- **There is no Graylog silence.** The Grafana NVMe silence does not cover these. While the pve-tiny drive awaits its RMA the
+  storage rule re-notifies once a day (the 24 h grace period) until the host is retired or the drive replaced.
+- **`--validate` checks structure, not logic.** It rejects a zero-length window but accepts a wrong condition reference, so the
+  drill below is the real test. The lockup/thermal patterns have never matched here.
+- **Graylog keeps these in its database**, so a graylog-stack rebuild loses them: run `--apply` again afterwards.
+
+### Operator: apply and prove Phase 2
+
+**Done 2026-10-24.** Two bugs found by running it: Graylog 7 create endpoints need the body wrapped in `{"entity": ...}` (updates take the bare object), and the notification test path is `/events/notifications/{id}/test`. Kept as the rebuild runbook.
+
+Production wrapper, as for any Graylog change (`./with-secrets` loads the retired test profile). Each command is safe to
+repeat. Run from the repo root:
 
 ```bash
-./with-secrets-prod bash -c 'for v in DISCORD_WEBHOOK_CRITICAL DISCORD_WEBHOOK_WARNING DISCORD_WEBHOOK_SECURITY; do test -n "${!v}" && echo "$v loaded"; done'
-TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py           # read-only: expect both notifications MISSING
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --validate # expect four "ok"
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --apply    # creates 2 notifications and 4 definitions
+TASK_APPROVAL=graylog-log-alerts ./with-secrets-prod python3 scripts/graylog_alerts.py --test     # a test message in each Discord channel
 ```
 
-Prove it:
+Then the drill, which exercises the real rule: the workstation ships warning and above, so this synthetic line matches the
+storage rule. Within about 10 minutes `Storage fault in a kernel log` should reach Discord `#alerts-critical` naming `garuda`:
 
-1. Grafana, Alerting, Alert rules: folder "Homelab alerts" with 24 rules
-   (7 baseline + 17 hardware), none in Error.
-2. Contact points: Test each of the three. A message reaches the matching
-   channel.
-3. Real fire: `ssh root@192.168.20.12 'docker stop cadvisor'`. Within about
-   7 minutes "Scrape target down" reaches `#alerts-critical`, and again every
-   30 minutes while it stays down. `docker start cadvisor` brings the
-   resolved message.
-4. `curl -s --data-urlencode 'query=count({__name__=~"omada_.*"})' http://192.168.20.12:8428/api/v1/query`
-   returns a non-zero count (closes Phase 0.7).
-5. Hardware replay: `increase(nvme_media_errors_total{job="node_exporter_hw"}[24h])`
-   for pve-tiny shows the real failure the rule exists for. The rule itself
-   fires on any burst; pve-tiny's drive is awaiting RMA, so expect it to page
-   while it keeps erroring. Ack it in Grafana until the Phase 3 buttons exist.
+```bash
+logger -p user.warning 'GRAYLOG_ALERT_DRILL critical medium error, dev nvme9n9 (synthetic)'
+```
 
-## Phase 2 (outline): Graylog log alerts
-
-Goal: the pve-tiny drive failure would have paged from the logs alone.
-
-Decided: Graylog event definitions on **exact message patterns**, never on
-level; notifications go to the relay (Phase 3), and to Discord directly until
-the relay exists.
-
-Patterns to confirm first by counting 30-day hits for each in Graylog (so none
-is encoded unverified): `critical medium error`, `NVMe error count increased`
-(both verified present), `EXT4-fs error`, `Machine check` / `Hardware Error`
-(kernel), thermal throttling messages, `soft lockup`, and the OOM killer
-(warning, not critical). The `EDAC` keyword must not be used: it matches
-harmless node_exporter startup lines. Exclude the expected NAS
-`GazaarBackup` failure. Exclude the `Pentest Segment` stream.
-
-To find before the steps are written: how Graylog 7.1.9's events API is
-driven from Ansible in this repo (event definitions are not provisioned
-anywhere yet), and what notification types it offers (HTTP, Slack-compatible).
+The notification message text uses Graylog's own `${...}` template variables, which cannot be checked offline: if the Discord
+message arrives with blank or literal fields, say so and the template line in `graylog_alerts.py` is the one to fix.
 
 ## Phase 3: the alert relay on the OCI box
+
+> **FUTURE STATE (operator decision 2026-10-24).** Parked. The relay is built and tested but
+> will not be deployed now, and whether it is the right tool (versus Uptime Kuma, or Grafana's own
+> contact points plus silences) is undecided. The status text below is kept for when this resumes.
 
 **Status 2026-10-24: 3a built and tested, not deployed.** Deploy it with
 [relay-deploy.md](relay-deploy.md). Do this straight after Phase 1, before
 Phase 2: it closes "nothing tells me when Grafana is down", and Phase 4
 depends on it.
 
-What exists, in the `~/git/oci` working tree (`roles/alert_relay/`; you commit
-it, my sandbox cannot):
+What exists, in the `~/git/oci` working tree (`roles/alert_relay/`). Nothing to commit
+there: the Pangolin source is being moved into this repo's `oci/`
+(`task/oci-security-prs-integration`, unmerged), and `roles/alert_relay/` is carried across
+when that merges:
 
 - `files/relay.py`: standard-library Python, SQLite state, about 30 MB.
   `POST /v1/alerts` (Grafana webhook or a generic JSON body),
@@ -1300,6 +1647,9 @@ alerts also reach Telegram. Discord stays as it is.
 
 ## Phase 4 (outline): watching the watchers
 
+> **FUTURE STATE.** Depends on Phase 3 or an off-the-shelf equivalent. Until then nothing watches
+> Grafana, VictoriaMetrics, Graylog or the monitoring host.
+
 Goal: if Grafana, VictoriaMetrics, Graylog, the monitoring host or a whole
 production node dies, you are told, with no SaaS and nothing on `framework`.
 
@@ -1321,6 +1671,9 @@ Accepted residual risk: the lab and the OCI box failing at the same moment, or
 Telegram and Discord both being unreachable.
 
 ## Phase 4b (outline): service checks for the alert chain (blackbox_exporter)
+
+> **FUTURE STATE.** Probes 1 and 2 (the relay's health and certificate) wait for the relay; probes
+> 3 to 7 do not depend on it.
 
 The Nagios-style layer: active checks of services, with the same Discord
 routing, Ack and Snooze as everything else.
@@ -1356,19 +1709,30 @@ the `omada_exporter` sidecar and its scrape job are wired (to copy the pattern),
 and a pinned `prom/blackbox-exporter` image available through the Harbor
 `dockerhub/` proxy.
 
-## Phase 5 (outline): new critical vulnerabilities
+## Phase 5: new critical vulnerabilities
 
-Goal: a critical finding that **first appears** alerts, not the roughly 206
-that already exist.
+**Status 2026-10-24: built, not yet deployed.** Goal: a critical finding that **first appears** alerts, not the roughly 700
+that already exist. `terraform/lxc/stacks/monitoring-stack/alerting/homelab-vulnerabilities.yml`, two Grafana rules
+over VictoriaMetrics, copied by the monitoring-stack deploy.
 
-Sources already in Grafana: the "Harbor Findings" and "UVM Findings"
-Infinity datasources, the `harbor-findings-exporter` job in VictoriaMetrics,
-and GVM/Wazuh data in OpenSearch. Routing: `#security` immediately; Telegram
-only once known-exploited (KEV) enrichment exists. **GVM results from
-`pentest_seg` are excluded.**
+| Rule | Data | Fires when |
+|---|---|---|
+| New critical vulnerability in a Harbor image | `harbor_findings_vulnerabilities_total{severity="Critical"}` from the Harbor findings exporter (labels `project`, `repository`) | a repository's critical count is higher than 3 hours ago, or the repository is new |
+| New high-severity finding in a Greenbone scan | `gvm_task_last_results{severity="hole"}` (Greenbone's "high"), per task | a task's high count is higher than 3 hours ago, or the task is new |
 
-To find before the steps are written: which of these expose a first-seen
-timestamp, and what the Harbor exporter's metric labels are.
+- **Routing:** `category: security`, severity warning: Discord `#security` only. Never a page. Telegram waits for known-exploited (KEV)
+  enrichment, which does not exist yet.
+- **The window is 3 hours, shorter than the 4 h repeat interval**, so a finding gives one message and then clears. Comparing with a
+  day ago would repeat it six times.
+- **Replayed over 14 days of real data before encoding:** Harbor would have alerted for 21 repositories, in batches after the daily
+  scan around 16:00 (grouped, so about one message a day); the GVM rule would have been silent (its metric only started on 2026-10-15).
+- **Guard:** each rule also needs more than 10 series to have existed 3 hours ago. Without it an exporter outage would make every
+  repository look new at once; with it the metric's first day (27 series, 15 October) correctly produced nothing.
+- **Excluded on purpose:** GVM tasks that scan `pentest_seg` or were launched for a pentest (results are not lab findings), and the
+  decommissioned pentagi project and `vxcontrol/*` images.
+- **On the first deploy** anything that became new in the previous 3 hours fires once (two Harbor repositories at the time of writing).
+- **Limits:** "new" means a higher count, so a critical that is fixed while another appears in the same repository is not seen; a
+  first scan of an image that was never scanned counts as new; Wazuh and UVM findings are not covered yet.
 
 ## Phase 6 (outline): the rest
 

@@ -25,6 +25,19 @@
 #     now capped separately (--maxmemory 6gb in deploy-greenbone-stack.yml) and
 #     mgmt_seg runs 2 hosts at a time. Right-size again once the per-host Redis
 #     peaks are known. Recorded here so Terraform sees no drift.
+#   4 cores -> 8 cores live (`pct set 70011 --cores 8`), 2026-10-21: a
+#     full 1-65535 port research scan against pentest_seg (192.168.70.214)
+#     was CPU-bound, not stuck -- ospd-openvas pegged at ~390% CPU grinding
+#     through the "Web application abuses" NVT family's thousands of
+#     per-CMS detect.nasl scripts, each taking minutes per script, load
+#     avg 6-7 on the container's 4 vCPUs. `pve` itself has 32 cores with
+#     ample headroom, so this is a straightforward resource bump, not an
+#     NVT-family/scan-config change -- unlike the Phase 2 lean-config
+#     experiment (docs/gvm-scan-redesign/), which the operator rejected for
+#     managed-host LAN scans because it drops real web findings; that
+#     reasoning doesn't carry over here anyway, since pentest_seg targets
+#     are deliberately vulnerable and the full NVT family is wanted.
+#     Memory unchanged -- this was never memory-bound.
 # `pve` itself has zero configured swap devices (confirmed live), so the
 # swap: value below is illustrative only, not a real cushion -- set to 0
 # to stop implying one exists.
@@ -35,7 +48,7 @@ dns_server: "${lab_gw_pentest}"
 network:
   zone: pentest_seg
 vmid: 70011
-cores: 4
+cores: 8
 memory: 12288
 swap: 0
 rootfs_size: 20

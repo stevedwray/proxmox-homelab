@@ -146,7 +146,15 @@
         path: "{{ gvm_bridge_build_dir }}"
         state: directory
         mode: "0750"
+      tags: [research-bridge]
 
+    # Tagged research-bridge too (confirmed missing live 2026-10-20: a
+    # --tags research-bridge-only run skipped this untagged copy, so
+    # "Rebuild gvm-bridge only" below built from whatever app.py happened
+    # to already be on disk -- in that incident, a version that predated
+    # the "complete" field scan_results relies on, which made every real
+    # refresh fail with "incomplete_results" / gateway_failure). The build
+    # context must always be current before a scoped rebuild runs.
     - name: Copy gvm-bridge source files from this repo
       ansible.builtin.copy:
         src: "{{ gvm_bridge_source_dir }}/{{ item }}"
@@ -156,6 +164,118 @@
         - Dockerfile
         - requirements.txt
         - app.py
+      tags: [research-bridge]
+
+    # Narrow, tagged research-bridge section -- docs/autonomous-pentesting-lab/
+    # research-snapshot-plan.md §1. Rebuilds only the gvm-bridge container
+    # (see "Rebuild gvm-bridge only" below) and never runs the full Greenbone
+    # play's own `docker_compose_v2` over the whole stack, which would
+    # interrupt an in-flight scan. Run with --tags research-bridge.
+    - name: Create the unprivileged pentest-research system account
+      ansible.builtin.user:
+        name: pentest-research
+        system: true
+        create_home: true
+        home: /home/pentest-research
+        # NOT nologin: sshd invokes a forced command through the account's
+        # configured shell (`shell -c command`); nologin just prints a
+        # message and exits, which would silently break every gateway
+        # invocation. The account still can't get an interactive shell --
+        # restrict in authorized_keys below is what actually prevents that.
+        shell: /bin/sh
+        password_lock: true
+      tags: [research-bridge]
+
+    - name: Create the pentest-research account's .ssh directory
+      ansible.builtin.file:
+        path: /home/pentest-research/.ssh
+        state: directory
+        owner: pentest-research
+        group: pentest-research
+        mode: "0700"
+      tags: [research-bridge]
+
+    # Public key only -- not a secret. The matching private key is written
+    # to OpenBao by the operator (services/pentest-lab's
+    # GVM_RESEARCH_GATEWAY_SSH_PRIVATE_KEY field) and installed on
+    # cse-controller by deploy-cse-controller.yml; if this key is ever
+    # rotated, both must change together, same convention as the existing
+    # pentest-lab-worker key (see deploy-pentest-runner.yml). `restrict`
+    # disables port/agent/X11 forwarding and PTY allocation; `command=`
+    # forces every invocation to the gateway regardless of what the client
+    # actually asked to run, so even an operator typo in the client's own
+    # ssh command can't matter.
+    - name: Authorize the research gateway's dedicated SSH key
+      ansible.builtin.copy:
+        content: >-
+          restrict,command="/usr/bin/python3 /usr/local/lib/gvm-research/research_gateway.py"
+          ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOa0Rju1rRswZbsBSY2G1PB9OtfJZOuHo4SFpIvyJ8La
+          gvm-research-gateway@cse-controller
+        dest: /home/pentest-research/.ssh/authorized_keys
+        owner: pentest-research
+        group: pentest-research
+        mode: "0600"
+      tags: [research-bridge]
+
+    - name: Create the gateway's script directory
+      ansible.builtin.file:
+        path: /usr/local/lib/gvm-research
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [research-bridge]
+
+    - name: Install the research gateway script
+      ansible.builtin.copy:
+        src: "{{ gvm_bridge_source_dir }}/research_gateway.py"
+        dest: /usr/local/lib/gvm-research/research_gateway.py
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [research-bridge]
+
+    # Pre-created here, owned by the account, so the gateway's own
+    # `registry.mkdir(mode=0o700, parents=True, exist_ok=True)` never has
+    # to create anything under root-owned /var/lib itself -- a non-root
+    # account can't create a new entry there, only write inside a
+    # directory it already owns.
+    - name: Create the gateway's persistent registry directory
+      ansible.builtin.file:
+        path: /var/lib/gvm-research
+        state: directory
+        owner: pentest-research
+        group: pentest-research
+        mode: "0700"
+      tags: [research-bridge]
+
+    # --no-deps and a services: filter on the compose module below both
+    # matter here -- this must never cascade into gvmd/ospd-openvas/redis
+    # or touch an in-flight scan. docker_compose_v2's own `build: always`
+    # with `services:` scopes exactly like `docker compose up -d --build
+    # --no-deps gvm-bridge` would.
+    - name: Rebuild gvm-bridge only
+      community.docker.docker_compose_v2:
+        project_src: "{{ greenbone_compose_dir }}"
+        services: [gvm-bridge]
+        build: always
+        state: present
+      tags: [research-bridge]
+
+    - name: Wait for gvm-bridge (port 8010) to accept connections after a research-bridge-only rebuild
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8010
+        timeout: 60
+      tags: [research-bridge]
+
+    - name: Confirm gvm-bridge is still loopback-only after rebuild
+      ansible.builtin.command:
+        cmd: ss -ltn
+      register: gvm_bridge_port_check
+      changed_when: false
+      failed_when: "'0.0.0.0:8010' in gvm_bridge_port_check.stdout or '*:8010' in gvm_bridge_port_check.stdout"
+      tags: [research-bridge]
 
     # Confirmed live: setting LDAPTLS_REQCERT=never on gvmd's environment is
     # NOT sufficient on its own -- gvm-libs sets its own TLS options in

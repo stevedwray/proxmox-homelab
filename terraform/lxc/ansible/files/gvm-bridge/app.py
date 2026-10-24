@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 
 from flask import Flask, jsonify, request
@@ -17,7 +18,16 @@ GVM_PASSWORD = os.environ["GVM_BRIDGE_PASSWORD"]
 # real UUIDs lazily below rather than hardcoding IDs, since they are
 # instance-specific even though the names are stable community-edition
 # defaults.
-SCAN_CONFIG_NAME = "Full and fast"
+#
+# "Full and fast (lean)" -- a clone of "Full and fast" with the "Web
+# application abuses" family deselected (created via
+# gvm_tuning.py mklean, docs/gvm-scan-redesign/) -- confirmed live
+# 2026-10-21: that family's thousands of per-CMS detect.nasl scripts ran
+# for hours against 192.168.70.214 with zero hits, since recon already
+# knows the real open services and this pipeline is the sole consumer of
+# this gvmd instance's scan configs (gvm-bridge is PentAGI/research-only;
+# the separate LAN/credentialed scans are unaffected by this constant).
+SCAN_CONFIG_NAME = "Full and fast (lean)"
 SCANNER_NAME = "OpenVAS Default"
 
 logging.basicConfig(level=logging.INFO)
@@ -79,11 +89,16 @@ def scan_start():
 
     if not target_ip or not isinstance(target_ip, str):
         return jsonify({"error": "target_ip is required"}), 400
-    if not ports or not isinstance(ports, list):
-        return jsonify({"error": "ports must be a non-empty list of ints"}), 400
+    if isinstance(ports, str):
+        if not re.fullmatch(r"[0-9]+-[0-9]+", ports):
+            return jsonify({"error": "ports range string must be 'low-high'"}), 400
+        port_range = "T:" + ports
+    elif isinstance(ports, list) and ports:
+        port_range = "T:" + ",".join(str(int(p)) for p in ports)
+    else:
+        return jsonify({"error": "ports must be a non-empty list of ints or a 'low-high' range string"}), 400
 
     suffix = str(int(time.time()))
-    port_range = "T:" + ",".join(str(int(p)) for p in ports)
 
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
@@ -154,26 +169,50 @@ def scan_results(task_id):
     # not which results are returned (confirmed against python-gvm's own
     # docstring) -- scoping to this task requires the GMP filter DSL
     # instead, or every call silently returns results across all tasks.
-    # rows=-1 disables GMP's default page size (10), which otherwise
-    # silently truncates larger result sets.
+    # rows=-1 is still limited by gvmd's global maximum; page explicitly.
+    # Validate before constructing the GMP filter expression.
+    if not re.fullmatch(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", task_id):
+        return jsonify({"error": "invalid task ID"}), 400
+    page_size = 500
+    page_limit = 200
+    result_elements = []
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
-        response = gmp.get_results(filter_string=f"task_id={task_id} rows=-1", details=True)
+        for page in range(page_limit):
+            response = gmp.get_results(
+                filter_string=f"task_id={task_id} first={1 + page * page_size} rows={page_size}",
+                details=True,
+            )
+            page_elements = response.findall("result")
+            result_elements.extend(page_elements)
+            if len(page_elements) < page_size:
+                break
+        else:
+            return jsonify({"error": "result page limit reached", "complete": False}), 502
 
     results = []
-    for r in response.findall("result"):
-        cve_ref = r.find('nvt/refs/ref[@type="cve"]')
+    for r in result_elements:
+        nvt = r.find("nvt")
+        refs = nvt.findall('refs/ref[@type="cve"]') if nvt is not None else []
+        cves = list(dict.fromkeys(ref.get("id") for ref in refs if ref.get("id")))
+        report = r.find("report")
         results.append(
             {
                 "host": r.findtext("host"),
                 "port": r.findtext("port"),
                 "severity": r.findtext("severity"),
-                "cve_id": cve_ref.get("id") if cve_ref is not None else None,
+                "cve_id": cves[0] if cves else None,
+                "cves": cves,
+                "name": r.findtext("name"),
+                "qod": r.findtext("qod/value"),
+                "finding_id": nvt.get("oid") if nvt is not None else None,
+                "result_id": r.get("id"),
+                "report_id": report.get("id") if report is not None else None,
                 "description": r.findtext("description"),
             }
         )
 
-    return jsonify({"results": results})
+    return jsonify({"results": results, "complete": True, "pages": page + 1})
 
 
 @app.get("/findings/all")

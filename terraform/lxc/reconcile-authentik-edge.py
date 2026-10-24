@@ -1035,6 +1035,7 @@ def _probe_forwardauth_endpoint(
 def _validate_forwardauth_endpoint_serving(
     client: Any,
     intents: list[RouteIntent],
+    pending_provider_routes: set[tuple[str, str]],
 ) -> tuple[ReconcileIssue, ...]:
     base_url = getattr(client, "base_url", None)
     verify_tls = getattr(client, "verify_tls", None)
@@ -1042,7 +1043,10 @@ def _validate_forwardauth_endpoint_serving(
         return ()
 
     issues: list[ReconcileIssue] = []
-    hosts = sorted({intent.host for intent in intents if intent.auth_mode == "forwardAuth"})
+    # A host whose provider is only planned cannot be served by the live
+    # outpost yet. Probe it after apply, not during the pre-create dry run.
+    hosts = sorted({intent.host for intent in intents if intent.auth_mode == "forwardAuth"
+                    and (intent.stack, intent.route) not in pending_provider_routes})
     for host in hosts:
         status, error = _probe_forwardauth_endpoint(
             base_url=base_url,
@@ -1590,7 +1594,9 @@ def reconcile_authentik(
 
     stop_conditions = sorted(set(stop_conditions))
     if has_forwardauth and not apply:
-        issues.extend(_validate_forwardauth_endpoint_serving(client, intents))
+        pending_provider_routes = {(action.stack, action.route) for action in actions
+                                   if action.object_kind == "provider" and action.operation == "create"}
+        issues.extend(_validate_forwardauth_endpoint_serving(client, intents, pending_provider_routes))
 
     actions.sort(key=lambda a: (a.stack, a.route, a.object_kind, a.object_name, a.operation))
     return ReconcileResult(

@@ -1,0 +1,14 @@
+# SNMPv3 auth for the ASUSTOR NAS. No secret is stored here: snmp_exporter runs with
+# --config.expand-environment-variables and the container's env_file supplies NAS_SNMP_USER and
+# NAS_SNMP_PASSWORD (OpenBao services/nas, via the monitoring-stack deploy).
+#
+# authNoPriv with MD5 is the only combination the NAS accepts (probed 2026-10-24 across all 16
+# MD5/SHA/SHA256 x DES/AES variants): signed requests, unencrypted replies. Acceptable for
+# read-only hardware stats on the LAN; ADM offers nothing stronger.
+auths:
+  nas:
+    version: 3
+    security_level: authNoPriv
+    username: ${NAS_SNMP_USER}
+    password: ${NAS_SNMP_PASSWORD}
+    auth_protocol: MD5
