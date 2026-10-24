@@ -126,3 +126,7 @@ certs/homelab-root.pve-test-vm.crt
 
 # local-ai-canary's own venv (workstation-local tooling, not committed)
 /scripts/local-ai-canary/.venv/
+
+# Terraform plan files embed input variable values (including secrets) in plain text
+plan.out
+*.tfplan
