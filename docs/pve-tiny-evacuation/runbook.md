@@ -229,7 +229,7 @@ The resumed role later failed while enrolling the ancillary Wazuh agent. DNS
 service health was unaffected; this pre-existing ancillary issue was recorded
 without repair under the migration scope rule.
 
-### Pentest runner CT 40072 preflight — passed
+### Pentest runner CT 40072 cutover — completed
 
 The imported stack definition, pve entrypoint and pve storage compatibility
 mapping produce a reviewed target plan: five creates, zero changes and zero
@@ -245,6 +245,23 @@ children. Preserve the complete root filesystem and separate Docker mount,
 including about 676 MiB under `/opt/BoxPwnr`, 15 MiB under
 `/root/strix_runs`, and 413 MiB of Docker state. The prior PBS test restore
 remains the recovery fallback if a final cold read fails.
+
+The approved cutover stopped source CT 40072 and set `onboot=0`, created the
+managed pve target stopped, and cold-restored its complete root and Docker
+filesystems with numeric ownership, ACLs and xattrs. The completed root archive
+was 4.30 GiB with 159,217 entries (SHA-256
+`3a32b0bad2977e5e22cc9a73145a050ca4c7663eff01a370f10504acc19421c1`);
+the Docker archive was 207 MiB with 348 entries (SHA-256
+`8b98a8cc7951214160ebb0734d11163de27147faeb2e341fc231577f10303533`).
+After restoration, Terraform made its reviewed single in-place update to set
+the target running and `onboot=1`.
+
+The target viewer supervisor is active and enabled, `/healthz` returns
+`{"ok": true}`, Portainer agent is running, all 80 preserved Strix run
+directories remain present, and the Framework port 8080 route succeeds. The
+source remains stopped with `onboot=0`; target state has a zero-change
+Terraform plan. A new backup completed successfully as
+`pbs-iscsi:ct/40072/2026-10-24T04:36:03Z`, including root and Docker.
 
 ### Secpipe CT 50012 preflight — passed
 
