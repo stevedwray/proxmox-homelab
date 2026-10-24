@@ -5,9 +5,24 @@ as soon as alerting goes live) · **Effort:** 1–1.5 h · **Value:** Medium
 **Approval names:** `catchup-08a-pentagi-firewall`, `catchup-08b-pentagi-edge`,
 `catchup-08c-monitoring-targets`
 
-**Status 2026-10-24:** Part C (repo) is **done** (`catchup-08-monitoring-targets` in `b3708f47`,
-`catchup-08-remove-iac` on `task/remove-pentagi`). Parts A, B and D (router, edge route, OpenBao entry,
-Harbor robot, framework key) are the operator's and **not yet run**.
+**Status 2026-10-24: DONE.** Every part ran the same day, each step verified after it was performed:
+
+| Part | Result |
+|---|---|
+| C, repo | `catchup-08-monitoring-targets` (`b3708f47`) and `catchup-08-remove-iac` (#513) merged to `stable` |
+| A, router | Six rules removed (176 to 170 filter rules); the two Greenbone rules were already re-commented and kept. **The live rules differed from the 2026-09-28 snapshot**, so each was read from the router first; the two mgmt-to-pentest rules (`*3E`, `*41`) matched by interface only, so the live scrape targets were checked before removing them. RouterOS safe mode (`<SAFE>`) had to be committed with Ctrl+X |
+| B, edge | Two Traefik route files deleted from the proxy (`pentagi-stack.yml` **and** `pentagi-upstream-control.yml`, which the plan did not list); Authentik application and provider deleted by API; `pentagi` A record deleted from Technitium (primary and the pve-tiny secondary return NXDOMAIN). The deploy only copies route files and never deletes them, so a stale generated file would have been re-pushed: it was removed locally too |
+| D3, OpenBao | `services/pentagi` deleted (the manifest entry went first) |
+| D4, Harbor | `robot$pentagi+kali-push` deleted. It never expired; the first listing missed it (zero results) until the query was made per project |
+| D1, local state | Two untracked state folders removed after confirming on `pve` that guests 70010 and 70013 do not exist |
+| D5, framework | `pentagi-test-harness` key removed from `~steve/.ssh/authorized_keys` (backup `authorized_keys.bak-pentagi` beside it) |
+
+Still in place on purpose (plan 13): the Harbor project `pentagi` and its CVE allowlist, `GREENBONE_PENTAGI_PASSWORD`,
+`docs/pentagi-stack/`, `pve-test-vm`'s own copy, `harness-target-pve`.
+
+Lessons: read the live state before each step (rules, files and robots all differed from the plan's snapshot); a "0 results"
+from a list API deserves a second query before it is believed; and the generated-file publish path is add-only, so removing
+a route needs the file deleted on the proxy as well as in the repo.
 
 ## State on 2026-09-28 (verified)
 
