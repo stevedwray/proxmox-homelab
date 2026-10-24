@@ -432,7 +432,7 @@ gates:
 
 ### Operator: enrol the workstation and the Pis
 
-No production-trust node is involved, so plain `./with-secrets` is right.
+Use **`./with-secrets-prod`** (as `tpot-monitoring.yml` does), not plain `./with-secrets`: the dev wrapper loads the retired `pve-test-vm` profile, whose `LAB_IP_GRAYLOG` is `192.168.20.114`, a dead address. Each playbook now refuses to continue unless Graylog answers. Found on the first workstation run, 2026-10-24.
 
 Preflight: targets are the workstation (this machine, `192.168.1.104`) and
 `argon-01` / `argon-02` (`192.168.1.22` / `.23`); mutating (a script, a
@@ -440,10 +440,10 @@ systemd unit, a package install on the Pis, one service restart each); out of
 scope: everything else on those hosts.
 
 ```bash
-./with-secrets ansible-playbook -i ansible/inventory/inventory.yml \
+TASK_APPROVAL=enrol-workstation-graylog ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
   ansible/00-initial-setup/graylog-workstation-syslog-ng.yml --limit garuda --ask-become-pass
 
-ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets ansible-playbook \
+ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=enrol-pis-graylog ./with-secrets-prod ansible-playbook \
   -i ansible/inventory/inventory.yml ansible/00-initial-setup/graylog-pi-syslog.yml --limit argon-01
 ```
 

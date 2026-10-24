@@ -4,9 +4,11 @@
 # tpot-monitoring.yml; real hardware keeps imklog so kernel and disk errors
 # are forwarded. They sit on the LAN, which MikroTik's shared Graylog rule
 # already admits. Run one host at a time:
-#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets ansible-playbook \
-#     -i ansible/inventory/inventory.yml ansible/00-initial-setup/graylog-pi-syslog.yml \
-#     --limit argon-01
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=enrol-pis-graylog \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/graylog-pi-syslog.yml --limit argon-01
+# Use the PRODUCTION wrapper, as tpot-monitoring.yml does: plain ./with-secrets loads the
+# retired pve-test-vm profile, whose LAB_IP_GRAYLOG (192.168.20.114) is a dead address.
 #
 # Verify: logger 'PI_FWD_PROOF' on the Pi, then in Graylog
 #   relay_src_ip:192.168.1.22 AND message:PI_FWD_PROOF
@@ -25,6 +27,14 @@
       ansible.builtin.assert:
         that: inventory_hostname in ['argon-01', 'argon-02']
         fail_msg: "graylog-pi-syslog.yml is only for argon-01/argon-02; use --limit."
+
+    # Checked from the Pi itself, which is what matters. A failure almost always means
+    # the wrong wrapper (see the header), which would otherwise queue logs to nowhere.
+    - name: Refuse to continue unless this Pi can reach Graylog
+      ansible.builtin.wait_for:
+        host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
+        port: 514
+        timeout: 5
 
   tasks:
     - name: Install rsyslog_forward for Graylog log shipping
