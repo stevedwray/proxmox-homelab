@@ -260,3 +260,105 @@ irreversible; a failed SSD boot may require hands-on recovery.
 - If Portainer/monitoring registration fails, keep SSH, Docker and the agent
   working locally, then resolve central connectivity under the appropriate
   production approval; do not remove further management access.
+
+## Execution log
+
+### 2026-10-25 — argon-01 stage 1: preflight passed
+
+- Confirmed hostname/IP `argon-01` / `192.168.1.22`, root `/dev/sda2`, boot
+  `/dev/sda1`, both on the expected local SSD, a Lexar 512 GB device. SMART
+  overall health remains `PASSED`; root is ext4 and boot is vfat.
+- SSH as `ansible`, passwordless sudo, IPv4 default route, Technitium
+  resolvers, Argon fan service, Docker/containerd, node_exporter, rsyslog and
+  smartmontools are active. Wazuh was already failed. No apt holds reported.
+- `rpi-eeprom-update` is absent. This confirms that an EEPROM operation is
+  out of scope for the first cleanup/reboot pass.
+- `apt-get -s full-upgrade` proposes ordinary Debian/Raspberry Pi/Docker
+  package upgrades and no package removals in its shown plan. The Pi runs
+  `6.18.23-v8+`; kernel/boot-file ownership remains a separate later gate.
+- Exact historical data targets were enumerated on their local filesystems:
+  Docker/containerd state, MariaDB/Elasticsearch state, legacy `/srv` and
+  `/opt` workload trees, the runZero and AttackIQ installations, and the
+  `ansible` user's historical workload directories. The account and `.ssh`
+  directory are retained.
+
+### 2026-10-25 — argon-01 stage 2a: workload data retired
+
+- Stopped and disabled the legacy Minecraft/world server and runZero units,
+  stopped Docker/containerd, then removed their local state. Removed the
+  explicitly inventoried Pi-hole, Portainer, Elasticsearch, MariaDB,
+  Minecraft, Crawl4AI, AttackIQ, runZero and historical user-workload paths.
+  Docker/containerd were restarted with empty local state.
+- Docker now lists no containers. Root filesystem use fell from 127 GB (29%)
+  to 16 GB (4%). Old DNS, HTTP/HTTPS, Portainer and database listeners are
+  gone; MariaDB still owns loopback 3306 until its package purge.
+- Simulated removal of MariaDB, Exim, Avahi, CIFS/NFS clients, ModemManager,
+  `rpi-update` and their dependent application libraries. It proposes no
+  boot, SSH, NetworkManager, Docker, Argon fan or monitoring-package removal.
+  `apt autoremove` is deliberately deferred until the kernel package path is
+  resolved because it currently proposes initramfs components.
+
+### 2026-10-25 — argon-01 stage 2b: legacy packages purged
+
+- Purged the reviewed legacy package set: MariaDB client/server and plugins,
+  Exim/mail utilities, Avahi, CIFS/NFS clients, ModemManager and `rpi-update`.
+  Its simulation showed 26 removals and no protected host-management or boot
+  package removals; the completed purge freed a further 210 MB.
+- The associated services are inactive and port 3306 is gone. `rpi-update` is
+  now unavailable, preventing it from being used later as an unsupported
+  kernel-update shortcut. Automatic cleanup remains deferred pending the
+  kernel/boot package decision.
+
+### 2026-10-25 — argon-01 stage 3a: kernel package gate deferred
+
+- Refreshed package indexes. `full-upgrade` now proposes 25 user-space/Docker
+  updates and no removals.
+- Inspected the actual `linux-image-rpi-v8` dependency package and
+  `raspi-firmware` post-install script. The image would install versioned
+  `/boot/vmlinuz-*`; the firmware script refuses a bare-metal install unless
+  `/boot/firmware` is a mount point, then copies firmware there. `argon-01`
+  instead has the active FAT boot partition mounted at `/boot` and no
+  `/boot/firmware` directory. Installing that package set without a reviewed
+  migration would risk writing firmware to the wrong layout.
+- Deferred only the kernel/firmware package migration. It will need an
+  explicit, tested migration from the legacy `/boot/kernel8.img` layout. The
+  existing `6.18.23-v8+` kernel is retained for this execution pass; no EEPROM
+  operation is attempted. Proceeding with the safe full user-space upgrade.
+
+### 2026-10-25 — argon-01 stage 3b: user-space update applied
+
+- Applied all 25 reviewed updates. Docker Engine is now `29.9.2` and Compose
+  is `v5.6.1`; `apt list --upgradable` is empty. No kernel image or boot
+  firmware package was installed.
+- Ready for the one-host reboot gate. The expected post-reboot kernel is still
+  `6.18.23-v8+`; deviation from that or a failed SSD return stops execution on
+  the second Pi.
+
+### 2026-10-25 — argon-01 stage 3c: SSD reboot gate passed
+
+- Rebooted argon-01. After two expected SSH timeouts during restart, it
+  returned with the same hostname/IP and expected `6.18.23-v8+` kernel.
+  Root remains `/dev/sda2` ext4 and boot remains `/dev/sda1` vfat.
+- Docker/containerd are active with an empty container inventory; Argon fan,
+  node_exporter, rsyslog and SMART services are active; no upgrades remain;
+  SSD SMART overall health remains `PASSED`. Retired application listeners
+  remain absent.
+- `openipmi.service` and the pre-existing Wazuh agent are failed. OpenIPMI is
+  unused on this Pi and will be purged. Wazuh is retained for lab monitoring;
+  its failure is the next diagnostic/fix gate.
+
+### 2026-10-25 — argon-01 stage 3d: local monitoring diagnosis
+
+- Purged unused OpenIPMI. The only remaining failed local unit is Wazuh.
+  Its retained configuration contains the literal placeholder `MANAGER_IP`,
+  so the agent has never had a valid manager endpoint and cannot start. It
+  needs a secrets-backed Wazuh-agent enrolment/reconfiguration, with central
+  manager access, before this host can meet the monitoring acceptance gate.
+- Existing node_exporter, SMART, rsyslog and certificate-renewal components
+  remain intact. The legacy Docker daemon configuration also remains and has
+  old registry addresses, router DNS and json-file logging. It will be
+  replaced during the fresh Portainer Agent deployment rather than carried
+  into the final state.
+- Harbor and Portainer names resolve to `192.168.30.10`; the direct Portainer
+  API at `192.168.20.20:9000` reports version `2.39.8`. Central registration
+  and firewall policy remain pending the required production approval flow.
