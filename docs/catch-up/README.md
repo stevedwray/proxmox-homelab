@@ -28,8 +28,8 @@ command.
 | 04 | [Secrets refactor close-out](04-secrets-closeout.md) | 2026-09-29, after the 02:40 UTC run | 15 min | High | — | not started |
 | 05 | [Decommission old AI CTs on pve](05-decommission-pve-source-cts.md) | **not before 2026-10-04** | 45 min | Medium | 03 | not started |
 | 06 | [Run CI gates on PRs into `stable`](06-ci-gates-on-stable-prs.md) | this week | 30 min | Med-High | 02 | not started |
-| 08 | [PentAGI residue cleanup](08-pentagi-residue-cleanup.md) | this week, **before 07** | 1–1.5 h | Medium | — | not started |
-| 07 | [Baseline alerting (Discord)](07-baseline-alerting.md) | this week, after 08 | 1–2 sessions | **High** | 08 | not started |
+| 08 | [PentAGI residue cleanup](08-pentagi-residue-cleanup.md) | this week, **before 07** | 1–1.5 h | Medium | — | **done 2026-10-24** |
+| 07 | [Baseline alerting (Discord)](07-baseline-alerting.md) | **superseded by [docs/alerting/](../alerting/README.md)** (2026-10-24) | — | **High** | 08 | Phase 0 groundwork live; rest planned |
 | 09 | [Rotate high-value secrets](09-secret-rotation.md) | following weeks | 2–3 h, staged | Med-High | 04 | not started |
 | 10 | [CI lint and policy cleanup](10-ci-lint-cleanup.md) | following weeks (soon after 06) | 2–3 h | Medium | 06 | not started |
 | 11 | [gaming-stack-lab Terraform drift](11-gaming-stack-lab-terraform-drift.md) | following weeks | 30 min | Low-Med | — | not started |
@@ -71,7 +71,7 @@ Why this order, and what changed from the first draft of the list:
 | How to close the arr direct-port exposure | MikroTik drop rule: UI ports on `192.168.80.11` reachable only from Traefik (`192.168.30.10`). No second arr login. |
 | PBS retention | `keep-daily=7, keep-weekly=4, keep-monthly=6` |
 | pve-tiny backup target | Same PBS datastore as `pve`, in its own namespace `pve-tiny`. Retention: the existing PBS prune job (keep-last 2) instead of 7/4/6, which was chosen under a wrong premise |
-| Alert delivery | Discord webhook (URL stored in OpenBao) |
+| Alert delivery | Discord webhook (URL stored in OpenBao). **Superseded 2026-10-24 by `docs/alerting/`:** Discord for everything, Telegram for pages |
 
 ## Things this workspace found that aren't planned here
 

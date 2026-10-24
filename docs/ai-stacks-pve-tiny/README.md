@@ -22,6 +22,25 @@ moving harbor-stack/graylog-stack there
 (`docs/pve-tiny-network-onboarding/plan.md` Phase 2) no longer fits
 as-is.
 
+## Reversal: mcp-utility-stack moved back to `pve` (2026-10-23)
+
+pve-tiny's NVMe (Kingston SNV3S2000G, 641 media errors) has unreadable
+blocks inside CT 50011's Docker volume, which made its nightly PBS backup
+fail every run. `mcp-utility-stack` (VMID 50011) was moved back to `pve`:
+
+- The original CT on `pve` (the Phase 3 rollback copy) was started, its
+  Docker volumes were replaced from a salvage tar of the pve-tiny CT, and
+  `provision.sh --stack mcp-utility-stack` was re-run under approval
+  `mcp-utility-back-to-pve`. Same IP (192.168.50.10), so no consumer changes.
+- `stack.yaml` is back on `platform-default`; the `terragrunt.hcl` entry was
+  moved from `environments/pve-tiny/` back to `environments/pve/`.
+- The pve-tiny CT 50011 is **stopped, `onboot: 0`, not destroyed**. Its
+  Wazuh agent key (agent 015) was reused on pve because the manager rejects a
+  duplicate agent name. Destroy it only after the pve copy has soaked, and
+  exclude it from the pve-tiny vzdump job until then.
+- The other three stacks in this move are still on pve-tiny, on the same
+  NVMe. Replace the drive before trusting them long term.
+
 ## Progress
 
 | Item | Status |

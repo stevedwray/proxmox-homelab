@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: omada-edge
+  stack: omada-controller
+spec:
+  routes:
+    - name: omada
+      host: omada.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: https://192.168.1.252:8043
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: none

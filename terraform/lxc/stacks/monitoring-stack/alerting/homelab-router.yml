@@ -1,0 +1,221 @@
+# Grafana file-provisioned alerts for the MikroTik hAP ax3, read through mktxp over API-SSL
+# (docs/alerting/plan.md, Phase 0b). Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# The hAP ax3 has ONE health sensor (cpu-temperature, about 63 C at rest). The router carries the whole LAN,
+# so only a very hot CPU pages; a firmware or RouterOS update notice repeats weekly (category: maintenance),
+# not every four hours. mktxp keeps answering when it cannot reach the router, so "Router metrics have stopped
+# arriving" is the rule that notices the monitoring account or its certificate breaking.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-router
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: router-cpu-temp-warning
+        title: Router CPU temperature above 80 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max(mktxp_system_cpu_temperature)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [80]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'Router CPU: {{ humanize $values.A.Value }} C (normally about 63)'
+
+      - uid: router-cpu-temp-critical
+        title: Router CPU temperature above 90 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max(mktxp_system_cpu_temperature)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: 'Router CPU: {{ humanize $values.A.Value }} C (normally about 63). The router carries the whole LAN.'
+
+      - uid: router-firmware-upgrade
+        title: Router RouterBOARD firmware update is available
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (current_firmware,upgrade_firmware)(mktxp_routerboard_firmware_upgrade_available)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: maintenance}
+        annotations:
+          summary: 'RouterBOARD firmware {{ $labels.current_firmware }} is installed and {{ $labels.upgrade_firmware }} is ready (System, RouterBOARD, Upgrade, then reboot). Reminded weekly.'
+
+      - uid: router-ros-update
+        title: Router RouterOS update is available
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (newest_version)(mktxp_system_update_available)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: maintenance}
+        annotations:
+          summary: 'RouterOS {{ $labels.newest_version }} is available. Reminded weekly.'
+
+      - uid: router-interface-errors
+        title: Router interface errors rising
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'sum by (name)(increase(mktxp_interface_rx_error_total{name=~"ether.*|sfp.*"}[1h]) + increase(mktxp_interface_tx_error_total{name=~"ether.*|sfp.*"}[1h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [5]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'Router {{ $labels.name }}: {{ humanize $values.A.Value }} errors in the last hour (a bad cable or port)'
+
+      - uid: router-link-flapping
+        title: Router port link is flapping
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'increase(mktxp_link_downs_total{name=~"ether.*|sfp.*"}[1h])'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [3]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'Router {{ $labels.name }} dropped its link {{ humanize $values.A.Value }} times in the last hour'
+
+      - uid: router-rebooted
+        title: Router has restarted
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'mktxp_system_uptime < 3600'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'The router restarted less than an hour ago: it nearly always means a power cut, a crash or an upgrade nobody mentioned.'
+
+      - uid: router-metrics-missing
+        title: Router metrics have stopped arriving
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'absent(mktxp_system_uptime)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: 'mktxp is running but returns nothing from the router: the monitoring account, its API-SSL certificate or the firewall rule has broken, so temperature and firmware are not being watched.'

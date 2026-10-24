@@ -1579,3 +1579,6 @@
 
 - name: DNS query logs index set, stream and pipeline (docs/lan-dns-technitium/)
   ansible.builtin.import_playbook: configure-graylog-dns-queries.yml
+
+- name: pentest_seg logs index set, stream and pipeline (docs/catch-up/07)
+  ansible.builtin.import_playbook: configure-graylog-pentest-seg.yml

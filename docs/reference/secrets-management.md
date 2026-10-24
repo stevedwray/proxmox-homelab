@@ -105,6 +105,22 @@ Undo a bad value: `bao kv rollback -mount=kv -version=<n> <entry>` (KV v2 keeps
 20 versions per entry). `bao kv metadata get -mount=kv <entry>` shows the
 version history without values.
 
+## Keeping a secret out of Git
+
+The repository is public. Three things stand between a secret and GitHub, and none of them is enough alone:
+
+| Control | Where | What it catches | What it cannot |
+|---|---|---|---|
+| `block-terraform-plan-files` | pre-commit and pre-push | `plan.out`, `*.tfplan`, `*.tfstate`, `*.tfstate.backup` by name | anything else |
+| gitleaks | pre-commit and pre-push | text with a recognisable key name or format | compressed or binary files |
+| `scripts/trufflehog_prepush.sh` | pre-push | credentials in a known provider format (Telegram, Discord, cloud keys, URI passwords), unverified | a bare token with no format, such as a Proxmox API secret (a UUID) |
+
+CI's TruffleHog job runs only for PRs into `main` and only reports secrets it can verify live, so it is a backstop, not the control.
+
+Terraform plan and state files embed input variable values, secrets included, inside a compressed archive no scanner reads. A Proxmox token secret reached `stable` this way on 2026-10-24 (rotated the same day). The rule that would have prevented it: **stage explicit paths** (`git add path1 path2`, or `git add -u`), never `git add -A` on a directory, and read the whole of `git diff --cached --name-only` before committing. The working tree usually has other sessions' untracked files in it.
+
+To rotate a leaked Proxmox token: confirm which nodes' stored secrets match by comparing `sha256sum | cut -c1-8` fingerprints (never print the value), then on the node `pveum user token remove automation@pve terraform && pveum user token add automation@pve terraform --privsep 0 --output-format json`, piped through `python3 -c 'import sys,json; print(json.load(sys.stdin)["value"])'` straight into `scripts/openbao_write.py hosts/<node> TF_VAR_pm_api_token_secret`.
+
 ## Adding a production node
 
 1. Add the node to `terraform/PRODUCTION_NODES` and create `.env.<node>`.

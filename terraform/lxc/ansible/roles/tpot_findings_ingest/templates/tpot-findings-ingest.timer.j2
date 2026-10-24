@@ -4,7 +4,7 @@ Description=Schedule for tpot-findings-ingest.service
 [Timer]
 OnCalendar={{ tpot_findings_ingest_on_calendar }}
 Persistent=true
-RandomizedDelaySec=300
+RandomizedDelaySec=60
 
 [Install]
 WantedBy=timers.target

@@ -8,6 +8,10 @@ for anything else in this repo going forward. The deployed containers on
 `pve`/`pve-test-vm` and the `work/pentagi-v210-upgrade` branch have not been
 torn down as part of this note — that's a separate decision, not yet made.
 
+**Torn down 2026-10-24** (both CTs were already gone; the IaC, manifest entry, monitoring targets, router rules, edge route, DNS record, Authentik objects, OpenBao entry, Harbor robot and framework key
+were all removed), see [docs/catch-up/08](../catch-up/08-pentagi-residue-cleanup.md). Left on purpose: the Harbor
+project `pentagi`, its CVE allowlist, and `GREENBONE_PENTAGI_PASSWORD`.
+
 Workspace for deploying [PentAGI](https://github.com/vxcontrol/pentagi) — an
 autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 `pve-test-vm`, driving local Ollama/SearXNG on `framework.gibbsgreatly.xyz`

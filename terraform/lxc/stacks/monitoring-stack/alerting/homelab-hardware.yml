@@ -1,0 +1,480 @@
+# Grafana file-provisioned hardware alert rules (docs/alerting/plan.md, Phase 1).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible, so the
+# {{ $labels.* }} parts are Grafana templates. Every expression selects
+# job="node_exporter_hw": LXC node_exporters repeat the host NVMe sensors.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-hardware
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: hw-nvme-media-errors
+        title: NVMe media errors increasing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'increase(nvme_media_errors_total{job="node_exporter_hw"}[1h])'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
+
+      - uid: hw-nvme-critical-warning
+        title: NVMe critical warning flag set
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'nvme_critical_warning{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
+
+      - uid: hw-nvme-spare-low
+        title: NVMe spare capacity near threshold
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: '(nvme_available_spare_threshold_ratio{job="node_exporter_hw"} + 0.05) - nvme_available_spare_ratio{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
+
+      - uid: hw-smart-unhealthy
+        title: SMART overall health failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'smartmon_device_smart_healthy{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
+
+      - uid: hw-nvme-wear
+        title: NVMe wear above 90%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'nvme_percentage_used_ratio{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0.9]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} of rated endurance used'
+
+      - uid: hw-nvme-temp-warning
+        title: NVMe composite temperature above 70 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,chip)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~"nvme_nvme.*",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [70]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-nvme-temp-critical
+        title: NVMe composite temperature above 80 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,chip)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~"nvme_nvme.*",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [80]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-cpu-temp-warning
+        title: CPU temperature above 85 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~".*18_3",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
+
+      - uid: hw-cpu-temp-critical
+        title: CPU temperature above 95 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack)(node_hwmon_temp_celsius{job="node_exporter_hw",chip=~".*18_3",sensor="temp1"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [95]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
+
+      - uid: hw-sata-bad-sectors
+        title: SATA disk has pending or uncorrectable sectors
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)({__name__=~"smartmon_(current_pending_sector|offline_uncorrectable)_raw_value",job="node_exporter_hw"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
+
+      - uid: hw-sata-counters-rising
+        title: SATA disk error counters rising
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)(increase({__name__=~"smartmon_(reallocated_sector_ct|reported_uncorrect|runtime_bad_block|end_to_end_error|program_fail_cnt_total|erase_fail_count_total)_raw_value",job="node_exporter_hw"}[24h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART error counters rose by {{ humanize $values.A.Value }} in 24h (reallocated, uncorrectable or bad blocks)'
+
+      - uid: hw-sata-crc-errors
+        title: SATA link CRC errors rising
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)(increase(smartmon_udma_crc_error_count_raw_value{job="node_exporter_hw"}[24h]))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} new CRC errors in 24h (suspect the SATA cable or backplane)'
+
+      # The Pis run an SSD in a small enclosure and sit at 48 to 56 C normally (operator, 2026-10-24: 55 C was too low for them),
+      # so they get 60 C; every other host keeps 55 C. The 65 C critical rule below still covers all hosts.
+      - uid: hw-sata-temp-warning
+        title: SATA disk temperature above 55 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw",stack!~"argon-.*"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw",stack!~"argon-.*"} < 120))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [55]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-sata-temp-warning-pi
+        title: SATA disk temperature above 60 C (Raspberry Pis)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw",stack=~"argon-.*"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw",stack=~"argon-.*"} < 120))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [60]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-sata-temp-critical
+        title: SATA disk temperature above 65 C
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw"} < 120))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [65]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: hardware, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-sata-wear
+        title: SATA SSD wear leveling below 20%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'smartmon_wear_leveling_count_value{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [20]}
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }}% of rated life remains'
+
+      - uid: hw-smart-unreadable
+        title: SMART became unreadable on a disk
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: '(smartmon_device_smart_available{job="node_exporter_hw"} offset 1d) - smartmon_device_smart_available{job="node_exporter_hw"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART was readable yesterday and is not now, so its health flag can no longer be trusted'
+
+      - uid: hw-smart-stale
+        title: SMART metrics stopped updating
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack)(time() - node_textfile_mtime_seconds{job="node_exporter_hw",file=~".*/(smartmon|nvme).prom"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [7200]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }}: the SMART/NVMe collector has not written metrics for {{ humanizeDuration $values.A.Value }}, so every disk rule is blind'

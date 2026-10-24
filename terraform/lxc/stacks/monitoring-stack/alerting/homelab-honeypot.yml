@@ -1,0 +1,105 @@
+# Grafana file-provisioned honeypot tripwire (docs/alerting/plan.md, Phase 1c).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# T-Pot is a LAN tripwire: nothing but known hosts should ever open a connection
+# to it. Suricata sees the real source address; the honeypot sensors do not
+# (Docker NATs LAN clients to 172.x / 192.168.112.1), so the rule reads
+# Suricata flow records. A flow only counts when it is an inbound connection:
+# a service port (<= 32767) reached from an ephemeral source port (>= 1024),
+# which excludes the Pi's own outbound traffic seen mid-stream.
+#
+# The allowlist below must match the "expected sources" in
+# dashboards/tpot-events.json (it includes Greenbone, 192.168.70.11, whose
+# scans are expected). The data lags the honeypot by up to the hourly sync, so
+# the rule looks back 2h and stays firing until the event ages out.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-honeypot
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: tpot-tripwire
+        title: Unexpected connection to the honeypot
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 7200, to: 0}
+            datasourceUid: tpot-events
+            model:
+              refId: A
+              datasource: {type: grafana-opensearch-datasource, uid: tpot-events}
+              query: "honeypot.keyword:suricata AND event_type.keyword:flow AND dest_ip.keyword:\"192.168.1.28\" AND NOT dest_port:(64295 OR 64297 OR 64294 OR 64298 OR 64296 OR 8083 OR 8084 OR 67 OR 68 OR 137 OR 138 OR 546 OR 547 OR 5353 OR 1900) AND NOT src_ip.keyword:(\"192.168.1.28\" OR \"192.168.1.4\" OR \"192.168.1.104\" OR \"192.168.1.251\" OR \"192.168.50.12\" OR \"192.168.20.12\" OR \"192.168.20.14\" OR \"192.168.20.15\" OR \"192.168.40.15\" OR \"192.168.70.11\") AND dest_port:[1 TO 32767] AND src_port:[1024 TO 65535]"
+              queryType: lucene
+              timeField: "@timestamp"
+              metrics:
+                - {id: "1", type: count}
+              bucketAggs:
+                - {id: "2", type: terms, field: src_ip.keyword, settings: {size: "20", order: desc, orderBy: _count, min_doc_count: "1"}}
+                - {id: "3", type: date_histogram, field: "@timestamp", settings: {interval: 1h, min_doc_count: "0", trimEdges: "0"}}
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: sum
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, category: security, page: "true", tripwire: honeypot}
+        annotations:
+          summary: 'An unexpected host, {{ index $labels "src_ip.keyword" }}, opened {{ humanize $values.B.Value }} connection(s) to the honeypot in the last 2h. Only the allowlisted scanners (Greenbone and known hosts) are expected. Details: T-Pot Events dashboard.'
+
+      # The tripwire above treats "no data" as fine (the honeypot is normally silent), so if the
+      # sync from the T-Pot Pi to OpenSearch stops it would go blind without a word. T-Pot's
+      # Suricata alone writes 7,200 to 10,000 events an hour: over 14 days (2026-10-24) no full hour
+      # had fewer than 7,231 and none was empty, so fewer than 1,000 in an hour means the data stopped.
+      - uid: tpot-data-stale
+        title: Honeypot data has stopped arriving
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: tpot-events
+            model:
+              refId: A
+              datasource: {type: grafana-opensearch-datasource, uid: tpot-events}
+              query: "honeypot.keyword:suricata"
+              queryType: lucene
+              timeField: "@timestamp"
+              metrics:
+                - {id: "1", type: count}
+              bucketAggs:
+                - {id: "2", type: date_histogram, field: "@timestamp", settings: {interval: 10m, min_doc_count: "0", trimEdges: "0"}}
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: sum
+              settings: {mode: dropNN}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1000]}
+        for: 10m
+        noDataState: Alerting
+        execErrState: Error
+        labels: {severity: warning, category: security}
+        annotations:
+          summary: 'No honeypot (Suricata) events reached OpenSearch in the last hour ({{ humanize $values.B.Value }} against about 9,000 normally). The T-Pot sync (secpipe-stack, every 10 minutes) or OpenSearch has stopped, so the honeypot tripwire cannot see anything.'

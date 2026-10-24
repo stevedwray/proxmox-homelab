@@ -1,0 +1,415 @@
+---
+# Put the T-Pot web UI (nginx :64297) behind the lab's Traefik, replacing the
+# legacy NPM route tpotce.gibbsgreatly.xyz. docs/npm-retirement/plan.md Part 1.
+#
+# HOST LAYER + the nginx service only: it adds a step-ca cert to nginx's cert
+# dir, a host firewall limiting :64297 to Traefik, and a bind-mounted copy of
+# tpotweb.conf without auth_basic (Authentik forwardAuth replaces it). It never
+# runs T-Pot's install.sh/update.sh and only recreates the `nginx` container.
+#
+# Tags (run in this order, each is a separate operator action):
+#   tls       step CLI + root CA + step-ca cert for nginx + renewal timer
+#   firewall  DOCKER-USER (v4) and ip6tables INPUT (v6) rules + boot unit
+#   noauth    remove auth_basic (REFUSES to run unless the firewall is active)
+#
+# Run (from repo root; env comes from the prod wrapper):
+#   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/tpot-web-behind-traefik.yml --tags tls
+# Required env: LAB_IP_PROXY, LAB_IP_STEP_CA, STEP_CA_PROVISIONER_PASSWORD (tls).
+- name: Put the T-Pot web UI behind Traefik
+  hosts: tpot
+  become: true
+  gather_facts: true
+
+  vars:
+    tpot_dir: /home/steve/tpotce
+    tpot_cert_dir: /home/steve/tpotce/data/nginx/cert
+    tpot_local_dir: /home/steve/tpotce/local/nginx
+    tpot_tls_dir: /root/tpot-tls
+    tpot_lan_ip: 192.168.1.28
+    tpot_ui_port: 64297
+    tpot_fqdn: "tpot.{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    tpot_traefik_ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+    tpot_root_ca: /usr/local/share/ca-certificates/homelab-root.crt
+    tpot_step_version: "0.30.2"
+    tpot_step_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+    tpot_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
+    tpot_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
+    tpot_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is required') }}"
+
+  tasks:
+    # ---- tls: step CLI, root CA, certificate ------------------------------
+    - name: Check whether the step CLI is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/step
+      register: tpot_step_stat
+      tags: [tls]
+
+    - name: Install the step CLI
+      when: not tpot_step_stat.stat.exists
+      tags: [tls]
+      block:
+        - name: Download the step CLI release archive
+          ansible.builtin.get_url:
+            url: "https://github.com/smallstep/cli/releases/download/v{{ tpot_step_version }}/step_linux_{{ tpot_step_version }}_{{ tpot_step_arch }}.tar.gz"
+            dest: "/tmp/step_linux_{{ tpot_step_version }}_{{ tpot_step_arch }}.tar.gz"
+            mode: "0600"
+        - name: Extract the step CLI archive
+          ansible.builtin.unarchive:
+            src: "/tmp/step_linux_{{ tpot_step_version }}_{{ tpot_step_arch }}.tar.gz"
+            dest: /tmp
+            remote_src: true
+        - name: Install the step CLI binary
+          ansible.builtin.copy:
+            src: "/tmp/step_{{ tpot_step_version }}/bin/step"
+            dest: /usr/local/bin/step
+            mode: "0755"  # nosonar: ansible:S2612 -- shared system binary in /usr/local/bin
+            remote_src: true
+      always:
+        - name: Remove the step CLI download leftovers
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "/tmp/step_linux_{{ tpot_step_version }}_{{ tpot_step_arch }}.tar.gz"
+            - "/tmp/step_{{ tpot_step_version }}"
+
+    - name: Install the homelab root CA on the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+        dest: "{{ tpot_root_ca }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: tpot_root_ca_installed
+      tags: [tls]
+
+    - name: Refresh the CA trust store
+      ansible.builtin.command: update-ca-certificates
+      when: tpot_root_ca_installed.changed
+      changed_when: true
+      tags: [tls]
+
+    - name: Ensure the TLS working directory exists
+      ansible.builtin.file:
+        path: "{{ tpot_tls_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      tags: [tls]
+
+    - name: Check the current T-Pot web certificate
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [[ -s "{{ tpot_tls_dir }}/leaf.crt" && -s "{{ tpot_tls_dir }}/leaf.key" ]] \
+           && openssl x509 -checkend 1296000 -noout -in "{{ tpot_tls_dir }}/leaf.crt" >/dev/null 2>&1; then
+          echo valid
+        else
+          echo issue
+        fi
+      args:
+        executable: /bin/bash
+      register: tpot_tls_state
+      changed_when: false
+      tags: [tls]
+
+    - name: Issue the T-Pot web certificate from step-ca
+      when: tpot_tls_state.stdout == 'issue'
+      tags: [tls]
+      block:
+        - name: Write temporary step-ca provisioner password file
+          ansible.builtin.copy:
+            dest: /root/.tpot-step-provisioner-password
+            content: "{{ tpot_step_ca_provisioner_password }}\n"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+        - name: Request certificate with FQDN and IP SANs
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/step
+              - ca
+              - certificate
+              - "{{ tpot_fqdn }}"
+              - "{{ tpot_tls_dir }}/leaf.crt"
+              - "{{ tpot_tls_dir }}/leaf.key"
+              - --san
+              - "{{ tpot_fqdn }}"
+              - --san
+              - "{{ tpot_lan_ip }}"
+              - --san
+              - tpot.gibbsgreatly.xyz
+              - --ca-url
+              - "{{ tpot_step_ca_url }}"
+              - --root
+              - "{{ tpot_root_ca }}"
+              - --provisioner
+              - "{{ tpot_step_ca_provisioner }}"
+              - --provisioner-password-file
+              - /root/.tpot-step-provisioner-password
+              - --not-after
+              - 2160h
+              - --force
+          changed_when: true
+      always:
+        - name: Remove temporary step-ca provisioner password file
+          ansible.builtin.file:
+            path: /root/.tpot-step-provisioner-password
+            state: absent
+
+    - name: Keep the stock self-signed nginx cert and key (once)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cp -p "{{ tpot_cert_dir }}/nginx.crt" "{{ tpot_cert_dir }}/nginx.crt.selfsigned"
+        cp -p "{{ tpot_cert_dir }}/nginx.key" "{{ tpot_cert_dir }}/nginx.key.selfsigned"
+      args:
+        executable: /bin/bash
+        creates: "{{ tpot_cert_dir }}/nginx.crt.selfsigned"
+      tags: [tls]
+
+    - name: Install the full-chain cert and key where nginx reads them
+      ansible.builtin.shell: |
+        set -euo pipefail
+        D="{{ tpot_cert_dir }}"
+        cat "{{ tpot_tls_dir }}/leaf.crt" "{{ tpot_root_ca }}" > "${D}/nginx.crt.new"
+        cp "{{ tpot_tls_dir }}/leaf.key" "${D}/nginx.key.new"
+        if cmp -s "${D}/nginx.crt.new" "${D}/nginx.crt" && cmp -s "${D}/nginx.key.new" "${D}/nginx.key"; then
+          rm -f "${D}/nginx.crt.new" "${D}/nginx.key.new"
+          echo same
+        else
+          chown tpot:tpot "${D}/nginx.crt.new" "${D}/nginx.key.new"
+          chmod 0644 "${D}/nginx.crt.new"
+          chmod 0640 "${D}/nginx.key.new"
+          mv -f "${D}/nginx.crt.new" "${D}/nginx.crt"
+          mv -f "${D}/nginx.key.new" "${D}/nginx.key"
+          echo updated
+        fi
+      args:
+        executable: /bin/bash
+      register: tpot_tls_install
+      changed_when: tpot_tls_install.stdout == 'updated'
+      tags: [tls]
+
+    - name: Reload nginx to pick up a changed certificate
+      ansible.builtin.command: docker exec nginx nginx -s reload
+      when: tpot_tls_install.changed
+      tags: [tls]
+
+    - name: Write the T-Pot web certificate renewal script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/tpot-tls-renew.sh
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          # Renew the T-Pot web cert via mTLS with the existing cert (no
+          # provisioner password stays on this host), reinstall it where nginx
+          # reads it, and reload nginx (no restart needed).
+          set -euo pipefail
+          T="{{ tpot_tls_dir }}"
+          D="{{ tpot_cert_dir }}"
+          if openssl x509 -checkend 1296000 -noout -in "${T}/leaf.crt" >/dev/null 2>&1; then
+            echo "tpot TLS cert valid for >15d, nothing to do"
+            exit 0
+          fi
+          /usr/local/bin/step ca renew --force \
+            --ca-url "{{ tpot_step_ca_url }}" \
+            --root "{{ tpot_root_ca }}" \
+            "${T}/leaf.crt" "${T}/leaf.key"
+          cat "${T}/leaf.crt" "{{ tpot_root_ca }}" > "${D}/nginx.crt"
+          cp "${T}/leaf.key" "${D}/nginx.key"
+          chown tpot:tpot "${D}/nginx.crt" "${D}/nginx.key"
+          chmod 0644 "${D}/nginx.crt"
+          chmod 0640 "${D}/nginx.key"
+          docker exec nginx nginx -s reload
+          echo "tpot TLS cert renewed; nginx reloaded"
+      tags: [tls]
+
+    - name: Write the renewal service and timer
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: "{{ item.content }}"
+      loop:
+        - name: tpot-tls-renew.service
+          content: |
+            [Unit]
+            Description=Renew the T-Pot web UI TLS certificate from step-ca
+            After=network-online.target docker.service
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/sbin/tpot-tls-renew.sh
+        - name: tpot-tls-renew.timer
+          content: |
+            [Unit]
+            Description=Daily check of the T-Pot web UI TLS certificate
+
+            [Timer]
+            OnCalendar=*-*-* 03:20:00
+            RandomizedDelaySec=20m
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      tags: [tls]
+
+    - name: Enable the renewal timer
+      ansible.builtin.systemd:
+        name: tpot-tls-renew.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      tags: [tls]
+
+    # ---- firewall: only Traefik may reach :64297 ---------------------------
+    # IPv4: the published port is DNAT'd, so it traverses FORWARD -> DOCKER-USER
+    # (matching the physical NIC so intra-Docker traffic is unaffected).
+    # IPv6: Docker has no ip6tables NAT here, so docker-proxy answers on [::]
+    # through the INPUT chain; Traefik reaches the backend over IPv4, so all
+    # IPv6 to the UI port is dropped. The Pi has a global IPv6 address.
+    - name: Write the T-Pot UI firewall script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/tpot-ui-firewall.sh
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          IF="$(ip -o route get {{ tpot_traefik_ip }} | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+          iptables -C DOCKER-USER -i "${IF}" -p tcp --dport {{ tpot_ui_port }} ! -s {{ tpot_traefik_ip }} -j DROP 2>/dev/null \
+            || iptables -I DOCKER-USER 1 -i "${IF}" -p tcp --dport {{ tpot_ui_port }} ! -s {{ tpot_traefik_ip }} -j DROP
+          ip6tables -C INPUT -p tcp --dport {{ tpot_ui_port }} -j DROP 2>/dev/null \
+            || ip6tables -I INPUT 1 -p tcp --dport {{ tpot_ui_port }} -j DROP
+          echo "tpot UI firewall active on ${IF}"
+      tags: [firewall]
+
+    - name: Write the T-Pot UI firewall unit (re-applied after every Docker start)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/tpot-ui-firewall.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd unit files must be world-readable
+        content: |
+          [Unit]
+          Description=Restrict the T-Pot web UI port to Traefik
+          Requires=docker.service
+          After=docker.service
+          PartOf=docker.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/usr/local/sbin/tpot-ui-firewall.sh
+
+          [Install]
+          WantedBy=multi-user.target
+      tags: [firewall]
+
+    - name: Ensure the tpot.service drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/tpot.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      tags: [firewall]
+
+    # tpot.service (T-Pot's compose up/down wrapper, also what the daily 04:09
+    # reboot restarts) must not bring nginx up before the firewall is in place:
+    # with basic auth gone the firewall is the only gate. Requires= makes the
+    # UI fail closed -- if the firewall script ever fails, T-Pot does not start.
+    - name: Make tpot.service start only after the UI firewall is active
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/tpot.service.d/10-ui-firewall.conf
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 -- systemd drop-ins must be world-readable
+        content: |
+          [Unit]
+          Requires=tpot-ui-firewall.service
+          After=tpot-ui-firewall.service
+      tags: [firewall]
+    - name: Enable and start the firewall unit
+      ansible.builtin.systemd:
+        name: tpot-ui-firewall.service
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      tags: [firewall]
+
+    # ---- noauth: drop auth_basic (only behind the firewall) ----------------
+    - name: Refuse to remove basic auth unless both firewall rules are active
+      ansible.builtin.shell: |
+        set -euo pipefail
+        IF="$(ip -o route get {{ tpot_traefik_ip }} | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')"
+        iptables -C DOCKER-USER -i "${IF}" -p tcp --dport {{ tpot_ui_port }} ! -s {{ tpot_traefik_ip }} -j DROP
+        ip6tables -C INPUT -p tcp --dport {{ tpot_ui_port }} -j DROP
+      args:
+        executable: /bin/bash
+      changed_when: false
+      tags: [noauth]
+
+    - name: Ensure the local nginx override directory exists
+      ansible.builtin.file:
+        path: "{{ tpot_local_dir }}"
+        state: directory
+        owner: steve
+        group: steve
+        mode: "0755"
+      tags: [noauth]
+
+    - name: Build tpotweb.conf without auth_basic from the running image's copy
+      ansible.builtin.shell: |
+        set -euo pipefail
+        docker cp nginx:/etc/nginx/conf.d/tpotweb.conf "{{ tpot_local_dir }}/tpotweb.conf.orig"
+        sed -e '/auth_basic/d' "{{ tpot_local_dir }}/tpotweb.conf.orig" > "{{ tpot_local_dir }}/tpotweb.conf"
+        ! grep -q auth_basic "{{ tpot_local_dir }}/tpotweb.conf"
+        chown steve:steve "{{ tpot_local_dir }}/tpotweb.conf" "{{ tpot_local_dir }}/tpotweb.conf.orig"
+      args:
+        executable: /bin/bash
+        creates: "{{ tpot_local_dir }}/tpotweb.conf"
+      tags: [noauth]
+
+    # T-Pot's stock config is `satisfy any` + `allow 127.0.0.1/::1` + `deny all`: a
+    # request passes if the IP is allowed OR basic auth succeeds. With auth_basic
+    # removed only localhost passes, so every app path 403s. Allow Traefik's address
+    # (the host firewall already limits :{{ tpot_ui_port }} to it).
+    - name: Allow the Traefik address in the nginx override (replaces basic auth)
+      ansible.builtin.lineinfile:
+        path: "{{ tpot_local_dir }}/tpotweb.conf"
+        insertafter: '^\s*allow ::1;'
+        line: "    allow {{ tpot_traefik_ip }};"
+        regexp: '^\s*allow {{ tpot_traefik_ip | regex_escape }};'
+      register: tpot_nginx_allow
+      tags: [noauth]
+
+    - name: Bind-mount the override into the nginx service (compose backed up first)
+      ansible.builtin.lineinfile:
+        path: "{{ tpot_dir }}/docker-compose.yml"
+        insertafter: '^\s+- \$\{TPOT_DATA_PATH\}/nginx/log/:/var/log/nginx/$'
+        line: "     - {{ tpot_local_dir }}/tpotweb.conf:/etc/nginx/conf.d/tpotweb.conf:ro"
+        backup: true
+      register: tpot_compose_edit
+      tags: [noauth]
+
+    - name: Recreate only the nginx service
+      ansible.builtin.command: docker compose -f {{ tpot_dir }}/docker-compose.yml up -d --no-deps nginx
+      args:
+        chdir: "{{ tpot_dir }}"
+      when: tpot_compose_edit.changed
+
+    # lineinfile replaces the file (new inode), which a single-file bind mount does
+    # not follow; a restart re-resolves it. Skipped when the recreate above ran.
+    - name: Restart nginx to pick up the allow-list edit
+      ansible.builtin.command: docker restart nginx
+      when: tpot_nginx_allow.changed and not tpot_compose_edit.changed
+      tags: [noauth]

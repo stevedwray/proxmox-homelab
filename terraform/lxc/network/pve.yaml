@@ -183,7 +183,7 @@ attachments:
   # else).
   # -------------------------------------------------------------------------
   pentest_seg:
-    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    description: Pentest segment — dedicated, contained zone
     type: sdn_vnet
     bridge: tvpent
     firewall: false
@@ -310,12 +310,10 @@ zones:
     containers:
       - "nextcloud-stack (VMID 120010) — 192.168.120.10 — live, deployed 2026-09-24"
   pentest_seg:
-    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    description: Pentest segment — dedicated, contained zone
     attachment: pentest_seg
     containers:
-      - "pentagi-stack — ${lab_ip_pentagi}"
       - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
-      - "pentagi-upstream-control (VMID 70013) — 192.168.70.13 — isolated upstream control for PentAGI model A/B testing"
   ai_seg:
     description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg
@@ -331,6 +329,8 @@ policies:
   # ansible/00-initial-setup/mikrotik-firewall-shared-graylog-ingress.yml.
   # It covers the normal LAN and managed service zones, while excluding
   # intentionally hostile/test zones. Do not add per-workload :514 rules.
+  # The one exception is pentest_seg -> Graylog below: those logs land in
+  # their own "Pentest Segment" stream, never the lab's normal streams.
   - from: edge_seg
     to: ai_seg
     protocol: tcp
@@ -493,6 +493,19 @@ policies:
       node_exporter_step_ca_url defaults to https://<step-ca>, i.e. 443).
       Other zones reach step-ca without an explicit rule because they
       aren't contained like pentest_seg is -- this makes it explicit here.
+      The live rule had drifted to any destination on 443; narrowed back
+      to step-ca by ansible/00-initial-setup/mikrotik-firewall-pentest-seg-narrow.yml.
+  - from: pentest_seg
+    to: 192.168.20.14
+    protocol: tcp
+    ports: [514]
+    description: >-
+      pentest_seg rsyslog to Graylog only. graylog-stack's relay stamps the
+      real sender IP and configure-graylog-pentest-seg.yml routes everything
+      from 192.168.70.0/24 into the "Pentest Segment" stream, out of the
+      lab's normal streams and alerting. Was a legacy pentagi-stack rule
+      with no destination (any host on 514); narrowed by
+      ansible/00-initial-setup/mikrotik-firewall-pentest-seg-narrow.yml.
   - from: mgmt_seg
     to: pentest_seg
     protocol: tcp
