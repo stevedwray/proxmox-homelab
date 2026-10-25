@@ -21,7 +21,7 @@ rollout.
 | Runtime | Native Debian packages and systemd; no Docker, Icinga Web, Icinga DB, Redis, Director, or database in phase 1 |
 | Cluster transport | Mutual TLS on TCP 5665, bound to the relevant LAN address and accepted only from the other Pi |
 | Alerting | Direct Discord and Telegram notification commands, with dedicated least-privilege secrets in OpenBao |
-| SmokePing | One native instance on `argon-01`; its web interface is loopback-only and reached with SSH forwarding when needed |
+| SmokePing | One native instance on `argon-01`; its web interface binds to argon-01's LAN address, reachable directly like every other lab service -- never published to the Internet |
 | OCI | Public Pangolin endpoint and existing source-restricted SSH are monitored targets only. No OCI daemon, listener, tunnel, firewall change, or route is added. |
 
 Icinga's HA zone is specifically for distributing checks and notifications;
@@ -527,15 +527,21 @@ growth warrants a smaller window. Do not use SmokePing to trigger primary
 pages. It is an explanatory latency/loss history alongside Icinga's immediate
 state monitoring.
 
-Bind nginx to `127.0.0.1` only. Operators view the graphs with:
+Bind nginx to argon-01's own LAN address (`192.168.1.22`), the same way
+every other lab service binds to its own address rather than `0.0.0.0` or
+loopback -- **revised 2026-10-25, operator correction**: the original text
+here specified loopback-only plus SSH port-forwarding, which was an
+inconsistent, needless-friction design for a service that lives on the LAN
+like everything else it monitors. Operators view the graphs directly:
 
-```bash
-ssh -L 8080:127.0.0.1:80 ansible@192.168.1.22
+```text
+http://192.168.1.22/smokeping/
 ```
 
-Then browse `http://127.0.0.1:8080/smokeping/`. If a different local web port
-is selected, record it in the role defaults and use it consistently. Do not
-publish this through Traefik, Pangolin, Portainer, or a new router rule.
+If a different port is selected, record it in the role defaults and use it
+consistently. Do not publish this through Traefik, Pangolin, Portainer, or
+a new router rule -- it stays LAN-internal, same as MikroTik's or
+Technitium's own web UIs; it is just never exposed to the Internet.
 
 Test by creating a short controlled loss condition to one safe target and
 confirm that the RRD graph distinguishes it from a gateway or Internet fault.
@@ -543,8 +549,8 @@ Rollback is `systemctl disable --now smokeping nginx`, removal of only the
 role-owned nginx site and optional RRD data, and no network-policy change.
 
 **Stage 4 gate:** graphs show usable home-to-OCI loss/latency history; the
-SmokePing listener is unreachable from another LAN client and no OCI change
-was required.
+SmokePing listener is reachable on the LAN (like every other lab service)
+and unreachable from the Internet, and no OCI change was required.
 
 ### 4.1 Stage 4 execution record (2026-10-25)
 
@@ -600,6 +606,26 @@ Latency/loss history accumulation (RRDs exist and are being written, step
 OCI-edge fault in the graphs themselves was not separately drilled this
 session.
 
+### 4.2 Revision: bind to the LAN, not loopback (2026-10-25, operator correction)
+
+The loopback-only-plus-SSH-forwarding design above (implemented and verified
+as written in §4.1) was an operator-identified mistake: this is a LAN
+service monitoring other LAN services, and every other service in this lab
+(Icinga's own ApiListener included) binds to its own address and is
+reachable directly, not through loopback and a tunnel. That precedent
+should have overridden the original design text; it didn't, and the
+operator caught it after Stage 4 first shipped.
+
+Changed `smokeping-nginx.conf.j2` to `listen {{ argon-01's LAN address
+}}:80` (was `127.0.0.1:80`); no firewall rule was needed either way, since
+`iptables -S INPUT` on argon-01 has no rule for port 80 at all (default
+`ACCEPT`), same as every other unrestricted service port on these Pis.
+
+**Verified:** `ss -ltnp` shows nginx bound to `192.168.1.22:80` (not
+`127.0.0.1` or `0.0.0.0`); `curl http://192.168.1.22/smokeping/smokeping.cgi`
+from the operator workstation returns `200` directly, no SSH forwarding
+involved.
+
 ## Validation, commit, and execution state
 
 For every Ansible change, run:
@@ -633,7 +659,7 @@ terminal transcript.
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4). Core checks, notifications, SmokePing all still disabled by role default. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
-| 4 — SmokePing | **Deployed and verified, argon-01** | 2026-10-25, this branch | SmokePing probing all 6 configured targets; nginx loopback-only (confirmed refused from a third LAN host) with fresh RRDs; CGI returns 200 both locally and via the documented SSH-forward path. 3 bugs found and fixed (§4.1), including a ~37-minute unintended `0.0.0.0:80` exposure from the nginx-light package default that this stage's own fix closed. Rollback: `systemctl disable --now smokeping nginx`, remove the role-owned nginx site |
+| 4 — SmokePing | **Deployed and verified, argon-01** | 2026-10-25, this branch | SmokePing probing all 6 configured targets with fresh RRDs; nginx bound to argon-01's LAN address (`192.168.1.22:80`, revised from an initial loopback-only design per operator correction, §4.2) -- `curl http://192.168.1.22/smokeping/` works directly from the LAN. 3 deployment bugs found and fixed (§4.1), including a ~37-minute unintended `0.0.0.0:80` exposure from the nginx-light package default that this stage's own fix closed. Rollback: `systemctl disable --now smokeping nginx`, remove the role-owned nginx site |
 
 ## References
 

@@ -5,11 +5,13 @@
 **Revised 2026-10-25. Stages 1 and 4 are deployed and verified.** Stage 1:
 a native Icinga 2 HA pair (argon-01 master, argon-02 synced) with mutual
 TLS, the TCP 5665 peer-only firewall rule, and peer/self checks only.
-Stage 4: SmokePing on argon-01, loopback-only, probing all 6 configured
-targets -- see [runbook.md](runbook.md) §1.4 and §4.1 for the
-verification evidence and the real deployment bugs found and fixed along
-the way (including an unintended ~37-minute `0.0.0.0:80` nginx exposure
-from the package default, now closed). Core checks (Stage 2) and
+Stage 4: SmokePing on argon-01, reachable directly on the LAN at
+`http://192.168.1.22/smokeping/` (like every other lab service), probing
+all 6 configured targets -- see [runbook.md](runbook.md) §1.4, §4.1 and
+§4.2 for the verification evidence, the real deployment bugs found and
+fixed along the way (including an unintended ~37-minute `0.0.0.0:80`
+nginx exposure from the package default, now closed), and the
+operator-corrected LAN-binding revision. Core checks (Stage 2) and
 notifications (Stage 3) are still disabled by the role's own default and
 have not been enabled. No router, OCI, or notification-destination
 change has been made anywhere.

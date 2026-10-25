@@ -72,6 +72,6 @@ icinga_observer_discord_webhook_url: "{{ lookup('env', 'ICINGA_DISCORD_WEBHOOK_U
 icinga_observer_telegram_bot_token: "{{ lookup('env', 'ICINGA_TELEGRAM_BOT_TOKEN') }}"
 icinga_observer_telegram_chat_id: "{{ lookup('env', 'ICINGA_TELEGRAM_CHAT_ID') }}"
 
-# nginx binds to 127.0.0.1 only; reach it with
-# `ssh -L 8080:127.0.0.1:80 ansible@192.168.1.22` (runbook Stage 4).
+# nginx binds to argon-01's own LAN address, same as every other lab
+# service; reach it directly at http://192.168.1.22/smokeping/.
 icinga_observer_smokeping_web_port: 80

@@ -489,7 +489,7 @@
     - Restart smokeping
     - Reload nginx
 
-- name: Render the loopback-only nginx vhost for SmokePing (argon-01 only)
+- name: Render the LAN-bound nginx vhost for SmokePing (argon-01 only)
   ansible.builtin.template:
     src: smokeping-nginx.conf.j2
     dest: /etc/nginx/sites-available/smokeping.conf
