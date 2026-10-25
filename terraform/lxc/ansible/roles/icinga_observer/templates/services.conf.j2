@@ -4,7 +4,7 @@
  * Normal services use max_check_attempts = 2 with a 60s minimum
  * notification interval and a recovery notification; the Icinga-peer
  * checks use a separately, deliberately shorter rule (runbook Stage 1.3).
- * Local resource checks on each Pi (disk, clock, cert expiry) run with
+ * Local resource checks on each Pi (disk, clock) run with
  * command_endpoint = that Pi's own name, since those plugins only read
  * local state and cannot be executed remotely.
  */
@@ -18,16 +18,6 @@ template Service "generic-service" {
 }
 
 /* --- Icinga peer / self: short-rule detection ------------------------------ */
-
-apply Service "icinga-process" to Host {
-  import "generic-service"
-  check_command = "hostalive"
-  max_check_attempts = 3
-  check_interval = 20s
-  retry_interval = 10s
-  command_endpoint = host.name
-  assign where host.name in [ "argon-01", "argon-02" ]
-}
 
 apply Service "cluster-zone-health" to Host {
   import "generic-service"
@@ -50,19 +40,29 @@ apply Service "disk-root" to Host {
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
+/* Public NTP server: 1.1.1.1 (used previously) does not serve NTP. */
 apply Service "clock" to Host {
   import "generic-service"
   check_command = "ntp_time"
-  vars.ntp_address = "{{ icinga_observer_resolver_a }}"
+  vars.ntp_address = "{{ icinga_observer_ntp_server }}"
   command_endpoint = host.name
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
-apply Service "api-listener-tls" to Host {
+/*
+ * Real TLS handshake on the cluster port plus certificate expiry, run from
+ * the peer (see checked_by in hosts.conf).
+ */
+apply Service "api-tls-cert" to Host {
   import "generic-service"
-  check_command = "tcp"
-  vars.tcp_port = {{ icinga_observer_api_port }}
-  vars.tcp_address = host.address
+  check_command = "ssl"
+  max_check_attempts = 3
+  retry_interval = 20s
+  vars.ssl_address = host.address
+  vars.ssl_port = {{ icinga_observer_api_port }}
+  vars.ssl_cert_valid_days_warn = 30
+  vars.ssl_cert_valid_days_critical = 7
+  command_endpoint = host.vars.checked_by
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
@@ -169,7 +169,7 @@ apply Service "sys-health" to Host {
   vars.http_ssl = true
   vars.http_uri = "/v1/sys/health"
   vars.http_string = "\"sealed\":false"
-  vars.http_ssl_cacert = "/etc/icinga2/pki/homelab-root.crt"
+  vars.http_ssl_cacert = "{{ icinga_observer_ca_bundle }}"
   assign where host.name == "openbao"
 }
 
@@ -179,7 +179,7 @@ apply Service "acme-directory" to Host {
   vars.http_ssl = true
   vars.http_uri = "/acme/acme/directory"
   vars.http_string = "newAccount"
-  vars.http_ssl_cacert = "/etc/icinga2/pki/homelab-root.crt"
+  vars.http_ssl_cacert = "{{ icinga_observer_ca_bundle }}"
   assign where host.name == "step-ca"
 }
 

@@ -1,8 +1,9 @@
 ---
-# Native Icinga 2 HA pair for argon-01/argon-02. Docker, Portainer Agent,
-# Wazuh Agent, node_exporter and rsyslog forwarding are untouched by this
-# role -- it only adds icinga2 (+ smokeping/nginx on argon-01) and one
-# narrow firewall rule for TCP 5665.
+# Native Icinga 2 HA pair for argon-01/argon-02 (+ SmokePing and, optionally,
+# Icinga Web on argon-01). Docker, Portainer Agent, Wazuh Agent, node_exporter
+# and rsyslog forwarding are untouched. Debian's icinga2 drops to the
+# `nagios` user for every invocation (CLI included), so anything icinga2 must
+# write or read is nagios-owned, not root-owned -- see runbook Stage 1.4.
 
 - name: Assert this role only targets the two Argon Pis
   ansible.builtin.assert:
@@ -13,74 +14,54 @@
       refusing to run against {{ inventory_hostname }}.
     quiet: true
 
+# --- Packages ---------------------------------------------------------------
 - name: Install Icinga 2 and plugin packages (both Pis)
-  ansible.builtin.apt:
-    name: "{{ icinga_observer_packages_common }}"
-    state: present
-    update_cache: true
+  ansible.builtin.include_tasks: install.yml
+  vars:
+    install_packages: "{{ icinga_observer_packages_common }}"
+    install_probe: icinga2
+    install_recommends: false
 
-- name: Install SmokePing and nginx-light (argon-01 only)
-  ansible.builtin.apt:
-    name: "{{ icinga_observer_packages_master_only }}"
-    state: present
+# Order matters: msmtp-mta (replaces exim4) and nginx-light must exist before
+# smokeping, whose dependencies would otherwise pull in exim4 and apache2.
+- name: Install nginx, fcgiwrap and a non-listening MTA (argon-01 only)
+  ansible.builtin.include_tasks: install.yml
+  vars:
+    install_packages: "{{ icinga_observer_packages_master_only }}"
+    install_probe: nginx-light
+    install_recommends: false
   when: icinga_observer_is_master | bool
 
-# --- Narrow cluster firewall (TCP 5665, peer only) --------------------------
-# Preflight on 2026-10-25 found nftables.service inactive/disabled on both
-# Pis; iptables (nf_tables backend) governs INPUT with policy ACCEPT and no
-# existing INPUT rules. Docker manages its own FORWARD/NAT chains and does
-# not touch INPUT, so adding INPUT rules here cannot collide with Docker.
-# iptables-persistent is not installed; use a small systemd oneshot unit
-# instead of pulling in a package that would also try to manage Docker's
-# own dynamic rules.
-- name: Check whether the TCP 5665 peer-restriction rule already exists
-  ansible.builtin.command: >-
-    iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }}
-    -s {{ icinga_observer_peer_address }} -j ACCEPT
-  register: icinga_observer_fw_accept_present
-  changed_when: false
-  failed_when: false
+- name: Install SmokePing without its apache2 recommendation (argon-01 only)
+  ansible.builtin.include_tasks: install.yml
+  vars:
+    install_packages: [smokeping]
+    install_probe: smokeping
+    install_recommends: false
+  when: icinga_observer_is_master | bool
 
-- name: Check whether the TCP 5665 default-reject rule already exists
-  ansible.builtin.command: >-
-    iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
-  register: icinga_observer_fw_reject_present
-  changed_when: false
-  failed_when: false
+- name: Remove the apache2 and exim4 daemons SmokePing's stock dependencies pulled in
+  ansible.builtin.apt:
+    name: "{{ icinga_observer_packages_unwanted }}"
+    state: absent
+    purge: true
 
-- name: Insert TCP 5665 accept-from-peer rule (idempotent)
-  ansible.builtin.command: >-
-    iptables -I INPUT 1 -p tcp --dport {{ icinga_observer_api_port }}
-    -s {{ icinga_observer_peer_address }} -j ACCEPT
-  when: icinga_observer_fw_accept_present.rc != 0
-  changed_when: true
-
-- name: Insert TCP 5665 reject-all-others rule (idempotent)
-  ansible.builtin.command: >-
-    iptables -I INPUT 2 -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
-  when: icinga_observer_fw_reject_present.rc != 0
-  changed_when: true
-
-- name: Write the TCP 5665 firewall-restore script
-  ansible.builtin.copy:
+# --- Narrow host firewall (cluster port: peer only; SmokePing backend: Traefik only) ---
+# nftables.service is inactive on these Pis and iptables (nf_tables backend)
+# governs INPUT with policy ACCEPT and no other rules; Docker manages only its
+# own FORWARD/NAT chains. iptables-persistent is not installed (it would also
+# try to persist Docker's dynamic rules), so a small oneshot unit re-applies
+# the idempotent script on boot, before icinga2.
+- name: Write the firewall script
+  ansible.builtin.template:
+    src: firewall.sh.j2
     dest: /usr/local/sbin/icinga-cluster-firewall.sh
     owner: root
     group: root
     mode: "0750"
-    content: |
-      #!/bin/bash
-      # Idempotent: re-applies the TCP {{ icinga_observer_api_port }}
-      # peer-only restriction on boot, since no iptables-persistent is
-      # installed on this host. Role-owned; does not touch any other rule.
-      set -euo pipefail
-      iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} \
-        -s {{ icinga_observer_peer_address }} -j ACCEPT 2>/dev/null || \
-        iptables -I INPUT 1 -p tcp --dport {{ icinga_observer_api_port }} \
-          -s {{ icinga_observer_peer_address }} -j ACCEPT
-      iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} -j REJECT 2>/dev/null || \
-        iptables -I INPUT 2 -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
+  notify: Apply Icinga observer firewall
 
-- name: Install the firewall-restore systemd unit
+- name: Install the firewall systemd unit
   ansible.builtin.copy:
     dest: /etc/systemd/system/icinga-cluster-firewall.service
     owner: root
@@ -88,7 +69,7 @@
     mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
     content: |
       [Unit]
-      Description=Restore the Icinga cluster TCP {{ icinga_observer_api_port }} peer-only firewall rule
+      Description=Icinga observer host firewall (cluster port peer-only, SmokePing backend Traefik-only)
       Before=icinga2.service
       After=network-online.target
       Wants=network-online.target
@@ -100,27 +81,23 @@
 
       [Install]
       WantedBy=multi-user.target
-  register: icinga_observer_fw_unit
+  notify: Apply Icinga observer firewall
 
-- name: Enable the firewall-restore systemd unit
+- name: Enable the firewall unit
   ansible.builtin.systemd:
     name: icinga-cluster-firewall.service
     enabled: true
-    daemon_reload: "{{ icinga_observer_fw_unit.changed }}"
+    daemon_reload: true
   ignore_errors: "{{ ansible_check_mode }}"
 
-# --- Config directories ------------------------------------------------------
-# icinga2 on Debian drops to the "nagios" user/group internally for every
-# invocation, CLI included -- confirmed 2026-10-25 when `icinga2 pki
-# new-ca` wrote /var/lib/icinga2/ca/ca.{crt,key} as nagios:nagios even
-# though Ansible ran it as root via become. Any directory the icinga2
-# binary itself must write into (pki material, notification scripts it
-# executes, the env file it reads) has to be owned/traversable by nagios,
-# not root -- a root:root 0750 /etc/icinga2/pki made `icinga2 pki
-# new-cert` fail with Permission Denied the first time this was run.
-- name: Create the PKI directory (nagios-owned -- icinga2 writes here as nagios)
+# The rules must exist before icinga2 listens on a fresh host.
+- name: Apply the firewall now
+  ansible.builtin.meta: flush_handlers
+
+# --- Directories and trust ----------------------------------------------------
+- name: Ensure icinga2's certificate directory is nagios-owned
   ansible.builtin.file:
-    path: /etc/icinga2/pki
+    path: "{{ icinga_observer_cert_dir }}"
     state: directory
     owner: nagios
     group: nagios
@@ -134,13 +111,13 @@
     group: nagios
     mode: "0700"
 
-- name: Copy the homelab root CA into the Icinga check-plugin path
+- name: Install the homelab root CA for plugin-side verification of internal (step-ca) services
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
-    dest: /etc/icinga2/pki/homelab-root.crt
+    dest: "{{ icinga_observer_ca_bundle }}"
     owner: root
-    group: root
-    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate; the containing directory is nagios:nagios 0700, so this is only ever reached by nagios or root anyway
+    group: nagios
+    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate
 
 - name: Create zones.d directory (configuration master only)
   ansible.builtin.file:
@@ -152,9 +129,11 @@
   when: icinga_observer_is_master | bool
 
 # --- Certificates -------------------------------------------------------------
-# Local CA generated on argon-01 during the initial controlled deployment;
-# the private CA key never leaves /var/lib/icinga2/ca and is never copied to
-# this repo or to OpenBao (runbook Stage 1.1).
+# Local CA generated on argon-01 during the initial controlled deployment; the
+# private CA key never leaves /var/lib/icinga2/ca and is never copied to this
+# repo or to OpenBao (runbook Stage 1.1). Internal cluster trust only: no
+# browser ever sees these -- browser-facing TLS is Let's Encrypt, never this CA
+# or step-ca.
 - name: Check whether the local CA already exists (master)
   ansible.builtin.stat:
     path: /var/lib/icinga2/ca/ca.crt
@@ -169,36 +148,31 @@
 
 - name: Check whether this node's certificate already exists
   ansible.builtin.stat:
-    path: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.crt"
+    path: "{{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt"
   register: icinga_observer_cert_stat
 
 - name: Generate this node's private key and CSR
   ansible.builtin.command: >-
     icinga2 pki new-cert --cn {{ icinga_observer_self_name }}
-    --key /etc/icinga2/pki/{{ icinga_observer_self_name }}.key
-    --csr /etc/icinga2/pki/{{ icinga_observer_self_name }}.csr
-    --cert /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+    --key {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.key
+    --csr {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.csr
+    --cert {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt
   when: not icinga_observer_cert_stat.stat.exists
 
 - name: Self-sign the master's own certificate from its local CA
   ansible.builtin.command: >-
-    icinga2 pki sign-csr --csr /etc/icinga2/pki/{{ icinga_observer_self_name }}.csr
-    --cert /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+    icinga2 pki sign-csr
+    --csr {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.csr
+    --cert {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt
   notify: reload icinga2
   when:
     - icinga_observer_is_master | bool
     - not icinga_observer_cert_stat.stat.exists
 
-# The master and peer are deployed as two separate --limit runs
-# (runbook.md Stage 1.1: argon-01 validates first, then argon-02), so
-# nothing here can rely on same-play hostvars from a run that already
-# finished and exited. `delegate_to: icinga_observer_master_name`
-# instead opens a fresh connection to argon-01 for exactly these few
-# tasks, which works the same whether or not argon-01 is in this
-# invocation's --limit set -- confirmed broken without this (2026-10-25:
-# the hostvars-based version silently skipped and left argon-02 with no
-# CA/signed cert at all, caught by `icinga2 daemon -C` failing on argon-02).
-
+# The master and peer are deployed as two separate --limit runs (runbook
+# Stage 1.1), so nothing here may rely on same-play hostvars from a run that
+# already exited. `delegate_to` opens a fresh connection to argon-01 for these
+# few tasks regardless of this invocation's --limit set.
 - name: Read the master's CA certificate
   ansible.builtin.slurp:
     src: /var/lib/icinga2/ca/ca.crt
@@ -206,12 +180,12 @@
   register: icinga_observer_ca_cert_b64
   when: not ansible_check_mode
 
-- name: Distribute the CA certificate to this node's trust store
+- name: Distribute the CA certificate to this node
   ansible.builtin.copy:
-    dest: /etc/icinga2/pki/ca.crt
-    owner: root
-    group: root
-    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate, must be world-readable for cert validation
+    dest: "{{ icinga_observer_cert_dir }}/ca.crt"
+    owner: nagios
+    group: nagios
+    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate; directory is nagios 0700
     content: "{{ icinga_observer_ca_cert_b64.content | b64decode }}"
   notify: reload icinga2
   when:
@@ -222,12 +196,10 @@
 - name: Check whether this node's certificate is already signed by the shared CA (peer only)
   # `icinga2 pki new-cert` writes a self-signed placeholder at the same
   # --cert path as a side effect of generating the key/CSR, so a bare
-  # stat-exists check (used for the master, which overwrites it via
-  # `pki sign-csr` in the same run) wrongly looked "already done" for
-  # the peer and left it running on a self-signed cert its own CA would
-  # reject -- confirmed 2026-10-25 via `openssl verify`.
+  # exists-check wrongly looked "done" for the peer (2026-10-25).
   ansible.builtin.command: >-
-    openssl verify -CAfile /etc/icinga2/pki/ca.crt /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+    openssl verify -CAfile {{ icinga_observer_cert_dir }}/ca.crt
+    {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt
   register: icinga_observer_peer_cert_verify
   changed_when: false
   failed_when: false
@@ -237,7 +209,7 @@
 
 - name: Read this node's own CSR to send for signing (peer only)
   ansible.builtin.slurp:
-    src: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.csr"
+    src: "{{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.csr"
   register: icinga_observer_own_csr_b64
   when:
     - not icinga_observer_is_master | bool
@@ -297,10 +269,10 @@
 
 - name: Install the master-signed certificate (peer only)
   ansible.builtin.copy:
-    dest: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.crt"
-    owner: root
-    group: root
-    mode: "0644"  # nosonar: ansible:S2612 — public node certificate, must be world-readable for TLS handshakes
+    dest: "{{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt"
+    owner: nagios
+    group: nagios
+    mode: "0644"  # nosonar: ansible:S2612 — public node certificate; directory is nagios 0700
     content: "{{ icinga_observer_own_cert_signed.content | b64decode }}"
   notify: reload icinga2
   when:
@@ -311,11 +283,30 @@
 
 - name: Enforce private key permissions
   ansible.builtin.file:
-    path: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.key"
+    path: "{{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.key"
     owner: nagios
     group: nagios
     mode: "0600"
   ignore_errors: "{{ ansible_check_mode }}"
+
+# Earlier revisions kept the material in /etc/icinga2/pki and pointed the
+# ApiListener at it with deprecated cert_path/key_path/ca_path attributes;
+# icinga2 copied it into the standard directory itself. Drop the duplicate
+# private key once the standard-location certificate is proven good.
+- name: Verify the certificate in the standard location
+  ansible.builtin.command: >-
+    openssl verify -CAfile {{ icinga_observer_cert_dir }}/ca.crt
+    {{ icinga_observer_cert_dir }}/{{ icinga_observer_self_name }}.crt
+  register: icinga_observer_cert_verify
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Remove the legacy PKI directory (duplicate private key)
+  ansible.builtin.file:
+    path: "{{ icinga_observer_legacy_pki_dir }}"
+    state: absent
+  when: not ansible_check_mode and icinga_observer_cert_verify.rc == 0
 
 # --- Core configuration -------------------------------------------------------
 - name: Render constants.conf
@@ -340,6 +331,15 @@
   ansible.builtin.template:
     src: icinga2.conf.j2
     dest: /etc/icinga2/icinga2.conf
+    owner: root
+    group: nagios
+    mode: "0640"
+  notify: reload icinga2
+
+- name: Render the ApiListener feature (bound to this Pi's LAN address)
+  ansible.builtin.template:
+    src: api.conf.j2
+    dest: /etc/icinga2/features-available/api.conf
     owner: root
     group: nagios
     mode: "0640"
@@ -387,6 +387,8 @@
   notify: reload icinga2
 
 # --- Notification scripts and secrets (Stage 3) -------------------------------
+# Secrets are injected by ./with-secrets-prod at deploy time and written to a
+# nagios-only file; nothing reads OpenBao at runtime.
 - name: Assert notification secrets are present when rendering scripts
   ansible.builtin.assert:
     that:
@@ -454,16 +456,27 @@
     - icinga_observer_is_master | bool
     - icinga_observer_enable_notifications | bool
 
-# --- Enable Icinga 2 ----------------------------------------------------------
+# --- Features ---------------------------------------------------------------
 - name: Enable the Icinga 2 API feature
   ansible.builtin.command: icinga2 feature enable api
   register: icinga_observer_api_feature
   changed_when: "'already enabled' not in icinga_observer_api_feature.stdout"
+  notify: reload icinga2
+
+# Icinga's own log lives in /var/log/icinga2/icinga2.log, which rsyslog does
+# not read; the syslog feature sends warning-and-above to /dev/log so the
+# existing Pi rsyslog forwarding ships it to Graylog (evidence only).
+- name: Enable the syslog feature (Icinga warnings and errors reach Graylog via rsyslog)
+  ansible.builtin.command: icinga2 feature enable syslog
+  register: icinga_observer_syslog_feature
+  changed_when: "'already enabled' not in icinga_observer_syslog_feature.stdout"
+  notify: reload icinga2
 
 - name: Validate Icinga 2 configuration before enabling the service
   ansible.builtin.command: icinga2 daemon -C
   register: icinga_observer_config_check
   changed_when: false
+  check_mode: false
 
 - name: Enable and start icinga2
   ansible.builtin.systemd:
@@ -471,25 +484,31 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: not ansible_check_mode and icinga_observer_config_check.rc == 0
+  when: icinga_observer_config_check.rc == 0
   ignore_errors: "{{ ansible_check_mode }}"
 
-# --- SmokePing (argon-01 only) ------------------------------------------------
+# --- nginx / SmokePing (argon-01 only) ----------------------------------------
+# The package's default site listens on 0.0.0.0:80 with the stock welcome page.
+- name: Disable the default nginx site (argon-01 only)
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: icinga_observer_is_master | bool
+  notify: Restart nginx
+
 - name: Render SmokePing configuration (argon-01 only)
   ansible.builtin.template:
     src: smokeping-config.j2
     dest: /etc/smokeping/config.d/Targets
     owner: root
     group: root
-    mode: "0644"  # nosonar: ansible:S2612 — non-secret target list (hostnames/IPs); smokeping's CGI runs as www-data and must read it, matching the package's own config.d/* files (all 0644)
+    mode: "0644"  # nosonar: ansible:S2612 — non-secret targets; smokeping's CGI (www-data) must read it, like the package's other config.d/* (0644)
   when:
     - icinga_observer_is_master | bool
     - icinga_observer_enable_smokeping | bool
-  notify:
-    - Restart smokeping
-    - Reload nginx
+  notify: Restart smokeping
 
-- name: Render the LAN-bound nginx vhost for SmokePing (argon-01 only)
+- name: Render the SmokePing nginx vhost (argon-01 only)
   ansible.builtin.template:
     src: smokeping-nginx.conf.j2
     dest: /etc/nginx/sites-available/smokeping.conf
@@ -499,7 +518,7 @@
   when:
     - icinga_observer_is_master | bool
     - icinga_observer_enable_smokeping | bool
-  notify: Reload nginx
+  notify: Restart nginx
 
 - name: Enable the SmokePing nginx site (argon-01 only)
   ansible.builtin.file:
@@ -509,19 +528,10 @@
   when:
     - icinga_observer_is_master | bool
     - icinga_observer_enable_smokeping | bool
-  notify: Reload nginx
+  notify: Restart nginx
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: Disable the default nginx site (argon-01 only)
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  when:
-    - icinga_observer_is_master | bool
-    - icinga_observer_enable_smokeping | bool
-  notify: Reload nginx
-
-- name: Enable and start smokeping and nginx (argon-01 only)
+- name: Enable and start smokeping, nginx and fcgiwrap (argon-01 only)
   ansible.builtin.systemd:
     name: "{{ item }}"
     enabled: true
@@ -534,3 +544,10 @@
     - icinga_observer_is_master | bool
     - icinga_observer_enable_smokeping | bool
   ignore_errors: "{{ ansible_check_mode }}"
+
+# --- Icinga Web 2 + Icinga DB (argon-01 only, Stage 5) ---------------------------
+- name: Icinga Web 2, Icinga DB and the Let's Encrypt certificate
+  ansible.builtin.include_tasks: web.yml
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_web | bool

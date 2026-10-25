@@ -1,14 +1,22 @@
 ---
 # Native Icinga 2 HA pair on the two Argon Pis -- independent observer for
 # the main monitoring/notification path. See docs/icinga-pi-observability/
-# README.md and runbook.md. No Icinga Web, Icinga DB, Redis, Director, or
-# database in phase 1; no Docker for Icinga itself.
+# README.md and runbook.md. No Docker for Icinga itself, and nothing here
+# depends at runtime on OpenBao, Traefik, Authentik or pve: secrets are
+# injected once at deploy time and live on the Pi.
+
+icinga_observer_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
 
 icinga_observer_master_name: argon-01
 icinga_observer_peer_name: argon-02
+# The cluster link is deliberately addressed by IP, not DNS: the observer's
+# own HA pair must not depend on Technitium/MikroTik name resolution.
 icinga_observer_nodes:
-  argon-01: 192.168.1.22
-  argon-02: 192.168.1.23
+  argon-01: "{{ lookup('env', 'LAB_IP_ARGON_01') | default('192.168.1.22', true) }}"
+  argon-02: "{{ lookup('env', 'LAB_IP_ARGON_02') | default('192.168.1.23', true) }}"
+icinga_observer_node_fqdns:
+  argon-01: "{{ lookup('env', 'LAB_FQDN_ARGON_01') | default('argon-01.gibbsgreatly.xyz', true) }}"
+  argon-02: "{{ lookup('env', 'LAB_FQDN_ARGON_02') | default('argon-02.gibbsgreatly.xyz', true) }}"
 icinga_observer_self_name: "{{ inventory_hostname }}"
 icinga_observer_self_address: "{{ icinga_observer_nodes[inventory_hostname] }}"
 icinga_observer_peer_address: "{{ icinga_observer_nodes[icinga_observer_peer_name]
@@ -20,13 +28,21 @@ icinga_observer_peer_inventory_name: "{{ icinga_observer_peer_name
 icinga_observer_is_master: "{{ inventory_hostname == icinga_observer_master_name }}"
 icinga_observer_api_port: 5665
 
-# Staged rollout switches (runbook.md Stages 1-4). All default off: a bare
-# run of this role only forms the HA pair and checks the two Pis
-# themselves. Each later stage is a deliberate, separately-approved
-# re-run with one more flag flipped, after that stage's own drill.
+# Staged rollout switches (runbook.md Stages 1-5). Off unless a stage has
+# been deliberately approved and its prerequisites exist.
 icinga_observer_enable_core_checks: false   # Stage 2: MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI
-icinga_observer_enable_notifications: false # Stage 3: Discord/Telegram NotificationCommands, requires services/icinga-observer secrets
+icinga_observer_enable_notifications: false # Stage 3: Discord/Telegram NotificationCommands, requires the three ICINGA_* notification secrets
 icinga_observer_enable_smokeping: true      # Stage 4: SmokePing targets, nginx vhost, service start (argon-01 only) -- enabled 2026-10-25
+# false: SmokePing's vhost is LAN-direct on :80 (interim, 2026-10-25).
+# true:  it moves to a backend port that only Traefik may reach, and is
+#        published as smokeping.<lab domain> behind Authentik forwardAuth
+#        (terraform/lxc/stacks/smokeping/edge.yaml) -- the T-Pot pattern.
+icinga_observer_smokeping_behind_traefik: false
+# Stage 5: Icinga Web 2 + Icinga DB (MariaDB, Redis) on argon-01, served
+# directly with its own Let's Encrypt certificate and native login. Needs
+# ICINGA_CF_DNS_API_TOKEN and ICINGAWEB_ADMIN_PASSWORD, and requires
+# icinga_observer_smokeping_behind_traefik (it takes ports 80/443).
+icinga_observer_enable_web: false
 
 icinga_observer_packages_common:
   - icinga2
@@ -36,15 +52,33 @@ icinga_observer_packages_common:
   - dnsutils
   - fping
   - jq
+# msmtp-mta first: smokeping Depends on a mail-transport-agent, and without
+# one already present apt picks exim4 (a listening MTA we do not want). It
+# also Recommends apache2, hence install_recommends: false in the tasks.
 icinga_observer_packages_master_only:
-  - smokeping
+  - msmtp-mta
   - nginx-light
   - fcgiwrap
+icinga_observer_packages_unwanted:
+  - apache2
+  - apache2-bin
+  - apache2-data
+  - apache2-utils
+  - exim4-base
+  - exim4-config
+  - exim4-daemon-light
 
 icinga_observer_config_dir: /etc/icinga2
 icinga_observer_zones_d_dir: /etc/icinga2/zones.d
 icinga_observer_scripts_dir: /etc/icinga2/notification-scripts
 icinga_observer_env_file: /etc/icinga2/notification-scripts/notify.env
+# Where icinga2 itself looks for its node certificate, key and CA.
+icinga_observer_cert_dir: /var/lib/icinga2/certs
+icinga_observer_legacy_pki_dir: /etc/icinga2/pki
+# Homelab root CA for plugin-side verification of step-ca-issued certs
+# (internal service checks only -- browsers use Let's Encrypt, never step-ca).
+icinga_observer_ca_bundle: /etc/icinga2/homelab-root.crt
+icinga_observer_ntp_server: time.cloudflare.com
 
 # Core check targets confirmed reachable and recorded in
 # docs/icinga-pi-observability/runbook.md Stage 0 (2026-10-25).
@@ -65,13 +99,58 @@ icinga_observer_resolver_a: "1.1.1.1"
 icinga_observer_resolver_b: "9.9.9.9"
 
 # Notification destination secrets. Field names are the planned OpenBao
-# services/icinga-observer entry (not yet created -- see runbook Stage 0.3).
-# Values are read only from environment variables injected by
-# ./with-secrets-prod; never hardcode a webhook URL, bot token or chat id.
+# services/icinga-observer entry (see runbook Stage 0.3.1). Values are read
+# only from environment variables injected by ./with-secrets-prod at deploy
+# time and written to root/nagios-only files on the Pi; nothing reads
+# OpenBao at runtime.
 icinga_observer_discord_webhook_url: "{{ lookup('env', 'ICINGA_DISCORD_WEBHOOK_URL') }}"
 icinga_observer_telegram_bot_token: "{{ lookup('env', 'ICINGA_TELEGRAM_BOT_TOKEN') }}"
 icinga_observer_telegram_chat_id: "{{ lookup('env', 'ICINGA_TELEGRAM_CHAT_ID') }}"
 
-# nginx binds to argon-01's own LAN address, same as every other lab
-# service; reach it directly at http://192.168.1.22/smokeping/.
-icinga_observer_smokeping_web_port: 80
+# SmokePing web backend. LAN-direct on :80 until behind Traefik, then a
+# dedicated port that only Traefik may reach (host firewall below).
+icinga_observer_smokeping_backend_port: 8081
+icinga_observer_smokeping_web_port: "{{ icinga_observer_smokeping_backend_port if icinga_observer_smokeping_behind_traefik | bool else 80 }}"
+
+# Host firewall: per port, accept the listed sources and reject the rest.
+# INPUT policy on these Pis is ACCEPT with no other rules (Docker only
+# manages FORWARD/NAT), so only these ports are narrowed and nothing else
+# is touched. Persisted by a role-owned oneshot unit, not iptables-persistent.
+icinga_observer_firewall_rules: >-
+  {{
+    [ {'name': 'icinga-api', 'port': icinga_observer_api_port, 'allow': [icinga_observer_peer_address]} ]
+    + ( [ {'name': 'smokeping-backend', 'port': icinga_observer_smokeping_backend_port, 'allow': [icinga_observer_traefik_host]} ]
+        if (icinga_observer_is_master | bool and icinga_observer_smokeping_behind_traefik | bool) else [] )
+  }}
+
+# --- Icinga Web 2 / Icinga DB (Stage 5, argon-01 only) -----------------------
+icinga_observer_web_fqdn: "{{ lookup('env', 'LAB_FQDN_ICINGA') | default('icinga.' ~ icinga_observer_lab_domain, true) }}"
+icinga_observer_web_admin_user: admin
+icinga_observer_web_admin_password: "{{ lookup('env', 'ICINGAWEB_ADMIN_PASSWORD') }}"
+icinga_observer_php_version: "8.4"
+icinga_observer_php_timezone: Pacific/Auckland
+icinga_observer_state_dir: /var/lib/icinga-observer
+icinga_observer_web_packages:
+  - mariadb-server
+  - redis-server
+  - php-fpm
+  - icingaweb2
+  - icingadb
+  - icingadb-web
+  - certbot
+  - python3-certbot-dns-cloudflare
+# Let's Encrypt via Cloudflare DNS-01, exactly as Traefik's resolver does
+# (production endpoint for the real lab domain, staging otherwise). The
+# token lives on this Pi so renewal never depends on OpenBao/pve/Traefik.
+icinga_observer_acme_email: "admin@gibbsgreatly.xyz"
+icinga_observer_acme_server: >-
+  {{ 'https://acme-v02.api.letsencrypt.org/directory'
+     if icinga_observer_lab_domain == 'lab.gibbsgreatly.xyz'
+     else 'https://acme-staging-v02.api.letsencrypt.org/directory' }}
+icinga_observer_cf_dns_api_token: "{{ lookup('env', 'ICINGA_CF_DNS_API_TOKEN') }}"
+# Generated on argon-01 at first run (state dir, root-only) and loaded with
+# set_fact by web.yml; these empty defaults only let templates render in
+# --check mode.
+icinga_observer_db_pw_icingadb: ""
+icinga_observer_db_pw_icingaweb2: ""
+icinga_observer_db_pw_icingadbweb: ""

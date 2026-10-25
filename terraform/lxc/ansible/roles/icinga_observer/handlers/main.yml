@@ -1,14 +1,17 @@
 ---
+# Every service here is started by its package's postinst with stock config
+# before this role has written anything, and Ansible's `state: started` never
+# restarts an already-running service. Config changes therefore always notify
+# a handler that restarts, never a bare "start".
+
 - name: Validate and reload icinga2
   listen: reload icinga2
   ansible.builtin.command: icinga2 daemon -C
   register: icinga_observer_validate
   # changed_when deliberately left at the command module's default
   # (changed=true on rc==0): a handler only propagates its own `notify`
-  # when it reports changed, so `changed_when: false` here silently
-  # broke the restart chain -- confirmed 2026-10-25, icinga2 kept running
-  # the package's stock post-install config through several rounds of
-  # real config changes until this was found.
+  # when it reports changed, so `changed_when: false` here silently broke
+  # the restart chain (2026-10-25).
   failed_when: icinga_observer_validate.rc != 0
   notify: Restart icinga2 after validated config
 
@@ -18,25 +21,35 @@
     state: restarted
     daemon_reload: true
 
+- name: Apply Icinga observer firewall
+  ansible.builtin.systemd:
+    name: icinga-cluster-firewall.service
+    state: restarted
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
 - name: Restart smokeping
-  # Same class of bug as icinga2 and nginx above: smokeping was started
-  # by the package postinst with its stock single-target config and a
-  # plain `state: started` never restarts an already-running service,
-  # so it kept probing only "localhost" after our real Targets file
-  # was rendered -- confirmed 2026-10-25.
   ansible.builtin.systemd:
     name: smokeping
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"
 
-- name: Reload nginx
-  # A plain reload (SIGHUP) does not rebind listening sockets when a
-  # `listen` address changes -- confirmed 2026-10-25: nginx kept
-  # listening on 0.0.0.0:80 (the package's default site) for ~37
-  # minutes after our loopback-only vhost was rendered and the default
-  # site removed, until a full restart actually closed and re-opened
-  # the socket on 127.0.0.1:80 only.
+# nginx: a plain reload (SIGHUP) does not rebind listening sockets when a
+# `listen` address changes -- confirmed 2026-10-25 -- so always restart.
+- name: Restart nginx
   ansible.builtin.systemd:
     name: nginx
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart php-fpm
+  ansible.builtin.systemd:
+    name: "php{{ icinga_observer_php_version }}-fpm"
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart icingadb
+  ansible.builtin.systemd:
+    name: icingadb
     state: restarted
   ignore_errors: "{{ ansible_check_mode }}"

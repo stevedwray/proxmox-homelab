@@ -1,0 +1,47 @@
+---
+# Install a package set. On a fresh install, block package-triggered service
+# starts (policy-rc.d) so nothing runs on its stock config before this role has
+# written the real one -- icinga2, nginx (default site on 0.0.0.0:80) and
+# smokeping all auto-started that way on 2026-10-25. The caller starts each
+# service explicitly once configured.
+#
+# Inputs: install_packages (list), install_probe (a package from the list),
+#         install_recommends (bool).
+
+- name: "Probe whether the probe package is already installed: {{ install_probe }}"
+  ansible.builtin.command: dpkg-query -W -f='${Status}' {{ install_probe }}
+  register: icinga_observer_install_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Install without auto-starting services (fresh install): {{ install_packages | join(', ') }}"
+  when: "'install ok installed' not in icinga_observer_install_probe.stdout"
+  block:
+    - name: Block package-triggered service starts
+      ansible.builtin.copy:
+        dest: /usr/sbin/policy-rc.d
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          exit 101
+    - name: Install packages
+      ansible.builtin.apt:
+        name: "{{ install_packages }}"
+        state: present
+        update_cache: true
+        install_recommends: "{{ install_recommends }}"
+  always:
+    - name: Re-allow package-triggered service starts
+      ansible.builtin.file:
+        path: /usr/sbin/policy-rc.d
+        state: absent
+
+- name: "Ensure present on already-installed hosts: {{ install_packages | join(', ') }}"
+  ansible.builtin.apt:
+    name: "{{ install_packages }}"
+    state: present
+    install_recommends: "{{ install_recommends }}"
+  when: "'install ok installed' in icinga_observer_install_probe.stdout"

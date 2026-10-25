@@ -14,16 +14,23 @@ template Host "generic-host" {
   check_command = "hostalive"
 }
 
+/*
+ * The two observers. checked_by is the *other* node: a node's own API port
+ * is firewalled to its peer only, so it can only be probed from there, and
+ * a check run on the node itself would be rejected by its own rule.
+ */
 object Host "argon-01" {
   import "generic-host"
   address = "{{ icinga_observer_nodes['argon-01'] }}"
-  vars.icinga_peer = (NodeName != "argon-01")
+  vars.fqdn = "{{ icinga_observer_node_fqdns['argon-01'] }}"
+  vars.checked_by = "argon-02"
 }
 
 object Host "argon-02" {
   import "generic-host"
   address = "{{ icinga_observer_nodes['argon-02'] }}"
-  vars.icinga_peer = (NodeName != "argon-02")
+  vars.fqdn = "{{ icinga_observer_node_fqdns['argon-02'] }}"
+  vars.checked_by = "argon-01"
 }
 
 {% if icinga_observer_enable_core_checks %}
