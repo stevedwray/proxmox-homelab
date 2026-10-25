@@ -44,12 +44,16 @@ object Host "mikrotik" {
 object Host "technitium-primary" {
   import "generic-host"
   address = "{{ icinga_observer_technitium_primary }}"
+  check_command = "tcp"
+  vars.tcp_port = 53
   vars.parent = "mikrotik"
 }
 
 object Host "technitium-secondary" {
   import "generic-host"
   address = "{{ icinga_observer_technitium_secondary }}"
+  check_command = "tcp"
+  vars.tcp_port = 53
   vars.parent = "mikrotik"
 }
 {% endif %}

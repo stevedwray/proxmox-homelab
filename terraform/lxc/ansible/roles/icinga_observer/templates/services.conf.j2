@@ -93,27 +93,33 @@ object CheckCommand "dns-tcp" {
     "--server" = {
       value = "$dns_tcp_server$"
       required = true
+      order = 1
     }
     "--lookup" = {
       value = "$dns_tcp_lookup$"
       required = true
+      order = 2
     }
   }
 }
 
 apply Service "dns-internal" to Host {
   import "generic-service"
-  check_command = "dns"
-  vars.dns_lookup = "pve.gibbsgreatly.xyz"
-  vars.dns_server = host.address
+  check_command = "dig"
+  vars.dig_lookup = "pve.gibbsgreatly.xyz"
+  vars.dig_server = host.address
+  vars.dig_record_type = "A"
+  vars.dig_timeout = 8
   assign where host.name in [ "technitium-primary", "technitium-secondary" ]
 }
 
 apply Service "dns-recursive" to Host {
   import "generic-service"
-  check_command = "dns"
-  vars.dns_lookup = "cloudflare.com"
-  vars.dns_server = host.address
+  check_command = "dig"
+  vars.dig_lookup = "cloudflare.com"
+  vars.dig_server = host.address
+  vars.dig_record_type = "A"
+  vars.dig_timeout = 8
   assign where host.name in [ "technitium-primary", "technitium-secondary" ]
 }
 
@@ -200,9 +206,27 @@ apply Service "lbstatus" to Host {
 {% if 'internal_services' in icinga_observer_core_check_groups %}
 /* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer -------- */
 
+/* Debian's Icinga 2.14 ITL lacks a curl CheckCommand even though the
+ * monitoring-plugins-basic package includes check_curl. Scope the command
+ * name to this role so a later ITL update cannot collide with it. */
+object CheckCommand "observer-curl" {
+  command = [ "/usr/lib/nagios/plugins/check_curl" ]
+  arguments = {
+    "-I" = "$address$"
+    "-p" = "$curl_port$"
+    "-S" = { set_if = "$curl_tls$" }
+    "--ca-cert" = "$curl_ca_cert_file$"
+    "-D" = { set_if = "$curl_verify_peer_cert$" }
+    "-u" = "$curl_url$"
+    "-s" = "$curl_expect_content_string$"
+    "-r" = "$curl_ereg$"
+    "-t" = "$curl_timeout$"
+  }
+}
+
 apply Service "sys-health" to Host {
   import "generic-service"
-  check_command = "curl"
+  check_command = "observer-curl"
   vars.curl_port = 8200
   vars.curl_tls = true
   vars.curl_url = "/v1/sys/health"
@@ -215,7 +239,7 @@ apply Service "sys-health" to Host {
 
 apply Service "acme-directory" to Host {
   import "generic-service"
-  check_command = "curl"
+  check_command = "observer-curl"
   vars.curl_tls = true
   vars.curl_url = "/acme/acme/directory"
   vars.curl_ca_cert_file = "{{ icinga_observer_ca_bundle }}"
@@ -256,6 +280,7 @@ apply Service "https" to Host {
   import "generic-service"
   check_command = "http"
   vars.http_ssl = true
+  vars.http_sni = true
   assign where host.name == "oci-pangolin"
 }
 
@@ -263,6 +288,7 @@ apply Service "certificate-expiry" to Host {
   import "generic-service"
   check_command = "http"
   vars.http_ssl = true
+  vars.http_sni = true
   vars.http_certificate = 30
   assign where host.name == "oci-pangolin"
 }
