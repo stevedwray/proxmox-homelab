@@ -37,7 +37,7 @@ icinga_observer_enable_smokeping: true      # Stage 4: SmokePing targets, nginx 
 # true:  it moves to a backend port that only Traefik may reach, and is
 #        published as smokeping.<lab domain> behind Authentik forwardAuth
 #        (terraform/lxc/stacks/smokeping/edge.yaml) -- the T-Pot pattern.
-icinga_observer_smokeping_behind_traefik: false
+icinga_observer_smokeping_behind_traefik: true
 # Stage 5: Icinga Web 2 + Icinga DB (MariaDB, Redis) on argon-01, served
 # directly with its own Let's Encrypt certificate and native login. Needs
 # ICINGA_CF_DNS_API_TOKEN and ICINGAWEB_ADMIN_PASSWORD, and requires
@@ -112,14 +112,16 @@ icinga_observer_telegram_chat_id: "{{ lookup('env', 'ICINGA_TELEGRAM_CHAT_ID') }
 icinga_observer_smokeping_backend_port: 8081
 icinga_observer_smokeping_web_port: "{{ icinga_observer_smokeping_backend_port if icinga_observer_smokeping_behind_traefik | bool else 80 }}"
 
-# Host firewall: per port, accept the listed sources and reject the rest.
+# Host firewall: per port, accept the listed sources and reject the rest. The
+# host's own address is always admitted (local diagnostics, and Icinga Web's
+# later API link); without it a node is rejected by its own rule.
 # INPUT policy on these Pis is ACCEPT with no other rules (Docker only
 # manages FORWARD/NAT), so only these ports are narrowed and nothing else
 # is touched. Persisted by a role-owned oneshot unit, not iptables-persistent.
 icinga_observer_firewall_rules: >-
   {{
-    [ {'name': 'icinga-api', 'port': icinga_observer_api_port, 'allow': [icinga_observer_peer_address]} ]
-    + ( [ {'name': 'smokeping-backend', 'port': icinga_observer_smokeping_backend_port, 'allow': [icinga_observer_traefik_host]} ]
+    [ {'name': 'icinga-api', 'port': icinga_observer_api_port, 'allow': [icinga_observer_peer_address, icinga_observer_self_address]} ]
+    + ( [ {'name': 'smokeping-backend', 'port': icinga_observer_smokeping_backend_port, 'allow': [icinga_observer_traefik_host, icinga_observer_self_address]} ]
         if (icinga_observer_is_master | bool and icinga_observer_smokeping_behind_traefik | bool) else [] )
   }}
 

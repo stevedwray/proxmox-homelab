@@ -744,30 +744,46 @@ the role switch `icinga_observer_smokeping_behind_traefik`, which moves nginx to
    Pis' DHCP lease name on the MikroTik, which was not in scope -- decide whether
    a single PTR matters (tpot has one).
 2. **Pi: move the backend** (`argon-01` only; SmokePing is briefly unreachable by
-   IP until step 3): run the role with `-e icinga_observer_smokeping_behind_traefik=true`
-   (set the default to `true` in the same commit once proven).
-3. **Authentik app + Traefik route + DNS record** (three mutations on pve; the
-   T-Pot sequence):
+   IP until step 3): `icinga_observer_smokeping_behind_traefik` is now `true` by
+   default, then
+   `TASK_APPROVAL=argon-icinga-observability ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml ansible/00-initial-setup/argon-icinga-observers.yml --limit argon-01`.
+   **Applied 2026-10-25.** Firewall rules on both ports also admit the host's own
+   address (`self`), otherwise a node is rejected by its own rule and cannot even
+   curl its own service; argon-02 picks that rule up on its next role run.
+3. **Authentik app + Traefik route + DNS record** (mutations on pve), **applied
+   2026-10-25**, with three departures from the T-Pot sequence that the review
+   made necessary:
+   - `reconcile-edge.py` now renders route files for **all 25 stacks** into
+     `--traefik-output-dir` even when given one manifest, so the old "expect
+     exactly one file" check is stale. Pushing that directory would republish
+     every route. Only `smokeping.yml` was taken from it.
+   - The full `deploy-proxy-stack.yml` was **not** run: a `--check` preview showed
+     it would also mask `portainer-agent` on the Traefik host and run the Wazuh
+     agent role, neither related to this route. The one rendered file was copied
+     into `/opt/proxy-stack/dynamic/` (`root:root 0640`, exactly what that
+     playbook's publish task does); Traefik hot-reloads it.
+   - DNS used a narrow standalone play, like llm-control, instead of the full
+     `technitium-stack` provision on the live authoritative DNS server.
    ```bash
-   export TASK_APPROVAL=smokeping-edge-authentik
-   ./with-secrets-prod python3 terraform/lxc/reconcile-edge.py \
-     --authentik-url https://authentik-int.lab.gibbsgreatly.xyz:9443 --no-verify-tls --json --apply \
-     --traefik-output-dir /tmp/smokeping-edge terraform/lxc/stacks/smokeping/edge.yaml
-   ls /tmp/smokeping-edge        # expect exactly smokeping.yml
-
-   export TASK_APPROVAL=smokeping-traefik-route
-   ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg ./with-secrets-prod ansible-playbook \
-     -i terraform/lxc/environments/pve/proxy-stack/inventory.yml -u root \
-     terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir=/tmp/smokeping-edge
-
-   export TASK_APPROVAL=smokeping-dns-record
-   ./with-secrets-prod scripts/provision.sh --stack technitium-stack
+   # dry run first (default), then --apply; creates one Authentik provider + application
+   LAB_IP_PROXY=... TASK_APPROVAL=smokeping-edge-authentik ./with-secrets-prod python3 terraform/lxc/reconcile-edge.py \
+     --authentik-url https://authentik-int.lab.gibbsgreatly.xyz:9443 --no-verify-tls --json [--apply] \
+     --traefik-output-dir /tmp/smokeping-edge-render terraform/lxc/stacks/smokeping/edge.yaml
+   mkdir /tmp/smokeping-edge-only && cp /tmp/smokeping-edge-render/smokeping.yml /tmp/smokeping-edge-only/
+   TASK_APPROVAL=smokeping-traefik-route ./with-secrets-prod ansible -i terraform/lxc/environments/pve/proxy-stack/inventory.yml \
+     proxy-stack -u root -m copy -a "src=/tmp/smokeping-edge-only/smokeping.yml dest=/opt/proxy-stack/dynamic/smokeping.yml owner=root group=root mode=0640"
+   TASK_APPROVAL=smokeping-dns-record ./with-secrets-prod ansible-playbook terraform/lxc/ansible/playbooks/configure-smokeping-dns-records.yml
    ```
-   Before the last one, `git diff origin/stable -- 'terraform/lxc/stacks/*/edge.yaml'`
-   must show only the new manifest.
-4. **Verify:** `scripts/icinga-observer-smoke.sh dns smokeping`; in a browser,
-   Authentik login then the SmokePing graphs. Rollback: remove the Traefik route
-   file and the Authentik app, set the switch back to `false` and re-run the role.
+   Rollback: delete `/opt/proxy-stack/dynamic/smokeping.yml`, the Authentik
+   application `edge-smokeping-smokeping-app` and provider
+   `edge-smokeping-smokeping-provider`, the `smokeping` A record, and set the role
+   switch back to `false`.
+4. **Verify:** `scripts/icinga-observer-smoke.sh dns smokeping` passes (2026-10-25:
+   Traefik serves a production Let's Encrypt certificate for the name, `302` to
+   Authentik with the right client, backend refused from the workstation, both
+   Technitium nodes resolve it). **Still to do by you:** log in once in a browser
+   and confirm the SmokePing graphs render -- the Authentik login itself is not
+   something the checks can complete.
 
 ## Stage 5 — Icinga Web 2 on argon-01, direct, with its own Let's Encrypt certificate
 
@@ -871,7 +887,7 @@ terminal transcript.
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Core checks, notifications, SmokePing all still disabled by role default. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
-| 4 — SmokePing | **Deployed, LAN-direct (interim); Traefik + Authentik route prepared, not published** | 2026-10-25, this branch | SmokePing probes all 6 targets; nginx on `192.168.1.22:80` (§4.2). Pattern review (§1.5, §4.3): repo artifacts for `smokeping.lab...` behind Authentik forwardAuth are committed and validated but not applied -- needs DNS for the Pis, the Pi backend move to `:8081` (Traefik-only firewall), and the Authentik/Traefik/DNS mutations. Rollback: `systemctl disable --now smokeping nginx`, remove the role-owned nginx site |
+| 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
 | 5 — Icinga Web | **Prepared, not deployed** | 2026-10-25, this branch | `tasks/web.yml` (MariaDB, Redis, Icinga DB, Icinga Web, certbot + Cloudflare DNS-01, nginx :443) behind `icinga_observer_enable_web` (off); `configure-icinga-dns-records.yml`; secrets entry `services/icinga-web` defined, not written. Untested against real hosts -- needs the operator-written secrets and the approvals in Stage 5 |
 
 ## References

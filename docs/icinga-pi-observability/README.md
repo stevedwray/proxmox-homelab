@@ -11,10 +11,10 @@ permanently-critical NTP check, a non-standard config layout, Icinga logs that
 never reached Graylog) -- [runbook.md](runbook.md) §1.5.
 
 Applied 2026-10-25: forward and reverse DNS for the Pis (`argon-0N.gibbsgreatly.xyz`;
-each IP also keeps its DHCP-lease PTR, runbook §4.3). Prepared in the repo but **not
-applied** (each needs its own approval, and some need secrets only the operator can
-write): SmokePing behind Traefik + Authentik (§4.3) and Icinga Web 2 served directly
-with its own Let's Encrypt certificate (Stage 5). Core checks (Stage 2) and
+each IP also keeps a stale router PTR, runbook §4.3), and SmokePing published at
+`https://smokeping.lab.gibbsgreatly.xyz` behind Traefik + Authentik with a Let's Encrypt
+certificate. Prepared in the repo but **not applied** (needs secrets only the operator
+can write): Icinga Web 2 served directly with its own Let's Encrypt certificate (Stage 5). Core checks (Stage 2) and
 notifications (Stage 3) are still off by the role's own defaults. No router,
 OCI, or notification-destination change has been made anywhere.
 `scripts/icinga-observer-smoke.sh` is the repeatable read-only verification.

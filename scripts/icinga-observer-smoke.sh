@@ -7,7 +7,7 @@
 # Groups (default: base):
 #   base       daemons, stray daemons gone, listeners, firewall, cluster link,
 #              certificate validity, nothing on 0.0.0.0:80
-#   dns        forward + reverse DNS for both Pis, icinga.<lab domain>
+#   dns        forward + reverse DNS for both Pis, smokeping.<lab domain> (Traefik)
 #   smokeping  Traefik route (Authentik redirect) and the backend locked to Traefik
 #   web        Icinga Web over HTTPS: publicly trusted (Let's Encrypt, not
 #              step-ca/homelab) certificate, login page, direct (not via Traefik)
@@ -67,7 +67,6 @@ group_dns() {
     check "forward ${fqdn} -> ${ip} via Technitium" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${fqdn} A)\" = '${ip}' ]"
     check "reverse ${ip} includes ${fqdn}. via Technitium" bash -c "dig +short +time=3 +tries=2 @${DNS} -x ${ip} | grep -qx '${fqdn}.'"
   done
-  check "forward ${ICINGA_FQDN} -> ${A1_IP}" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${ICINGA_FQDN} A)\" = '${A1_IP}' ]"
   check "forward ${SMOKEPING_FQDN} -> Traefik ${TRAEFIK}" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${SMOKEPING_FQDN} A)\" = '${TRAEFIK}' ]"
 }
 
@@ -85,6 +84,7 @@ group_smokeping() {
 group_web() {
   echo "web"
   local issuer code
+  check "forward ${ICINGA_FQDN} -> ${A1_IP} via Technitium" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${ICINGA_FQDN} A)\" = '${A1_IP}' ]"
   issuer=$(echo | openssl s_client -connect "${A1_IP}:443" -servername "${ICINGA_FQDN}" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null)
   if echo "$issuer" | grep -qi "Let's Encrypt"; then pass "certificate issuer is Let's Encrypt (${issuer#issuer=})"; else fail "certificate issuer is not Let's Encrypt: ${issuer:-none}"; fi
   if echo "$issuer" | grep -qi "homelab"; then fail "certificate chains to the homelab/step-ca CA (browser-facing certs must be Let's Encrypt)"; else pass "no step-ca certificate on the browser-facing endpoint"; fi
