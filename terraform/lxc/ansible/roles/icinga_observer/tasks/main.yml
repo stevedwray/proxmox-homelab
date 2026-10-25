@@ -110,23 +110,44 @@
   ignore_errors: "{{ ansible_check_mode }}"
 
 # --- Config directories ------------------------------------------------------
-- name: Create Icinga config and script directories
+# icinga2 on Debian drops to the "nagios" user/group internally for every
+# invocation, CLI included -- confirmed 2026-10-25 when `icinga2 pki
+# new-ca` wrote /var/lib/icinga2/ca/ca.{crt,key} as nagios:nagios even
+# though Ansible ran it as root via become. Any directory the icinga2
+# binary itself must write into (pki material, notification scripts it
+# executes, the env file it reads) has to be owned/traversable by nagios,
+# not root -- a root:root 0750 /etc/icinga2/pki made `icinga2 pki
+# new-cert` fail with Permission Denied the first time this was run.
+- name: Create the PKI directory (nagios-owned -- icinga2 writes here as nagios)
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /etc/icinga2/pki
     state: directory
+    owner: nagios
+    group: nagios
+    mode: "0700"
+
+- name: Create the notification scripts directory (nagios-owned -- icinga2 executes these as nagios)
+  ansible.builtin.file:
+    path: "{{ icinga_observer_scripts_dir }}"
+    state: directory
+    owner: nagios
+    group: nagios
+    mode: "0700"
+
+- name: Copy the homelab root CA into the Icinga check-plugin path
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+    dest: /etc/icinga2/pki/homelab-root.crt
     owner: root
     group: root
-    mode: "0750"
-  loop:
-    - "{{ icinga_observer_scripts_dir }}"
-    - /etc/icinga2/pki
+    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate; the containing directory is nagios:nagios 0700, so this is only ever reached by nagios or root anyway
 
 - name: Create zones.d directory (configuration master only)
   ansible.builtin.file:
     path: "{{ icinga_observer_zones_d_dir }}/master"
     state: directory
     owner: root
-    group: root
+    group: nagios
     mode: "0750"
   when: icinga_observer_is_master | bool
 
@@ -163,17 +184,27 @@
   ansible.builtin.command: >-
     icinga2 pki sign-csr --csr /etc/icinga2/pki/{{ icinga_observer_self_name }}.csr
     --cert /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+  notify: reload icinga2
   when:
     - icinga_observer_is_master | bool
     - not icinga_observer_cert_stat.stat.exists
 
+# The master and peer are deployed as two separate --limit runs
+# (runbook.md Stage 1.1: argon-01 validates first, then argon-02), so
+# nothing here can rely on same-play hostvars from a run that already
+# finished and exited. `delegate_to: icinga_observer_master_name`
+# instead opens a fresh connection to argon-01 for exactly these few
+# tasks, which works the same whether or not argon-01 is in this
+# invocation's --limit set -- confirmed broken without this (2026-10-25:
+# the hostvars-based version silently skipped and left argon-02 with no
+# CA/signed cert at all, caught by `icinga2 daemon -C` failing on argon-02).
+
 - name: Read the master's CA certificate
   ansible.builtin.slurp:
     src: /var/lib/icinga2/ca/ca.crt
+  delegate_to: "{{ icinga_observer_master_name }}"
   register: icinga_observer_ca_cert_b64
-  when:
-    - icinga_observer_is_master | bool
-    - not ansible_check_mode
+  when: not ansible_check_mode
 
 - name: Distribute the CA certificate to this node's trust store
   ansible.builtin.copy:
@@ -181,84 +212,108 @@
     owner: root
     group: root
     mode: "0644"  # nosonar: ansible:S2612 — public CA certificate, must be world-readable for cert validation
-    content: "{{ hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64.content | b64decode }}"
+    content: "{{ icinga_observer_ca_cert_b64.content | b64decode }}"
+  notify: reload icinga2
   when:
     - not ansible_check_mode
-    - hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64 is defined
-    - hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64 is not skipped
+    - icinga_observer_ca_cert_b64 is defined
+    - icinga_observer_ca_cert_b64 is not skipped
 
-- name: Read the peer's CSR (run on the peer, needed on the master)
-  ansible.builtin.slurp:
-    src: "/etc/icinga2/pki/{{ icinga_observer_peer_inventory_name }}.csr"
-  delegate_to: "{{ icinga_observer_peer_inventory_name }}"
-  register: icinga_observer_peer_csr_b64
-  when:
-    - icinga_observer_is_master | bool
-    - not ansible_check_mode
-    - icinga_observer_peer_inventory_name in ansible_play_hosts
-
-- name: Write the peer's CSR locally on the master for signing
-  ansible.builtin.copy:
-    dest: "/tmp/{{ icinga_observer_peer_inventory_name }}.csr"
-    mode: "0600"
-    content: "{{ icinga_observer_peer_csr_b64.content | b64decode }}"
-  when:
-    - icinga_observer_is_master | bool
-    - not ansible_check_mode
-    - icinga_observer_peer_csr_b64 is defined
-    - icinga_observer_peer_csr_b64 is not skipped
-
-- name: Sign the peer's certificate on the master
+- name: Check whether this node's certificate is already signed by the shared CA (peer only)
+  # `icinga2 pki new-cert` writes a self-signed placeholder at the same
+  # --cert path as a side effect of generating the key/CSR, so a bare
+  # stat-exists check (used for the master, which overwrites it via
+  # `pki sign-csr` in the same run) wrongly looked "already done" for
+  # the peer and left it running on a self-signed cert its own CA would
+  # reject -- confirmed 2026-10-25 via `openssl verify`.
   ansible.builtin.command: >-
-    icinga2 pki sign-csr --csr /tmp/{{ icinga_observer_peer_inventory_name }}.csr
-    --cert /tmp/{{ icinga_observer_peer_inventory_name }}.crt
+    openssl verify -CAfile /etc/icinga2/pki/ca.crt /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+  register: icinga_observer_peer_cert_verify
+  changed_when: false
+  failed_when: false
   when:
-    - icinga_observer_is_master | bool
+    - not icinga_observer_is_master | bool
     - not ansible_check_mode
-    - icinga_observer_peer_csr_b64 is defined
-    - icinga_observer_peer_csr_b64 is not skipped
 
-- name: Read the peer's signed certificate back
+- name: Read this node's own CSR to send for signing (peer only)
   ansible.builtin.slurp:
-    src: "/tmp/{{ icinga_observer_peer_inventory_name }}.crt"
-  register: icinga_observer_peer_cert_signed
+    src: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.csr"
+  register: icinga_observer_own_csr_b64
   when:
-    - icinga_observer_is_master | bool
+    - not icinga_observer_is_master | bool
     - not ansible_check_mode
-    - icinga_observer_peer_csr_b64 is defined
-    - icinga_observer_peer_csr_b64 is not skipped
+    - icinga_observer_peer_cert_verify.rc != 0
 
-- name: Remove the peer's temporary CSR/cert copies from the master
+- name: Copy this node's CSR onto the master for signing (peer only)
+  ansible.builtin.copy:
+    dest: "/tmp/{{ icinga_observer_self_name }}.csr"
+    owner: nagios
+    group: nagios
+    mode: "0600"
+    content: "{{ icinga_observer_own_csr_b64.content | b64decode }}"
+  delegate_to: "{{ icinga_observer_master_name }}"
+  when:
+    - not icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_own_csr_b64 is defined
+    - icinga_observer_own_csr_b64 is not skipped
+
+- name: Sign this node's certificate on the master (peer only)
+  ansible.builtin.command: >-
+    icinga2 pki sign-csr --csr /tmp/{{ icinga_observer_self_name }}.csr
+    --cert /tmp/{{ icinga_observer_self_name }}.crt
+  delegate_to: "{{ icinga_observer_master_name }}"
+  changed_when: true
+  when:
+    - not icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_own_csr_b64 is defined
+    - icinga_observer_own_csr_b64 is not skipped
+
+- name: Read the signed certificate back from the master (peer only)
+  ansible.builtin.slurp:
+    src: "/tmp/{{ icinga_observer_self_name }}.crt"
+  delegate_to: "{{ icinga_observer_master_name }}"
+  register: icinga_observer_own_cert_signed
+  when:
+    - not icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_own_csr_b64 is defined
+    - icinga_observer_own_csr_b64 is not skipped
+
+- name: Remove this node's temporary CSR/cert copies from the master (peer only)
   ansible.builtin.file:
-    path: "/tmp/{{ icinga_observer_peer_inventory_name }}.{{ item }}"
+    path: "/tmp/{{ icinga_observer_self_name }}.{{ item }}"
     state: absent
+  delegate_to: "{{ icinga_observer_master_name }}"
   loop:
     - csr
     - crt
   when:
-    - icinga_observer_is_master | bool
+    - not icinga_observer_is_master | bool
     - not ansible_check_mode
-    - icinga_observer_peer_csr_b64 is defined
-    - icinga_observer_peer_csr_b64 is not skipped
+    - icinga_observer_own_csr_b64 is defined
+    - icinga_observer_own_csr_b64 is not skipped
 
-- name: Install the peer-signed certificate (peer node)
+- name: Install the master-signed certificate (peer only)
   ansible.builtin.copy:
     dest: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.crt"
     owner: root
     group: root
     mode: "0644"  # nosonar: ansible:S2612 — public node certificate, must be world-readable for TLS handshakes
-    content: "{{ hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed.content | b64decode }}"
+    content: "{{ icinga_observer_own_cert_signed.content | b64decode }}"
+  notify: reload icinga2
   when:
     - not icinga_observer_is_master | bool
     - not ansible_check_mode
-    - hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed is defined
-    - hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed is not skipped
+    - icinga_observer_own_cert_signed is defined
+    - icinga_observer_own_cert_signed is not skipped
 
 - name: Enforce private key permissions
   ansible.builtin.file:
     path: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.key"
-    owner: root
-    group: root
+    owner: nagios
+    group: nagios
     mode: "0600"
   ignore_errors: "{{ ansible_check_mode }}"
 
@@ -268,7 +323,7 @@
     src: constants.conf.j2
     dest: /etc/icinga2/constants.conf
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   notify: reload icinga2
 
@@ -277,7 +332,7 @@
     src: zones.conf.j2
     dest: /etc/icinga2/zones.conf
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   notify: reload icinga2
 
@@ -286,7 +341,7 @@
     src: icinga2.conf.j2
     dest: /etc/icinga2/icinga2.conf
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   notify: reload icinga2
 
@@ -295,7 +350,7 @@
     src: hosts.conf.j2
     dest: "{{ icinga_observer_zones_d_dir }}/master/hosts.conf"
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   when: icinga_observer_is_master | bool
   notify: reload icinga2
@@ -305,7 +360,7 @@
     src: services.conf.j2
     dest: "{{ icinga_observer_zones_d_dir }}/master/services.conf"
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   when: icinga_observer_is_master | bool
   notify: reload icinga2
@@ -315,7 +370,7 @@
     src: notifications.conf.j2
     dest: "{{ icinga_observer_zones_d_dir }}/master/notifications.conf"
     owner: root
-    group: root
+    group: nagios
     mode: "0640"
   when:
     - icinga_observer_is_master | bool
@@ -351,8 +406,8 @@
 - name: Write the notification EnvironmentFile (configuration master only)
   ansible.builtin.copy:
     dest: "{{ icinga_observer_env_file }}"
-    owner: root
-    group: root
+    owner: nagios
+    group: nagios
     mode: "0600"
     content: |
       ICINGA_DISCORD_WEBHOOK_URL={{ icinga_observer_discord_webhook_url }}
@@ -368,8 +423,8 @@
   ansible.builtin.template:
     src: notification-discord.sh.j2
     dest: "{{ icinga_observer_scripts_dir }}/notification-discord.sh"
-    owner: root
-    group: root
+    owner: nagios
+    group: nagios
     mode: "0700"
   when:
     - icinga_observer_is_master | bool
@@ -379,8 +434,8 @@
   ansible.builtin.template:
     src: notification-telegram.sh.j2
     dest: "{{ icinga_observer_scripts_dir }}/notification-telegram.sh"
-    owner: root
-    group: root
+    owner: nagios
+    group: nagios
     mode: "0700"
   when:
     - icinga_observer_is_master | bool

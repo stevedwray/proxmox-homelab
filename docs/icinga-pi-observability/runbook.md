@@ -122,8 +122,16 @@ icinga_telegram_chat_id
 Use an Icinga-specific Discord webhook and Telegram bot/chat capability where
 practical. That prevents compromise of a Pi from silently inheriting the
 credentials used by Grafana or another alerting service. The rendered scripts
-must be root-owned (`0700`) and read their environment only from a root-owned
-systemd `EnvironmentFile` (`0600`). Never expose the Icinga API outside the
+and their `EnvironmentFile` must be owned by `nagios:nagios`, mode `0700`
+scripts / `0600` env file -- **not root**, despite this section's original
+wording. Debian's `icinga2` binary drops to the `nagios` user internally for
+every invocation, including CLI subcommands and the NotificationCommand it
+executes, confirmed during Stage 1 (`icinga2 pki new-ca`/`new-cert` wrote
+`nagios:nagios` files even when Ansible ran them as root via `become`;
+a root-owned `/etc/icinga2/pki` or notification script is simply
+unreadable/unexecutable to the process that actually needs it). `nagios`
+is still a dedicated system account, not a shared or interactive one, so
+other-user isolation is preserved. Never expose the Icinga API outside the
 two-Pi cluster merely to send a notification.
 
 ### 0.4 Preflight findings (2026-10-25, read-only, no mutation)
@@ -340,6 +348,96 @@ rules.
 TCP 5665 is inaccessible from a third LAN client; either Pi can be stopped
 without duplicate alerts or loss of core checks.
 
+### 1.4 Stage 1 execution record (2026-10-25)
+
+Deployed with the operator's approval (`TASK_APPROVAL=argon-icinga-observability`),
+argon-01 then argon-02, each via `./with-secrets-prod ansible-playbook ... --limit
+<host>`. `icinga_observer_enable_core_checks`/`_notifications`/`_smokeping` all
+stayed at their default `false`, so only the HA pair and the five peer/self
+checks per host went live -- nothing in Stage 2-4's scope was touched.
+
+Five real bugs were found and fixed only by actually running this against the
+Pis (none were visible from `--syntax-check` or `--check`, since Debian's
+icinga2 drops to the `nagios` user internally for every invocation --
+confirmed when `icinga2 pki new-ca` wrote `/var/lib/icinga2/ca/ca.{crt,key}` as
+`nagios:nagios` even though Ansible ran it as root via `become`):
+
+1. `/etc/icinga2/pki` and the notification-scripts directory were `root:root`;
+   `icinga2 pki new-cert` failed with Permission Denied trying to write into
+   them as `nagios`. Fixed to `nagios:nagios 0700`.
+2. The rendered `/etc/icinga2/*.conf` files were `root:root 0640`; `icinga2
+   daemon -C` (running as `nagios`) couldn't read its own config. Fixed to
+   `root:nagios 0640` (root-writable, nagios-group-readable) -- also corrects
+   the runbook's original "root-owned scripts/EnvironmentFile" text in §0.3
+   and §2, which was wrong for the same reason.
+3. `icinga2.conf`'s manual `include_recursive "zones.d"` double-included the
+   same files Icinga2 already auto-includes once the API feature and zones
+   exist, producing an exact "object re-defined ... previous definition: the
+   same file, the same line" validation failure. Removed the manual include.
+4. The `ApiListener` object had no `cert_path`/`key_path`/`ca_path`, so it
+   defaulted to the stock `/var/lib/icinga2/certs/` location instead of our
+   `/etc/icinga2/pki/`. Added all three (now-deprecated-but-functional)
+   attributes.
+5. The validate-and-reload handler had `changed_when: false`, which silently
+   broke its own `notify:` chain to the restart handler (a handler only
+   propagates `notify` when it itself reports `changed`) -- `icinga2` kept
+   running the package's stock post-install config (a demo `localhost` host,
+   mail notification commands) through several rounds of real config changes
+   until this was caught by checking `MainPID`/`ActiveEnterTimestamp` directly
+   and finding they never moved.
+6. The peer's cross-host PKI exchange (CA distribution, CSR signing) was
+   built around same-play `hostvars`/`delegate_to` + `ansible_play_hosts`
+   checks, which only work when both hosts are in one play invocation --
+   broken by design, since argon-01 and argon-02 are deployed as two separate
+   `--limit` runs. It silently skipped on argon-02's run, leaving it on a
+   self-signed placeholder cert (`icinga2 pki new-cert` writes one as a side
+   effect of generating the CSR) that its own CA would reject. Rewritten to
+   use `delegate_to: argon-01` directly (works regardless of `--limit`), with
+   an `openssl verify` check (not a bare file-exists check) to detect the
+   unsigned-placeholder case and re-sign it.
+7. `FileLogger` severity `information` is *less* verbose than `notice` in
+   Icinga2's ordering, so it silently hid all cluster connect/reconnect
+   activity. Changed to `notice`.
+
+**Verified, both Pis:**
+
+- `icinga2 daemon -C` passes; `systemctl is-active icinga2` is `active`
+  running the Stage 1 config (2 Hosts, 2 Endpoints, 1 ApiListener, 10
+  Services, 0 NotificationCommands -- confirmed via `icinga2 object list`
+  against a fresh `--dump-objects` run).
+- Each node's `argon-0N.crt` verifies against the shared `ca.crt`
+  (`openssl verify`, both report `OK`); each `ApiListener` is bound to its
+  own LAN address only (`192.168.1.22:5665` / `.23:5665`, not `0.0.0.0`).
+- `iptables -S INPUT` on each Pi: accept from the peer only, reject
+  everything else to 5665 -- confirmed external: a `/dev/tcp` connect
+  attempt from the operator workstation (a third LAN host) to
+  `192.168.1.22:5665` got `Connection refused`.
+- Raw mutual TLS proof: `openssl s_client` from argon-01 to argon-02:5665
+  using each side's own issued cert and the shared `ca.crt` returns
+  `Verify return code: 0 (ok)`.
+- Live cluster link: `ss -tnp state established` shows a genuine
+  `192.168.1.22:5665 <-> 192.168.1.23:<ephemeral>` socket between the two
+  `icinga2` processes on both ends.
+- Drill performed: `systemctl stop icinga2` on argon-02 -> the established
+  socket on argon-01 disappears immediately; `systemctl start icinga2` on
+  argon-02 -> a new established socket reappears within ~10s, unprompted
+  (Icinga2's own reconnect logic), no manual intervention needed on
+  argon-01. The reboot-argon-02, reboot-argon-01, and block-TCP-5665 drills
+  from this section's text were not run this session -- only the two
+  stop/start cycles above.
+- **Caveat (flagged before Stage 1 started):** "confirm one fault
+  notification" in this section's drill list could not be verified as
+  worded, since Stage 3's Discord/Telegram notifications are deliberately
+  still disabled (`icinga_observer_enable_notifications: false`). The
+  connection-level evidence above substitutes for it at this stage; real
+  notification delivery remains a Stage 3 deliverable.
+
+Not yet done: Stage 1's reboot drills, and Stage 2 (core checks against
+MikroTik/Technitium/pve/VictoriaMetrics/Grafana/Graylog/OpenBao/step-ca/
+Traefik/Portainer/OCI), Stage 3 (notifications), and Stage 4 (SmokePing)
+all remain at their Stage 0 planning state -- `icinga_observer_enable_*`
+are still `false` and nothing beyond the HA pair and self-checks is live.
+
 ## Stage 2 — enable core checks safely
 
 Add target groups in this exact order, with a successful manual test and one
@@ -371,8 +469,9 @@ VictoriaMetrics/Grafana/Graylog DOWN
 An HTTP success code alone is inadequate where the endpoint has a meaningful
 state body. The custom check scripts must validate expected JSON fields (for
 example OpenBao is unsealed) and must use explicit `--connect-timeout` and
-overall timeouts. Set each script `root:icinga`, `0750`; do not place tokens
-on command lines, in service object variables, or in Icinga debug logs.
+overall timeouts. Set each script `nagios:nagios`, `0700` (see §0.3's note
+on why `root:icinga` was wrong); do not place tokens on command lines, in
+service object variables, or in Icinga debug logs.
 
 For public OCI tests, SSH must be a non-interactive command using the existing
 source-restricted identity and a harmless fixed probe (for example
@@ -477,7 +576,7 @@ terminal transcript.
 | Stage | Status | Date / commit | Evidence and rollback result |
 |---|---|---|---|
 | 0 — inventory and secrets | **Artifacts created; endpoints confirmed; secrets not yet written** | 2026-10-25, this branch | Playbook + `icinga_observer` role created; `--syntax-check` and `--check --diff` pass on both Pis (`failed=0`); 10/10 Tier-1 endpoints plus both Technitium nodes confirmed read-only (§0.4); manifest diff defined, not applied (§0.3.1); no package, config, cert, firewall rule, or secret written to either Pi. Open items: Traefik has no health endpoint, OCI SSH probe identity not provisioned (§0.4) |
-| 1 — HA base | Planned | — | — |
+| 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4). Core checks, notifications, SmokePing all still disabled by role default. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
 | 4 — SmokePing | Planned | — | — |

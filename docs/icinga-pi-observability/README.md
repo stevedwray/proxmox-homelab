@@ -2,10 +2,14 @@
 
 ## Status
 
-**Revised 2026-10-25; Stage 0 implementation artifacts (playbook +
-`icinga_observer` role) created and read-only preflight findings recorded
-in [runbook.md](runbook.md) §0.4. No Icinga, firewall, router, OCI, or
-notification change has been made on either Pi or anywhere else.**
+**Revised 2026-10-25. Stage 1 is deployed and verified on both Pis**: a
+native Icinga 2 HA pair (argon-01 master, argon-02 synced) with mutual
+TLS, the TCP 5665 peer-only firewall rule, and peer/self checks only --
+see [runbook.md](runbook.md) §1.4 for the verification evidence and the
+real deployment bugs found and fixed along the way. Core checks (Stage 2),
+notifications (Stage 3), and SmokePing (Stage 4) are still disabled by
+the role's own default and have not been enabled. No router, OCI, or
+notification-destination change has been made anywhere.
 
 This plan adds an independent observer for the current monitoring and notification path. It does not replace VictoriaMetrics, Grafana, Graylog, Wazuh, or their alert rules.
 

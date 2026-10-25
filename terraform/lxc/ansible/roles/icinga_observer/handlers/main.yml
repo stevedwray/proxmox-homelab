@@ -3,7 +3,12 @@
   listen: reload icinga2
   ansible.builtin.command: icinga2 daemon -C
   register: icinga_observer_validate
-  changed_when: false
+  # changed_when deliberately left at the command module's default
+  # (changed=true on rc==0): a handler only propagates its own `notify`
+  # when it reports changed, so `changed_when: false` here silently
+  # broke the restart chain -- confirmed 2026-10-25, icinga2 kept running
+  # the package's stock post-install config through several rounds of
+  # real config changes until this was found.
   failed_when: icinga_observer_validate.rc != 0
   notify: Restart icinga2 after validated config
 

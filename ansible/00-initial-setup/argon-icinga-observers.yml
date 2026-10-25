@@ -43,21 +43,5 @@
       ansible.builtin.command: update-ca-certificates
       changed_when: true
       when: argon_icinga_root_ca is changed
-
-    - name: Create /etc/icinga2/pki ahead of the role (for the CA copy below)
-      ansible.builtin.file:
-        path: /etc/icinga2/pki
-        state: directory
-        owner: root
-        group: root
-        mode: "0750"
-
-    - name: Copy the homelab root CA into the Icinga check-plugin path
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
-        dest: /etc/icinga2/pki/homelab-root.crt
-        owner: root
-        group: root
-        mode: "0644"  # nosonar: ansible:S2612 — public CA certificate, must be world-readable for cert validation
   roles:
     - role: icinga_observer
