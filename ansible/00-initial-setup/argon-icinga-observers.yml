@@ -33,6 +33,7 @@
           --limit argon-01 or --limit argon-02. Refusing to run against
           {{ inventory_hostname }}.
         quiet: true
+      tags: always
 
     - name: Install the current homelab root CA (for Icinga check scripts)
       ansible.builtin.copy:

@@ -1244,6 +1244,34 @@ terminal transcript.
 | 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch; browser fix 2026-10-26 | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application and Traefik route live. The post-Authentik redirect and asset paths were fixed (§4.4); the expanded smoke suite passes. Operator browser retry still pending. Rollback in §§4.3–4.4 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. At its initial rollout, Icinga DB held 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
+| 5a — dashboard grouping | **Deployed and verified, argon-01; groups synced to argon-02** | 2026-10-26, this branch | Six populated HostGroups and ServiceGroups, shared **Core services** dashboard, authenticated HTTP 200 with all six sections, scoped preview `changed=0`; details below |
+
+### Dashboard service groups (deployed 2026-10-26)
+
+The `icinga_observer` role renders six matching HostGroup and ServiceGroup
+objects on argon-01, and a small shared Icinga Web module supplies a **Core
+services** dashboard with six filtered dashlets. The categories are observer
+health (both Argon Pis), network and DNS (MikroTik and Technitium), compute
+(`pve`), monitoring and logs (VictoriaMetrics, Grafana, Graylog), internal
+platform (OpenBao, step-ca, Traefik, Portainer), and public edge (OCI/Pangolin).
+Category creation follows the enabled core-check groups, so a staged rollout
+does not show empty sections. Icinga synchronizes group objects to argon-02;
+the web module runs only on argon-01.
+
+The full-role check-mode preview reported unrelated secret-backed web and DB
+templates as changed, so the rollout used `--limit argon-01 --tags dashboard`
+for both preview and deployment. The scoped preview showed only the four
+dashboard objects and no ignored errors. The root-only rollback backup is
+`/var/backups/argon-icinga-dashboard-pre-20261025T180448Z.tar.gz` on argon-01;
+it contains the pre-change master zone and Icinga Web enabled-module links.
+Icinga validated before restart, then synchronized all six groups to argon-02.
+Icinga DB recorded 14 host-group memberships and 31 service-group memberships:
+observer 2/8, network and DNS 3/10, compute 1/2, monitoring and logs 3/4,
+internal platform 4/4, and public edge 1/3 (hosts/services). An authenticated
+dashboard request returned HTTP 200 with all six section names, the `base dns
+web` smoke checks passed, and the follow-up tagged preview reported
+`changed=0`. Check definitions, alert routing, SmokePing, Traefik, and
+Authentik were not modified.
 
 ## References
 

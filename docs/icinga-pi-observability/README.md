@@ -24,6 +24,16 @@ passes after repair, including redirect and asset checks. The role's scoped
 preview reported `changed=0` on 2026-10-26. The observer itself
 uses native packages and systemd, with no Docker or OCI mutation.
 
+The Icinga Web dashboard grouping was deployed on argon-01 on 2026-10-26.
+Its **Core services** dashboard has sections for
+observer health, network and DNS, compute, monitoring and logs, internal
+platform, and the public edge. The same six categories are native Icinga host
+and service groups, so they can also filter the normal Icinga DB Web lists.
+This only changes presentation and group metadata; check commands, intervals,
+dependencies, and notifications are unchanged. An authenticated dashboard
+request returned HTTP 200 with all six sections; the scoped role preview
+reported `changed=0` after deployment.
+
 ## Decision
 
 Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plane checks and direct notifications. Use OCI/Pangolin purely as an external target; it is not a dead-man receiver or a monitoring control-plane host.

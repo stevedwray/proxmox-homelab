@@ -214,6 +214,37 @@
     state: link
   ignore_errors: "{{ ansible_check_mode }}"
 
+- name: Create the shared observer dashboard module directory
+  ansible.builtin.file:
+    path: /usr/share/icingaweb2/modules/observerdashboard
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: dashboard
+
+- name: Render the shared observer dashboard
+  ansible.builtin.template:
+    src: icingaweb-observer-dashboard.php.j2
+    dest: /usr/share/icingaweb2/modules/observerdashboard/configuration.php
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: dashboard
+
+- name: Enable the shared observer dashboard module
+  ansible.builtin.file:
+    src: /usr/share/icingaweb2/modules/observerdashboard
+    dest: /etc/icingaweb2/enabledModules/observerdashboard
+    state: link
+    force: true  # allows --check before the new module directory exists
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: dashboard
+
 - name: Set PHP's timezone for Icinga Web
   ansible.builtin.template:
     src: php-icingaweb.ini.j2

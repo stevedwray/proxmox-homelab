@@ -384,6 +384,17 @@
   when: icinga_observer_is_master | bool
   notify: reload icinga2
 
+- name: Render dashboard groups (configuration master only)
+  ansible.builtin.template:
+    src: groups.conf.j2
+    dest: "{{ icinga_observer_zones_d_dir }}/master/groups.conf"
+    owner: root
+    group: nagios
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: reload icinga2
+  tags: dashboard
+
 - name: Render service checks (configuration master only)
   ansible.builtin.template:
     src: services.conf.j2
@@ -590,3 +601,4 @@
   when:
     - icinga_observer_is_master | bool
     - icinga_observer_enable_web | bool
+  tags: always
