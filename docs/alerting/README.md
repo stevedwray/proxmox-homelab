@@ -196,8 +196,8 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
     The independent Icinga pair on the Argon Pis ([docs/icinga-pi-observability](../icinga-pi-observability/README.md))
     is the planned answer: Stage 1 (the HA pair) is live, the checks of Grafana/VictoriaMetrics/Graylog are Stage 2 and the
-    direct Discord/Telegram notifications are Stage 3, neither enabled yet. It overlaps Phase 4b's blackbox_exporter scope
-    ("Icinga is the planned upgrade", in plan.md); decide before Stage 2 whether both run.
+    direct Discord/Telegram notifications are Stage 3, neither enabled yet. It supersedes Phase 4b's blackbox_exporter probes 3-7
+    (decided 2026-10-25, plan.md Phase 4b): they are not built; Icinga owns them.
 
 ## Future-state design notes (parked)
 

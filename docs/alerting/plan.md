@@ -1706,6 +1706,14 @@ Telegram and Discord both being unreachable.
 
 ## Phase 4b (outline): service checks for the alert chain (blackbox_exporter)
 
+> **Decision 2026-10-25 (operator: "best practice under the circumstances"): probes 3 to 7 are NOT built
+> here; the independent Icinga pair on the Argon Pis owns them.** A probe running inside monitoring-stack
+> shares the failure domain of the Grafana it is meant to back up, and its alerts route through the very
+> contact points being tested. Icinga's Stage 2 and 3 cover the same targets from outside (Discord and
+> Telegram reachability, DNS via both Technitium nodes, Graylog TCP 514 and `lbstatus`) and notify directly
+> ([docs/icinga-pi-observability](../icinga-pi-observability/README.md)). Probes 1 and 2 only matter if the
+> parked OCI relay is ever deployed; build them then, not before.
+
 > **FUTURE STATE.** Probes 1 and 2 (the relay's health and certificate) wait for the relay; probes
 > 3 to 7 do not depend on it.
 
