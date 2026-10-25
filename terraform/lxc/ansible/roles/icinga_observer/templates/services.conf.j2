@@ -87,6 +87,20 @@ apply Service "dns-recursion" to Host {
 {% if 'dns' in icinga_observer_core_check_groups %}
 /* --- Technitium: UDP/TCP DNS for internal + public names ------------------- */
 
+object CheckCommand "dns-tcp" {
+  command = [ "{{ icinga_observer_check_scripts_dir }}/check-dns-tcp.sh" ]
+  arguments = {
+    "--server" = {
+      value = "$dns_tcp_server$"
+      required = true
+    }
+    "--lookup" = {
+      value = "$dns_tcp_lookup$"
+      required = true
+    }
+  }
+}
+
 apply Service "dns-internal" to Host {
   import "generic-service"
   check_command = "dns"
@@ -100,6 +114,22 @@ apply Service "dns-recursive" to Host {
   check_command = "dns"
   vars.dns_lookup = "cloudflare.com"
   vars.dns_server = host.address
+  assign where host.name in [ "technitium-primary", "technitium-secondary" ]
+}
+
+apply Service "dns-internal-tcp" to Host {
+  import "generic-service"
+  check_command = "dns-tcp"
+  vars.dns_tcp_server = host.address
+  vars.dns_tcp_lookup = "pve.gibbsgreatly.xyz"
+  assign where host.name in [ "technitium-primary", "technitium-secondary" ]
+}
+
+apply Service "dns-recursive-tcp" to Host {
+  import "generic-service"
+  check_command = "dns-tcp"
+  vars.dns_tcp_server = host.address
+  vars.dns_tcp_lookup = "cloudflare.com"
   assign where host.name in [ "technitium-primary", "technitium-secondary" ]
 }
 {% endif %}
@@ -144,7 +174,7 @@ apply Service "api-health" to Host {
   check_command = "http"
   vars.http_port = 3000
   vars.http_uri = "/api/health"
-  vars.http_string = "\"database\": \"ok\""
+  vars.http_expect_body_regex = "\"database\"[[:space:]]*:[[:space:]]*\"ok\""
   assign where host.name == "grafana"
 }
 
@@ -168,26 +198,30 @@ apply Service "lbstatus" to Host {
 {% endif %}
 
 {% if 'internal_services' in icinga_observer_core_check_groups %}
-/* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer --------
- * check_http has no custom-CA option and does not verify the chain (-C only
- * checks expiry), so there is deliberately no CA variable here. */
+/* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer -------- */
 
 apply Service "sys-health" to Host {
   import "generic-service"
-  check_command = "http"
-  vars.http_port = 8200
-  vars.http_ssl = true
-  vars.http_uri = "/v1/sys/health"
-  vars.http_string = "\"sealed\":false"
+  check_command = "curl"
+  vars.curl_port = 8200
+  vars.curl_tls = true
+  vars.curl_url = "/v1/sys/health"
+  vars.curl_ca_cert_file = "{{ icinga_observer_ca_bundle }}"
+  vars.curl_verify_peer_cert = true
+  vars.curl_ereg = "\"sealed\"[[:space:]]*:[[:space:]]*false"
+  vars.curl_timeout = 8
   assign where host.name == "openbao"
 }
 
 apply Service "acme-directory" to Host {
   import "generic-service"
-  check_command = "http"
-  vars.http_ssl = true
-  vars.http_uri = "/acme/acme/directory"
-  vars.http_string = "newAccount"
+  check_command = "curl"
+  vars.curl_tls = true
+  vars.curl_url = "/acme/acme/directory"
+  vars.curl_ca_cert_file = "{{ icinga_observer_ca_bundle }}"
+  vars.curl_verify_peer_cert = true
+  vars.curl_expect_content_string = "newAccount"
+  vars.curl_timeout = 8
   assign where host.name == "step-ca"
 }
 
@@ -210,7 +244,7 @@ apply Service "api-status" to Host {
   check_command = "http"
   vars.http_port = 9000
   vars.http_uri = "/api/system/status"
-  vars.http_string = "InstanceID"
+  vars.http_string = "\"Version\""
   assign where host.name == "portainer"
 }
 {% endif %}

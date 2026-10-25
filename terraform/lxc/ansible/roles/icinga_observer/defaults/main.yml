@@ -74,14 +74,14 @@ icinga_observer_packages_unwanted:
 
 icinga_observer_config_dir: /etc/icinga2
 icinga_observer_zones_d_dir: /etc/icinga2/zones.d
+icinga_observer_check_scripts_dir: /usr/local/libexec/icinga-observer
 icinga_observer_scripts_dir: /etc/icinga2/notification-scripts
 icinga_observer_env_file: /etc/icinga2/notification-scripts/notify.env
 # Where icinga2 itself looks for its node certificate, key and CA.
 icinga_observer_cert_dir: /var/lib/icinga2/certs
 icinga_observer_legacy_pki_dir: /etc/icinga2/pki
-# Homelab root CA, kept for custom check scripts that must verify step-ca-issued
-# certs (check_http cannot take a CA and does not verify chains). Browsers use
-# Let's Encrypt, never step-ca.
+# Homelab root CA for check_curl's verified OpenBao and step-ca probes.
+# Browsers use Let's Encrypt, never step-ca.
 icinga_observer_ca_bundle: /etc/icinga2/homelab-root.crt
 icinga_observer_ntp_server: time.cloudflare.com
 

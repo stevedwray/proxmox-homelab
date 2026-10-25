@@ -23,7 +23,7 @@ this section first; the stage sections below are the detail and the history.
 |---|---|---|
 | 0 inventory, artifacts | done | §0.4 |
 | 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
-| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **router group live** (`icinga_observer_core_check_groups: [router]`); other groups off; router fault/recovery drill owed | Stage 2, "Router rollout" |
+| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **router group live** (`icinga_observer_core_check_groups: [router]`); other groups off; operator waived fault drills for this rollout | Stage 2, "Router rollout" |
 | 3 Discord/Telegram notifications | written, **off**; needs two operator-created destinations | Stage 3 |
 | 4 SmokePing | **live**, `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik) | §4.1-§4.3 |
 | 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
@@ -64,8 +64,9 @@ generated passwords loaded they render empty).
 1. **Stage 2, one target group at a time.** The role's
    `icinga_observer_core_check_groups` list has `router` enabled and all other
    groups off. Router host, ICMP, and DNS recursion are OK in Icinga's state
-   file. Do one controlled router fault and recovery before adding `dns`, then
-   continue with `pve`, `metrics`, `internal_services`, and `oci` in order.
+   file. Add `dns`, then `pve`, `metrics`, `internal_services`, and `oci` in
+   order, checking actual Icinga results after each. On 2026-10-25 the operator
+   waived the planned controlled fault/recovery drills for this rollout.
    Read "Pre-enable findings" and "Router rollout" below.
 2. **Stage 3 notifications.** The operator creates a dedicated Discord webhook and a
    second Telegram bot (Stage 3 has the steps) and writes the three values to
@@ -612,8 +613,10 @@ Reboot drills and the network-block drill from §1.3 are still not done.
 
 ## Stage 2 — enable core checks safely
 
-Add target groups in this exact order, with a successful manual test and one
-controlled failure/recovery before enabling notifications for the next group:
+Add target groups in this exact order. The original gate included one controlled
+failure/recovery per group; the operator waived those drills for the current
+rollout on 2026-10-25. Continue to require a manual protocol check, scoped
+`--check --diff`, `icinga2 daemon -C`, and actual Icinga state for each group:
 
 1. MikroTik ICMP and DNS recursion.
 2. Both Technitium nodes (`192.168.20.15` and `192.168.20.17`), UDP and TCP DNS.
@@ -713,8 +716,24 @@ child group is enabled. The scoped follow-up preview changed only `hosts.conf`;
 the live follow-up validated and restarted Icinga without that warning.
 `scripts/icinga-observer-smoke.sh base dns smokeping web` passed after the
 follow-up. The default list now includes `router`, preserving the live config
-on subsequent role runs. **Router controlled fault and recovery remain owed;
-do not add the DNS group until that drill succeeds.**
+on subsequent role runs. The controlled fault and recovery were not run; the
+operator waived this drill as a gate for enabling the remaining groups.
+
+### 2.3 Source preparation for remaining groups (2026-10-25)
+
+Before enabling DNS, the role now includes a `nagios`-executable DNS-over-TCP
+check script on both Pis and two TCP services per Technitium node (internal and
+public names), alongside the existing UDP checks. The script requires a
+`NOERROR` response with at least one A record; `dig` can exit zero on NXDOMAIN,
+which the script treats as CRITICAL. Read-only local tests succeeded for both
+names on both Technitium nodes and returned CRITICAL for an `.invalid` name.
+
+The not-yet-enabled Grafana check now accepts compact JSON around
+`"database":"ok"`; Portainer expects the documented `"Version"` field.
+OpenBao and step-ca use the packaged `check_curl` command with the homelab CA
+and peer verification, rather than `check_http`, which cannot verify the chain.
+These remaining groups are **source-only** until individually previewed,
+deployed, and confirmed from Icinga's own state.
 
 ## Stage 3 — direct notification proof and logs
 
@@ -1117,7 +1136,7 @@ terminal transcript.
 |---|---|---|---|
 | 0 — inventory and secrets | **Artifacts created; endpoints confirmed; secrets not yet written** | 2026-10-25, this branch | Playbook + `icinga_observer` role created; `--syntax-check` and `--check --diff` pass on both Pis (`failed=0`); 10/10 Tier-1 endpoints plus both Technitium nodes confirmed read-only (§0.4); manifest diff defined, not applied (§0.3.1); no package, config, cert, firewall rule, or secret written to either Pi. Open items: Traefik has no health endpoint, OCI SSH probe identity not provisioned (§0.4) |
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Reboot drills and the 5665-block drill still owed. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
-| 2 — core checks | **Router live and OK; fault/recovery drill owed; other groups off** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router]`; scoped preview and deployment on argon-01, backup at `/var/backups/icinga-observer-master-before-d6393557`; `icinga2 daemon -C` passes, state file shows router host + ICMP + DNS recursion OK (DNS executed on argon-02); full smoke passes. Unused dependency warning fixed in follow-up. No other group enabled. Details and rollback in §2.1-2.2 |
+| 2 — core checks | **Router live and OK; other groups source-only/off; fault drills waived for rollout** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router]`; scoped preview and deployment on argon-01, backup at `/var/backups/icinga-observer-master-before-d6393557`; `icinga2 daemon -C` passes, state file shows router host + ICMP + DNS recursion OK (DNS executed on argon-02); full smoke passes. Unused dependency warning fixed. DNS TCP, Grafana, Portainer, and TLS check corrections are source-only (§2.3). No other group enabled. Details and rollback in §2.1-2.2 |
 | 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. Icinga DB holds 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |

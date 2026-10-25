@@ -124,6 +124,22 @@
     group: nagios
     mode: "0700"
 
+- name: Create the check scripts directory (both Pis)
+  ansible.builtin.file:
+    path: "{{ icinga_observer_check_scripts_dir }}"
+    state: directory
+    owner: root
+    group: nagios
+    mode: "0750"
+
+- name: Install the DNS-over-TCP check on both Pis before enabling the DNS group
+  ansible.builtin.template:
+    src: check-dns-tcp.sh.j2
+    dest: "{{ icinga_observer_check_scripts_dir }}/check-dns-tcp.sh"
+    owner: nagios
+    group: nagios
+    mode: "0700"
+
 - name: Install the homelab root CA for plugin-side verification of internal (step-ca) services
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
