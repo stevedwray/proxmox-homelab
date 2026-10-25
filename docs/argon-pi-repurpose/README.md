@@ -523,3 +523,17 @@ irreversible; a failed SSD boot may require hands-on recovery.
   supported `6.18.50+rpt-rpi-v8` kernel. The migration preserved the existing
   FAT partition and has passed an independent reboot and service-health gate
   on each host.
+
+### 2026-10-25 — final Debian package cleanup complete
+
+- Reviewed `apt-get -s autoremove` independently on each Pi before applying
+  it. The removal sets contained only orphaned dependencies of the retired
+  workload software: 61 packages on argon-01 and 30 on argon-02. Neither set
+  included `linux-image-rpi-v8`, its active `6.18.50` image, or
+  `raspi-firmware`.
+- Applied the reviewed removals and cleared the apt package caches. Both hosts
+  now report zero upgradable packages, zero packages eligible for autoremove,
+  and a clean `dpkg` state.
+- Docker, Portainer Agent and firewall, Wazuh, node_exporter (including SMART
+  and apt textfile collectors), rsyslog Graylog forwarding, and the Argon fan
+  service remained active on both hosts after the cleanup.
