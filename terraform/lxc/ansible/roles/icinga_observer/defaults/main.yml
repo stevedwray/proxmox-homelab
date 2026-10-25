@@ -1,0 +1,69 @@
+---
+# Native Icinga 2 HA pair on the two Argon Pis -- independent observer for
+# the main monitoring/notification path. See docs/icinga-pi-observability/
+# README.md and runbook.md. No Icinga Web, Icinga DB, Redis, Director, or
+# database in phase 1; no Docker for Icinga itself.
+
+icinga_observer_master_name: argon-01
+icinga_observer_peer_name: argon-02
+icinga_observer_nodes:
+  argon-01: 192.168.1.22
+  argon-02: 192.168.1.23
+icinga_observer_self_name: "{{ inventory_hostname }}"
+icinga_observer_self_address: "{{ icinga_observer_nodes[inventory_hostname] }}"
+icinga_observer_peer_address: "{{ icinga_observer_nodes[icinga_observer_peer_name]
+  if inventory_hostname == icinga_observer_master_name
+  else icinga_observer_nodes[icinga_observer_master_name] }}"
+icinga_observer_peer_inventory_name: "{{ icinga_observer_peer_name
+  if inventory_hostname == icinga_observer_master_name
+  else icinga_observer_master_name }}"
+icinga_observer_is_master: "{{ inventory_hostname == icinga_observer_master_name }}"
+icinga_observer_api_port: 5665
+
+icinga_observer_packages_common:
+  - icinga2
+  - monitoring-plugins-basic
+  - monitoring-plugins-standard
+  - curl
+  - dnsutils
+  - fping
+  - jq
+icinga_observer_packages_master_only:
+  - smokeping
+  - nginx-light
+  - fcgiwrap
+
+icinga_observer_config_dir: /etc/icinga2
+icinga_observer_zones_d_dir: /etc/icinga2/zones.d
+icinga_observer_scripts_dir: /etc/icinga2/notification-scripts
+icinga_observer_env_file: /etc/icinga2/notification-scripts/notify.env
+
+# Core check targets confirmed reachable and recorded in
+# docs/icinga-pi-observability/runbook.md Stage 0 (2026-10-25).
+icinga_observer_mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
+icinga_observer_technitium_primary: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default('192.168.20.15', true) }}"
+icinga_observer_technitium_secondary: "{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | default('192.168.20.17', true) }}"
+icinga_observer_pve_host: "pve.gibbsgreatly.xyz"
+icinga_observer_victoriametrics_host: "{{ lookup('env', 'LAB_IP_MONITORING') | default('192.168.20.12', true) }}"
+icinga_observer_grafana_host: "{{ lookup('env', 'LAB_IP_MONITORING') | default('192.168.20.12', true) }}"
+icinga_observer_graylog_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | default('192.168.20.14', true) }}"
+icinga_observer_openbao_host: "{{ lookup('env', 'LAB_IP_OPENBAO') | default('192.168.20.16', true) }}"
+icinga_observer_stepca_host: "{{ lookup('env', 'LAB_IP_STEP_CA') | default('192.168.20.11', true) }}"
+icinga_observer_traefik_host: "{{ lookup('env', 'LAB_IP_PROXY') | default('192.168.30.10', true) }}"
+icinga_observer_portainer_host: "{{ lookup('env', 'LAB_IP_PORTAINER') | default('192.168.20.20', true) }}"
+icinga_observer_oci_fqdn: "pangolin.gibbsgreatly.xyz"
+icinga_observer_oci_ssh_alias: "oci"
+icinga_observer_resolver_a: "1.1.1.1"
+icinga_observer_resolver_b: "9.9.9.9"
+
+# Notification destination secrets. Field names are the planned OpenBao
+# services/icinga-observer entry (not yet created -- see runbook Stage 0.3).
+# Values are read only from environment variables injected by
+# ./with-secrets-prod; never hardcode a webhook URL, bot token or chat id.
+icinga_observer_discord_webhook_url: "{{ lookup('env', 'ICINGA_DISCORD_WEBHOOK_URL') }}"
+icinga_observer_telegram_bot_token: "{{ lookup('env', 'ICINGA_TELEGRAM_BOT_TOKEN') }}"
+icinga_observer_telegram_chat_id: "{{ lookup('env', 'ICINGA_TELEGRAM_CHAT_ID') }}"
+
+# nginx binds to 127.0.0.1 only; reach it with
+# `ssh -L 8080:127.0.0.1:80 ansible@192.168.1.22` (runbook Stage 4).
+icinga_observer_smokeping_web_port: 80

@@ -2,7 +2,10 @@
 
 ## Status
 
-**Revised 2026-10-25; no Icinga, firewall, router, OCI, or notification change has been made.**
+**Revised 2026-10-25; Stage 0 implementation artifacts (playbook +
+`icinga_observer` role) created and read-only preflight findings recorded
+in [runbook.md](runbook.md) §0.4. No Icinga, firewall, router, OCI, or
+notification change has been made on either Pi or anywhere else.**
 
 This plan adds an independent observer for the current monitoring and notification path. It does not replace VictoriaMetrics, Grafana, Graylog, Wazuh, or their alert rules.
 

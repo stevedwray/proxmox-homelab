@@ -1,0 +1,20 @@
+---
+- name: Validate and reload icinga2
+  listen: reload icinga2
+  ansible.builtin.command: icinga2 daemon -C
+  register: icinga_observer_validate
+  changed_when: false
+  failed_when: icinga_observer_validate.rc != 0
+  notify: Restart icinga2 after validated config
+
+- name: Restart icinga2 after validated config
+  ansible.builtin.systemd:
+    name: icinga2
+    state: restarted
+    daemon_reload: true
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  ignore_errors: "{{ ansible_check_mode }}"

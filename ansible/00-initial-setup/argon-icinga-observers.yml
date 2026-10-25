@@ -1,0 +1,63 @@
+---
+# Native Icinga 2 HA pair + loopback-only SmokePing on the two Argon Pis.
+# Independent observer for the main monitoring/notification path --
+# docs/icinga-pi-observability/README.md and runbook.md.
+#
+# Must always be limited to the two Pis (the role itself also refuses any
+# other host). Run one host at a time, argon-01 (configuration master)
+# first, then argon-02 once argon-01 validates:
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles TASK_APPROVAL=<task> \
+#     ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+#     ansible/00-initial-setup/argon-icinga-observers.yml --limit argon-01
+# Stage 0 use is syntax-check only -- do not run this for real without the
+# runbook's per-stage preflight and the operator's explicit "Proceed".
+- name: Deploy the native Icinga 2 observer and SmokePing on the Argon Pis
+  hosts: hw_hosts
+  become: true
+  gather_facts: true
+  vars:
+    argon_icinga_allowed_hosts:
+      - argon-01
+      - argon-02
+  pre_tasks:
+    - name: Refuse to run against anything other than the two Argon Pis
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in argon_icinga_allowed_hosts
+        fail_msg: >-
+          This playbook only targets {{ argon_icinga_allowed_hosts }}; pass
+          --limit argon-01 or --limit argon-02. Refusing to run against
+          {{ inventory_hostname }}.
+        quiet: true
+
+    - name: Install the current homelab root CA (for Icinga check scripts)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+        dest: /usr/local/share/ca-certificates/homelab-root.crt
+        owner: root
+        group: root
+        mode: "0644"
+      register: argon_icinga_root_ca
+
+    - name: Refresh the system trust store
+      ansible.builtin.command: update-ca-certificates
+      changed_when: true
+      when: argon_icinga_root_ca is changed
+
+    - name: Create /etc/icinga2/pki ahead of the role (for the CA copy below)
+      ansible.builtin.file:
+        path: /etc/icinga2/pki
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy the homelab root CA into the Icinga check-plugin path
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+        dest: /etc/icinga2/pki/homelab-root.crt
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 — public CA certificate, must be world-readable for cert validation
+  roles:
+    - role: icinga_observer

@@ -126,9 +126,145 @@ must be root-owned (`0700`) and read their environment only from a root-owned
 systemd `EnvironmentFile` (`0600`). Never expose the Icinga API outside the
 two-Pi cluster merely to send a notification.
 
-**Stage 0 gate:** endpoint matrix complete; dedicated notification secrets
-exist; both notification destinations have an operator-confirmed test path;
-and no new OCI or home-inbound rule is proposed.
+### 0.4 Preflight findings (2026-10-25, read-only, no mutation)
+
+Artifacts created on `feat/argon-icinga-observability` (cut from `77ed9c86`):
+`ansible/00-initial-setup/argon-icinga-observers.yml` and the full
+`terraform/lxc/ansible/roles/icinga_observer/` role from the Stage 0.1 file
+list. `ansible-playbook --syntax-check` and a `--check --diff` dry run
+against both `argon-01` and `argon-02` pass (`failed=0`; the only "ignored"
+failures are the documented check-mode artifact for a systemd unit/service
+that does not exist yet -- see `docs/alerting/README.md` Lessons learned).
+Nothing was deployed; no package, config, cert, firewall rule, or secret was
+written to either Pi.
+
+**Pi host state** (`ansible -b -m shell`, both Pis):
+
+| Finding | argon-01 | argon-02 |
+|---|---|---|
+| OS / kernel | Debian 13 (trixie), 6.18.50+rpt-rpi-v8, aarch64 | same |
+| `docker`, `portainer-agent`, `rsyslog`, `wazuh-agent`, `prometheus-node-exporter` | all active | all active |
+| TCP 5665 | free (no listener) | free (no listener) |
+| `nftables.service` | inactive, disabled | inactive, disabled |
+| INPUT chain | `iptables -S INPUT` -> `-P INPUT ACCEPT`, no rules | same |
+| Firewall backend | `iptables v1.8.11 (nf_tables)`; Docker owns FORWARD/NAT only, never touches INPUT | same |
+| `iptables-persistent` / `netfilter-persistent` | not installed | not installed |
+| Disk `/` | 470G, 3% used | 118G, 10% used |
+
+Because nothing currently governs INPUT and no persistence package exists,
+the role adds the TCP 5665 peer-only rule with plain `iptables` (not
+`nft`), and persists it across reboot with a small role-owned
+`icinga-cluster-firewall.service` oneshot unit (`Before=icinga2.service`)
+instead of installing `iptables-persistent`, which would also start
+managing Docker's own dynamic rules. This cannot collide with Docker's
+FORWARD/NAT chains.
+
+**Target packages** (`apt-cache policy`, both Pis): `icinga2` 2.14.6-1+deb13u1,
+`smokeping` 2.8.2+ds-1, `nginx-light` 1.26.3-3+deb13u10, `fping` 5.1-1+b1,
+`monitoring-plugins-basic`/`-standard` 2.4.0-3+deb13u1 all available and
+uninstalled; `dnsutils` and `jq` already installed. `fcgiwrap` (needed to run
+`smokeping.cgi` under nginx) is added to the role's `argon-01`-only package
+list.
+
+**Endpoint matrix** (tested read-only from the operator workstation on the
+same mgmt_seg network, 2026-10-25; Stage 1 repeats the TLS-verified version
+of each check from the Pis themselves):
+
+| Target | Address | Check | Result |
+|---|---|---|---|
+| MikroTik | `192.168.1.1` | ICMP | 2/2, ~0.15ms |
+| Technitium primary | `192.168.20.15` | `dig pve.gibbsgreatly.xyz` / `dig cloudflare.com` | internal and recursive both resolve |
+| Technitium secondary | `192.168.20.17` | same | internal and recursive both resolve |
+| `pve` | `pve.gibbsgreatly.xyz:8006` | `GET /api2/json/version` (no creds) | `401 No ticket` -- proves TLS + API daemon alive |
+| VictoriaMetrics | `192.168.20.12:8428` | `GET /health` | `200`, body `OK` |
+| Grafana | `192.168.20.12:3000` | `GET /api/health` | `200`, `{"database":"ok","version":"13.0.2",...}` |
+| Graylog | `192.168.20.14:9000` | `GET /api/system/lbstatus` | `200` |
+| OpenBao | `192.168.20.16:8200` | `GET /v1/sys/health` with `--cacert certs/homelab-root.crt` | `200`, `"sealed":false` |
+| step-ca | `192.168.20.11:443` | `GET /acme/acme/directory` with `--cacert certs/homelab-root.crt` | `200`, full ACME directory body |
+| Portainer | `192.168.20.20:9000` | `GET /api/system/status` | `200`, `{"Version":"2.39.8",...}` |
+| OCI/Pangolin | `pangolin.gibbsgreatly.xyz` (`192.9.191.163`, static MikroTik DNS entry bypassing Cloudflare) | `GET /` HTTPS, cert inspect | `200`; cert `CN=gibbsgreatly.xyz`, expires 2026-12-02 |
+
+All ten non-Pi Tier-1 targets and both DNS nodes are confirmed reachable
+with the exact expected response shape the runbook's Stage 2 check
+definitions assume. `homelab-root.crt` is required and sufficient for the
+OpenBao and step-ca HTTPS checks; the role installs it at
+`/etc/icinga2/pki/homelab-root.crt` for the check plugins and into the
+system trust store, mirroring the existing `hw-monitoring-node-exporter.yml`
+pattern.
+
+**Open items found, not resolved in Stage 0:**
+
+1. **Traefik has no unauthenticated health endpoint.** `proxy-stack`'s
+   `traefik.yml` sets `api.insecure: false` and defines no `ping`
+   entrypoint (confirmed by reading
+   `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`). Phase 1's
+   Traefik check (`services.conf.j2`) is a bare TCP connect to 443 only.
+   Adding a real `ping` entrypoint is an Authentik/Traefik-tier change
+   under AGENTS.md's validation table and needs its own separate approval;
+   it is explicitly out of scope here.
+2. **The OCI SSH probe needs its own authorized key.** The operator's own
+   `ssh oci` alias (`~/.ssh/config`, `ubuntu@192.9.191.163`) works from the
+   workstation, which shares the Pis' home public IP, so the existing
+   home-source firewall policy does not need to change. But no Pi-local
+   SSH identity is authorized on the OCI box yet; provisioning one (or
+   reusing an existing narrowly-scoped key such as the Greenbone OCI audit
+   key referenced in `docs/greenbone-stack/README.md`) is an OCI-side
+   mutation and needs its own preflight and "Proceed" before the
+   `ssh-probe` service in `services.conf.j2` is enabled in Stage 2. Do not
+   add any new OCI firewall rule to support this -- the home IP is already
+   permitted.
+3. **This plan is independent of, and does not touch,** the separate
+   `docs/alerting/` Grafana/Discord/Telegram pipeline or its parked OCI
+   relay/dead-man's-switch design (`docs/alerting/README.md`). Icinga's
+   Discord/Telegram notifications use their own dedicated
+   `services/icinga-observer` OpenBao secrets (below), never
+   `services/grafana`'s.
+
+### 0.3.1 Planned `secrets/manifest.json` diff (not yet applied)
+
+Per `docs/alerting/README.md` Lessons learned ("write the secret to OpenBao
+first, the manifest second -- the wrappers fail closed on a manifest field
+with no value"), this diff is **not applied in Stage 0**. Apply it only
+after the operator has written all three fields to OpenBao via
+`scripts/openbao_write.py`, so `./with-secrets-prod` never fails closed on a
+value that doesn't exist yet:
+
+```diff
+   "entries": {
++    "services/icinga-observer": {
++      "fields": [
++        "ICINGA_DISCORD_WEBHOOK_URL",
++        "ICINGA_TELEGRAM_BOT_TOKEN",
++        "ICINGA_TELEGRAM_CHAT_ID"
++      ]
++    },
+     "services/tpot": {
+```
+
+```diff
+   "profiles": {
+     "pve": {
+       "auth": "approle",
+       "role": "deploy-pve",
+       "entries": [
+         "services/ai-services",
+         "services/authentik",
++        "services/icinga-observer",
+         ...
+```
+
+(`services/icinga-observer` added once, kept alphabetically where it fits
+among the other `services/*` entries.) Field names match
+`icinga_observer_discord_webhook_url` / `-telegram_bot_token` /
+`-telegram_chat_id` in `terraform/lxc/ansible/roles/icinga_observer/defaults/main.yml`,
+which reads them via `lookup('env', 'ICINGA_*')` -- i.e. exactly the
+uppercase field names above, matching the convention of every other
+`services/*` entry in the manifest (e.g. `GRAYLOG_ROOT_PASSWORD`).
+
+**Stage 0 gate:** endpoint matrix complete (above); dedicated notification
+secret **names** are defined (above) with no value written anywhere, and
+both notification destinations have an operator-confirmed test path
+pending Stage 3; no new OCI or home-inbound rule is proposed or required.
 
 ## Stage 1 — install and form the HA pair
 
@@ -340,7 +476,7 @@ terminal transcript.
 
 | Stage | Status | Date / commit | Evidence and rollback result |
 |---|---|---|---|
-| 0 — inventory and secrets | Planned | — | — |
+| 0 — inventory and secrets | **Artifacts created; endpoints confirmed; secrets not yet written** | 2026-10-25, this branch | Playbook + `icinga_observer` role created; `--syntax-check` and `--check --diff` pass on both Pis (`failed=0`); 10/10 Tier-1 endpoints plus both Technitium nodes confirmed read-only (§0.4); manifest diff defined, not applied (§0.3.1); no package, config, cert, firewall rule, or secret written to either Pi. Open items: Traefik has no health endpoint, OCI SSH probe identity not provisioned (§0.4) |
 | 1 — HA base | Planned | — | — |
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |

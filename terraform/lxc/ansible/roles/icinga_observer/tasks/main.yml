@@ -1,0 +1,449 @@
+---
+# Native Icinga 2 HA pair for argon-01/argon-02. Docker, Portainer Agent,
+# Wazuh Agent, node_exporter and rsyslog forwarding are untouched by this
+# role -- it only adds icinga2 (+ smokeping/nginx on argon-01) and one
+# narrow firewall rule for TCP 5665.
+
+- name: Assert this role only targets the two Argon Pis
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in icinga_observer_nodes
+    fail_msg: >-
+      icinga_observer only targets {{ icinga_observer_nodes.keys() | list }};
+      refusing to run against {{ inventory_hostname }}.
+    quiet: true
+
+- name: Install Icinga 2 and plugin packages (both Pis)
+  ansible.builtin.apt:
+    name: "{{ icinga_observer_packages_common }}"
+    state: present
+    update_cache: true
+
+- name: Install SmokePing and nginx-light (argon-01 only)
+  ansible.builtin.apt:
+    name: "{{ icinga_observer_packages_master_only }}"
+    state: present
+  when: icinga_observer_is_master | bool
+
+# --- Narrow cluster firewall (TCP 5665, peer only) --------------------------
+# Preflight on 2026-10-25 found nftables.service inactive/disabled on both
+# Pis; iptables (nf_tables backend) governs INPUT with policy ACCEPT and no
+# existing INPUT rules. Docker manages its own FORWARD/NAT chains and does
+# not touch INPUT, so adding INPUT rules here cannot collide with Docker.
+# iptables-persistent is not installed; use a small systemd oneshot unit
+# instead of pulling in a package that would also try to manage Docker's
+# own dynamic rules.
+- name: Check whether the TCP 5665 peer-restriction rule already exists
+  ansible.builtin.command: >-
+    iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }}
+    -s {{ icinga_observer_peer_address }} -j ACCEPT
+  register: icinga_observer_fw_accept_present
+  changed_when: false
+  failed_when: false
+
+- name: Check whether the TCP 5665 default-reject rule already exists
+  ansible.builtin.command: >-
+    iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
+  register: icinga_observer_fw_reject_present
+  changed_when: false
+  failed_when: false
+
+- name: Insert TCP 5665 accept-from-peer rule (idempotent)
+  ansible.builtin.command: >-
+    iptables -I INPUT 1 -p tcp --dport {{ icinga_observer_api_port }}
+    -s {{ icinga_observer_peer_address }} -j ACCEPT
+  when: icinga_observer_fw_accept_present.rc != 0
+  changed_when: true
+
+- name: Insert TCP 5665 reject-all-others rule (idempotent)
+  ansible.builtin.command: >-
+    iptables -I INPUT 2 -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
+  when: icinga_observer_fw_reject_present.rc != 0
+  changed_when: true
+
+- name: Write the TCP 5665 firewall-restore script
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/icinga-cluster-firewall.sh
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/bin/bash
+      # Idempotent: re-applies the TCP {{ icinga_observer_api_port }}
+      # peer-only restriction on boot, since no iptables-persistent is
+      # installed on this host. Role-owned; does not touch any other rule.
+      set -euo pipefail
+      iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} \
+        -s {{ icinga_observer_peer_address }} -j ACCEPT 2>/dev/null || \
+        iptables -I INPUT 1 -p tcp --dport {{ icinga_observer_api_port }} \
+          -s {{ icinga_observer_peer_address }} -j ACCEPT
+      iptables -C INPUT -p tcp --dport {{ icinga_observer_api_port }} -j REJECT 2>/dev/null || \
+        iptables -I INPUT 2 -p tcp --dport {{ icinga_observer_api_port }} -j REJECT
+
+- name: Install the firewall-restore systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/icinga-cluster-firewall.service
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
+    content: |
+      [Unit]
+      Description=Restore the Icinga cluster TCP {{ icinga_observer_api_port }} peer-only firewall rule
+      Before=icinga2.service
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/icinga-cluster-firewall.sh
+      RemainAfterExit=true
+
+      [Install]
+      WantedBy=multi-user.target
+  register: icinga_observer_fw_unit
+
+- name: Enable the firewall-restore systemd unit
+  ansible.builtin.systemd:
+    name: icinga-cluster-firewall.service
+    enabled: true
+    daemon_reload: "{{ icinga_observer_fw_unit.changed }}"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# --- Config directories ------------------------------------------------------
+- name: Create Icinga config and script directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ icinga_observer_scripts_dir }}"
+    - /etc/icinga2/pki
+
+- name: Create zones.d directory (configuration master only)
+  ansible.builtin.file:
+    path: "{{ icinga_observer_zones_d_dir }}/master"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: icinga_observer_is_master | bool
+
+# --- Certificates -------------------------------------------------------------
+# Local CA generated on argon-01 during the initial controlled deployment;
+# the private CA key never leaves /var/lib/icinga2/ca and is never copied to
+# this repo or to OpenBao (runbook Stage 1.1).
+- name: Check whether the local CA already exists (master)
+  ansible.builtin.stat:
+    path: /var/lib/icinga2/ca/ca.crt
+  register: icinga_observer_ca_stat
+  when: icinga_observer_is_master | bool
+
+- name: Create the local Icinga CA (master, first run only)
+  ansible.builtin.command: icinga2 pki new-ca
+  when:
+    - icinga_observer_is_master | bool
+    - not icinga_observer_ca_stat.stat.exists
+
+- name: Check whether this node's certificate already exists
+  ansible.builtin.stat:
+    path: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.crt"
+  register: icinga_observer_cert_stat
+
+- name: Generate this node's private key and CSR
+  ansible.builtin.command: >-
+    icinga2 pki new-cert --cn {{ icinga_observer_self_name }}
+    --key /etc/icinga2/pki/{{ icinga_observer_self_name }}.key
+    --csr /etc/icinga2/pki/{{ icinga_observer_self_name }}.csr
+    --cert /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+  when: not icinga_observer_cert_stat.stat.exists
+
+- name: Self-sign the master's own certificate from its local CA
+  ansible.builtin.command: >-
+    icinga2 pki sign-csr --csr /etc/icinga2/pki/{{ icinga_observer_self_name }}.csr
+    --cert /etc/icinga2/pki/{{ icinga_observer_self_name }}.crt
+  when:
+    - icinga_observer_is_master | bool
+    - not icinga_observer_cert_stat.stat.exists
+
+- name: Read the master's CA certificate
+  ansible.builtin.slurp:
+    src: /var/lib/icinga2/ca/ca.crt
+  register: icinga_observer_ca_cert_b64
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+
+- name: Distribute the CA certificate to this node's trust store
+  ansible.builtin.copy:
+    dest: /etc/icinga2/pki/ca.crt
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — public CA certificate, must be world-readable for cert validation
+    content: "{{ hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64.content | b64decode }}"
+  when:
+    - not ansible_check_mode
+    - hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64 is defined
+    - hostvars[icinga_observer_master_name].icinga_observer_ca_cert_b64 is not skipped
+
+- name: Read the peer's CSR (run on the peer, needed on the master)
+  ansible.builtin.slurp:
+    src: "/etc/icinga2/pki/{{ icinga_observer_peer_inventory_name }}.csr"
+  delegate_to: "{{ icinga_observer_peer_inventory_name }}"
+  register: icinga_observer_peer_csr_b64
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_peer_inventory_name in ansible_play_hosts
+
+- name: Write the peer's CSR locally on the master for signing
+  ansible.builtin.copy:
+    dest: "/tmp/{{ icinga_observer_peer_inventory_name }}.csr"
+    mode: "0600"
+    content: "{{ icinga_observer_peer_csr_b64.content | b64decode }}"
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_peer_csr_b64 is defined
+    - icinga_observer_peer_csr_b64 is not skipped
+
+- name: Sign the peer's certificate on the master
+  ansible.builtin.command: >-
+    icinga2 pki sign-csr --csr /tmp/{{ icinga_observer_peer_inventory_name }}.csr
+    --cert /tmp/{{ icinga_observer_peer_inventory_name }}.crt
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_peer_csr_b64 is defined
+    - icinga_observer_peer_csr_b64 is not skipped
+
+- name: Read the peer's signed certificate back
+  ansible.builtin.slurp:
+    src: "/tmp/{{ icinga_observer_peer_inventory_name }}.crt"
+  register: icinga_observer_peer_cert_signed
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_peer_csr_b64 is defined
+    - icinga_observer_peer_csr_b64 is not skipped
+
+- name: Remove the peer's temporary CSR/cert copies from the master
+  ansible.builtin.file:
+    path: "/tmp/{{ icinga_observer_peer_inventory_name }}.{{ item }}"
+    state: absent
+  loop:
+    - csr
+    - crt
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - icinga_observer_peer_csr_b64 is defined
+    - icinga_observer_peer_csr_b64 is not skipped
+
+- name: Install the peer-signed certificate (peer node)
+  ansible.builtin.copy:
+    dest: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.crt"
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — public node certificate, must be world-readable for TLS handshakes
+    content: "{{ hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed.content | b64decode }}"
+  when:
+    - not icinga_observer_is_master | bool
+    - not ansible_check_mode
+    - hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed is defined
+    - hostvars[icinga_observer_master_name].icinga_observer_peer_cert_signed is not skipped
+
+- name: Enforce private key permissions
+  ansible.builtin.file:
+    path: "/etc/icinga2/pki/{{ icinga_observer_self_name }}.key"
+    owner: root
+    group: root
+    mode: "0600"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# --- Core configuration -------------------------------------------------------
+- name: Render constants.conf
+  ansible.builtin.template:
+    src: constants.conf.j2
+    dest: /etc/icinga2/constants.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: reload icinga2
+
+- name: Render zones.conf
+  ansible.builtin.template:
+    src: zones.conf.j2
+    dest: /etc/icinga2/zones.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: reload icinga2
+
+- name: Render icinga2.conf
+  ansible.builtin.template:
+    src: icinga2.conf.j2
+    dest: /etc/icinga2/icinga2.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: reload icinga2
+
+- name: Render host/peer objects (configuration master only)
+  ansible.builtin.template:
+    src: hosts.conf.j2
+    dest: "{{ icinga_observer_zones_d_dir }}/master/hosts.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: reload icinga2
+
+- name: Render service checks (configuration master only)
+  ansible.builtin.template:
+    src: services.conf.j2
+    dest: "{{ icinga_observer_zones_d_dir }}/master/services.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: reload icinga2
+
+- name: Render notification objects (configuration master only)
+  ansible.builtin.template:
+    src: notifications.conf.j2
+    dest: "{{ icinga_observer_zones_d_dir }}/master/notifications.conf"
+    owner: root
+    group: root
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: reload icinga2
+
+# --- Notification scripts and secrets ----------------------------------------
+- name: Assert notification secrets are present when rendering scripts
+  ansible.builtin.assert:
+    that:
+      - icinga_observer_discord_webhook_url | length > 0
+      - icinga_observer_telegram_bot_token | length > 0
+      - icinga_observer_telegram_chat_id | length > 0
+    fail_msg: >-
+      ICINGA_DISCORD_WEBHOOK_URL, ICINGA_TELEGRAM_BOT_TOKEN and
+      ICINGA_TELEGRAM_CHAT_ID must all be set. Run via ./with-secrets-prod
+      once services/icinga-observer exists in OpenBao and the manifest.
+    quiet: true
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+
+- name: Write the notification EnvironmentFile (configuration master only)
+  ansible.builtin.copy:
+    dest: "{{ icinga_observer_env_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      ICINGA_DISCORD_WEBHOOK_URL={{ icinga_observer_discord_webhook_url }}
+      ICINGA_TELEGRAM_BOT_TOKEN={{ icinga_observer_telegram_bot_token }}
+      ICINGA_TELEGRAM_CHAT_ID={{ icinga_observer_telegram_chat_id }}
+  no_log: true
+  when:
+    - icinga_observer_is_master | bool
+    - not ansible_check_mode
+
+- name: Render the Discord notification script (configuration master only)
+  ansible.builtin.template:
+    src: notification-discord.sh.j2
+    dest: "{{ icinga_observer_scripts_dir }}/notification-discord.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  when: icinga_observer_is_master | bool
+
+- name: Render the Telegram notification script (configuration master only)
+  ansible.builtin.template:
+    src: notification-telegram.sh.j2
+    dest: "{{ icinga_observer_scripts_dir }}/notification-telegram.sh"
+    owner: root
+    group: root
+    mode: "0700"
+  when: icinga_observer_is_master | bool
+
+- name: Create the notification audit log
+  ansible.builtin.file:
+    path: /var/log/icinga2/notifications-audit.log
+    state: touch
+    owner: nagios
+    group: nagios
+    mode: "0640"
+    access_time: preserve
+    modification_time: preserve
+
+# --- Enable Icinga 2 ----------------------------------------------------------
+- name: Enable the Icinga 2 API feature
+  ansible.builtin.command: icinga2 feature enable api
+  register: icinga_observer_api_feature
+  changed_when: "'already enabled' not in icinga_observer_api_feature.stdout"
+
+- name: Validate Icinga 2 configuration before enabling the service
+  ansible.builtin.command: icinga2 daemon -C
+  register: icinga_observer_config_check
+  changed_when: false
+
+- name: Enable and start icinga2
+  ansible.builtin.systemd:
+    name: icinga2
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode and icinga_observer_config_check.rc == 0
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# --- SmokePing (argon-01 only) ------------------------------------------------
+- name: Render SmokePing configuration (argon-01 only)
+  ansible.builtin.template:
+    src: smokeping-config.j2
+    dest: /etc/smokeping/config.d/Targets
+    owner: root
+    group: root
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: Reload nginx
+
+- name: Render the loopback-only nginx vhost for SmokePing (argon-01 only)
+  ansible.builtin.template:
+    src: smokeping-nginx.conf.j2
+    dest: /etc/nginx/sites-available/smokeping.conf
+    owner: root
+    group: root
+    mode: "0640"
+  when: icinga_observer_is_master | bool
+  notify: Reload nginx
+
+- name: Enable the SmokePing nginx site (argon-01 only)
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/smokeping.conf
+    dest: /etc/nginx/sites-enabled/smokeping.conf
+    state: link
+  when: icinga_observer_is_master | bool
+  notify: Reload nginx
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Disable the default nginx site (argon-01 only)
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: icinga_observer_is_master | bool
+  notify: Reload nginx
+
+- name: Enable and start smokeping and nginx (argon-01 only)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - smokeping
+    - nginx
+    - fcgiwrap
+  when: icinga_observer_is_master | bool
+  ignore_errors: "{{ ansible_check_mode }}"
