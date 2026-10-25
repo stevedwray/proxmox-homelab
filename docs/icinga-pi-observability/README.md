@@ -2,10 +2,11 @@
 
 ## Status
 
-**Updated 2026-10-25.** The native Icinga 2 HA pair is live on both Pis
+**Checked live 2026-10-26.** The native Icinga 2 HA pair is live on both Pis
 (argon-01 config master), with mutual TLS and peer-only TCP 5665. All six
 Stage 2 core-check groups are enabled: router, DNS, pve, metrics, internal
-services and OCI. Icinga DB reports **14/14 hosts and 31/31 services OK**.
+services and OCI. Icinga's Redis state reports **14/14 hosts and 31/31 services
+OK**, with results from both Pis updated within two minutes of the audit.
 The OCI SSH probe remains off pending a separately authorised key and pinned
 host key; Discord/Telegram notifications remain off pending three dedicated
 OpenBao values. The operator waived Stage 2 fault drills for this rollout.
@@ -15,8 +16,9 @@ SmokePing is live at `https://smokeping.lab.gibbsgreatly.xyz` behind Traefik
 and Authentik. Icinga Web 2 is live at `https://icinga.lab.gibbsgreatly.xyz`,
 served directly by argon-01 with its own Let's Encrypt certificate and native
 login. The Pis have forward and reverse DNS (`argon-0N.gibbsgreatly.xyz`, one
-PTR each). `scripts/icinga-observer-smoke.sh base dns smokeping web` passes;
-the role's scoped default preview reports `changed=0`. The observer itself
+PTR each). `scripts/icinga-observer-smoke.sh base dns smokeping web` passed on
+2026-10-26; all six SmokePing target RRDs were updating. The role's last
+scoped default preview reported `changed=0` on 2026-10-25. The observer itself
 uses native packages and systemd, with no Docker or OCI mutation.
 
 ## Decision
@@ -120,9 +122,9 @@ Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium 
 - **Waived for this rollout:** controlled fault and recovery drills. Suppression
   and notification delivery remain unproven until Stage 3.
 
-**Verification:** all 14 hosts and 31 services OK in Icinga DB; the scoped
-default preview has no changes and the full smoke suite passes. See
-[runbook.md](runbook.md) §2.5.
+**Verification:** all 14 hosts and 31 services OK in Icinga's current Redis
+state on 2026-10-26; the scoped default preview had no changes and the full
+smoke suite passes. See [runbook.md](runbook.md) §2.5.
 
 ### Stage 3 — notification proof
 

@@ -30,6 +30,8 @@ critical vulnerabilities, backups, and the monitoring going quiet.
 - The few alerts that need a human **now** also go to **Telegram**, through **Grafana's own Telegram
   contact point**. No custom service.
 - Silencing is a time-boxed **Grafana silence** (Alerting, Silences). Telegram has no buttons.
+- The independent Argon Pi Icinga checks are live for the approved core
+  targets. Direct Discord/Telegram delivery from Icinga is pending Stage 3.
 
 **Future state, deliberately deferred** (designed; none deployed):
 
@@ -37,10 +39,10 @@ critical vulnerabilities, backups, and the monitoring going quiet.
   `~/git/oci`. Whether to keep it or use off-the-shelf software (Uptime Kuma for the heartbeat) is undecided.
 - A **dead man's switch** on the OCI box, reached over **mutual TLS on a dedicated port** (not 443),
   firewalled to the home IP.
-- **blackbox_exporter** checks of the alert chain, then Icinga.
 
-Until the dead man's switch exists, **nothing watches Grafana, VictoriaMetrics, Graylog or the
-monitoring host themselves.**
+The parked OCI dead man's switch would cover a different failure domain:
+loss of the lab or of the Argon observers themselves. Icinga already checks
+Grafana, VictoriaMetrics and Graylog from outside the monitoring stack.
 
 ## What pages Telegram, and what does not
 
@@ -70,7 +72,7 @@ only and never page (found the hard way: see *Lessons learned*).
 | Ack / snooze | Now: a Grafana silence. Future: buttons in Telegram via the relay |
 | Hosting | **Self-hosted only, no SaaS** (Healthchecks.io dropped). Nothing new on `framework`: its memory and load must stay low |
 | Wariness of bespoke code | The operator is wary of a custom service on a critical path. Prefer maintained software; the relay is a last resort and outside the safety path |
-| Service checks | blackbox_exporter, limited to the services the alert chain depends on (7 probes, plan Phase 4b); additions only when the operator asks. Icinga later |
+| Service checks | Independent Icinga checks on the Argon Pis for the approved core targets; Phase 4b blackbox_exporter probes 3–7 remain unbuilt and superseded by Icinga |
 | Log alerts | From **Graylog**, on exact message patterns, never on log level |
 | Hardware | Faults, temperatures and firmware-update-available for every device, including workstation, MikroTik, Omada switches, NAS and Pis |
 | Workstation logs | Warning and above only |

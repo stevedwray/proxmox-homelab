@@ -14,7 +14,7 @@ The runbook is written so that each numbered stage can be performed, tested,
 and reverted independently. Do not combine the stages into a large blind
 rollout.
 
-## Current state and plan (updated 2026-10-25)
+## Current state and plan (checked 2026-10-26)
 
 Branch `feat/argon-icinga-observability` (unmerged, **deployed live from it**). Read
 this section first; the stage sections below are the detail and the history.
@@ -23,10 +23,21 @@ this section first; the stage sections below are the detail and the history.
 |---|---|---|
 | 0 inventory, artifacts | done | §0.4 |
 | 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
-| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live and OK** on argon-01; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
-| 3 Discord/Telegram notifications | written, **off**; needs two operator-created destinations | Stage 3 |
+| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live; 14/14 hosts and 31/31 services OK** in current Redis state from both Pis; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
+| 3 Discord/Telegram notifications | written, **off**; live notification object count is zero; needs two operator-created destinations | Stage 3 |
 | 4 SmokePing | **live**, `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik) | §4.1-§4.3 |
 | 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
+
+**Live audit, 2026-10-26:** `scripts/icinga-observer-smoke.sh base dns
+smokeping web` passed. Icinga's direct state file contained all 45 recent OK
+check results; the Redis state hashes had 14 OK hosts and 31 OK services, with
+the oldest result under two minutes old and service execution split across
+argon-01 (18) and argon-02 (13). All six SmokePing target RRDs were updating.
+The `notifications.conf` object file was absent and the Icinga DB notification
+table contained zero rows. The MariaDB `host_state` and `service_state`
+`last_update` values were older, which is expected: [Icinga DB Web reads the
+latest host and service state from Redis](https://icinga.com/docs/icinga-db/latest/doc/01-About/).
+Do not use those SQL timestamps alone to judge check freshness.
 
 **What exists where**
 
@@ -62,7 +73,7 @@ generated passwords loaded they render empty).
 **Completed and pending work**
 
 1. **Stage 2 complete for the approved scope.** All six core groups are on and
-   their hosts and services are OK in Icinga DB (§2.5). The operator waived
+   their hosts and services are OK in current Icinga state (§2.5). The operator waived
    the planned controlled fault/recovery drills. OCI SSH still needs a
    separately authorised OCI-side key and pinned host key.
 2. **Stage 3 notifications.** The operator creates a dedicated Discord webhook and a
@@ -1151,8 +1162,9 @@ found six real defects, fixed in turn and re-run (the role is idempotent):
   Redis not listening off-loopback, `certbot.timer` active.
 - **End to end as a user:** logged in as `admin` (native login), reached the
   dashboard, and the services page lists argon-01 and argon-02 with
-  `cluster-zone-health`, `api-tls-cert`, `disk-root` and `clock`. Icinga DB holds
-  2 hosts and 8 services, all in hard state OK.
+  `cluster-zone-health`, `api-tls-cert`, `disk-root` and `clock`. At this
+  initial Stage 5 rollout, Icinga DB held 2 hosts and 8 services, all in
+  hard state OK; the current count is in the state table at the top.
 - Role re-run: `changed=0`, `failed=0`.
 
 **Reading the admin password:** `ssh ansible@192.168.1.22 sudo cat /var/lib/icinga-observer/web-admin.pass`
@@ -1201,7 +1213,7 @@ terminal transcript.
 | 2 — core checks | **All six core groups deployed and OK; OCI SSH off; fault drills waived for rollout** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router, dns, pve, metrics, internal_services, oci]`; per-group scoped previews, backups and successful Icinga validation. Both Technitium hosts and all eight DNS services OK in state file (§2.4); pve, metrics, internal services and OCI host/service checks OK in Icinga DB (§2.5). OCI HTTPS required explicit `http_vhost` for SNI |
 | 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
-| 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. Icinga DB holds 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
+| 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. At its initial rollout, Icinga DB held 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
 
 ## References
 

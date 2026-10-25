@@ -4,11 +4,14 @@ Workspace README (decisions, design rules, hand-backs): [README.md](README.md).
 Replaces `docs/catch-up/07-baseline-alerting.md`, whose OpenBao-health and
 alert-rule steps are reused below by id.
 
-## Status (2026-10-24)
+## Status (base snapshot 2026-10-24; Icinga note 2026-10-26)
 
 **Phases 1, 1c and both prerequisites are deployed and proven** (drills and a real page: README, *Proven live*).
-The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`. Phase 0 enrolment, Phase 2, 5 and 6
-are still to do. Phases 3, 4 and 4b are future state.
+The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`.
+Phase 2 and the workstation/Pi enrolment are also applied; the remaining
+Phase 0 MikroTik exporter and Phases 5–6 are pending. Phases 3 and 4 are
+future state; Phase 4b probes 3–7 were superseded by the live Argon Icinga
+checks (2026-10-26 audit).
 
 | Phase | What | State |
 |---|---|---|
@@ -21,16 +24,20 @@ are still to do. Phases 3, 4 and 4b are future state.
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
 | 2 | Graylog log alerts | **Applied and drilled** (`scripts/graylog_alerts.py`) |
-| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
+| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Relay and dead man's switch parked.** Phase 4b probes 3–7 superseded by the live Argon Icinga checks; probes 1–2 only apply if the relay is deployed (§4b). Direct Icinga notifications remain off pending Stage 3 |
 | 5 | New critical vulnerabilities (Harbor, Greenbone) | **Built, not yet deployed** (`homelab-vulnerabilities.yml`) |
 | 6 | Digest, fire drill, native integrations | Outline |
 | 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **Planned** (see Phase 7) |
 
-**Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
-would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
+**Order from here:** the remaining Phase 0 MikroTik exporter, then Phases 5
+and 6. Phase 2 Graylog log alerts are already applied and drilled. Phases 3
+and 4 wait for a decision; Phase 4b probes 3–7 are superseded and probes 1–2
+are conditional. Operator housekeeping
 (NVMe silence, Discord token reset) is in the README's open items. **Parallel work:** the pve-tiny evacuation
 (`work/pve-tiny-evacuation`) moves stacks off that host; re-check the `stack=pve-tiny` alerts, the NVMe silence and
-the secpipe/honeypot sync host as each stack moves.
+the secpipe/honeypot sync host as each stack moves. The independent Icinga
+state is tracked in [its runbook](../icinga-pi-observability/runbook.md),
+not by the parked Phase 4b outline below.
 
 ## How to read this
 
