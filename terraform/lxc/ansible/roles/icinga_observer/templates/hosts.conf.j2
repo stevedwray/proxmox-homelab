@@ -119,7 +119,7 @@ object Host "oci-pangolin" {
 }
 {% endif %}
 
-{% if 'router' in icinga_observer_core_check_groups %}
+{% if 'router' in icinga_observer_core_check_groups and (icinga_observer_core_check_groups | intersect(['dns', 'pve', 'metrics', 'internal_services']) | length > 0) %}
 /*
  * MikroTik is modelled as a parent dependency for every LAN/pve/service
  * target so a single router fault produces one root-cause notification,
