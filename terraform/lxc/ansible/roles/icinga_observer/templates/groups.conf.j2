@@ -6,8 +6,15 @@ object HostGroup "observer" {
 }
 object ServiceGroup "observer" {
   display_name = "Observer health"
-  assign where host.name in [ "argon-01", "argon-02" ]
+  assign where host.name in [ "argon-01", "argon-02" ] && service.name in [ "cluster-zone-health", "disk-root", "clock", "api-tls-cert" ]
 }
+
+{% if icinga_observer_enable_web or icinga_observer_enable_smokeping %}
+object ServiceGroup "observer-ui" {
+  display_name = "Observer web and diagnostics"
+  assign where host.name == "argon-01" && service.name in [ "icinga-web-login", "observer-ui-units", "smokeping-cgi" ]
+}
+{% endif %}
 
 {% if 'router' in icinga_observer_core_check_groups or 'dns' in icinga_observer_core_check_groups %}
 object HostGroup "network-dns" {

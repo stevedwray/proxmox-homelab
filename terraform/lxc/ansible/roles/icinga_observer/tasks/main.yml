@@ -140,6 +140,18 @@
     group: nagios
     mode: "0700"
 
+- name: Install the observer web-stack unit check on argon-01
+  ansible.builtin.template:
+    src: check-observer-ui-units.sh.j2
+    dest: "{{ icinga_observer_check_scripts_dir }}/check-observer-ui-units.sh"
+    owner: root
+    group: nagios
+    mode: "0750"
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_web | bool
+  tags: monitoring
+
 - name: Install the homelab root CA for plugin-side verification of internal (step-ca) services
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../certs/homelab-root.crt"
@@ -393,7 +405,7 @@
     mode: "0640"
   when: icinga_observer_is_master | bool
   notify: reload icinga2
-  tags: dashboard
+  tags: [dashboard, monitoring]
 
 - name: Render service checks (configuration master only)
   ansible.builtin.template:
@@ -404,6 +416,7 @@
     mode: "0640"
   when: icinga_observer_is_master | bool
   notify: reload icinga2
+  tags: monitoring
 
 - name: Render notification objects (configuration master only, Stage 3)
   ansible.builtin.template:

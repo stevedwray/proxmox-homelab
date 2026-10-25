@@ -23,10 +23,11 @@ this section first; the stage sections below are the detail and the history.
 |---|---|---|
 | 0 inventory, artifacts | done | §0.4 |
 | 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
-| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live; 14/14 hosts and 31/31 services OK** in current Redis state from both Pis; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
+| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live; 14/14 hosts and 31/31 core services OK** in the initial Redis audit from both Pis; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
 | 3 Discord/Telegram notifications | written, **off**; live notification object count is zero; needs two operator-created destinations | Stage 3 |
 | 4 SmokePing | probes and RRD history **live**; browser redirect and assets repaired on argon-01; operator browser confirmation still pending | §4.4 |
 | 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
+| 5b monitoring health | **live**, three new Argon checks OK; 34/34 service hard states OK in Icinga DB; monitoring dashboard opens first | Monitoring control-plane coverage below |
 
 **Live audit, 2026-10-26:** the original `scripts/icinga-observer-smoke.sh base
 dns smokeping web` passed, but its SmokePing group missed the browser-path
@@ -1245,6 +1246,7 @@ terminal transcript.
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch; browser fix 2026-10-26 | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application and Traefik route live. The post-Authentik redirect and asset paths were fixed (§4.4); the expanded smoke suite passes. Operator browser retry still pending. Rollback in §§4.3–4.4 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. At its initial rollout, Icinga DB held 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
 | 5a — dashboard grouping | **Deployed and verified, argon-01; groups synced to argon-02** | 2026-10-26, this branch | Six populated HostGroups and ServiceGroups, shared **Core services** dashboard, authenticated HTTP 200 with all six sections, scoped preview `changed=0`; details below |
+| 5b — monitoring health | **Deployed and verified, argon-01; config synced to argon-02** | 2026-10-26, this branch | Grafana view verified; three new checks OK; 34/34 services hard-state OK in Icinga DB; **Monitoring health** dashboard opens first; details below |
 
 ### Dashboard service groups (deployed 2026-10-26)
 
@@ -1272,6 +1274,39 @@ dashboard request returned HTTP 200 with all six section names, the `base dns
 web` smoke checks passed, and the follow-up tagged preview reported
 `changed=0`. Check definitions, alert routing, SmokePing, Traefik, and
 Authentik were not modified.
+
+### Monitoring control-plane coverage (deployed 2026-10-26)
+
+The live Icinga configuration already has `grafana!api-health` on port 3000,
+`victoriametrics!health` on port 8428, Graylog TCP 514 and `lbstatus`, and
+four peer/resource checks on each Argon Pi. Icinga DB reported Grafana's
+`api-health` check OK and assigned it to `monitoring-logs`; an authenticated
+request to that filtered service view returned Grafana and `api-health`.
+
+The role added three checks on argon-01: `icinga-web-login` probes
+the native HTTPS login redirect, `observer-ui-units` checks the local
+`icingadb`, Redis, MariaDB, PHP-FPM, nginx, SmokePing and fcgiwrap systemd
+units, and `smokeping-cgi` probes the protected backend CGI from the Pi. A
+separate `observer-ui` ServiceGroup keeps these optional UI checks distinct
+from the eight existing HA peer/resource checks. A **Monitoring health**
+dashboard puts Grafana/VictoriaMetrics/Graylog, the Icinga pair, and the UI
+checks in three visible sections ahead of the broader **Core services** tab.
+The new probes were exercised from the intended hosts before deployment,
+including both local probes as `nagios`; all returned OK.
+
+The scoped `--limit argon-01 --tags monitoring --check --diff` preview showed
+only the new check script, service definitions, group assignment, and shared
+dashboard PHP. A root-only rollback backup on argon-01 is
+`/var/backups/argon-monitoring-health-pre-20261025T181730Z.tar.gz` (master
+zone, dashboard module, and check-script directory). Icinga validated before
+restart, and the new configuration synchronized to argon-02. Icinga DB showed
+`observer` with eight services, `observer-ui` with three, and `monitoring-logs`
+with four; all three new service results and all 34 service hard states were OK.
+The authenticated default dashboard returned HTTP 200 with **Monitoring
+health** ahead of **Core services**, and its filtered views contained Grafana
+and all three new checks. The full `base dns smokeping web` smoke suite passed;
+the follow-up tagged preview reported `changed=0`. Stage 3 notifications
+remain disabled; this change adds visibility, not Discord or Telegram delivery.
 
 ## References
 

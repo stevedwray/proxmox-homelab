@@ -5,8 +5,10 @@
 **Checked live 2026-10-26.** The native Icinga 2 HA pair is live on both Pis
 (argon-01 config master), with mutual TLS and peer-only TCP 5665. All six
 Stage 2 core-check groups are enabled: router, DNS, pve, metrics, internal
-services and OCI. Icinga's Redis state reports **14/14 hosts and 31/31 services
-OK**, with results from both Pis updated within two minutes of the audit.
+services and OCI. The initial Redis audit found **14/14 hosts and 31/31 core
+services OK**, with results from both Pis updated within two minutes. After
+the monitoring-health expansion, Icinga DB reports **14 hosts and 34 services,
+all 34 services hard-state OK**.
 The OCI SSH probe remains off pending a separately authorised key and pinned
 host key; Discord/Telegram notifications remain off pending three dedicated
 OpenBao values. The operator waived Stage 2 fault drills for this rollout.
@@ -33,6 +35,16 @@ This only changes presentation and group metadata; check commands, intervals,
 dependencies, and notifications are unchanged. An authenticated dashboard
 request returned HTTP 200 with all six sections; the scoped role preview
 reported `changed=0` after deployment.
+
+**Monitoring health deployed 2026-10-26:** Grafana is monitored as
+`grafana!api-health`, with VictoriaMetrics and Graylog also checked. The
+authenticated dashboard opens on **Monitoring health**, showing those checks
+first, followed by the Icinga peer and three new Argon checks: Icinga Web's
+login endpoint, local Icinga Web/DB support units, and SmokePing's CGI. All
+three new checks returned OK, the complete smoke suite passed, and the scoped
+preview reported `changed=0`. These UI checks are separate from Icinga's core
+checker. Stage 3 Discord/Telegram notifications remain off until their
+dedicated secrets are provided.
 
 ## Decision
 

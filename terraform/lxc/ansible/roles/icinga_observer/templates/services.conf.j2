@@ -66,6 +66,46 @@ apply Service "api-tls-cert" to Host {
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
+{% if icinga_observer_enable_web %}
+/* The web stack is a non-critical consumer of the checker. Probe it from the
+ * HA pair without making core checks depend on it. */
+object CheckCommand "observer-ui-units" {
+  command = [ "{{ icinga_observer_check_scripts_dir }}/check-observer-ui-units.sh" ]
+}
+
+apply Service "icinga-web-login" to Host {
+  import "generic-service"
+  check_command = "http"
+  vars.http_vhost = "{{ icinga_observer_web_fqdn }}"
+  vars.http_ssl = true
+  vars.http_sni = true
+  vars.http_uri = "/icingaweb2/authentication/login"
+  vars.http_expect = "302"
+  assign where host.name == "argon-01"
+}
+
+apply Service "observer-ui-units" to Host {
+  import "generic-service"
+  check_command = "observer-ui-units"
+  command_endpoint = host.name
+  assign where host.name == "argon-01"
+}
+{% endif %}
+
+{% if icinga_observer_enable_smokeping %}
+/* The backend is firewall-limited to the Pi and Traefik, so run locally. */
+apply Service "smokeping-cgi" to Host {
+  import "generic-service"
+  check_command = "http"
+  vars.http_vhost = "smokeping.{{ icinga_observer_lab_domain }}"
+  vars.http_port = {{ icinga_observer_smokeping_web_port }}
+  vars.http_uri = "/smokeping/smokeping.cgi"
+  vars.http_expect = "200"
+  command_endpoint = host.name
+  assign where host.name == "argon-01"
+}
+{% endif %}
+
 {% if 'router' in icinga_observer_core_check_groups %}
 /* --- MikroTik: ICMP plus DNS recursion -------------------------------------- */
 

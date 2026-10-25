@@ -233,7 +233,7 @@
     mode: "0644"
   notify: Restart php-fpm
   ignore_errors: "{{ ansible_check_mode }}"
-  tags: dashboard
+  tags: [dashboard, monitoring]
 
 - name: Enable the shared observer dashboard module
   ansible.builtin.file:
