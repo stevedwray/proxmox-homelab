@@ -866,6 +866,59 @@ Prerequisites and order (each distinct mutation is its own approval):
 chain (not step-ca) directly from argon-01, both Pis' services are visible, and
 stopping MariaDB does not stop a single check or notification.
 
+### 5.1 Stage 5 execution record (2026-10-25)
+
+Deployed on argon-01 only, with approvals `icinga-dns` (the Technitium A record)
+and `argon-icinga-web` (the role with `icinga_observer_enable_web=true`, now the
+role default). The web path had never run on real hosts, and the first runs
+found six real defects, fixed in turn and re-run (the role is idempotent):
+
+1. `icingadb`'s logger output is `systemd-journald`; I had written
+   `systemd-journal` (a typo the daemon rejected at start).
+2. Debian ships no `icingacli` on PATH, so "enable module" now creates the
+   `enabledModules` symlink directly (all the CLI does).
+3. **Handlers queued before a failed task were discarded**, so a feature enabled
+   in a failed run never triggered its icinga2 restart, and the re-run found
+   nothing changed to notify about (the third time this class of bug hit).
+   Fixed at the root: `force_handlers: true` on the play, plus an explicit flush
+   after enabling the feature.
+4. Icinga's stock `icingadb` feature targets Redis on **6380** (the dedicated
+   `icingadb-redis` package, not in Debian); the role now renders the feature
+   file for the regular `redis-server` on 6379. Symptom: Icinga DB showed 0
+   hosts while every service reported healthy.
+5. `php-mysql`, `php-mbstring` and `php-gd` are only *recommended* by
+   `icingaweb2` and we install without recommends (to keep apache2 out); the
+   login page died with `PDO::MYSQL_ATTR_INIT_COMMAND` undefined.
+6. The role's own HTTPS probe passed at first **because it was reading the PHP
+   fatal error page** (HTTP 200). Icinga Web answers a cookie-less first request
+   with a 302 cookie check, so the probe (and the smoke test) now keep cookies,
+   follow redirects and require 200 on the real login form.
+
+**Verified:**
+
+- `scripts/icinga-observer-smoke.sh base dns smokeping web` passes in full: a
+  Let's Encrypt production certificate (not step-ca) served directly by argon-01,
+  trusted by the system store, `http` redirects to `https`, `icinga.lab...`
+  resolves to `192.168.1.22` (single PTR `argon-01.gibbsgreatly.xyz`), MariaDB and
+  Redis not listening off-loopback, `certbot.timer` active.
+- **End to end as a user:** logged in as `admin` (native login), reached the
+  dashboard, and the services page lists argon-01 and argon-02 with
+  `cluster-zone-health`, `api-tls-cert`, `disk-root` and `clock`. Icinga DB holds
+  2 hosts and 8 services, all in hard state OK.
+- Role re-run: `changed=0`, `failed=0`.
+
+**Reading the admin password:** `ssh ansible@192.168.1.22 sudo cat /var/lib/icinga-observer/web-admin.pass`
+(generated on the Pi; change it in the UI if you like).
+
+**Not done / known limits:** the "stop MariaDB and prove no check or notification
+is affected" drill from the Stage 5 gate was not run (Icinga writes to Redis,
+never to MariaDB, and the feature retries on its own, but this is reasoned, not
+demonstrated); no command transport, so no acknowledgements from the UI yet; the UI
+lives on argon-01 only; argon-02 still lacks the host-self firewall rule until its
+next role run; the `monitoring` module is absent, which Icinga Web logs as
+"Unable to locate monitoring module" on each request (expected, Icinga DB replaces
+it).
+
 ## Validation, commit, and execution state
 
 For every Ansible change, run:
@@ -900,7 +953,7 @@ terminal transcript.
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
-| 5 — Icinga Web | **Prepared, not deployed** | 2026-10-25, this branch | `tasks/web.yml` (MariaDB, Redis, Icinga DB, Icinga Web, certbot + Cloudflare DNS-01, nginx :443) behind `icinga_observer_enable_web` (off); `configure-icinga-dns-records.yml`; no new secrets (reuses Traefik's `CF_DNS_API_TOKEN`, generates its own passwords). Untested against real hosts -- needs the two approvals in Stage 5 |
+| 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. Icinga DB holds 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
 
 ## References
 

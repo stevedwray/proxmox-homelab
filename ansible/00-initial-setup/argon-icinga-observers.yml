@@ -15,6 +15,10 @@
   hosts: hw_hosts
   become: true
   gather_facts: true
+  # A failed task must not discard queued restarts: a service that was already
+  # reconfigured would otherwise keep running its old config forever, because a
+  # re-run finds nothing changed to notify about (bit us three times).
+  force_handlers: true
   vars:
     argon_icinga_allowed_hosts:
       - argon-01

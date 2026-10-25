@@ -42,7 +42,7 @@ icinga_observer_smokeping_behind_traefik: true
 # directly with its own Let's Encrypt certificate and native login. Uses the
 # existing CF_DNS_API_TOKEN (injected at deploy time) and requires
 # icinga_observer_smokeping_behind_traefik (it takes ports 80/443).
-icinga_observer_enable_web: false
+icinga_observer_enable_web: true       # deployed and verified 2026-10-25 (argon-01 only)
 
 icinga_observer_packages_common:
   - icinga2
@@ -140,6 +140,11 @@ icinga_observer_web_packages:
   - mariadb-server
   - redis-server
   - php-fpm
+  # icingaweb2 only *recommends* these and we install without recommends (to keep
+  # apache2 out): without php-mysql the login page fatals on PDO::MYSQL_ATTR_*.
+  - php-mysql
+  - php-mbstring
+  - php-gd
   - icingaweb2
   - icingadb
   - icingadb-web

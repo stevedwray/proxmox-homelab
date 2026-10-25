@@ -137,11 +137,23 @@
     state: started
   ignore_errors: "{{ ansible_check_mode }}"
 
+- name: Point icinga2's icingadb feature at the local Redis (6379, not the stock 6380)
+  ansible.builtin.template:
+    src: icingadb-feature.conf.j2
+    dest: /etc/icinga2/features-available/icingadb.conf
+    owner: root
+    group: nagios
+    mode: "0640"
+  notify: reload icinga2
+
 - name: Enable the icinga2 icingadb feature (writes state into Redis)
   ansible.builtin.command: icinga2 feature enable icingadb
   register: icinga_observer_icingadb_feature
   changed_when: "'already enabled' not in icinga_observer_icingadb_feature.stdout"
   notify: reload icinga2
+
+- name: Restart icinga2 now so the icingadb feature is loaded before anything depends on it
+  ansible.builtin.meta: flush_handlers
 
 # --- Icinga Web 2 -----------------------------------------------------------------
 - name: Let the web server user read Icinga Web's configuration
@@ -184,10 +196,22 @@
   no_log: true
   ignore_errors: "{{ ansible_check_mode }}"
 
+# Debian ships no `icingacli` binary on PATH; enabling a module is just this
+# symlink (what `icingacli module enable` creates).
+- name: Create the enabledModules directory
+  ansible.builtin.file:
+    path: /etc/icingaweb2/enabledModules
+    state: directory
+    owner: root
+    group: icingaweb2
+    mode: "2770"
+  ignore_errors: "{{ ansible_check_mode }}"
+
 - name: Enable the Icinga DB web module
-  ansible.builtin.command: icingacli module enable icingadb
-  args:
-    creates: /etc/icingaweb2/enabledModules/icingadb
+  ansible.builtin.file:
+    src: /usr/share/icingaweb2/modules/icingadb
+    dest: /etc/icingaweb2/enabledModules/icingadb
+    state: link
   ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Set PHP's timezone for Icinga Web
@@ -323,7 +347,7 @@
 
 - name: Check Icinga Web answers over HTTPS with a publicly trusted certificate
   ansible.builtin.command: >-
-    curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15
+    curl --silent --location --cookie '' --output /dev/null --write-out '%{http_code}' --max-time 15
     --resolve {{ icinga_observer_web_fqdn }}:443:{{ icinga_observer_self_address }}
     https://{{ icinga_observer_web_fqdn }}/icingaweb2/authentication/login
   register: icinga_observer_web_probe

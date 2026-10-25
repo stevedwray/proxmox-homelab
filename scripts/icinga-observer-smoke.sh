@@ -89,7 +89,7 @@ group_web() {
   if echo "$issuer" | grep -qi "Let's Encrypt"; then pass "certificate issuer is Let's Encrypt (${issuer#issuer=})"; else fail "certificate issuer is not Let's Encrypt: ${issuer:-none}"; fi
   if echo "$issuer" | grep -qi "homelab"; then fail "certificate chains to the homelab/step-ca CA (browser-facing certs must be Let's Encrypt)"; else pass "no step-ca certificate on the browser-facing endpoint"; fi
   check "certificate verifies with the system trust store for ${ICINGA_FQDN}" bash -c "curl -s -o /dev/null --max-time 10 --resolve ${ICINGA_FQDN}:443:${A1_IP} https://${ICINGA_FQDN}/"
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ICINGA_FQDN}:443:${A1_IP}" "https://${ICINGA_FQDN}/icingaweb2/authentication/login")
+  code=$(curl -sL --cookie '' -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ICINGA_FQDN}:443:${A1_IP}" "https://${ICINGA_FQDN}/icingaweb2/authentication/login")
   [[ "$code" == "200" ]] && pass "login page returns 200" || fail "login page returned ${code}"
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ICINGA_FQDN}:80:${A1_IP}" "http://${ICINGA_FQDN}/")
   [[ "$code" == "301" ]] && pass "http redirects to https (301)" || fail "http returned ${code}, expected 301"
