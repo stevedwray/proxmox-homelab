@@ -193,11 +193,13 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 7. **Deploy the Phase 5 vulnerability rules** (next monitoring-stack deploy), then **Phase 6** digest and native integrations. Phase 2, the Graylog log alerts, is applied and drilled.
 8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
 9. **Phase 7: align monitoring with the post-migration lab** (plan.md). The honeypot sync cadence is fixed (W1, drill outstanding); the `pve-tiny` silence needed before it is powered off (W3); 15 running guests, including `opensearch-stack`, have no metrics (W2); nothing alerts on a failed backup (W5).
-10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
-    The independent Icinga pair on the Argon Pis ([docs/icinga-pi-observability](../icinga-pi-observability/README.md))
-    is the planned answer: Stage 1 (the HA pair) is live, the checks of Grafana/VictoriaMetrics/Graylog are Stage 2 and the
-    direct Discord/Telegram notifications are Stage 3, neither enabled yet. It supersedes Phase 4b's blackbox_exporter probes 3-7
-    (decided 2026-10-25, plan.md Phase 4b): they are not built; Icinga owns them.
+10. **Independent checks are live; direct Icinga alert delivery is pending.**
+    The Argon Pi Icinga HA pair ([observability state](../icinga-pi-observability/README.md))
+    now checks Grafana, VictoriaMetrics and Graylog from outside the monitoring stack;
+    all Stage 2 core checks are OK. Its Stage 3 Discord/Telegram routes remain disabled
+    until dedicated destinations are written to OpenBao and delivery is proved. The
+    parked OCI dead man's switch is separate. Icinga supersedes Phase 4b's
+    blackbox_exporter probes 3-7; those probes are not built.
 
 ## Future-state design notes (parked)
 

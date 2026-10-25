@@ -1709,9 +1709,10 @@ Telegram and Discord both being unreachable.
 > **Decision 2026-10-25 (operator: "best practice under the circumstances"): probes 3 to 7 are NOT built
 > here; the independent Icinga pair on the Argon Pis owns them.** A probe running inside monitoring-stack
 > shares the failure domain of the Grafana it is meant to back up, and its alerts route through the very
-> contact points being tested. Icinga's Stage 2 and 3 cover the same targets from outside (Discord and
-> Telegram reachability, DNS via both Technitium nodes, Graylog TCP 514 and `lbstatus`) and notify directly
-> ([docs/icinga-pi-observability](../icinga-pi-observability/README.md)). Probes 1 and 2 only matter if the
+> contact points being tested. Icinga Stage 2 is live outside that failure domain: both Technitium nodes,
+> Graylog TCP 514 and `lbstatus`, Grafana, VictoriaMetrics and the other core targets are checked.
+> Stage 3 direct Discord/Telegram notifications remain disabled pending dedicated OpenBao values and
+> delivery proof ([observability state](../icinga-pi-observability/README.md)). Probes 1 and 2 only matter if the
 > parked OCI relay is ever deployed; build them then, not before.
 
 > **FUTURE STATE.** Probes 1 and 2 (the relay's health and certificate) wait for the relay; probes
@@ -1723,8 +1724,8 @@ routing, Ack and Snooze as everything else.
 **Scope rule, set by the operator: this monitors only the services the alert
 and notification path depends on. It is not a general service monitor. Do not
 add probes for other services unless the operator asks.** Icinga is the
-planned upgrade if richer Nagios semantics (dependencies, escalations) turn
-out to be needed.
+deployed independent observer for the approved core targets; the following
+blackbox_exporter outline remains parked.
 
 Runs as a small sidecar in monitoring-stack (about 20 MB, like the Omada
 exporter), scraped by VictoriaMetrics, with its rules in a new

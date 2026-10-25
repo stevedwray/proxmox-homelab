@@ -552,11 +552,9 @@ confirmed when `icinga2 pki new-ca` wrote `/var/lib/icinga2/ca/ca.{crt,key}` as
   connection-level evidence above substitutes for it at this stage; real
   notification delivery remains a Stage 3 deliverable.
 
-Not yet done: Stage 1's reboot drills, and Stage 2 (core checks against
-MikroTik/Technitium/pve/VictoriaMetrics/Grafana/Graylog/OpenBao/step-ca/
-Traefik/Portainer/OCI), Stage 3 (notifications), and Stage 4 (SmokePing)
-all remain at their Stage 0 planning state -- `icinga_observer_enable_*`
-are still `false` and nothing beyond the HA pair and self-checks is live.
+At the end of this Stage 1 deployment, the reboot drills and Stages 2–4
+were still pending. The current state is in the table at the top of this
+runbook: Stage 2 and SmokePing have since been deployed; Stage 3 remains off.
 
 ### 1.5 Pattern-alignment review and corrections (2026-10-25)
 
@@ -620,9 +618,9 @@ rollout on 2026-10-25. Continue to require a manual protocol check, scoped
 4. VictoriaMetrics `/health`, Grafana `/api/health`, and Graylog TCP 514 plus
    `/api/system/lbstatus`.
 5. OpenBao `/v1/sys/health` (expected unsealed response), step-ca ACME
-   directory, Traefik health and Portainer `/api/system/status`.
-6. OCI/Pangolin public HTTPS, certificate expiry, public DNS and the existing
-   home-source SSH path.
+   directory, Traefik TCP 443 and Portainer `/api/system/status`.
+6. OCI/Pangolin public HTTPS, certificate expiry and public DNS. The
+   home-source SSH path remains separately gated (§2.1).
 
 Use service dependencies rather than alert suppression scripts:
 
@@ -649,14 +647,15 @@ source-restricted identity and a harmless fixed probe (for example
 `ssh -o BatchMode=yes -o ConnectTimeout=5 <oci-host> true`). Do not make the
 Pi a general SSH automation client and do not add an OCI ingress rule.
 
-**Stage 2 gate:** a router fault is one root-cause notification rather than an
-alert storm; one known failure in each target group creates one problem and one
-recovery; Grafana/VictoriaMetrics can be unavailable while Icinga still pages.
+**Stage 2 verification:** each enabled host and service returned OK in Icinga's
+own results (§§2.2–2.5). The original root-cause notification and controlled
+failure/recovery gates were waived for this rollout. Notification delivery and
+the Grafana/VictoriaMetrics outage proof remain Stage 3 work.
 
 ### 2.1 Pre-enable findings (2026-10-25, recorded before router rollout)
 
-Read before adding another group. Router and DNS are loaded; the later Stage 2
-groups have not yet been loaded by icinga2.
+Historical findings recorded before the remaining Stage 2 groups were loaded.
+All six core groups are now live; consult §2.5 for their deployment results.
 
 - **Fixed in the templates now:** `http_ssl_cacert` does not exist in Icinga's command
   definitions and `check_http` cannot take a CA or verify a chain (it only checks expiry
@@ -672,8 +671,8 @@ groups have not yet been loaded by icinga2.
   `/etc/icinga2/zones.d/master` first, enable one group, confirm
   `icinga2 daemon -C` and the UI, and revert the flag and re-run if it fails.
 - **One group at a time.** The role uses `icinga_observer_core_check_groups`,
-  currently `[router, dns]`. Its valid values are `router`, `dns`, `pve`, `metrics`,
-  `internal_services`, and `oci`. LAN groups require `router`; OCI's SSH
+  currently `[router, dns, pve, metrics, internal_services, oci]`. These are
+  its six valid values. LAN groups require `router`; OCI's SSH
   service additionally requires `icinga_observer_enable_oci_ssh_probe: true`
   and the separately approved OCI-side key and pinned host key. The router
   dependency is rendered only when at least one LAN child group is enabled.

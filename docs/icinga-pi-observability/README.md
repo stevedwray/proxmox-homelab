@@ -2,21 +2,22 @@
 
 ## Status
 
-**Revised 2026-10-25.** Deployed and verified: a native Icinga 2 HA pair on
-both Pis (argon-01 master) with mutual TLS, the peer-only TCP 5665 rule, and
-four peer/self checks per Pi that all report OK from Icinga's own results, plus
-SmokePing on argon-01 (currently LAN-direct, interim). A pattern review against
-the rest of the lab found and fixed real mistakes (stray apache2/exim4, a
-permanently-critical NTP check, a non-standard config layout, Icinga logs that
-never reached Graylog) -- [runbook.md](runbook.md) §1.5.
+**Updated 2026-10-25.** The native Icinga 2 HA pair is live on both Pis
+(argon-01 config master), with mutual TLS and peer-only TCP 5665. All six
+Stage 2 core-check groups are enabled: router, DNS, pve, metrics, internal
+services and OCI. Icinga DB reports **14/14 hosts and 31/31 services OK**.
+The OCI SSH probe remains off pending a separately authorised key and pinned
+host key; Discord/Telegram notifications remain off pending three dedicated
+OpenBao values. The operator waived Stage 2 fault drills for this rollout.
+See [runbook.md](runbook.md) §§2.4–2.5 for live evidence and rollback copies.
 
-Also applied 2026-10-25: forward and reverse DNS for the Pis (`argon-0N.gibbsgreatly.xyz`, one
-PTR each); SmokePing at `https://smokeping.lab.gibbsgreatly.xyz` behind Traefik + Authentik; and
-**Icinga Web 2 at `https://icinga.lab.gibbsgreatly.xyz`**, served directly by argon-01 with its own
-Let's Encrypt certificate and native login (Stage 5, runbook §5.1). Core checks (Stage 2) and
-notifications (Stage 3) are still off by the role's own defaults, so the UI currently shows only the
-Pis' own checks. No router rule, OCI or notification-destination change has been made.
-`scripts/icinga-observer-smoke.sh` is the repeatable read-only verification.
+SmokePing is live at `https://smokeping.lab.gibbsgreatly.xyz` behind Traefik
+and Authentik. Icinga Web 2 is live at `https://icinga.lab.gibbsgreatly.xyz`,
+served directly by argon-01 with its own Let's Encrypt certificate and native
+login. The Pis have forward and reverse DNS (`argon-0N.gibbsgreatly.xyz`, one
+PTR each). `scripts/icinga-observer-smoke.sh base dns smokeping web` passes;
+the role's scoped default preview reports `changed=0`. The observer itself
+uses native packages and systemd, with no Docker or OCI mutation.
 
 ## Decision
 
@@ -24,7 +25,7 @@ Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plan
 
 Run native Icinga 2 under systemd, not Docker. This intentionally avoids depending on Docker, Portainer, image pulls, or writable container layers for the observer itself. The existing Portainer Agent remains for other Pi workloads.
 
-Checks and notifications must not depend on Icinga Web, Icinga DB, Redis, Director, or a database: they add stateful dependencies to the service whose purpose is to remain useful when the main monitoring stack is impaired. Stages 1-4 therefore ran with the Icinga API, CLI, Git-managed configuration, and notification commands only. **Revised 2026-10-25 (operator):** without a UI there is no way to see state, so Stage 5 adds Icinga Web 2 + Icinga DB on `argon-01` as a strictly non-critical consumer, served directly (not via Traefik, no Authentik) with its own Let's Encrypt certificate and native login. Director is still out.
+Checks and notifications must not depend on Icinga Web, Icinga DB, Redis, Director, or a database: they add stateful dependencies to the service whose purpose is to remain useful when the main monitoring stack is impaired. The core checker runs from Git-managed Icinga configuration without these services. **Revised 2026-10-25 (operator):** Stage 5 added Icinga Web 2 + Icinga DB on `argon-01` as a strictly non-critical consumer, served directly (not via Traefik, no Authentik) with its own Let's Encrypt certificate and native login. Director is still out.
 
 ## Failure-domain rationale
 
@@ -57,13 +58,13 @@ The Pi pair shares one Icinga master zone. TCP 5665 is allowed only between the 
 | Icinga peer | ICMP, TCP 5665, API/status, service, time, disk | observer failure and HA proof |
 | MikroTik | ICMP plus DNS recursion | LAN gateway/root cause |
 | Technitium `.15` + `.17` | UDP/TCP queries for internal and public names | local resolver availability |
-| `pve` | ICMP, TCP 8006, API health | production compute plane |
+| `pve` | ICMP and API response on TLS port 8006 (expected unauthenticated 401) | production compute plane |
 | VictoriaMetrics | `/health` | metrics store |
 | Grafana | `/api/health` | dashboard and alert evaluator |
 | Graylog | TCP 514 plus `/api/system/lbstatus` | log ingress and log platform |
 | OpenBao | TLS `/v1/sys/health`, unsealed | secrets control plane |
 | step-ca | ACME directory | certificate issuance |
-| Traefik | documented health endpoint | internal ingress |
+| Traefik | TCP 443 (no unauthenticated health endpoint configured) | internal ingress reachability |
 | Portainer | `/api/system/status` | container management |
 
 Harbor, Authentik, NetBox, Nextcloud, and application stacks are deliberately out of phase 1 unless they directly support the alert path. Grafana remains the broad application and hardware monitor.
@@ -72,14 +73,14 @@ Harbor, Authentik, NetBox, Nextcloud, and application stacks are deliberately ou
 
 - Model MikroTik as a parent dependency, avoiding a downstream alert storm when it fails.
 - Require two failed results for ordinary APIs, with a separately chosen shorter rule for a missing Icinga peer. Always send recovery notifications.
-- Send critical Icinga notifications directly to existing Discord and Telegram destinations with narrowly scoped OpenBao credentials. Grafana, Graylog, and VictoriaMetrics are evidence sources, never notification prerequisites.
-- Schedule controlled drills. A notification route that has never delivered a real test is not accepted.
+- Stage 3 will send Icinga notifications to a dedicated Discord webhook and a second Telegram bot using three operator-written OpenBao values. Grafana, Graylog, and VictoriaMetrics are evidence sources, never notification prerequisites.
+- Prove problem and recovery delivery when Stage 3 is enabled. Stage 2 fault drills were waived for this rollout, so notification suppression and failover are not yet demonstrated.
 
 ## OCI and Internet references
 
 OCI is an external target, not a third Icinga master. A stretched Icinga zone would make a WAN partition a cluster incident and unnecessarily extend home monitoring trust into OCI.
 
-The Pis actively check OCI's public Pangolin endpoint, certificate, public DNS, and SSH from the already-permitted home source. This tests the path that actually exists, including the OCI firewall policy.
+The Pis actively check OCI's public Pangolin endpoint, certificate and public DNS. The SSH check is defined but disabled until a Pi-local key is authorised on OCI and its host key is pinned; no OCI-side change was made for Stage 2.
 
 Do not deploy the custom OCI alert relay, a heartbeat receiver, an OCI Icinga cluster member, or a SmokePing service on OCI in this scope. Do not expose the Icinga API through Pangolin, and do not reuse the Newt tunnel for monitoring. There is no new OCI-to-home firewall rule, home port forward, or OCI reachability to a home VLAN.
 
@@ -112,15 +113,24 @@ Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium 
 
 ### Stage 2 — core checks
 
-- Add router/DNS, then `pve`, then VictoriaMetrics/Grafana/Graylog, then OpenBao/step-ca/Traefik/Portainer.
-- Add dependencies and thresholds before enabling notifications.
-- Test one controlled fault at a time and prove suppression plus recovery.
+- **Deployed:** router/DNS, `pve`, VictoriaMetrics/Grafana/Graylog,
+  OpenBao/step-ca/Traefik/Portainer, and OCI public HTTPS/certificate/DNS.
+- **Deployed:** MikroTik parent dependencies and ordinary-check retry rules.
+- **Deferred:** OCI SSH until its separate identity and pinned host key exist.
+- **Waived for this rollout:** controlled fault and recovery drills. Suppression
+  and notification delivery remain unproven until Stage 3.
 
-**Gate:** an Icinga alert describes a root cause rather than every symptom.
+**Verification:** all 14 hosts and 31 services OK in Icinga DB; the scoped
+default preview has no changes and the full smoke suite passes. See
+[runbook.md](runbook.md) §2.5.
 
 ### Stage 3 — notification proof
 
-- Configure direct Discord/Telegram notifications and destination-health checks.
+- **Pending operator input:** write a dedicated Discord webhook, Telegram bot
+  token and chat ID to `services/icinga-observer` in OpenBao. The notification
+  source exists but is disabled by default.
+- Configure direct Discord/Telegram notifications and verify destination
+  reachability and delivery.
 - Forward Icinga logs to Graylog as evidence only, never as a prerequisite.
 - Prove that a Grafana or VictoriaMetrics outage is notified by Icinga even though Grafana cannot alert itself.
 
@@ -137,9 +147,13 @@ Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium 
 
 ## Acceptance and residual risk
 
-- Either Pi can fail without losing core checks or producing duplicate pages.
-- A `pve` or monitoring-stack outage is detected by the surviving Pi while Grafana/VictoriaMetrics are unavailable.
-- OCI/Pangolin and its home-source SSH policy are detected locally while direct notifications remain possible.
-- SmokePing stores home-to-OCI latency/loss history without exposing a home service to the Internet.
+- Both Pis run checks and the cluster reconnects after a peer service restart;
+  full reboot/failover and duplicate-notification drills remain open.
+- `pve`, Grafana and VictoriaMetrics are checked from outside the monitoring
+  stack; outage notification delivery remains a Stage 3 proof.
+- OCI/Pangolin HTTPS, certificate and public DNS are checked; SSH policy
+  detection remains deferred.
+- SmokePing stores home-to-OCI latency/loss history without exposing a home
+  service to the Internet.
 - This does not replace Grafana alerting, hardware metrics, Graylog, Wazuh, or backup monitoring.
 - Technitium already has a `pve-tiny` cluster secondary; this plan does not move DNS to a Pi or revive Pi-hole.
