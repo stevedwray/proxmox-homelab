@@ -2,9 +2,9 @@
 
 Status as of **2026-10-25**: the alerting is **live and proven end to end**, and has grown from the original plan
 to cover the NAS, the router, the workstation and Pis, vulnerabilities, and the honeypot's own data. 45 Grafana rules
-and four Graylog rules are deployed; Discord carries everything and Telegram carries the pages. **One fault is under
-investigation** (the router's API session to mktxp keeps dropping; see *Open items* item 1 and *Lessons learned*), and the
-alerts are built to survive it. This file is the current-state summary: what it does, what was decided, what was found,
+and four Graylog rules are deployed; Discord carries everything and Telegram carries the pages. **One fault is cleared but
+unexplained** (the router's API session to mktxp kept dropping until the exporter was restarted; see *Open items* item 1 and
+*Lessons learned*), and the alerts are built to survive it. This file is the current-state summary: what it does, what was decided, what was found,
 where things live, what went wrong on the way. The plan ([plan.md](plan.md)) holds the steps and its own status table.
 
 Supersedes `docs/catch-up/07-baseline-alerting.md` (Discord only).
