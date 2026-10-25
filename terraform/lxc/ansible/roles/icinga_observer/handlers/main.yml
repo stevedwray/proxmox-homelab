@@ -18,8 +18,25 @@
     state: restarted
     daemon_reload: true
 
+- name: Restart smokeping
+  # Same class of bug as icinga2 and nginx above: smokeping was started
+  # by the package postinst with its stock single-target config and a
+  # plain `state: started` never restarts an already-running service,
+  # so it kept probing only "localhost" after our real Targets file
+  # was rendered -- confirmed 2026-10-25.
+  ansible.builtin.systemd:
+    name: smokeping
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
 - name: Reload nginx
+  # A plain reload (SIGHUP) does not rebind listening sockets when a
+  # `listen` address changes -- confirmed 2026-10-25: nginx kept
+  # listening on 0.0.0.0:80 (the package's default site) for ~37
+  # minutes after our loopback-only vhost was rendered and the default
+  # site removed, until a full restart actually closed and re-opened
+  # the socket on 127.0.0.1:80 only.
   ansible.builtin.systemd:
     name: nginx
-    state: reloaded
+    state: restarted
   ignore_errors: "{{ ansible_check_mode }}"

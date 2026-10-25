@@ -2,14 +2,17 @@
 
 ## Status
 
-**Revised 2026-10-25. Stage 1 is deployed and verified on both Pis**: a
-native Icinga 2 HA pair (argon-01 master, argon-02 synced) with mutual
-TLS, the TCP 5665 peer-only firewall rule, and peer/self checks only --
-see [runbook.md](runbook.md) §1.4 for the verification evidence and the
-real deployment bugs found and fixed along the way. Core checks (Stage 2),
-notifications (Stage 3), and SmokePing (Stage 4) are still disabled by
-the role's own default and have not been enabled. No router, OCI, or
-notification-destination change has been made anywhere.
+**Revised 2026-10-25. Stages 1 and 4 are deployed and verified.** Stage 1:
+a native Icinga 2 HA pair (argon-01 master, argon-02 synced) with mutual
+TLS, the TCP 5665 peer-only firewall rule, and peer/self checks only.
+Stage 4: SmokePing on argon-01, loopback-only, probing all 6 configured
+targets -- see [runbook.md](runbook.md) §1.4 and §4.1 for the
+verification evidence and the real deployment bugs found and fixed along
+the way (including an unintended ~37-minute `0.0.0.0:80` nginx exposure
+from the package default, now closed). Core checks (Stage 2) and
+notifications (Stage 3) are still disabled by the role's own default and
+have not been enabled. No router, OCI, or notification-destination
+change has been made anywhere.
 
 This plan adds an independent observer for the current monitoring and notification path. It does not replace VictoriaMetrics, Grafana, Graylog, Wazuh, or their alert rules.
 

@@ -481,11 +481,13 @@
     dest: /etc/smokeping/config.d/Targets
     owner: root
     group: root
-    mode: "0640"
+    mode: "0644"  # nosonar: ansible:S2612 — non-secret target list (hostnames/IPs); smokeping's CGI runs as www-data and must read it, matching the package's own config.d/* files (all 0644)
   when:
     - icinga_observer_is_master | bool
     - icinga_observer_enable_smokeping | bool
-  notify: Reload nginx
+  notify:
+    - Restart smokeping
+    - Reload nginx
 
 - name: Render the loopback-only nginx vhost for SmokePing (argon-01 only)
   ansible.builtin.template:

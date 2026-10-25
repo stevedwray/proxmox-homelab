@@ -546,6 +546,60 @@ role-owned nginx site and optional RRD data, and no network-policy change.
 SmokePing listener is unreachable from another LAN client and no OCI change
 was required.
 
+### 4.1 Stage 4 execution record (2026-10-25)
+
+Deployed on argon-01 only (`icinga_observer_enable_smokeping: true`), with
+operator approval. Packages (`smokeping`, `nginx-light`, `fcgiwrap`) were
+already installed from Stage 1; this stage only rendered config and started
+services.
+
+Two more real bugs, same root cause as Stage 1's handler bug (a service
+already running from package postinst time looks "already started" to
+Ansible, so a config-only change silently never reaches it without an
+explicit restart):
+
+1. **`nginx-light`'s default site had been listening on `0.0.0.0:80` (both
+   IPv4 and IPv6) with the stock welcome page since Stage 1 package
+   install** -- a real, unintended LAN exposure that existed for about 40
+   minutes before being noticed and fixed here. Our loopback-only vhost and
+   the removal of the default site were both correctly written to disk, but
+   a plain `reload` (SIGHUP) does not rebind nginx's listening sockets when
+   a `listen` address changes; the live process kept its original
+   `0.0.0.0:80` bind for ~37 minutes until a full restart. The role's
+   "Reload nginx" handler now uses `state: restarted`, not `reloaded`.
+2. **`smokeping` kept probing only its stock single target ("localhost")**
+   after our real `Targets` file was rendered, because it was already
+   "started" from package-install time and a bare `state: started` never
+   restarts a running service. Added a dedicated `Restart smokeping`
+   handler, notified from the Targets-render task.
+
+A third bug (not a restart issue): the rendered `Targets` file was
+`root:root 0640`; `smokeping.cgi` runs as `www-data` under `fcgiwrap` and
+got `Permission denied` reading it (`500` from the CGI). Every other file
+the package ships under `/etc/smokeping/config.d/` is `root:root 0644`;
+ours is now the same.
+
+**Verified:**
+
+- `ss -ltnp`: nginx listens on `127.0.0.1:80` only (confirmed no `0.0.0.0`
+  or `::` entry); a `/dev/tcp` connect attempt to `192.168.1.22:80` from
+  the operator workstation (a third LAN host) gets `Connection refused`.
+- `smokeping` is probing all 6 configured targets (RRDs exist under
+  `/var/lib/smokeping/{Home,Internet}/`: MikroTik, TechnitiumPrimary,
+  TechnitiumSecondary, OciPangolin, ResolverCloudflare, ResolverQuad9).
+- `curl http://127.0.0.1/smokeping/smokeping.cgi` returns `200` on argon-01
+  itself.
+- The documented operator access path works end to end: from the
+  workstation, `ssh -L 18080:127.0.0.1:80 ansible@192.168.1.22` then
+  `curl http://127.0.0.1:18080/smokeping/smokeping.cgi` also returns `200`.
+- `icinga2`, `nginx`, `fcgiwrap`, `smokeping` all `active`; the role re-run
+  is now fully idempotent (`changed=0`) against this state.
+
+Latency/loss history accumulation (RRDs exist and are being written, step
+300s) satisfies the gate; distinguishing a local-gateway fault from an
+OCI-edge fault in the graphs themselves was not separately drilled this
+session.
+
 ## Validation, commit, and execution state
 
 For every Ansible change, run:
@@ -579,7 +633,7 @@ terminal transcript.
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4). Core checks, notifications, SmokePing all still disabled by role default. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
-| 4 — SmokePing | Planned | — | — |
+| 4 — SmokePing | **Deployed and verified, argon-01** | 2026-10-25, this branch | SmokePing probing all 6 configured targets; nginx loopback-only (confirmed refused from a third LAN host) with fresh RRDs; CGI returns 200 both locally and via the documented SSH-forward path. 3 bugs found and fixed (§4.1), including a ~37-minute unintended `0.0.0.0:80` exposure from the nginx-light package default that this stage's own fix closed. Rollback: `systemctl disable --now smokeping nginx`, remove the role-owned nginx site |
 
 ## References
 
