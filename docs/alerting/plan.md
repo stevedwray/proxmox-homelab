@@ -14,7 +14,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
 | 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
-| 0.6 | MikroTik metrics (mktxp) | **Live and verified**; one open fault (API session drops, Phase 0b) |
+| 0.6 | MikroTik metrics (mktxp) | **Live and verified**; API-session drop cleared by restart, cause unknown (Phase 0b) |
 | 0.8 | NAS (SNMPv3) | **Live and verified** |
 | 1 | Discord channels, 9 baseline + 18 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
@@ -62,7 +62,7 @@ the 2026-10-24 sweep.
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
 | 0.4 Workstation `garuda` into Graylog, warning and above | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
 | 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
-| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Live and verified 2026-10-25**; one open fault (Phase 0b below) |
+| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Live and verified 2026-10-25**; session-drop fault cleared by an exporter restart (cause unknown) (Phase 0b below) |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
 | 0.8 NAS (Asustor Drivestor) | **Live and verified**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
@@ -493,7 +493,7 @@ user, trap level warning (no trap receiver exists; polling is what is used).
 An unreachable NAS is caught by the generic "Scrape target down" rule. The monitoring host was confirmed to reach the NAS on UDP 161
 (no firewall change). The `NAS above 90%` rule is separate: it reads the NFS mounts from the clients' side.
 
-**Open fault: the API session to the router keeps dying (investigation log, 2026-10-25).** mktxp holds one API-SSL session and
+**Fault, cleared by restart 2026-10-25 but not explained: the API session to the router kept dying (investigation log).** mktxp holds one API-SSL session and
 it ends every few minutes, which causes a scrape error and a reconnect. Established, and what is not:
 
 | Observation | Meaning |
@@ -503,6 +503,10 @@ it ends every few minutes, which causes a scrape error and a reconnect. Establis
 | Capture on the monitoring host at 08:07:34: the router acked everything and sent a 67-byte reply; the host side sent the RST 1.7 ms later | the close was initiated on the monitoring-host side (mktxp container), not by the router or the path |
 | No ping gaps to the router during the capture | not a network outage |
 | mktxp logs `[Errno 110] Operation timed out` at the same instant | does not match the wire; suspect mktxp or librouteros read handling, not yet proven |
+
+**Result (2026-10-26):** the exporter itself closes the socket (client FIN/RST within a millisecond of its first request in all three
+captured deaths). After `docker restart mktxp` the session has lasted 21+ hours with no gaps. See
+[router-api-session-drops.md](router-api-session-drops.md), section 4.6. Remaining question: why the old process failed.
 
 **Retracted:** an earlier note said the router sends the FIN after exactly 15 minutes. That rested on a one-directional capture,
 which cannot show who closed. Next step: read mktxp's code path around that error, or run it with debug logging, before changing
@@ -514,7 +518,7 @@ anything. The rules already tolerate the resulting gaps (#537).
 
 ### Phase 0b: MikroTik hardware and firmware metrics
 
-**Status 2026-10-24: live and verified, with one open fault (below).**
+**Status 2026-10-24: live and verified; the session-drop fault is cleared by an exporter restart, cause unknown (below).**
 
 **Router side (applied by the operator, `ansible/00-initial-setup/mikrotik-monitoring-access.yml`):**
 

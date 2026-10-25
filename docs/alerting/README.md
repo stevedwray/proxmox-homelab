@@ -200,20 +200,14 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 
 In order of urgency. Phase 7 (the plan, [plan.md](plan.md)) is the work list for most of these.
 
-1. **The router's API session to mktxp keeps dying (under investigation).** Since an accidental power cycle on 2026-10-24 18:40, every
-   mktxp session ends after 15 minutes (49 times in a row), and 8 minutes after a deliberate reboot on 2026-10-25. Each death leaves
-   about two minutes of missing router metrics. **What is established:** mktxp logs `[Errno 110] Operation timed out` within a
-   millisecond of the scrape starting, so the connection was already dead at the kernel level; its socket carries a TCP keep-alive
-   timer; the router logs `logged out` on the same second; the limit is not a fixed 15 minutes (the post-reboot session lasted 8);
-   there is no scheduler or script on the router; the router's change history (kept in Graylog across the reboot) shows no changes by
-   anyone between the monitoring access change (16:47) and the power cycle, and the one session before it lasted 1 h 44 min.
-   **First two-way capture (2026-10-25 08:07:34):** the router acked everything and sent a short 67-byte reply, then **the monitoring
-   host's side sent the RST** 1.7 ms later. There were no ping gaps. A session held open from the workstation as `api-user`
-   survived the full 18 minutes while mktxp's died four times; detail in [router-api-session-drops.md](router-api-session-drops.md). So the router and the path did not close it; the mktxp container did (in all three captured deaths the exporter closes its own socket within a millisecond of sending its first request of a scrape), and its
-   `Errno 110` message does not match what the wire shows. **Not established:** why mktxp resets (suspect mktxp or librouteros read
-   handling). An earlier note here said the router sends the FIN; that was an overreach from a one-direction capture (see
-   *Lessons learned*). Next: read mktxp's code path around that error, or run it with debug logging. The alerts no longer depend on
-   the answer.
+1. **mktxp's API session to the router kept dying: cleared by restarting the exporter, cause unknown.** After an accidental router power
+   cycle on 2026-10-24 18:40, sessions ended every 15 min (49 times), then every 6 to 8 min after a deliberate reboot. Two-way
+   captures show the **exporter** closing its own socket within a millisecond of its first request of a scrape; the router, the path
+   and the account were healthy, and a control session from the workstation lived 18 min. `docker restart mktxp` with extra logging
+   on 2026-10-25 08:57 produced **one session that has lasted 21+ hours** with 1260 gap-free samples and no error. Open: why the old
+   process failed (likely state built up after the router outage) and why it logged `Errno 110`. The extra logging is still in the
+   running container and will print the exception if it recurs. Full evidence and test plan:
+   [router-api-session-drops.md](router-api-session-drops.md). Alerts already tolerate the gaps (#537).
 2. **`pve-tiny` comes back with a new NVMe drive.** Create one Grafana silence for `stack = pve-tiny` **just before the power-off**
    (see plan W3). The existing NVMe-only silence **ends 2026-10-26 13:46 NZ**, and the page returns when it does.
 3. **Phase 7 workstreams still to do:** W2 (apply the `step-ca` firewall playbook, give the eight plain-HTTP exporters TLS, then scrape

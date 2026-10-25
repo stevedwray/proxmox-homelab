@@ -1,16 +1,18 @@
 # Research brief: mktxp's RouterOS API-SSL session keeps ending
 
-Status 2026-10-25: **open, root cause not found; the mechanism is narrowed to "the exporter closes its own socket" (section 4.5).** This brief is written so someone with no access to the lab can research it.
+Status 2026-10-26: **cleared by restarting the exporter; root cause still not found.** The mechanism is narrowed to "the exporter closes its own socket" (4.5), and a restarted exporter has run 21 hours with no session death (4.6). This brief is written so someone with no access to the lab can research it.
 It lists every symptom, every measurement, what was ruled out, what was wrongly claimed and retracted, and the questions worth
 answering. Parent docs: [README.md](README.md) (open item 1), [plan.md](plan.md) (Phase 0b).
 
 ## 1. One-paragraph summary
 
 A Prometheus exporter, **mktxp 2.1.0**, holds one persistent **API-SSL (tcp/8729)** session to a **MikroTik hAP ax3 on RouterOS
-7.25**. The session ends every 6 to 15 minutes. Each end makes one scrape fail, the exporter logs `[Errno 110] Operation timed out`,
-and it reconnects. A second API session from another machine, using the same router and a full-access account, is not dropped on
-the same schedule. A two-way packet capture of one death shows the router answering normally and **the exporter's host sending the
-TCP RST**. That contradicts the exporter's own error message, and nobody has yet explained it.
+7.25**. After an accidental router power cycle the session started ending every 6 to 15 minutes. Each end makes one scrape
+fail, the exporter logs `[Errno 110] Operation timed out`, and it reconnects. Packet captures show the **exporter** closing its
+own socket within a millisecond of sending the first request of a scrape (FIN or RST from the client side, router replying
+normally). A session held open from another machine on the same router was not affected. **Restarting the exporter container
+cleared the fault**: the new process has held one session for 21+ hours (and 1260 consecutive metric samples). Why the old
+process failed, and why Errno 110 appears on a socket that is working, is unexplained.
 
 ## 2. Environment
 
@@ -116,6 +118,30 @@ after the first write. The logged `[Errno 110]` would then be a real OSError(ETI
 remaining puzzle: a kernel ETIMEDOUT on a socket that has just carried a write successfully and has recent keep-alive replies is
 unexpected. mktxp's `identity_ds` prints only the message, not a traceback, and `verbose_mode` does not add one.
 
+### 4.6 Result of the instrumented restart (2026-10-25 08:57 to 2026-10-26 06:27)
+
+| Fact | Value |
+|---|---|
+| Change made | patched logging into the running container (backups `*.orig`): a diagnostic line on any socket send/recv error and a stack trace on every `close()`, plus a traceback in `identity_ds`; then `docker restart mktxp` |
+| Session since restart | **one session, logged in 08:57:41, no logout in 21.5 h** (router log), still up at 06:27 next day |
+| Diagnostic lines | **none**: no socket error, no `close()`, no identity error since the restart |
+| Metric continuity | 1260 samples of `mktxp_system_uptime` in 21 h (one per minute, no gaps) |
+| Router | uptime 22.6 h, no reboot; CPU 0 % |
+| Before the restart | the same process had run about 16 h and produced sessions of 15 min (x49), then 8/6 min |
+
+What this implies, and what it does not:
+
+- The fault was **not in the router, the network path or the account**: none of those changed, and the same router now keeps
+  the session. It lives in the old exporter process, or in the process's interaction with something that the restart reset.
+- That process lasted 1 h 44 min on its first session (before the power cycle), then failed repeatedly after the router went away
+  and came back. Candidate state: connection or TLS objects reused across reconnects, the failure-backoff counters, the update-check
+  cache. mktxp's backoff resets on every successful connect, so those counters alone do not explain it.
+- The 15.0-minute lifetimes equal mktxp's `max_delay_on_failure = 900` s. This may be a coincidence; it has not been explained.
+- It is **not proven** that the restart (and not the logging patch or chance) cured it. The long-lived process had the fault for
+  16 hours straight, so chance is unlikely, but a second occurrence is the real test.
+- Only the original capture survives of a failing death: with the patched logging in place nothing has failed yet, so the
+  exception chain was never captured.
+
 ## 5. What has been ruled out or weakened
 
 | Idea | Why it is weak or ruled out |
@@ -132,6 +158,9 @@ unexpected. mktxp's `identity_ds` prints only the message, not a traceback, and 
 ## 6. Open questions and hypotheses to research
 
 Ordered by how well they fit the evidence.
+
+0. **State that went bad inside the old exporter process after the router outage, cleared by a restart** (section 4.6). This is the
+   leading explanation. It does not name the mechanism; hypotheses 1 and 2 are candidate mechanisms.
 
 1. **A socket or TLS error is raised on the first read of a scrape and normal cleanup closes the socket.** Fits 4.5 and the
    code. The unknown is what raised it: the original exception chain is not logged. Needed: a traceback and a syscall trace.
@@ -169,6 +198,12 @@ Ordered by how well they fit the evidence.
 
 ## 8. Current mitigation
 
+**Restarting the exporter** (`docker restart mktxp`) cleared the fault on 2026-10-25 and it has not returned in 21 hours. If it
+returns, restart again and check whether the interval has changed; the instrumented build will then print the original exception.
+The diagnostic patch is still in the running container (not in the repo or compose file) and disappears when the container is
+recreated by a monitoring-stack deploy; that is acceptable.
+
+
 The alert rules tolerate the gaps: gauge queries use `last_over_time(...[5m])`, the restart rule uses
 `last_over_time(mktxp_system_uptime[30m]) < 900` with `for: 2m`, and the "router metrics missing" rule uses
 `absent_over_time(...[5m])`. Nothing pages because of this fault. The fault costs some metric resolution and about one error log
@@ -182,8 +217,9 @@ burst per death; it does not currently hide a router failure for longer than the
 - Configuration: `terraform/lxc/stacks/monitoring-stack/mktxp/{mktxp.conf,_mktxp.conf}`; router access change:
   `ansible/00-initial-setup/mikrotik-monitoring-access.yml`; compose service in
   `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`.
-- Capture files from 2026-10-25 08:03 to 08:25 were in `/tmp/obs/` on 192.168.20.12 (lost at reboot) and have been copied to the
-  session scratchpad; copy them somewhere durable if you need them.
+- Capture files: 2026-10-25 08:03 to 08:25 (`/tmp/obs/`, the failing process) and 08:57 to 13:20 (`/tmp/obs2/ring.pcap0`, the healthy
+  process, about 1.3 MB) on 192.168.20.12 (RAM-backed `/tmp`, lost at reboot). Both sets were copied to the session scratchpad;
+  copy them somewhere durable if you need them.
 - Independent source audit and test plan: `~/Downloads/mktxp-api-ssl-research-2026-10-25.md` (mktxp v2.1.0 and RouterOS-api
   0.21.0 at pinned commits). Its main points are folded into sections 4.2, 4.5, 6 and 7.
 
