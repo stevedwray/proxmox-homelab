@@ -20,6 +20,14 @@ icinga_observer_peer_inventory_name: "{{ icinga_observer_peer_name
 icinga_observer_is_master: "{{ inventory_hostname == icinga_observer_master_name }}"
 icinga_observer_api_port: 5665
 
+# Staged rollout switches (runbook.md Stages 1-4). All default off: a bare
+# run of this role only forms the HA pair and checks the two Pis
+# themselves. Each later stage is a deliberate, separately-approved
+# re-run with one more flag flipped, after that stage's own drill.
+icinga_observer_enable_core_checks: false   # Stage 2: MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI
+icinga_observer_enable_notifications: false # Stage 3: Discord/Telegram NotificationCommands, requires services/icinga-observer secrets
+icinga_observer_enable_smokeping: false     # Stage 4: SmokePing targets, nginx vhost, service start (argon-01 only)
+
 icinga_observer_packages_common:
   - icinga2
   - monitoring-plugins-basic

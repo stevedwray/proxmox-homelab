@@ -310,17 +310,28 @@
   when: icinga_observer_is_master | bool
   notify: reload icinga2
 
-- name: Render notification objects (configuration master only)
+- name: Render notification objects (configuration master only, Stage 3)
   ansible.builtin.template:
     src: notifications.conf.j2
     dest: "{{ icinga_observer_zones_d_dir }}/master/notifications.conf"
     owner: root
     group: root
     mode: "0640"
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
   notify: reload icinga2
 
-# --- Notification scripts and secrets ----------------------------------------
+- name: Remove notification objects when Stage 3 is not yet enabled
+  ansible.builtin.file:
+    path: "{{ icinga_observer_zones_d_dir }}/master/notifications.conf"
+    state: absent
+  when:
+    - icinga_observer_is_master | bool
+    - not icinga_observer_enable_notifications | bool
+  notify: reload icinga2
+
+# --- Notification scripts and secrets (Stage 3) -------------------------------
 - name: Assert notification secrets are present when rendering scripts
   ansible.builtin.assert:
     that:
@@ -334,6 +345,7 @@
     quiet: true
   when:
     - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
     - not ansible_check_mode
 
 - name: Write the notification EnvironmentFile (configuration master only)
@@ -349,6 +361,7 @@
   no_log: true
   when:
     - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
     - not ansible_check_mode
 
 - name: Render the Discord notification script (configuration master only)
@@ -358,7 +371,9 @@
     owner: root
     group: root
     mode: "0700"
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
 
 - name: Render the Telegram notification script (configuration master only)
   ansible.builtin.template:
@@ -367,7 +382,9 @@
     owner: root
     group: root
     mode: "0700"
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
 
 - name: Create the notification audit log
   ansible.builtin.file:
@@ -378,6 +395,9 @@
     mode: "0640"
     access_time: preserve
     modification_time: preserve
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_notifications | bool
 
 # --- Enable Icinga 2 ----------------------------------------------------------
 - name: Enable the Icinga 2 API feature
@@ -407,7 +427,9 @@
     owner: root
     group: root
     mode: "0640"
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
   notify: Reload nginx
 
 - name: Render the loopback-only nginx vhost for SmokePing (argon-01 only)
@@ -417,7 +439,9 @@
     owner: root
     group: root
     mode: "0640"
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
   notify: Reload nginx
 
 - name: Enable the SmokePing nginx site (argon-01 only)
@@ -425,7 +449,9 @@
     src: /etc/nginx/sites-available/smokeping.conf
     dest: /etc/nginx/sites-enabled/smokeping.conf
     state: link
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
   notify: Reload nginx
   ignore_errors: "{{ ansible_check_mode }}"
 
@@ -433,7 +459,9 @@
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
   notify: Reload nginx
 
 - name: Enable and start smokeping and nginx (argon-01 only)
@@ -445,5 +473,7 @@
     - smokeping
     - nginx
     - fcgiwrap
-  when: icinga_observer_is_master | bool
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
   ignore_errors: "{{ ansible_check_mode }}"

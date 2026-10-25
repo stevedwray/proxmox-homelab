@@ -66,6 +66,7 @@ apply Service "api-listener-tls" to Host {
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
+{% if icinga_observer_enable_core_checks %}
 /* --- MikroTik: ICMP plus DNS recursion -------------------------------------- */
 
 apply Service "icmp" to Host {
@@ -246,3 +247,11 @@ apply Service "ssh-probe" to Host {
   command_endpoint = "argon-01"
   assign where host.name == "oci-pangolin"
 }
+{% else %}
+/*
+ * Stage 2 core-check services (MikroTik, Technitium, pve, VictoriaMetrics,
+ * Grafana, Graylog, OpenBao, step-ca, Traefik, Portainer, OCI/Pangolin)
+ * are withheld until icinga_observer_enable_core_checks is set, per
+ * runbook.md Stage 2's one-target-group-at-a-time rollout.
+ */
+{% endif %}

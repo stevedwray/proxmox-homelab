@@ -26,6 +26,7 @@ object Host "argon-02" {
   vars.icinga_peer = (NodeName != "argon-02")
 }
 
+{% if icinga_observer_enable_core_checks %}
 object Host "mikrotik" {
   import "generic-host"
   address = "{{ icinga_observer_mikrotik_host }}"
@@ -105,3 +106,11 @@ apply Dependency "mikrotik-parent" to Host {
   states = [ Up ]
   assign where host.vars.parent == "mikrotik"
 }
+{% else %}
+/*
+ * Stage 2 core-check hosts (MikroTik, Technitium, pve, VictoriaMetrics,
+ * Grafana, Graylog, OpenBao, step-ca, Traefik, Portainer, OCI/Pangolin)
+ * are withheld until icinga_observer_enable_core_checks is set, per
+ * runbook.md Stage 2's one-target-group-at-a-time rollout.
+ */
+{% endif %}
