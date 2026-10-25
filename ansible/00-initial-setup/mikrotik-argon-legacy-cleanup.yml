@@ -1,0 +1,160 @@
+---
+# One-off: remove the Pi-hole-era router leftovers for argon-01/argon-02 so each
+# IP has a single PTR (argon-0N.gibbsgreatly.xyz, mikrotik-dns-argon.yml).
+# docs/lan-dns-technitium/plan.md Phase 5 already lists these as leftovers; the
+# static DHCP *leases* stay (they pin the Pis' addresses -- the Pis are being
+# repurposed, not retired), only their stale "pihole" comment is corrected.
+#
+# Deletes exactly these static DNS entries (all dynamic=false, ttl 1d, no
+# comment), refusing to touch anything else:
+#   A    argon-01.lan.local -> 192.168.1.22
+#   A    argon-02.lan.local -> 192.168.1.23
+#   AAAA argon-01.lan.local -> 2404:440c:1357:2a00:d059:eb02:52c7:eacc
+#   AAAA argon-02.lan.local -> 2404:440c:1357:2a00:610:32e8:19e9:7533
+# Rollback = re-add those four entries (router/config/current-config.json also
+# holds the 2026-09-28 export). Lease comments before: "argon-01 pihole" and
+# "argon-02 pihole".
+#
+# Run:
+#   TASK_APPROVAL=argon-router-cleanup ./with-secrets-prod ansible-playbook \
+#     ansible/00-initial-setup/mikrotik-argon-legacy-cleanup.yml
+
+- name: Remove Pi-hole-era router leftovers for the Argon Pis
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{ lookup('env', 'MIKROTIK_ADMIN') | default(lookup('env', 'MIKROTIK_USER'), true) | default('api-user', true) }}
+    mikrotik_password: >-
+      {{ lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD'), true) }}
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_nodes:
+      - "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+      - "{{ lookup('env', 'LAB_IP_TECHNITIUM_TINY') | mandatory('LAB_IP_TECHNITIUM_TINY env var is required') }}"
+    legacy_names: ["argon-01.lan.local", "argon-02.lan.local"]
+    legacy_a_addresses: ["192.168.1.22", "192.168.1.23"]
+    cache_domains:
+      - argon-01.lan.local
+      - argon-02.lan.local
+      - 22.1.168.192.in-addr.arpa
+      - 23.1.168.192.in-addr.arpa
+    lease_fixes:
+      - { address: "192.168.1.22", old: "argon-01 pihole", new: "argon-01 observer (Icinga, SmokePing)" }
+      - { address: "192.168.1.23", old: "argon-02 pihole", new: "argon-02 observer (Icinga)" }
+
+  tasks:
+    - name: Read static DNS entries and DHCP leases
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      loop: [ip/dns/static, ip/dhcp-server/lease]
+      register: argon_mt_read
+      no_log: true
+
+    - name: Select exactly the legacy entries
+      ansible.builtin.set_fact:
+        argon_legacy_entries: >-
+          {{ argon_mt_read.results[0].json
+             | selectattr('name', 'defined') | selectattr('name', 'in', legacy_names)
+             | selectattr('dynamic', 'equalto', 'false') | list }}
+        argon_leases: "{{ argon_mt_read.results[1].json }}"
+
+    - name: Refuse anything unexpected (only A with the Pi addresses, or AAAA, up to four entries)
+      ansible.builtin.assert:
+        that:
+          - argon_legacy_entries | length <= 4
+          - >-
+            argon_legacy_entries
+            | rejectattr('type', 'equalto', 'AAAA')
+            | rejectattr('address', 'in', legacy_a_addresses) | list | length == 0
+        fail_msg: "Unexpected legacy DNS entries: {{ argon_legacy_entries | map(attribute='name') | list }} -- inspect by hand."
+        quiet: true
+
+    - name: Delete the legacy static DNS entries
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ item['.id'] }}"
+        method: DELETE
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        status_code: [200, 204]
+      loop: "{{ argon_legacy_entries }}"
+      loop_control:
+        label: "{{ item.name }} {{ item.type | default('A') }} {{ item.address }}"
+      no_log: true
+
+    - name: Correct the stale "pihole" lease comments (leases themselves untouched)
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dhcp-server/lease/{{ (argon_leases | selectattr('address', 'equalto', item.address) | list)[0]['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          comment: "{{ item.new }}"
+        status_code: [200, 201]
+      loop: "{{ lease_fixes }}"
+      loop_control:
+        label: "{{ item.address }}"
+      when:
+        - (argon_leases | selectattr('address', 'equalto', item.address) | list | length) == 1
+        - (argon_leases | selectattr('address', 'equalto', item.address) | list)[0].comment | default('') == item.old
+      no_log: true
+
+    - name: Flush the router's DNS cache
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/cache/flush"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: {}
+        status_code: [200, 201]
+      no_log: true
+
+    - name: Log in to each Technitium node
+      ansible.builtin.uri:
+        url: "http://{{ item }}:5380/api/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+        method: GET
+        return_content: true
+      loop: "{{ technitium_nodes }}"
+      register: argon_cleanup_tech_login
+      no_log: true
+
+    - name: Drop cached answers for the removed names and the PTR owners on each node
+      ansible.builtin.uri:
+        url: "http://{{ item.0.item }}:5380/api/cache/delete?domain={{ item.1 }}&token={{ (item.0.content | from_json).token }}"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+        method: POST
+        status_code: [200]
+      loop: "{{ argon_cleanup_tech_login.results | product(cache_domains) | list }}"
+      loop_control:
+        label: "{{ item.0.item }} {{ item.1 }}"
+      changed_when: false
+      no_log: true
+
+    - name: Each Pi IP now has exactly one PTR, argon-0N.gibbsgreatly.xyz (router and both Technitium nodes)
+      ansible.builtin.command: dig +short +time=3 +tries=2 @{{ item.1 }} -x {{ item.0 }}
+      loop: "{{ ['192.168.1.22', '192.168.1.23'] | product([mikrotik_host] + technitium_nodes) | list }}"
+      loop_control:
+        label: "{{ item.0 }} @{{ item.1 }}"
+      register: argon_cleanup_ptr
+      changed_when: false
+      check_mode: false
+      retries: 5
+      delay: 2
+      until: argon_cleanup_ptr.stdout_lines | length == 1 and argon_cleanup_ptr.stdout_lines[0] is match('^argon-0[12][.]gibbsgreatly[.]xyz[.]$')
+      failed_when: argon_cleanup_ptr.stdout_lines | length != 1 or argon_cleanup_ptr.stdout_lines[0] is not match('^argon-0[12][.]gibbsgreatly[.]xyz[.]$')

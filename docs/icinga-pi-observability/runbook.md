@@ -738,11 +738,21 @@ the role switch `icinga_observer_smokeping_behind_traefik`, which moves nginx to
    built those PTR names with regex back-references that came out as literal
    `\4.\3...`, so the flush "succeeded" while deleting nothing -- caught only
    because the TTL kept counting down; the names are now built with
-   split/reverse/join; (c) **each IP keeps a second PTR**, the DHCP-lease name
-   `argon-0N.lan.local` (TTL 1 day), and the order differs by server (router:
-   gibbsgreatly.xyz first; Technitium: varies). Removing it means changing the
-   Pis' DHCP lease name on the MikroTik, which was not in scope -- decide whether
-   a single PTR matters (tpot has one).
+   split/reverse/join; (c) each IP kept a second PTR, `argon-0N.lan.local`, in varying order. A
+   read-only look at the router (approval `argon-lease-inspect`) showed it is
+   not a DHCP-lease name at all but four **static** DNS entries (A and AAAA, the
+   AAAA addresses stale) left from the Pi-hole days, which
+   `docs/lan-dns-technitium/plan.md` Phase 5 already lists for removal. The
+   static DHCP *leases* stay: they pin the Pis' addresses and the Pis are being
+   repurposed, not retired. **Cleaned up 2026-10-25** (approval
+   `argon-router-cleanup`, `ansible/00-initial-setup/mikrotik-argon-legacy-cleanup.yml`:
+   exact-match guards, four entries deleted, two stale "pihole" lease comments
+   corrected, caches flushed). Every Pi IP now returns exactly one PTR,
+   `argon-0N.gibbsgreatly.xyz`, from the router and both Technitium nodes.
+   Rollback values are in the playbook header. Left alone: the inert
+   `fd00::22/fd00::23` DNS list on the router's `bridgeLocal` IPv6 ND entry
+   (`advertise-dns: no`), which points at the Pis' old Pi-hole addresses and
+   should go when the operator next touches RA settings.
 2. **Pi: move the backend** (`argon-01` only; SmokePing is briefly unreachable by
    IP until step 3): `icinga_observer_smokeping_behind_traefik` is now `true` by
    default, then

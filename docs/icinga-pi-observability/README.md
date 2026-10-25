@@ -10,8 +10,8 @@ the rest of the lab found and fixed real mistakes (stray apache2/exim4, a
 permanently-critical NTP check, a non-standard config layout, Icinga logs that
 never reached Graylog) -- [runbook.md](runbook.md) §1.5.
 
-Applied 2026-10-25: forward and reverse DNS for the Pis (`argon-0N.gibbsgreatly.xyz`;
-each IP also keeps a stale router PTR, runbook §4.3), and SmokePing published at
+Applied 2026-10-25: forward and reverse DNS for the Pis (`argon-0N.gibbsgreatly.xyz`, one
+PTR per IP after the stale Pi-hole-era router entries were removed, runbook §4.3), and SmokePing published at
 `https://smokeping.lab.gibbsgreatly.xyz` behind Traefik + Authentik with a Let's Encrypt
 certificate. Prepared in the repo but **not applied** (needs secrets only the operator
 can write): Icinga Web 2 served directly with its own Let's Encrypt certificate (Stage 5). Core checks (Stage 2) and

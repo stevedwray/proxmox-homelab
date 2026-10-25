@@ -65,7 +65,7 @@ group_dns() {
   for pair in "${A1_FQDN} ${A1_IP}" "${A2_FQDN} ${A2_IP}"; do
     set -- $pair; fqdn=$1; ip=$2
     check "forward ${fqdn} -> ${ip} via Technitium" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${fqdn} A)\" = '${ip}' ]"
-    check "reverse ${ip} includes ${fqdn}. via Technitium" bash -c "dig +short +time=3 +tries=2 @${DNS} -x ${ip} | grep -qx '${fqdn}.'"
+    check "reverse ${ip} is exactly ${fqdn}. (single PTR) via Technitium" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} -x ${ip})\" = '${fqdn}.' ]"
   done
   check "forward ${SMOKEPING_FQDN} -> Traefik ${TRAEFIK}" bash -c "[ \"\$(dig +short +time=3 +tries=2 @${DNS} ${SMOKEPING_FQDN} A)\" = '${TRAEFIK}' ]"
 }
