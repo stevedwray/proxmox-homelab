@@ -39,8 +39,8 @@ icinga_observer_enable_smokeping: true      # Stage 4: SmokePing targets, nginx 
 #        (terraform/lxc/stacks/smokeping/edge.yaml) -- the T-Pot pattern.
 icinga_observer_smokeping_behind_traefik: true
 # Stage 5: Icinga Web 2 + Icinga DB (MariaDB, Redis) on argon-01, served
-# directly with its own Let's Encrypt certificate and native login. Needs
-# ICINGA_CF_DNS_API_TOKEN and ICINGAWEB_ADMIN_PASSWORD, and requires
+# directly with its own Let's Encrypt certificate and native login. Uses the
+# existing CF_DNS_API_TOKEN (injected at deploy time) and requires
 # icinga_observer_smokeping_behind_traefik (it takes ports 80/443).
 icinga_observer_enable_web: false
 
@@ -128,7 +128,11 @@ icinga_observer_firewall_rules: >-
 # --- Icinga Web 2 / Icinga DB (Stage 5, argon-01 only) -----------------------
 icinga_observer_web_fqdn: "{{ lookup('env', 'LAB_FQDN_ICINGA') | default('icinga.' ~ icinga_observer_lab_domain, true) }}"
 icinga_observer_web_admin_user: admin
-icinga_observer_web_admin_password: "{{ lookup('env', 'ICINGAWEB_ADMIN_PASSWORD') }}"
+# Initial admin password: generated on argon-01 at first run (root-only file in the
+# state dir, read it with sudo) unless ICINGAWEB_ADMIN_PASSWORD is injected. Not an
+# OpenBao secret; change it in the UI if you like.
+icinga_observer_web_admin_password_env: "{{ lookup('env', 'ICINGAWEB_ADMIN_PASSWORD') }}"
+icinga_observer_web_admin_password: ""
 icinga_observer_php_version: "8.4"
 icinga_observer_php_timezone: Pacific/Auckland
 icinga_observer_state_dir: /var/lib/icinga-observer
@@ -143,13 +147,14 @@ icinga_observer_web_packages:
   - python3-certbot-dns-cloudflare
 # Let's Encrypt via Cloudflare DNS-01, exactly as Traefik's resolver does
 # (production endpoint for the real lab domain, staging otherwise). The
-# token lives on this Pi so renewal never depends on OpenBao/pve/Traefik.
+# token (the same CF_DNS_API_TOKEN Traefik uses, from shared/platform) lives root-only
+# on this Pi so renewal never depends on OpenBao/pve/Traefik.
 icinga_observer_acme_email: "admin@gibbsgreatly.xyz"
 icinga_observer_acme_server: >-
   {{ 'https://acme-v02.api.letsencrypt.org/directory'
      if icinga_observer_lab_domain == 'lab.gibbsgreatly.xyz'
      else 'https://acme-staging-v02.api.letsencrypt.org/directory' }}
-icinga_observer_cf_dns_api_token: "{{ lookup('env', 'ICINGA_CF_DNS_API_TOKEN') }}"
+icinga_observer_cf_dns_api_token: "{{ lookup('env', 'CF_DNS_API_TOKEN') }}"
 # Generated on argon-01 at first run (state dir, root-only) and loaded with
 # set_fact by web.yml; these empty defaults only let templates render in
 # --check mode.

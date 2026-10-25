@@ -10,13 +10,11 @@
   ansible.builtin.assert:
     that:
       - icinga_observer_smokeping_behind_traefik | bool
-      - icinga_observer_web_admin_password | length >= 12
       - icinga_observer_cf_dns_api_token | length > 0
     fail_msg: >-
       Icinga Web needs icinga_observer_smokeping_behind_traefik (it takes ports
-      80/443 on argon-01), ICINGAWEB_ADMIN_PASSWORD (12+ characters) and
-      ICINGA_CF_DNS_API_TOKEN, injected by ./with-secrets-prod once
-      services/icinga-observer holds them in OpenBao and the manifest.
+      80/443 on argon-01) and CF_DNS_API_TOKEN (Traefik's existing Cloudflare
+      token, injected by ./with-secrets-prod from shared/platform).
     quiet: true
   when: not ansible_check_mode
 
@@ -43,19 +41,26 @@
   loop: [icingadb, icingaweb2, icingadbweb]
   no_log: true
 
-- name: Read the database passwords
+- name: Generate the initial web admin password once (unless one is injected)
+  ansible.builtin.shell: umask 077 && openssl rand -base64 18 | tr -d '/+=' | cut -c1-20 > {{ icinga_observer_state_dir }}/web-admin.pass
+  args:
+    creates: "{{ icinga_observer_state_dir }}/web-admin.pass"
+  no_log: true
+
+- name: Read the database passwords and the web admin password file
   ansible.builtin.slurp:
-    src: "{{ icinga_observer_state_dir }}/{{ item }}.dbpass"
-  loop: [icingadb, icingaweb2, icingadbweb]
+    src: "{{ icinga_observer_state_dir }}/{{ item }}"
+  loop: [icingadb.dbpass, icingaweb2.dbpass, icingadbweb.dbpass, web-admin.pass]
   register: icinga_observer_db_pw_files
   no_log: true
   when: not ansible_check_mode
 
 - name: Expose the database passwords to templates
   ansible.builtin.set_fact:
-    icinga_observer_db_pw_icingadb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadb') | first).content | b64decode | trim }}"
-    icinga_observer_db_pw_icingaweb2: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingaweb2') | first).content | b64decode | trim }}"
-    icinga_observer_db_pw_icingadbweb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadbweb') | first).content | b64decode | trim }}"
+    icinga_observer_db_pw_icingadb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadb.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_db_pw_icingaweb2: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingaweb2.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_db_pw_icingadbweb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadbweb.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_web_admin_password: "{{ icinga_observer_web_admin_password_env if icinga_observer_web_admin_password_env | length >= 12 else ((icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'web-admin.pass') | first).content | b64decode | trim) }}"
   no_log: true
   when: not ansible_check_mode
 

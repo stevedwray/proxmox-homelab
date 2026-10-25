@@ -240,8 +240,10 @@ first, the manifest second -- the wrappers fail closed on a manifest field
 with no value"), nothing here is applied until the operator has written that
 entry's values to OpenBao with `scripts/openbao_write.py`, so
 `./with-secrets-prod` never fails closed on a value that doesn't exist yet.
-There are two entries so the stages can land independently; add each only
-when its own values exist:
+Only the Stage 3 notification secrets are new OpenBao entries. Stage 5 (Icinga
+Web) needs none: it reuses Traefik's existing `CF_DNS_API_TOKEN`
+(`shared/platform`, already in the `pve` profile) and generates its own
+passwords on the Pi. Add the entry only when its values exist:
 
 ```diff
    "entries": {
@@ -252,12 +254,6 @@ when its own values exist:
 +        "ICINGA_TELEGRAM_CHAT_ID"
 +      ]
 +    },
-+    "services/icinga-web": {
-+      "fields": [
-+        "ICINGA_CF_DNS_API_TOKEN",
-+        "ICINGAWEB_ADMIN_PASSWORD"
-+      ]
-+    },
      "services/tpot": {
 ```
 
@@ -266,19 +262,27 @@ and, in the `pve` profile's `entries` (alphabetical among the `services/*`):
 ```diff
          "services/authentik",
 +        "services/icinga-observer",
-+        "services/icinga-web",
 ```
 
 | Entry | Field | Used by | Notes |
 |---|---|---|---|
 | `services/icinga-observer` | `ICINGA_DISCORD_WEBHOOK_URL`, `ICINGA_TELEGRAM_BOT_TOKEN`, `ICINGA_TELEGRAM_CHAT_ID` | Stage 3 notification scripts | Dedicated to Icinga -- never the Grafana bot/webhooks (§Stage 3) |
-| `services/icinga-web` | `ICINGA_CF_DNS_API_TOKEN` | certbot on argon-01 (Let's Encrypt DNS-01) | Cloudflare token, `Zone:DNS:Edit` + `Zone:Zone:Read` on `gibbsgreatly.xyz` (Cloudflare cannot scope a token to one record). Create a **separate** token from Traefik's `CF_DNS_API_TOKEN` so it can be revoked independently. It lives root-only on the Pi so renewal never depends on OpenBao/pve |
-| `services/icinga-web` | `ICINGAWEB_ADMIN_PASSWORD` | Icinga Web native `admin` login | 12+ characters. Database passwords are generated on argon-01 and never leave it |
 
 Field names match the `lookup('env', ...)` calls in
 `terraform/lxc/ansible/roles/icinga_observer/defaults/main.yml` and follow the
 uppercase convention of every other `services/*` entry. These secrets are
 read at deploy time only; the running observer never reads OpenBao.
+
+**Cloudflare token (operator decision 2026-10-25):** the Let's Encrypt DNS-01 token
+is the existing `CF_DNS_API_TOKEN` that Traefik uses, rather than a new dedicated one.
+Trade-off, stated plainly: that zone-wide DNS-edit token now also lives root-only on
+argon-01 (`/etc/letsencrypt/cloudflare.ini`), and revoking or rotating it affects
+Traefik and the Pi together.
+
+**Web admin password:** generated on argon-01 at first run into
+`/var/lib/icinga-observer/web-admin.pass` (root-only); read it with
+`ssh ansible@192.168.1.22 sudo cat /var/lib/icinga-observer/web-admin.pass` and change
+it in the UI if you like. Not an OpenBao secret.
 
 **Stage 0 gate:** endpoint matrix complete (above); secret **names** defined
 with no value written anywhere; no new OCI or home-inbound rule is proposed
@@ -814,11 +818,11 @@ Design (implemented in `tasks/web.yml`, off by default via
 - **Let's Encrypt, never step-ca.** certbot with the Cloudflare DNS-01 plugin,
   production endpoint for the real lab domain (staging otherwise, exactly like
   Traefik's resolver), renewed by `certbot.timer` on the Pi with an nginx
-  reload hook. The Cloudflare token lives root-only on argon-01
-  (`/etc/letsencrypt/cloudflare.ini`), so renewal needs no OpenBao, pve or
-  Traefik. Trade-off, stated plainly: a zone-wide DNS-edit token on a Pi is a
-  larger blast radius than the Pi otherwise has; it is a dedicated token so it
-  can be revoked on its own.
+  reload hook. The token is Traefik's existing `CF_DNS_API_TOKEN` (operator
+  decision), kept root-only on argon-01 (`/etc/letsencrypt/cloudflare.ini`), so
+  renewal needs no OpenBao, pve or Traefik. Trade-off, stated plainly: a
+  zone-wide DNS-edit token now also lives on a Pi, and rotating it affects
+  Traefik and the Pi together.
 - **Icinga DB, one node.** MariaDB (unix socket) and Redis (loopback) and the
   `icingadb` daemon run on argon-01 only; the `icingadb` feature is enabled on
   argon-01's icinga2. The cluster replicates argon-02's check results to
@@ -827,9 +831,9 @@ Design (implemented in `tasks/web.yml`, off by default via
 - **Read-only for now.** No command transport (acknowledgements from the UI)
   yet: that needs an `ApiUser`, and the API port is firewalled to the peer.
   Adding it (with a self-allow rule) is a follow-up, not a Stage 5 gate.
-- Database passwords are generated on the Pi and kept in a root-only state
-  directory; the admin password and the Cloudflare token are the only secrets
-  that come from OpenBao, at deploy time (`services/icinga-web`, §0.3.1).
+- Database passwords and the initial web admin password are generated on the Pi
+  and kept in a root-only state directory. The only secret used is Traefik's
+  existing `CF_DNS_API_TOKEN`, injected at deploy time; no new OpenBao entry.
 - Packages come from Debian trixie (`icingaweb2` 2.12, `icingadb` 1.3,
   `icingadb-web`, `mariadb-server`, `redis-server`, `php-fpm`, `certbot`,
   `python3-certbot-dns-cloudflare`); no third-party repository. A simulated
@@ -838,13 +842,11 @@ Design (implemented in `tasks/web.yml`, off by default via
 
 Prerequisites and order (each distinct mutation is its own approval):
 
-1. **Operator, outside the agent:** create the Cloudflare token and the admin
-   password; write them with `scripts/openbao_write.py` after an OIDC login into
-   `services/icinga-web`; then add the `services/icinga-web` entry and profile
-   line to `secrets/manifest.json` (§0.3.1) and commit. (Agents never write
-   OpenBao.)
-2. `icinga_observer_smokeping_behind_traefik` must already be `true` (Stage 4.3
-   steps 1-3), because Icinga Web takes ports 80 and 443 on argon-01.
+1. **Nothing for the operator to write first.** The Cloudflare token already reaches
+   the playbook through `./with-secrets-prod` (`shared/platform`); passwords are
+   generated on the Pi.
+2. `icinga_observer_smokeping_behind_traefik` must already be `true` (done,
+   Stage 4.3), because Icinga Web takes ports 80 and 443 on argon-01.
 3. DNS: `TASK_APPROVAL=icinga-dns ./with-secrets-prod ansible-playbook terraform/lxc/ansible/playbooks/configure-icinga-dns-records.yml`
    (Technitium A `icinga.lab...` -> `192.168.1.22`, no PTR: the PTR for that IP is
    `argon-01.gibbsgreatly.xyz`).
@@ -898,7 +900,7 @@ terminal transcript.
 | 2 — core checks | Planned | — | — |
 | 3 — notifications | Planned | — | — |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
-| 5 — Icinga Web | **Prepared, not deployed** | 2026-10-25, this branch | `tasks/web.yml` (MariaDB, Redis, Icinga DB, Icinga Web, certbot + Cloudflare DNS-01, nginx :443) behind `icinga_observer_enable_web` (off); `configure-icinga-dns-records.yml`; secrets entry `services/icinga-web` defined, not written. Untested against real hosts -- needs the operator-written secrets and the approvals in Stage 5 |
+| 5 — Icinga Web | **Prepared, not deployed** | 2026-10-25, this branch | `tasks/web.yml` (MariaDB, Redis, Icinga DB, Icinga Web, certbot + Cloudflare DNS-01, nginx :443) behind `icinga_observer_enable_web` (off); `configure-icinga-dns-records.yml`; no new secrets (reuses Traefik's `CF_DNS_API_TOKEN`, generates its own passwords). Untested against real hosts -- needs the two approvals in Stage 5 |
 
 ## References
 
