@@ -23,7 +23,7 @@ this section first; the stage sections below are the detail and the history.
 |---|---|---|
 | 0 inventory, artifacts | done | §0.4 |
 | 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
-| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **router + DNS groups live** (`icinga_observer_core_check_groups: [router, dns]`); other groups off; operator waived fault drills for this rollout | Stage 2, "DNS rollout" |
+| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live and OK** on argon-01; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
 | 3 Discord/Telegram notifications | written, **off**; needs two operator-created destinations | Stage 3 |
 | 4 SmokePing | **live**, `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik) | §4.1-§4.3 |
 | 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
@@ -59,21 +59,17 @@ with `--check --diff` first, and **run `--check` through the wrapper or expect
 spurious "changed" on the web templates** (without `CF_DNS_API_TOKEN` and the
 generated passwords loaded they render empty).
 
-**Backlog, in order**
+**Completed and pending work**
 
-1. **Stage 2, one target group at a time.** The role's
-   `icinga_observer_core_check_groups` list has `router` and `dns` enabled.
-   Their hosts and services are OK in Icinga's state file. Add `pve`, then
-   `metrics`, `internal_services`, and `oci` in
-   order, checking actual Icinga results after each. On 2026-10-25 the operator
-   waived the planned controlled fault/recovery drills for this rollout.
-   Read "Pre-enable findings" and "Router rollout" below.
+1. **Stage 2 complete for the approved scope.** All six core groups are on and
+   their hosts and services are OK in Icinga DB (§2.5). The operator waived
+   the planned controlled fault/recovery drills. OCI SSH still needs a
+   separately authorised OCI-side key and pinned host key.
 2. **Stage 3 notifications.** The operator creates a dedicated Discord webhook and a
    second Telegram bot (Stage 3 has the steps) and writes the three values to
    `services/icinga-observer`; then add the manifest entry (§0.3.1), then enable. Prove
    problem and recovery on both channels, then the Grafana/VictoriaMetrics-outage case.
-3. **argon-02 firewall self-allow** (small, additive; argon-01 already has it): re-run
-   the role on argon-02.
+3. **argon-02 firewall self-allow:** applied and verified during Stage 2.
 4. **Stage 1 drills still owed:** reboot argon-02, reboot argon-01, and a temporary
    5665 block between the Pis. Also rehearse the certificate renewal (§1.5) well
    before **2027-11-26**, when the Icinga node certificates expire.
@@ -744,11 +740,11 @@ The first DNS-group state flush exposed two additional issues: both
 Technitium nodes drop ICMP, so their host checks now use TCP 53; and Icinga
 ordered the custom TCP-check arguments differently from the script's required
 order, so the CheckCommand now sets explicit argument order. The UDP A-record
-checks were already OK. These corrections still need live validation.
-The DNS group is deployed and verified from Icinga's state file; the later
-groups remain source-only until individually previewed and validated.
+checks were already OK. Both corrections were deployed and verified in Icinga's
+state file. The remaining groups were then individually previewed and validated
+as recorded in §2.5.
 
-### 2.4 DNS rollout in progress (2026-10-25)
+### 2.4 DNS rollout (2026-10-25)
 
 With `TASK_APPROVAL=argon-icinga-stage2-remaining`, the role first installed
 the `nagios`-executable DNS-over-TCP script on argon-01, then argon-02. The
@@ -773,6 +769,34 @@ TCP 53 and set explicit command argument order; `icinga2 daemon -C` passed
 and the full baseline smoke suite passed. The post-fix state flush showed
 both hosts and all eight UDP/TCP services OK with real output. The DNS group
 is now in the role default so subsequent runs preserve the live config.
+
+### 2.5 Remaining Stage 2 rollout (2026-10-25)
+
+With operator approval `TASK_APPROVAL=argon-icinga-stage2-remaining`, the
+`pve`, `metrics`, `internal_services`, and `oci` groups were added one at a
+time on argon-01. Each group had a scoped `--check --diff` preview changing
+only the expected `hosts.conf` and `services.conf` objects, a pre-change copy
+of `/etc/icinga2/zones.d/master` under `/var/backups/icinga-observer-master-before-<group>-1a68cc1b`,
+an Icinga syntax validation, and a successful role run. Icinga DB then showed
+the following actual checks OK:
+
+| Group | Verified host and service results |
+|---|---|
+| pve | Host ping, ICMP, API `:8006` expected HTTP 401 (checks executed on argon-02) |
+| metrics | VictoriaMetrics `/health`; Grafana `/api/health` with database OK; Graylog TCP 514 and `/api/system/lbstatus`; all three hosts ping |
+| internal services | OpenBao `/v1/sys/health` unsealed; step-ca ACME directory, both using `check_curl` with the homelab CA and peer verification; Traefik TCP 443; Portainer status API; all four hosts ping |
+| OCI | TCP 443 host, public HTTPS 200, certificate valid past 30 days, and public DNS via `1.1.1.1` |
+
+The first live OCI HTTPS and certificate results were CRITICAL: the `http`
+CheckCommand emitted `--sni` without `-H`. The exact plugin commands succeeded
+as `nagios` after adding `http_vhost`, and the scoped follow-up preview changed
+only those two arguments. After redeployment, both services returned OK in
+Icinga DB with `-H pangolin.gibbsgreatly.xyz` in the recorded command line.
+OCI SSH remains disabled because the separately authorised OCI-side key and
+pinned host key are absent. Notifications remain disabled for Stage 3.
+The final scoped preview using the role defaults reported `changed=0`;
+`scripts/icinga-observer-smoke.sh base dns smokeping web` passed; Icinga DB
+reported 14/14 hosts and 31/31 services OK with no pending or non-OK states.
 
 ## Stage 3 — direct notification proof and logs
 
@@ -1175,7 +1199,7 @@ terminal transcript.
 |---|---|---|---|
 | 0 — inventory and secrets | **Artifacts created; endpoints confirmed; secrets not yet written** | 2026-10-25, this branch | Playbook + `icinga_observer` role created; `--syntax-check` and `--check --diff` pass on both Pis (`failed=0`); 10/10 Tier-1 endpoints plus both Technitium nodes confirmed read-only (§0.4); manifest diff defined, not applied (§0.3.1); no package, config, cert, firewall rule, or secret written to either Pi. Open items: Traefik has no health endpoint, OCI SSH probe identity not provisioned (§0.4) |
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Reboot drills and the 5665-block drill still owed. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
-| 2 — core checks | **Router + DNS live and OK; later groups off; fault drills waived for rollout** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router, dns]`; DNS backup at `/var/backups/icinga-observer-master-before-dns-6a73e0b0`; `icinga2 daemon -C` and full smoke pass. Both Technitium hosts and all eight DNS services are OK from Icinga's state file after correcting the ICMP and script-argument failures (§2.4). pve, metrics, internal services and OCI remain off |
+| 2 — core checks | **All six core groups deployed and OK; OCI SSH off; fault drills waived for rollout** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router, dns, pve, metrics, internal_services, oci]`; per-group scoped previews, backups and successful Icinga validation. Both Technitium hosts and all eight DNS services OK in state file (§2.4); pve, metrics, internal services and OCI host/service checks OK in Icinga DB (§2.5). OCI HTTPS required explicit `http_vhost` for SNI |
 | 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. Icinga DB holds 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |

@@ -281,6 +281,7 @@ apply Service "https" to Host {
   check_command = "http"
   vars.http_ssl = true
   vars.http_sni = true
+  vars.http_vhost = "{{ icinga_observer_oci_fqdn }}"
   assign where host.name == "oci-pangolin"
 }
 
@@ -289,6 +290,7 @@ apply Service "certificate-expiry" to Host {
   check_command = "http"
   vars.http_ssl = true
   vars.http_sni = true
+  vars.http_vhost = "{{ icinga_observer_oci_fqdn }}"
   vars.http_certificate = 30
   assign where host.name == "oci-pangolin"
 }

@@ -30,11 +30,14 @@ icinga_observer_api_port: 5665
 
 # Staged rollout switches (runbook.md Stages 1-5). Off unless a stage has
 # been deliberately approved and its prerequisites exist.
-# Stage 2: enable one group at a time in runbook order. Router and DNS are
-# deployed on argon-01; remaining groups stay off. OCI SSH is separate below.
+# Stage 2 core groups deployed and verified on argon-01. OCI SSH is separate.
 icinga_observer_core_check_groups:
   - router
-  - dns # pve, metrics, internal_services, oci remain off
+  - dns
+  - pve
+  - metrics
+  - internal_services
+  - oci
 icinga_observer_enable_oci_ssh_probe: false # needs an OCI-authorized key and pinned host key for nagios
 icinga_observer_enable_notifications: false # Stage 3: Discord/Telegram NotificationCommands, requires the three ICINGA_* notification secrets
 icinga_observer_enable_smokeping: true      # Stage 4: SmokePing targets, nginx vhost, service start (argon-01 only) -- enabled 2026-10-25
