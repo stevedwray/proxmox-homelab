@@ -66,7 +66,7 @@ apply Service "api-tls-cert" to Host {
   assign where host.name in [ "argon-01", "argon-02" ]
 }
 
-{% if icinga_observer_enable_core_checks %}
+{% if 'router' in icinga_observer_core_check_groups %}
 /* --- MikroTik: ICMP plus DNS recursion -------------------------------------- */
 
 apply Service "icmp" to Host {
@@ -82,7 +82,9 @@ apply Service "dns-recursion" to Host {
   vars.dns_server = host.address
   assign where host.name == "mikrotik"
 }
+{% endif %}
 
+{% if 'dns' in icinga_observer_core_check_groups %}
 /* --- Technitium: UDP/TCP DNS for internal + public names ------------------- */
 
 apply Service "dns-internal" to Host {
@@ -100,7 +102,9 @@ apply Service "dns-recursive" to Host {
   vars.dns_server = host.address
   assign where host.name in [ "technitium-primary", "technitium-secondary" ]
 }
+{% endif %}
 
+{% if 'pve' in icinga_observer_core_check_groups %}
 /* --- pve: ICMP, TCP 8006, API health --------------------------------------- */
 
 apply Service "icmp" to Host {
@@ -121,7 +125,9 @@ apply Service "api-8006" to Host {
   vars.http_expect = "401"
   assign where host.name == "pve"
 }
+{% endif %}
 
+{% if 'metrics' in icinga_observer_core_check_groups %}
 /* --- VictoriaMetrics /health, Grafana /api/health --------------------------- */
 
 apply Service "health" to Host {
@@ -159,7 +165,9 @@ apply Service "lbstatus" to Host {
   vars.http_string = "ALIVE"
   assign where host.name == "graylog"
 }
+{% endif %}
 
+{% if 'internal_services' in icinga_observer_core_check_groups %}
 /* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer --------
  * check_http has no custom-CA option and does not verify the chain (-C only
  * checks expiry), so there is deliberately no CA variable here. */
@@ -205,8 +213,10 @@ apply Service "api-status" to Host {
   vars.http_string = "InstanceID"
   assign where host.name == "portainer"
 }
+{% endif %}
 
-/* --- OCI/Pangolin: public HTTPS, certificate, public DNS, home-source SSH -- */
+{% if 'oci' in icinga_observer_core_check_groups %}
+/* --- OCI/Pangolin: public HTTPS, certificate, public DNS; SSH separately gated -- */
 
 apply Service "https" to Host {
   import "generic-service"
@@ -238,6 +248,7 @@ apply Service "public-dns" to Host {
  * alias ("ssh oci"); no new OCI firewall rule. by_ssh runs a harmless
  * fixed, non-interactive probe (runbook Stage 2).
  */
+{% if icinga_observer_enable_oci_ssh_probe %}
 apply Service "ssh-probe" to Host {
   import "generic-service"
   check_command = "by_ssh"
@@ -248,11 +259,5 @@ apply Service "ssh-probe" to Host {
   command_endpoint = "argon-01"
   assign where host.name == "oci-pangolin"
 }
-{% else %}
-/*
- * Stage 2 core-check services (MikroTik, Technitium, pve, VictoriaMetrics,
- * Grafana, Graylog, OpenBao, step-ca, Traefik, Portainer, OCI/Pangolin)
- * are withheld until icinga_observer_enable_core_checks is set, per
- * runbook.md Stage 2's one-target-group-at-a-time rollout.
- */
+{% endif %}
 {% endif %}

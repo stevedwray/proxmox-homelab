@@ -14,6 +14,19 @@
       refusing to run against {{ inventory_hostname }}.
     quiet: true
 
+- name: Assert the Stage 2 core-check rollout is scoped to valid groups
+  ansible.builtin.assert:
+    that:
+      - icinga_observer_core_check_groups is sequence
+      - icinga_observer_core_check_groups is not string
+      - icinga_observer_core_check_groups | difference(['router', 'dns', 'pve', 'metrics', 'internal_services', 'oci']) | length == 0
+      - icinga_observer_core_check_groups | intersect(['dns', 'pve', 'metrics', 'internal_services']) | length == 0 or 'router' in icinga_observer_core_check_groups
+      - not (icinga_observer_enable_oci_ssh_probe | bool) or 'oci' in icinga_observer_core_check_groups
+    fail_msg: >-
+      Stage 2 groups must be router, dns, pve, metrics, internal_services or
+      oci. LAN groups require router; the OCI SSH probe requires oci.
+    quiet: true
+
 # --- Packages ---------------------------------------------------------------
 - name: Install Icinga 2 and plugin packages (both Pis)
   ansible.builtin.include_tasks: install.yml

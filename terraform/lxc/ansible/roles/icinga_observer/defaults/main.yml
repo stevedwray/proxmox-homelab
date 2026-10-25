@@ -30,7 +30,10 @@ icinga_observer_api_port: 5665
 
 # Staged rollout switches (runbook.md Stages 1-5). Off unless a stage has
 # been deliberately approved and its prerequisites exist.
-icinga_observer_enable_core_checks: false   # Stage 2: MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI
+# Stage 2: enable one group at a time in runbook order. Empty keeps all core
+# hosts and checks off. OCI's SSH service also needs its separate opt-in below.
+icinga_observer_core_check_groups: [] # router, dns, pve, metrics, internal_services, oci
+icinga_observer_enable_oci_ssh_probe: false # needs an OCI-authorized key and pinned host key for nagios
 icinga_observer_enable_notifications: false # Stage 3: Discord/Telegram NotificationCommands, requires the three ICINGA_* notification secrets
 icinga_observer_enable_smokeping: true      # Stage 4: SmokePing targets, nginx vhost, service start (argon-01 only) -- enabled 2026-10-25
 # false: SmokePing's vhost is LAN-direct on :80 (interim, 2026-10-25).
