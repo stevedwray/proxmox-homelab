@@ -728,6 +728,20 @@ the role switch `icinga_observer_smokeping_behind_traefik`, which moves nginx to
 1. **DNS for the Pis** -- MikroTik static A (+ RouterOS PTR), then check forward
    and reverse through Technitium:
    `TASK_APPROVAL=argon-dns ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-dns-argon.yml`
+   **Applied 2026-10-25** (approvals `argon-dns`, `argon-dns-cache`). Result:
+   `argon-01/02.gibbsgreatly.xyz` resolve to `192.168.1.22/.23` and the reverse
+   lookups include the new names, checked against the router and both Technitium
+   nodes. Findings: (a) Technitium .15 had cached a single old PTR from a probe
+   made before the record existed (24 h TTL), so the play now drops cached
+   answers for the FQDNs and PTR owner names on both nodes; (b) my first version
+   built those PTR names with regex back-references that came out as literal
+   `\4.\3...`, so the flush "succeeded" while deleting nothing -- caught only
+   because the TTL kept counting down; the names are now built with
+   split/reverse/join; (c) **each IP keeps a second PTR**, the DHCP-lease name
+   `argon-0N.lan.local` (TTL 1 day), and the order differs by server (router:
+   gibbsgreatly.xyz first; Technitium: varies). Removing it means changing the
+   Pis' DHCP lease name on the MikroTik, which was not in scope -- decide whether
+   a single PTR matters (tpot has one).
 2. **Pi: move the backend** (`argon-01` only; SmokePing is briefly unreachable by
    IP until step 3): run the role with `-e icinga_observer_smokeping_behind_traefik=true`
    (set the default to `true` in the same commit once proven).

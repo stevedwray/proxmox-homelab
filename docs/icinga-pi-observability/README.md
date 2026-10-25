@@ -10,9 +10,10 @@ the rest of the lab found and fixed real mistakes (stray apache2/exim4, a
 permanently-critical NTP check, a non-standard config layout, Icinga logs that
 never reached Graylog) -- [runbook.md](runbook.md) §1.5.
 
-Prepared in the repo but **not applied** (each needs its own approval, and some
-need secrets only the operator can write): FQDNs and reverse DNS for the Pis,
-SmokePing behind Traefik + Authentik (§4.3), and Icinga Web 2 served directly
+Applied 2026-10-25: forward and reverse DNS for the Pis (`argon-0N.gibbsgreatly.xyz`;
+each IP also keeps its DHCP-lease PTR, runbook §4.3). Prepared in the repo but **not
+applied** (each needs its own approval, and some need secrets only the operator can
+write): SmokePing behind Traefik + Authentik (§4.3) and Icinga Web 2 served directly
 with its own Let's Encrypt certificate (Stage 5). Core checks (Stage 2) and
 notifications (Stage 3) are still off by the role's own defaults. No router,
 OCI, or notification-destination change has been made anywhere.
