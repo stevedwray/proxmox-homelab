@@ -3,14 +3,115 @@
 ## Purpose and boundary
 
 This is the executable delivery plan for the design in [README.md](README.md).
-It creates a small, native Icinga 2 HA pair on the Argon Pis and one local
-SmokePing instance. It intentionally does **not** create an OCI monitoring
-node, open a home port to the Internet, change DNS, or replace the existing
-Grafana/VictoriaMetrics monitoring stack.
+It creates a small, native Icinga 2 HA pair on the Argon Pis, one SmokePing
+instance and an Icinga Web UI, all on the Pis. It intentionally does **not**
+create an OCI monitoring node, open a home port to the Internet, expose Icinga's
+API, or replace the existing Grafana/VictoriaMetrics monitoring stack. It adds
+only names for its own hosts and UIs to DNS (never touching Technitium's design or
+resolution of anything else) and one Authentik/Traefik route for SmokePing.
 
 The runbook is written so that each numbered stage can be performed, tested,
 and reverted independently. Do not combine the stages into a large blind
 rollout.
+
+## Current state and plan (updated 2026-10-25)
+
+Branch `feat/argon-icinga-observability` (unmerged, **deployed live from it**). Read
+this section first; the stage sections below are the detail and the history.
+
+| Stage | State | Evidence |
+|---|---|---|
+| 0 inventory, artifacts | done | §0.4 |
+| 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
+| 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | written, **off** (`icinga_observer_enable_core_checks`), never validated by icinga2 | Stage 2, "Pre-enable findings" |
+| 3 Discord/Telegram notifications | written, **off**; needs two operator-created destinations | Stage 3 |
+| 4 SmokePing | **live**, `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik) | §4.1-§4.3 |
+| 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
+
+**What exists where**
+
+- argon-01 (`192.168.1.22`, `argon-01.gibbsgreatly.xyz`): icinga2 (config master), nginx
+  (SmokePing backend `:8081` firewalled to Traefik + self, Icinga Web `:443`/`:80`),
+  smokeping, fcgiwrap, MariaDB (socket), Redis (loopback), icingadb, php8.4-fpm, certbot.
+- argon-02 (`192.168.1.23`, `argon-02.gibbsgreatly.xyz`): icinga2 only.
+- DNS: MikroTik static A (+ automatic single PTR) for both Pis; Technitium A for
+  `icinga.lab` (-> argon-01) and `smokeping.lab` (-> Traefik). The Pi-hole-era
+  `argon-0N.lan.local` router entries are gone.
+- Authentik: provider `edge-smokeping-smokeping-provider`, application
+  `edge-smokeping-smokeping-app`. Traefik: `/opt/proxy-stack/dynamic/smokeping.yml`.
+- Secrets: nothing from this plan is in OpenBao yet. Stage 5 uses Traefik's existing
+  `CF_DNS_API_TOKEN`; passwords are generated on argon-01
+  (`/var/lib/icinga-observer/`, root-only, includes `web-admin.pass`).
+
+**Day-to-day**
+
+```bash
+scripts/icinga-observer-smoke.sh base dns smokeping web      # read-only, ~1 min
+export ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles
+ansible-playbook --syntax-check -i ansible/inventory/inventory.yml ansible/00-initial-setup/argon-icinga-observers.yml
+TASK_APPROVAL=<task> ./with-secrets-prod ansible-playbook -i ansible/inventory/inventory.yml \
+  ansible/00-initial-setup/argon-icinga-observers.yml --limit argon-01      # then argon-02
+```
+
+Always `--limit` one Pi, argon-01 first, always through the wrapper with a
+`TASK_APPROVAL` after a preflight the operator has approved (AGENTS.md). Preview
+with `--check --diff` first, and **run `--check` through the wrapper or expect
+spurious "changed" on the web templates** (without `CF_DNS_API_TOKEN` and the
+generated passwords loaded they render empty).
+
+**Backlog, in order**
+
+1. **Stage 2, one target group at a time.** The role has a single switch for all
+   groups, but this runbook requires one group, one drill, then the next. Split it
+   into a per-group list (router, DNS, pve, metrics, secrets/internal services, OCI)
+   before enabling anything, and enable with the UI open so each group can be watched.
+   Read "Pre-enable findings" under Stage 2 first.
+2. **Stage 3 notifications.** The operator creates a dedicated Discord webhook and a
+   second Telegram bot (Stage 3 has the steps) and writes the three values to
+   `services/icinga-observer`; then add the manifest entry (§0.3.1), then enable. Prove
+   problem and recovery on both channels, then the Grafana/VictoriaMetrics-outage case.
+3. **argon-02 firewall self-allow** (small, additive; argon-01 already has it): re-run
+   the role on argon-02.
+4. **Stage 1 drills still owed:** reboot argon-02, reboot argon-01, and a temporary
+   5665 block between the Pis. Also rehearse the certificate renewal (§1.5) well
+   before **2027-11-26**, when the Icinga node certificates expire.
+5. **Stage 5 gate leftovers:** the "stop MariaDB, nothing else notices" drill; an
+   ApiUser plus command transport if acknowledgements from the UI are wanted (the API
+   port already admits the host itself).
+6. **Merge:** validate per AGENTS.md validation tiers, promote `feat/...` to `stable`,
+   and delete the entry in `docs/workflow/open-branches.md`.
+
+**Decisions made (operator, 2026-10-25) -- do not re-litigate**
+
+Icinga Web is direct with its own Let's Encrypt certificate and native login; SmokePing
+is Traefik + Authentik; browsers get Let's Encrypt only (step-ca is internal only);
+nothing reads OpenBao at runtime; every service gets forward and reverse DNS; Debian
+packages are unpinned and auto-updated (pinning is for containers); Traefik's
+`CF_DNS_API_TOKEN` is reused for DNS-01; the Phase 4b blackbox probes 3-7 are not
+built (Icinga owns them); the cluster link stays IP-addressed so the observer does not
+depend on DNS.
+
+**Lessons that cost real time (apply them)**
+
+- Debian's `icinga2` drops to the `nagios` user for every invocation: anything it reads
+  or writes (certs, scripts, config) must be nagios-readable, never `root:root 0600/0750`.
+- A service started by its package's postinst keeps stock config forever; a changed
+  config must always notify a restart handler. A plain nginx reload does not rebind a
+  changed `listen`. The play uses `force_handlers: true` because handlers queued
+  before a failed task were silently discarded.
+- Cross-host steps use `delegate_to`, never same-play `hostvars`: the Pis are deployed
+  as separate `--limit` runs.
+- Install with `--no-install-recommends` to keep apache2/exim4 out, then add the
+  recommended pieces that are actually needed (`php-mysql`, `php-mbstring`, `php-gd`).
+- Preview a playbook with `--check` before running it for real, and read what it
+  would touch: the full proxy-stack playbook would have masked `portainer-agent`, and
+  `reconcile-edge.py` now renders **all 25** stacks, so push only your own route file.
+- Verify from the system's own state, not object counts: Icinga check results come
+  from `/var/lib/icinga2/icinga2.state` (flushed every 5 minutes) or Icinga Web.
+- A passing probe can be passing for the wrong reason (it was reading a PHP fatal page
+  with HTTP 200). Assert on real content.
+- `check_mode` hides real failures that only appear with real state; expect ignored
+  errors for services that do not exist yet.
 
 ## Fixed decisions
 
@@ -551,6 +652,39 @@ Pi a general SSH automation client and do not add an OCI ingress rule.
 alert storm; one known failure in each target group creates one problem and one
 recovery; Grafana/VictoriaMetrics can be unavailable while Icinga still pages.
 
+### 2.1 Pre-enable findings (2026-10-25, nothing enabled)
+
+Read before turning anything on; the Stage 2 config has never been loaded by icinga2.
+
+- **Fixed in the templates now:** `http_ssl_cacert` does not exist in Icinga's command
+  definitions and `check_http` cannot take a CA or verify a chain (it only checks expiry
+  with `-C`), so the OpenBao and step-ca checks no longer pretend to; the OCI host
+  drops ICMP, so its host check is a TCP 443 probe instead of `hostalive`; the OCI
+  public-DNS check looked up the literal Icinga host name `oci-pangolin`
+  (NXDOMAIN) and carried a meaningless expected-answer setting, now a plain lookup of
+  `pangolin.gibbsgreatly.xyz` via `1.1.1.1` (Cloudflare proxies the public name, so
+  its addresses differ from the MikroTik's static record, by design).
+- **Validate before the files land on disk.** The play renders `zones.d` and then
+  validates; a DSL error leaves bad files that stop icinga2 at the *next* restart or
+  reboot (the running daemon is protected, the on-disk config is not). Back up
+  `/etc/icinga2/zones.d/master` first, enable one group, confirm
+  `icinga2 daemon -C` and the UI, and revert the flag and re-run if it fails.
+- **One group at a time.** The role has one switch for every group; split it into a
+  per-group list before the first enable so the drill/notify-after-each-group rule in
+  this stage can be followed.
+- **Traefik** has no unauthenticated health endpoint (`api.insecure: false`, no `ping`
+  entrypoint): it is a TCP 443 check until that is changed under the Authentik/Traefik
+  approval tier.
+- **OCI SSH probe** needs a key authorised on the OCI host for the `nagios` user (an
+  OCI-side change needing its own approval) and a pinned host key; until then leave
+  that service out. OCI's firewall already admits the home IP, so no OCI rule changes.
+- **Names vs addresses.** Cluster traffic is IP-addressed on purpose; the Stage 2
+  targets use names for lab services (so a DNS fault shows as a DNS problem). Keep that
+  split deliberate.
+- **Dependencies.** MikroTik is the parent of everything LAN-side (`states = [Up]`,
+  `disable_notifications`); the `oci-pangolin` host has no parent. Verify with one real
+  fault per group that exactly one notification results.
+
 ## Stage 3 — direct notification proof and logs
 
 The role renders two notification commands. Each command must have a 10-second
@@ -713,7 +847,7 @@ Changed `smokeping-nginx.conf.j2` to `listen {{ argon-01's LAN address
 from the operator workstation returns `200` directly, no SSH forwarding
 involved.
 
-### 4.3 Revision: behind Traefik + Authentik (prepared, not yet published)
+### 4.3 Revision: behind Traefik + Authentik (published 2026-10-25)
 
 Lab convention is that every browser UI is `<name>.lab.gibbsgreatly.xyz`
 through Traefik, with the stack owning an edge manifest and the host firewall
@@ -722,7 +856,7 @@ admitting only Traefik (T-Pot is the bare-metal precedent,
 on Traefik/Authentik/pve for its UI. LAN-direct `http://192.168.1.22/` (§4.2)
 is therefore interim.
 
-Repo artifacts (committed, validated, **not applied**):
+Repo artifacts (committed and, as of 2026-10-25, applied; steps below record what was run):
 `terraform/lxc/stacks/smokeping/{stack,edge}.yaml` (route
 `smokeping.${LAB_DOMAIN}` -> `http://192.168.1.22:8081`, Traefik DNS target,
 `letsencrypt` resolver, `forwardAuth`; `validate-edge-manifests.py` passes), and
@@ -800,6 +934,8 @@ the role switch `icinga_observer_smokeping_behind_traefik`, which moves nginx to
    something the checks can complete.
 
 ## Stage 5 — Icinga Web 2 on argon-01, direct, with its own Let's Encrypt certificate
+
+**Status: deployed and verified 2026-10-25 -- see §5.1.** The text below is the design and the procedure that was followed.
 
 Operator decision (2026-10-25), reversing the original "no Icinga Web" stance
 (README Stage 5 had made it optional): without a UI there is no way to see
@@ -949,13 +1085,17 @@ terminal transcript.
 | Stage | Status | Date / commit | Evidence and rollback result |
 |---|---|---|---|
 | 0 — inventory and secrets | **Artifacts created; endpoints confirmed; secrets not yet written** | 2026-10-25, this branch | Playbook + `icinga_observer` role created; `--syntax-check` and `--check --diff` pass on both Pis (`failed=0`); 10/10 Tier-1 endpoints plus both Technitium nodes confirmed read-only (§0.4); manifest diff defined, not applied (§0.3.1); no package, config, cert, firewall rule, or secret written to either Pi. Open items: Traefik has no health endpoint, OCI SSH probe identity not provisioned (§0.4) |
-| 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Core checks, notifications, SmokePing all still disabled by role default. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
-| 2 — core checks | Planned | — | — |
-| 3 — notifications | Planned | — | — |
+| 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Reboot drills and the 5665-block drill still owed. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
+| 2 — core checks | **Written, off; never validated by icinga2** | — | Templates corrected 2026-10-25 (dead `http_ssl_cacert` variable removed, OCI host probed on TCP 443 because it drops ICMP, OCI DNS check looked up the wrong name). Needs a per-group switch before enabling; see "Current state and plan" and Stage 2 "Pre-enable findings" |
+| 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
 | 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. Icinga DB holds 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
 
 ## References
+
+- `scripts/icinga-observer-smoke.sh` -- read-only verification (groups `base`, `dns`, `smokeping`, `web`)
+- `terraform/lxc/ansible/roles/icinga_observer/` and `ansible/00-initial-setup/argon-icinga-observers.yml` -- the role and entry playbook
+- `ansible/00-initial-setup/mikrotik-dns-argon.yml`, `mikrotik-argon-legacy-cleanup.yml`; `terraform/lxc/ansible/playbooks/configure-icinga-dns-records.yml`, `configure-smokeping-dns-records.yml`; `terraform/lxc/stacks/smokeping/` -- DNS and edge artifacts
 
 - [Icinga distributed monitoring and HA zones](https://icinga.com/docs/icinga-2/latest/doc/06-distributed-monitoring/)
 - [Icinga monitoring basics](https://icinga.com/docs/icinga-2/latest/doc/03-monitoring-basics/)

@@ -160,7 +160,9 @@ apply Service "lbstatus" to Host {
   assign where host.name == "graylog"
 }
 
-/* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer -------- */
+/* --- OpenBao sys/health (unsealed), step-ca ACME, Traefik, Portainer --------
+ * check_http has no custom-CA option and does not verify the chain (-C only
+ * checks expiry), so there is deliberately no CA variable here. */
 
 apply Service "sys-health" to Host {
   import "generic-service"
@@ -169,7 +171,6 @@ apply Service "sys-health" to Host {
   vars.http_ssl = true
   vars.http_uri = "/v1/sys/health"
   vars.http_string = "\"sealed\":false"
-  vars.http_ssl_cacert = "{{ icinga_observer_ca_bundle }}"
   assign where host.name == "openbao"
 }
 
@@ -179,7 +180,6 @@ apply Service "acme-directory" to Host {
   vars.http_ssl = true
   vars.http_uri = "/acme/acme/directory"
   vars.http_string = "newAccount"
-  vars.http_ssl_cacert = "{{ icinga_observer_ca_bundle }}"
   assign where host.name == "step-ca"
 }
 
@@ -226,8 +226,9 @@ apply Service "certificate-expiry" to Host {
 apply Service "public-dns" to Host {
   import "generic-service"
   check_command = "dns"
-  vars.dns_lookup = host.name
-  vars.dns_expected_answers = "{{ icinga_observer_oci_fqdn }}!CNAME"
+  /* Any answer from a public resolver (Cloudflare proxies this name, so the
+     addresses differ from the MikroTik's static pointer at the real OCI IP). */
+  vars.dns_lookup = "{{ icinga_observer_oci_fqdn }}"
   vars.dns_server = "{{ icinga_observer_resolver_a }}"
   assign where host.name == "oci-pangolin"
 }

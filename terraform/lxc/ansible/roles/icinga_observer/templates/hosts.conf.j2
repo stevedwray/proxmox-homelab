@@ -97,9 +97,13 @@ object Host "portainer" {
   vars.parent = "mikrotik"
 }
 
+/* OCI drops ICMP, so hostalive would mark it DOWN forever: probe TCP 443. The
+   name resolves via the MikroTik's static record to the real OCI address. */
 object Host "oci-pangolin" {
   import "generic-host"
   address = "{{ icinga_observer_oci_fqdn }}"
+  check_command = "tcp"
+  vars.tcp_port = 443
 }
 
 /*
