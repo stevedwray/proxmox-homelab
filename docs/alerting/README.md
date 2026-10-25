@@ -194,6 +194,10 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 8. **Decide the future state:** keep the relay, or Grafana plus Uptime Kuma. Also the dedicated port (9443 proposed) and who terminates mTLS. The relay code moves with the Pangolin source into `oci/` when `task/oci-security-prs-integration` merges.
 9. **Phase 7: align monitoring with the post-migration lab** (plan.md). The honeypot sync cadence is fixed (W1, drill outstanding); the `pve-tiny` silence needed before it is powered off (W3); 15 running guests, including `opensearch-stack`, have no metrics (W2); nothing alerts on a failed backup (W5).
 10. **Until the dead man's switch exists, nothing watches Grafana, VictoriaMetrics, Graylog or the monitoring host.**
+    The independent Icinga pair on the Argon Pis ([docs/icinga-pi-observability](../icinga-pi-observability/README.md))
+    is the planned answer: Stage 1 (the HA pair) is live, the checks of Grafana/VictoriaMetrics/Graylog are Stage 2 and the
+    direct Discord/Telegram notifications are Stage 3, neither enabled yet. It overlaps Phase 4b's blackbox_exporter scope
+    ("Icinga is the planned upgrade", in plan.md); decide before Stage 2 whether both run.
 
 ## Future-state design notes (parked)
 

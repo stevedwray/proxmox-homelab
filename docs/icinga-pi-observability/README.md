@@ -2,21 +2,21 @@
 
 ## Status
 
-**Revised 2026-10-25. Stages 1 and 4 are deployed and verified.** Stage 1:
-a native Icinga 2 HA pair (argon-01 master, argon-02 synced) with mutual
-TLS, the TCP 5665 peer-only firewall rule, and peer/self checks only.
-Stage 4: SmokePing on argon-01, reachable directly on the LAN at
-`http://192.168.1.22/smokeping/` (like every other lab service), probing
-all 6 configured targets -- see [runbook.md](runbook.md) §1.4, §4.1 and
-§4.2 for the verification evidence, the real deployment bugs found and
-fixed along the way (including an unintended ~37-minute `0.0.0.0:80`
-nginx exposure from the package default, now closed), and the
-operator-corrected LAN-binding revision. Core checks (Stage 2) and
-notifications (Stage 3) are still disabled by the role's own default and
-have not been enabled. No router, OCI, or notification-destination
-change has been made anywhere.
+**Revised 2026-10-25.** Deployed and verified: a native Icinga 2 HA pair on
+both Pis (argon-01 master) with mutual TLS, the peer-only TCP 5665 rule, and
+four peer/self checks per Pi that all report OK from Icinga's own results, plus
+SmokePing on argon-01 (currently LAN-direct, interim). A pattern review against
+the rest of the lab found and fixed real mistakes (stray apache2/exim4, a
+permanently-critical NTP check, a non-standard config layout, Icinga logs that
+never reached Graylog) -- [runbook.md](runbook.md) §1.5.
 
-This plan adds an independent observer for the current monitoring and notification path. It does not replace VictoriaMetrics, Grafana, Graylog, Wazuh, or their alert rules.
+Prepared in the repo but **not applied** (each needs its own approval, and some
+need secrets only the operator can write): FQDNs and reverse DNS for the Pis,
+SmokePing behind Traefik + Authentik (§4.3), and Icinga Web 2 served directly
+with its own Let's Encrypt certificate (Stage 5). Core checks (Stage 2) and
+notifications (Stage 3) are still off by the role's own defaults. No router,
+OCI, or notification-destination change has been made anywhere.
+`scripts/icinga-observer-smoke.sh` is the repeatable read-only verification.
 
 ## Decision
 
@@ -24,7 +24,7 @@ Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plan
 
 Run native Icinga 2 under systemd, not Docker. This intentionally avoids depending on Docker, Portainer, image pulls, or writable container layers for the observer itself. The existing Portainer Agent remains for other Pi workloads.
 
-Do not start with Icinga Web, Icinga DB, Redis, Director, or a database. They add stateful dependencies to the service whose purpose is to remain useful when the main monitoring stack is impaired. Phase 1 uses the Icinga API, CLI, Git-managed configuration, and notification commands.
+Checks and notifications must not depend on Icinga Web, Icinga DB, Redis, Director, or a database: they add stateful dependencies to the service whose purpose is to remain useful when the main monitoring stack is impaired. Stages 1-4 therefore ran with the Icinga API, CLI, Git-managed configuration, and notification commands only. **Revised 2026-10-25 (operator):** without a UI there is no way to see state, so Stage 5 adds Icinga Web 2 + Icinga DB on `argon-01` as a strictly non-critical consumer, served directly (not via Traefik, no Authentik) with its own Let's Encrypt certificate and native login. Director is still out.
 
 ## Failure-domain rationale
 
@@ -131,9 +131,9 @@ Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium 
 
 **Gate:** useful latency/loss history exists for the home-to-OCI path without any new OCI service or exposure.
 
-### Stage 5 — optional additions
+### Stage 5 — Icinga Web 2 + Icinga DB (operator decision 2026-10-25)
 
-- Add Icinga Web/DB only if API/CLI operation proves insufficient; it is a non-critical consumer, never required for checks or notifications.
+- Add Icinga Web/DB on `argon-01` as a non-critical consumer, never required for checks or notifications. See [runbook.md](runbook.md) Stage 5.
 
 ## Acceptance and residual risk
 

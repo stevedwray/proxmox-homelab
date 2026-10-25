@@ -28,6 +28,9 @@ existing SSD boot path; no reimage and no backup are requested.
   these components after cleanup. Retain the root CA and certificate renewal
   timer. Remove old application-specific monitors and agents that are not part
   of this set, including runZero discovery and AttackIQ agents.
+- Independent observer (added 2026-10-25, [icinga-pi-observability](../icinga-pi-observability/README.md)): a native
+  Icinga 2 HA pair across both Pis (argon-01 config master), SmokePing and, later, Icinga Web on argon-01. Native
+  Debian packages and systemd, no Docker; it must keep working without pve, Traefik, Authentik or OpenBao.
 - No Pi-hole DNS/DHCP, Nginx Proxy Manager, Deluge, registry, Minecraft,
   MariaDB, Elasticsearch, Crawl4AI, Neo4j, AttackIQ, or local Portainer state.
   The Pi-hole query history is disposable. Greenbone's occasional Pi-hole
