@@ -79,6 +79,14 @@ group_smokeping() {
   check "firewall: ${SMOKEPING_BACKEND_PORT} allowed from Traefik ${TRAEFIK} only" remote "$A1_IP" \
     "sudo iptables -S INPUT | grep -q -- '-s ${TRAEFIK}/32 -p tcp -m tcp --dport ${SMOKEPING_BACKEND_PORT} -j ACCEPT' && sudo iptables -S INPUT | grep -q -- '--dport ${SMOKEPING_BACKEND_PORT} -j REJECT'"
   check "smokeping CGI answers on argon-01 itself" remote "$A1_IP" "curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://${A1_IP}:${SMOKEPING_BACKEND_PORT}/smokeping/smokeping.cgi | grep -q 200"
+  check "SmokePing backend redirects without exposing private :${SMOKEPING_BACKEND_PORT}" remote "$A1_IP" \
+    "curl -sS -D - -o /dev/null --max-time 8 -H 'Host: ${SMOKEPING_FQDN}' http://${A1_IP}:${SMOKEPING_BACKEND_PORT}/ | tr -d '\r' | grep -Fx 'Location: /smokeping/smokeping.cgi'"
+  check "SmokePing filter posts to the public HTTPS URL" remote "$A1_IP" \
+    "curl -fsS --max-time 8 -H 'Host: ${SMOKEPING_FQDN}' http://${A1_IP}:${SMOKEPING_BACKEND_PORT}/smokeping/smokeping.cgi | grep -Fq 'action=\"https://${SMOKEPING_FQDN}/smokeping/smokeping.cgi\"'"
+  check "SmokePing CSS is served as CSS" remote "$A1_IP" \
+    "curl -sS -o /dev/null -w '%{http_code} %{content_type}' --max-time 8 http://${A1_IP}:${SMOKEPING_BACKEND_PORT}/smokeping/css/smokeping-screen.css | grep -Fx '200 text/css'"
+  check "SmokePing graph image is served as PNG" remote "$A1_IP" \
+    "curl -sS -o /dev/null -w '%{http_code} %{content_type}' --max-time 8 http://${A1_IP}:${SMOKEPING_BACKEND_PORT}/smokeping/images/Home/MikroTik_mini.png | grep -Fx '200 image/png'"
 }
 
 group_web() {

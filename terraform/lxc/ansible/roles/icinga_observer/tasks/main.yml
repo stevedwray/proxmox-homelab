@@ -537,6 +537,16 @@
     - icinga_observer_enable_smokeping | bool
   notify: Restart smokeping
 
+- name: Set SmokePing CGI URL to the browser-facing address (argon-01 only)
+  ansible.builtin.lineinfile:
+    path: /etc/smokeping/config.d/General
+    regexp: '^cgiurl\s*='
+    line: "cgiurl   = {{ icinga_observer_smokeping_cgi_url }}"
+  when:
+    - icinga_observer_is_master | bool
+    - icinga_observer_enable_smokeping | bool
+  notify: Restart smokeping
+
 - name: Render the SmokePing nginx vhost (argon-01 only)
   ansible.builtin.template:
     src: smokeping-nginx.conf.j2

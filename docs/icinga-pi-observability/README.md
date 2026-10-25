@@ -12,13 +12,16 @@ host key; Discord/Telegram notifications remain off pending three dedicated
 OpenBao values. The operator waived Stage 2 fault drills for this rollout.
 See [runbook.md](runbook.md) §§2.4–2.5 for live evidence and rollback copies.
 
-SmokePing is live at `https://smokeping.lab.gibbsgreatly.xyz` behind Traefik
-and Authentik. Icinga Web 2 is live at `https://icinga.lab.gibbsgreatly.xyz`,
+SmokePing probes and six target RRDs are live. Its browser redirect, filter
+URL and static assets were repaired on 2026-10-26 (§4.4 of the runbook);
+the operator's Authentik browser retry is still pending. Icinga Web 2 is live
+at `https://icinga.lab.gibbsgreatly.xyz`,
 served directly by argon-01 with its own Let's Encrypt certificate and native
 login. The Pis have forward and reverse DNS (`argon-0N.gibbsgreatly.xyz`, one
-PTR each). `scripts/icinga-observer-smoke.sh base dns smokeping web` passed on
-2026-10-26; all six SmokePing target RRDs were updating. The role's last
-scoped default preview reported `changed=0` on 2026-10-25. The observer itself
+PTR each). The original SmokePing smoke checks missed the browser failure;
+the expanded `scripts/icinga-observer-smoke.sh base dns smokeping web` suite
+passes after repair, including redirect and asset checks. The role's scoped
+preview reported `changed=0` on 2026-10-26. The observer itself
 uses native packages and systemd, with no Docker or OCI mutation.
 
 ## Decision

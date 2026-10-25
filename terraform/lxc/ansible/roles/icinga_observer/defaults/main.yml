@@ -120,6 +120,10 @@ icinga_observer_telegram_chat_id: "{{ lookup('env', 'ICINGA_TELEGRAM_CHAT_ID') }
 # dedicated port that only Traefik may reach (host firewall below).
 icinga_observer_smokeping_backend_port: 8081
 icinga_observer_smokeping_web_port: "{{ icinga_observer_smokeping_backend_port if icinga_observer_smokeping_behind_traefik | bool else 80 }}"
+icinga_observer_smokeping_cgi_url: >-
+  {{ 'https://smokeping.' ~ icinga_observer_lab_domain ~ '/smokeping/smokeping.cgi'
+     if icinga_observer_smokeping_behind_traefik | bool
+     else 'http://' ~ icinga_observer_self_address ~ ':' ~ (icinga_observer_smokeping_web_port | string) ~ '/smokeping/smokeping.cgi' }}
 
 # Host firewall: per port, accept the listed sources and reject the rest. The
 # host's own address is always admitted (local diagnostics, and Icinga Web's

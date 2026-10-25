@@ -12,19 +12,38 @@
 server {
   listen {{ icinga_observer_self_address }}:{{ icinga_observer_smokeping_web_port }} default_server;
   server_name _;
+  # Keep redirects on the browser's HTTPS origin. nginx otherwise expands
+  # the relative return below to the private HTTP backend on :8081.
+  absolute_redirect off;
 
   location = / {
     return 302 /smokeping/smokeping.cgi;
   }
 
-  location /smokeping/ {
+  location = /smokeping/ {
+    return 302 /smokeping/smokeping.cgi;
+  }
+
+  location = /smokeping/smokeping.cgi {
     include fastcgi_params;
     fastcgi_pass unix:/var/run/fcgiwrap.socket;
     fastcgi_param SCRIPT_FILENAME /usr/lib/cgi-bin/smokeping.cgi;
     fastcgi_param SCRIPT_NAME /smokeping/smokeping.cgi;
   }
 
-  location /smokeping/cache/ {
+  location /smokeping/css/ {
+    alias /usr/share/smokeping/www/css/;
+  }
+
+  location /smokeping/js/ {
+    alias /usr/share/smokeping/www/js/;
+  }
+
+  location /smokeping/images/ {
     alias /var/cache/smokeping/images/;
+  }
+
+  location /smokeping/ {
+    return 404;
   }
 }

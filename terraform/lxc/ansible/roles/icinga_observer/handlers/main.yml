@@ -36,7 +36,14 @@
 
 # nginx: a plain reload (SIGHUP) does not rebind listening sockets when a
 # `listen` address changes -- confirmed 2026-10-25 -- so always restart.
-- name: Restart nginx
+# Validate first because nginx also serves Icinga Web on this host.
+- name: Validate nginx before restart
+  listen: Restart nginx
+  ansible.builtin.command: nginx -t
+  notify: Restart nginx after validated config
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart nginx after validated config
   ansible.builtin.systemd:
     name: nginx
     state: restarted

@@ -25,11 +25,12 @@ this section first; the stage sections below are the detail and the history.
 | 1 HA pair, peer-only 5665, own-checks | **live, both Pis**; reboot and network-block drills not run | §1.4, §1.5 |
 | 2 core checks (MikroTik, DNS, pve, VM/Grafana/Graylog, OpenBao/step-ca/Traefik/Portainer, OCI) | **all six core groups live; 14/14 hosts and 31/31 services OK** in current Redis state from both Pis; OCI SSH remains off; operator waived fault drills for this rollout | §2.5 |
 | 3 Discord/Telegram notifications | written, **off**; live notification object count is zero; needs two operator-created destinations | Stage 3 |
-| 4 SmokePing | **live**, `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik) | §4.1-§4.3 |
+| 4 SmokePing | probes and RRD history **live**; browser redirect and assets repaired on argon-01; operator browser confirmation still pending | §4.4 |
 | 5 Icinga Web 2 + Icinga DB | **live**, `https://icinga.lab.gibbsgreatly.xyz` (direct, Let's Encrypt) | §5.1 |
 
-**Live audit, 2026-10-26:** `scripts/icinga-observer-smoke.sh base dns
-smokeping web` passed. Icinga's direct state file contained all 45 recent OK
+**Live audit, 2026-10-26:** the original `scripts/icinga-observer-smoke.sh base
+dns smokeping web` passed, but its SmokePing group missed the browser-path
+failure found later that day (§4.4). Icinga's direct state file contained all 45 recent OK
 check results; the Redis state hashes had 14 OK hosts and 31 OK services, with
 the oldest result under two minutes old and service execution split across
 argon-01 (18) and argon-02 (13). All six SmokePing target RRDs were updating.
@@ -1056,6 +1057,35 @@ the role switch `icinga_observer_smokeping_behind_traefik`, which moves nginx to
    and confirm the SmokePing graphs render -- the Authentik login itself is not
    something the checks can complete.
 
+### 4.4 Browser redirect and static assets (fixed 2026-10-26)
+
+The operator's first browser login exposed a gap in the earlier smoke test:
+nginx returned `Location: http://smokeping.lab.gibbsgreatly.xyz:8081/...`
+after Authentik, sending the browser to the private backend port. A read-only
+backend audit also found that CSS, JavaScript and images were being passed to
+the CGI and returned HTML instead of their asset types. The stock SmokePing
+`cgiurl` still pointed at `http://some.url/smokeping.cgi`, breaking the filter
+form. Probe data and six target RRDs continue updating; the fault is in the
+browser path.
+
+The deployed role change disables nginx's absolute redirect expansion, routes
+only `smokeping.cgi` to FastCGI, serves CSS/JS/images from the package and
+image-cache paths, and sets `cgiurl` to the public HTTPS address. The nginx
+restart handler now validates configuration first. Before deployment, the
+expanded `scripts/icinga-observer-smoke.sh smokeping` caught all four live
+failures. The scoped `--check --diff` changed only the nginx vhost and
+`/etc/smokeping/config.d/General`. With approval
+`TASK_APPROVAL=argon-smokeping-browser-fix`, both files were backed up to
+`/var/backups/smokeping-{nginx,General}-before-browser-fix-20261026`, then
+deployed on argon-01. `nginx -t`, `smokeping --check` and the full
+`base dns smokeping web` smoke suite passed. The backend now returns
+`Location: /smokeping/smokeping.cgi`; its filter action uses the public HTTPS
+URL, and CSS, JavaScript and graph PNG paths return the right content types.
+The follow-up scoped preview reported `changed=0`.
+The operator still needs to retry the Authentik browser login. Rollback:
+restore those two pre-change files, validate nginx, then restart nginx and
+SmokePing.
+
 ## Stage 5 — Icinga Web 2 on argon-01, direct, with its own Let's Encrypt certificate
 
 **Status: deployed and verified 2026-10-25 -- see §5.1.** The text below is the design and the procedure that was followed.
@@ -1212,7 +1242,7 @@ terminal transcript.
 | 1 — HA base | **Deployed and verified, both Pis** | 2026-10-25, this branch | Native icinga2 HA pair live on argon-01 (master) and argon-02; `icinga2 daemon -C` passes; mutual TLS verified (`openssl verify` OK both ways, live established socket on 5665); TCP 5665 confirmed refused from a third LAN host; stop/start drill on argon-02 proved automatic reconnect. 7 real bugs found and fixed during deployment (§1.4); pattern-alignment corrections 2026-10-25 (§1.5): stray apache2/exim4 removed, broken checks replaced, stock config layout, Icinga warnings to Graylog. All 8 service checks OK from Icinga's own results. Reboot drills and the 5665-block drill still owed. Rollback: `systemctl disable --now icinga2` on either Pi, as documented in Stage 1 |
 | 2 — core checks | **All six core groups deployed and OK; OCI SSH off; fault drills waived for rollout** | 2026-10-25, this branch | `icinga_observer_core_check_groups: [router, dns, pve, metrics, internal_services, oci]`; per-group scoped previews, backups and successful Icinga validation. Both Technitium hosts and all eight DNS services OK in state file (§2.4); pve, metrics, internal services and OCI host/service checks OK in Icinga DB (§2.5). OCI HTTPS required explicit `http_vhost` for SNI |
 | 3 — notifications | **Written, off** | — | Scripts and objects exist and render; waiting on the operator's dedicated Discord webhook and second Telegram bot in `services/icinga-observer` (Stage 3 has the steps) |
-| 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application created; one route file in Traefik; Technitium A record on both nodes; Traefik serves a production Let's Encrypt cert. `scripts/icinga-observer-smoke.sh dns smokeping` passes. Operator still to confirm a browser login renders the graphs. §4.2 (LAN-direct) is superseded by §4.3. Rollback in §4.3 |
+| 4 — SmokePing | **Deployed and published: `https://smokeping.lab.gibbsgreatly.xyz` (Traefik + Authentik)** | 2026-10-25, this branch; browser fix 2026-10-26 | SmokePing probes all 6 targets; backend on `192.168.1.22:8081`, firewalled to Traefik (+ the host itself); Authentik provider+application and Traefik route live. The post-Authentik redirect and asset paths were fixed (§4.4); the expanded smoke suite passes. Operator browser retry still pending. Rollback in §§4.3–4.4 |
 | 5 — Icinga Web | **Deployed and verified, argon-01** | 2026-10-25, this branch | `https://icinga.lab.gibbsgreatly.xyz`: direct (no Traefik/Authentik), Let's Encrypt production cert via certbot + Traefik's existing Cloudflare token, native login. At its initial rollout, Icinga DB held 2 hosts / 8 services (all OK); logged in and saw both Pis end to end; smoke groups all pass. Six defects found and fixed (§5.1). MariaDB-stop drill not run; no acknowledgements from the UI yet. Rollback in Stage 5 |
 
 ## References
