@@ -105,7 +105,7 @@ Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium 
 
 ### Stage 1 — Pi HA base
 
-- Install pinned Icinga 2 and check plugins natively on both Pis.
+- Install Icinga 2 and check plugins natively on both Pis from Debian's repositories. Native Debian packages are deliberately **not** pinned: they stay current through unattended-upgrades (operator decision 2026-10-25; pinning is for containers).
 - Configure master-zone mutual TLS, checker, notification, API, logging, and systemd hardening; limit TCP 5665 to the pair.
 - Add peer/self checks only. Drill a cluster disconnect, one-Pi reboot, Icinga restart, and notification failover without touching `pve`.
 
