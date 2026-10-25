@@ -2,13 +2,13 @@
 
 ## Status
 
-**Proposed 2026-10-25; no Icinga, firewall, router, OCI, or notification change has been made.**
+**Revised 2026-10-25; no Icinga, firewall, router, OCI, or notification change has been made.**
 
 This plan adds an independent observer for the current monitoring and notification path. It does not replace VictoriaMetrics, Grafana, Graylog, Wazuh, or their alert rules.
 
 ## Decision
 
-Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plane checks, direct notifications, and a separate OCI dead-man observer.
+Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plane checks and direct notifications. Use OCI as a tightly constrained external target and the preferred SmokePing master location; it is not a dead-man receiver.
 
 Run native Icinga 2 under systemd, not Docker. This intentionally avoids depending on Docker, Portainer, image pulls, or writable container layers for the observer itself. The existing Portainer Agent remains for other Pi workloads.
 
@@ -21,13 +21,13 @@ Do not start with Icinga Web, Icinga DB, Redis, Director, or a database. They ad
 | `argon-01` + `argon-02` | Yes | No |
 | OCI/Pangolin | Yes | Yes |
 
-The Pis cover a Proxmox or monitoring-stack failure. OCI tells the operator that the whole home observation point has gone silent. Neither alone solves both problems.
+The Pis cover a Proxmox or monitoring-stack failure. OCI supplies an Internet-side reference point and latency history. This plan deliberately does not try to diagnose the exact cause of a whole-home loss.
 
 ## Target topology
 
 ```text
-OCI/Pangolin: public checks + dead-man receiver
-             ^ outbound authenticated HTTPS only
+OCI/Pangolin: public edge target + restricted SmokePing master
+             ^ home-to-OCI HTTPS only
              |
 argon-01: Icinga master A <--- mutual TLS ---> Icinga master B: argon-02
              |                                      |
@@ -65,28 +65,30 @@ Harbor, Authentik, NetBox, Nextcloud, and application stacks are deliberately ou
 
 ## OCI and Internet references
 
-OCI is a separate observer, not a third Icinga master. A stretched Icinga zone would make a WAN partition a cluster incident.
+OCI is an external target, not a third Icinga master. A stretched Icinga zone would make a WAN partition a cluster incident and unnecessarily extend home monitoring trust into OCI.
 
-OCI must only:
+OCI is used in two tightly separated ways:
 
-1. Check externally visible assets: Pangolin/Traefik public endpoint, certificate, public DNS, and Newt/site tunnel health. Never publish Grafana, Graylog, VictoriaMetrics, Portainer, Icinga, or a management subnet merely to monitor it.
-2. Receive signed five-minute heartbeats from both Pis over outbound authenticated HTTPS. One missing heartbeat means a Pi fault; both missing means **home observation lost** (power, router, WAN, or both Pis), not a falsely precise `pve` diagnosis.
+1. The Pis actively check OCI's public Pangolin endpoint, certificate, public DNS, and SSH from the already-permitted home source. This tests the path that actually exists, including the OCI firewall policy.
+2. OCI hosts a SmokePing master reachable only from the home public address. `argon-01` is its slave/probe and initiates all master/slave communication outbound to OCI. OCI stores and presents history but receives no route into a home subnet.
 
-The existing tested but parked OCI alert relay is a candidate heartbeat receiver. Because it is custom code, deploying it requires a separate decision and a real Telegram drill. The alternative is a minimal independently configured OCI Icinga/notification path. Do not expose the Icinga API through Pangolin merely to avoid that decision.
+Do not deploy the custom OCI alert relay, a heartbeat receiver, or an OCI Icinga cluster member in this scope. Do not expose the Icinga API through Pangolin, and do not reuse the Newt tunnel for monitoring.
+
+The OCI firewall contract is explicit: allow the home public source only to existing SSH and the dedicated SmokePing master HTTPS endpoint; deny all other sources to the latter. The SmokePing UI must not be public. There is no new OCI-to-home firewall rule, no home port forward, and no OCI reachability to a home VLAN.
 
 From each Pi, compare independent categories: a resolver from two operators (for example `1.1.1.1` and `9.9.9.9`), Discord HTTPS, Telegram HTTPS, OCI/Pangolin HTTPS, and each local Technitium node. Interpret the resulting matrix instead of treating two public IPs as proof that the Internet is healthy.
 
 ## SmokePing
 
-SmokePing is deferred. It is valuable for latency, jitter, packet-loss, and path trends, but does not provide Icinga's dependency model, acknowledgement, escalation, or notification control plane.
+SmokePing is a diagnostic companion, not the primary alerting system. It is valuable for latency, jitter, packet-loss, and path trends, but does not provide Icinga's dependency model, acknowledgement, escalation, or notification control plane.
 
-After Icinga and OCI heartbeats have passed drills, add one local SmokePing instance on `argon-01` only if WAN or tunnel quality is a real question. Probe MikroTik, both Technitium nodes, OCI/Pangolin, and the two external resolvers. Do not build a master/slave setup or OCI probe until a concrete reverse-path question justifies it.
+Run the master on OCI and a single slave/probe on `argon-01`. The slave polls the master for its assignment and posts results back, so all application connections run home-to-OCI. Probe MikroTik, both Technitium nodes, OCI/Pangolin, and the two external resolvers. This gives a durable home-to-OCI latency/loss record without making any home service externally reachable. Add a second probe only when a concrete reverse-path question justifies it.
 
 ## Staged delivery
 
 ### Stage 0 — preflight
 
-- Decide between the tested OCI relay and a minimal OCI Icinga/notification path.
+- Confirm the home public source address and design the OCI allow-list for SSH and the dedicated SmokePing HTTPS endpoint.
 - Inventory each Tier-1 endpoint, auth/CA needs, and firewall path; use existing health endpoints only.
 - Allocate Pi FQDNs, static IPs, Icinga certificates, OpenBao entries, and least-privilege accounts.
 - Document the dependency graph, notification matrix, severity, timeout, retries, owner, and rollback for every check.
@@ -115,24 +117,23 @@ After Icinga and OCI heartbeats have passed drills, add one local SmokePing inst
 - Forward Icinga logs to Graylog as evidence only, never as a prerequisite.
 - Prove that a Grafana or VictoriaMetrics outage is notified by Icinga even though Grafana cannot alert itself.
 
-### Stage 4 — OCI dead man
+### Stage 4 — OCI-referenced SmokePing
 
-- Deploy and harden the approved OCI receiver with separate credentials and notification path.
-- Add Pi heartbeats and OCI public-edge checks.
-- Drill one-Pi silence, both-Pi silence, OCI failure, and home notification-egress failure.
+- Deploy a dedicated SmokePing master on OCI behind an HTTPS endpoint restricted to the home public source.
+- Configure `argon-01` as the only SmokePing slave/probe; add OCI/Pangolin and external targets.
+- Prove that the slave can post results, that a forbidden Internet source cannot reach the master, and that no OCI-originated connection reaches a home address.
 
-**Gate:** whole-home observer loss is externally reported within the chosen deadline without exposing an internal management service.
+**Gate:** useful latency/loss history exists for the home-to-OCI path without creating an OCI-to-home path.
 
 ### Stage 5 — optional additions
 
-- Add SmokePing only for an evidence-backed latency question.
 - Add Icinga Web/DB only if API/CLI operation proves insufficient; it is a non-critical consumer, never required for checks or notifications.
 
 ## Acceptance and residual risk
 
 - Either Pi can fail without losing core checks or producing duplicate pages.
 - A `pve` or monitoring-stack outage is detected by the surviving Pi while Grafana/VictoriaMetrics are unavailable.
-- OCI reports loss of both home observers without claiming to know whether the root cause is power, router, WAN, or both Pis.
-- OCI/Pangolin loss is detected locally while direct notifications remain possible.
+- OCI/Pangolin and its home-source SSH policy are detected locally while direct notifications remain possible.
+- SmokePing stores home-to-OCI latency/loss history without exposing a home service to the Internet.
 - This does not replace Grafana alerting, hardware metrics, Graylog, Wazuh, or backup monitoring.
 - Technitium already has a `pve-tiny` cluster secondary; this plan does not move DNS to a Pi or revive Pi-hole.
