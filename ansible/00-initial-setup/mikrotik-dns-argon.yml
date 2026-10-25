@@ -1,0 +1,169 @@
+---
+# argon-01 / argon-02 forward + reverse DNS on the MikroTik -- the ONE place the
+# Pis' addresses are published, same pattern as the Framework Desktop
+# (mikrotik-dns-framework.yml), pve and tpot: a static A record under
+# gibbsgreatly.xyz. RouterOS answers the matching PTR for 192.168.1.x itself
+# (Technitium forwards both gibbsgreatly.xyz and 1.168.192.in-addr.arpa to the
+# router, see configure-technitium-lan-resolver.yml), so no Technitium change
+# is needed for these two names.
+#
+# Names/IPs come from .env (LAB_FQDN_ARGON_0N / LAB_IP_ARGON_0N). Touches
+# exactly those two static names and nothing else. Today the Pis' only PTR is
+# the DHCP-lease name argon-0N.lan.local; after this run each IP also has
+# argon-0N.gibbsgreatly.xyz, which the play checks.
+#
+# Run:
+#   TASK_APPROVAL=argon-dns ./with-secrets-prod ansible-playbook \
+#     ansible/00-initial-setup/mikrotik-dns-argon.yml
+# Rollback: delete the two static entries (comment starts "argon-fqdn:").
+
+- name: Publish the Argon Pis' names in MikroTik static DNS
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+    argon_dns_ttl: "1h"
+    argon_dns_records:
+      - fqdn: "{{ lookup('env', 'LAB_FQDN_ARGON_01') | mandatory('LAB_FQDN_ARGON_01 env var is required') }}"
+        ip: "{{ lookup('env', 'LAB_IP_ARGON_01') | mandatory('LAB_IP_ARGON_01 env var is required') }}"
+      - fqdn: "{{ lookup('env', 'LAB_FQDN_ARGON_02') | mandatory('LAB_FQDN_ARGON_02 env var is required') }}"
+        ip: "{{ lookup('env', 'LAB_IP_ARGON_02') | mandatory('LAB_IP_ARGON_02 env var is required') }}"
+
+  pre_tasks:
+    - name: Assert MikroTik credentials are set and the addresses are plain IPv4
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+          - item.ip is match('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$')
+          - item.fqdn is match('^[a-z0-9-]+[.]gibbsgreatly[.]xyz$')
+        fail_msg: "Check MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD and {{ item }}"
+        quiet: true
+      loop: "{{ argon_dns_records }}"
+      loop_control:
+        label: "{{ item.fqdn }}"
+      no_log: true
+
+  tasks:
+    - name: Read MikroTik static DNS entries
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: argon_dns_static
+      no_log: true
+
+    - name: Refuse to guess if a name has more than one static record
+      ansible.builtin.assert:
+        that: >-
+          (argon_dns_static.json | selectattr('name', 'defined')
+           | selectattr('name', 'equalto', item.fqdn) | list | length) <= 1
+        fail_msg: "{{ item.fqdn }} has more than one static DNS entry; remove the extras by hand, then re-run."
+        quiet: true
+      loop: "{{ argon_dns_records }}"
+      loop_control:
+        label: "{{ item.fqdn }}"
+
+    - name: Add the record if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          name: "{{ item.fqdn }}"
+          address: "{{ item.ip }}"
+          ttl: "{{ argon_dns_ttl }}"
+          comment: "argon-fqdn: {{ item.fqdn }} -- managed by mikrotik-dns-argon.yml"
+        status_code: [200, 201]
+      loop: "{{ argon_dns_records }}"
+      loop_control:
+        label: "{{ item.fqdn }}"
+      when: >-
+        (argon_dns_static.json | selectattr('name', 'defined')
+         | selectattr('name', 'equalto', item.fqdn) | list | length) == 0
+      no_log: true
+
+    - name: Correct the record's address or TTL if it drifted
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ (argon_dns_static.json | selectattr('name', 'defined') | selectattr('name', 'equalto', item.fqdn) | list)[0]['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body:
+          address: "{{ item.ip }}"
+          ttl: "{{ argon_dns_ttl }}"
+        status_code: [200, 201]
+      loop: "{{ argon_dns_records }}"
+      loop_control:
+        label: "{{ item.fqdn }}"
+      when:
+        - (argon_dns_static.json | selectattr('name', 'defined') | selectattr('name', 'equalto', item.fqdn) | list | length) == 1
+        - >-
+          ((argon_dns_static.json | selectattr('name', 'defined') | selectattr('name', 'equalto', item.fqdn) | list)[0].address | default('')) != item.ip
+          or ((argon_dns_static.json | selectattr('name', 'defined') | selectattr('name', 'equalto', item.fqdn) | list)[0].ttl | default('')) != argon_dns_ttl
+      no_log: true
+
+    - name: Flush the router's DNS cache
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/cache/flush"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: {}
+        status_code: [200, 201]
+      no_log: true
+
+    # ── Verify forward AND reverse, from the router and through Technitium ──
+    - name: Forward lookups answer the right address (router and Technitium)
+      ansible.builtin.command: dig +short +time=3 +tries=2 @{{ item.1 }} {{ item.0.fqdn }} A
+      loop: "{{ argon_dns_records | product([mikrotik_host, lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required')]) | list }}"
+      loop_control:
+        label: "{{ item.0.fqdn }} @{{ item.1 }}"
+      register: argon_dns_forward
+      changed_when: false
+      check_mode: false
+      failed_when: (argon_dns_forward.stdout | trim) != item.0.ip
+      retries: 5
+      delay: 2
+      until: (argon_dns_forward.stdout | trim) == item.0.ip
+
+    - name: Reverse lookups include the new name
+      ansible.builtin.command: dig +short +time=3 +tries=2 @{{ item.1 }} -x {{ item.0.ip }}
+      loop: "{{ argon_dns_records | product([mikrotik_host, lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required')]) | list }}"
+      loop_control:
+        label: "{{ item.0.ip }} @{{ item.1 }}"
+      register: argon_dns_reverse
+      changed_when: false
+      check_mode: false
+      failed_when: (item.0.fqdn ~ '.') not in (argon_dns_reverse.stdout_lines | default([]))
+      retries: 5
+      delay: 2
+      until: (item.0.fqdn ~ '.') in (argon_dns_reverse.stdout_lines | default([]))

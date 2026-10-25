@@ -1,0 +1,50 @@
+# Add the Technitium A record for Icinga Web (icinga.<lab domain>), served
+# DIRECTLY by argon-01 with its own Let's Encrypt certificate -- NOT through
+# Traefik, so unlike llm-control/smokeping this points at argon-01's own LAN
+# address, not Traefik's. It does not own the PTR: 192.168.1.22 is in the
+# flat-LAN reverse zone the MikroTik serves (Technitium only forwards it), and
+# that PTR is argon-01.gibbsgreatly.xyz from mikrotik-dns-argon.yml.
+# Narrow standalone play (same reasoning as configure-llm-control-dns-
+# records.yml): avoids a full technitium-stack provision for one record. The
+# cluster replicates it to the secondary.
+#
+#   TASK_APPROVAL=icinga-dns ./with-secrets-prod ansible-playbook \
+#     terraform/lxc/ansible/playbooks/configure-icinga-dns-records.yml
+# Verify: dig +short icinga.lab.gibbsgreatly.xyz @192.168.20.15  (and .17) -> 192.168.1.22
+---
+- name: Add Technitium A record for Icinga Web
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api" # nosonar: ansible:S5332 -- Technitium admin API, private mgmt_seg only
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    icinga_ip: "{{ lookup('env', 'LAB_IP_ARGON_01') | mandatory('LAB_IP_ARGON_01 env var is required') }}"
+    icinga_dns_records:
+      - { name: "icinga", zone: "{{ lab_domain }}", ip: "{{ icinga_ip }}", ptr: false }
+
+  tasks:
+    - name: Log in to Technitium
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: technitium_login
+      no_log: true
+      until: technitium_login.status == 200
+      retries: 3
+      delay: 5
+
+    - name: Extract session token
+      ansible.builtin.set_fact:
+        technitium_token: "{{ (technitium_login.content | from_json).token }}"
+      no_log: true
+
+    - name: Publish the icinga A record via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ icinga_dns_records }}"
