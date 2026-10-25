@@ -8,7 +8,7 @@ This plan adds an independent observer for the current monitoring and notificati
 
 ## Decision
 
-Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plane checks and direct notifications. Use OCI as a tightly constrained external target and the preferred SmokePing master location; it is not a dead-man receiver.
+Deploy Icinga 2 as an HA pair on `argon-01` and `argon-02` for core control-plane checks and direct notifications. Use OCI/Pangolin purely as an external target; it is not a dead-man receiver or a monitoring control-plane host.
 
 Run native Icinga 2 under systemd, not Docker. This intentionally avoids depending on Docker, Portainer, image pulls, or writable container layers for the observer itself. The existing Portainer Agent remains for other Pi workloads.
 
@@ -26,8 +26,8 @@ The Pis cover a Proxmox or monitoring-stack failure. OCI supplies an Internet-si
 ## Target topology
 
 ```text
-OCI/Pangolin: public edge target + restricted SmokePing master
-             ^ home-to-OCI HTTPS only
+OCI/Pangolin: public edge target
+             ^ active probes from the Pis
              |
 argon-01: Icinga master A <--- mutual TLS ---> Icinga master B: argon-02
              |                                      |
@@ -67,14 +67,9 @@ Harbor, Authentik, NetBox, Nextcloud, and application stacks are deliberately ou
 
 OCI is an external target, not a third Icinga master. A stretched Icinga zone would make a WAN partition a cluster incident and unnecessarily extend home monitoring trust into OCI.
 
-OCI is used in two tightly separated ways:
+The Pis actively check OCI's public Pangolin endpoint, certificate, public DNS, and SSH from the already-permitted home source. This tests the path that actually exists, including the OCI firewall policy.
 
-1. The Pis actively check OCI's public Pangolin endpoint, certificate, public DNS, and SSH from the already-permitted home source. This tests the path that actually exists, including the OCI firewall policy.
-2. OCI hosts a SmokePing master reachable only from the home public address. `argon-01` is its slave/probe and initiates all master/slave communication outbound to OCI. OCI stores and presents history but receives no route into a home subnet.
-
-Do not deploy the custom OCI alert relay, a heartbeat receiver, or an OCI Icinga cluster member in this scope. Do not expose the Icinga API through Pangolin, and do not reuse the Newt tunnel for monitoring.
-
-The OCI firewall contract is explicit: allow the home public source only to existing SSH and the dedicated SmokePing master HTTPS endpoint; deny all other sources to the latter. The SmokePing UI must not be public. There is no new OCI-to-home firewall rule, no home port forward, and no OCI reachability to a home VLAN.
+Do not deploy the custom OCI alert relay, a heartbeat receiver, an OCI Icinga cluster member, or a SmokePing service on OCI in this scope. Do not expose the Icinga API through Pangolin, and do not reuse the Newt tunnel for monitoring. There is no new OCI-to-home firewall rule, home port forward, or OCI reachability to a home VLAN.
 
 From each Pi, compare independent categories: a resolver from two operators (for example `1.1.1.1` and `9.9.9.9`), Discord HTTPS, Telegram HTTPS, OCI/Pangolin HTTPS, and each local Technitium node. Interpret the resulting matrix instead of treating two public IPs as proof that the Internet is healthy.
 
@@ -82,13 +77,13 @@ From each Pi, compare independent categories: a resolver from two operators (for
 
 SmokePing is a diagnostic companion, not the primary alerting system. It is valuable for latency, jitter, packet-loss, and path trends, but does not provide Icinga's dependency model, acknowledgement, escalation, or notification control plane.
 
-Run the master on OCI and a single slave/probe on `argon-01`. The slave polls the master for its assignment and posts results back, so all application connections run home-to-OCI. Probe MikroTik, both Technitium nodes, OCI/Pangolin, and the two external resolvers. This gives a durable home-to-OCI latency/loss record without making any home service externally reachable. Add a second probe only when a concrete reverse-path question justifies it.
+Run one local SmokePing instance on `argon-01`. Probe MikroTik, both Technitium nodes, OCI/Pangolin, and the two external resolvers. This gives the required home-to-OCI latency/loss record with no new OCI service, firewall rule, or control-plane dependency. Add a second probe only when a concrete reverse-path question justifies it.
 
 ## Staged delivery
 
 ### Stage 0 — preflight
 
-- Confirm the home public source address and design the OCI allow-list for SSH and the dedicated SmokePing HTTPS endpoint.
+- Confirm the existing OCI public endpoint, Pangolin certificate name, and home-source SSH policy; no new OCI firewall rule is planned.
 - Inventory each Tier-1 endpoint, auth/CA needs, and firewall path; use existing health endpoints only.
 - Allocate Pi FQDNs, static IPs, Icinga certificates, OpenBao entries, and least-privilege accounts.
 - Document the dependency graph, notification matrix, severity, timeout, retries, owner, and rollback for every check.
@@ -117,13 +112,12 @@ Run the master on OCI and a single slave/probe on `argon-01`. The slave polls th
 - Forward Icinga logs to Graylog as evidence only, never as a prerequisite.
 - Prove that a Grafana or VictoriaMetrics outage is notified by Icinga even though Grafana cannot alert itself.
 
-### Stage 4 — OCI-referenced SmokePing
+### Stage 4 — local SmokePing against OCI
 
-- Deploy a dedicated SmokePing master on OCI behind an HTTPS endpoint restricted to the home public source.
-- Configure `argon-01` as the only SmokePing slave/probe; add OCI/Pangolin and external targets.
-- Prove that the slave can post results, that a forbidden Internet source cannot reach the master, and that no OCI-originated connection reaches a home address.
+- Deploy one local SmokePing instance on `argon-01`; add OCI/Pangolin and external targets.
+- Prove the latency/loss graphs distinguish local gateway, resolver, and OCI-edge faults.
 
-**Gate:** useful latency/loss history exists for the home-to-OCI path without creating an OCI-to-home path.
+**Gate:** useful latency/loss history exists for the home-to-OCI path without any new OCI service or exposure.
 
 ### Stage 5 — optional additions
 
