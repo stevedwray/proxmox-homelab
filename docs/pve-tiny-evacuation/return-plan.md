@@ -477,7 +477,7 @@ works). Manifest diff additive (`apt-listchanges.timer`, `ipmi`) plus
 `systemd-pcrlock.socket` and `.dpkg-old` not carried. pve copy stopped,
 `onboot=0`.
 
-### R3 guest 6: cse-controller 40070 (preflight written 2026-10-27, not yet run)
+### R3 guest 6: cse-controller 40070 (returned 2026-10-27)
 
 Method A with two archives. (1) `/srv/cyberseceval` (560 MB; **hand-maintained**:
 pinned PurpleLlama checkout with the local `cse-lab` branch, venv, manifests,
@@ -503,6 +503,41 @@ answers, else requires no non-Celery process and unchanged CPU time over 5 s
 (tested read-only: passes on the idle worker, reports busy on a control
 container; an earlier draft passed vacuously because `docker top` needed the
 `pid` field).
+
+**Result 2026-10-27:** all phases completed. Quiesce: the worker did not
+answer inspect, so the process/CPU fallback ran and passed. Salvage archive
+verified before and re-verified during `restore`; extracted before provision.
+`destroy_half_phantom` removed `pve/vm-40070-disk-0` and `-disk-1` (the nvme
+volume was already gone). Provision ok=136, failed=0 (one ignored: Step CA
+timeout). `verify`: all five containers up (controller, worker, pentest
+worker, pentest research worker, viewer proxy); the worker connected to
+Redis and answers `inspect ping` (5 pongs: it was wedged on pve since
+2026-10-24); mount yes; branch `cse-lab`; key files mode 600; 19
+run-manifests; `step` 0.30.2; controller to pentest-runner SSH ok. pve copy
+stopped, `onboot=0`.
+
+**Finding: node_exporter TLS is not in place on ai_seg and cse_seg guests.**
+The `node_exporter` role skips TLS cert issuance when Step CA
+(`192.168.20.11:443`) is unreachable; that is the ignored "Timeout when
+waiting for 192.168.20.11:443" in every provision log. Tested from the guests:
+Step CA answers only from `mgmt_seg` (20017 gets 200); 50012, 50013, 40072,
+100071 and 40070 time out (default-deny zones). So those five serve plain
+unauthenticated `:9100` metrics, which is how 50012/50013/40072/100071 were
+before and after the move. 40070 did have a TLS exporter on the old source
+(cert to 2026-12-17, issued 2026-09-18); the pve copy lost it and the files
+restored from the salvage are inert (no drop-in, no renew timer; `inactive`
+is expected). **No alerting impact:** VictoriaMetrics scrapes `node_exporter`
+only for 20017 among these guests. Follow-up decision (not part of the
+return, and no router changes were made): add a narrow Step CA rule for
+`ai_seg`/`cse_seg`, or accept plain exporters there.
+
+**Redis restart hazard for the 20030 move:** the cse-panel Redis (on 20030)
+is the Celery broker for the controller worker (40070) and the eval-runner
+workers (50013). The controller worker wedged and never reconnected after the
+10-24 Redis restart. Moving 20030 restarts Redis again, so around that move:
+stop `cse-controller-worker` (40070) and `eval-runner-worker-runs/-ctl`
+(50013) before Redis stops, start them after it is back, and verify
+`inspect ping` pongs from both.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
