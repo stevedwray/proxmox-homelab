@@ -539,7 +539,7 @@ stop `cse-controller-worker` (40070) and `eval-runner-worker-runs/-ctl`
 (50013) before Redis stops, start them after it is back, and verify
 `inspect ping` pongs from both.
 
-### R3 guest 7: cse-panel 20030 (preflight written 2026-10-27, not yet run)
+### R3 guest 7: cse-panel 20030 (returned 2026-10-27)
 
 Method A, 2.8 MB. Carried: `/srv/cse-panel/redis-data` (Redis AOF); the app
 code dirs and `redis.conf` (which holds the password) are rewritten by the
@@ -559,6 +559,22 @@ across the fleet and refuses unless every worker answers and none has a task
 (tested: idle passes, a forced-busy control fails). Baseline `redis dbsize`
 is 7 and is compared in `verify`, which also checks the panel UI `:8050` and
 that 5 workers answer through the new Redis. No Wazuh play here.
+
+**Result 2026-10-27:** returned. Two script bugs on the way, both fixed:
+an uninitialised `EXTRA_ARCHIVE` under `set -u` (my edit to the settings line
+silently matched nothing; all guests now pass `check`), and tar creating the
+implicit parent `/srv/cse-panel` as real root, which an unprivileged CT sees
+as `nobody`, so the playbook could not write `redis.conf` (operator re-owned
+it to 100000:100000; `restore` now re-owns such parents automatically).
+After provision (ok=89, failed=0): panel-ui `:8050` 200; `redis dbsize` 7 =
+baseline; 5 workers answer `inspect` through the new Redis; the post-hook
+restarted the three containers on 40070 and the two units on 50013; the plan's
+consumer path holds (`GET /framework` on panel-web returns a fresh `checked`
+and the model). The Celery "clock drift" warnings are stale heartbeats from
+the workers stopped for the move. pve copy stopped, `onboot=0`.
+
+**Returned so far (7 of 8):** 20017, 50012, 50013, 40072, 100071, 40070,
+20030. Remaining: 40014 opensearch.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
