@@ -670,6 +670,31 @@ state/archive cleanup, and the node_exporter/Step CA policy decision.
   `/root/salvage-*`; `cve-deep-dive.timer` decision; unpushed commits
   (trufflehog hook fails in a worktree).
 
+### Closeout round, 2026-10-27 (late)
+
+- **Terraform drift:** `terragrunt plan` on all eight pve-tiny stacks (return
+  worktree): "No changes. Your infrastructure matches the configuration."
+- **Spot checks:** `eval-run selftest` (all harnesses): `all selftests OK` (the
+  two `EOFError` tracebacks are AgentBench's upstream `input()` hitting EOF
+  when non-interactive). OpenWebUI's model route (`llm.lab.../v1`) lists the
+  model and answers an 8-token completion. The controller worker reaches
+  Framework with its own key (200 on both paths; 401 without the key) and
+  Harbor. A real OpenWebUI login/chat needs a human (Authentik); no real CSE
+  benchmark was submitted (its only task is a full benchmark run).
+- **Monitoring:** the five newly-TLS guests were added to the playbook and the
+  identical lines applied to the live `victoria-metrics/scrape.yml` on CT
+  20012 (backup `/root/scrape.yml.bak-2026-10-27`), reloaded with a HUP
+  ("added targets: 5, removed targets: 0"). Four are `up`. `cse-controller` is
+  down: its restored node_exporter certificate (issued 2026-09-18) names
+  `192.168.40.70`, the controller's old infra address; the role only reissues
+  within 30 days of expiry. Fix:
+  `scripts/pve-tiny-reissue-cse-controller-exporter-cert.sh` (same `step ca
+  certificate` command as the role, correct SAN; blocked for the assistant as
+  a credential-use action, so the operator runs it).
+- **stable:** PR #539 merged (`03a4645b`): web-search-mcp dependency pin,
+  Dashboards healthcheck accepts 401, scrape targets for the five guests.
+  Semgrep passed; Snyk reported only its private-test quota being exhausted.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
