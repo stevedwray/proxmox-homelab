@@ -444,8 +444,9 @@ extra_verify() {
 docker ps --format '{{.Names}} {{.Status}}'
 c=opensearch-stack-opensearch
 docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" https://localhost:9200/_cluster/health' | tr ',' '\n' | grep -E '"status"|number_of_nodes|active_shards"|unassigned_shards"'
-echo "security index docs: $(docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" "https://localhost:9200/_cat/count/.opendistro_security?h=count"')"
-echo "dashboards :5601 -> $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:5601/api/status)"
+echo "security index: $(docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" "https://localhost:9200/_cat/indices/.opendistro_security?h=index,docs.count"')"
+echo "internal users: $(docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" https://localhost:9200/_plugins/_security/api/internalusers' | grep -oE '"[A-Za-z0-9_.-]+":\{"hash"' | wc -l)"
+echo "dashboards :5601 -> $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:5601/api/status) (401 = up and requiring login; health: $(docker inspect -f '{{.State.Health.Status}}' opensearch-stack-dashboards))"
 echo "data mount: $(mountpoint -q /var/lib/opensearch-data && echo yes || echo NO), used $(du -sh /var/lib/opensearch-data | cut -f1)"
 REMOTE
       ;;

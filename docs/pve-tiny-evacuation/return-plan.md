@@ -576,7 +576,7 @@ the workers stopped for the move. pve copy stopped, `onboot=0`.
 **Returned so far (7 of 8):** 20017, 50012, 50013, 40072, 100071, 40070,
 20030. Remaining: 40014 opensearch.
 
-### R3 guest 8: opensearch 40014 (preflight written 2026-10-27, not yet run)
+### R3 guest 8: opensearch 40014 (returned 2026-10-27; Dashboards healthcheck fix pending apply)
 
 **Sizing correction:** the 150 GiB data mount has only about 0.9 GB used (the
 whole CT's PBS backups are about 8.2 GB; the largest index, `harbor-findings`,
@@ -598,6 +598,30 @@ and `docker-live-usage`, which grow with every query). Tested read-only:
 quiesce passes on the live cluster and a forced-failure control fails; the
 baseline is identical across two consecutive reads. Expected baseline status
 is `yellow` (single node, replicas unassigned).
+
+**Result 2026-10-27:** all phases completed; provision ok=116, failed=0
+(`WAZUH=skip`). `verify`: **BASELINE-MATCH, 124 index doc counts identical
+before and after**; cluster `yellow` (the expected single-node baseline),
+127 active / 104 unassigned shards; security index 10 docs, 15 internal
+users, 54 roles (4 custom, 50 reserved); data mount present. Secpipe resumed
+and its T-Pot ingest finished successfully against the new OpenSearch
+(consumer path ok). pve copy stopped, `onboot=0`.
+
+**Defect found in `stable`:** Dashboards sits at `health: starting` (failing
+streak) because `stable`'s healthcheck accepts only `200|302`, while OIDC
+makes `/api/status` answer `401`. The evacuation branch had fixed this
+(`200|302|401`) and the fix never reached `stable`. Same change applied on
+`work/pve-tiny-return` (`5953c8a6`, `--syntax-check` ok); **it must reach
+`stable`**. Applying it re-runs provision for 40014 (`WAZUH=skip`), which
+recreates the Docker containers (a brief OpenSearch/Dashboards restart).
+Also: the verify check used `_cat/count`, which returns 0 for the security
+index; it now uses `_cat/indices` and the security API.
+
+**All 8 guests are now on pve-tiny.** Remaining: apply the Dashboards fix,
+the Wazuh enrolment batch (50012, 50013, 40014 and 50012's unattended-upgrades
+play), backups and `known_hosts`, the merge of the two `stable` fixes
+(web-search-mcp pin, Dashboards healthcheck), soak, retiring the pve copies,
+state/archive cleanup, and the node_exporter/Step CA policy decision.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
