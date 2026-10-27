@@ -415,7 +415,7 @@ id, `idna`/`normalizer` pip entry points, `systemd-pcrlock.socket` and a
 `.dpkg-old` file. Still to do: backup, `known_hosts`, Wazuh enrolment batch,
 soak before destroying the pve copy.
 
-### R3 guest 4: pentest-runner 40072 (preflight written 2026-10-27, not yet run)
+### R3 guest 4: pentest-runner 40072 (returned 2026-10-27)
 
 Method A with a selective copy (about 0.9 GB), because most of this guest's
 state is not reproducible by `deploy-pentest-runner.yml`. Carried: `/root`
@@ -434,6 +434,21 @@ is the first guest on `cse_seg` and so the first real test of that VLAN path.
 `verify` adds the viewer `/healthz`, run counts, key comments and DNS.
 `WAZUH=skip` is not needed (this playbook has no Wazuh play). The 40070
 controller's pentest worker is still absent on live pve; it returns with 40070.
+
+**Result 2026-10-27:** `copy` (476 MB archive: 73,139 entries, 80 strix
+runs, model-traffic, no `.ssh`/`.ansible`), `create`, `restore`,
+`provision` (ok=75, failed=0; one ignored: the known Step CA reachability
+timeout to 192.168.20.11:443), `verify` all completed. CT 40072 runs on
+pve-tiny (`onboot=1`, `nvme-lvm`, `tvcse`); pve copy stopped with
+`onboot=0`. `restore` passed the gateway check, so **VLAN 100 works on
+pve-tiny**. `verify`: viewer `/healthz` `{"ok": true}`, 80 strix runs, 527 MB
+model-traffic, both authorized keys present (operator and
+`pentest-lab-worker@cse-controller`), DNS resolves. Manifest diff is
+additive (apt timers, `ipmi`) plus pve-copy leftovers not carried
+(`fonts`, `glvnd`, `vulkan` under `/etc`, `.dpkg-old`, `systemd-pcrlock.socket`).
+Bug found and fixed on the way: a quiesce check with nested quotes made `ssh`
+run `view` (vim) on pve; checks that contain quotes or pipes are now sent on
+stdin. Each phase now logs to `<state>/logs/`.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 

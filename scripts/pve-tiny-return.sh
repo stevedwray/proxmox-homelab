@@ -14,6 +14,8 @@
 #   verify     containers, units, resolvers, manifest vs baseline
 #   rollback   destroy the pve-tiny target, restart the pve copy
 #
+# Full output of every phase is kept in ~/.local/state/pve-tiny-return/<vmid>/logs/.
+#
 # Approval name for every phase: pve-tiny-return-<stack minus "-stack">
 set -euo pipefail
 
@@ -109,7 +111,9 @@ phase_check() {
   [[ $(t hostname) == pve-tiny ]] || die "second host is not pve-tiny"
   p "pct status $V" | grep -qE 'running|stopped' || die "CT $V not on pve"
   echo "pve   CT $V: $(p "pct status $V"), $(p "pct config $V | grep ^onboot || echo onboot-unset")"
-  if t "test -e /etc/pve/lxc/$V.conf"; then
+  if [[ -e $STATE/create.done ]]; then
+    echo "tiny  CT $V: the returned target ($(t "pct status $V"), created $(cat "$STATE/create.done"))"
+  elif t "test -e /etc/pve/lxc/$V.conf"; then
     echo "tiny  CT $V: STALE config present ($(t "pct status $V")); rootfs: $(t "pct config $V | grep ^rootfs")"
     if t "pct config $V | grep -E '^(rootfs|mp[0-9]+):' | grep -q 'nvme-lvm'"; then die "stale CT $V references nvme-lvm; remove the phantom config first"; fi
   else
@@ -313,6 +317,15 @@ phase_rollback() {
   dig_all
   rm -f "$STATE"/create.done "$STATE"/restore.done "$STATE"/provision.done "$STATE"/verify.done
 }
+
+# Every phase writes its full output to a log, so nothing has to be pasted back: tell the assistant
+# the phase finished and it reads the newest log (ls -t "$STATE/logs"). Mode 700 like the rest of $STATE.
+if [[ -n $PHASE ]]; then
+  mkdir -p "$STATE/logs"; chmod 700 "$STATE" "$STATE/logs"
+  LOG="$STATE/logs/$(date +%Y%m%dT%H%M%S)-$PHASE.log"
+  exec > >(tee -a "$LOG") 2>&1
+  echo "[log: $LOG]"
+fi
 
 case $PHASE in
   check) phase_check ;;
