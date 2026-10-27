@@ -107,7 +107,21 @@ phase_create() {
     t "pct destroy $V --purge"
   fi
   cd "$RET_WT/terraform/lxc/environments/pve-tiny/$STACK"
-  ../../../../../with-secrets-prod-tiny terragrunt plan -lock=false -no-color 2>&1 | sed 's/^[0-9:.]* STDOUT tofu: //' | grep -E '^  # |Plan:|Error' || true
+  # The state's null_resource triggers hold the main checkout's paths. From this worktree they differ,
+  # Terraform would REPLACE it, and its destroy-time provisioner tries to delete the SDN vnet (the
+  # network_sdn_allow_destroy guard blocks it, aborting the apply). Dropping it from the worktree's
+  # state copy makes the plan a plain create without running that provisioner.
+  local st=terraform.tfstate.d/pve-tiny/terraform.tfstate
+  if grep -q configure_network_sdn_attachment "$st"; then
+    cp -p "$st" "$st.pre-sdn-staterm-$(date +%s)"
+    ../../../../../with-secrets-prod-tiny terragrunt state rm -no-color 'null_resource.configure_network_sdn_attachment[0]'
+  fi
+  local plan
+  plan=$(../../../../../with-secrets-prod-tiny terragrunt plan -lock=false -no-color 2>&1 | sed 's/^[0-9:.]* STDOUT tofu: //')
+  grep -E '^  # |Plan:|Error' <<<"$plan" || true
+  if grep -E '^  # null_resource.*(destroyed|replaced)|^  # module.lxc.proxmox_virtual_environment_container.*(destroyed|replaced)' <<<"$plan"; then
+    die "plan would destroy/replace the SDN attachment or a container; not applying"
+  fi
   read -r -p "Plan above should only CREATE CT $V (no real guest destroyed). Type yes to apply: " ans
   [[ $ans == yes ]] || die "not applied"
   ../../../../../with-secrets-prod-tiny terragrunt apply -auto-approve -no-color

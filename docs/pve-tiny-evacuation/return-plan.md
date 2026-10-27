@@ -276,6 +276,23 @@ Fallback if the join breaks: rejoin as an operator step
 both answer UDP and TCP; `technitium-tiny.cluster.lab...` resolves to `.17`.
 Approval name: `pve-tiny-return-technitium`.
 
+### Lesson from the first Technitium apply (2026-10-27): SDN null_resource replacement
+
+Planning from the return worktree changes the paths held in the state's
+`null_resource.configure_network_sdn_attachment` triggers, so Terraform wants
+to **replace** it. Its destroy-time provisioner runs
+`destroy-network-sdn-vnet.yml`, which would remove the VNet. The
+`network_sdn_allow_destroy: false` guard aborted the apply before anything
+changed (all four pve-tiny vnets verified intact, CT not created). The
+earlier read-only plans listed this as one of the "destroys" and it was
+wrongly described as harmless bookkeeping.
+
+Fix, applied to every return: back up the worktree's state copy, then
+`terragrunt state rm 'null_resource.configure_network_sdn_attachment[0]'`
+before planning, so it plans as a create. Never set
+`NETWORK_SDN_ALLOW_DESTROY_OVERRIDE`. The return scripts now do this and
+refuse to apply if the plan replaces that resource or a container.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
