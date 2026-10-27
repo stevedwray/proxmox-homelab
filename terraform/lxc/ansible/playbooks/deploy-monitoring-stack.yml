@@ -293,6 +293,19 @@
                 # pangolin-proxy has no LAB_IP_ variable; its address is in stacks/pangolin-proxy/stack.yaml.
                 - targets: ["192.168.30.11:9100"]
                   labels: {stack: pangolin-proxy}
+                # Added 2026-10-27 (pve-tiny return): the AI and CSE zones now reach step-ca, so these guests' exporters
+                # issue TLS certificates and answer only to the scrape login. cse-* and pentest-runner have no
+                # LAB_IP_ variable; their addresses are in stacks/<name>/stack.yaml.
+                - targets: ["{{ lookup('env', 'LAB_IP_SECPIPE') }}:9100"]
+                  labels: {stack: secpipe-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_AI_SERVICES') }}:9100"]
+                  labels: {stack: ai-services-stack}
+                - targets: ["192.168.100.70:9100"]
+                  labels: {stack: cse-controller}
+                - targets: ["192.168.100.71:9100"]
+                  labels: {stack: cse-code-eval}
+                - targets: ["192.168.100.72:9100"]
+                  labels: {stack: pentest-runner}
                 - targets: ["{{ omada_controller_host }}:9100"]
                   labels: {stack: omada-controller}
                 - targets: ["{{ lookup('env', 'LAB_FQDN_FRAMEWORK') }}:9100"]
