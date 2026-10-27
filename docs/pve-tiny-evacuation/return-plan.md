@@ -273,8 +273,12 @@ IP cannot collide), run the parity manifest on source and copy, diff them,
 then destroy the test CT and forget the staging snapshot. Records backup
 time/size and restore time/throughput for the sizing estimate.
 
-Approvals: `pve-tiny-return-r2-backup` (pve), `pve-tiny-return-r2-restore`
-(pve-tiny), `pve-tiny-return-r2-cleanup` (pve-tiny). Must finish and clean
+Run it with one command from the workstation:
+`scripts/pve-tiny-return-rehearsal.sh <vmid>` (`--dry-run` for read-only
+checks, `--use-existing` if the backup was already taken by hand,
+`--cleanup-only` to remove the test CT and staging snapshot). The script
+finds the snapshot itself, so nothing is copied between sessions. Approval
+names: `pve-tiny-return-r2-backup`, `-restore`, `-cleanup`. Must finish and clean
 up before the pve-tiny backup job at 12:30 NZDT next day, or it would back up
 the test CT.
 
