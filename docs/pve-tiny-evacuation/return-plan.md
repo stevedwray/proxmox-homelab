@@ -265,9 +265,9 @@ main argument for B.
 
 ### R3 guest 1: Technitium 20017 (returned 2026-10-27)
 
-Method A. `scripts/pve-tiny-return-technitium.sh <phase>`: `check`, `copy`,
+Method A. `scripts/pve-tiny-return.sh 20017 <phase>` (generic per-guest script, one settings block per VMID): `check`, `copy`,
 `create`, `restore`, `provision`, `verify`, `rollback`. State (archive,
-checksums, baseline manifest) lives in `~/.local/state/pve-tiny-return/20017/`;
+checksums, baseline manifest) lives in `~/.local/state/pve-tiny-return/<vmid>/`;
 each phase refuses to run until the previous one completed. 20017 is a
 cluster **secondary**; the playbook does not join the cluster, so the 44 MB
 `technitium-stack_technitium-config` volume is copied to preserve membership.
@@ -308,6 +308,50 @@ directory; failed safe before any change). Still to do for this guest:
 confirm the primary UI shows `.17` connected, take a backup on pve-tiny,
 refresh `known_hosts`, then soak before destroying the pve copy under its
 own approval.
+
+### R3 guest 2: secpipe 50012 (returned 2026-10-27, Wazuh enrolment pending)
+
+Method A, stateless: `scripts/pve-tiny-return.sh 50012 <phase>`. Verified
+read-only: only the Portainer agent container, no data volumes; both timers'
+scripts live in `/opt` (reproducible); the T-Pot ingest cursor lives in
+OpenSearch (`tpot-events-sync-state`), not on the guest. No stale pve-tiny
+config (phantom removed); plan is a clean create. The pve-tiny profile holds
+`services/opensearch`, `tpot`, `llm-gpu` and `shared/external-apis`.
+
+The known stale CVE credential is `/opt/cve-enrichment-sync/es-user.env`
+(dated 2026-08-18; the rest are 2026-10-24), left by reusing a stale copy.
+A fresh target plus the full provision rewrites it from OpenBao, so this
+should resolve on its own. **Decision point:** with a working credential the
+daily `cve-enrichment-sync` (about 21:00 NZDT) may send derived vulnerability
+findings to an external LLM again, which the evacuation deliberately did not
+trigger. That was its normal behaviour before the evacuation; confirm
+whether to leave the timer enabled after the return or disable it until
+reviewed.
+
+**Result 2026-10-27:** operator ran `copy`, `create`, `restore`, `provision`.
+CT 50012 runs on pve-tiny (`onboot=1`, `nvme-lvm`); pve copy stopped with
+`onboot=0`. Core roles applied (CVE sync, T-Pot ingest, GVM scan account);
+`es-user.env` and the T-Pot tunnel key were rewritten fresh on 15:37 (the
+stale credential is gone). First T-Pot ingest on the new guest succeeded
+(15:40). `provision` aborts at the Wazuh agent play, so the unattended-upgrades
+play after it has not run; `verify` is not yet complete.
+
+**Wazuh manager fault (not caused by the return):** the `wazuh-remoted`
+daemon on CT 40015 is not running ("daemons not ready (wazuh-remoted->stopped)"),
+so the manager API returns 500 on authentication and **every agent shows
+Disconnected**. Agent last keepalive was 2026-10-26 03:44 UTC (about 23 h
+before the return work started); the manager container itself has been up 11
+days, 0 restarts, no OOM, and `ossec.log` shows no remoted error. Enrolment
+(authd) still accepts requests. Fix remoted first (mind the known
+restart-OOM hazard in `docs/wazuh-tuning/runbook.md`), then rerun
+`scripts/pve-tiny-return.sh 50012 provision` and `verify`; the playbook is
+idempotent.
+
+**Open decision:** `cve-enrichment-sync.timer` is enabled on the new guest
+and next fires 21:01 NZDT today; it may send derived findings to an external
+LLM, as it did before the evacuation. Disable with
+`pct exec 50012 -- systemctl disable --now cve-enrichment-sync.timer` on
+pve-tiny if it should wait.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
