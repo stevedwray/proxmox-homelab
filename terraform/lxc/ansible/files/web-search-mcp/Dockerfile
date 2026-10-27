@@ -35,10 +35,22 @@ FROM mcr.microsoft.com/playwright:v1.54.2-noble
 # 'mcp.client.streamable_http'`, a real breaking API change upstream that
 # mcpo 0.0.20's own code hasn't caught up to). 1.30.0 is the latest
 # stable 1.x release and confirmed working.
+#
+# fastapi/starlette/uvicorn/pydantic/sse-starlette are pinned to the exact
+# set the last known-good image was built with (read from its layers
+# 2026-10-27). mcpo 0.0.20 declares them unbounded; a fresh build on the
+# pve-tiny return resolved fastapi 0.162.0 / starlette 1.10.0 / uvicorn
+# 0.54.0 / pydantic 2.14.1 and mcpo crashed at start (`FastAPI.__init__()
+# got an unexpected keyword argument 'ssl_certfile'`), leaving web-search-mcp
+# unhealthy and OpenWebUI (which depends on it) never starting. Verified:
+# with these pins mcpo starts ("Starting MCP OpenAPI Proxy").
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir --break-system-packages mcpo==0.0.20 mcp==1.30.0
+    && pip install --no-cache-dir --break-system-packages \
+        mcpo==0.0.20 mcp==1.30.0 \
+        fastapi==0.141.1 starlette==1.6.0 uvicorn==0.53.0 \
+        pydantic==2.13.5 sse-starlette==3.4.11
 
 WORKDIR /opt/web-search-mcp
 
