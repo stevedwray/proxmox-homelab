@@ -353,6 +353,22 @@ LLM, as it did before the evacuation. Disable with
 `pct exec 50012 -- systemctl disable --now cve-enrichment-sync.timer` on
 pve-tiny if it should wait.
 
+### R3 guest 3: ai-services 50013 (preflight written 2026-10-27, not yet run)
+
+Method A, about 2 GB of data. Carried (all verified present on the running pve
+CT): `ai-services-openwebui-data` (948 MB: users, chats), `ai-services-deep-research-config`
+(21 MB), `ai-services-searxng-data`, `eval-runner-hf` (958 MB, HF cache; saves a
+re-download), and **`/srv/eval-runner`** (20 MB: all run results including the
+restored `_historical/`; this is the path the evacuation missed). Not carried:
+`ai-services-deep-research-data` (obsolete since 2026-09-22), images (about
+15 GB, re-pulled from Harbor). The eval queue is in the cse-panel Redis (still
+on pve until 20030 returns), not on this guest. Quiesce check: no running
+`eval-*` container. Verify adds OpenWebUI `:8081`, SearXNG `:8082` and
+`eval-run results` showing the historical section. The script now treats a
+provision whose only failure is the Wazuh agent play as done-with-warning
+(`provision.warn`), so Wazuh enrolments can be batched after the manager is
+fixed.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
