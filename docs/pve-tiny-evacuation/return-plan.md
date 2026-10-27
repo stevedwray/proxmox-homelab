@@ -353,7 +353,7 @@ LLM, as it did before the evacuation. Disable with
 `pct exec 50012 -- systemctl disable --now cve-enrichment-sync.timer` on
 pve-tiny if it should wait.
 
-### R3 guest 3: ai-services 50013 (in progress 2026-10-27)
+### R3 guest 3: ai-services 50013 (returned 2026-10-27, Wazuh enrolment pending)
 
 Method A, about 2 GB of data. Carried (all verified present on the running pve
 CT): `ai-services-openwebui-data` (948 MB: users, chats), `ai-services-deep-research-config`
@@ -399,6 +399,21 @@ fixed.
 - Wazuh enrolment batch (do after the manager's `wazuh-remoted` is fixed):
   50012 secpipe, 50013 ai-services, plus any guest provisioned with
   `WAZUH=skip` (`provision.warn` marks them). 20017 enrolled successfully.
+
+**Result 2026-10-27 (after the web-search-mcp pin and `WAZUH=skip`):** CT
+50013 runs on pve-tiny (`onboot=1`); pve copy stopped with `onboot=0`.
+`verify`: all containers healthy (openwebui, web-search-mcp, searxng,
+deep-research, deep-research-files, portainer-agent); eval-runner workers
+active and `ready` (Redis reached); OpenWebUI `:8081` and SearXNG `:8082`
+return 200; the real ingress route `openwebui.lab...` returns 200 and
+`deep-research.lab...` redirects to Authentik; `/srv/eval-runner/results` has
+11 entries and `_historical` 29, matching the pve copy; `webui.db` on the new
+guest has 1 user / 50 chats, identical to the pve source. Remaining manifest
+diff vs the pve source is expected: `wazuh-agent` (pending), the obsolete
+`deep-research-data` volume (deliberately not carried), an anonymous volume
+id, `idna`/`normalizer` pip entry points, `systemd-pcrlock.socket` and a
+`.dpkg-old` file. Still to do: backup, `known_hosts`, Wazuh enrolment batch,
+soak before destroying the pve copy.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
