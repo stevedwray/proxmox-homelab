@@ -61,7 +61,7 @@ case $V in
     EXCLUDES=(root/.ssh root/.ansible)
     MERGE_KEYS=root/.ssh/authorized_keys
     UNITS=(docker pentest-viewer-supervisor prometheus-node-exporter)
-    QUIESCE='! ps -eo args --no-headers | grep -E "boxpwnr|strix" | grep -vqE "grep|view"'
+    QUIESCE='! ps -eo args --no-headers | grep -E "boxpwnr|strix" | grep -vE "grep|view" | grep -q .'
     ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
@@ -131,7 +131,8 @@ phase_copy() {
       p "pct exec $V -- test -d /$v" || die "data path /$v not found in the running CT; nothing was stopped"
     done
     if [[ -n $QUIESCE ]]; then
-      p "pct exec $V -- bash -c \"$QUIESCE\"" || die "guest is busy (quiesce check failed); nothing was stopped"
+      # Sent on stdin: no ssh/shell quoting layer can split or reinterpret the check's own quotes and pipes.
+      printf '%s\n' "$QUIESCE" | p "pct exec $V -- bash -s" || die "guest is busy (quiesce check failed); nothing was stopped"
     fi
     if [[ -n $MERGE_KEYS ]]; then
       p "pct exec $V -- cat /$MERGE_KEYS" >"$STATE/merge-keys.txt"
@@ -263,7 +264,13 @@ extra_verify() {
   case $V in
     40072)
       printf 'viewer healthz -> %s\n' "$(t "pct exec $V -- curl -s --max-time 8 http://192.168.100.72:18820/healthz" || echo fail)"
-      t "pct exec $V -- bash -c 'echo strix_runs: \$(ls /root/strix_runs | wc -l); echo model-traffic: \$(du -sh /root/model-traffic | cut -f1); echo authorized key comments:; awk \"{print \\\$NF}\" /root/.ssh/authorized_keys; getent hosts github.com | head -1'"
+      t "pct exec $V -- bash -s" <<'REMOTE'
+echo "strix_runs: $(ls /root/strix_runs | wc -l)"
+echo "model-traffic: $(du -sh /root/model-traffic | cut -f1)"
+echo "authorized key comments:"
+awk '{print $NF}' /root/.ssh/authorized_keys
+getent hosts github.com | head -1
+REMOTE
       ;;
     50013)
       local ep
