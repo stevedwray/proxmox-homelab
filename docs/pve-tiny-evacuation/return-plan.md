@@ -217,6 +217,26 @@ Read-only check of CT 50013 on pve:
   sources still exist on the boot SSD and are handled in R3 (VMID collision
   section).
 
+### Method per guest (provisional, decided 2026-10-27)
+
+Method A = fresh Terraform target + cold data copy + full provision.
+Method B = fresh backup of the stopped pve CT, restore on pve-tiny, import
+into state, then full provision. Both start from a fresh copy of the pve
+guest taken after its writers are quiet; never from an older backup.
+
+| Order | Guest | Method | Note |
+|---|---|---|---|
+| 1 | 20017 Technitium | A | Small |
+| 2 | 50012 secpipe | A | Stateless |
+| 3 | 50013 ai-services | A, revisit after R2 | B possible if volumes are large |
+| 4 | 40072 pentest-runner | A | Restore root/Docker over the fresh target |
+| 5 | 100071, 40070, 20030 | A | 40070 also gets the salvage archive |
+| 6 | 40014 opensearch | B, revisit after R2 | 150G data mount; needs the PBS namespace question settled; ingestion paused first |
+
+Note: node-to-node SSH is not available, so cold copies relay through the
+operator workstation. That makes the 150G OpenSearch copy slow; it is the
+main argument for B.
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
