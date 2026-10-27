@@ -30,7 +30,13 @@ PHASE=${2:-}
 #  EXCLUDES tar --exclude paths (relative to the CT root) left out of the data archive
 #  MERGE_KEYS an authorized_keys file whose lines are MERGED into the new CT's copy (never overwritten),
 #             so the fresh guest keeps the operator key that Ansible needs
-VOLS=(); IPS=(); UNITS=(); QUIESCE=; EXCLUDES=(); MERGE_KEYS=
+#  EXTRA_ARCHIVE a verified tarball on pve-tiny (with SHA256SUMS beside it) extracted over the new CT after VOLS
+#  BASELINE a script run inside the pve CT before shutdown; verify re-runs it on the new CT for comparison
+#  pre_hook/post_hook run once around the move: pre before the pve CT is stopped, post after provisioning
+#             (and from rollback)
+VOLS=(); IPS=(); UNITS=(); QUIESCE=; EXCLUDES=(); MERGE_KEYS=; EXTRA_ARCHIVE=; BASELINE=
+pre_hook() { :; }
+post_hook() { :; }
 case $V in
   20017)
     STACK=technitium-tiny-stack
