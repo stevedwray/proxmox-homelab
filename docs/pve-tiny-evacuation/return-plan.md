@@ -539,6 +539,27 @@ stop `cse-controller-worker` (40070) and `eval-runner-worker-runs/-ctl`
 (50013) before Redis stops, start them after it is back, and verify
 `inspect ping` pongs from both.
 
+### R3 guest 7: cse-panel 20030 (preflight written 2026-10-27, not yet run)
+
+Method A, 2.8 MB. Carried: `/srv/cse-panel/redis-data` (Redis AOF); the app
+code dirs and `redis.conf` (which holds the password) are rewritten by the
+playbook. Stale pve-tiny config is a normal stale CT (both volumes on
+`local-lvm`), removed with `pct destroy`. This Redis is the Celery broker for
+five workers (controller worker + two pentest workers on 40070, eval-runner
+`runs`/`ctl` on 50013). Because the controller worker wedged and never
+reconnected after the 10-24 Redis restart, the script runs hooks: **pre**
+(before the pve CT stops) stops those workers (`docker stop` the three
+containers on 40070; `systemctl stop` the two units on 50013); **post** (after
+a successful provision, and from rollback) starts them against the new Redis.
+Verified read-only that the five workers in the idle check
+(`celery@eaec76750f83`, `celery@10499522354e`, `celery@c5df725c3573`,
+`runs@`, `ctl@ai-services-stack`) are exactly those containers/units.
+Quiesce uses flower's Celery to inspect `active`, `reserved` and `scheduled`
+across the fleet and refuses unless every worker answers and none has a task
+(tested: idle passes, a forced-busy control fails). Baseline `redis dbsize`
+is 7 and is compared in `verify`, which also checks the panel UI `:8050` and
+that 5 workers answer through the new Redis. No Wazuh play here.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.

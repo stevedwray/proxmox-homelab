@@ -3,7 +3,7 @@
 # restore of any listed data volumes + full provision). See
 # docs/pve-tiny-evacuation/return-plan.md. Run from the operator workstation.
 #
-#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071, 40070
+#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071, 40070, 20030
 #
 # Phases (each is idempotent and refuses to run if the previous one is not done):
 #   check      read-only: both nodes, both CTs, free space, (DNS guests) resolvers
@@ -104,6 +104,36 @@ else
 fi
 exit 0'
     ;;
+  20030)
+    STACK=cse-panel-stack
+    # Redis AOF (queued/recent job state). The app code dirs and redis.conf are rewritten by the playbook.
+    VOLS=(srv/cse-panel/redis-data)
+    UNITS=(docker)
+    # shellcheck disable=SC2016  # runs remotely on stdin; must not expand locally
+    QUIESCE='for k in active reserved scheduled; do
+  o=$(docker exec cse-panel-flower sh -c "celery -b \"\$CELERY_BROKER_URL\" inspect $k -t 8 --json" 2>&1)
+  workers=$(echo "$o" | grep -oE "\"[a-z]+@[A-Za-z0-9._-]+\"" | sort -u | tr "\n" " ")
+  echo "$k: workers replying: ${workers:-none}"
+  if [ -z "$workers" ]; then echo "no worker answered $k; cannot confirm the queues are idle"; exit 1; fi
+  if echo "$o" | grep -q "\"id\""; then echo "busy: $k tasks exist"; exit 1; fi
+done
+exit 0'
+    # shellcheck disable=SC2016
+    BASELINE='echo "redis dbsize: $(docker exec cse-panel-redis sh -c '"'"'redis-cli -a "$(awk "/^requirepass/{print \$2}" /usr/local/etc/redis/redis.conf)" --no-auth-warning dbsize'"'"')"'
+    # This Redis is the Celery broker for the controller (40070) and eval-runner (50013) workers. They wedged
+    # after the 2026-10-24 Redis restart and never reconnected, so stop them before Redis goes down and start
+    # them only once the new Redis is up.
+    pre_hook() {
+      echo "stopping Celery workers that use this Redis (40070 controller + pentest workers, 50013 eval-runner)"
+      t "pct exec 40070 -- docker stop cse-controller-worker cse-controller-pentest-worker cse-controller-pentest-research-worker"
+      t "pct exec 50013 -- systemctl stop eval-runner-worker-runs eval-runner-worker-ctl"
+    }
+    post_hook() {
+      echo "starting the Celery workers against the new Redis"
+      t "pct exec 40070 -- docker start cse-controller-worker cse-controller-pentest-worker cse-controller-pentest-research-worker"
+      t "pct exec 50013 -- systemctl start eval-runner-worker-runs eval-runner-worker-ctl"
+    }
+    ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
 
@@ -193,6 +223,12 @@ phase_copy() {
       [[ -s $STATE/merge-keys.txt ]] || die "could not read /$MERGE_KEYS; nothing was stopped"
       echo "authorized keys captured: $(grep -c '^ssh-' "$STATE/merge-keys.txt") key line(s)"
     fi
+    if [[ -n $BASELINE ]]; then
+      printf '%s\n' "$BASELINE" | p "pct exec $V -- bash -s" >"$STATE/baseline.txt"
+      echo "baseline: $(cat "$STATE/baseline.txt")"
+    fi
+    pre_hook
+    trap 'echo "copy failed after pre_hook; run: $0 $V rollback (restarts the pve copy and the workers)" >&2' ERR
     manifest | p "pct exec $V -- bash -s" >"$STATE/manifest-source.txt"
     echo "baseline manifest: $(wc -l <"$STATE/manifest-source.txt") lines"
     p "pct shutdown $V --timeout 90"
@@ -345,10 +381,23 @@ phase_provision() {
   grep -qE 'failed=0\b' "$STATE/provision.log" || die "recap does not show failed=0 (see $STATE/provision.log)"
   [[ ${WAZUH:-} != skip ]] || echo "wazuh-pending" >"$STATE/provision.warn"
   mark provision
+  post_hook
 }
 
 extra_verify() {
   case $V in
+    20030)
+      t "pct exec $V -- bash -s" <<'REMOTE'
+docker ps --format '{{.Names}} {{.Status}}'
+echo "panel-ui :8050 -> $(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8050/)"
+echo "redis dbsize: $(docker exec cse-panel-redis sh -c 'redis-cli -a "$(awk "/^requirepass/{print \$2}" /usr/local/etc/redis/redis.conf)" --no-auth-warning dbsize')"
+for k in active; do
+  o=$(docker exec cse-panel-flower sh -c "celery -b \"\$CELERY_BROKER_URL\" inspect $k -t 10 --json" 2>&1)
+  echo "workers answering via the new Redis: $(echo "$o" | grep -oE '"[a-z]+@[A-Za-z0-9._-]+"' | sort -u | wc -l) (expect 5)"
+done
+REMOTE
+      echo "baseline before the move: $(cat "$STATE/baseline.txt" 2>/dev/null)"
+      ;;
     40070)
       t "pct exec $V -- bash -s" <<'REMOTE'
 docker ps --format '{{.Names}} {{.Status}}'
@@ -421,6 +470,7 @@ phase_rollback() {
   if t "test -e /etc/pve/lxc/$V.conf"; then t "pct stop $V 2>/dev/null || true; pct destroy $V --purge"; fi
   p "pct set $V --onboot 1 && pct start $V"
   sleep 10
+  post_hook
   dig_all
   rm -f "$STATE"/create.done "$STATE"/restore.done "$STATE"/provision.done "$STATE"/verify.done
 }
