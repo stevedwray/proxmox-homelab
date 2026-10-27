@@ -34,7 +34,8 @@ PHASE=${2:-}
 #  BASELINE a script run inside the pve CT before shutdown; verify re-runs it on the new CT for comparison
 #  pre_hook/post_hook run once around the move: pre before the pve CT is stopped, post after provisioning
 #             (and from rollback)
-VOLS=(); IPS=(); UNITS=(); QUIESCE=; EXCLUDES=(); MERGE_KEYS=; EXTRA_ARCHIVE=; BASELINE=
+#  HOLD_DISABLED units the operator turned off; the playbook re-enables them, so they are disabled again after provision
+VOLS=(); IPS=(); UNITS=(); QUIESCE=; EXCLUDES=(); MERGE_KEYS=; EXTRA_ARCHIVE=; BASELINE=; HOLD_DISABLED=()
 pre_hook() { :; }
 post_hook() { :; }
 case $V in
@@ -46,7 +47,8 @@ case $V in
     ;;
   50012)
     STACK=secpipe-stack
-    UNITS=(docker cve-enrichment-sync.timer tpot-findings-ingest.timer wazuh-agent)
+    UNITS=(docker tpot-findings-ingest.timer wazuh-agent)
+    HOLD_DISABLED=(cve-enrichment-sync.timer)   # operator request 2026-10-27: it can send derived findings to an external LLM
     ;;
   50013)
     STACK=ai-services-stack
@@ -173,7 +175,8 @@ docker exec $c sh -c "curl -sk --max-time 20 -u \"admin:\$OPENSEARCH_INITIAL_ADM
     }
     post_hook() {
       echo "resuming secpipe timers on 50012"
-      t "pct exec 50012 -- systemctl start cve-enrichment-sync.timer tpot-findings-ingest.timer cve-deep-dive.timer"
+      # Only timers that are enabled: the operator disabled cve-enrichment-sync.timer on 2026-10-27 and it must stay off.
+      t "pct exec 50012 -- bash -c 'for u in cve-enrichment-sync.timer tpot-findings-ingest.timer cve-deep-dive.timer; do systemctl is-enabled --quiet \$u && systemctl start \$u; done; true'"
     }
     ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
@@ -434,6 +437,11 @@ phase_provision() {
   grep -qE 'failed=0\b' "$STATE/provision.log" || die "recap does not show failed=0 (see $STATE/provision.log)"
   [[ ${WAZUH:-} != skip ]] || echo "wazuh-pending" >"$STATE/provision.warn"
   mark provision
+  local hu
+  for hu in "${HOLD_DISABLED[@]}"; do
+    t "pct exec $V -- systemctl disable --now $hu" >/dev/null 2>&1 || true
+    echo "held off: $hu is $(t "pct exec $V -- systemctl is-enabled $hu" 2>&1 | head -1) / $(t "pct exec $V -- systemctl is-active $hu" 2>&1 | head -1)"
+  done
   post_hook
 }
 

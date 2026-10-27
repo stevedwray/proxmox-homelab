@@ -623,6 +623,53 @@ play), backups and `known_hosts`, the merge of the two `stable` fixes
 (web-search-mcp pin, Dashboards healthcheck), soak, retiring the pve copies,
 state/archive cleanup, and the node_exporter/Step CA policy decision.
 
+### Post-return follow-ups, 2026-10-27 evening
+
+- **CVE timer:** `cve-enrichment-sync.timer` on 50012 disabled at the
+  operator's request (derived findings can go to an external LLM). The
+  stack's `cve_enrichment_sync_enabled: true` would re-enable it on every
+  provision, so the return script now disables it again after 50012's
+  provision (`HOLD_DISABLED`) and the 40014 post-hook only restarts timers
+  that are enabled. Verified held through all six re-provisions.
+  `cve-deep-dive.timer` (weekly, Sunday 23:00) is still enabled: operator to
+  decide.
+- **pve backups:** pve job `backup-8b90fc3e-c3a5` now excludes the eight
+  stopped copies (20017, 20030, 40014, 40070, 40072, 50012, 50013, 100071);
+  old config saved as `/root/jobs.cfg.bak-2026-10-27` on pve. The moved
+  guests get their first backup from the pve-tiny job (12:30 daily); no
+  snapshot exists yet.
+- **Wazuh:** `wazuh-remoted` on the manager (CT 40015) had exited silently on
+  2026-10-26 about 03:44 UTC (no log line, no OOM). Started with
+  `wazuh-control start`. LXC agents stayed stranded (no reconnect); restart
+  of `wazuh-agent` reconnects them: `scripts/wazuh-agents-restart.sh
+  [--apply]`. 29 Disconnected became 3 (the `pve` host, the `pve-test`
+  laptop, and a stale IP-named record `035 192.168.40.14`). 50012, 50013 and
+  40014 enrolled on re-provision (now Active). 100071, 40072 and 40070 have
+  no Wazuh play in their playbooks, so no agent (as before the move).
+- **Step CA rules:** `mikrotik-firewall-step-ca-node-exporter.yml` (on
+  `stable`, `e7fe420f`) applied: `ai_seg`, `cse_seg`, `connector_seg` and
+  the `pterodactyl-lab` host reach `192.168.20.11:443`. Verified from 50012,
+  50013, 40072, 100071, 40070 and 40014 (all 200). The preview confirmed all
+  four anchors exist.
+- **Re-provision of 50012, 50013, 40014, 100071, 40072, 40070** (no
+  `WAZUH=skip`): all failed=0 (116, 146, 120, 83, 83, 138 tasks ok). Result:
+  TLS `node_exporter` with basic auth and active renewal timers on all six
+  (40070 keeps its restored cert, expiry 2026-12-17; the timer renews it
+  through the now-open Step CA path), Dashboards healthcheck fixed (healthy),
+  unattended-upgrades play ran on 50012.
+- **Functional sweep:** `scripts/pve-tiny-return-sweep.sh`: 47 pass, 0 warn,
+  0 fail (placement, health, DNS, nine ingress routes, OpenWebUI/SearXNG,
+  eval history, panel `/framework`, 5 Celery workers, controller to runner,
+  OpenSearch, secpipe, Step CA reachability, Wazuh, pve backup job).
+- **Still open:** monitoring-stack deploy (scrape targets for the six TLS
+  exporters; same commit as the Step CA rules); first backups of the moved
+  guests; user-level spot checks (an OpenWebUI chat, one small eval or CSE
+  job); controlled pve-tiny reboot test; Terraform drift check; merge of the
+  `web-search-mcp` pin and Dashboards healthcheck fixes to `stable`; soak and
+  retiring the pve copies; cleanup of `~/.local/state/pve-tiny-return/` and
+  `/root/salvage-*`; `cve-deep-dive.timer` decision; unpushed commits
+  (trufflehog hook fails in a worktree).
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
