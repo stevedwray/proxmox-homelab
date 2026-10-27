@@ -166,6 +166,26 @@ Read-only check of CT 50013 on pve:
 - Lesson for the return: add `/srv/<stack>` data directories to the parity
   manifest, not only `/opt`, `/etc`, units and Docker volumes.
 
+### Open items 1-2 salvaged, 2026-10-27 (40070)
+
+- The stopped 40070 root volume (`pve/vm-40070-disk-0`, boot SSD) was
+  activated and mounted read-only (`ro,noload`), then unmounted and
+  deactivated. Nothing on it was modified.
+- Archived with `tar --numeric-owner --xattrs --acls`: `/srv/pentest-worker`
+  (SSH key `id_pentest_runner`, launcher, 19 run-manifests, `.venv`),
+  `/srv/pentest-research` (GVM gateway key, `known_hosts`, snapshots, M01
+  research data), `/srv/pentest-target-guard`, `/etc/node_exporter` and
+  `/usr/local/bin/step`: 8,862 entries, 38 MB.
+- Copies, both mode 0600 in a 0700 directory, identical SHA-256
+  `acf58478bd05276b4a7910d8dc6e57da4b03be6b364af88609956a95b94d4b05`:
+  `pve-tiny:/root/salvage-40070/` and `pve:/root/salvage-40070/`.
+- The live pve 40070 has **none** of these (only `/srv/cyberseceval`), so the
+  pentest worker, research worker and node_exporter cert are absent on the
+  live controller today. Restoring them on whichever node runs 40070 is part
+  of R3 for that guest (extract the archive, then the full stack provision).
+- Items 3-4 (reporter scripts, Wazuh enrolment) remain reproducible from
+  playbooks; no copy taken.
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
