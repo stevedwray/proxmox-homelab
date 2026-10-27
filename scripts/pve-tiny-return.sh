@@ -161,7 +161,9 @@ phase_create() {
   # The state's null_resource triggers hold the main checkout's paths. From this worktree they differ,
   # Terraform would REPLACE it, and its destroy-time provisioner tries to delete the SDN vnet (the
   # network_sdn_allow_destroy guard blocks it, aborting the apply). Dropping it from the worktree's
-  # state copy makes the plan a plain create without running that provisioner.
+  # state copy makes the plan a plain create without running that provisioner. It is the only resource
+  # with a destroy-time provisioner (checked: grep 'when = destroy' in terraform/lxc), so other
+  # null_resource replacements (e.g. the legacy provisioner-less stack_cleanup) are harmless.
   local st=terraform.tfstate.d/pve-tiny/terraform.tfstate
   if grep -q configure_network_sdn_attachment "$st"; then
     cp -p "$st" "$st.pre-sdn-staterm-$(date +%s)"
@@ -170,7 +172,7 @@ phase_create() {
   local plan
   plan=$(../../../../../with-secrets-prod-tiny terragrunt plan -lock=false -no-color 2>&1 | sed 's/^[0-9:.]* STDOUT tofu: //')
   grep -E '^  # |Plan:|Error' <<<"$plan" || true
-  if grep -E '^  # null_resource.*(destroyed|replaced)|^  # module.lxc.proxmox_virtual_environment_container.*(destroyed|replaced)' <<<"$plan"; then
+  if grep -E '^  # null_resource.configure_network_sdn_attachment.*(destroyed|replaced)|^  # module.lxc.proxmox_virtual_environment_container.*(destroyed|replaced)' <<<"$plan"; then
     die "plan would destroy/replace the SDN attachment or a container; not applying"
   fi
   grep -q 'docker_host will be created' <<<"$plan" || die "plan does not create the container; not applying"
