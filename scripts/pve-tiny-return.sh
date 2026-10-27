@@ -340,6 +340,17 @@ phase_restore() {
        mkdir -p \$mp/var/lib/docker/volumes
        tar --numeric-owner --xattrs --acls -xzf - -C \$mp
        for v in $list; do test -d \$mp/\$v && du -sh \$mp/\$v; done
+       # tar runs as real root on the host, so any parent directory it had to create is owned by uid 0, which an
+       # unprivileged CT sees as nobody (its root, uid 100000, then cannot write there). Re-own those parents.
+       if pct config $V | grep -q '^unprivileged: 1'; then
+         for v in $list; do
+           d=\$(dirname \$v)
+           while [ \"\$d\" != . ] && [ \"\$d\" != / ]; do
+             if [ \"\$(stat -c %u \$mp/\$d)\" = 0 ]; then chown 100000:100000 \$mp/\$d; echo \"re-owned implicitly created parent: \$d\"; fi
+             d=\$(dirname \$d)
+           done
+         done
+       fi
        if [ -n '$EXTRA_ARCHIVE' ]; then
          (cd \$(dirname '$EXTRA_ARCHIVE') && sha256sum -c --quiet SHA256SUMS)
          tar --numeric-owner --xattrs --acls -xzf '$EXTRA_ARCHIVE' -C \$mp
