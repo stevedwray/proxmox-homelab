@@ -156,6 +156,15 @@ Read-only check of CT 50013 on pve:
      BFCL and AgentBench via `import_history.py`).
 - Restore is additive into `_historical/`; it must not touch the newer
   run directories. It is a pve production write and needs its own approval.
+- **Restored 2026-10-27.** `_historical/` extracted from
+  `ct/50013/2026-10-23T23:33:12Z` (pve-tiny namespace, `root.pxar`,
+  pattern `/srv/eval-runner/results/_historical/**`; 56 files, 42 MB) on
+  pve-tiny, streamed to CT 50013 on pve by the operator, owner 1000:1000.
+  `/usr/local/bin/eval-run results` shows the historical section again.
+  The temp directory on pve-tiny was removed. Note: `eval-run` is not on
+  the PATH under `pct exec`; call it by full path.
+- Lesson for the return: add `/srv/<stack>` data directories to the parity
+  manifest, not only `/opt`, `/etc`, units and Docker volumes.
 
 ### R2. Rehearsal
 
