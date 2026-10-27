@@ -3,7 +3,7 @@
 # restore of any listed data volumes + full provision). See
 # docs/pve-tiny-evacuation/return-plan.md. Run from the operator workstation.
 #
-#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071
+#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071, 40070
 #
 # Phases (each is idempotent and refuses to run if the previous one is not done):
 #   check      read-only: both nodes, both CTs, free space, (DNS guests) resolvers
@@ -74,6 +74,36 @@ case $V in
     UNITS=(docker)
     QUIESCE='! ps -eo args --no-headers | grep -E "CybersecurityBenchmarks|canary|run-autonomous|gcc|g\+\+|cmake" | grep -vE "grep" | grep -q .'
     ;;
+  40070)
+    STACK=cse-controller
+    # /srv/cyberseceval is hand-maintained (pinned PurpleLlama checkout + cse-lab branch, venv, manifests):
+    # the playbook only clones when the repo is absent, so this MUST be restored before provisioning.
+    VOLS=(srv/cyberseceval)
+    EXCLUDES=(srv/cyberseceval/lost+found)
+    # Pentest keys/launcher data, node_exporter cert and step, salvaged from the stopped pve-tiny source on
+    # 2026-10-27 (also copied on pve). Neither is reproducible by the playbook.
+    EXTRA_ARCHIVE=/root/salvage-40070/cse-controller-40070-salvage.tgz
+    UNITS=(docker node-exporter-cert-renew.timer)
+    # shellcheck disable=SC2016  # runs remotely on stdin; must not expand locally
+    QUIESCE='w=cse-controller-worker
+docker inspect "$w" >/dev/null 2>&1 || { echo "worker container missing"; exit 1; }
+o=$(docker exec -w /srv/cyberseceval/repo/PurpleLlama "$w" /srv/cyberseceval/.venv/bin/celery -A cse_tasks inspect active -t 6 --json 2>&1)
+if echo "$o" | grep -q "celery@"; then
+  if echo "$o" | grep -q "\"id\""; then echo "busy: active Celery task"; exit 1; fi
+  echo "worker replied: idle"
+else
+  echo "worker did not answer inspect (disconnected from Redis?); checking processes and CPU instead"
+  n=$(docker top "$w" -eo pid,args | tail -n +2 | grep -c .)
+  if [ "$n" -lt 1 ]; then echo "cannot list the worker processes; not assuming idle"; exit 1; fi
+  extra=$(docker top "$w" -eo pid,args | tail -n +2 | grep -vc "celery -A cse_tasks worker")
+  if [ "$extra" != 0 ]; then echo "busy: $extra non-celery process(es)"; exit 1; fi
+  t1=$(docker top "$w" -eo pid,time | tail -n +2 | tr "\n" " "); sleep 5
+  t2=$(docker top "$w" -eo pid,time | tail -n +2 | tr "\n" " ")
+  if [ "$t1" != "$t2" ]; then echo "busy: CPU time is changing"; exit 1; fi
+  echo "idle by process/CPU check"
+fi
+exit 0'
+    ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
 
@@ -131,6 +161,15 @@ phase_check() {
     echo "tiny  CT $V: none (clean slate)"
   fi
   echo "tiny nvme-lvm free: $(t "pvesm status | awk '\$1==\"nvme-lvm\"{printf \"%.0f GiB\", \$6/1048576}'")"
+  if [[ -n $EXTRA_ARCHIVE ]]; then
+    local d f want have
+    d=$(dirname "$EXTRA_ARCHIVE"); f=$(basename "$EXTRA_ARCHIVE")
+    t "cd $d && sha256sum -c --quiet SHA256SUMS" || die "salvage archive on pve-tiny failed its checksum ($EXTRA_ARCHIVE)"
+    want=$(t "cut -d' ' -f1 $d/SHA256SUMS")
+    have=$(p "sha256sum $d/$f | cut -d' ' -f1")
+    [[ $want == "$have" ]] || die "pve's copy of the salvage archive differs from pve-tiny's"
+    echo "salvage archive: verified on pve-tiny and identical on pve (${want:0:12}...)"
+  fi
   [[ -d $RET_WT/terraform/lxc/environments/pve-tiny/$STACK/terraform.tfstate.d ]] || die "state missing in $RET_WT"
   [[ $(git -C "$RET_WT" branch --show-current) == work/pve-tiny-return ]] || die "return worktree not on work/pve-tiny-return"
   dig_all
@@ -258,7 +297,12 @@ phase_restore() {
        mp=/var/lib/lxc/$V/rootfs
        mkdir -p \$mp/var/lib/docker/volumes
        tar --numeric-owner --xattrs --acls -xzf - -C \$mp
-       for v in $list; do test -d \$mp/\$v && du -sh \$mp/\$v; done" <"$STATE/data.tgz"
+       for v in $list; do test -d \$mp/\$v && du -sh \$mp/\$v; done
+       if [ -n '$EXTRA_ARCHIVE' ]; then
+         (cd \$(dirname '$EXTRA_ARCHIVE') && sha256sum -c --quiet SHA256SUMS)
+         tar --numeric-owner --xattrs --acls -xzf '$EXTRA_ARCHIVE' -C \$mp
+         echo 'extra archive extracted:'; ls -ld \$mp/srv/pentest-worker \$mp/etc/node_exporter | cut -c1-70
+       fi" <"$STATE/data.tgz"
     t "pct start $V"
   else
     echo "stateless guest: nothing to restore"
@@ -305,6 +349,20 @@ phase_provision() {
 
 extra_verify() {
   case $V in
+    40070)
+      t "pct exec $V -- bash -s" <<'REMOTE'
+docker ps --format '{{.Names}} {{.Status}}'
+echo "worker log: $(docker logs --tail 40 cse-controller-worker 2>&1 | grep -E 'Connected to redis|ready\.' | tail -2 | cut -c1-110 | tr '\n' ' ')"
+echo "worker answers inspect: $(docker exec -w /srv/cyberseceval/repo/PurpleLlama cse-controller-worker /srv/cyberseceval/.venv/bin/celery -A cse_tasks inspect ping -t 8 2>&1 | grep -c 'pong') pong(s)"
+echo "mountpoint /srv/cyberseceval: $(mountpoint -q /srv/cyberseceval && echo yes || echo NO)"
+echo "repo branch: $(git -C /srv/cyberseceval/repo/PurpleLlama branch --show-current 2>&1)"
+echo "key files: $(stat -c '%a %n' /srv/pentest-worker/id_pentest_runner /srv/pentest-research/id_gvm_research_gateway 2>&1 | tr '\n' ';')"
+echo "run-manifests: $(ls /srv/pentest-worker/run-manifests 2>/dev/null | wc -l)"
+echo "step: $(/usr/local/bin/step version 2>&1 | head -1)"
+echo "node_exporter cert files: $(ls /etc/node_exporter 2>/dev/null | wc -l)"
+ssh -i /srv/pentest-worker/id_pentest_runner -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/r2-kh root@192.168.100.72 'echo "controller -> pentest-runner ssh: ok"' 2>&1 | tail -1
+REMOTE
+      ;;
     100071)
       t "pct exec $V -- bash -s" <<'REMOTE'
 echo "mountpoint /srv/cyberseceval: $(mountpoint -q /srv/cyberseceval && echo yes || echo NO)"

@@ -477,6 +477,33 @@ works). Manifest diff additive (`apt-listchanges.timer`, `ipmi`) plus
 `systemd-pcrlock.socket` and `.dpkg-old` not carried. pve copy stopped,
 `onboot=0`.
 
+### R3 guest 6: cse-controller 40070 (preflight written 2026-10-27, not yet run)
+
+Method A with two archives. (1) `/srv/cyberseceval` (560 MB; **hand-maintained**:
+pinned PurpleLlama checkout with the local `cse-lab` branch, venv, manifests,
+results): `deploy-cse-controller` only clones when the repo is absent, so it
+must be restored before provisioning or the local work is replaced by a fresh
+clone. (2) The salvage archive (`/srv/pentest-worker`, `/srv/pentest-research`,
+`/srv/pentest-target-guard`, `/etc/node_exporter`, `/usr/local/bin/step`; SSH
+keys and run-manifests) extracted over the new CT in the same mount session;
+`check` verifies its checksum on pve-tiny and that pve's copy is identical.
+The playbook deploys the launcher code but expects the keys to exist. Stale
+pve-tiny config is half-phantom (data mount on the lost NVMe): handled by
+`destroy_half_phantom`, safe because the salvage is verified. No Wazuh play.
+
+**Finding (live on pve, not caused by the return):** the controller's Celery
+worker (`cse-controller-worker`, container up 3 days) has had **no connection
+to Redis since 2026-10-24 03:36 UTC**, when the cse-panel Redis restarted
+during the evacuation cutover (`Connection reset by peer`; no "ready" since;
+no established TCP to `192.168.20.30:6379`; ignores `inspect ping`). Only the
+two Celery processes run, idle. So the controller has not consumed CSE jobs
+for three days; the return recreates the container and fixes it. Quiesce
+therefore cannot rely on `celery inspect`: it uses inspect when the worker
+answers, else requires no non-Celery process and unchanged CPU time over 5 s
+(tested read-only: passes on the idle worker, reports busy on a control
+container; an earlier draft passed vacuously because `docker top` needed the
+`pid` field).
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
