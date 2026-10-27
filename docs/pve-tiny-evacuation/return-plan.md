@@ -576,6 +576,29 @@ the workers stopped for the move. pve copy stopped, `onboot=0`.
 **Returned so far (7 of 8):** 20017, 50012, 50013, 40072, 100071, 40070,
 20030. Remaining: 40014 opensearch.
 
+### R3 guest 8: opensearch 40014 (preflight written 2026-10-27, not yet run)
+
+**Sizing correction:** the 150 GiB data mount has only about 0.9 GB used (the
+whole CT's PBS backups are about 8.2 GB; the largest index, `harbor-findings`,
+is 272 MB). The earlier "about 35 minutes" estimate assumed a full mount. A
+plain cold copy (method A) is therefore enough: no PBS staging and no
+Terraform import. Carried: `/var/lib/opensearch-data` (includes the
+`.opendistro_security` index with users and roles). Host prerequisites on
+pve-tiny verified: `vm.max_map_count` 1,048,576 (needs 262,144), 27 GB RAM
+available for the 6 GB CT. The playbook has a Wazuh play, so run provision
+with `WAZUH=skip` (still pending in the Wazuh batch).
+
+Quiesce: cluster not red and no relocating/initializing shards (reads the
+container's own `OPENSEARCH_INITIAL_ADMIN_PASSWORD`, never printing it).
+Pre-hook pauses secpipe's three timers on 50012 and waits for any run to end;
+post-hook resumes them. Other writers (Harbor, GVM, Graylog) are not paused
+and retry. Baseline is `_cat/indices` doc counts (124 lines), taken after the
+writers are paused and compared by `verify` (excluding today's auditlog index
+and `docker-live-usage`, which grow with every query). Tested read-only:
+quiesce passes on the live cluster and a forced-failure control fails; the
+baseline is identical across two consecutive reads. Expected baseline status
+is `yellow` (single node, replicas unassigned).
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.

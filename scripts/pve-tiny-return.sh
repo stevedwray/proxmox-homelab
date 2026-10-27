@@ -3,7 +3,7 @@
 # restore of any listed data volumes + full provision). See
 # docs/pve-tiny-evacuation/return-plan.md. Run from the operator workstation.
 #
-#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071, 40070, 20030
+#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071, 40070, 20030, 40014
 #
 # Phases (each is idempotent and refuses to run if the previous one is not done):
 #   check      read-only: both nodes, both CTs, free space, (DNS guests) resolvers
@@ -140,6 +140,42 @@ exit 0'
       t "pct exec 50013 -- systemctl start eval-runner-worker-runs eval-runner-worker-ctl"
     }
     ;;
+  40014)
+    STACK=opensearch-stack
+    # Index data (the security index with users/roles lives in it). Only about 0.9 GB is used of the 150 GB
+    # mount, so a plain cold copy is quick; images are re-pulled from Harbor.
+    VOLS=(var/lib/opensearch-data)
+    EXCLUDES=(var/lib/opensearch-data/lost+found)
+    UNITS=(docker wazuh-agent)
+    # shellcheck disable=SC2016  # runs remotely on stdin; must not expand locally
+    QUIESCE='c=opensearch-stack-opensearch
+o=$(docker exec $c sh -c "curl -sk --max-time 15 -u \"admin:\$OPENSEARCH_INITIAL_ADMIN_PASSWORD\" https://localhost:9200/_cluster/health" 2>&1)
+echo "health: $(echo "$o" | grep -oE "\"status\":\"[a-z]+\"|\"(relocating|initializing)_shards\":[0-9]+" | tr "\n" " ")"
+if ! echo "$o" | grep -q "\"status\""; then echo "no health answer; not assuming the cluster is quiet"; exit 1; fi
+if echo "$o" | grep -q "\"status\":\"red\""; then echo "cluster is red"; exit 1; fi
+n=$(echo "$o" | grep -oE "\"(relocating|initializing)_shards\":0" | wc -l)
+if [ "$n" != 2 ]; then echo "shards are relocating or initializing"; exit 1; fi
+exit 0'
+    # shellcheck disable=SC2016
+    BASELINE='c=opensearch-stack-opensearch
+today=$(date -u +%Y.%m.%d)
+docker exec $c sh -c "curl -sk --max-time 20 -u \"admin:\$OPENSEARCH_INITIAL_ADMIN_PASSWORD\" \"https://localhost:9200/_cat/indices?h=index,docs.count&s=index\"" | grep -vE "^(security-auditlog-$today|docker-live-usage) " '
+    # Secpipe (50012) is the main writer (CVE sync daily, T-Pot ingest every 10 min). Pause its timers for the
+    # move and let any running run finish. Other writers (Harbor, GVM, Graylog) are not paused; they retry.
+    pre_hook() {
+      echo "pausing secpipe timers on 50012"
+      t "pct exec 50012 -- systemctl stop cve-enrichment-sync.timer tpot-findings-ingest.timer cve-deep-dive.timer"
+      for _ in $(seq 1 24); do
+        t "pct exec 50012 -- systemctl is-active --quiet cve-enrichment-sync.service tpot-findings-ingest.service cve-deep-dive.service" || break
+        sleep 5
+      done
+      if t "pct exec 50012 -- systemctl is-active --quiet tpot-findings-ingest.service"; then die "a secpipe run is still active after 2 minutes"; fi
+    }
+    post_hook() {
+      echo "resuming secpipe timers on 50012"
+      t "pct exec 50012 -- systemctl start cve-enrichment-sync.timer tpot-findings-ingest.timer cve-deep-dive.timer"
+    }
+    ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
 
@@ -229,12 +265,12 @@ phase_copy() {
       [[ -s $STATE/merge-keys.txt ]] || die "could not read /$MERGE_KEYS; nothing was stopped"
       echo "authorized keys captured: $(grep -c '^ssh-' "$STATE/merge-keys.txt") key line(s)"
     fi
+    pre_hook
+    trap 'echo "copy failed after pre_hook; run: $0 $V rollback (restarts the pve copy and the paused workers/timers)" >&2' ERR
     if [[ -n $BASELINE ]]; then
       printf '%s\n' "$BASELINE" | p "pct exec $V -- bash -s" >"$STATE/baseline.txt"
-      echo "baseline: $(cat "$STATE/baseline.txt")"
+      echo "baseline recorded: $(wc -l <"$STATE/baseline.txt") line(s)"
     fi
-    pre_hook
-    trap 'echo "copy failed after pre_hook; run: $0 $V rollback (restarts the pve copy and the workers)" >&2' ERR
     manifest | p "pct exec $V -- bash -s" >"$STATE/manifest-source.txt"
     echo "baseline manifest: $(wc -l <"$STATE/manifest-source.txt") lines"
     p "pct shutdown $V --timeout 90"
@@ -403,6 +439,16 @@ phase_provision() {
 
 extra_verify() {
   case $V in
+    40014)
+      t "pct exec $V -- bash -s" <<'REMOTE'
+docker ps --format '{{.Names}} {{.Status}}'
+c=opensearch-stack-opensearch
+docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" https://localhost:9200/_cluster/health' | tr ',' '\n' | grep -E '"status"|number_of_nodes|active_shards"|unassigned_shards"'
+echo "security index docs: $(docker exec $c sh -c 'curl -sk --max-time 15 -u "admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD" "https://localhost:9200/_cat/count/.opendistro_security?h=count"')"
+echo "dashboards :5601 -> $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:5601/api/status)"
+echo "data mount: $(mountpoint -q /var/lib/opensearch-data && echo yes || echo NO), used $(du -sh /var/lib/opensearch-data | cut -f1)"
+REMOTE
+      ;;
     20030)
       t "pct exec $V -- bash -s" <<'REMOTE'
 docker ps --format '{{.Names}} {{.Status}}'
@@ -413,7 +459,6 @@ for k in active; do
   echo "workers answering via the new Redis: $(echo "$o" | grep -oE '"[a-z]+@[A-Za-z0-9._-]+"' | sort -u | wc -l) (expect 5)"
 done
 REMOTE
-      echo "baseline before the move: $(cat "$STATE/baseline.txt" 2>/dev/null)"
       ;;
     40070)
       t "pct exec $V -- bash -s" <<'REMOTE'
@@ -472,6 +517,10 @@ phase_verify() {
   for u in "${UNITS[@]}"; do printf '%-34s %s\n' "$u" "$(t "pct exec $V -- systemctl is-active $u" || true)"; done
   dig_all
   extra_verify
+  if [[ -n $BASELINE ]]; then
+    printf '%s\n' "$BASELINE" | t "pct exec $V -- bash -s" >"$STATE/baseline-target.txt"
+    if diff -u "$STATE/baseline.txt" "$STATE/baseline-target.txt"; then echo "BASELINE-MATCH ($(wc -l <"$STATE/baseline.txt") line(s) identical before and after)"; else echo "BASELINE DIFF above: review (live writers can legitimately change counts)"; fi
+  fi
   manifest | t "pct exec $V -- bash -s" >"$STATE/manifest-target.txt"
   if diff -u "$STATE/manifest-source.txt" "$STATE/manifest-target.txt"; then
     echo "MANIFEST-PARITY-OK"
