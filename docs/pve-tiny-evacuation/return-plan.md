@@ -923,8 +923,29 @@ Still open:
 - `cve-enrichment-sync.timer` on 50012 is disabled at the operator's request
   (the script holds it off after a provision); `cve-deep-dive.timer` is still
   enabled.
-- The `pve-tiny` Terraform state for the eight stacks is local and
-  untracked; its authoritative copy is the one updated during the return.
+- **Terraform state location.** The `pve-tiny` state for the eight stacks is
+  local and untracked. During the return it was updated inside the
+  `pve-tiny-return` worktree and, at closeout, copied to the main checkout's
+  `terraform/lxc/environments/pve-tiny/<stack>/terraform.tfstate.d/pve-tiny/`
+  (checksums verified; the previous files are kept beside them as
+  `terraform.tfstate.pre-return-2026-10-27`). Before the first plan or apply
+  from any checkout, remove the SDN attachment resource once per stack, because
+  its triggers hold the old worktree's paths and Terraform would otherwise try
+  to *replace* it; its destroy-time provisioner would delete the `tvmgmt`
+  VNet (the `network_sdn_allow_destroy: false` guard aborts it, but do not rely
+  on that):
+
+  ```bash
+  cd terraform/lxc/environments/pve-tiny
+  for s in technitium-tiny-stack secpipe-stack ai-services-stack pentest-runner \
+           cse-code-eval cse-controller cse-panel-stack opensearch-stack; do
+    (cd $s && TASK_APPROVAL=pve-tiny-state-migration ../../../../with-secrets-prod-tiny \
+       terragrunt state rm 'null_resource.configure_network_sdn_attachment[0]')
+  done
+  ```
+
+  The plan then shows a harmless create of that resource. Never set
+  `NETWORK_SDN_ALLOW_DESTROY_OVERRIDE`.
 - Policy: ai_seg/cse_seg/connector_seg and the `pterodactyl-lab` host now
   reach Step CA on 443 (`mikrotik-firewall-step-ca-node-exporter.yml`); the
   mcp-utility guest on `pve` (50011) still serves plain `:9100`.
