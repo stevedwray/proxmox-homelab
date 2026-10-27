@@ -263,10 +263,24 @@ main argument for B.
   `return-staging` (a fresh newest snapshot is retained by keep-daily 8
   regardless).
 
-### R2. Rehearsal
+### R2. Rehearsal (preflight written 2026-10-27, not yet run)
 
-Test restore of one PBS snapshot to an unused VMID on isolated
-networking, then run the full provision path against it.
+Rehearses method B end to end on a small, harmless guest before OpenSearch.
+Subject: pve CT 50012 secpipe (1.3 GiB used, running; stateless). Backup to
+`pbs-usb-staging`, restore to unused VMID 950012 on pve-tiny `nvme-lvm`
+with **no network** (net0 deleted before first start, so the 192.168.50.12
+IP cannot collide), run the parity manifest on source and copy, diff them,
+then destroy the test CT and forget the staging snapshot. Records backup
+time/size and restore time/throughput for the sizing estimate.
+
+Approvals: `pve-tiny-return-r2-backup` (pve), `pve-tiny-return-r2-restore`
+(pve-tiny), `pve-tiny-return-r2-cleanup` (pve-tiny). Must finish and clean
+up before the pve-tiny backup job at 12:30 NZDT next day, or it would back up
+the test CT.
+
+Does **not** prove the full provision from `stable` or Terraform import on
+pve-tiny; the first method-A guest (Technitium) proves provision, and the
+first method-B guest needs an import step in its own preflight.
 
 ### R3. Per-guest return (one approval each, named `pve-tiny-return-<stack>`)
 
