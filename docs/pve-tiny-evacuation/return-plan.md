@@ -263,6 +263,19 @@ main argument for B.
   `return-staging` (a fresh newest snapshot is retained by keep-daily 8
   regardless).
 
+### R3 guest 1: Technitium 20017 (preflight written 2026-10-27, not yet run)
+
+Method A. `scripts/pve-tiny-return-technitium.sh <phase>`: `check`, `copy`,
+`create`, `restore`, `provision`, `verify`, `rollback`. State (archive,
+checksums, baseline manifest) lives in `~/.local/state/pve-tiny-return/20017/`;
+each phase refuses to run until the previous one completed. 20017 is a
+cluster **secondary**; the playbook does not join the cluster, so the 44 MB
+`technitium-stack_technitium-config` volume is copied to preserve membership.
+Fallback if the join breaks: rejoin as an operator step
+(`docs/lan-dns-technitium/README.md`). Baseline 2026-10-27: `.15` and `.17`
+both answer UDP and TCP; `technitium-tiny.cluster.lab...` resolves to `.17`.
+Approval name: `pve-tiny-return-technitium`.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
