@@ -165,7 +165,8 @@ phase_create() {
   # with a destroy-time provisioner (checked: grep 'when = destroy' in terraform/lxc), so other
   # null_resource replacements (e.g. the legacy provisioner-less stack_cleanup) are harmless.
   local st=terraform.tfstate.d/pve-tiny/terraform.tfstate
-  if grep -q configure_network_sdn_attachment "$st"; then
+  # Look for the actual resource entry: the name also appears in other resources' "dependencies" lists.
+  if python3 -I -c 'import json,sys; sys.exit(0 if any(r["type"]=="null_resource" and r["name"]=="configure_network_sdn_attachment" for r in json.load(open(sys.argv[1]))["resources"]) else 1)' "$st"; then
     cp -p "$st" "$st.pre-sdn-staterm-$(date +%s)"
     ../../../../../with-secrets-prod-tiny terragrunt state rm -no-color 'null_resource.configure_network_sdn_attachment[0]'
   fi
