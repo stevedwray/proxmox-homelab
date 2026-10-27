@@ -263,7 +263,7 @@ main argument for B.
   `return-staging` (a fresh newest snapshot is retained by keep-daily 8
   regardless).
 
-### R3 guest 1: Technitium 20017 (preflight written 2026-10-27, not yet run)
+### R3 guest 1: Technitium 20017 (returned 2026-10-27)
 
 Method A. `scripts/pve-tiny-return-technitium.sh <phase>`: `check`, `copy`,
 `create`, `restore`, `provision`, `verify`, `rollback`. State (archive,
@@ -292,6 +292,22 @@ Fix, applied to every return: back up the worktree's state copy, then
 before planning, so it plans as a create. Never set
 `NETWORK_SDN_ALLOW_DESTROY_OVERRIDE`. The return scripts now do this and
 refuse to apply if the plan replaces that resource or a container.
+
+**Result 2026-10-27:** `copy` (40 MB archive, sha256 verified, baseline
+manifest 240 lines), `create` (stale CT destroyed; apply after the SDN
+`state rm` fix; 5 added), `restore`, `provision` (113 ok, 64 changed, **0
+failed**; the Wazuh enrolment that failed during the evacuation succeeded)
+and `verify` completed. CT 20017 runs on pve-tiny (`onboot=1`); pve copy is
+stopped with `onboot=0` for the soak. Both resolvers answer UDP and TCP;
+technitium logs show zone refresh from the primary `.15` and the cluster
+config saved, so the restored volume kept cluster membership. Manifest diff
+vs the pve source is additive: `wazuh-agent`, `unattended-upgrades`,
+`cadvisor` and the apt timers, i.e. what the evacuation audit found missing.
+One script bug found and fixed (checksum check ran from the wrong
+directory; failed safe before any change). Still to do for this guest:
+confirm the primary UI shows `.17` connected, take a backup on pve-tiny,
+refresh `known_hosts`, then soak before destroying the pve copy under its
+own approval.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 

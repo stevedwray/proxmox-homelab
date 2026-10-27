@@ -132,7 +132,7 @@ phase_create() {
 phase_restore() {
   need create
   say "restore: config volume into the new CT, then start"
-  sha256sum -c "$STATE/SHA256SUMS" --quiet --status || die "local archive checksum failed"
+  (cd "$STATE" && sha256sum -c SHA256SUMS --quiet) || die "local archive checksum failed"
   t "pct stop $V 2>/dev/null || true"
   ssh -o BatchMode=yes "$TINY" "set -e; pct mount $V >/dev/null; trap 'pct unmount $V' EXIT
      mp=/var/lib/lxc/$V/rootfs
