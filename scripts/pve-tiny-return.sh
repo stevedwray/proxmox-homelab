@@ -209,21 +209,23 @@ phase_provision() {
   say "provision: full playbook for $STACK via the pve-tiny production wrapper"
   cd "$RET_WT"
   mkdir -p "$STATE"
-  if ./with-secrets-prod-tiny scripts/provision.sh --stack "$STACK" 2>&1 | tee "$STATE/provision.log"; then
-    mark provision
-  elif grep -qE 'failed=1\b' "$STATE/provision.log" \
-       && [[ $(grep -c '^Origin:' "$STATE/provision.log") -ge 1 ]] \
-       && ! grep '^Origin:' "$STATE/provision.log" | grep -qv 'roles/wazuh_agent/'; then
-    # Every failed task's Origin line is inside the wazuh_agent role (not merely mentioned somewhere in the log).
-    echo
-    echo "WARN: the only failure is the Wazuh agent enrolment (manager fault). Marking provision done."
-    echo "      Pending, to batch later: wazuh_agent and the plays after it (unattended-upgrades)."
-    echo "      Re-run this phase after Wazuh is fixed."
-    mark provision
-    echo "wazuh-pending" >"$STATE/provision.warn"
-  else
-    die "provision failed (see $STATE/provision.log)"
+  rm -f "$STATE/provision.warn"
+  # WAZUH=skip skips only the wazuh_agent_rollout play (tagged in every stack playbook) so a broken
+  # Wazuh manager does not abort the plays that follow it (e.g. eval-runner on ai-services-stack).
+  # It is explicit, never inferred from a failure: the enrolment stays pending until re-run without it.
+  if [[ ${WAZUH:-} == skip ]]; then
+    export ANSIBLE_SKIP_TAGS=wazuh_agent_rollout
+    echo "NOTE: skipping the Wazuh agent play (ANSIBLE_SKIP_TAGS=$ANSIBLE_SKIP_TAGS)"
   fi
+  if ./with-secrets-prod-tiny scripts/provision.sh --stack "$STACK" 2>&1 | tee "$STATE/provision.log"; then
+    :
+  else
+    die "provision failed (see $STATE/provision.log); fix the cause, or if it is the Wazuh manager re-run with WAZUH=skip"
+  fi
+  # tee masks the exit status in some shells; confirm from the recap.
+  grep -qE 'failed=0\b' "$STATE/provision.log" || die "recap does not show failed=0 (see $STATE/provision.log)"
+  [[ ${WAZUH:-} != skip ]] || echo "wazuh-pending" >"$STATE/provision.warn"
+  mark provision
 }
 
 extra_verify() {
@@ -233,6 +235,7 @@ extra_verify() {
       for ep in 8081 8082; do
         printf 'http://192.168.50.11:%s -> %s\n' "$ep" "$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://192.168.50.11:$ep/" || echo fail)"
       done
+      t "pct exec $V -- test -x /usr/local/bin/eval-run" || echo "FAIL: /usr/local/bin/eval-run missing: the eval-runner play did not run"
       echo "eval-run results (historical section must be present):"
       t "pct exec $V -- /usr/local/bin/eval-run results" 2>&1 | grep -E '^historical|^  bfcl-|runs? ' | head -4 || true
       t "pct exec $V -- bash -c 'ls /srv/eval-runner/results | wc -l; ls /srv/eval-runner/results/_historical | wc -l'"
