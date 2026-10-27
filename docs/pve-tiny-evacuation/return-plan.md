@@ -117,6 +117,26 @@ until every item above is closed or explicitly accepted as lost.**
 - The stopped CT configs still reference the lost NVMe volumes (cleanup in
   R1). No guest has been started.
 
+### R1 progress, 2026-10-27
+
+- **Done (operator-run):** PV/VG `nvme-lvm` on `/dev/nvme0n1` and thin pool
+  `nvme-lvm` (1.77 TiB, 16G metadata, 0.00% used); `pvesm status` shows the
+  storage `active`. The classifier blocks agent-run remote writes on
+  pve-tiny, so the operator runs mutating commands there.
+- **Stale CT configs (read-only look):**
+  - 40014, 50012, 50013, 40072: every volume is on the lost `nvme-lvm`.
+    Their configs are phantom and safe to remove once nothing needs them.
+  - **40070 and 100071** also have an `nvme-lvm` data mount at
+    `/srv/cyberseceval` (lost), but root and Docker are on `local-lvm` and
+    **survive**.
+  - **20030 and 20017**: root and Docker are on `local-lvm` and survive.
+  - So the four boot-SSD sources are the only remaining copy of open items
+    1-4 (40070 `/srv/pentest-*` and `/etc/node_exporter`; reporter scripts;
+    Wazuh enrolment state). **Salvage those before destroying them**, and
+    do not start them (their 40070/100071 configs reference a missing mount).
+  - Only 50013's eval-runner history (open item 5) was on the lost drive;
+    the pve copy is now its sole authority.
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
