@@ -211,7 +211,10 @@ phase_provision() {
   mkdir -p "$STATE"
   if ./with-secrets-prod-tiny scripts/provision.sh --stack "$STACK" 2>&1 | tee "$STATE/provision.log"; then
     mark provision
-  elif grep -q 'roles/wazuh_agent/' "$STATE/provision.log" && grep -qE 'failed=1\b' "$STATE/provision.log"; then
+  elif grep -qE 'failed=1\b' "$STATE/provision.log" \
+       && [[ $(grep -c '^Origin:' "$STATE/provision.log") -ge 1 ]] \
+       && ! grep '^Origin:' "$STATE/provision.log" | grep -qv 'roles/wazuh_agent/'; then
+    # Every failed task's Origin line is inside the wazuh_agent role (not merely mentioned somewhere in the log).
     echo
     echo "WARN: the only failure is the Wazuh agent enrolment (manager fault). Marking provision done."
     echo "      Pending, to batch later: wazuh_agent and the plays after it (unattended-upgrades)."
