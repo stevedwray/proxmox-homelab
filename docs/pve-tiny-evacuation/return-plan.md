@@ -415,6 +415,26 @@ id, `idna`/`normalizer` pip entry points, `systemd-pcrlock.socket` and a
 `.dpkg-old` file. Still to do: backup, `known_hosts`, Wazuh enrolment batch,
 soak before destroying the pve copy.
 
+### R3 guest 4: pentest-runner 40072 (preflight written 2026-10-27, not yet run)
+
+Method A with a selective copy (about 0.9 GB), because most of this guest's
+state is not reproducible by `deploy-pentest-runner.yml`. Carried: `/root`
+(80 `strix_runs`, 253 MB raw `model-traffic`, tool caches, launcher logs,
+`framework_lock_client.py`) **excluding `/root/.ssh` and `/root/.ansible`**,
+`/home/shannon` (fixture source, models.json), `/opt/BoxPwnr` (git clone) and
+the `infra_temporal-data` volume. `/root/.ssh/authorized_keys` is **merged,
+not copied**: it holds the operator key (`steve@garuda`, which Ansible
+needs; the fresh guest already has it) and
+`pentest-lab-worker@cse-controller` (how the controller reaches the runner);
+missing lines are appended. No workload is running (only the viewer
+supervisor); quiesce check refuses to stop if a `strix`/`boxpwnr` run is
+active. `restore` also pings the VNet gateway from the new CT and stops if
+VLAN 100 (`tvcse`) is not working on pve-tiny, before any provisioning. This
+is the first guest on `cse_seg` and so the first real test of that VLAN path.
+`verify` adds the viewer `/healthz`, run counts, key comments and DNS.
+`WAZUH=skip` is not needed (this playbook has no Wazuh play). The 40070
+controller's pentest worker is still absent on live pve; it returns with 40070.
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.

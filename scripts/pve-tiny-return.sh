@@ -3,7 +3,7 @@
 # restore of any listed data volumes + full provision). See
 # docs/pve-tiny-evacuation/return-plan.md. Run from the operator workstation.
 #
-#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013
+#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072
 #
 # Phases (each is idempotent and refuses to run if the previous one is not done):
 #   check      read-only: both nodes, both CTs, free space, (DNS guests) resolvers
@@ -25,7 +25,10 @@ PHASE=${2:-}
 #  IPS   resolver IPs to dig (DNS guests only)
 #  UNITS systemd units that must be active after provisioning
 #  QUIESCE a command run inside the running pve CT before shutdown; non-zero aborts (nothing stopped)
-VOLS=(); IPS=(); UNITS=(); QUIESCE=
+#  EXCLUDES tar --exclude paths (relative to the CT root) left out of the data archive
+#  MERGE_KEYS an authorized_keys file whose lines are MERGED into the new CT's copy (never overwritten),
+#             so the fresh guest keeps the operator key that Ansible needs
+VOLS=(); IPS=(); UNITS=(); QUIESCE=; EXCLUDES=(); MERGE_KEYS=
 case $V in
   20017)
     STACK=technitium-tiny-stack
@@ -49,6 +52,16 @@ case $V in
     )
     UNITS=(docker eval-runner-worker-runs eval-runner-worker-ctl wazuh-agent)
     QUIESCE="! docker ps --filter name=eval- --format '{{.Names}}' | grep -q ."
+    ;;
+  40072)
+    STACK=pentest-runner
+    # Everything not reproducible by the playbook: strix runs, raw model traffic, caches, tool state,
+    # the shannon fixture source, the BoxPwnr clone and the Temporal volume. /root/.ssh is merged, not copied.
+    VOLS=(root home/shannon opt/BoxPwnr var/lib/docker/volumes/infra_temporal-data)
+    EXCLUDES=(root/.ssh root/.ansible)
+    MERGE_KEYS=root/.ssh/authorized_keys
+    UNITS=(docker pentest-viewer-supervisor prometheus-node-exporter)
+    QUIESCE='! ps -eo args --no-headers | grep -E "boxpwnr|strix" | grep -vqE "grep|view"'
     ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
@@ -120,6 +133,11 @@ phase_copy() {
     if [[ -n $QUIESCE ]]; then
       p "pct exec $V -- bash -c \"$QUIESCE\"" || die "guest is busy (quiesce check failed); nothing was stopped"
     fi
+    if [[ -n $MERGE_KEYS ]]; then
+      p "pct exec $V -- cat /$MERGE_KEYS" >"$STATE/merge-keys.txt"
+      [[ -s $STATE/merge-keys.txt ]] || die "could not read /$MERGE_KEYS; nothing was stopped"
+      echo "authorized keys captured: $(grep -c '^ssh-' "$STATE/merge-keys.txt") key line(s)"
+    fi
     manifest | p "pct exec $V -- bash -s" >"$STATE/manifest-source.txt"
     echo "baseline manifest: $(wc -l <"$STATE/manifest-source.txt") lines"
     p "pct shutdown $V --timeout 90"
@@ -128,12 +146,13 @@ phase_copy() {
   [[ -s $STATE/manifest-source.txt ]] || die "no baseline manifest recorded"
   p "pct set $V --onboot 0"
   if has_data; then
-    local list="${VOLS[*]}"
+    local list="${VOLS[*]}" excl="" x
+    for x in "${EXCLUDES[@]}"; do excl+=" --exclude=$x"; done
     p "set -e; mkdir -p /root/salvage-$V; chmod 700 /root/salvage-$V
        pct mount $V >/dev/null; trap 'pct unmount $V' EXIT
        mp=/var/lib/lxc/$V/rootfs
        for v in $list; do test -d \$mp/\$v || { echo \"\$v not found under the mounted CT\" >&2; exit 1; }; done
-       tar --numeric-owner --xattrs --acls -czf /root/salvage-$V/data.tgz -C \$mp $list
+       tar --numeric-owner --xattrs --acls$excl -czf /root/salvage-$V/data.tgz -C \$mp $list
        cd /root/salvage-$V && sha256sum data.tgz >SHA256SUMS"
     p "cat /root/salvage-$V/data.tgz" >"$STATE/data.tgz"
     local remote local_
@@ -166,7 +185,7 @@ phase_create() {
   # null_resource replacements (e.g. the legacy provisioner-less stack_cleanup) are harmless.
   local st=terraform.tfstate.d/pve-tiny/terraform.tfstate
   # Look for the actual resource entry: the name also appears in other resources' "dependencies" lists.
-  if python3 -I -c 'import json,sys; sys.exit(0 if any(r["type"]=="null_resource" and r["name"]=="configure_network_sdn_attachment" for r in json.load(open(sys.argv[1]))["resources"]) else 1)' "$st"; then
+  if [[ -f $st ]] && python3 -I -c 'import json,sys; sys.exit(0 if any(r["type"]=="null_resource" and r["name"]=="configure_network_sdn_attachment" for r in json.load(open(sys.argv[1]))["resources"]) else 1)' "$st"; then
     cp -p "$st" "$st.pre-sdn-staterm-$(date +%s)"
     ../../../../../with-secrets-prod-tiny terragrunt state rm -no-color 'null_resource.configure_network_sdn_attachment[0]'
   fi
@@ -201,6 +220,18 @@ phase_restore() {
     echo "stateless guest: nothing to restore"
     t "pct status $V" | grep -q running || t "pct start $V"
   fi
+  if [[ -n $MERGE_KEYS ]]; then
+    need copy
+    for _ in $(seq 1 30); do t "pct exec $V -- true" 2>/dev/null && break; sleep 2; done
+    t "pct exec $V -- bash -c 'f=/$MERGE_KEYS; mkdir -p \$(dirname \$f); touch \$f; while IFS= read -r l; do [ -z \"\$l\" ] || grep -qxF \"\$l\" \$f || echo \"\$l\" >> \$f; done; chmod 600 \$f'" <"$STATE/merge-keys.txt"
+    echo "authorized_keys now has $(t "pct exec $V -- grep -c '^ssh-' /$MERGE_KEYS") key line(s)"
+  fi
+  local gw
+  gw=$(t "pct config $V | grep '^net0:' | grep -o 'gw=[0-9.]*' | cut -d= -f2")
+  [[ -n $gw ]] || die "could not read the gateway from net0 of CT $V"
+  for _ in $(seq 1 15); do t "pct exec $V -- ping -c1 -W2 $gw >/dev/null 2>&1" && break; sleep 2; done
+  t "pct exec $V -- ping -c2 -W2 $gw >/dev/null 2>&1" || die "new CT cannot reach its gateway $gw; check the VNet/VLAN on pve-tiny before provisioning"
+  echo "gateway $gw reachable from the new CT"
   mark restore
 }
 
@@ -230,6 +261,10 @@ phase_provision() {
 
 extra_verify() {
   case $V in
+    40072)
+      printf 'viewer healthz -> %s\n' "$(t "pct exec $V -- curl -s --max-time 8 http://192.168.100.72:18820/healthz" || echo fail)"
+      t "pct exec $V -- bash -c 'echo strix_runs: \$(ls /root/strix_runs | wc -l); echo model-traffic: \$(du -sh /root/model-traffic | cut -f1); echo authorized key comments:; awk \"{print \\\$NF}\" /root/.ssh/authorized_keys; getent hosts github.com | head -1'"
+      ;;
     50013)
       local ep
       for ep in 8081 8082; do
