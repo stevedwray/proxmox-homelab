@@ -3,7 +3,7 @@
 # restore of any listed data volumes + full provision). See
 # docs/pve-tiny-evacuation/return-plan.md. Run from the operator workstation.
 #
-#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072
+#   scripts/pve-tiny-return.sh <vmid> <phase>      guests: 20017, 50012, 50013, 40072, 100071
 #
 # Phases (each is idempotent and refuses to run if the previous one is not done):
 #   check      read-only: both nodes, both CTs, free space, (DNS guests) resolvers
@@ -65,6 +65,15 @@ case $V in
     UNITS=(docker pentest-viewer-supervisor prometheus-node-exporter)
     QUIESCE='! ps -eo args --no-headers | grep -E "boxpwnr|strix" | grep -vE "grep|view" | grep -q .'
     ;;
+  100071)
+    STACK=cse-code-eval
+    # Disposable scratch by design (backup_policy: exclude): PurpleLlama clone + work area. Carried anyway
+    # (318 MB) to keep any run records; lost+found belongs to the new ext4 mount and stays.
+    VOLS=(srv/cyberseceval)
+    EXCLUDES=(srv/cyberseceval/lost+found)
+    UNITS=(docker)
+    QUIESCE='! ps -eo args --no-headers | grep -E "CybersecurityBenchmarks|canary|run-autonomous|gcc|g\+\+|cmake" | grep -vE "grep" | grep -q .'
+    ;;
   *) echo "no return settings for VMID $V" >&2; exit 2 ;;
 esac
 
@@ -115,7 +124,9 @@ phase_check() {
     echo "tiny  CT $V: the returned target ($(t "pct status $V"), created $(cat "$STATE/create.done"))"
   elif t "test -e /etc/pve/lxc/$V.conf"; then
     echo "tiny  CT $V: STALE config present ($(t "pct status $V")); rootfs: $(t "pct config $V | grep ^rootfs")"
-    if t "pct config $V | grep -E '^(rootfs|mp[0-9]+):' | grep -q 'nvme-lvm'"; then die "stale CT $V references nvme-lvm; remove the phantom config first"; fi
+    if t "pct config $V | grep -E '^(rootfs|mp[0-9]+):' | grep -q 'nvme-lvm'"; then
+      echo "      note: half-phantom (a volume was on the replaced NVMe); create removes it by hand, after verifying each volume"
+    fi
   else
     echo "tiny  CT $V: none (clean slate)"
   fi
@@ -172,6 +183,30 @@ phase_copy() {
   mark copy
 }
 
+# A stale pve-tiny CT with one volume on the replaced NVMe (gone) and the rest on the boot SSD.
+# pct destroy can stop on the missing volume, so verify every volume by exact name, then remove the
+# boot-SSD LVs and the config by hand. Only names of the form vm-<this vmid>-disk-N are ever touched.
+destroy_half_phantom() {
+  local refs r stor name
+  refs=$(t "pct config $V | grep -E '^(rootfs|mp[0-9]+):' | grep -oE '(local-lvm|nvme-lvm):vm-$V-disk-[0-9]+'")
+  [[ -n $refs ]] || die "could not parse the stale CT's volumes"
+  for r in $refs; do
+    stor=${r%%:*}; name=${r#*:}
+    if [[ $stor == nvme-lvm ]]; then
+      if t "lvs --noheadings nvme-lvm/$name >/dev/null 2>&1"; then die "nvme-lvm/$name exists; not a phantom, review by hand"; fi
+    else
+      t "lvs --noheadings pve/$name >/dev/null 2>&1" || die "pve/$name not found on pve-tiny"
+    fi
+  done
+  echo "removing stale boot-SSD volumes and config of CT $V:"
+  for r in $refs; do
+    stor=${r%%:*}; name=${r#*:}
+    if [[ $stor == local-lvm ]]; then echo "  lvremove pve/$name"; t "lvremove -y pve/$name"; else echo "  (already gone: nvme-lvm/$name)"; fi
+  done
+  t "rm /etc/pve/lxc/$V.conf"
+  t "test ! -e /etc/pve/lxc/$V.conf" || die "stale config still present"
+}
+
 phase_create() {
   need copy
   say "create: pve-tiny target for CT $V from Terraform"
@@ -179,7 +214,11 @@ phase_create() {
   p "pct config $V | grep -q '^onboot: 0'" || die "pve CT $V onboot is not 0"
   if t "test -e /etc/pve/lxc/$V.conf"; then
     [[ $(t "pct status $V") == "status: stopped" ]] || die "stale CT $V is running on pve-tiny"
-    t "pct destroy $V --purge"
+    if t "pct config $V | grep -E '^(rootfs|mp[0-9]+):' | grep -q 'nvme-lvm'"; then
+      destroy_half_phantom
+    else
+      t "pct destroy $V --purge"
+    fi
   fi
   cd "$RET_WT/terraform/lxc/environments/pve-tiny/$STACK"
   # The state's null_resource triggers hold the main checkout's paths. From this worktree they differ,
@@ -266,6 +305,16 @@ phase_provision() {
 
 extra_verify() {
   case $V in
+    100071)
+      t "pct exec $V -- bash -s" <<'REMOTE'
+echo "mountpoint /srv/cyberseceval: $(mountpoint -q /srv/cyberseceval && echo yes || echo NO)"
+echo "repo: $(ls /srv/cyberseceval/repo 2>/dev/null | head -3 | tr '\n' ' ')"
+docker ps --format '{{.Names}} {{.Status}}'
+echo "gcc: $(docker exec cse-code-eval gcc --version 2>&1 | head -1)"
+echo "cmake: $(docker exec cse-code-eval cmake --version 2>&1 | head -1)"
+ping -c2 -W2 192.168.100.70 >/dev/null 2>&1 && echo "route to cse-controller 192.168.100.70: ok" || echo "route to cse-controller 192.168.100.70: NO REPLY"
+REMOTE
+      ;;
     40072)
       printf 'viewer healthz -> %s\n' "$(t "pct exec $V -- curl -s --max-time 8 http://192.168.100.72:18820/healthz" || echo fail)"
       t "pct exec $V -- bash -s" <<'REMOTE'

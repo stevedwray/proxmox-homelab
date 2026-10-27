@@ -450,6 +450,21 @@ Bug found and fixed on the way: a quiesce check with nested quotes made `ssh`
 run `view` (vim) on pve; checks that contain quotes or pipes are now sent on
 stdin. Each phase now logs to `<state>/logs/`.
 
+### R3 guest 5: cse-code-eval 100071 (preflight written 2026-10-27, not yet run)
+
+Method A. State is `/srv/cyberseceval` (318 MB: PurpleLlama clone and work
+area; `backup_policy: exclude`, disposable by design) and is carried to keep
+any run records; `lost+found` stays with the new ext4 mount. Nothing depends
+on this guest. Stale pve-tiny config is **half-phantom**: root and Docker are
+on `local-lvm` (stale, still present) and its data mount was on the lost
+NVMe. `create` removes it with `destroy_half_phantom`: every volume must be
+named `vm-100071-disk-N`; any NVMe volume must be absent (else it stops);
+only the two boot-SSD LVs and the config file are removed, never another
+VMID's LVs (tested read-only against the live config). No Wazuh play in this
+playbook. `verify` checks the mount, repo, container, gcc/cmake and the route
+to cse-controller `192.168.100.70` (a cross-node VLAN test while the
+controller is still on pve).
+
 ### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
