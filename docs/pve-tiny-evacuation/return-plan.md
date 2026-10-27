@@ -263,7 +263,7 @@ main argument for B.
   `return-staging` (a fresh newest snapshot is retained by keep-daily 8
   regardless).
 
-### R2. Rehearsal (preflight written 2026-10-27, not yet run)
+### R2. Rehearsal (run and passed 2026-10-27)
 
 Rehearses method B end to end on a small, harmless guest before OpenSearch.
 Subject: pve CT 50012 secpipe (1.3 GiB used, running; stateless). Backup to
@@ -281,6 +281,27 @@ finds the snapshot itself, so nothing is copied between sessions. Approval
 names: `pve-tiny-return-r2-backup`, `-restore`, `-cleanup`. Must finish and clean
 up before the pve-tiny backup job at 12:30 NZDT next day, or it would back up
 the test CT.
+
+**Result, 2026-10-27** (CT 50012, snapshot `ct/50012/2026-10-27T02:16:01Z`):
+
+| Measure | Value |
+|---|---|
+| Backup (pve to `pbs-usb-staging`, snapshot mode, guest running) | 13 s (task log), 2.16 GiB logical |
+| Restore on pve-tiny to `nvme-lvm` | 34 s total, 28.5 s data, 77.6 MiB/s average |
+| Test CT | 950012, no network, `onboot=0`; started and ran |
+| Parity manifest (enabled units, Docker volumes, `/opt` `/srv` `/usr/local/bin`, `/etc`) | 241 lines each, **PARITY-OK** |
+| Cleanup | test CT purged, staging snapshot forgotten, both verified |
+
+Sizing estimate for method B: roughly 13 s per GiB restored at this
+throughput, so OpenSearch's 150 GiB data mount is about 35 minutes of
+restore if it is fully used, plus the backup of the stopped CT. The backup
+was fast partly because `usb-backup` already held most chunks (synced from
+iscsi); expect a slower first backup for data not yet synced. Treat these as
+estimates until OpenSearch's own preflight measures its size.
+
+Method B (backup to `pbs-usb-staging`, restore on pve-tiny to `nvme-lvm`) is
+confirmed working. `scripts/pve-tiny-return-rehearsal.sh` is reusable for
+other guests.
 
 Does **not** prove the full provision from `stable` or Terraform import on
 pve-tiny; the first method-A guest (Technitium) proves provision, and the
