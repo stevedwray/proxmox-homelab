@@ -31,7 +31,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: {{ humanize $values.A.Value }} new NVMe media errors in the last hour (drive is failing even if SMART says healthy)'
 
@@ -57,7 +57,7 @@ groups:
         for: 2m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: NVMe controller reports a critical warning'
 
@@ -83,7 +83,7 @@ groups:
         for: 10m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.device }}: available spare is within 5% of the failure threshold of the drive'
 
@@ -109,7 +109,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: SMART overall health assessment failed'
 
@@ -187,7 +187,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.chip }}: {{ humanize $values.A.Value }} C'
 
@@ -239,7 +239,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }}: CPU Tctl {{ humanize $values.A.Value }} C'
 
@@ -265,7 +265,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} sectors are pending reallocation or uncorrectable (data at risk)'
 
@@ -321,6 +321,8 @@ groups:
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} new CRC errors in 24h (suspect the SATA cable or backplane)'
 
+      # The Pis run an SSD in a small enclosure and sit at 48 to 56 C normally (operator, 2026-10-24: 55 C was too low for them),
+      # so they get 60 C; every other host keeps 55 C. The 65 C critical rule below still covers all hosts.
       - uid: hw-sata-temp-warning
         title: SATA disk temperature above 55 C
         condition: C
@@ -331,7 +333,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw"} < 120))'
+              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw",stack!~"argon-.*"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw",stack!~"argon-.*"} < 120))'
           - refId: C
             datasourceUid: __expr__
             model:
@@ -340,6 +342,32 @@ groups:
               expression: A
               conditions:
                 - evaluator: {type: gt, params: [55]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: hardware}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
+
+      - uid: hw-sata-temp-warning-pi
+        title: SATA disk temperature above 60 C (Raspberry Pis)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max by (stack,disk)((smartmon_temperature_celsius_raw_value{job="node_exporter_hw",stack=~"argon-.*"} < 120) or (smartmon_airflow_temperature_cel_raw_value{job="node_exporter_hw",stack=~"argon-.*"} < 120))'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [60]}
         for: 15m
         noDataState: OK
         execErrState: Error
@@ -369,7 +397,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical, category: hardware}
+        labels: {severity: critical, category: hardware, page: "true"}
         annotations:
           summary: '{{ $labels.stack }} {{ $labels.disk }}: {{ humanize $values.A.Value }} C'
 

@@ -108,7 +108,7 @@ groups:
         for: 2m
         noDataState: Alerting
         execErrState: Error
-        labels: {severity: critical}
+        labels: {severity: critical, page: "true"}
         annotations:
           summary: 'OpenBao is sealed or its health endpoint is unreachable; every deploy wrapper will fail'
 
@@ -134,7 +134,7 @@ groups:
         for: 10m
         noDataState: Alerting
         execErrState: Error
-        labels: {severity: critical}
+        labels: {severity: critical, page: "true"}
         annotations:
           summary: 'Newest successful OpenBao snapshot is {{ humanizeDuration $values.A.Value }} old'
 
@@ -160,7 +160,7 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: critical}
+        labels: {severity: critical, page: "true"}
         annotations:
           summary: 'Last OpenBao {{ $labels.kind }} snapshot run failed'
 
@@ -189,3 +189,55 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: '{{ $values.A.Value }} secrets-manifest entries are missing from OpenBao or from the manifest'
+
+      - uid: homelab-prod-node-down
+        title: Production node unreachable
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'up{job="node_exporter_hw",stack=~"pve|pve-tiny"}'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 3m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} stopped answering its metrics scrape: the node, its network or its exporter is down'
+
+      - uid: homelab-disk-critical
+        title: Local disk above 95%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: '100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|zfs|xfs|btrfs"} / node_filesystem_size_bytes{fstype=~"ext4|zfs|xfs|btrfs"})'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [95]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: critical, page: "true"}
+        annotations:
+          summary: '{{ $labels.stack }} {{ $labels.mountpoint }} is {{ humanize $values.A.Value }}% full'

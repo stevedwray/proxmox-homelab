@@ -280,7 +280,9 @@ Names live in `terraform/lxc/stacks/monitoring-stack/hwmon-hosts.yml`
 
 1. Name pve-tiny and garuda fan headers and voltage rails (needs BIOS/board
    manual; see "Deferred" above and the garuda notes).
-2. Alerting (over-temperature, fan stall, undervoltage); not built.
+2. Alerting: **live since 2026-10-24** (`docs/alerting/`: 18 hardware rules for NVMe and SATA faults,
+   temperatures and SMART going blind; critical ones page Telegram). Fan stall and undervoltage alerts are still not
+   built; they wait for the neutral rail and fan names above.
 3. Look at pve nvme1 Sensor 2 (~80 C) and garuda nvme1/2 (~66 C) airflow.
 4. pve `it87` DKMS: install `proxmox-headers-<kver>` for 7.0.14-19/-20 before
    rebooting pve into them.

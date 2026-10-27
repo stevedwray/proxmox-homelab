@@ -19,6 +19,7 @@ from flask import request
 
 import compare_tab
 import eval_tab
+import pentest_tab
 
 PANEL_API_BASE_URL = os.environ.get("PANEL_API_BASE_URL", "http://panel-web:8000")
 LAB_DOMAIN = os.environ.get("LAB_DOMAIN", "")
@@ -222,6 +223,8 @@ app.layout = dbc.Container(
             dbc.Tab(cse_family, tab_id="cse", label="CyberSecEval",
                     label_style={"fontSize": "1.15rem"}),
             dbc.Tab(eval_family, tab_id="eval", label="Eval battery",
+                    label_style={"fontSize": "1.15rem"}),
+            dbc.Tab(pentest_tab.layout(), tab_id="pentest", label="Pentest lab",
                     label_style={"fontSize": "1.15rem"}),
             dbc.Tab(compare_tab.layout(), tab_id="compare", label="Compare",
                     label_style={"fontSize": "1.15rem"}),

@@ -40,3 +40,22 @@ repos:
         # touched these files. New edits are caught at commit time (here) and
         # in PRs (validate.yml sops-freeze).
         stages: [pre-commit]
+      # Terraform plan and state files embed input variable values, secrets
+      # included, in plain text inside a compressed archive no scanner reads
+      # (2026-10-24: a Proxmox API token secret reached public stable this way).
+      # Reject them by name, at commit and again at push.
+      - id: block-terraform-plan-files
+        name: Block Terraform plan and state files (they embed secrets)
+        entry: "Terraform plan/state files hold variable values, including secrets, in plain text. Do not commit them; delete the file (plan.out and *.tfplan are in .gitignore)."
+        language: fail
+        files: '(^|/)(plan\.out|[^/]*\.tfplan|[^/]*\.tfstate(\.backup)?)$'
+        stages: [pre-commit, pre-push]
+
+      # Scan only the commits being pushed, before they leave this machine.
+      - id: trufflehog-pre-push
+        name: TruffleHog (commits being pushed)
+        entry: scripts/trufflehog_prepush.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

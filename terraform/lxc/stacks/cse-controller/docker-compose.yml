@@ -38,6 +38,20 @@ services:
     container_name: cse-controller-pentest-worker
     volumes:
       - /srv/pentest-worker:/srv/pentest-worker
+      # Read-only: a metasploitable3-linux launch reads the latest research
+      # snapshot here (research-snapshot-plan.md,
+      # pipeline-generalization-plan.md) but must never be able to write
+      # it -- only pentest-research-worker's own, separately mounted,
+      # read-write copy does that. Scoped to just the snapshots tree, not
+      # all of /srv/pentest-research (which also holds the research
+      # worker's own private SSH key as a sibling path).
+      - /srv/pentest-research/snapshots:/srv/pentest-research/snapshots:ro
+      # Shared with pentest-research-worker at the identical host path --
+      # research_target_guard.py's fcntl locking only provides real
+      # cross-container mutual exclusion if both containers see the same
+      # underlying inode, not two separate bind mounts of different host
+      # directories.
+      - /srv/pentest-target-guard:/srv/pentest-target-guard
     working_dir: /srv/pentest-worker/launcher
     command:
       - /srv/pentest-worker/.venv/bin/celery
@@ -51,6 +65,42 @@ services:
       - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/0
       - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/1
       - PENTEST_WORKER_SSH_KEY=/srv/pentest-worker/id_pentest_runner
+      # run_task.py reads these two directly (not derived from the
+      # Celery URLs above) -- confirmed live missing on first deploy:
+      # the job completed as "crashed" with exactly this stop_reason.
+      - CSE_PANEL_REDIS_PASSWORD=${CSE_PANEL_REDIS_PASSWORD}
+      - LLM_GPU_STACK_API_KEY=${LLM_GPU_STACK_API_KEY}
+    restart: unless-stopped
+
+  pentest-research-worker:
+    # research-snapshot-plan.md: GVM scan + CVE-MCP triage for any
+    # pentest_seg target, refreshed on demand, never on a Strix launch.
+    # Its own queue and
+    # concurrency-1 container so a long GVM scan can never block the
+    # existing pentest-worker queue above. Deliberately its own mount,
+    # not a subdirectory of /srv/pentest-worker -- that directory is
+    # also mounted whole into pentest-viewer-proxy below, and this
+    # container's private key must never be reachable from there.
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/python:3.10-slim
+    container_name: cse-controller-pentest-research-worker
+    volumes:
+      - /srv/pentest-research:/srv/pentest-research
+      - /srv/pentest-target-guard:/srv/pentest-target-guard
+    working_dir: /srv/pentest-research/worker
+    command:
+      - /srv/pentest-research/.venv/bin/celery
+      - -A
+      - pentest_research_tasks
+      - worker
+      - --loglevel=INFO
+      - --concurrency=1
+      - --queues=pentest-research
+    environment:
+      - CELERY_BROKER_URL=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${CSE_PANEL_REDIS_PASSWORD}@${LAB_IP_CSE_PANEL}:6379/1
+      - PENTEST_RESEARCH_SSH_KEY=/srv/pentest-research/id_gvm_research_gateway
+      - PENTEST_RESEARCH_KNOWN_HOSTS=/srv/pentest-research/known_hosts
+      - PENTEST_CVE_MCP_URL=https://cve-mcp.${LAB_DOMAIN}/mcp
     restart: unless-stopped
 
   pentest-viewer-proxy:
@@ -60,6 +110,10 @@ services:
     container_name: cse-controller-pentest-viewer-proxy
     volumes:
       - /srv/pentest-worker:/srv/pentest-worker
+      # Read-only, same scoping/sharing reasoning as pentest-worker's
+      # identical mount above -- research_review.py's bounded, escaped
+      # review routes read from here, write nothing.
+      - /srv/pentest-research/snapshots:/srv/pentest-research/snapshots:ro
     working_dir: /srv/pentest-worker/launcher
     command:
       - python3

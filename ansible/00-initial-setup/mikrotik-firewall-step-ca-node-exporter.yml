@@ -1,0 +1,149 @@
+---
+# Let four more zones reach step-ca (192.168.20.11) on tcp/443 so their node_exporter can get a TLS
+# certificate (docs/alerting/plan.md, Phase 7, workstream W2).
+#
+# Found 2026-10-24: the router had such a rule for the game (one host), apps, media and pentest zones but
+# NOT for the AI zone (vlan50), the CSE zone (vlan100), the connector zone (vlan110) or the second game host
+# (pterodactyl-lab, .60.20). The node_exporter role skips TLS when step-ca is unreachable, so secpipe,
+# ai-services, mcp-utility, cse-controller, cse-code-eval, pentest-runner, newt-connector and pterodactyl-lab
+# were left serving metrics over plain HTTP with no password.
+#
+# Same shape as the existing rules (*AB apps_seg, *8D media_seg): one narrow forward accept per zone, placed
+# BEFORE that zone's own default-deny so it is actually reached. Each is matched by exact comment, so a re-run
+# adds nothing. Source is the zone CIDR except the game zone, where it is the single host.
+#
+# Preview (reads only; also what --check does):
+#   PVE_ENV=pve ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-step-ca-node-exporter.yml --check
+# Apply:
+#   TASK_APPROVAL=mikrotik-step-ca-ai-cse PVE_ENV=pve ./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-step-ca-node-exporter.yml
+#
+# Rollback: remove the four rules by their comments below.
+
+- name: Allow AI, CSE, connector and one game host to reach step-ca for node_exporter certificates
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
+    step_ca_ip: "192.168.20.11"
+
+    step_ca_rules:
+      - comment: "ai_seg node_exporter TLS cert issuance from step-ca"
+        src: "192.168.50.0/24"
+        anchor: "ai_seg explicit deny - everything else"
+      - comment: "cse_seg node_exporter TLS cert issuance from step-ca"
+        src: "192.168.100.0/24"
+        anchor: "cse_seg default-deny to LAN and other zones"
+      - comment: "connector_seg node_exporter TLS cert issuance from step-ca"
+        src: "192.168.110.0/24"
+        anchor: "connector_seg default-deny to LAN and other zones"
+      - comment: "game_seg pterodactyl-lab node_exporter TLS cert issuance from step-ca"
+        src: "192.168.60.20"
+        anchor: "game_seg default-deny to LAN and other zones"
+
+  pre_tasks:
+    - name: Assert production router and credentials
+      ansible.builtin.assert:
+        that:
+          - lookup('env', 'PVE_ENV') == 'pve'
+          - mikrotik_user | length > 0
+          - mikrotik_password | length > 0
+        fail_msg: "Run through ./with-secrets-prod with PVE_ENV=pve."
+
+  tasks:
+    - name: Read the router's forward-chain rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter?chain=forward"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: forward_rules
+      check_mode: false
+      no_log: true
+
+    - name: Start the plan empty
+      ansible.builtin.set_fact:
+        plan: []
+
+    - name: Work out, per zone, whether the rule exists and where that zone's default-deny is
+      ansible.builtin.set_fact:
+        plan: >-
+          {{ plan + [{
+               'comment': item.comment,
+               'src': item.src,
+               'anchor_comment': item.anchor,
+               'anchor_id': ((forward_rules.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.anchor)
+                              | list | first | default({}))['.id'] | default('')),
+               'present': (forward_rules.json | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.comment)
+                           | list | length) > 0
+             }] }}
+      loop: "{{ step_ca_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+
+    - name: Assert every zone's default-deny anchor was found
+      ansible.builtin.assert:
+        that:
+          - item.anchor_id | length > 0
+        fail_msg: "No forward rule with comment '{{ item.anchor_comment }}': the router differs from 2026-10-24. Stop and look."
+      loop: "{{ plan }}"
+      loop_control:
+        label: "{{ item.comment }}"
+
+    - name: Show what will change
+      ansible.builtin.debug:
+        msg: "{{ plan | map(attribute='comment') | zip(plan | map(attribute='present') | map('string')) | map('join', ': already present = ') | list }}"
+
+    - name: Add each missing rule ahead of its zone's default-deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        body_format: json
+        body:
+          comment: "{{ item.comment }}"
+          chain: "forward"
+          action: "accept"
+          src-address: "{{ item.src }}"
+          dst-address: "{{ step_ca_ip }}"
+          protocol: "tcp"
+          dst-port: "443"
+          place-before: "{{ item.anchor_id }}"
+        status_code: [200, 201]
+      loop: "{{ plan | rejectattr('present') | list }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Re-read the forward chain
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter?chain=forward"
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; private network
+        return_content: true
+      register: after
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Assert each rule exists and sits ahead of its zone's default-deny
+      ansible.builtin.assert:
+        that:
+          - >-
+            (after.json | map(attribute='comment', default='') | list).index(item.comment)
+            < (after.json | map(attribute='comment', default='') | list).index(item.anchor_comment)
+        fail_msg: "'{{ item.comment }}' is missing or sits AFTER '{{ item.anchor_comment }}', so it would never match."
+      loop: "{{ plan }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when: not ansible_check_mode
