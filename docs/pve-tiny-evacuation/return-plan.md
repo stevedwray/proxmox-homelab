@@ -353,7 +353,7 @@ LLM, as it did before the evacuation. Disable with
 `pct exec 50012 -- systemctl disable --now cve-enrichment-sync.timer` on
 pve-tiny if it should wait.
 
-### R3 guest 3: ai-services 50013 (preflight written 2026-10-27, not yet run)
+### R3 guest 3: ai-services 50013 (in progress 2026-10-27)
 
 Method A, about 2 GB of data. Carried (all verified present on the running pve
 CT): `ai-services-openwebui-data` (948 MB: users, chats), `ai-services-deep-research-config`
@@ -368,6 +368,37 @@ on pve until 20030 returns), not on this guest. Quiesce check: no running
 provision whose only failure is the Wazuh agent play as done-with-warning
 (`provision.warn`), so Wazuh enrolments can be batched after the manager is
 fixed.
+
+**Findings while running 50013 (2026-10-27):**
+
+- `copy`, `create`, `restore` completed (1.6 GB archive verified). The first
+  `provision` failed in the compose play, **not** at Wazuh: a fresh build of
+  `web-search-mcp` resolved unpinned `fastapi 0.162.0` / `starlette 1.10.0`
+  / `uvicorn 0.54.0` / `pydantic 2.14.1` and `mcpo 0.0.20` crashed
+  (`FastAPI.__init__() got an unexpected keyword argument 'ssl_certfile'`),
+  so OpenWebUI (which waits on it) never started. The old pve image kept
+  working because it predates the drift. Fix: pin the five packages to the
+  last known-good set read from the old image's layers (fastapi 0.141.1,
+  starlette 1.6.0, uvicorn 0.53.0, pydantic 2.13.5, sse-starlette 3.4.11),
+  proved with a throwaway container. Committed on `work/pve-tiny-return`
+  (`e291781d`); **it must also reach `stable`**, or any rebuild will break
+  the same way.
+- My Wazuh-tolerance logic wrongly marked that failed provision as done (it
+  matched `roles/wazuh_agent/` anywhere in the log). Replaced by an explicit
+  `WAZUH=skip` option (skips only the `wazuh_agent_rollout` play); nothing is
+  inferred from a failure any more.
+- **Play order matters:** in `deploy-ai-services-stack.yml` the Wazuh play
+  (line 906) precedes the eval-runner install (line 948). While the Wazuh
+  manager is down, a plain provision aborts before eval-runner is deployed,
+  which is exactly how the evacuation lost it. Use `WAZUH=skip` for this
+  guest until Wazuh is fixed; `verify` now fails loudly if
+  `/usr/local/bin/eval-run` is missing.
+- Same consequence for 50012: its provision stopped at the Wazuh play, so
+  the unattended-upgrades play after it has not run; rerun with
+  `WAZUH=skip` (and again later without it).
+- Wazuh enrolment batch (do after the manager's `wazuh-remoted` is fixed):
+  50012 secpipe, 50013 ai-services, plus any guest provisioned with
+  `WAZUH=skip` (`provision.warn` marks them). 20017 enrolled successfully.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
