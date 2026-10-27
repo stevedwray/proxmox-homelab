@@ -186,6 +186,37 @@ Read-only check of CT 50013 on pve:
 - Items 3-4 (reporter scripts, Wazuh enrolment) remain reproducible from
   playbooks; no copy taken.
 
+### R1 progress, 2026-10-27 (continued)
+
+- **Phantom CT configs removed (operator-run):** 40014, 50012, 50013 and
+  40072 configs were checked (stopped, only `nvme-lvm` volumes), backed up
+  to `pve-tiny:/root/phantom-ct-configs-2026-10-27/`, then deleted.
+  `pct list` now shows 910, 20017, 20030, 40070, 50011, 100071.
+- **Return worktree:** `.worktrees/pve-tiny-return`, branch
+  `work/pve-tiny-return` cut from `origin/stable` (344a50f5). Stable already
+  has `environments/pve-tiny/*` for all eight stacks.
+- **State copied** (ignored files) for seven stacks from the main checkout;
+  `pentest-runner` has no pve-tiny state. SHA-256 of all seven copies match
+  the originals. Source state was not modified.
+- **Read-only plans** (`./with-secrets-prod-tiny terragrunt plan
+  -lock=false`; this also proves the pve-tiny profile loads):
+
+  | Stack | Result |
+  |---|---|
+  | opensearch-stack, secpipe-stack | container "has been deleted" outside Terraform, so it is **created**; 5 add, 4 destroy |
+  | ai-services-stack | same; 6 add, 5 destroy (adds `stack_cleanup`) |
+  | pentest-runner | no state; 5 add, 0 destroy |
+
+  The "destroys" are only generated inventory/SDN vars and bookkeeping
+  resources being replaced (`local_file`, `null_resource`,
+  `terraform_data`), not a guest. No `state rm` is needed: the plan already
+  treats the missing containers as absent. Review each plan again right
+  before its apply; the plan output path in `network.intent` changes
+  with the worktree.
+- Plans for 40070, 100071, 20030 and 20017 were not run: their stale
+  sources still exist on the boot SSD and are handled in R3 (VMID collision
+  section).
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
