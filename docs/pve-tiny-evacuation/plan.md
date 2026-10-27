@@ -21,6 +21,9 @@ The pve Terraform state now owns CT 40072 and has a zero-change post-cutover
 plan. The earlier cold-copy targets remain subject to their documented later
 reconciliation; do not use an empty state directory to manage a live guest.
 
+The return to `pve-tiny` after the NVMe replacement is planned in
+[return-plan.md](return-plan.md).
+
 The [execution runbook](runbook.md) defines the per-guest sequence, storage
 profiles, data to preserve, verification, and rollback. Its restore and
 inventory gates must be completed before any guest approval.

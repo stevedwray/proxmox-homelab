@@ -2,7 +2,11 @@
 
 Status: **plan only; nothing executed.** Written 2026-10-24 from the
 evacuation plan/runbook, the issues met during it, and a parity audit of
-the stopped pve-tiny sources against the live pve targets.
+the stopped pve-tiny sources against the live pve targets. Revised
+2026-10-27 after review: added the branch/Terraform-state handoff, VMID
+collision handling, edge/firewall/monitoring items, sizing, and a gate
+checklist (below). Step-level commands are still parameterised; see
+"What this plan does not yet fix".
 
 ## Decisions
 
@@ -141,6 +145,110 @@ Order, lowest risk first:
 | Secpipe → OpenSearch | One bounded index read |
 | Clients → both resolvers | `.15` and `.17` answer |
 | Every guest → PBS | New snapshot exists |
+
+## Branch, Terraform state and scaffolding (added 2026-10-27)
+
+Do the return from a **new** `work/pve-tiny-return` branch cut from
+current `stable`, never from `work/pve-tiny-evacuation`.
+
+Evacuation-only changes (not on `stable`; verified by grep 2026-10-27).
+They stay on the evacuation branch and are **not** carried back, except
+where noted:
+
+| Item | Return handling |
+|---|---|
+| `network/pve.yaml` `cse_seg` attachment (`tvcse`) | Stays live on pve (decision above). Merge to `stable` only if the operator wants it tracked; otherwise the live SDN object is unmanaged by Terraform. Decide before R3. |
+| `storage/pve.yaml` `platform-nvme` profile | Needed on pve **only until the pve copies are destroyed**. Not needed for the return. |
+| `variables.tf` `stack_start`/`stack_onboot` | Same: pve copies only. |
+| `environments/pve/{cse-*,pentest-runner,technitium-tiny-stack}` | Needed to plan/destroy the pve copies cleanly. Use the evacuation worktree for the retirement step (R3.7), then delete the entries. |
+| `technitium-tiny-stack` `storage_profile: platform-monitoring-zfs` | **Do not carry back.** `stable` has `platform-default`; confirm what profile the pve-tiny stack should use against `storage/pve-tiny.yaml` before plan. |
+
+State handling:
+
+- Terragrunt state is **local and untracked** in each environment
+  directory. pve-tiny state lives in the original checkout; pve state for
+  the evacuated guests lives in the evacuation worktree. A branch cut from
+  `stable` has neither.
+- Before R1, copy both sets of state into the return worktree as ignored,
+  access-restricted files and record checksums (same rule as the
+  evacuation plan). Never plan from an empty state directory.
+- After the NVMe is replaced, pve-tiny state for the nvme-lvm guests refers
+  to volumes that no longer exist. Per guest: `terraform state rm` the
+  stale resources only after the matching CT config is removed from
+  pve-tiny, then let the reviewed plan **create** the target.
+- 40072 `pentest-runner` has pve-tiny state that was historically empty and
+  now has pve state. Its return target is created fresh by Terraform, with
+  the root/Docker content restored over it; the plan must show a create,
+  not a replace of anything live.
+- Retiring a pve copy (R3.7): `terragrunt destroy` from the evacuation
+  worktree environment, or `pct destroy` plus `terraform state rm`. Either
+  way a reviewed plan/preflight first and its own approval.
+
+## VMID and IP collisions on pve-tiny (added 2026-10-27)
+
+Four guests (100071, 40070, 20030, 20017) have stopped sources on the boot
+SSD that keep their VMIDs, and the stale CT configs point at old data.
+For each, before creating the target:
+
+1. Confirm the stopped source is `onboot=0` and still stopped.
+2. Before the destroy: take a PBS backup of that stale source only if the
+   operator wants it kept as evidence. It is stale by design, so the default
+   is no.
+3. Destroy the stale source CT under the guest's own approval.
+4. Only then create the target with the same VMID and IP.
+
+Never have the pve copy and the pve-tiny target running at once (same IP).
+For the NVMe guests (40014, 50012, 50013, 40072) the stale CT configs on
+pve-tiny reference lost volumes; remove them in R1.
+
+## Edge, firewall, DNS and monitoring (added 2026-10-27)
+
+These did not move with the guests, but depend on where they run.
+Check each before R3 and again after each guest.
+
+| Area | Check |
+|---|---|
+| MikroTik | Cross-zone rules for VLAN 100/`cse_seg` (see `mikrotik-firewall-cse-panel-cross-zone.yml`) are keyed on IPs, which do not change. Confirm they still permit the intended paths after the return and that the router rule reconciler passes. Do not edit router rules for the move itself. |
+| VLAN 100 on pve-tiny | Confirm the `cse_seg` VNet and switch trunk are intact after the drive swap (R1) before any CSE guest. |
+| Traefik/Authentik edge | `cse-panel-stack/edge.yaml` backends use IPs (`${LAB_IP_CSE_PANEL}`), so no edge change is expected; verify login and the four pentest-viewer routes through the real ingress. |
+| Technitium | After restore of 20017, confirm cluster/zone sync with `.15`, UDP and TCP on `.17`, and that DHCP still hands out both resolvers. Do it before moving anything else (it is order 1). |
+| Monitoring scrape | Confirm Prometheus/VictoriaMetrics targets for the eight guests resolve to the same IPs and go `up`. Recreated guests need fresh node_exporter certs (`/etc/node_exporter` on 40070 is a known gap). |
+| Alerting | pve-tiny host alerts (`node_exporter_hw` for `pve-tiny`, file-handle alerts) will page while the node is down. Decide whether to silence them during the swap, and clear any silence afterwards. Alerting Phase 7 treats secpipe as pve-tiny: confirm the cadence fix still matches. |
+| Wazuh / backups | Re-enrol agents on 50012 and 20017 and verify the pve-tiny PBS job covers all eight, with correct exclusions. |
+
+## Sizing and windows (added 2026-10-27)
+
+- The cold copy is the long step. Record, per guest, the used bytes before
+  starting (`du`/`pct df`/`zfs list` on pve) and the measured throughput of
+  a 1 GiB pve to pve-tiny test transfer; estimate the window from those.
+- OpenSearch (150G data mount) is the dominant cost. Do it in a quiet
+  period with the Secpipe timers and Grafana/Graylog consumers paused.
+- Per guest, name the rollback trigger and time before starting. Rollback
+  after the cutover means restarting the pve copy, so it must remain
+  stopped, not destroyed, until the soak ends.
+- Keep the pve guest `onboot=0` once stopped, so a pve reboot cannot start
+  a duplicate IP.
+
+## Gate checklist (all must be true before the first R3 approval)
+
+- [ ] Open items 1-5 above closed or explicitly accepted as lost.
+- [ ] Return branch cut from current `stable`; both state sets copied with checksums.
+- [ ] New NVMe healthy, `nvme-lvm` recreated (R1), stale CT configs/state removed.
+- [ ] pve-tiny profile loads; all `services/*` the eight stacks need exist.
+- [ ] Inventory generated; `scripts/provision.sh --stack` works for all eight.
+- [ ] Rehearsal (R2) restore and provision passed.
+- [ ] Sizing estimates and windows recorded; alert silences decided.
+- [ ] Ancillary faults (Step CA timeout, Wazuh enrolment, CVE credential) fixed or logged.
+
+## What this plan does not yet fix
+
+- **Per-guest literal commands.** The copy, restore and verify commands
+  depend on pool IDs, mount layouts and sizes that are only known after R1.
+  Write them as a `runbook` (one preflight per guest) once the new drive is
+  in, following `docs/agent-design/step-packet-schema.md`, then ask for
+  approval one task at a time.
+- Whether the open items in the audit were closed. Verify with a read-only
+  look at pve-tiny before the erase decision; do not assume.
 
 ## Completion
 
