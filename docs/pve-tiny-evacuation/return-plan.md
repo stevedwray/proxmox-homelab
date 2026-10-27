@@ -237,6 +237,32 @@ Note: node-to-node SSH is not available, so cold copies relay through the
 operator workstation. That makes the 150G OpenSearch copy slow; it is the
 main argument for B.
 
+### PBS targets for method B (read from the PBS server, 2026-10-27)
+
+- Datastores: `iscsi-backup` (primary; about 115 GiB free of 1.0 TiB, GC
+  03:00, verify-new on) and `usb-backup` (path `/mnt/usb-dispatch`; about
+  1.8 TiB free of 3.6 TiB, GC 15:00). Only `iscsi-backup` is configured as a
+  Proxmox storage on pve and pve-tiny.
+- `usb-backup` is a **pull replica** of `iscsi-backup`: sync job daily 13:00,
+  root namespace, `remove-vanished` **false**. Normal flow is backup to
+  iscsi, then sync to usb.
+- Prune: `iscsi-backup` keep-last 2 (every 2 h); `usb-backup` keep daily 8,
+  weekly 4, monthly 2 (14:00). So iscsi holds only 2 restore points per
+  guest; usb holds the history (pve-tiny namespace there: 7-10 snapshots per
+  guest, last 2026-10-23; root namespace: pve's guests, last 2026-10-26).
+- Method B (OpenSearch, possibly AI Services): write the fresh backup of the
+  stopped pve CT **directly to `usb-backup` in a dedicated namespace**
+  (`return-staging`), not iscsi, so the 115 GiB on iscsi is not at risk.
+  The pull sync never writes to usb outside what it pulls, and
+  `remove-vanished=false` means it will not delete the staging namespace.
+  Needs a PBS storage entry for `usb-backup` on pve (to write) and on
+  pve-tiny (to restore): two small reversible config changes, each approved
+  separately. The staging copy is not replicated back to iscsi; delete it
+  after the soak and let usb GC run.
+- Open check: confirm the usb prune job's namespace scope will not touch
+  `return-staging` (a fresh newest snapshot is retained by keep-daily 8
+  regardless).
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
