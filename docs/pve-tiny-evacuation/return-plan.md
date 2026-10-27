@@ -450,7 +450,7 @@ Bug found and fixed on the way: a quiesce check with nested quotes made `ssh`
 run `view` (vim) on pve; checks that contain quotes or pipes are now sent on
 stdin. Each phase now logs to `<state>/logs/`.
 
-### R3 guest 5: cse-code-eval 100071 (preflight written 2026-10-27, not yet run)
+### R3 guest 5: cse-code-eval 100071 (returned 2026-10-27)
 
 Method A. State is `/srv/cyberseceval` (318 MB: PurpleLlama clone and work
 area; `backup_policy: exclude`, disposable by design) and is carried to keep
@@ -464,6 +464,18 @@ VMID's LVs (tested read-only against the live config). No Wazuh play in this
 playbook. `verify` checks the mount, repo, container, gcc/cmake and the route
 to cse-controller `192.168.100.70` (a cross-node VLAN test while the
 controller is still on pve).
+
+**Result 2026-10-27:** all phases completed (logs in `<state>/100071/logs/`).
+`destroy_half_phantom` removed exactly `pve/vm-100071-disk-0` and `-disk-1`
+and the stale config (the nvme volume was already gone); Terraform then
+created the target (5 added, 3 destroyed = generated/bookkeeping resources),
+root and Docker on `local-lvm`, `/srv/cyberseceval` on `nvme-lvm`.
+Provision ok=72, failed=0 (one ignored: known Step CA timeout). `verify`:
+mountpoint yes, `repo/PurpleLlama` present, container up, gcc 14.2.0, cmake
+3.31.6, route to cse-controller `192.168.100.70` ok (cross-node VLAN path
+works). Manifest diff additive (`apt-listchanges.timer`, `ipmi`) plus
+`systemd-pcrlock.socket` and `.dpkg-old` not carried. pve copy stopped,
+`onboot=0`.
 
 ### R2. Rehearsal (run and passed 2026-10-27)
 
