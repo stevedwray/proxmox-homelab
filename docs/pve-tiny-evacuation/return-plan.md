@@ -101,6 +101,22 @@ until every item above is closed or explicitly accepted as lost.**
 - Restore the pve-tiny PBS job and its exclusions; confirm a backup runs.
 - Confirm `cse_seg`/VLAN 100 is intact on pve-tiny.
 
+### R1 read-only baseline, 2026-10-27 (pve-tiny just booted)
+
+- Kernel `7.0.14-20-pve`. API reachable; pve-tiny is up with all ten CTs
+  **stopped** (40070, 100071, 50012, 40014, 20030, 20017, 50013, 40072,
+  50011, 910).
+- New NVMe `/dev/nvme0n1` (Kingston SNV3S2000G, 2 TB): SMART PASSED, 0 power-on
+  hours, 0 data written, 0 media errors, 100% spare, 27 C. Blank: no LVM or
+  partitions listed.
+- Storage `nvme-lvm` is defined (lvmthin) but **inactive**, 0 bytes. It must
+  be recreated on the new drive with the same ID. `local-lvm` has about
+  28 GB free; boot SSD wearout 88% remaining.
+- The pve-tiny PBS job runs 12:30 daily and excludes only 910; it will fail
+  or skip guests until their volumes exist, so expect noise until R3.
+- The stopped CT configs still reference the lost NVMe volumes (cleanup in
+  R1). No guest has been started.
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
