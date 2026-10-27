@@ -137,6 +137,26 @@ until every item above is closed or explicitly accepted as lost.**
   - Only 50013's eval-runner history (open item 5) was on the lost drive;
     the pve copy is now its sole authority.
 
+### Open item 5 resolved, 2026-10-27: eval-runner history was NOT carried over
+
+Read-only check of CT 50013 on pve:
+
+- `/srv/eval-runner/results/` holds only runs made since the cutover
+  (2026-10-24 on: gemma4 and glm-5.3-flash pilots, `_publish-state.json`).
+- **`/srv/eval-runner/results/_historical/` is missing.** It held the
+  imported Ollama-era GPQA/IFEval files (36 files, about 42 MB) plus the
+  BFCL and AgentBench imports. The cutover copied only three Docker volumes;
+  `/srv/eval-runner` was not in the checklist, and the NVMe copy is gone.
+- Recovery sources, best first:
+  1. PBS snapshots of 50013 in the `pve-tiny` namespace:
+     `pbs-iscsi:backup/ct/50013/2026-10-23T05:32:21Z` and
+     `...2026-10-23T23:33:12Z` (pre-cutover; the newer is the final state).
+  2. Re-import from framework/garuda using the two "Operator" blocks in
+     `docs/eval-runner/plan.md` (GPQA/IFEval from `~/eval-harnesses/results`;
+     BFCL and AgentBench via `import_history.py`).
+- Restore is additive into `_historical/`; it must not touch the newer
+  run directories. It is a pve production write and needs its own approval.
+
 ### R2. Rehearsal
 
 Test restore of one PBS snapshot to an unused VMID on isolated
