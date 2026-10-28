@@ -8,6 +8,9 @@ groups:
     folder: Homelab alerts
     interval: 1m
     rules:
+      # framework.gibbsgreatly.xyz:8080 (the llama.cpp chat server) is excluded below: it is stopped or its model
+      # unloaded on purpose from the controller, so "down" is a normal state. The host being down is still caught
+      # by framework's node_exporter target, and the embeddings server (:8085) is still covered here.
       - uid: homelab-target-down
         title: Scrape target down
         condition: C
@@ -18,7 +21,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: 'up{job!~"minecraft-status|minecraft-jvm",instance!~"192.168.60.10:8080|pve-test.gibbsgreatly.xyz:9100|garuda.gibbsgreatly.xyz:9100"}'
+              expr: 'up{job!~"minecraft-status|minecraft-jvm",instance!~"192.168.60.10:8080|pve-test.gibbsgreatly.xyz:9100|garuda.gibbsgreatly.xyz:9100|framework.gibbsgreatly.xyz:8080"}'
           - refId: C
             datasourceUid: __expr__
             model:
