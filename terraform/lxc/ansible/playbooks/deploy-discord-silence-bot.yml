@@ -84,6 +84,7 @@
         force_basic_auth: true
         body_format: json
         body: {name: "{{ bot_service_account }}", role: Editor, isDisabled: false}
+        status_code: [200, 201]
         return_content: true
       register: sa_created
       when: sa_id == ''
@@ -103,6 +104,7 @@
         force_basic_auth: true
         body_format: json
         body: {name: "bot-{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"}
+        status_code: [200, 201]
         return_content: true
       register: sa_token
       when: not stored_token.stat.exists and sa_id != ''
