@@ -1,0 +1,195 @@
+---
+# Discord reaction -> Grafana silence bot (docs/alerting/discord-silence-bot.md). Runs on the monitoring-stack LXC as its
+# own small compose project, so deploying or breaking it never touches monitoring-stack itself, and alerts keep
+# arriving if it is down.
+#
+# Order of operations (secrets first, or the production wrapper fails closed for EVERY deploy once the manifest lands):
+#   1. Operator creates the Discord application and bot, then writes the three values to OpenBao (see the doc).
+#   2. Merge the branch that adds services/discord-silence-bot to secrets/manifest.json.
+#   3. Preview, then apply (hand-run playbook: ANSIBLE_CONFIG / ANSIBLE_ROLES_PATH needed, see the doc):
+#        TASK_APPROVAL=discord-silence-bot ./with-secrets-prod ansible-playbook \
+#          -i terraform/lxc/environments/pve/monitoring-stack/inventory.yml -u root \
+#          terraform/lxc/ansible/playbooks/deploy-discord-silence-bot.yml [--check]
+#
+# Grafana access: the play uses the Grafana admin login ONCE to create a service account (role Editor, which may manage
+# silences) and a token, kept 0600 on the host and handed to the bot. The bot never holds the admin password.
+# Rollback: docker compose -f /opt/discord-silence-bot/docker-compose.yml down; delete the service account in Grafana.
+
+- name: Deploy the Discord silence bot
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    bot_dir: /opt/discord-silence-bot
+    bot_token_file: "{{ bot_dir }}/grafana-token"
+    bot_service_account: discord-silence-bot
+    grafana_local_url: "http://127.0.0.1:3000"
+    grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
+    grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') }}"
+    discord_bot_token: "{{ lookup('env', 'DISCORD_BOT_TOKEN') }}"
+    discord_bot_owner_id: "{{ lookup('env', 'DISCORD_BOT_OWNER_ID') }}"
+    discord_bot_channel_ids: "{{ lookup('env', 'DISCORD_BOT_CHANNEL_IDS') }}"
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lab_domain, true), true) }}"
+    bot_image: "{{ registry_host }}/dockerhub/library/python:3.12-alpine"
+
+  pre_tasks:
+    - name: Assert the secrets are present
+      ansible.builtin.assert:
+        that:
+          - discord_bot_token | length > 0
+          - discord_bot_owner_id | regex_search('^[0-9]+$') is not none
+          - discord_bot_channel_ids | regex_search('^[0-9]+(,[0-9]+)*$') is not none
+          - grafana_admin_password | length > 0
+        fail_msg: >-
+          Run through ./with-secrets-prod with TASK_APPROVAL set. DISCORD_BOT_TOKEN, DISCORD_BOT_OWNER_ID (digits) and
+          DISCORD_BOT_CHANNEL_IDS (comma-separated digits) come from OpenBao services/discord-silence-bot.
+      no_log: true
+
+  tasks:
+    - name: Create the bot directory
+      ansible.builtin.file:
+        path: "{{ bot_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Check whether a Grafana token is already stored
+      ansible.builtin.stat:
+        path: "{{ bot_token_file }}"
+      register: stored_token
+
+    - name: Look for the bot's Grafana service account
+      ansible.builtin.uri:
+        url: "{{ grafana_local_url }}/api/serviceaccounts/search?query={{ bot_service_account }}"
+        user: "{{ grafana_admin_user }}"
+        password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: sa_search
+      check_mode: false
+      no_log: true
+
+    - name: Work out the service account id (empty when it does not exist yet)
+      ansible.builtin.set_fact:
+        sa_id: >-
+          {{ (sa_search.json.serviceAccounts | selectattr('name', 'equalto', bot_service_account) | map(attribute='id') | list | first) | default('') }}
+
+    - name: Create the service account (Editor can manage silences, nothing more is needed)
+      ansible.builtin.uri:
+        url: "{{ grafana_local_url }}/api/serviceaccounts"
+        method: POST
+        user: "{{ grafana_admin_user }}"
+        password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body: {name: "{{ bot_service_account }}", role: Editor, isDisabled: false}
+        status_code: [200, 201]
+        return_content: true
+      register: sa_created
+      when: sa_id == ''
+      no_log: true
+
+    - name: Remember the service account id
+      ansible.builtin.set_fact:
+        sa_id: "{{ sa_created.json.id }}"
+      when: sa_id == '' and sa_created is not skipped
+
+    - name: Create a token when none is stored
+      ansible.builtin.uri:
+        url: "{{ grafana_local_url }}/api/serviceaccounts/{{ sa_id }}/tokens"
+        method: POST
+        user: "{{ grafana_admin_user }}"
+        password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body: {name: "bot-{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"}
+        status_code: [200, 201]
+        return_content: true
+      register: sa_token
+      when: not stored_token.stat.exists and sa_id != ''
+      no_log: true
+
+    - name: Store the token where only root can read it
+      ansible.builtin.copy:
+        content: "{{ sa_token.json.key }}"
+        dest: "{{ bot_token_file }}"
+        mode: "0600"
+      when: sa_token is not skipped
+      no_log: true
+
+    - name: Read the stored token
+      ansible.builtin.slurp:
+        src: "{{ bot_token_file }}"
+      register: token_file
+      when: stored_token.stat.exists or sa_token is not skipped
+      no_log: true
+
+    - name: Copy the bot script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/discord_silence_bot.py"
+        dest: "{{ bot_dir }}/discord_silence_bot.py"
+        mode: "0644"
+      register: bot_script
+
+    - name: Write the bot's environment file
+      ansible.builtin.copy:
+        dest: "{{ bot_dir }}/.env"
+        mode: "0600"
+        content: |
+          DISCORD_BOT_TOKEN={{ discord_bot_token }}
+          DISCORD_BOT_OWNER_ID={{ discord_bot_owner_id }}
+          DISCORD_BOT_CHANNEL_IDS={{ discord_bot_channel_ids }}
+          GRAFANA_URL={{ grafana_local_url }}
+          GRAFANA_SILENCE_TOKEN={{ (token_file.content | b64decode) if token_file is not skipped else 'PENDING-CHECK-MODE' }}
+      register: bot_env
+      no_log: true
+
+    - name: Write the compose file
+      ansible.builtin.copy:
+        dest: "{{ bot_dir }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          services:
+            discord-silence-bot:
+              image: {{ bot_image }}
+              container_name: discord-silence-bot
+              restart: unless-stopped
+              network_mode: host
+              user: "65534:65534"
+              read_only: true
+              cap_drop: [ALL]
+              security_opt: ["no-new-privileges:true"]
+              mem_limit: 128m
+              env_file: [.env]
+              command: ["python3", "/app/discord_silence_bot.py"]
+              volumes:
+                - ./discord_silence_bot.py:/app/discord_silence_bot.py:ro
+              logging:
+                driver: json-file
+                options: {max-size: 5m, max-file: "3"}
+      register: bot_compose
+
+    - name: Start the bot (recreate it when its script, environment or definition changed)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose -f {{ bot_dir }}/docker-compose.yml up -d
+          {{ '--force-recreate' if (bot_script.changed or bot_env.changed or bot_compose.changed) else '' }}
+      register: bot_up
+      changed_when: "bot_up.stderr is search('Created|Started|Recreated')"
+      when: not ansible_check_mode
+
+    - name: Wait for the bot to log that it is watching the channels
+      ansible.builtin.command:
+        cmd: docker logs discord-silence-bot
+      register: bot_logs
+      until: "'watching' in bot_logs.stdout or 'watching' in bot_logs.stderr"
+      retries: 6
+      delay: 5
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Show the bot's startup line (no secrets are logged)
+      ansible.builtin.debug:
+        msg: "{{ (bot_logs.stdout_lines + bot_logs.stderr_lines) | select('search', 'watching') | list | last }}"
+      when: not ansible_check_mode
