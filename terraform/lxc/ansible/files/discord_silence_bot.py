@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 DISCORD_API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/stevedwray/proxmox-homelab, 1)"  # Discord rejects generic agents
 DEFAULT_DURATIONS = "\U0001F44D=4,\U0001F319=12,\U0001F4C5=24"  # thumbs up 4h, crescent moon 12h, calendar 24h
+DEFAULT_SEED = "\U0001F50D,\U0001F319"  # magnifying glass, crescent moon: the buttons worth having one click away
 DONE, FAILED = "✅", "❌"  # bot's own marker reactions: check mark, cross mark
 INVESTIGATE = {"\U0001F50D", "\U0001F50E"}  # magnifying glass, either way round
 QUEUED, REPORTED, INV_FAILED = "⏳", "\U0001F4DD", "⚠"  # bot's own investigation markers: hourglass, memo, warning
@@ -179,6 +180,27 @@ class Grafana:
         return (self.api.call("GET", "/api/health") or {}).get("database") == "ok"
 
 
+def others_reacted(reaction: dict) -> bool:
+    """True when someone besides the bot is among the reactors (the bot's own seeded reaction is not a request)."""
+    return reaction.get("count", 0) - (1 if reaction.get("me") else 0) > 0
+
+
+def seed_reactions(message: dict, channel: str, cfg: dict, discord: Discord, now: datetime) -> list[str]:
+    """Pre-add the owner's one-click buttons to a fresh alert that has a silence link, so they need not hunt the picker."""
+    if not message.get("webhook_id") or not cfg.get("seed") or not extract_silence_urls(message):
+        return []
+    age = now - datetime.fromisoformat(message["timestamp"].replace("Z", "+00:00"))
+    if age > timedelta(hours=cfg["seed_max_age_hours"]):
+        return []  # do not backfill history after a deploy
+    have = my_markers(message)
+    added = []
+    for emoji in cfg["seed"]:
+        if normalize_emoji(emoji) not in have:
+            discord.react(channel, message["id"], emoji)
+            added.append(emoji)
+    return added
+
+
 def wanted_hours(message: dict, owner: str, durations: dict[str, float], discord: Discord, channel: str) -> float | None:
     """Longest duration the owner reacted with, or None. Messages the bot already marked are skipped."""
     seen: dict[str, int] = {}
@@ -186,7 +208,7 @@ def wanted_hours(message: dict, owner: str, durations: dict[str, float], discord
         name = normalize_emoji((reaction.get("emoji") or {}).get("name") or "")
         if name in (DONE, FAILED) and reaction.get("me"):
             return None
-        if name in durations and reaction.get("count", 0) > 0:
+        if name in durations and others_reacted(reaction):
             seen[name] = reaction["count"]
     best = None
     for name in seen:
@@ -273,7 +295,7 @@ class Investigations:
     def owner_asked(self, message: dict, channel: str) -> bool:
         for reaction in message.get("reactions") or []:
             raw = (reaction.get("emoji") or {}).get("name") or ""
-            if (normalize_emoji(raw) in INVESTIGATE and reaction.get("count", 0) > 0
+            if (normalize_emoji(raw) in INVESTIGATE and others_reacted(reaction)
                     and self.cfg["owner"] in self.discord.reactors(channel, message["id"], raw)):
                 return True
         return False
@@ -373,6 +395,12 @@ def make_runner(cfg: dict) -> Callable[[dict], tuple[str, str, str]]:
     return run
 
 
+def cfg_for_seed(cfg: dict, investigations: "Investigations | None") -> dict:
+    """The 🔍 button only makes sense when investigations are on."""
+    seed = [e for e in cfg.get("seed") or [] if investigations is not None or normalize_emoji(e) not in INVESTIGATE]
+    return {**cfg, "seed": seed}
+
+
 def poll_once(cfg: dict, discord: Discord, grafana: Grafana, investigations: Investigations | None = None) -> int:
     handled = 0
     for channel in cfg["channels"]:
@@ -385,6 +413,12 @@ def poll_once(cfg: dict, discord: Discord, grafana: Grafana, investigations: Inv
             if result:
                 handled += 1
                 log(f"channel {channel} message {message['id']}: {result}")
+            try:
+                seeded = seed_reactions(message, channel, cfg_for_seed(cfg, investigations), discord, datetime.now(timezone.utc))
+                if seeded:
+                    message = {**message, "reactions": (message.get("reactions") or []) + [{"emoji": {"name": e}, "count": 1, "me": True} for e in seeded]}
+            except Exception as exc:
+                log(f"channel {channel} message {message.get('id')}: could not add reaction buttons: {exc}")
             if investigations is None:
                 continue
             try:
@@ -409,6 +443,8 @@ def load_config(env: dict[str, str]) -> dict:
         "grafana_url": env.get("GRAFANA_URL", "http://127.0.0.1:3000"),
         "grafana_token": env["GRAFANA_SILENCE_TOKEN"].strip(),
         "durations": parse_durations(env.get("DISCORD_BOT_DURATIONS", DEFAULT_DURATIONS)),
+        "seed": [e.strip() for e in env.get("DISCORD_BOT_SEED_REACTIONS", DEFAULT_SEED).split(",") if e.strip()],
+        "seed_max_age_hours": float(env.get("DISCORD_BOT_SEED_MAX_AGE_HOURS", "2")),
         "poll_seconds": float(env.get("DISCORD_BOT_POLL_SECONDS", "30")),
         "max_age_hours": float(env.get("DISCORD_BOT_MAX_AGE_HOURS", "24")),
         # Investigations are on only when the model endpoint is configured.

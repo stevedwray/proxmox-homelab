@@ -38,7 +38,8 @@
     discord_bot_channel_ids: "{{ lookup('env', 'DISCORD_BOT_CHANNEL_IDS') }}"
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lab_domain, true), true) }}"
-    bot_image: "{{ registry_host }}/dockerhub/library/python:3.12-alpine"
+    # glibc image: musl (alpine) fails a name whose AAAA answer is NXDOMAIN, as the router gives for the Framework FQDN
+    bot_image: "{{ registry_host }}/dockerhub/library/python:3.12-slim"
     # ---- investigations (docs/alerting/alert-investigator.md) ----
     investigator_enabled: true
     investigator_user: alert-investigator

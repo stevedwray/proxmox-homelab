@@ -6,7 +6,8 @@ import discord_silence_bot as bot
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=timezone.utc)
 OWNER = "111"
 URL = "https://grafana.example/alerting/silence/new?alertmanager=grafana&matcher=alertname%3DScrape%20target%20down&matcher=instance%3D192.168.20.12%3A9100"
-CFG = {"owner": OWNER, "durations": bot.parse_durations(bot.DEFAULT_DURATIONS), "max_age_hours": 24, "channels": ["c1"]}
+CFG = {"owner": OWNER, "durations": bot.parse_durations(bot.DEFAULT_DURATIONS), "max_age_hours": 24, "channels": ["c1"],
+       "seed": ["\U0001F50D", "\U0001F319"], "seed_max_age_hours": 2}
 
 
 class FakeDiscord:
@@ -255,3 +256,31 @@ class Investigating(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Seeding(unittest.TestCase):
+    def test_fresh_alert_gets_the_buttons_once(self):
+        d, msg = FakeDiscord(), message(reactions=(), age_hours=0.1)
+        self.assertEqual(bot.seed_reactions(msg, "c1", CFG, d, NOW), ["\U0001F50D", "\U0001F319"])
+        self.assertEqual(bot.seed_reactions(message(reactions=("\U0001F50D", "\U0001F319"), me=("\U0001F50D", "\U0001F319"), age_hours=0.1), "c1", CFG, d, NOW), [])
+
+    def test_old_alert_resolved_message_and_non_webhook_are_left_alone(self):
+        d = FakeDiscord()
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=5), "c1", CFG, d, NOW), [])
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=0.1, embed_text="resolved, no link"), "c1", CFG, d, NOW), [])
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=0.1, webhook=False), "c1", CFG, d, NOW), [])
+        self.assertEqual(d.reactions, [])
+
+    def test_the_bots_own_button_is_not_a_request(self):
+        msg = message(reactions=("\U0001F319",), me=("\U0001F319",), age_hours=0.1)
+        d = FakeDiscord({"\U0001F319": [OWNER]})  # would silence if it counted
+        self.assertIsNone(run(msg, d)[0])
+        self.assertEqual(d.reactions, [])
+
+    def test_owner_clicking_the_seeded_button_still_works(self):
+        msg = message(reactions=("\U0001F319",), me=("\U0001F319",), age_hours=0.1)
+        msg["reactions"][0]["count"] = 2  # the bot plus the owner
+        self.assertEqual(run(msg, FakeDiscord({"\U0001F319": [OWNER]}))[0], "silenced")
+
+    def test_magnifier_seed_is_dropped_when_investigations_are_off(self):
+        self.assertEqual(bot.cfg_for_seed(CFG, None)["seed"], ["\U0001F319"])
