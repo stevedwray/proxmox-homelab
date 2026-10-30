@@ -790,27 +790,43 @@ def derive_zone_policy_flows(network_intent):
     flows = []
     policies = network_intent.get("policies", [])
     for i, policy in enumerate(policies):
-        from_zone = policy.get("from", "unknown")
-        to_zone = policy.get("to", "unknown")
         ports = policy.get("ports", [])
         proto = policy.get("protocol", "tcp")
         desc = policy.get("description", "")
-
-        flows.append({
-            "id": f"df-zone-policy-{i:02d}",
-            "name": f"Zone policy: {from_zone} → {to_zone}",
-            "from": f"zone:{from_zone}",
-            "to": f"zone:{to_zone}",
-            "protocol": proto,
-            "ports": ports,
-            "data_classification": "varies",
-            "data": desc,
-            "trigger": "runtime",
-            "trust_boundary_crossing": _zone_boundary(from_zone, to_zone),
-            "inferred_from": "pve.yaml policies section",
-            "flow_type": "zone-policy",
-        })
+        # from/to may each be a single zone or a list (e.g. the greenbone
+        # scan-reach rule fans out to every zone). Emit one flow per pair;
+        # single-pair policies keep their original id so annotations.yaml
+        # keys stay valid.
+        pairs = [
+            (from_zone, to_zone)
+            for from_zone in _as_list(policy.get("from", "unknown"))
+            for to_zone in _as_list(policy.get("to", "unknown"))
+        ]
+        for j, (from_zone, to_zone) in enumerate(pairs):
+            flow_id = f"df-zone-policy-{i:02d}" if len(pairs) == 1 else f"df-zone-policy-{i:02d}-{j:02d}"
+            flows.append(_zone_policy_flow(flow_id, from_zone, to_zone, proto, ports, desc))
     return flows
+
+
+def _as_list(value):
+    return value if isinstance(value, list) else [value]
+
+
+def _zone_policy_flow(flow_id, from_zone, to_zone, proto, ports, desc):
+    return {
+        "id": flow_id,
+        "name": f"Zone policy: {from_zone} → {to_zone}",
+        "from": f"zone:{from_zone}",
+        "to": f"zone:{to_zone}",
+        "protocol": proto,
+        "ports": ports,
+        "data_classification": "varies",
+        "data": desc,
+        "trigger": "runtime",
+        "trust_boundary_crossing": _zone_boundary(from_zone, to_zone),
+        "inferred_from": "pve.yaml policies section",
+        "flow_type": "zone-policy",
+    }
 
 
 def derive_monitoring_flows(stacks, composes, processes):
