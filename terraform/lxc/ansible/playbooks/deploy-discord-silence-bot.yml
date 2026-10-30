@@ -1,7 +1,7 @@
 ---
-# Discord reaction -> Grafana silence bot (docs/alerting/discord-silence-bot.md). Runs on the monitoring-stack LXC as its
-# own small compose project, so deploying or breaking it never touches monitoring-stack itself, and alerts keep
-# arriving if it is down.
+# Discord reaction -> Grafana silence bot (docs/alerting/discord-silence-bot.md), which also runs alert investigations
+# with the local model (docs/alerting/alert-investigator.md). Runs on the monitoring-stack LXC as its own small compose
+# project, so deploying or breaking it never touches monitoring-stack itself, and alerts keep arriving if it is down.
 #
 # Order of operations (secrets first, or the production wrapper fails closed for EVERY deploy once the manifest lands):
 #   1. Operator creates the Discord application and bot, then writes the three values to OpenBao (see the doc).
@@ -13,7 +13,13 @@
 #
 # Grafana access: the play uses the Grafana admin login ONCE to create a service account (role Editor, which may manage
 # silences) and a token, kept 0600 on the host and handed to the bot. The bot never holds the admin password.
-# Rollback: docker compose -f /opt/discord-silence-bot/docker-compose.yml down; delete the service account in Grafana.
+#
+# Investigations read through their own accounts, created here the same way and stored 0600 beside the bot: a Graylog
+# service account (Reader, every stream except "Pentest Segment") and an OpenSearch user (read on the findings and CVE
+# indices only). The play uses the Graylog root and OpenSearch admin passwords for that and never hands them to the bot.
+# investigator_enabled=false deploys the silence bot alone.
+# Rollback: docker compose -f /opt/discord-silence-bot/docker-compose.yml down; delete the service account in Grafana,
+# the alert-investigator user in Graylog and in OpenSearch.
 
 - name: Deploy the Discord silence bot
   hosts: all
@@ -33,6 +39,19 @@
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lab_domain, true), true) }}"
     bot_image: "{{ registry_host }}/dockerhub/library/python:3.12-alpine"
+    # ---- investigations (docs/alerting/alert-investigator.md) ----
+    investigator_enabled: true
+    investigator_user: alert-investigator
+    investigator_llm_url: "http://{{ lookup('env', 'LAB_FQDN_FRAMEWORK') | default('framework.gibbsgreatly.xyz', true) }}:8080/v1"
+    investigator_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') }}"
+    graylog_api: "http://{{ lookup('env', 'LAB_IP_GRAYLOG') | default('192.168.20.14', true) }}:9000/api"
+    graylog_root_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') }}"
+    graylog_excluded_streams: ["Pentest Segment"]  # pentest_seg results are never lab findings
+    graylog_token_file: "{{ bot_dir }}/graylog-token"
+    opensearch_url: "https://{{ lookup('env', 'LAB_IP_OPENSEARCH') | default('192.168.40.14', true) }}:9200"
+    opensearch_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') }}"
+    opensearch_role: alert_investigator_reader
+    opensearch_password_file: "{{ bot_dir }}/opensearch-password"
 
   pre_tasks:
     - name: Assert the secrets are present
@@ -45,6 +64,18 @@
         fail_msg: >-
           Run through ./with-secrets-prod with TASK_APPROVAL set. DISCORD_BOT_TOKEN, DISCORD_BOT_OWNER_ID (digits) and
           DISCORD_BOT_CHANNEL_IDS (comma-separated digits) come from OpenBao services/discord-silence-bot.
+      no_log: true
+
+    - name: Assert the investigation secrets are present
+      ansible.builtin.assert:
+        that:
+          - investigator_llm_api_key | length > 0
+          - graylog_root_password | length > 0
+          - opensearch_admin_password | length > 0
+        fail_msg: >-
+          Investigations need LLM_GPU_STACK_API_KEY (services/llm-gpu), GRAYLOG_ROOT_PASSWORD (services/graylog) and
+          OPENSEARCH_ADMIN_PASSWORD (services/opensearch), all in the pve profile. Or pass -e investigator_enabled=false.
+      when: investigator_enabled | bool
       no_log: true
 
   tasks:
@@ -125,12 +156,234 @@
       when: stored_token.stat.exists or sa_token is not skipped
       no_log: true
 
+    # ---- Graylog: a read-only service account and token for log searches ----------------------------------------
+    # The token and password files live on the monitoring host, so they are read with slurp (a file lookup would read
+    # the machine running Ansible).
+    - name: Check whether a Graylog token is already stored
+      ansible.builtin.stat:
+        path: "{{ graylog_token_file }}"
+      register: stored_graylog_token
+      when: investigator_enabled | bool
+
+    - name: Read the stored Graylog token
+      ansible.builtin.slurp:
+        src: "{{ graylog_token_file }}"
+      register: graylog_token_slurp
+      when: investigator_enabled | bool and stored_graylog_token.stat.exists
+      no_log: true
+
+    - name: Remember the stored Graylog token
+      ansible.builtin.set_fact:
+        graylog_token_value: "{{ graylog_token_slurp.content | b64decode }}"
+      when: investigator_enabled | bool and stored_graylog_token.stat.exists
+      no_log: true
+
+    - name: Check whether the stored Graylog token still works (tokens can expire)
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/search/messages"
+        method: POST
+        url_username: "{{ graylog_token_value }}"
+        url_password: token
+        force_basic_auth: true
+        headers: {X-Requested-By: ansible}
+        body_format: json
+        body: {query: "*", timerange: {type: relative, range: 60}, size: 1}
+        status_code: [200, 401, 403]
+      register: graylog_token_check
+      check_mode: false
+      when: investigator_enabled | bool and stored_graylog_token.stat.exists
+      no_log: true
+
+    - name: Decide whether a new Graylog token is needed
+      ansible.builtin.set_fact:
+        graylog_needs_token: >-
+          {{ (investigator_enabled | bool) and (not stored_graylog_token.stat.exists or graylog_token_check.status != 200) }}
+
+    - name: List Graylog streams (the account may read every one except the excluded)
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/streams"
+        url_username: admin
+        url_password: "{{ graylog_root_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_streams
+      check_mode: false
+      when: graylog_needs_token | bool
+      no_log: true
+
+    - name: Look for the Graylog service account
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/users/{{ investigator_user }}"
+        url_username: admin
+        url_password: "{{ graylog_root_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+        return_content: true
+      register: graylog_user
+      check_mode: false
+      when: graylog_needs_token | bool
+      no_log: true
+
+    - name: Create the Graylog service account (Reader, stream read only, cannot log in to the UI)
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/users"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_root_password }}"
+        force_basic_auth: true
+        headers: {X-Requested-By: ansible}
+        body_format: json
+        body:
+          username: "{{ investigator_user }}"
+          password: "{{ lookup('password', '/dev/null length=40 chars=ascii_letters,digits') }}"
+          email: "{{ investigator_user }}@localhost"
+          first_name: Alert
+          last_name: Investigator
+          roles: [Reader]
+          service_account: true
+          permissions: >-
+            {{ graylog_streams.json.streams | rejectattr('title', 'in', graylog_excluded_streams)
+               | map(attribute='id') | map('regex_replace', '^', 'streams:read:') | list }}
+        status_code: [200, 201]
+      when: graylog_needs_token | bool and graylog_user.status == 404
+      no_log: true
+
+    - name: Read the service account back (its id names the token)
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/users/{{ investigator_user }}"
+        url_username: admin
+        url_password: "{{ graylog_root_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_user_now
+      when: graylog_needs_token | bool and not ansible_check_mode
+      no_log: true
+
+    - name: Create a Graylog token for it
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/users/{{ graylog_user_now.json.id }}/tokens/bot-{{ lookup('pipe', 'date +%Y%m%d%H%M%S') }}"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_root_password }}"
+        force_basic_auth: true
+        headers: {X-Requested-By: ansible}
+        body_format: json
+        body: {token_ttl: P3650D}
+        status_code: [200, 201]
+        return_content: true
+      register: graylog_token_created
+      when: graylog_needs_token | bool and not ansible_check_mode
+      no_log: true
+
+    - name: Store the new Graylog token where only root can read it
+      ansible.builtin.copy:
+        content: "{{ graylog_token_created.json.token }}"
+        dest: "{{ graylog_token_file }}"
+        mode: "0600"
+      when: graylog_needs_token | bool and not ansible_check_mode
+      no_log: true
+
+    - name: Remember the new Graylog token
+      ansible.builtin.set_fact:
+        graylog_token_value: "{{ graylog_token_created.json.token }}"
+      when: graylog_needs_token | bool and not ansible_check_mode
+      no_log: true
+
+    - name: Prove the token can search (fails the play if Reader lacks search rights in this Graylog version)
+      ansible.builtin.uri:
+        url: "{{ graylog_api }}/search/messages"
+        method: POST
+        url_username: "{{ graylog_token_value }}"
+        url_password: token
+        force_basic_auth: true
+        headers: {X-Requested-By: ansible}
+        body_format: json
+        body: {query: "*", timerange: {type: relative, range: 300}, size: 1}
+      when: investigator_enabled | bool and not ansible_check_mode
+      no_log: true
+
+    # ---- OpenSearch: a read-only user for findings and CVE enrichment --------------------------------------------
+    - name: Check whether an OpenSearch password is already stored
+      ansible.builtin.stat:
+        path: "{{ opensearch_password_file }}"
+      register: stored_os_password
+      when: investigator_enabled | bool
+
+    - name: Ensure the OpenSearch reader role (read on findings and CVE indices, nothing else)
+      ansible.builtin.uri:
+        url: "{{ opensearch_url }}/_plugins/_security/api/roles/{{ opensearch_role }}"
+        method: PUT
+        url_username: admin
+        url_password: "{{ opensearch_admin_password }}"
+        force_basic_auth: true
+        validate_certs: false  # same as the lab's OpenSearch datasources (uvm_dashboard_es_no_verify_tls)
+        body_format: json
+        body:
+          cluster_permissions: [cluster_composite_ops_ro]
+          index_permissions:
+            - index_patterns: ["harbor-findings*", "gvm-findings*", "unified-cve-exposure*", "cve-remediation-assessment*"]
+              allowed_actions: [read]
+        status_code: [200, 201]
+      when: investigator_enabled | bool and not stored_os_password.stat.exists
+      no_log: true
+
+    - name: Generate the OpenSearch user's password
+      ansible.builtin.set_fact:
+        os_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when: investigator_enabled | bool and not stored_os_password.stat.exists
+      no_log: true
+
+    - name: Ensure the OpenSearch user
+      ansible.builtin.uri:
+        url: "{{ opensearch_url }}/_plugins/_security/api/internalusers/{{ investigator_user }}"
+        method: PUT
+        url_username: admin
+        url_password: "{{ opensearch_admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          password: "{{ os_password }}"
+          opendistro_security_roles: ["{{ opensearch_role }}"]
+          description: "Alert investigator (discord-silence-bot): read-only findings and CVE enrichment"
+        status_code: [200, 201]
+      when: investigator_enabled | bool and not stored_os_password.stat.exists
+      no_log: true
+
+    - name: Store the OpenSearch password where only root can read it
+      ansible.builtin.copy:
+        content: "{{ os_password }}"
+        dest: "{{ opensearch_password_file }}"
+        mode: "0600"
+      when: investigator_enabled | bool and not stored_os_password.stat.exists
+      no_log: true
+
+    - name: Read the stored OpenSearch password
+      ansible.builtin.slurp:
+        src: "{{ opensearch_password_file }}"
+      register: os_password_slurp
+      when: investigator_enabled | bool and stored_os_password.stat.exists
+      no_log: true
+
+    - name: Remember the stored OpenSearch password
+      ansible.builtin.set_fact:
+        os_password: "{{ os_password_slurp.content | b64decode }}"
+      when: investigator_enabled | bool and stored_os_password.stat.exists
+      no_log: true
+
     - name: Copy the bot script
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../files/discord_silence_bot.py"
         dest: "{{ bot_dir }}/discord_silence_bot.py"
         mode: "0644"
       register: bot_script
+
+    - name: Copy the investigator module
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/alert_investigator.py"
+        dest: "{{ bot_dir }}/alert_investigator.py"
+        mode: "0644"
+      register: investigator_script
 
     - name: Write the bot's environment file
       ansible.builtin.copy:
@@ -142,6 +395,17 @@
           DISCORD_BOT_CHANNEL_IDS={{ discord_bot_channel_ids }}
           GRAFANA_URL={{ grafana_local_url }}
           GRAFANA_SILENCE_TOKEN={{ (token_file.content | b64decode) if token_file is not skipped else 'PENDING-CHECK-MODE' }}
+          {% if investigator_enabled | bool %}
+          INVESTIGATOR_LLM_URL={{ investigator_llm_url }}
+          INVESTIGATOR_LLM_API_KEY={{ investigator_llm_api_key }}
+          VICTORIAMETRICS_URL=http://127.0.0.1:8428
+          GRAYLOG_URL={{ graylog_api }}
+          GRAYLOG_TOKEN={{ graylog_token_value | default('PENDING-CHECK-MODE', true) }}
+          OPENSEARCH_URL={{ opensearch_url }}
+          OPENSEARCH_USER={{ investigator_user }}
+          OPENSEARCH_PASSWORD={{ os_password | default('PENDING-CHECK-MODE', true) }}
+          OPENSEARCH_VERIFY_TLS=false
+          {% endif %}
       register: bot_env
       no_log: true
 
@@ -160,11 +424,12 @@
               read_only: true
               cap_drop: [ALL]
               security_opt: ["no-new-privileges:true"]
-              mem_limit: 128m
+              mem_limit: 256m
               env_file: [.env]
               command: ["python3", "/app/discord_silence_bot.py"]
               volumes:
                 - ./discord_silence_bot.py:/app/discord_silence_bot.py:ro
+                - ./alert_investigator.py:/app/alert_investigator.py:ro
               logging:
                 driver: json-file
                 options: {max-size: 5m, max-file: "3"}
@@ -174,7 +439,7 @@
       ansible.builtin.command:
         cmd: >-
           docker compose -f {{ bot_dir }}/docker-compose.yml up -d
-          {{ '--force-recreate' if (bot_script.changed or bot_env.changed or bot_compose.changed) else '' }}
+          {{ '--force-recreate' if (bot_script.changed or investigator_script.changed or bot_env.changed or bot_compose.changed) else '' }}
       register: bot_up
       changed_when: "bot_up.stderr is search('Created|Started|Recreated')"
       when: not ansible_check_mode

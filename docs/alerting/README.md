@@ -189,6 +189,7 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Routing and config check | `scripts/check_grafana_provisioning.py` (rules, routing, templates, synthetic error alerts) |
 | Discord setup | `scripts/discord_bootstrap.py` (17 tests), [discord-setup.md](discord-setup.md) |
 | Telegram setup | `scripts/telegram_setup.py` (12 tests), [telegram-setup.md](telegram-setup.md) |
+| Alert investigator (🔍 on an alert: local-model triage, read-only; **built, not deployed**) | `terraform/lxc/ansible/files/alert_investigator.py` + `discord_silence_bot.py`, [alert-investigator.md](alert-investigator.md) |
 | OpenBao seal metric | `terraform/lxc/ansible/files/openbao/openbao_health.py` (5 tests) + `deploy-openbao.yml` |
 | T-Pot sync cadence | `terraform/lxc/ansible/roles/tpot_findings_ingest/` (defaults, timer) |
 | Graylog sender IP and pentest stream | `roles/rsyslog_forward/templates/graylog_inbound.conf.j2`, `playbooks/configure-graylog-pentest-seg.yml` |
