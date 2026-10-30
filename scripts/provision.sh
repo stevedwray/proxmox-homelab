@@ -387,6 +387,10 @@ CVE_DEEP_DIVE_KEYS = (
     "cve_enrichment_sync_deep_dive_enabled",
 )
 
+SECURITY_DAILY_REPORT_KEYS = (
+    "cve_enrichment_sync_daily_report_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -474,6 +478,10 @@ for key in CVE_ENRICHMENT_SYNC_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in CVE_DEEP_DIVE_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in SECURITY_DAILY_REPORT_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 

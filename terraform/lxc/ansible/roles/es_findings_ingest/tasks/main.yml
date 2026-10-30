@@ -303,68 +303,22 @@
         force_basic_auth: true
         body_format: json
         body:
-          index_permissions:
-            # No trailing hyphen before the wildcard -- the actual index
-            # name harbor_findings_sync.py writes to is the literal flat
-            # "harbor-findings" (see docs/opensearch-stack/README.md's
-            # storage model), which "harbor-findings-*" does NOT match
-            # (glob requires a literal "-" after "findings"). Confirmed
-            # live 2026-08-17: this exact mismatch caused every bulk
-            # upsert to 403 with "no permissions for [indices:admin/create]"
-            # even though the role listed create_index -- the pattern
-            # just never matched the index being written to. Also fixed
-            # in the harbor-findings.json index template's own
-            # index_patterns for the same reason.
-            # This role name (es_findings_writer) is shared, independently,
-            # across FOUR different roles -- es_findings_ingest,
-            # gvm_findings_ingest, cve_enrichment_sync, wazuh_findings_ingest
-            # -- each with its own hardcoded, manually-kept-in-sync "extended
-            # to X" copy of this same PUT, no merge, no single source of
-            # truth. Confirmed live 2026-09-07, the hard way: making just
-            # this role's copy of the task un-gated (see the comment above
-            # this task) to fix Phase 14's docker-live-usage grant silently
-            # wiped cve_enrichment_sync's/wazuh_findings_ingest's own patterns
-            # the next time this task ran, since their own copies of this
-            # task are still gated to "only once, if the credential file
-            # doesn't already exist" and never got a chance to re-assert
-            # theirs. This list is now the full union of every consumer's
-            # needs (matching cve_enrichment_sync's own list, the most
-            # complete of the four) specifically BECAUSE this is now the one
-            # copy of the four that reconciles unconditionally every run --
-            # if a fifth consumer is ever added, add its pattern here too,
-            # not just to its own role's copy of this task.
-            #
-            # No trailing hyphen before the wildcard -- the actual index
-            # name harbor_findings_sync.py writes to is the literal flat
-            # "harbor-findings" (see docs/opensearch-stack/README.md's
-            # storage model), which "harbor-findings-*" does NOT match
-            # (glob requires a literal "-" after "findings"). Confirmed
-            # live 2026-08-17: this exact mismatch caused every bulk
-            # upsert to 403 with "no permissions for [indices:admin/create]"
-            # even though the role listed create_index -- the pattern
-            # just never matched the index being written to. Also fixed
-            # in the harbor-findings.json index template's own
-            # index_patterns for the same reason.
-            - index_patterns:
-                - "harbor-findings*"
-                - "gvm-findings*"
-                - "es-findings-sync-state"
-                - "unified-cve-exposure*"
-                - "wazuh-findings*"
-                - "stack-risk-summary*"
-                - "cve-remediation-assessment*"
-              allowed_actions:
-                - "create_index"
-                - "write"
-                - "read"
-            # Read-only -- Phase 14 (docs/threat-vuln-platform/plan.md,
-            # uvm-14-03). es_findings_ingest never writes here; that's
-            # docker_live_usage_reporter's own scoped role, on the hosts
-            # that role is deployed to.
-            - index_patterns:
-                - "docker-live-usage*"
-              allowed_actions:
-                - "read"
+          # es_findings_writer is shared by five roles (es_findings_ingest,
+          # gvm_findings_ingest, wazuh_findings_ingest, tpot_findings_ingest,
+          # cve_enrichment_sync) and this PUT replaces the whole role. Each
+          # role used to carry its own hand-kept list, so whichever stack was
+          # deployed last decided what the others could write (confirmed live
+          # 2026-09-07: this copy wiped cve_enrichment_sync's/
+          # wazuh_findings_ingest's patterns; tpot-events* and the
+          # docker-live-usage* read grant were later dropped the same way).
+          # All five now PUT the same file, so deploy order no longer matters.
+          # A new consumer's index goes in that file, nowhere else.
+          #
+          # No trailing hyphen before a wildcard there: harbor_findings_sync.py
+          # writes the flat "harbor-findings", which "harbor-findings-*" does
+          # not match (confirmed live 2026-08-17: every bulk upsert got 403
+          # "no permissions for [indices:admin/create]").
+          index_permissions: "{{ lookup('file', playbook_dir ~ '/../files/opensearch/es_findings_writer_index_permissions.json') | from_json }}"
         status_code: [200, 201]
       when: not (es_findings_ingest_es_reachable_for_role.failed | default(true))
       delegate_to: localhost

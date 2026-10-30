@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for security-daily-report.service
+
+[Timer]
+OnCalendar={{ cve_enrichment_sync_daily_report_on_calendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

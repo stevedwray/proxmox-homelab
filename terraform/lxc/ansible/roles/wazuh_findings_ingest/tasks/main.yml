@@ -221,12 +221,10 @@
       no_log: true
 
     # ---------------------------------------------------------------
-    # Scoped OpenSearch internal user (destination) -- extends the
-    # existing es_findings_writer role's index_patterns to also cover
-    # wazuh-findings*, same technique cve_enrichment_sync used for
-    # unified-cve-exposure*. Idempotent PUT -- safe even if
-    # es_findings_ingest/gvm_findings_ingest/cve_enrichment_sync already
-    # created this role with a narrower pattern list; this is the union.
+    # Scoped OpenSearch internal user (destination) -- reuses the shared
+    # es_findings_writer role; its permissions come from the one shared
+    # files/opensearch/es_findings_writer_index_permissions.json (the PUT
+    # replaces the role, so every consumer sends the same full set).
     # ---------------------------------------------------------------
 
     - name: Check for existing OpenSearch findings-writer credential
@@ -261,7 +259,7 @@
         - not (wazuh_findings_ingest_es_reachable.failed | default(true))
       no_log: true
 
-    - name: Ensure es_findings_writer role exists in OpenSearch (extended to wazuh-findings*)
+    - name: Ensure es_findings_writer role exists in OpenSearch
       ansible.builtin.uri:
         url: "{{ wazuh_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ wazuh_findings_ingest_es_role_name }}"
         method: PUT
@@ -271,17 +269,9 @@
         force_basic_auth: true
         body_format: json
         body:
-          index_permissions:
-            - index_patterns:
-                - "harbor-findings*"
-                - "gvm-findings*"
-                - "es-findings-sync-state"
-                - "unified-cve-exposure*"
-                - "wazuh-findings*"
-              allowed_actions:
-                - "create_index"
-                - "write"
-                - "read"
+          # Shared, complete permission set -- see es_findings_ingest's copy
+          # of this task for why every consumer PUTs the same file.
+          index_permissions: "{{ lookup('file', playbook_dir ~ '/../files/opensearch/es_findings_writer_index_permissions.json') | from_json }}"
         status_code: [200, 201]
       delegate_to: localhost
 

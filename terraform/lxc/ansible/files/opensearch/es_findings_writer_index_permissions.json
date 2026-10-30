@@ -1,0 +1,20 @@
+[
+  {
+    "index_patterns": [
+      "harbor-findings*",
+      "gvm-findings*",
+      "es-findings-sync-state",
+      "wazuh-findings*",
+      "tpot-events*",
+      "unified-cve-exposure*",
+      "stack-risk-summary*",
+      "cve-remediation-assessment*",
+      "security-daily-report*"
+    ],
+    "allowed_actions": ["create_index", "write", "read"]
+  },
+  {
+    "index_patterns": ["docker-live-usage*"],
+    "allowed_actions": ["read"]
+  }
+]

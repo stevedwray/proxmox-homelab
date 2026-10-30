@@ -48,9 +48,9 @@ apt_cacher_host: "${lab_ip_apt_cacher}"
 
 # cve_enrichment_sync (role) -- reads harbor-findings/gvm-findings from
 # opensearch-stack, calls cve-mcp-server (mcp-utility-stack, same zone)
-# for CVSS/EPSS/KEV/PoC triage, calls an LLM (Anthropic/OpenAI for now --
-# the local LLM is occupied with benchmarking, see plan.md) for a risk
-# narrative, and writes results into unified-cve-exposure plus back onto
+# for CVSS/EPSS/KEV/PoC triage, calls the local Framework LLM for a risk
+# narrative (role default cve_enrichment_sync_llm_provider: llamacpp since
+# 2026-10-30), and writes results into unified-cve-exposure plus back onto
 # each finding's own severity_assessed/* fields.
 cve_enrichment_sync_enabled: true
 
@@ -69,3 +69,9 @@ cve_enrichment_sync_deep_dive_enabled: true
 # 2026-09-30 once the operator wrote kv/services/tpot's
 # TPOT_SSH_PRIVATE_KEY into OpenBao and added it to secrets/manifest.json.
 tpot_findings_ingest_enabled: true
+
+# security_daily_report (docs/threat-vuln-platform/plan.md Phase 15, same
+# role) -- daily 22:30 UTC report across every findings index in
+# opensearch-stack, written by the local Framework LLM into
+# security-daily-report for the Discord notifier and threat modelling.
+cve_enrichment_sync_daily_report_enabled: true

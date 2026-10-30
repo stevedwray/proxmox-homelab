@@ -4186,3 +4186,100 @@ explicitly deferred, not defaulted.
   (untagged historical digests piling up too, not just stale-but-tagged
   ones) -- worth a dedicated verification pass independent of this
   phase.
+
+## Phase 15 (built 2026-10-30, not yet deployed): daily local-LLM security report across every source
+
+Goal: one daily report, written by the local Framework LLM, built only from
+what is in OpenSearch, as the input for the planned Discord notification
+and threat-modelling work.
+
+### What was wrong before this phase
+
+- The daily CVE pass (`cve-enrichment-sync.timer`) was disabled on CT 50012
+  on 2026-10-27 because its default provider was `anthropic`, so derived
+  findings left the lab (`docs/pve-tiny-evacuation/return-plan.md`). Since
+  then `unified-cve-exposure` and `stack-risk-summary` have not moved, and
+  the weekly deep dive reads that frozen data.
+- Nothing combined the sources into a report. T-Pot reached OpenSearch but
+  no AI job read it; the only "report" was per-CVE narrative text.
+- `es_findings_writer` was PUT by five roles, each with its own list; the
+  PUT replaces the role, so the last stack deployed decided what the others
+  could write. Harbor's copy (the one that runs every deploy) lacked
+  `tpot-events*`; the T-Pot, Wazuh and CVE copies dropped Harbor's
+  `docker-live-usage*` read grant; GVM's lacked everything but its own.
+- `cve_enrichment_sync` trusted an existing `es-user.env` forever, which is
+  how a stale credential kept 401ing after the evacuation.
+
+### What was built
+
+- `cve_enrichment_sync_llm_provider` defaults to `llamacpp`. The daily CVE
+  pass is local, like the deep dive already was.
+- `security_daily_report.py` (same role, same host, same OpenSearch
+  credential), timer `security-daily-report.timer` at 22:30 UTC, flag
+  `cve_enrichment_sync_daily_report_enabled` (on in `secpipe-stack`,
+  passed through by `provision.sh`). It reads:
+
+  | Section | Index | Scope |
+  |---|---|---|
+  | Harbor/Trivy findings | `harbor-findings` | `artifact.in_production`, not `in_use:false` |
+  | Greenbone findings | `gvm-findings` | `target.in_production`, not `pentest_target` |
+  | Wazuh vulnerability state | `wazuh-findings` | `target.in_production` |
+  | Correlated CVEs | `unified-cve-exposure` | `in_production` and `in_use` |
+  | Per-stack rollup | `stack-risk-summary` | top N by critical, high |
+  | Open remediation calls | `cve-remediation-assessment` | not `resolved` |
+  | Honeypot | `tpot-events-*` | last 24h; the Grafana tripwire's own "unexpected connection" query |
+
+  Plus a freshness check of every source (stale after 26h for the daily
+  jobs, 1h for T-Pot, 8 days for the deep dive). The facts go to the local
+  model with a fixed section layout (bottom line, last 24h, top risks,
+  honeypot, data quality, threat-model focus) and a no-invention rule.
+- Output: `security-daily-report/_doc/<YYYY-MM-DD>` (rerun replaces the
+  day). Fields for the consumers:
+  - Discord: `headline` (deterministic, never from the LLM), `summary_markdown`,
+    `status` (`ok` / `llm_failed` / `facts_only`). A failed LLM call still
+    writes the facts and headline.
+  - Threat modelling: `top_cves[]` and `stack_risk[]` with stacks and zones,
+    `facts.cves.exposure_by_zone`, and the full fact set under `facts`
+    (stored, not indexed).
+  - Alerting hooks: `stale_sources`, `missing_sources`, the integer totals.
+  The unit fails only when no source is readable at all (a credential or
+  permission fault, not a quiet day).
+- One `es_findings_writer` permission set in
+  `terraform/lxc/ansible/files/opensearch/es_findings_writer_index_permissions.json`,
+  PUT identically by all five roles; it adds `security-daily-report*`.
+- `cve_enrichment_sync` tests an existing `es-user.env` against
+  `_plugins/_security/authinfo` and re-provisions the user on 401.
+
+Tests: `cd terraform/lxc/ansible/roles/cve_enrichment_sync/files && python3 -m unittest test_security_daily_report`.
+Syntax: `ansible-playbook --syntax-check` passes for the secpipe, harbor,
+greenbone and wazuh deploy playbooks.
+
+### Deploy (production, `pve-tiny`, under the approval flow)
+
+Validation tier: Ansible role change, so `provision.sh` per affected stack on
+production. Order matters only for the first run: secpipe first, because it
+adds the new index to the shared role.
+
+1. `./with-secrets-prod-tiny scripts/provision.sh --stack secpipe-stack`
+   (approval required). This re-enables `cve-enrichment-sync.timer`, now
+   local; that is the intended change, and it replaces the 2026-10-27 hold.
+   Do not re-run `scripts/pve-tiny-return.sh 50012 provision` afterwards:
+   its `HOLD_DISABLED` step would turn the timer off again.
+2. One-off report before the timer, to check output quality:
+   `pct exec 50012 -- systemctl start security-daily-report.service`, then
+   `tail /var/log/security-daily-report.log` and
+   `GET security-daily-report/_doc/<today>`.
+3. Re-provision harbor-stack, greenbone-stack and wazuh-stack (each its own
+   approval, on their own node's wrapper) when convenient, so every copy of
+   the role PUT matches. Not urgent: they now send the same set.
+
+### Not done here
+
+- Discord delivery (next phase): read `security-daily-report/_doc/<date>`,
+  post `headline` plus `summary_markdown`; alert separately when
+  `status != ok` or `stale_sources` is non-empty.
+- Wazuh alerts (not just vulnerability state) are still not in OpenSearch
+  (Phase 2B), so the report has no host-intrusion section.
+- The other four ingest roles still trust an existing `es-user.env` forever.
+- Quality check of the local narrative against the old Anthropic text was
+  never run; spot-check the first few reports and CVE narratives.

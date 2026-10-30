@@ -104,9 +104,9 @@
 
     # ---------------------------------------------------------------
     # Scoped OpenSearch internal user -- reuses es_findings_ingest's own
-    # es_findings_writer role (already scoped to harbor-findings*/
-    # gvm-findings*/es-findings-sync-state) rather than defining a second,
-    # identically-scoped role. Only a new USER identity is created here,
+    # es_findings_writer role (permissions from the shared
+    # files/opensearch/es_findings_writer_index_permissions.json) rather
+    # than defining a second, identically-scoped role. Only a new USER identity is created here,
     # so this role's credential stays independently rotatable from
     # es_findings_ingest's. If harbor-stack's role has never run,
     # es_findings_writer won't exist yet -- create-role-if-missing here
@@ -155,15 +155,9 @@
         force_basic_auth: true
         body_format: json
         body:
-          index_permissions:
-            - index_patterns:
-                - "harbor-findings*"
-                - "gvm-findings*"
-                - "es-findings-sync-state"
-              allowed_actions:
-                - "create_index"
-                - "write"
-                - "read"
+          # Shared, complete permission set -- see es_findings_ingest's copy
+          # of this task for why every consumer PUTs the same file.
+          index_permissions: "{{ lookup('file', playbook_dir ~ '/../files/opensearch/es_findings_writer_index_permissions.json') | from_json }}"
         status_code: [200, 201]
       when:
         - not gvm_findings_ingest_es_credential_stat.stat.exists

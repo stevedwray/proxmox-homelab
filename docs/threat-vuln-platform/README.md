@@ -8,9 +8,16 @@ found deploying it, and how it was verified live) and
 `remediation-runbook.md` for how to actually work through the weekly
 output.
 
-Sources correlated: Harbor, GVM/Greenbone, and Wazuh findings. Security
-Onion and T-Pot ingestion remain explicitly deferred (those source
-systems need their own setup work first).
+Sources correlated: Harbor, GVM/Greenbone, and Wazuh findings. T-Pot
+events are ingested (`tpot-events-*`) and, from Phase 15, read by the daily
+report; Security Onion remains deferred.
+
+**Phase 15 (built 2026-10-30, not yet deployed):** a daily local-LLM
+security report across every source, read only from OpenSearch, into
+`security-daily-report` -- the input for the planned Discord notification
+and threat-modelling work. The daily CVE pass also moves to the local LLM,
+so its timer (held off since 2026-10-27 because it called Anthropic) can run
+again. See `plan.md` Phase 15 for the deploy steps.
 
 ## What this is
 
@@ -33,6 +40,9 @@ remediation call for the worst/most-exploitable subset.
   for the worst/most-exploitable CVEs (Phase 11), with a
   `mark_cve_resolved.py` workflow to record what's actually been done —
   see `remediation-runbook.md`.
+- `security-daily-report` -- one local-LLM report per day across Harbor,
+  GVM, Wazuh, T-Pot and the CVE layers, with a deterministic `headline`
+  for Discord (Phase 15, built, not yet deployed).
 - `Threat & Vulnerability Overview (UVM)` Grafana dashboard
   (`monitoring-stack`) — exploitability funnel, per-stack risk table, and
   the "Top CVEs Needing Attention" remediation panel (Phase 10).

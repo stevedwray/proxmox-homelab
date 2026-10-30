@@ -67,6 +67,39 @@
       failed_when: false
       changed_when: false
 
+- name: Remove the daily security report when not explicitly enabled
+  when: not (cve_enrichment_sync_enabled | bool and cve_enrichment_sync_daily_report_enabled | bool)
+  block:
+    - name: Stop and disable security-daily-report timer
+      ansible.builtin.systemd:
+        name: security-daily-report.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop security-daily-report service if present
+      ansible.builtin.systemd:
+        name: security-daily-report.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove security-daily-report units and script
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/security-daily-report.timer
+        - /etc/systemd/system/security-daily-report.service
+        - "{{ cve_enrichment_sync_dir }}/security_daily_report.py"
+      notify: Reload systemd
+
+    - name: Clear stale security-daily-report service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed security-daily-report.service security-daily-report.timer
+      failed_when: false
+      changed_when: false
+
 - name: Install scheduled CVE enrichment sync when explicitly enabled
   when: cve_enrichment_sync_enabled | bool
   block:
@@ -120,6 +153,15 @@
         mode: "0750"
       when: cve_enrichment_sync_deep_dive_enabled | bool
 
+    - name: Copy security_daily_report.py
+      ansible.builtin.copy:
+        src: security_daily_report.py
+        dest: "{{ cve_enrichment_sync_dir }}/security_daily_report.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: cve_enrichment_sync_daily_report_enabled | bool
+
     - name: Copy index template assets
       ansible.builtin.copy:
         src: "assets/templates/{{ item }}"
@@ -131,6 +173,7 @@
         - unified-cve-exposure.json
         - stack-risk-summary.json
         - cve-remediation-assessment.json
+        - security-daily-report.json
 
     - name: Write LLM provider credential file
       ansible.builtin.copy:
@@ -147,10 +190,9 @@
 
     # ---------------------------------------------------------------
     # Scoped OpenSearch internal user -- reuses es_findings_ingest's own
-    # es_findings_writer role, extending its index_patterns to also
-    # cover unified-cve-exposure* (idempotent PUT -- safe to reapply even
-    # if es_findings_ingest/gvm_findings_ingest already created this role
-    # with a narrower pattern list; this is the union, not a replacement).
+    # es_findings_writer role, whose permissions come from the one shared
+    # files/opensearch/es_findings_writer_index_permissions.json (the PUT
+    # replaces the role, so every consumer sends the same full set).
     # Only a new USER identity is created here, so this role's credential
     # stays independently rotatable. Create-role-if-missing here too so
     # this role doesn't implicitly depend on harbor-stack/greenbone-stack
@@ -169,7 +211,50 @@
         timeout: 5
       register: cve_enrichment_sync_es_reachable
       ignore_errors: true
-      when: not cve_enrichment_sync_es_credential_stat.stat.exists
+
+    # An existing es-user.env used to be trusted forever. After the
+    # 2026-10 evacuation a stale copy (2026-08-18) kept getting 401 and no
+    # deploy replaced it (docs/pve-tiny-evacuation/return-plan.md). Test it
+    # against authinfo and re-provision the user when it is rejected.
+    - name: Read existing OpenSearch findings-writer credential
+      ansible.builtin.slurp:
+        src: "{{ cve_enrichment_sync_dir }}/es-user.env"
+      register: cve_enrichment_sync_es_credential_file
+      when:
+        - cve_enrichment_sync_es_credential_stat.stat.exists
+        - not (cve_enrichment_sync_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Test existing OpenSearch findings-writer credential
+      ansible.builtin.uri:
+        url: "{{ cve_enrichment_sync_elasticsearch_url }}/_plugins/_security/authinfo"
+        method: GET
+        url_username: "{{ (cve_enrichment_sync_es_credential_file.content | b64decode).splitlines() | select('match', '^ES_FINDINGS_USER=') | map('regex_replace', '^ES_FINDINGS_USER=', '') | first | default('') }}"
+        url_password: "{{ (cve_enrichment_sync_es_credential_file.content | b64decode).splitlines() | select('match', '^ES_FINDINGS_PASSWORD=') | map('regex_replace', '^ES_FINDINGS_PASSWORD=', '') | first | default('') }}"
+        validate_certs: "{{ not cve_enrichment_sync_es_no_verify_tls }}"
+        force_basic_auth: true
+        status_code: [200, 401]
+      register: cve_enrichment_sync_es_credential_auth
+      when: cve_enrichment_sync_es_credential_file.content is defined
+      delegate_to: localhost
+      no_log: true
+
+    # Provision when there is no credential file, or when OpenSearch
+    # rejected the one there. Unreachable OpenSearch keeps the file as-is.
+    - name: Decide whether the scoped OpenSearch user needs provisioning
+      ansible.builtin.set_fact:
+        cve_enrichment_sync_es_credential_needed: >-
+          {{ (not cve_enrichment_sync_es_credential_stat.stat.exists)
+             or ((cve_enrichment_sync_es_credential_auth.status | default(200)) == 401) }}
+
+    - name: Report a rejected OpenSearch credential being replaced
+      ansible.builtin.debug:
+        msg: >-
+          {{ cve_enrichment_sync_dir }}/es-user.env was rejected by OpenSearch (401);
+          re-provisioning the {{ cve_enrichment_sync_es_user_name }} user.
+      when:
+        - cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_credential_needed | bool
 
     - name: Warn and skip OpenSearch user provisioning when it is not yet reachable
       ansible.builtin.debug:
@@ -178,18 +263,18 @@
           reachable (timeout). Skipping cve-enrichment-sync user creation --
           re-run provision once opensearch-stack is reachable.
       when:
-        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_credential_needed | bool
         - cve_enrichment_sync_es_reachable.failed | default(true)
 
     - name: Generate a random password for the scoped OpenSearch user
       ansible.builtin.set_fact:
         cve_enrichment_sync_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when:
-        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_credential_needed | bool
         - not (cve_enrichment_sync_es_reachable.failed | default(true))
       no_log: true
 
-    - name: Ensure es_findings_writer role exists in OpenSearch (extended to unified-cve-exposure*)
+    - name: Ensure es_findings_writer role exists in OpenSearch
       ansible.builtin.uri:
         url: "{{ cve_enrichment_sync_elasticsearch_url }}/_plugins/_security/api/roles/{{ cve_enrichment_sync_es_role_name }}"
         method: PUT
@@ -199,19 +284,9 @@
         force_basic_auth: true
         body_format: json
         body:
-          index_permissions:
-            - index_patterns:
-                - "harbor-findings*"
-                - "gvm-findings*"
-                - "es-findings-sync-state"
-                - "unified-cve-exposure*"
-                - "wazuh-findings*"
-                - "stack-risk-summary*"
-                - "cve-remediation-assessment*"
-              allowed_actions:
-                - "create_index"
-                - "write"
-                - "read"
+          # Shared, complete permission set -- see es_findings_ingest's copy
+          # of this task for why every consumer PUTs the same file.
+          index_permissions: "{{ lookup('file', playbook_dir ~ '/../files/opensearch/es_findings_writer_index_permissions.json') | from_json }}"
         status_code: [200, 201]
       delegate_to: localhost
 
@@ -231,7 +306,7 @@
           description: "cve_enrichment_sync service account (secpipe-stack) -- never the admin superuser"
         status_code: [200, 201]
       when:
-        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_credential_needed | bool
         - not (cve_enrichment_sync_es_reachable.failed | default(true))
       delegate_to: localhost
       no_log: true
@@ -247,7 +322,7 @@
           ES_FINDINGS_USER={{ cve_enrichment_sync_es_user_name }}
           ES_FINDINGS_PASSWORD={{ cve_enrichment_sync_es_password }}
       when:
-        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_credential_needed | bool
         - not (cve_enrichment_sync_es_reachable.failed | default(true))
       no_log: true
 
@@ -438,3 +513,41 @@
       when:
         - not ansible_check_mode
         - cve_enrichment_sync_deep_dive_enabled | bool
+
+    # ---------------------------------------------------------------
+    # Daily security report (Phase 15): reads every findings index in
+    # OpenSearch and writes one local-LLM report per day into
+    # security-daily-report -- see security_daily_report.py's docstring.
+    # ---------------------------------------------------------------
+
+    - name: Write security-daily-report systemd service
+      ansible.builtin.template:
+        src: security-daily-report.service.j2
+        dest: /etc/systemd/system/security-daily-report.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+      when: cve_enrichment_sync_daily_report_enabled | bool
+
+    - name: Write security-daily-report systemd timer
+      ansible.builtin.template:
+        src: security-daily-report.timer.j2
+        dest: /etc/systemd/system/security-daily-report.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+      when: cve_enrichment_sync_daily_report_enabled | bool
+
+    - name: Flush handlers before enabling daily report timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start security-daily-report timer
+      ansible.builtin.systemd:
+        name: security-daily-report.timer
+        enabled: true
+        state: started
+      when:
+        - not ansible_check_mode
+        - cve_enrichment_sync_daily_report_enabled | bool

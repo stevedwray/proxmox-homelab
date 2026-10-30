@@ -1,0 +1,53 @@
+{
+  "index_patterns": ["security-daily-report*"],
+  "template": {
+    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "report_date": {"type": "date", "format": "yyyy-MM-dd"},
+        "generated_at": {"type": "date"},
+        "window_hours": {"type": "integer"},
+        "status": {"type": "keyword"},
+        "llm_provider": {"type": "keyword"},
+        "llm_model": {"type": "keyword"},
+        "llm_error": {"type": "text"},
+        "headline": {"type": "text"},
+        "summary_markdown": {"type": "text"},
+        "stale_sources": {"type": "keyword"},
+        "missing_sources": {"type": "keyword"},
+        "critical_total": {"type": "integer"},
+        "high_total": {"type": "integer"},
+        "new_critical_24h": {"type": "integer"},
+        "new_high_24h": {"type": "integer"},
+        "kev_in_use": {"type": "integer"},
+        "poc_in_use": {"type": "integer"},
+        "open_remediations": {"type": "integer"},
+        "tpot_unexpected_sources": {"type": "integer"},
+        "tpot_unexpected_connections": {"type": "integer"},
+        "top_cves": {
+          "properties": {
+            "cve_id": {"type": "keyword"},
+            "risk_score": {"type": "float"},
+            "risk_band": {"type": "keyword"},
+            "kev_listed": {"type": "boolean"},
+            "poc_available": {"type": "boolean"},
+            "stacks": {"type": "keyword"},
+            "zones": {"type": "keyword"}
+          }
+        },
+        "stack_risk": {
+          "properties": {
+            "stack": {"type": "keyword"},
+            "total_cves": {"type": "integer"},
+            "critical": {"type": "integer"},
+            "high": {"type": "integer"},
+            "avg_risk_score": {"type": "float"},
+            "sources_reporting": {"type": "integer"}
+          }
+        },
+        "facts": {"type": "object", "enabled": false}
+      }
+    }
+  }
+}

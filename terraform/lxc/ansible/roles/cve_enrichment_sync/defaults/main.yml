@@ -25,14 +25,12 @@ cve_enrichment_sync_triage_depth: standard
 
 # --- LLM provider (see cve_enrichment_sync.py's module docstring and
 # plan.md's "LLM narrative step" / Phase 6 sections) ----------------------
-# Still anthropic for the standing scheduled timer as of 2026-09-01 --
-# the operator has confirmed framework's local Ollama GPU now has
-# standing capacity (the 2026-08-18 "occupied with benchmarking" reason
-# no longer applies) and wants to migrate, but that switch happens after
-# validating output quality via small --max-cves-capped manual test runs
-# (cve_enrichment_sync_max_cves below), not by flipping this default
-# blind. Swap this default once that validation is done.
-cve_enrichment_sync_llm_provider: anthropic
+# Local by default since 2026-10-30 (Phase 15): the operator disabled
+# cve-enrichment-sync.timer on 2026-10-27 because the anthropic default sent
+# derived findings to an external LLM (docs/pve-tiny-evacuation/
+# return-plan.md). The Framework llama-server already runs the weekly deep
+# dive. anthropic/openai stay available for a deliberate manual run only.
+cve_enrichment_sync_llm_provider: llamacpp
 cve_enrichment_sync_anthropic_api_key: "{{ lookup('env', 'ANTHROPIC_API_KEY') | default('', true) }}"
 cve_enrichment_sync_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('', true) }}"
 # Framework's llama-server (Nathanw llama.cpp fork), which replaced Ollama
@@ -113,3 +111,25 @@ cve_enrichment_sync_deep_dive_top_n: 15
 # its own variables so the deep-dive can move independently.
 cve_enrichment_sync_deep_dive_llamacpp_url: "{{ cve_enrichment_sync_llamacpp_url }}"
 cve_enrichment_sync_deep_dive_llamacpp_model: "{{ cve_enrichment_sync_llamacpp_model }}"
+
+# --- Daily security report (Phase 15) --------------------------------------
+# One local-LLM report per UTC day across every findings index in OpenSearch
+# (Harbor/Trivy, Greenbone, Wazuh, T-Pot, plus the CVE correlation and deep
+# dive), written to security-daily-report/_doc/<date> for the Discord
+# notifier and threat-modelling work to read. See security_daily_report.py.
+# Nested inside cve_enrichment_sync_enabled, like the deep dive: it reuses
+# that role's directory and OpenSearch credential.
+cve_enrichment_sync_daily_report_enabled: false
+cve_enrichment_sync_daily_report_log_path: /var/log/security-daily-report.log
+
+# 22:30 UTC: after every daily source has landed (Harbor 05:30, Wazuh 06:00,
+# GVM 19:00, CVE correlation 21:00) and before the Sunday 23:00 deep dive
+# takes the same Framework llama-server. That is 11:30 NZDT / 10:30 NZST.
+cve_enrichment_sync_daily_report_on_calendar: "*-*-* 22:30:00"
+
+# How many CVEs/stacks the report lists in its top-risk sections.
+cve_enrichment_sync_daily_report_top_n: 10
+
+# Local only -- this job has no hosted-provider option by design.
+cve_enrichment_sync_daily_report_llamacpp_url: "{{ cve_enrichment_sync_llamacpp_url }}"
+cve_enrichment_sync_daily_report_llamacpp_model: "{{ cve_enrichment_sync_llamacpp_model }}"

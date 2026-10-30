@@ -1,0 +1,21 @@
+[Unit]
+Description=Daily security report from OpenSearch via the local LLM (security_daily_report)
+After=network-online.target cve-enrichment-sync.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=ELASTICSEARCH_URL={{ cve_enrichment_sync_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ cve_enrichment_sync_es_no_verify_tls | ternary('1', '0') }}
+Environment=LLAMACPP_URL={{ cve_enrichment_sync_daily_report_llamacpp_url }}
+Environment=LLAMACPP_MODEL={{ cve_enrichment_sync_daily_report_llamacpp_model }}
+Environment=LLAMACPP_MAX_TOKENS={{ cve_enrichment_sync_llamacpp_max_tokens }}
+Environment=SECURITY_REPORT_TOP_N={{ cve_enrichment_sync_daily_report_top_n }}
+EnvironmentFile=-{{ cve_enrichment_sync_dir }}/es-user.env
+EnvironmentFile=-{{ cve_enrichment_sync_dir }}/llm-user.env
+ExecStart=/usr/bin/python3 {{ cve_enrichment_sync_dir }}/security_daily_report.py
+StandardOutput=append:{{ cve_enrichment_sync_daily_report_log_path }}
+StandardError=append:{{ cve_enrichment_sync_daily_report_log_path }}
+
+[Install]
+WantedBy=multi-user.target
