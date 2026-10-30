@@ -1,0 +1,39 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: neo4j-edge
+  stack: neo4j-stack
+spec:
+  routes:
+    - name: browser
+      host: neo4j.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_NEO4J}:7474
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Neo4j Community has no SSO; Authentik gates the Browser UI, and
+        # the Neo4j login inside it is the second factor.
+        mode: forwardAuth
+    - name: bolt
+      host: neo4j-bolt.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_NEO4J}:7687
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Bolt-over-websocket from the Browser (and drivers) can't follow an
+        # Authentik redirect. Same call as llm-gpu-stack's machine API
+        # (Decision 8): Traefik terminates TLS and routes only; Neo4j's own
+        # password is the auth boundary.
+        mode: none

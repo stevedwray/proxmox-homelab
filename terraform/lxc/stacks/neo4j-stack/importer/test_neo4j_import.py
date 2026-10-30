@@ -65,6 +65,15 @@ class BuildGraphTest(unittest.TestCase):
         self.assertEqual(self.graph.nodes["p-missing"][0], "Unresolved")
         self.assertIn(("ee-lan-user", "p-missing"), _rels(self.graph, "FLOWS_TO"))
 
+    def test_duplicate_flow_ids_kept_as_separate_relationships(self):
+        model = {"processes": [{"id": "p-proxy"}, {"id": "p-ai"}], "data_flows": [
+            {"id": "df-traefik-to-ai", "from": "p-proxy", "to": "p-ai", "port": 8081},
+            {"id": "df-traefik-to-ai", "from": "p-proxy", "to": "p-ai", "port": 8082},
+        ]}
+        graph = neo4j_import.build_graph(model, [], [], [], [])
+        keys = sorted(k for (t, _s, _d, k) in graph.rels if t == "FLOWS_TO")
+        self.assertEqual(keys, ["df-traefik-to-ai", "df-traefik-to-ai#2"])
+
     def test_flow_props_are_neo4j_safe(self):
         props = next(p for (t, *_rest, k), p in self.graph.rels.items() if k == "df-a")
         self.assertEqual(props["ports"], ["8080", "8443"])  # mixed types coerced to strings
@@ -81,10 +90,11 @@ class BuildGraphTest(unittest.TestCase):
         self.assertNotIn(("p-netbox", "vm:8"), _rels(self.graph, "RUNS_ON"))
 
     def test_real_derived_model_builds(self):
-        graph = neo4j_import.build_graph(flows.build_threat_model(env="pve"), [], [], [], [])
+        model = flows.build_threat_model(env="pve")
+        graph = neo4j_import.build_graph(model, [], [], [], [])
         summary = graph.summary()
         self.assertGreater(summary["nodes"]["Process"], 0)
-        self.assertGreater(summary["relationships"]["FLOWS_TO"], 0)
+        self.assertEqual(summary["relationships"]["FLOWS_TO"], len(model["data_flows"]))
         for _label, props in graph.nodes.values():
             for value in props.values():
                 self.assertIsInstance(value, (str, int, float, bool, list))

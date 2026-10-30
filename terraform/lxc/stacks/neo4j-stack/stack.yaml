@@ -1,0 +1,51 @@
+# Neo4j Community — threat-model graph of the lab, rebuilt daily from NetBox
+# (the flows.py 'threat-model' config context + VM/IP/service/prefix
+# inventory) by importer/neo4j_import.py. See docs/neo4j-stack/.
+#
+# infra_seg, next to NetBox: the importer's only cross-host read is
+# NetBox's API, which stays intra-zone, so no MikroTik rule is needed.
+hostname: neo4j-stack
+ip_address: "192.168.40.16/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
+network:
+  zone: infra_seg
+vmid: 40016
+cores: 2
+memory: 4096
+swap: 1024
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: "20G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "20G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - neo4j
+  - threat-model
+  - security
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+  - netbox-stack
+  - authentik-stack
+provides:
+  - service: neo4j-browser-http
+    port: 7474
+    protocol: tcp
+  - service: neo4j-bolt
+    port: 7687
+    protocol: tcp
+
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+ansible_playbook: "deploy-neo4j-stack"
+deployment_tier: apps
+portainer_agent: false

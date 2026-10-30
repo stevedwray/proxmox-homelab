@@ -1,0 +1,37 @@
+# Copied to /opt/neo4j-stack by deploy-neo4j-stack.yml; REGISTRY_HOST,
+# NEO4J_PASSWORD and LAB_DOMAIN come from the .env file the playbook writes
+# alongside it.
+services:
+  neo4j:
+    image: ${REGISTRY_HOST}/dockerhub/library/neo4j:5.26.31-community
+    container_name: neo4j-stack-neo4j
+    environment:
+      # Only applied when /data is empty (first start). Rotating the
+      # password later needs ALTER USER, not a change here -- see
+      # STACK_CONTRACT.md "What Must Not Be Edited Casually".
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_server_default__listen__address: 0.0.0.0
+      # Browser discovers Bolt here and connects over wss via Traefik's
+      # neo4j-bolt route (edge.yaml), not the raw 7687 port.
+      NEO4J_server_bolt_advertised__address: neo4j-bolt.${LAB_DOMAIN}:443
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_dbms_usage__report_enabled: "false"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  neo4j-data:
+  neo4j-logs:
