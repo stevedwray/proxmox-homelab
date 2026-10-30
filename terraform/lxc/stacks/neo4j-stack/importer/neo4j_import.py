@@ -138,13 +138,19 @@ def add_threat_model(graph, model):
         if ds.get("host"):
             _ensure_endpoint(graph, ds["host"])
             graph.rel("HOSTED_ON", ds["id"], ds["host"])
+    seen_ids = {}
     for flow in model.get("data_flows", []):
         src = _ensure_endpoint(graph, flow.get("from"))
         dst = _ensure_endpoint(graph, flow.get("to"))
         if not src or not dst:
             continue
         props = {k: v for k, v in flow.items() if k not in ("from", "to")}
-        graph.rel("FLOWS_TO", src, dst, props, key=flow.get("id"))
+        # flows.py reuses one id for every Traefik route to a multi-route
+        # stack; suffix repeats so each route stays its own relationship.
+        flow_id = flow.get("id")
+        seen_ids[flow_id] = seen_ids.get(flow_id, 0) + 1
+        key = flow_id if seen_ids[flow_id] == 1 else f"{flow_id}#{seen_ids[flow_id]}"
+        graph.rel("FLOWS_TO", src, dst, props, key=key)
 
 
 def _ensure_endpoint(graph, ref):
