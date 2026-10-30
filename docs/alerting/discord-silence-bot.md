@@ -21,7 +21,7 @@ You react to a Grafana alert message in Discord. The bot silences that alert in 
 
 **Investigations:** the same bot also runs alert investigations with the local model: react 🔍 (pages are investigated
 automatically). See [alert-investigator.md](alert-investigator.md). That needs the **Attach Files** permission as well
-(invite permissions `101440` instead of `68672`).
+(invite permissions `101440` instead of `68672`). It also pre-adds 🔍 and 🌙 to fresh alerts as one-click buttons.
 
 ## How it works
 

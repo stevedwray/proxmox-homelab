@@ -1,8 +1,34 @@
 # Alert investigator: ask the local model to triage an alert
 
-Status 2026-10-30: **built and unit-tested, not deployed.** Branch `ccr-f6c779fd-ufumqp`. 37 new tests (no network) plus an
-end-to-end run against local stub servers (model, Grafana, VictoriaMetrics, Discord upload). Never yet run against the real
-Framework model or the lab's real data. Deploying it means re-running the silence bot's playbook (below).
+Status 2026-10-31: **live on the monitoring-stack (`pve`, 192.168.20.12)**, proven against the real Framework model
+(`glm-5.3-flash-upstream`) with a test alert and a real outage (drill A). Two proof steps wait for a real alert (see
+"Not verified yet"). Deployed with the silence bot's playbook under approval `alert-investigator`.
+
+**What the proof showed (2026-10-30/31)**
+
+| Step | Result |
+|---|---|
+| Playbook proof task (Graylog `POST /api/search/messages`) | Passed on Graylog 7.1: the token searched. Whether `token_ttl: P3650D` was honoured was not checked (a capped token is replaced by the next play run). |
+| 1. Test alert, 🔍 then 🌙 | Reply and 📝 in 57 s, 4 tool calls, `noise`, 4 KB report attached (so Attach Files works). 🌙 then silenced it as before. |
+| First test run | Failed `Name does not resolve` for `framework.gibbsgreatly.xyz`: see Findings. |
+| 2. Drill A (`docker stop cadvisor`) | Alert after about 6 min; Telegram silent. Report: `up=0` for the cadvisor target only, host and other services healthy, `container_last_seen` flatlined at the stop time, scrape errors in Graylog; `needs-attention`. 21 tool calls, 407 s, 32 KB report. `[RESOLVED]` arrived about 7 min after the restart. |
+| 3. `page=true` in the silence link | Partly: Grafana does put custom rule labels in the link (`severity`, `stack` seen on the cadvisor alert). `page=true` itself needs a real page. |
+| 4. Harbor vulnerability alert | Not yet seen. |
+
+**Findings that differ from the earlier text**
+
+- **The bot must run on a glibc image.** On `python:3.12-alpine` (musl) the lookup of `framework.gibbsgreatly.xyz` failed
+  although the host resolved it: the router answers AAAA for that static name with NXDOMAIN, and musl treats that as a failure.
+  The playbook now uses `python:3.12-slim`. (The proper fix, an empty AAAA answer on the router, is a production router
+  change and was not made.)
+- **Steps are rounds, not calls.** `INVESTIGATOR_MAX_STEPS` (8 model rounds, up to 4 tool calls each) counts model rounds; each round may ask for up to 4 tools, so a
+  real investigation made 21 calls.
+- **Time per investigation:** 57 s for a test alert, about 7 minutes for a real outage, against the expected 2 to 5.
+- **Reaction buttons.** The bot now adds 🔍 and 🌙 itself to fresh alerts that have a silence link (alerts under 2 hours old),
+  so they are one click, not a hunt through the emoji picker. Its own reaction is not a request. Tune with
+  `DISCORD_BOT_SEED_REACTIONS` and `DISCORD_BOT_SEED_MAX_AGE_HOURS`. Clicking a reaction you already made removes it.
+- The deploy was run without a `--check --diff` preview: the prod wrapper blocks it without `TASK_APPROVAL`.
+
 Parent docs: [README.md](README.md), [discord-silence-bot.md](discord-silence-bot.md).
 Code: `terraform/lxc/ansible/files/alert_investigator.py` (the investigation), `discord_silence_bot.py` (trigger, queue,
 reply). Playbook: `terraform/lxc/ansible/playbooks/deploy-discord-silence-bot.yml`.
@@ -147,24 +173,24 @@ The play ends with the bot's startup line, which should now read
 - Each investigation is a handful of model calls. Framework serves one request per slot, so an investigation running
   during a benchmark slows both. Automatic runs are limited to pages for that reason.
 - Tests: `cd terraform/lxc/ansible/files && python3 -m unittest test_discord_silence_bot test_alert_investigator`
-  (56 tests, no network).
+  (61 tests, no network).
 - Tune with environment variables in `/opt/discord-silence-bot/.env` (add them to the playbook to make them stick):
-  `INVESTIGATOR_MAX_STEPS` (8), `INVESTIGATOR_DEADLINE_SECONDS` (900), `INVESTIGATOR_LLM_TIMEOUT_SECONDS` (300),
+  `INVESTIGATOR_MAX_STEPS` (8 model rounds, up to 4 tool calls each), `INVESTIGATOR_DEADLINE_SECONDS` (900), `INVESTIGATOR_LLM_TIMEOUT_SECONDS` (300),
   `INVESTIGATOR_MODEL` (empty: whatever is loaded), `INVESTIGATE_AUTO_LABELS`, `INVESTIGATE_AUTO_MAX_AGE_MINUTES` (60),
   `INVESTIGATE_AUTO_REPEAT_HOURS` (12).
 - Rotate the Graylog token: delete `/opt/discord-silence-bot/graylog-token` and re-run the play (it also replaces a token
   that stops working). OpenSearch password: delete `opensearch-password` and re-run.
 
-## Not verified yet (check during the first deploy)
+## Not verified yet
 
-1. **Graylog 7.1's search API.** The tool uses `POST /api/search/messages` (Graylog's simple search API). The play proves
-   the token can search before it finishes, so a mismatch fails the deploy rather than every investigation. Also open:
-   whether Graylog honours `token_ttl: P3650D` or caps it; a capped token is replaced by the next play run.
-2. **Custom labels in Grafana's silence link** (proof step 3).
-3. **Tool calling by the loaded model.** GLM scored 75.5% on BFCL on llama.cpp (`models.json`). A model that ignores the
-   tools still produces a report, from the rule and firing alerts it was given up front, with few tool calls listed.
-   Check how many tool calls the first reports show.
-4. **Time per investigation** on Framework. The budget is 15 minutes; expect two to five.
+1. **`page=true` in a real page's silence link** (proof step 3). Custom labels are confirmed to appear (`severity`, `stack`).
+   After the next real page, `docker logs discord-silence-bot | grep "(auto)"` shows whether the automatic run started. If
+   it does not, read labels from Grafana's alert API instead.
+2. **A Harbor vulnerability alert** (proof step 4): the report should name the CVEs, the fixed version and KEV status.
+3. **Whether Graylog honours `token_ttl: P3650D`.**
+
+Resolved: Graylog's search API works on 7.1; the loaded model calls tools (4 calls on a test alert, 21 on a real one);
+time per investigation is 1 to 7 minutes.
 
 ## Not built (possible next steps)
 
