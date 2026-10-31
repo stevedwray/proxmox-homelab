@@ -322,3 +322,23 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   an "what uses Authentik" panel, and a table view. `build_graph_view.py` plus
   `graph_view.template.html` rebuild it; `export_from_model.py` previews a
   checkout's model without touching NetBox or Neo4j.
+
+### Pipeline alerts (2026-10-31)
+
+- **Why:** nothing watched the chain populate -> NetBox -> importer -> Neo4j. The model went 8 days stale because
+  the daily populate sat in a queue, and nothing said so.
+- **Metrics:** the importer writes `neo4j_import.prom` through node_exporter's textfile collector when
+  `NEO4J_METRICS_FILE` is set (the playbook sets it and enables the textfile dir): `neo4j_import_last_run_ok`,
+  `..._last_run_timestamp_seconds`, `..._last_success_timestamp_seconds`,
+  `..._threat_model_last_updated_timestamp_seconds` (NetBox's context `last_updated`, as seen by the last good run),
+  and node and relationship totals. A failed run keeps the previous success and model age. A metrics write failure
+  never fails the import and never masks a real error. 8 new unit tests.
+- **Rules** (`alerting/homelab-neo4j.yml`, Discord `#alerts-warning`, never a page): import has not succeeded in 36
+  hours; last import failed; NetBox threat-model context not refreshed in 36 hours. The last one is the one that
+  would have caught the stale model.
+- **Scrape:** `neo4j-stack` is added to the monitoring stack's node_exporter targets (TLS with basic auth, like the
+  other hosts; checked: the exporter answers 401 without credentials).
+- **Not deployed.** Needs a `neo4j-stack` provision (importer, textfile dir, exporter restart) and a monitoring-stack
+  deploy (Grafana rules, scrape target), each with its own preflight. The runner-side alerts are PR #551.
+- **Expect the third rule to fire** about 36 hours after the last refresh unless the daily populate is running
+  again (PR #550 and the runner fix); that is the intended signal.

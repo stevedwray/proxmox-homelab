@@ -1,0 +1,92 @@
+# Grafana file-provisioned alerts for the threat-model graph pipeline (docs/neo4j-stack, docs/alerting).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# Pipeline: netbox-populate writes the 'threat-model' config context -> neo4j-import (daily 04:30 on neo4j-stack)
+# rebuilds the graph. Either step can stop without anything failing loudly: 2026-10 the daily populate sat in a
+# queue for a week and the model went 8 days stale unnoticed. Metrics: neo4j_import.prom, written by the importer
+# through node_exporter's textfile collector. The 36 hour threshold is a daily job plus a day of slack.
+# Routing: severity warning, so Discord #alerts-warning; never a page.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-neo4j
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: neo4j-import-stale
+        title: Neo4j import has not succeeded in 36 hours
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max(neo4j_import_last_success_timestamp_seconds)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [129600]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'The threat-model graph has not been rebuilt for {{ humanizeDuration $values.A.Value }}: check neo4j-import.timer and its journal on neo4j-stack'
+
+      - uid: neo4j-import-failed
+        title: Neo4j import last run failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'min(neo4j_import_last_run_ok)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'The last neo4j import failed; the graph is still the previous one (journalctl -u neo4j-import.service on neo4j-stack)'
+
+      - uid: neo4j-threat-model-stale
+        title: NetBox threat-model context not refreshed in 36 hours
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'time() - max(neo4j_import_threat_model_last_updated_timestamp_seconds)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [129600]}
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'NetBox threat-model config context was last updated {{ humanizeDuration $values.A.Value }} ago: the daily populate is not running (GitHub runner, or populate itself failing)'

@@ -53,6 +53,7 @@ on top. See `docs/neo4j-stack/` for the graph model and example queries.
 | `neo4j-data` volume (`/data`) | docker_storage (20 GiB) | Graph store. The `:Homelab` part is regenerable from NetBox; hand-authored nodes are not |
 | `neo4j-logs` volume (`/logs`) | docker_storage | Neo4j logs |
 | `/etc/neo4j-import/env` | rootfs | Importer credentials (0600) |
+| `/var/lib/node_exporter/textfile/neo4j_import.prom` | rootfs | Importer health for Grafana: last run ok, last success, age of NetBox's threat-model context, node and relationship counts. Rewritten each run; a failed run keeps the last success |
 
 ## What May Depend On This Stack
 

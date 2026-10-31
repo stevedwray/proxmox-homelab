@@ -25,6 +25,9 @@
     # FQDN, not the raw LAB_IP_HARBOR -- docker login against the bare
     # Harbor IP fails; Traefik's real TLS termination on the FQDN works.
     neo4j_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    # node_exporter's textfile collector: the importer writes neo4j_import.prom here so Grafana can alert when the
+    # import stops running, fails, or is fed a stale NetBox model (docs/alerting, Pipeline alerts).
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
   roles:
     - lxc_base
     - docker_base
@@ -219,6 +222,7 @@
           NEO4J_URL=http://127.0.0.1:7474
           NEO4J_USER=neo4j
           NEO4J_PASSWORD={{ neo4j_password }}
+          NEO4J_METRICS_FILE=/var/lib/node_exporter/textfile/neo4j_import.prom
       no_log: true
 
     - name: Install importer systemd service

@@ -24,11 +24,13 @@ HTTP transaction API):
 
 import argparse
 import base64
+import datetime
 import ipaddress
 import json
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -432,11 +434,76 @@ def fetch_sources(base_url, token):
         raise RuntimeError(f"NetBox config context {THREAT_MODEL_CONTEXT_NAME!r} not found")
     return {
         "model": contexts[0].get("data") or {},
+        "threat_model_updated": contexts[0].get("last_updated"),
         "vms": netbox_get_all(base_url, token, "/virtualization/virtual-machines/"),
         "services": netbox_get_all(base_url, token, "/ipam/services/"),
         "prefixes": netbox_get_all(base_url, token, "/ipam/prefixes/"),
         "vlans": netbox_get_all(base_url, token, "/ipam/vlans/"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Metrics (optional): node_exporter's textfile collector, so Grafana can alert
+# when the import stops running, fails, or is fed a stale NetBox model.
+# ---------------------------------------------------------------------------
+
+_METRIC_LINE = re.compile(r"^([a-z_:][a-z0-9_:]*) (\S+)$")
+
+
+def _epoch(iso):
+    """NetBox's ISO 8601 timestamp ('2026-10-31T04:09:23.779203Z') as epoch seconds, or None."""
+    if not iso:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def read_previous_metrics(path):
+    """Values from the last metrics file, so a failed run can keep the last success."""
+    try:
+        with open(path) as fh:
+            text = fh.read()
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        m = _METRIC_LINE.match(line)
+        if m:
+            try:
+                out[m.group(1)] = float(m.group(2))
+            except ValueError:
+                pass
+    return out
+
+
+def render_metrics(ok, now, previous, threat_model_updated=None, summary=None):
+    """Prometheus text for one run. A failed run keeps the previous success, model age and counts."""
+    last_success = now if ok else previous.get("neo4j_import_last_success_timestamp_seconds")
+    model_updated = _epoch(threat_model_updated) if ok else None
+    if model_updated is None:
+        model_updated = previous.get("neo4j_import_threat_model_last_updated_timestamp_seconds")
+    nodes = sum(summary["nodes"].values()) if summary else previous.get("neo4j_import_nodes_total")
+    rels = sum(summary["relationships"].values()) if summary else previous.get("neo4j_import_relationships_total")
+    rows = [
+        ("neo4j_import_last_run_ok", "1 when the last import succeeded, 0 when it failed.", 1 if ok else 0),
+        ("neo4j_import_last_run_timestamp_seconds", "When the importer last ran.", now),
+        ("neo4j_import_last_success_timestamp_seconds", "When the importer last succeeded.", last_success),
+        ("neo4j_import_threat_model_last_updated_timestamp_seconds",
+         "When NetBox's threat-model config context was last updated, as seen by the last good run.", model_updated),
+        ("neo4j_import_nodes_total", "Nodes the last good import wrote.", nodes),
+        ("neo4j_import_relationships_total", "Relationships the last good import wrote.", rels),
+    ]
+    return "".join(f"# HELP {n} {h}\n# TYPE {n} gauge\n{n} {int(v) if float(v).is_integer() else v}\n"
+                   for n, h, v in rows if v is not None)
+
+
+def write_metrics(path, text):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+    os.replace(tmp, path)  # the collector only reads *.prom, and never sees a half-written file
 
 
 def neo4j_commit(neo4j_url, user, password, database, statements):
@@ -459,20 +526,28 @@ def neo4j_commit(neo4j_url, user, password, database, statements):
     return payload
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Rebuild the homelab threat-model graph in Neo4j from NetBox")
-    parser.add_argument("--dry-run", action="store_true", help="Fetch from NetBox and print a graph summary; don't write Neo4j")
-    args = parser.parse_args()
+def record_metrics(path, text):
+    """Write the metrics file if one is configured. A metrics problem must never mask the real error
+    or fail an import that already updated the graph, so it is reported and swallowed."""
+    if not path:
+        return
+    try:
+        write_metrics(path, text)
+    except OSError as exc:
+        print(f"warning: could not write metrics to {path}: {exc}", file=sys.stderr)
 
+
+def run_import(args):
     netbox_url = os.environ["NETBOX_URL"]
     netbox_token = os.environ["NETBOX_TOKEN"]
     sources = fetch_sources(netbox_url, netbox_token)
+    threat_model_updated = sources.pop("threat_model_updated", None)
     graph = build_graph(**sources, home_cluster=os.environ.get("NEO4J_HOME_CLUSTER", DEFAULT_HOME_CLUSTER))
     summary = graph.summary()
 
     if args.dry_run:
         print(json.dumps(summary, indent=2))
-        return 0
+        return None, summary
 
     run_id = str(uuid.uuid4())
     neo4j = (
@@ -484,6 +559,21 @@ def main():
     neo4j_commit(*neo4j, SCHEMA_STATEMENTS)
     neo4j_commit(*neo4j, build_statements(graph, run_id))
     print(json.dumps({"run": run_id, **summary}, indent=2))
+    return threat_model_updated, summary
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Rebuild the homelab threat-model graph in Neo4j from NetBox")
+    parser.add_argument("--dry-run", action="store_true", help="Fetch from NetBox and print a graph summary; don't write Neo4j")
+    args = parser.parse_args()
+    metrics_path = None if args.dry_run else os.environ.get("NEO4J_METRICS_FILE")
+    previous = read_previous_metrics(metrics_path) if metrics_path else {}
+    try:
+        threat_model_updated, summary = run_import(args)
+    except BaseException:
+        record_metrics(metrics_path, render_metrics(False, int(time.time()), previous))
+        raise
+    record_metrics(metrics_path, render_metrics(True, int(time.time()), previous, threat_model_updated, summary))
     return 0
 
 
