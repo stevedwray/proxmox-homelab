@@ -116,3 +116,15 @@ preamble).
   0 changed, 0 destroyed. vmid 40016, 192.168.40.16/24, `infra_seg`.
 - Verified: pings, ssh works, hostname `neo4j-stack`, Docker 26.1.5 present.
 - Next: `provision.sh --stack neo4j-stack` (first real run of the importer).
+
+### Step 5b - provision (2026-10-31)
+
+- `./with-secrets-prod scripts/provision.sh --stack neo4j-stack`: exit 0,
+  recap ok=83 changed=49 failed=0. `ansible_host` checked as 192.168.40.16
+  beforehand.
+- First live run of the importer's Cypher succeeded on the first attempt: the
+  playbook's "Confirm the graph has threat-model processes" task passed.
+  No fix needed. The graph was built from the 8-day-old `threat-model`
+  context (freshness gate skipped by the operator).
+- Edge reconcile was skipped by provision.sh in single-stack mode, as expected.
+  Edge publishing is step 6.
