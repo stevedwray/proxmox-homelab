@@ -4,8 +4,9 @@ Neo4j and the threat model exist for **threat-informed defence**, not for alerti
 next to the lab's own graph so the questions a defender asks can be answered from data: which techniques apply
 to this asset and why, which are mitigated, and where the lab would not see an attacker.
 
-Status: **pilot on `authentik-stack`** (2026-10-31), ATT&CK **Enterprise v20.0** including the Containers and
-Identity Provider platforms. Other processes follow the same recipe (see *Adding a process*).
+Status: **setup phase** (2026-10-31). The foundation is in place and validated on one process (`authentik-stack`);
+working through ATT&CK, meaning reviewing assessments and acting on gaps, has not started. ATT&CK **Enterprise v20.0**
+including the Containers and Identity Provider platforms.
 
 ## What is loaded
 
@@ -51,27 +52,34 @@ Authentik's *web login*, which is a different attack surface. A data component n
 is collected on, the platform the analytic is written for, and the platform of the surface assessed all agree
 (`test_ssh_logs_are_not_telemetry_for_the_web_login`). The corrected figure is zero.
 
-## Pilot findings: authentik-stack
+## What the pilot run shows about the tooling
 
-24 techniques apply and 3 were assessed not applicable (T1190, T1133, T1610, each with its reason).
+`authentik-stack` is the first mapping, written to prove the loader, the validation and the queries end to end. Its
+assessments are a first pass and are **not yet reviewed**; treat the output as a demonstration, not a conclusion.
 
-| | |
-|---|---|
-| Mitigation | 16 of 24 have at least one control implementing an ATT&CK mitigation |
-| Telemetry | **0 full, 5 partial, 18 none, 1 no analytic** |
-| No mitigation in place | T1078 Valid Accounts, T1110.001/.003/.004 brute force, T1087 Account Discovery, T1005, T1499, T1611 |
-| Largest surface | Credential Access (10 techniques), then Persistence (4) |
+- The mapping has 27 assessments (24 apply, 3 not applicable, each with its reason), 7 controls and 2 sensors.
+- Offline and from the live graph the coverage computation agrees exactly (cross-checked).
+- The layer survives the daily importer, and the Homelab graph is unchanged by loading it.
+- It caught a tooling bug on the way: the first coverage matched data components regardless of platform and so
+  overstated coverage; it is now platform-aware, with a test.
 
-Telemetry the lab does not collect, ranked by how many applicable techniques it would help:
+Reviewing the assessments, and deciding what to do about what they show, is the next phase.
 
-1. **Process Creation** (7 techniques) and **Command Execution** (3): `auditd` is inactive and Wazuh's syscollector
-   is off, so there is no process or command telemetry on the host at all.
-2. **User Account Authentication** for the **Identity Provider** platform (5): Authentik's own login events are
-   not collected as identity data. Container logs reach Graylog, but nothing parses them into logins and admin changes.
-3. **File Access** (4), **Network Traffic Content** (3, the plaintext hops), **User Account Modification** (2).
+## Asset facts the mapping builds on
 
-Questions this raises that the repo cannot answer: is MFA enforced in Authentik, and are there lockout or reputation
-policies (they decide T1078 and T1110)? Can Authentik's event stream be parsed in Graylog?
+A mapping should not have to assert what the repo already declares. The threat model now carries these on each
+Process, derived from `stack.yaml`, `docker-compose.yml` and `edge.yaml`:
+
+| Property | From | Why an ATT&CK analysis wants it |
+|---|---|---|
+| `platforms` (`Linux`, `Containers`) | the stack runs Docker | selects which techniques and analytics can apply |
+| `technologies` | base images, registry and tag stripped | the software a technique targets |
+| `containers`, `containers_privileged`, `containers_host_network`, `containers_docker_sock`, `containers_user_set`, `containers_cap_drop`, `containers_read_only` | compose | container-escape and discovery techniques depend on these |
+| `routed`, `route_auth_modes` | edge manifest | how it is reached |
+| `docker_socket_proxy`, `docker_socket_proxy_port`, `host_bind_mounts`, `device_passthrough` | stack.yaml | host and API exposure |
+| `DEPENDS_ON` edges | `depends_on` | what a compromise reaches or breaks |
+
+Built and tested; **not yet deployed** (it needs the threat-model refresh and an importer run).
 
 ## Querying it
 

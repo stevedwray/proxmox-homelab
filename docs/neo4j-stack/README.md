@@ -337,15 +337,18 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   (3,353 nodes and 50 overlay relationships before and after).
 - **Cross-check:** telemetry coverage recomputed from the live graph (18 none, 5 partial, 1 no-analytic, 0 full) equals
   the offline report exactly.
-- **A correction made on the way:** the first coverage figure said 5 techniques fully covered. It matched data
-  components regardless of platform, so Linux SSH logs counted as telemetry for brute force against Authentik's web
-  login. Fixed (platform-aware, with a test); the true figure is 0 full.
-- **Facts verified on the host (read-only, 192.168.20.10):** Wazuh agent with realtime FIM on `/etc`, binaries and
-  `/opt/authentik-stack`, `auth.log` and `syslog` read, SCA on; Docker logs to syslog to Graylog; **`auditd` inactive,
-  syscollector off**. The Docker socket proxy is read-only for writes (POST and IMAGES off) but plaintext and
-  unauthenticated for `GET /containers`.
+- **A correction made on the way:** the first coverage figure matched data components regardless of platform, so
+  Linux SSH logs counted as telemetry for brute force against Authentik's web login. Fixed (platform-aware, with a
+  test).
 - **Corrected before loading:** I had written that Authentik serves "11 services"; 11 is the count of flow sources into
   it. The real dependency is 9 OIDC applications, 22 forward-auth routes and Graylog's LDAP.
-- **Open:** whether MFA and lockout policies are enforced in Authentik (decides T1078 and T1110); whether Authentik's
-  event stream can be parsed in Graylog; enabling auditd. No detection-rule layer yet (Wazuh and Graylog rules per
-  technique).
+- **Status: setup phase.** The pilot mapping is a first pass for proving the tooling, not a reviewed assessment; working
+  through ATT&CK has not started. See [attack.md](attack.md).
+
+### Asset facts for ATT&CK (2026-10-31, built, not deployed)
+
+- `flows.py` now derives per-process `platforms`, base-image `technologies`, container privilege counts, `routed` and
+  `route_auth_modes`, socket-proxy and host-access facts, and `depends_on`; the importer turns `depends_on` into
+  `DEPENDS_ON` edges (33 on the current model) and drops the list property. 12 + 3 new tests.
+- Needs two production steps to take effect, each with its own preflight: the one-section threat-model refresh, then
+  an importer run.

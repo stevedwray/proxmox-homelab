@@ -64,6 +64,7 @@ REL_TYPES = (
     "EXPOSES",
     "IN_PREFIX",
     "ON_VLAN",
+    "DEPENDS_ON",
 )
 
 
@@ -185,10 +186,15 @@ def add_threat_model(graph, model):
         props["provides"] = [
             f"{p.get('service')}/{p.get('port')}/{p.get('protocol')}" for p in proc.get("provides", [])
         ]
+        props.pop("depends_on", None)  # becomes DEPENDS_ON edges below, once every process exists
         graph.node("Process", proc["id"], props)
         if proc.get("zone"):
             graph.node("Zone", _zone_key(proc["zone"]), {"name": proc["zone"]})
             graph.rel("IN_ZONE", proc["id"], _zone_key(proc["zone"]))
+    for proc in model.get("processes", []):
+        for dep in proc.get("depends_on", []):
+            if graph.nodes.get(dep, (None,))[0] == "Process":
+                graph.rel("DEPENDS_ON", proc["id"], dep)
     for ds in model.get("data_stores", []):
         graph.node("DataStore", ds["id"], ds)
         if ds.get("host"):

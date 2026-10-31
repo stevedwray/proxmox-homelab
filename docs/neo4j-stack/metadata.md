@@ -28,8 +28,9 @@ data written by hand.
 | Node | Properties | Status |
 |---|---|---|
 | **Process** | name, stack, vmid, zone, deployment_tier, tags, provides[] | Live |
-| | `stack.yaml`: cores, memory, rootfs_size, `depends_on[]`, backup_policy, privilege flags (unprivileged, keyctl, device_passthrough, host_bind_mounts, docker_socket_proxy) | 1b |
-| | `edge.yaml`: exposure, routes[], auth mode | 1b |
+| | `platforms`, `technologies` (base images), container privilege counts, `docker_socket_proxy`, `host_bind_mounts`, `device_passthrough` | **1b built** (not deployed) |
+| | `stack.yaml`: cores, memory, rootfs_size, backup_policy | 1b |
+| | `routed`, `route_auth_modes` (from `edge.yaml`) | **1b built** (not deployed) |
 | | compose: images[], digests | 2 |
 | | vulnerability counts (critical/high), last scan (Harbor, Greenbone, OpenSearch; the CVE overlay deferred in `plan.md`) | 2 |
 | **VirtualMachine** | name, cluster, status, vcpus, memory, tags | Live |
@@ -69,7 +70,7 @@ data written by hand.
 | Relationship | Added | Status |
 |---|---|---|
 | `RUNS_ON` | `matched_by` (`home-cluster` or `only-vm`) | Live |
-| `DEPENDS_ON` (Process to Process) | from `stack.yaml depends_on`; answers "what breaks if X is down" without any flow data | 1b |
+| `DEPENDS_ON` (Process to Process) | from `stack.yaml depends_on`; answers "what breaks if X is down" without any flow data | **1b built** (not deployed) |
 | `PROTECTED_BY` (Flow to Authentik Application) | turns `auth: forward-auth` into a concrete object with groups | 2 |
 
 ## What the real model looks like (140 flows, 2026-10-31)
