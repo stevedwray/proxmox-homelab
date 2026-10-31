@@ -1,9 +1,9 @@
 # neo4j-stack
 
-Status: **repo files authored and validated offline. Not deployed to `pve`
-yet.** Start with `plan.md`. Everything that's left is operator work in
-production: OpenBao writes, a NetBox token, `terragrunt apply`,
-`provision.sh`, and edge publishing.
+Status: **deployed to `pve` 2026-10-31** (LXC 40016, `192.168.40.16`, edge
+routes live, importer timer armed for 04:30 daily). Browser connects through
+Traefik. Two known gaps in the imported graph (see "Known gaps" below); the
+`RUNS_ON` one is an importer bug. Start with `plan.md`.
 
 ## What this is
 
@@ -47,6 +47,18 @@ checkout that is 0 commits behind `origin/stable` (see plan.md's runbook
 preamble).
 
 ## Known gaps the graph will show (not fixed here)
+
+- **`RUNS_ON` is never created (importer bug).** The importer joins
+  `Process.name` to the NetBox VM `name`, but NetBox VM names carry an `@node`
+  suffix (`netbox-stack@pve`, `cse-code-eval@pve-tiny`) while Process names
+  are bare (`netbox-stack`). Nothing matches, so the DFD-to-inventory join is
+  empty and every VM shows as drift in the "inventory drift" query. The unit
+  tests pass because their fixtures use bare names. A fix has to strip the
+  `@node` suffix and pick the VM in the cluster that belongs to the modelled
+  environment, since a stack can have VMs on several nodes.
+- **`ON_VLAN` is never created (NetBox data gap).** The importer is correct,
+  but NetBox's prefixes have no VLAN assigned (13 VLANs and 10 prefixes exist,
+  unlinked).
 
 - `flows.py` reuses one flow id for every Traefik route to a multi-route
   stack (e.g. `df-traefik-to-torrent-stack-lab` ×6). The importer suffixes
@@ -178,3 +190,30 @@ preamble).
   system trust store).
 - Operator reply "proceed" after the step 6b message was taken as acceptance
   of the netbox/dashboards check and approval of this step.
+
+### Step 7 - browser check (2026-10-31, operator)
+
+- Worked: `https://neo4j.lab.gibbsgreatly.xyz` through Authentik, then
+  Browser connected to `neo4j+s://neo4j-bolt.lab.gibbsgreatly.xyz:443` as
+  `neo4j` (server Neo4j 5.26.31). Bolt over websocket through Traefik works;
+  the `bolt://192.168.40.16:7687` fallback was not needed.
+
+### Step 8 - final counts (2026-10-31, run over ssh from stdin)
+
+| Node kind | Count |
+|---|---|
+| DataStore | 8 |
+| ExternalEntity | 7 |
+| IPAddress | 44 |
+| Prefix | 10 |
+| Process | 21 |
+| Service | 76 |
+| TrustBoundary | 7 |
+| Unresolved | 12 |
+| VLAN | 13 |
+| VirtualMachine | 49 |
+| Zone | 25 |
+
+Relationships: EXPOSES 76, FLOWS_TO 131, HAS_IP 44, HOSTED_ON 8, IN_PREFIX 29,
+IN_ZONE 21. No `RUNS_ON` or `ON_VLAN` (see Known gaps). Cypher errors: none.
+Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
