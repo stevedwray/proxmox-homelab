@@ -1,0 +1,286 @@
+---
+# neo4j-stack — Neo4j Community holding the lab's threat-model graph,
+# rebuilt daily from NetBox. See terraform/lxc/stacks/neo4j-stack/STACK_CONTRACT.md
+# and docs/neo4j-stack/.
+#
+# Play 1: Docker base configuration (matches deploy-opensearch-stack.yml's
+#         shape).
+# Play 2: Deploy Neo4j from the stack's docker-compose.yml.
+# Play 3: Install the NetBox -> Neo4j importer as a daily systemd timer and
+#         run it once.
+
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    # Points at technitium-stack, not dns-stack -- see
+    # reference_dns_stack_docker_daemon_dependency memory/incident.
+    neo4j_lab_ip_dns: >-
+      {{
+        lookup('env', 'LAB_IP_TECHNITIUM')
+        | default(dns_server, true)
+        | mandatory('LAB_IP_TECHNITIUM env var or dns_server inventory var is required')
+      }}
+    # FQDN, not the raw LAB_IP_HARBOR -- docker login against the bare
+    # Harbor IP fails; Traefik's real TLS termination on the FQDN works.
+    neo4j_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+  roles:
+    - lxc_base
+    - docker_base
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ neo4j_registry_host }}"],
+            "dns": ["{{ neo4j_lab_ip_dns }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before compose up
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Neo4j
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    neo4j_compose_dir: /opt/neo4j-stack
+    neo4j_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    neo4j_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}"
+    neo4j_password: >-
+      {{
+        lookup('env', 'NEO4J_PASSWORD')
+        | mandatory('NEO4J_PASSWORD env var is required -- OpenBao kv/services/neo4j, see STACK_CONTRACT.md Inputs')
+      }}
+    # Keep in sync with docker-compose.yml's image tag.
+    neo4j_runtime_image: "{{ neo4j_registry_host }}/dockerhub/library/neo4j:5.26.31-community"
+
+  tasks:
+    - name: Create Neo4j compose directory
+      ansible.builtin.file:
+        path: "{{ neo4j_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write Neo4j compose env file
+      ansible.builtin.copy:
+        dest: "{{ neo4j_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          REGISTRY_HOST={{ neo4j_registry_host }}
+          LAB_DOMAIN={{ neo4j_lab_domain }}
+          NEO4J_PASSWORD={{ neo4j_password }}
+      no_log: true
+      register: neo4j_env_file
+
+    - name: Copy Neo4j docker-compose.yml from stack
+      ansible.builtin.copy:
+        src: "../../stacks/neo4j-stack/docker-compose.yml"
+        dest: "{{ neo4j_compose_dir }}/docker-compose.yml"
+        mode: "0644"
+      register: neo4j_compose_file
+
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ neo4j_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+
+    - name: Pre-pull Neo4j runtime image from Harbor
+      ansible.builtin.command:
+        argv:
+          - docker
+          - pull
+          - "{{ neo4j_runtime_image }}"
+      register: neo4j_image_pull
+      retries: 5
+      delay: 10
+      until: neo4j_image_pull.rc == 0
+      changed_when: "'Downloaded newer image' in neo4j_image_pull.stdout"
+
+    - name: Bring up Neo4j
+      community.docker.docker_compose_v2:
+        project_src: "{{ neo4j_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: "{{ 'always' if (neo4j_env_file.changed or neo4j_compose_file.changed) else 'auto' }}"
+
+    - name: Wait for Neo4j HTTP port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 7474
+        timeout: 180
+
+    - name: Confirm Neo4j enforces auth
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:7474/db/neo4j/tx/commit"
+        method: POST
+        body_format: json
+        body:
+          statements:
+            - statement: "RETURN 1"
+        status_code: [401]
+      register: neo4j_auth_check
+      until: neo4j_auth_check.status == 401
+      retries: 30
+      delay: 10
+
+    - name: Confirm Neo4j answers Cypher with the stack password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:7474/db/neo4j/tx/commit"
+        method: POST
+        url_username: neo4j
+        url_password: "{{ neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "RETURN 1 AS ok"
+        return_content: true
+      register: neo4j_cypher_check
+      until: >-
+        neo4j_cypher_check.status == 200 and
+        (neo4j_cypher_check.json.errors | default(['pending'])) | length == 0
+      retries: 30
+      delay: 10
+
+- name: Install NetBox -> Neo4j importer daily timer
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    importer_dir: /opt/neo4j-import
+    importer_env_file: /etc/neo4j-import/env
+    neo4j_password: "{{ lookup('env', 'NEO4J_PASSWORD') | mandatory('NEO4J_PASSWORD env var is required') }}"
+    neo4j_netbox_url: "http://{{ lookup('env', 'LAB_IP_NETBOX') | mandatory('LAB_IP_NETBOX env var is required') }}:8080"
+    neo4j_netbox_token: >-
+      {{
+        lookup('env', 'NEO4J_NETBOX_READONLY_TOKEN')
+        | mandatory('NEO4J_NETBOX_READONLY_TOKEN env var is required -- OpenBao kv/services/neo4j, a read-only NetBox API token')
+      }}
+
+  tasks:
+    - name: Install python3
+      ansible.builtin.apt:
+        name: python3
+        state: present
+        update_cache: false
+
+    - name: Create importer directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop:
+        - "{{ importer_dir }}"
+        - "{{ importer_env_file | dirname }}"
+
+    - name: Deploy importer script
+      ansible.builtin.copy:
+        src: "../../stacks/neo4j-stack/importer/neo4j_import.py"
+        dest: "{{ importer_dir }}/neo4j_import.py"
+        owner: root
+        group: root
+        mode: "0640"
+
+    - name: Write importer env file
+      ansible.builtin.copy:
+        dest: "{{ importer_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          NETBOX_URL={{ neo4j_netbox_url }}
+          NETBOX_TOKEN={{ neo4j_netbox_token }}
+          NEO4J_URL=http://127.0.0.1:7474
+          NEO4J_USER=neo4j
+          NEO4J_PASSWORD={{ neo4j_password }}
+      no_log: true
+
+    - name: Install importer systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/neo4j-import.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Rebuild the threat-model graph in Neo4j from NetBox
+          After=docker.service network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          EnvironmentFile={{ importer_env_file }}
+          ExecStart=/usr/bin/python3 {{ importer_dir }}/neo4j_import.py
+
+    - name: Install importer systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/neo4j-import.timer
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Daily NetBox -> Neo4j threat-model import
+
+          [Timer]
+          # After netbox-populate's daily run, so the threat-model context
+          # is fresh.
+          OnCalendar=*-*-* 04:30:00
+          RandomizedDelaySec=15m
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable importer timer
+      ansible.builtin.systemd:
+        name: neo4j-import.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Run the importer once now
+      ansible.builtin.systemd:
+        name: neo4j-import.service
+        state: started
+      when: not ansible_check_mode
+
+    - name: Confirm the graph has threat-model processes
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:7474/db/neo4j/tx/commit"
+        method: POST
+        url_username: neo4j
+        url_password: "{{ neo4j_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          statements:
+            - statement: "MATCH (p:Homelab:Process) RETURN count(p) AS processes"
+        return_content: true
+      register: neo4j_import_check
+      failed_when: >-
+        (neo4j_import_check.json.errors | length > 0) or
+        (neo4j_import_check.json.results[0].data[0].row[0] | int) == 0
+      when: not ansible_check_mode
