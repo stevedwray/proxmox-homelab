@@ -288,3 +288,37 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
 - The model differs by 2 flows between this checkout (140, includes the
   neo4j routes) and what the graph holds (138, from `stable`'s manifests); it
   closes when this branch merges and populate runs.
+
+### Traceable model and graph view (2026-10-31)
+
+- **Why:** the graph could not show what uses Authentik or trace a request from
+  the LAN to a service (e.g. Jellyfin). Cause, all in `flows.py`: only
+  platform-tier stacks became processes (21 of ~63) while Traefik route flows
+  were derived for every stack, leaving 14 dangling ids; static flows
+  hardcoded `p-traefik` (the process is `p-proxy`); Authentik's dependents
+  existed only as text in the Traefik flow's `auth`.
+- **Fix:** PR #549 (`feat/threat-model-trace-paths`, not part of this PR): apps,
+  ai and application tiers (plus untiered stacks with a route) become
+  processes, the real proxy and CI-runner ids are used, and each OIDC-fronted
+  stack gets an `auth-dependency` flow to Authentik (port and transport left
+  unset, `needs_annotation`). 8 new tests, 6 fail on the old code.
+- **Deployed from that branch** (not yet on `stable`): one-section refresh of
+  the NetBox `threat-model` context (dry run first), verified in NetBox's DB:
+  40 processes, 162 flows, 9 auth-dependency flows, no `p-traefik`,
+  `last_updated` 2026-10-31 04:09 UTC. Then the importer: Process 21 to 40,
+  FLOWS_TO 138 to 162, Unresolved 14 to 0, Zone 26 to 28, RUNS_ON 19 to 34.
+  `shortestPath((:ExternalEntity {key:'ee-lan-user'})-[:FLOWS_TO*..6]->(:Process {key:'p-media-stack-lab'}))`
+  returns LAN User, proxy-stack, media-stack-lab; 11 sources flow into Authentik.
+- **Until #549 merges:** a populate or refresh run from a `stable` checkout
+  restores the 21-process model. The daily CI populate does not run (see Known
+  gaps), so nothing does this automatically.
+- **Still unlinked by `RUNS_ON`:** `comfyui-stack` and `llm-gpu-stack` (served
+  from the Framework host, not NetBox VMs), `dns-stack` (destroyed on pve),
+  `dhcp-test-client-01`, `harness-target-pve`, `tpot`. `neo4j-stack` itself is
+  not a process until this PR merges.
+- **Graph view** (local, git-ignored `docs/neo4j-stack/artifacts/`): a
+  self-contained HTML page built from a Neo4j export. Emphasis on risky flows,
+  "trace a request" between any two nodes with the Authentik branch dashed,
+  an "what uses Authentik" panel, and a table view. `build_graph_view.py` plus
+  `graph_view.template.html` rebuild it; `export_from_model.py` previews a
+  checkout's model without touching NetBox or Neo4j.
