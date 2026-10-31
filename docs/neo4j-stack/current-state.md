@@ -1,6 +1,6 @@
 # neo4j-stack: current state
 
-**Checkpoint 2026-10-31.** Verified the same day against the repo, GitHub and, read-only, production. The history of
+**Checkpoint 2026-10-31, updated after the merges.** Verified the same day against the repo, GitHub and, read-only, production. The history of
 how it got here is the hand-back log in [README.md](README.md); the plan is in [plan.md](plan.md#roadmap).
 
 ## Purpose and direction
@@ -21,40 +21,28 @@ on one process; working through ATT&CK (reviewing assessments, acting on gaps) h
 | ATT&CK layer | Enterprise v20.0: 3,353 `:Attack*`, `:Sensor`, `:Control` nodes and 50 overlay relationships (`authentik-stack`). Survives the importer; nothing in it carries `:Homelab` |
 | NetBox | `threat-model` config context refreshed 2026-10-31 04:09 UTC from PR #549's model (40 processes, 162 flows) |
 
-## Built and in git, **not live**
+## In `stable`, **not yet deployed**
 
-- Per-process asset facts (`platforms`, `technologies`, container privilege counts, `routed`, `route_auth_modes`,
-  socket-proxy and host-access facts) and `DEPENDS_ON` edges: PR #553 and the importer change in #552. In production no
-  Process has `platforms` and there are 0 `DEPENDS_ON` edges. Taking effect needs the threat-model refresh and an
-  importer run.
-- The runner self-update alert and the `deploy-ci-runner.yml` version-pin fix (#551); the populate fixes (#550).
+All seven PRs (#547, #549, #553, #550, #551, #548, #552) were merged into `stable` on 2026-10-31, in that order, and the
+combined head passes every suite (importer 25, ATT&CK 27, viewer 2, NetBox integrations 160, runner metrics 10). Merging
+changed git only; production still runs what it did:
 
-## Pull requests and merge order
+- **Asset facts and `DEPENDS_ON`** (#553, #552): in production no Process has `platforms` and there are 0 `DEPENDS_ON`
+  edges. Taking effect needs the threat-model refresh and an importer run.
+- **Runner self-update alert and the `runner_version` pin** (#551): not provisioned. `ci-runner-01` still has the
+  hand-repaired 2.338.0; re-provisioning is now safe, because `stable` pins the same version.
+- **Populate fixes** (#550, with #549's model): in `stable`, not yet run. The daily CI populate is unproven until
+  `stable` reaches `main`; a manual full populate from `stable` is now safe in principle (shared-address guard, 40-process
+  model) but has not been run.
+- **neo4j-stack** and the ATT&CK layer are live from the earlier deploys; `stable` now matches them.
 
-| PR | What | Base | Depends on |
-|---|---|---|---|
-| #547 | Argon/Icinga/SmokePing work, live in prod but unmerged | stable | none; confirm prod matches its head first |
-| #549 | Traceable threat model: 40 processes, no dangling ids, Authentik consumers as edges | stable | none |
-| #553 | Asset facts on every process | #549 | #549 (retarget to stable when it merges) |
-| #550 | Daily populate: CI config and shared-address guard | stable | none; merge #549 first so a populate run does not revert the model |
-| #551 | Runner self-update alert and the `runner_version` pin | stable | none |
-| #548 | neo4j-stack itself (draft) | stable | none |
-| #552 | ATT&CK layer, `DEPENDS_ON`, matrix view, viewer | #548 | #548 (retarget to stable when it merges) |
+Remaining promotion step: `stable` to `main` after an incremental deploy of the pieces above.
 
-Suggested order: #547, #549, #553, #550, #551, #548, #552. After each merge the next branch needs `stable` merged in and
-its validators re-run; stacked PRs need retargeting.
+## Where production still differs from git
 
-## Where production is ahead of git, or fragile
-
-- **NetBox `threat-model` context** comes from #549's branch. A populate or refresh run from a `stable` checkout would
-  put the old 21-process model back. Nothing runs that automatically, because the daily CI populate has never worked.
-- **neo4j-stack** was deployed from unmerged branches; it exists only on them.
-- **`ci-runner-01`** was repaired by hand (stale `bin.*`/`externals.*` moved to `/opt/actions-runner-stale/`, 2.338.0
-  swapped in). `stable`'s `deploy-ci-runner.yml` still pins 2.333.1, so **re-provisioning it before #551 merges would
-  silently downgrade the runner** and bring the stuck state back.
-- **Argon** (`smokeping` DNS and Traefik, `icinga` DNS) is live from a branch that was never merged (#547).
-- **A full `populate.py` run is not safe yet:** it fails on five guests that exist on both pve and pve-tiny (#550), and
-  from `stable` it would revert the threat model.
+- **NetBox `threat-model` context** was refreshed from the #549 model, which `stable` now contains. It is only as fresh as
+  that refresh: re-run it after model changes.
+- **Asset facts and `DEPENDS_ON`** are in git, not live (see above).
 
 ## Decisions on record
 
@@ -114,6 +102,5 @@ rebuild the graph. Verify `last_updated` in NetBox before and the counts in Neo4
 
 ## Housekeeping
 
-Scratch worktrees from this work sit under the session scratchpad (one per open branch) and are safe to delete once the
-branches merge. The graph-view builder now lives in `terraform/lxc/stacks/neo4j-stack/viewer/`; its output goes to the
-git-ignored `docs/neo4j-stack/artifacts/`.
+The merged PRs' branches and their scratch worktrees were removed. The graph-view builder lives in
+`terraform/lxc/stacks/neo4j-stack/viewer/`; its output goes to the git-ignored `docs/neo4j-stack/artifacts/`.

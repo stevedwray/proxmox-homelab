@@ -223,9 +223,8 @@ gates:
 Updated at the 2026-10-31 checkpoint; the live state is in [current-state.md](current-state.md). Direction: threat-informed
 defence against MITRE ATT&CK. **Not** alerting. We are in the setup phase, and the phases below are ordered.
 
-**0. Land the work (needs the operator).** Merge in this order: #547, #549, #553, #550, #551, #548, #552, merging
-`stable` into each next branch and re-running its validators, and retargeting the stacked PRs (#553, #552) to `stable`.
-Until then production is ahead of git in the ways listed in current-state.md.
+**0. Land the work. Done 2026-10-31.** All seven PRs (#547, #549, #553, #550, #551, #548, #552) are in `stable`. What
+remains undeployed is listed in current-state.md.
 
 **1. Make the pipeline reliable** (after the merges).
 - Run the full populate from a `stable` checkout, so NetBox is refreshed on the new model without the one-section workaround.
