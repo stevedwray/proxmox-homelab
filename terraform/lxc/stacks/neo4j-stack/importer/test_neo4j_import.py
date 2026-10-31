@@ -1,11 +1,8 @@
 """Unit tests for neo4j_import graph building and Cypher generation."""
 
-import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
@@ -222,72 +219,6 @@ class DerivedMetadataTest(unittest.TestCase):
         self.assertEqual(next(p for (t, *_), p in graph.rels.items() if t == "RUNS_ON")["matched_by"], "home-cluster")
         graph = neo4j_import.build_graph(MODEL, [vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster")], [], [], [])
         self.assertEqual(next(p for (t, *_), p in graph.rels.items() if t == "RUNS_ON")["matched_by"], "only-vm")
-
-
-class MetricsTest(unittest.TestCase):
-    SUMMARY = {"nodes": {"Process": 3, "Zone": 2}, "relationships": {"FLOWS_TO": 4}}
-
-    def _values(self, text):
-        return {line.split()[0]: float(line.split()[1]) for line in text.splitlines() if line and not line.startswith("#")}
-
-    def test_epoch_parses_netbox_timestamps(self):
-        self.assertEqual(neo4j_import._epoch("2026-10-31T04:09:23.779203Z"), 1793419763.779203)
-        self.assertIsNone(neo4j_import._epoch(None))
-        self.assertIsNone(neo4j_import._epoch("not a date"))
-
-    def test_successful_run(self):
-        v = self._values(neo4j_import.render_metrics(True, 1000, {}, "2026-10-31T04:09:23Z", self.SUMMARY))
-        self.assertEqual(v["neo4j_import_last_run_ok"], 1)
-        self.assertEqual(v["neo4j_import_last_success_timestamp_seconds"], 1000)
-        self.assertEqual(v["neo4j_import_threat_model_last_updated_timestamp_seconds"], 1793419763)
-        self.assertEqual((v["neo4j_import_nodes_total"], v["neo4j_import_relationships_total"]), (5, 4))
-
-    def test_failed_run_keeps_the_last_success_model_age_and_counts(self):
-        good = self._values(neo4j_import.render_metrics(True, 1000, {}, "2026-10-31T04:09:23Z", self.SUMMARY))
-        v = self._values(neo4j_import.render_metrics(False, 2000, good))
-        self.assertEqual(v["neo4j_import_last_run_ok"], 0)
-        self.assertEqual(v["neo4j_import_last_run_timestamp_seconds"], 2000)
-        self.assertEqual(v["neo4j_import_last_success_timestamp_seconds"], 1000)
-        self.assertEqual(v["neo4j_import_threat_model_last_updated_timestamp_seconds"], 1793419763)
-        self.assertEqual(v["neo4j_import_nodes_total"], 5)
-
-    def test_first_ever_failure_omits_what_it_does_not_know(self):
-        text = neo4j_import.render_metrics(False, 2000, {})
-        self.assertNotIn("last_success", text)
-        self.assertNotIn("None", text)
-        self.assertIn("neo4j_import_last_run_ok 0\n", text)
-
-    def test_previous_metrics_round_trip_and_missing_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "neo4j_import.prom"
-            self.assertEqual(neo4j_import.read_previous_metrics(str(path)), {})
-            neo4j_import.write_metrics(str(path), neo4j_import.render_metrics(True, 1000, {}, None, self.SUMMARY))
-            self.assertEqual(neo4j_import.read_previous_metrics(str(path))["neo4j_import_last_success_timestamp_seconds"], 1000)
-            self.assertEqual([p.name for p in Path(d).iterdir()], ["neo4j_import.prom"])  # no .tmp left behind
-
-    def _main(self, run_import, path):
-        with mock.patch.dict(os.environ, {"NEO4J_METRICS_FILE": str(path)}), \
-                mock.patch.object(sys, "argv", ["neo4j_import.py"]), \
-                mock.patch.object(neo4j_import, "run_import", run_import):
-            return neo4j_import.main()
-
-    def test_main_records_success(self):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "m.prom"
-            self.assertEqual(self._main(lambda args: ("2026-10-31T04:09:23Z", self.SUMMARY), path), 0)
-            self.assertEqual(self._values(path.read_text())["neo4j_import_last_run_ok"], 1)
-
-    def test_main_records_failure_and_still_raises(self):
-        def boom(args):
-            raise RuntimeError("neo4j rejected the import")
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "m.prom"
-            with self.assertRaises(RuntimeError):
-                self._main(boom, path)
-            self.assertEqual(self._values(path.read_text())["neo4j_import_last_run_ok"], 0)
-
-    def test_unwritable_metrics_never_fail_the_import(self):
-        self.assertEqual(self._main(lambda args: (None, self.SUMMARY), "/nonexistent-dir/m.prom"), 0)
 
 
 class BuildStatementsTest(unittest.TestCase):

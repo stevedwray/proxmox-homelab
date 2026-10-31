@@ -280,8 +280,6 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
-                - targets: ["{{ lookup('env', 'LAB_IP_NEO4J') }}:9100"]
-                  labels: {stack: neo4j-stack}
                 # Added 2026-10-24 (docs/alerting/plan.md, Phase 7 W2): running guests that were never scraped.
                 # Only those whose exporter already speaks TLS; the rest are added after their exporters are fixed.
                 - targets: ["{{ lookup('env', 'LAB_IP_OPENSEARCH') }}:9100"]
@@ -635,7 +633,6 @@
         - homelab-vulnerabilities.yml
         - homelab-nas.yml
         - homelab-router.yml
-        - homelab-neo4j.yml
       register: grafana_alert_rules_provisioning
 
     - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)
