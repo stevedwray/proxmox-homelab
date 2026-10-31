@@ -594,7 +594,40 @@ _EXTERNAL_FLOWS = [
 # Derivation functions
 # ---------------------------------------------------------------------------
 
-def derive_processes(stacks, edge_stacks=frozenset()):
+_REGISTRY_PROJECTS = {"dockerhub", "ghcr", "gcr", "quay", "docker", "k8s", "registry", "library"}
+
+
+def _image_repo(image):
+    """'${REGISTRY_HOST}/ghcr/goauthentik/server:${V:-1}' -> 'goauthentik/server' (registry, proxy project and tag removed)."""
+    if not isinstance(image, str) or not image:
+        return None
+    ref = re.sub(r"^\$\{[^}]*\}/", "", image.strip())              # leading ${REGISTRY_HOST}/
+    ref = re.sub(r":(\$\{[^}]*\}|[\w.\-]+)$", "", ref.split("@", 1)[0])   # tag or ${tag}; digest
+    parts = ref.split("/")
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0]):       # a literal registry host
+        parts = parts[1:]
+    while len(parts) > 1 and parts[0] in _REGISTRY_PROJECTS:         # Harbor proxy-cache project, 'library'
+        parts = parts[1:]
+    return "/".join(parts) or None
+
+
+def _compose_facts(compose):
+    """Container count, base images and the privilege facts an attacker's path through a container depends on."""
+    services = (compose or {}).get("services") or {}
+    mounts_sock = lambda s: any("docker.sock" in str(v) for v in (s.get("volumes") or []))
+    return {
+        "technologies": sorted({r for r in (_image_repo(s.get("image")) for s in services.values()) if r}),
+        "containers": len(services),
+        "containers_privileged": sum(1 for s in services.values() if s.get("privileged") is True),
+        "containers_host_network": sum(1 for s in services.values() if s.get("network_mode") == "host"),
+        "containers_docker_sock": sum(1 for s in services.values() if mounts_sock(s)),
+        "containers_user_set": sum(1 for s in services.values() if s.get("user")),
+        "containers_cap_drop": sum(1 for s in services.values() if s.get("cap_drop")),
+        "containers_read_only": sum(1 for s in services.values() if s.get("read_only") is True),
+    }
+
+
+def derive_processes(stacks, edge_stacks=frozenset(), composes=None, edge_yamls=None):
     """Build process node list from stack.yaml files."""
     processes = []
     for name, stack in stacks.items():
@@ -614,7 +647,7 @@ def derive_processes(stacks, edge_stacks=frozenset()):
             for p in (stack.get("provides") or [])
         ]
 
-        processes.append({
+        proc = {
             "id": pid,
             "name": stack.get("hostname", name),
             "stack": name,
@@ -624,7 +657,36 @@ def derive_processes(stacks, edge_stacks=frozenset()):
             "provides": provides,
             "deployment_tier": stack.get("deployment_tier", "platform"),
             "tags": stack.get("tags", []),
-        })
+        }
+        # Asset facts a threat-informed analysis needs (e.g. which ATT&CK platforms and techniques apply), derived
+        # from what the repo already declares rather than asserted by hand.
+        compose = (composes or {}).get(name)
+        runs_docker = bool(compose) or bool(stack.get("docker_mount") or stack.get("docker_storage_size"))
+        proc["platforms"] = ["Containers", "Linux"] if runs_docker else ["Linux"]
+        if compose:
+            proc.update(_compose_facts(compose))
+        modes = sorted({r.get("auth", {}).get("mode", "none")
+                        for r in ((edge_yamls or {}).get(name, {}).get("spec", {}).get("routes", []))
+                        if r.get("backend", {}).get("type") != "traefikService"})
+        proc["routed"] = bool(modes)
+        if modes:
+            proc["route_auth_modes"] = modes
+        if stack.get("enable_docker_socket_proxy"):
+            proc["docker_socket_proxy"] = True
+            proc["docker_socket_proxy_port"] = stack.get("docker_socket_proxy_listen_port")
+        if stack.get("host_bind_mounts"):
+            proc["host_bind_mounts"] = len(stack["host_bind_mounts"])
+        if stack.get("device_passthrough"):
+            proc["device_passthrough"] = True
+        proc["_depends_on_stacks"] = list(stack.get("depends_on") or [])
+        processes.append(proc)
+    # depends_on as process ids, resolved once every process is known; unmodelled stacks are dropped
+    by_stack = {p["stack"]: p["id"] for p in processes}
+    for proc in processes:
+        deps = proc.pop("_depends_on_stacks")
+        resolved = [by_stack[d] for d in deps if d in by_stack]
+        if resolved:
+            proc["depends_on"] = resolved
     return processes
 
 
@@ -1038,7 +1100,7 @@ def build_threat_model(env=None, stacks_dir=None, annotations_path=None):
     network_intent = load_network_intent(env)
     annotations = load_annotations(annotations_path)
 
-    processes = derive_processes(stacks, edge_stacks=frozenset(edge_yamls))
+    processes = derive_processes(stacks, edge_stacks=frozenset(edge_yamls), composes=composes, edge_yamls=edge_yamls)
 
     flows = []
     flows.extend(_EXTERNAL_FLOWS)
