@@ -25,6 +25,7 @@ are still to do. Phases 3, 4 and 4b are future state.
 | 5 | New critical vulnerabilities (Harbor, Greenbone) | **Live** (`homelab-vulnerabilities.yml`) |
 | 6 | Digest, fire drill, native integrations | Outline |
 | 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **In progress**: W1 done, W2 half done (see Phase 7) |
+| 7b | Silence from Discord (react to an alert) | **Live and proven 2026-10-29**: [discord-silence-bot.md](discord-silence-bot.md) |
 
 **Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
 would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping

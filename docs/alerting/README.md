@@ -210,6 +210,9 @@ In order of urgency. Phase 7 (the plan, [plan.md](plan.md)) is the work list for
    process failed (likely state built up after the router outage) and why it logged `Errno 110`. The extra logging is still in the
    running container and will print the exception if it recurs. Full evidence and test plan:
    [router-api-session-drops.md](router-api-session-drops.md). Alerts already tolerate the gaps (#537).
+1b. **Silence from Discord is live (2026-10-29).** React 👍 (4 h), 🌙 (12 h) or 📅 (24 h) to an alert in Discord and a small bot silences it in
+   Grafana, so silencing works away from the lab network. Proven with a Grafana test message. How it works, security, rollback:
+   [discord-silence-bot.md](discord-silence-bot.md). Not yet tried live: a grouped message and the channels other than warning.
 2. **`pve-tiny` comes back with a new NVMe drive.** Create one Grafana silence for `stack = pve-tiny` **just before the power-off**
    (see plan W3). The existing NVMe-only silence **ends 2026-10-26 13:46 NZ**, and the page returns when it does.
 3. **Phase 7 workstreams still to do:** W2 (apply the `step-ca` firewall playbook, give the eight plain-HTTP exporters TLS, then scrape

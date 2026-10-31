@@ -1,6 +1,7 @@
 # Discord silence bot: react to an alert to silence it
 
-Status 2026-10-29: **built and tested, not deployed.** Needs the one-time setup below (Discord application, three OpenBao values).
+Status 2026-10-29: **live and proven** (PRs #542, #543). A 👍 on a Grafana test message in the warning channel produced a silence, a ✅ and a reply.
+Not yet tried live: a grouped message with several alerts, and the other three channels. The setup steps below are what was done.
 Parent docs: [README.md](README.md), [plan.md](plan.md). Script: `terraform/lxc/ansible/files/discord_silence_bot.py`.
 Playbook: `terraform/lxc/ansible/playbooks/deploy-discord-silence-bot.yml`.
 
