@@ -1,0 +1,40 @@
+---
+# GitHub runner self-update health for Grafana. Needs node_exporter's textfile collector enabled at
+# github_runner_metrics_textfile_dir (node_exporter_textfile_dir in the playbook). It only reads the runner's
+# _diag directory and `systemctl list-units`; it never touches the runner.
+- name: Create the github-runner-metrics directory
+  ansible.builtin.file:
+    path: "{{ github_runner_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Copy the metrics script
+  ansible.builtin.copy:
+    src: github_runner_metrics.py
+    dest: "{{ github_runner_metrics_dir }}/github_runner_metrics.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Write github-runner-metrics service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - github-runner-metrics.service
+    - github-runner-metrics.timer
+  notify: Reload systemd
+
+- name: Flush handlers so systemd sees the units
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the github-runner-metrics timer
+  ansible.builtin.systemd:
+    name: github-runner-metrics.timer
+    enabled: true
+    state: started

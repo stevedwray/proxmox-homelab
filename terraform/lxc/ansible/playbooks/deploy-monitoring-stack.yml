@@ -633,6 +633,7 @@
         - homelab-vulnerabilities.yml
         - homelab-nas.yml
         - homelab-router.yml
+        - homelab-pipeline.yml
       register: grafana_alert_rules_provisioning
 
     - name: Copy Grafana notification message templates (static file; Grafana templates, never Jinja)

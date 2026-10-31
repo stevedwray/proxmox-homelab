@@ -1,0 +1,67 @@
+# Grafana file-provisioned alerts for the automation the lab's data depends on (docs/alerting/plan.md).
+# Copied as-is by deploy-monitoring-stack.yml; never templated by Ansible.
+#
+# The GitHub Actions runner updates itself daily. When that fails the service stays up and GitHub keeps
+# showing it online, but once GitHub requires a newer version it stops handing it jobs, so scheduled
+# workflows (NetBox populate) queue for days and nothing says why. 2026-10: stale backup directories made the
+# update's `mv` fail every day for weeks and the model in NetBox went 8 days stale unnoticed.
+# Metrics come from roles/github_runner_metrics (node_exporter textfile collector on ci-runner-01).
+# Routing: severity warning, so Discord #alerts-warning; never a page.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: homelab-pipeline
+    folder: Homelab alerts
+    interval: 1m
+    rules:
+      - uid: pipeline-runner-selfupdate-failing
+        title: GitHub runner self-update failing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'max(github_runner_selfupdate_consecutive_failures)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [2]}
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'The GitHub runner has failed {{ $values.A.Value }} self-updates in a row; once GitHub requires a newer version it stops taking jobs and scheduled workflows queue silently (see the runner _diag SelfUpdate logs)'
+
+      - uid: pipeline-runner-service-down
+        title: GitHub runner service not running
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: 'min(github_runner_service_active)'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning}
+        annotations:
+          summary: 'No GitHub Actions runner unit is active on ci-runner-01; CI and the scheduled NetBox populate cannot run'

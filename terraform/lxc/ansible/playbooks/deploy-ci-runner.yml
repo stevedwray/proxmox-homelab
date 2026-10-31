@@ -4,7 +4,12 @@
   become: true
   gather_facts: false
   vars:
-    runner_version: "2.333.1"
+    # Keep this at the version the runner actually runs. The runner updates itself, and this play extracts
+    # runner_version over runner_home on every run, so an old pin here silently downgrades it (2026-10: a
+    # downgrade to 2.333.1 plus stale backup dirs made every self-update fail and queued CI for a week).
+    runner_version: "2.338.0"
+    # node_exporter's textfile collector: github_runner_metrics writes github_runner.prom here (docs/alerting).
+    node_exporter_textfile_dir: /var/lib/node_exporter/textfile
     syft_version: "1.19.0"
     cosign_version: "3.0.6"
     runner_user: runner
@@ -23,6 +28,7 @@
 
   roles:
     - lxc_base
+    - github_runner_metrics
     - role: harbor_repull
       when: harbor_repull_enabled | default(false) | bool
 

@@ -200,6 +200,25 @@ Logs ──► Graylog (relay stamps relay_src_ip; pentest_seg has its own strea
 | Workstation and Pi enrolment | `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml` (run with `./with-secrets-prod`, never the dev wrapper) |
 | **Parked relay** | `~/git/oci/roles/alert_relay/` (not in any git repo I can see: the Pangolin source was copied into this repo's `oci/` on `task/oci-security-prs-integration`, unmerged, and `~/git/oci` stays the operational source until that cutover; when the import merges, carry `roles/alert_relay/` into `oci/roles/`). `site.yml` has the role commented out. Superseded runbook: [relay-deploy.md](relay-deploy.md) |
 
+## Pipeline alerts (2026-10-31)
+
+The automation the lab's data depends on had no alerts: the GitHub runner updates itself daily, and when that
+fails it stays "online" while scheduled workflows (the NetBox populate) queue silently. In 2026-10 stale backup
+directories made every self-update fail for weeks and the threat model in NetBox went 8 days stale unnoticed.
+
+| Rule | Fires when | Routes to |
+|---|---|---|
+| GitHub runner self-update failing | more than 2 self-updates in a row have failed | Discord `#alerts-warning` |
+| GitHub runner service not running | no runner unit is active for 15 minutes | Discord `#alerts-warning` |
+
+Metrics: `roles/github_runner_metrics` (a timer on ci-runner-01 every 15 minutes) turns the runner's own
+`_diag/SelfUpdate-*.log.failed|succeed` files and `systemctl` into `github_runner_*` metrics through node_exporter's
+textfile collector. Run against the real runner history it reads 24 consecutive failures, and the rule would have
+fired on 2026-10-09, about two weeks before jobs started queueing. Rules: `alerting/homelab-pipeline.yml`.
+
+Also found: `deploy-ci-runner.yml` pinned `runner_version` and re-extracts it on every run, so an old pin silently
+downgrades the self-updated runner. The pin now matches the running version (2.338.0); bump it when you re-provision.
+
 ## Open items for the operator
 
 In order of urgency. Phase 7 (the plan, [plan.md](plan.md)) is the work list for most of these.

@@ -1,0 +1,7 @@
+---
+# Runner health for Grafana (docs/alerting). Runs on the ci-runner host, writes github_runner.prom into
+# node_exporter's textfile directory (node_exporter_textfile_dir in the playbook, applied by the node_exporter role).
+github_runner_metrics_dir: /opt/github-runner-metrics
+github_runner_metrics_textfile_dir: /var/lib/node_exporter/textfile
+github_runner_metrics_interval: "15min"
+github_runner_metrics_diag_dir: /opt/actions-runner/_diag
