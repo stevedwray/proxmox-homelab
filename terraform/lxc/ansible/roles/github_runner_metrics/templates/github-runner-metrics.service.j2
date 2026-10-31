@@ -1,0 +1,8 @@
+[Unit]
+Description=GitHub runner health for node_exporter's textfile collector
+
+[Service]
+Type=oneshot
+Environment=RUNNER_DIAG_DIR={{ github_runner_metrics_diag_dir }}
+Environment=RUNNER_METRICS_OUT={{ github_runner_metrics_textfile_dir }}/github_runner.prom
+ExecStart=/usr/bin/python3 {{ github_runner_metrics_dir }}/github_runner_metrics.py

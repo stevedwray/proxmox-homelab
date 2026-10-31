@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for github-runner-metrics.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ github_runner_metrics_interval }}
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
