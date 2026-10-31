@@ -113,6 +113,12 @@ def _process_id(stack_name):
     return "p-" + re.sub(r"-stack$", "", stack_name)
 
 
+# The reverse proxy and CI runner are referenced by id from static flows; use
+# the ids derive_processes() really produces ("p-proxy", "p-ci-runner-01").
+_PROXY_PID = _process_id("proxy-stack")
+_CI_RUNNER_PID = _process_id("ci-runner-01")
+
+
 def _flow_id(*parts):
     """Build a flow id from parts, slugifying each."""
     return "df-" + "-to-".join(
@@ -202,7 +208,10 @@ def load_annotations(path=None):
 # Platform stack detection
 # ---------------------------------------------------------------------------
 
-_PLATFORM_TIERS = {"platform"}
+# Tiers that become processes. Apps, AI and gaming stacks are modelled too:
+# their Traefik routes are derived either way, and a route needs a process to
+# land on, or the flow dangles and a request can't be traced to its service.
+_PLATFORM_TIERS = {"platform", "apps", "ai", "application"}
 _SKIP_STACKS = {
     "docker-socket-proxy-test", "test-docker", "test-lxc",
     "test-storage", "test-storage-extra",
@@ -212,14 +221,14 @@ _SKIP_STACKS = {
 }
 
 
-def _is_platform_stack(name, stack):
+def _is_platform_stack(name, stack, edge_stacks=frozenset()):
     if name in _SKIP_STACKS:
         return False
     tier = stack.get("deployment_tier")
     if tier and tier not in _PLATFORM_TIERS:
         return False
-    # Must have a network zone or be a known platform service
-    return bool(stack.get("network", {}).get("zone"))
+    # Must have a network zone, or a Traefik route that needs a process to land on
+    return bool(stack.get("network", {}).get("zone")) or name in edge_stacks
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +478,7 @@ _EXTERNAL_FLOWS = [
     {
         "id": "df-traefik-to-letsencrypt",
         "name": "Traefik ACME certificate issuance",
-        "from": "p-traefik",
+        "from": _PROXY_PID,
         "to": "ee-letsencrypt",
         "protocol": "tcp",
         "port": 443,
@@ -485,7 +494,7 @@ _EXTERNAL_FLOWS = [
         "id": "df-letsencrypt-to-traefik",
         "name": "Let's Encrypt httpChallenge validation",
         "from": "ee-letsencrypt",
-        "to": "p-traefik",
+        "to": _PROXY_PID,
         "protocol": "tcp",
         "port": 80,
         "transport_security": "none",
@@ -500,7 +509,7 @@ _EXTERNAL_FLOWS = [
         "id": "df-step-ca-to-traefik",
         "name": "step-ca ACME challenge via Traefik",
         "from": "p-step-ca",
-        "to": "p-traefik",
+        "to": _PROXY_PID,
         "protocol": "tcp",
         "port": 80,
         "transport_security": "none",
@@ -514,7 +523,7 @@ _EXTERNAL_FLOWS = [
     {
         "id": "df-ci-to-github",
         "name": "CI runner to GitHub Actions (polling and status)",
-        "from": "p-ci-runner",
+        "from": _CI_RUNNER_PID,
         "to": "ee-github",
         "protocol": "tcp",
         "port": 443,
@@ -548,7 +557,7 @@ _EXTERNAL_FLOWS = [
         "id": "df-user-to-traefik",
         "name": "Browser HTTPS ingress",
         "from": "ee-lan-user",
-        "to": "p-traefik",
+        "to": _PROXY_PID,
         "protocol": "tcp",
         "port": 443,
         "transport_security": "tls",
@@ -564,7 +573,7 @@ _EXTERNAL_FLOWS = [
     {
         "id": "df-traefik-forwardauth",
         "name": "Traefik forward auth check to Authentik",
-        "from": "p-traefik",
+        "from": _PROXY_PID,
         "to": "p-authentik",
         "protocol": "tcp",
         "port": 9000,
@@ -585,11 +594,11 @@ _EXTERNAL_FLOWS = [
 # Derivation functions
 # ---------------------------------------------------------------------------
 
-def derive_processes(stacks):
-    """Build process node list from platform stack.yaml files."""
+def derive_processes(stacks, edge_stacks=frozenset()):
+    """Build process node list from stack.yaml files."""
     processes = []
     for name, stack in stacks.items():
-        if not _is_platform_stack(name, stack):
+        if not _is_platform_stack(name, stack, edge_stacks):
             continue
         pid = _process_id(name)
         zone = stack.get("network", {}).get("zone", "unknown")
@@ -782,6 +791,49 @@ def derive_edge_flows(stacks, edge_yamls, processes):
                 "inferred_from": f"{stack_name}/edge.yaml (auth.mode: {auth_mode})",
             })
 
+    return flows
+
+
+def derive_auth_dependency_flows(stacks, edge_yamls, processes):
+    """Show who depends on Authentik: every stack that fronts an app with OIDC.
+
+    Forward-auth is one Traefik-to-Authentik flow (static). An OIDC app instead
+    talks to Authentik itself (token and userinfo requests), which the edge
+    route only records as free text in the Traefik flow's `auth`. Emit it as a
+    real flow so Authentik's consumers show up as edges. The endpoint and
+    transport aren't derivable, so the flow asks for an annotation.
+    """
+    flows = []
+    process_ids = {p["stack"]: p["id"] for p in processes}
+    authentik_pid = process_ids.get("authentik-stack", _process_id("authentik-stack"))
+
+    for stack_name, edge in edge_yamls.items():
+        if stack_name == "authentik-stack":
+            continue
+        oidc_hosts = [
+            r.get("host", "") for r in edge.get("spec", {}).get("routes", [])
+            if r.get("auth", {}).get("mode") == "oidc"
+        ]
+        if not oidc_hosts:
+            continue
+        src_zone = stacks.get(stack_name, {}).get("network", {}).get("zone", "unknown")
+        dst_zone = stacks.get("authentik-stack", {}).get("network", {}).get("zone", "unknown")
+        flows.append({
+            "id": f"df-{_process_id(stack_name)[2:]}-oidc-authentik",
+            "name": f"{stack_name} validates OIDC logins with Authentik",
+            "from": process_ids.get(stack_name, _process_id(stack_name)),
+            "to": authentik_pid,
+            "protocol": "tcp",
+            "auth": "oidc (Authentik)",
+            "data_classification": "internal",
+            "data": f"OIDC token and userinfo requests for logins to {', '.join(oidc_hosts)}",
+            "trigger": "runtime",
+            "trust_boundary_crossing": _zone_boundary(src_zone, dst_zone),
+            "flow_type": "auth-dependency",
+            "inferred_from": f"{stack_name}/edge.yaml (auth.mode: oidc)",
+            "needs_annotation": True,
+            "annotation_hint": "Does the app call Authentik directly (:9000) or via the Traefik hostname, and over TLS?",
+        })
     return flows
 
 
@@ -986,7 +1038,7 @@ def build_threat_model(env=None, stacks_dir=None, annotations_path=None):
     network_intent = load_network_intent(env)
     annotations = load_annotations(annotations_path)
 
-    processes = derive_processes(stacks)
+    processes = derive_processes(stacks, edge_stacks=frozenset(edge_yamls))
 
     flows = []
     flows.extend(_EXTERNAL_FLOWS)
@@ -994,6 +1046,7 @@ def build_threat_model(env=None, stacks_dir=None, annotations_path=None):
     flows.extend(derive_apt_flows(stacks, processes))
     flows.extend(derive_socket_proxy_flows(stacks, processes))
     flows.extend(derive_edge_flows(stacks, edge_yamls, processes))
+    flows.extend(derive_auth_dependency_flows(stacks, edge_yamls, processes))
     flows.extend(derive_monitoring_flows(stacks, composes, processes))
     flows.extend(derive_zone_policy_flows(network_intent))
 
