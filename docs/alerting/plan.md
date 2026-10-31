@@ -4,33 +4,32 @@ Workspace README (decisions, design rules, hand-backs): [README.md](README.md).
 Replaces `docs/catch-up/07-baseline-alerting.md`, whose OpenBao-health and
 alert-rule steps are reused below by id.
 
-## Status (base snapshot 2026-10-24; Icinga note 2026-10-26)
+## Status (2026-10-25; Icinga note 2026-10-26)
 
 **Phases 1, 1c and both prerequisites are deployed and proven** (drills and a real page: README, *Proven live*).
 The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`.
-Phase 2 and the workstation/Pi enrolment are also applied; the remaining
-Phase 0 MikroTik exporter and Phases 5–6 are pending. Phases 3 and 4 are
-future state; Phase 4b probes 3–7 were superseded by the live Argon Icinga
+Phase 2, the workstation/Pi enrolment, the MikroTik exporter and Phase 5 are
+also live; Phase 6 is an outline. Phases 3 and 4 are future state; Phase 4b probes 3–7 were superseded by the live Argon Icinga
 checks (2026-10-26 audit).
 
 | Phase | What | State |
 |---|---|---|
 | 0.1, 0.3 | Graylog stamps the real sender IP; `pentest_seg` has its own stream; two MikroTik rules narrowed | **Live** |
 | 0.4, 0.5 | Workstation and argon-01/02 into Graylog | **Done and proven 2026-10-24** (`graylog-workstation-syslog-ng.yml`, `graylog-pi-syslog.yml`) |
-| 0.6 | MikroTik metrics (mktxp) | Router access live; exporter and eight rules built, not yet deployed |
+| 0.6 | MikroTik metrics (mktxp) | **Live and verified**; API-session drop cleared by restart, cause unknown (Phase 0b) |
 | 0.8 | NAS (SNMPv3) | **Live and verified** |
 | 1 | Discord channels, 9 baseline + 18 hardware rules, routing | **Live and proven** |
 | 1c | Telegram paging via Grafana, honeypot tripwire, 10-minute T-Pot sync, short plain-text messages | **Live and proven** |
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
 | 2 | Graylog log alerts | **Applied and drilled** (`scripts/graylog_alerts.py`) |
-| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Relay and dead man's switch parked.** Phase 4b probes 3–7 superseded by the live Argon Icinga checks; probes 1–2 only apply if the relay is deployed (§4b). Direct Icinga notifications remain off pending Stage 3 |
-| 5 | New critical vulnerabilities (Harbor, Greenbone) | **Built, not yet deployed** (`homelab-vulnerabilities.yml`) |
+| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed. Phase 4b probes 3–7 superseded by the live Argon Icinga checks; probes 1–2 only apply if the relay is deployed (§4b). Direct Icinga notifications remain off pending Stage 3 |
+| 5 | New critical vulnerabilities (Harbor, Greenbone) | **Live** (`homelab-vulnerabilities.yml`) |
 | 6 | Digest, fire drill, native integrations | Outline |
-| 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **Planned** (see Phase 7) |
+| 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **In progress**: W1 done, W2 half done (see Phase 7) |
 
-**Order from here:** the remaining Phase 0 MikroTik exporter, then Phases 5
-and 6. Phase 2 Graylog log alerts are already applied and drilled. Phases 3
+**Order from here:** Phase 6 (the digest and native integrations) and the Phase 7
+workstreams. Phases 0, 2 and 5 are applied and drilled. Phases 3
 and 4 wait for a decision; Phase 4b probes 3–7 are superseded and probes 1–2
 are conditional. Operator housekeeping
 (NVMe silence, Discord token reset) is in the README's open items. **Parallel work:** the pve-tiny evacuation
@@ -69,9 +68,9 @@ the 2026-10-24 sweep.
 | 0.2 T-Pot relabel | **Dropped**: its source is already the generic `raspberrypi` and its own logs never say "tpot" |
 | 0.4 Workstation `garuda` into Graylog, warning and above | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-workstation-syslog-ng.yml` (syslog-ng from the official repo; rsyslog was the operator's first choice but chaotic-aur's build crashes on glibc 2.44). Steps 00 and 01 below are **superseded** |
 | 0.5 argon-01 / argon-02 into Graylog | **Done and proven 2026-10-24**: `ansible/00-initial-setup/graylog-pi-syslog.yml` (step 02's content, as committed) |
-| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Router access live; exporter and eight rules built, not yet deployed** (Phase 0b below) |
+| 0.6 MikroTik hardware and firmware metrics (mktxp) | **Live and verified 2026-10-25**; session-drop fault cleared by an exporter restart (cause unknown) (Phase 0b below) |
 | 0.7 Omada metrics missing from VictoriaMetrics | Closed by the monitoring-stack deploy (Phase 1c checklist) |
-| 0.8 NAS (Asustor Drivestor) | **Built, not yet deployed**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
+| 0.8 NAS (Asustor Drivestor) | **Live and verified**: SNMPv3 through `snmp-exporter` in monitoring-stack, six rules (`homelab-nas.yml`). See *Operator: NAS* below |
 | 0.9 Ignore the expected `GazaarBackup` failure | Phase 2 (Graylog event definitions) |
 
 ### alerting-00-journal-forwarder
@@ -500,13 +499,32 @@ user, trap level warning (no trap receiver exists; polling is what is used).
 An unreachable NAS is caught by the generic "Scrape target down" rule. The monitoring host was confirmed to reach the NAS on UDP 161
 (no firewall change). The `NAS above 90%` rule is separate: it reads the NFS mounts from the clients' side.
 
+**Fault, cleared by restart 2026-10-25 but not explained: the API session to the router kept dying (investigation log).** mktxp holds one API-SSL session and
+it ends every few minutes, which causes a scrape error and a reconnect. Established, and what is not:
+
+| Observation | Meaning |
+|---|---|
+| Sessions ended after 15.0 min (x49) following the power cycle, then 8.0 min and 6.0 min after the reboot | not a fixed router timer |
+| A second session held by `api-user` from the workstation survived 18 min while mktxp's died four times (full brief: [router-api-session-drops.md](router-api-session-drops.md)) | the router does not drop every API session on a schedule |
+| Capture on the monitoring host at 08:07:34: the router acked everything and sent a 67-byte reply; the host side sent the RST 1.7 ms later | the close was initiated on the monitoring-host side (mktxp container), not by the router or the path |
+| No ping gaps to the router during the capture | not a network outage |
+| mktxp logs `[Errno 110] Operation timed out` at the same instant | does not match the wire; suspect mktxp or librouteros read handling, not yet proven |
+
+**Result (2026-10-26):** the exporter itself closes the socket (client FIN/RST within a millisecond of its first request in all three
+captured deaths). After `docker restart mktxp` the session has lasted 21+ hours with no gaps. See
+[router-api-session-drops.md](router-api-session-drops.md), section 4.6. Remaining question: why the old process failed.
+
+**Retracted:** an earlier note said the router sends the FIN after exactly 15 minutes. That rested on a one-directional capture,
+which cannot show who closed. Next step: read mktxp's code path around that error, or run it with debug logging, before changing
+anything. The rules already tolerate the resulting gaps (#537).
+
 **Deploy:** `TASK_APPROVAL=alerting-monitoring ./with-secrets-prod scripts/provision.sh --stack monitoring-stack` (pulls
 `dockerhub/prom/snmp-exporter:v0.30.1` through Harbor; the image name has a hyphen though the binary has an underscore, and the first deploy failed on `repository dockerhub/prom/snmp_exporter not found` until that was fixed). Then in VictoriaMetrics `up{job="asustor-nas"}` is 1 and
 `count({__name__=~"asustor_.*"})` is about 30.
 
 ### Phase 0b: MikroTik hardware and firmware metrics
 
-**Status 2026-10-24: router access is live and verified; mktxp and eight rules are built, not yet deployed.**
+**Status 2026-10-24: live and verified; the session-drop fault is cleared by an exporter restart, cause unknown (below).**
 
 **Router side (applied by the operator, `ansible/00-initial-setup/mikrotik-monitoring-access.yml`):**
 
@@ -549,7 +567,7 @@ and the rules against real series.
 
 ## Phase 7: align monitoring with the post-migration lab
 
-**Status 2026-10-24: planned, nothing built.** The pve-tiny evacuation is finished on the ground (all eight guests run on `pve`,
+**Status 2026-10-25: W1 (honeypot sync) done; W2 half done (batch 1 merged in #531, deployed, all five up; batch 2 waits for the step-ca firewall rules); W3 pending; W4/W5 not started.** The pve-tiny evacuation is finished on the ground (all eight guests run on `pve`,
 `pve-tiny` has no running guests, 34 containers run on `pve`) but the evacuation branch is **not merged** (31 commits, and it now
 conflicts with `stable` in at least `secrets/manifest.json`, `deploy-cse-controller.yml`, `deploy-pentest-runner.yml` and the
 autonomous-pentest docs). Reviewing the monitoring against the new layout found five problems. Evidence is from read-only checks on
@@ -636,7 +654,7 @@ data has stopped arriving" stays Normal across two hourly boundaries.
    `cse-controller`, `cse-code-eval`, `pentest-runner`, **`pterodactyl-lab` and `newt-connector`** with
    `scripts/provision.sh --stack <name>` (one at a time; it succeeds once step 1 is applied). Check `http://:9100` now refuses and
    `https` answers 401. (A survey on 2026-10-24 found `pterodactyl-lab` 192.168.60.20 and `newt-connector` 192.168.110.10 also on plain HTTP.)
-3. **Scrape them (me), in two batches.** *Batch 1 (built, PR #531):* `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack`,
+3. **Scrape them (me), in two batches.** *Batch 1 (merged in #531, deployed, all five up):* `opensearch-stack`, `cse-panel-stack`, `nextcloud-stack`,
    `torrent-stack-lab` and `pangolin-proxy`, whose exporters already answer over TLS (401 without the scrape login). *Batch 2 (after
    step 2):* the eight guests above. Adding a plain-HTTP guest to an `https` job would just fire "Scrape target down" for it. Then
    "Scrape target down" and the disk rules cover them for free.
@@ -1761,7 +1779,7 @@ and a pinned `prom/blackbox-exporter` image available through the Harbor
 
 ## Phase 5: new critical vulnerabilities
 
-**Status 2026-10-24: built, not yet deployed.** Goal: a critical finding that **first appears** alerts, not the roughly 700
+**Status 2026-10-24: live.** Goal: a critical finding that **first appears** alerts, not the roughly 700
 that already exist. `terraform/lxc/stacks/monitoring-stack/alerting/homelab-vulnerabilities.yml`, two Grafana rules
 over VictoriaMetrics, copied by the monitoring-stack deploy.
 
