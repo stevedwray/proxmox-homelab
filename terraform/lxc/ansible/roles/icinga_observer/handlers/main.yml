@@ -1,0 +1,62 @@
+---
+# Every service here is started by its package's postinst with stock config
+# before this role has written anything, and Ansible's `state: started` never
+# restarts an already-running service. Config changes therefore always notify
+# a handler that restarts, never a bare "start".
+
+- name: Validate and reload icinga2
+  listen: reload icinga2
+  ansible.builtin.command: icinga2 daemon -C
+  register: icinga_observer_validate
+  # changed_when deliberately left at the command module's default
+  # (changed=true on rc==0): a handler only propagates its own `notify`
+  # when it reports changed, so `changed_when: false` here silently broke
+  # the restart chain (2026-10-25).
+  failed_when: icinga_observer_validate.rc != 0
+  notify: Restart icinga2 after validated config
+
+- name: Restart icinga2 after validated config
+  ansible.builtin.systemd:
+    name: icinga2
+    state: restarted
+    daemon_reload: true
+
+- name: Apply Icinga observer firewall
+  ansible.builtin.systemd:
+    name: icinga-cluster-firewall.service
+    state: restarted
+    daemon_reload: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart smokeping
+  ansible.builtin.systemd:
+    name: smokeping
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# nginx: a plain reload (SIGHUP) does not rebind listening sockets when a
+# `listen` address changes -- confirmed 2026-10-25 -- so always restart.
+# Validate first because nginx also serves Icinga Web on this host.
+- name: Validate nginx before restart
+  listen: Restart nginx
+  ansible.builtin.command: nginx -t
+  notify: Restart nginx after validated config
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart nginx after validated config
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart php-fpm
+  ansible.builtin.systemd:
+    name: "php{{ icinga_observer_php_version }}-fpm"
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Restart icingadb
+  ansible.builtin.systemd:
+    name: icingadb
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"

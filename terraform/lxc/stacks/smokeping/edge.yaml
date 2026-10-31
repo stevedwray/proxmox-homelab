@@ -1,0 +1,23 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: smokeping-edge
+  stack: smokeping
+spec:
+  routes:
+    - name: smokeping
+      host: smokeping.${LAB_DOMAIN}
+      backend:
+        type: url
+        # SmokePing's nginx on argon-01 (icinga_observer role,
+        # icinga_observer_smokeping_behind_traefik). The host firewall limits
+        # this port to Traefik; SmokePing has no auth of its own.
+        url: http://192.168.1.22:8081
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth

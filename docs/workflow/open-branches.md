@@ -62,6 +62,7 @@ merged or dropped from its own work session; update this list when one is.
 |---|---|---|---|---|
 | `feat/azerothcore-starter-weapon-skills` | PR #466, 6 commits | 2026-09-29 | AzerothCore QoL: universal starter bags, Draenei heirloom vendor placement, starter weapon skills, each with docs. | Merges cleanly into stable; check it matches what runs. |
 | `fix/teardown-skip-portainer-backup-when-stopped` | PR #467, 1 commit | 2026-10-10 | Skip the Portainer pre-destroy backup in `teardown-deploy-test.sh` when the LXC isn't running. | `bash -n`/shellcheck clean; not exercised live. |
+| `feat/argon-icinga-observability` | local, unpushed | 2026-10-26 | Native Icinga HA pair, all six Stage 2 core-check groups, SmokePing probes and repaired web backend, DNS and direct Icinga Web are **deployed live from this unmerged branch**. The 2026-10-26 audit found 14/14 hosts and 31/31 services OK in current Redis state; the expanded SmokePing and Icinga Web smoke checks pass. | Operator to retry the SmokePing Authentik browser login. Stage 3 notifications await dedicated OpenBao values; OCI SSH awaits its separate key and pinned host key. Finish remaining gates, then validate and merge to stable. |
 | `fix/ark-update-workaround` | local + remote | 2026-09-27 | Merged (#435); branch not yet deleted. | Delete local and remote. |
 | `prod/pve-infra` | local + remote | 2026-05-25 | "Promote validated pve infrastructure state" and planning docs for the baseline, credential and data refactors; far behind stable. | Kept (operator, 2026-10-10). |
 

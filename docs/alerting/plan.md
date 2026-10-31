@@ -4,11 +4,13 @@ Workspace README (decisions, design rules, hand-backs): [README.md](README.md).
 Replaces `docs/catch-up/07-baseline-alerting.md`, whose OpenBao-health and
 alert-rule steps are reused below by id.
 
-## Status (2026-10-25)
+## Status (2026-10-25; Icinga note 2026-10-26)
 
 **Phases 1, 1c and both prerequisites are deployed and proven** (drills and a real page: README, *Proven live*).
-The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`. Phase 0 enrolment, Phase 2, 5 and 6
-are still to do. Phases 3, 4 and 4b are future state.
+The work was merged to `stable` from `work/graylog-sender-ip-pentest-stream`.
+Phase 2, the workstation/Pi enrolment, the MikroTik exporter and Phase 5 are
+also live; Phase 6 is an outline. Phases 3 and 4 are future state; Phase 4b probes 3–7 were superseded by the live Argon Icinga
+checks (2026-10-26 audit).
 
 | Phase | What | State |
 |---|---|---|
@@ -21,16 +23,20 @@ are still to do. Phases 3, 4 and 4b are future state.
 | prereq | OpenBao seal-status metric | **Live** (`openbao_sealed` = 0) |
 | prereq | node_exporter fleet repair | **Done** 2026-10-24 |
 | 2 | Graylog log alerts | **Applied and drilled** (`scripts/graylog_alerts.py`) |
-| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed |
+| 3, 4, 4b | OCI relay with buttons, dead man's switch, blackbox checks | **Future state.** The relay is built and tested but parked, not deployed. Phase 4b probes 3–7 superseded by the live Argon Icinga checks; probes 1–2 only apply if the relay is deployed (§4b). Direct Icinga notifications remain off pending Stage 3 |
 | 5 | New critical vulnerabilities (Harbor, Greenbone) | **Live** (`homelab-vulnerabilities.yml`) |
 | 6 | Digest, fire drill, native integrations | Outline |
 | 7 | Align monitoring with the post-migration lab (honeypot cadence, 15 unmonitored guests, `pve-tiny` lifecycle, host and storage alerts, backup notifications) | **In progress**: W1 done, W2 half done (see Phase 7) |
 
-**Order from here:** the Phase 0 enrolment steps, then Phase 2 (Graylog log alerts, so the pve-tiny drive failure
-would have paged from logs alone), then 5 and 6. Phases 3, 4 and 4b wait for a decision. Operator housekeeping
+**Order from here:** Phase 6 (the digest and native integrations) and the Phase 7
+workstreams. Phases 0, 2 and 5 are applied and drilled. Phases 3
+and 4 wait for a decision; Phase 4b probes 3–7 are superseded and probes 1–2
+are conditional. Operator housekeeping
 (NVMe silence, Discord token reset) is in the README's open items. **Parallel work:** the pve-tiny evacuation
 (`work/pve-tiny-evacuation`) moves stacks off that host; re-check the `stack=pve-tiny` alerts, the NVMe silence and
-the secpipe/honeypot sync host as each stack moves.
+the secpipe/honeypot sync host as each stack moves. The independent Icinga
+state is tracked in [its runbook](../icinga-pi-observability/runbook.md),
+not by the parked Phase 4b outline below.
 
 ## How to read this
 
@@ -1725,6 +1731,15 @@ Telegram and Discord both being unreachable.
 
 ## Phase 4b (outline): service checks for the alert chain (blackbox_exporter)
 
+> **Decision 2026-10-25 (operator: "best practice under the circumstances"): probes 3 to 7 are NOT built
+> here; the independent Icinga pair on the Argon Pis owns them.** A probe running inside monitoring-stack
+> shares the failure domain of the Grafana it is meant to back up, and its alerts route through the very
+> contact points being tested. Icinga Stage 2 is live outside that failure domain: both Technitium nodes,
+> Graylog TCP 514 and `lbstatus`, Grafana, VictoriaMetrics and the other core targets are checked.
+> Stage 3 direct Discord/Telegram notifications remain disabled pending dedicated OpenBao values and
+> delivery proof ([observability state](../icinga-pi-observability/README.md)). Probes 1 and 2 only matter if the
+> parked OCI relay is ever deployed; build them then, not before.
+
 > **FUTURE STATE.** Probes 1 and 2 (the relay's health and certificate) wait for the relay; probes
 > 3 to 7 do not depend on it.
 
@@ -1734,8 +1749,8 @@ routing, Ack and Snooze as everything else.
 **Scope rule, set by the operator: this monitors only the services the alert
 and notification path depends on. It is not a general service monitor. Do not
 add probes for other services unless the operator asks.** Icinga is the
-planned upgrade if richer Nagios semantics (dependencies, escalations) turn
-out to be needed.
+deployed independent observer for the approved core targets; the following
+blackbox_exporter outline remains parked.
 
 Runs as a small sidecar in monitoring-stack (about 20 MB, like the Omada
 exporter), scraped by VictoriaMetrics, with its rules in a new

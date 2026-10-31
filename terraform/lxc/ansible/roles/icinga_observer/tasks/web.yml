@@ -1,0 +1,387 @@
+---
+# Icinga Web 2 + Icinga DB on argon-01. Served directly (no Traefik, no
+# Authentik), HTTPS with a Let's Encrypt certificate (certbot, Cloudflare
+# DNS-01, renewed by certbot.timer on this Pi), Icinga Web's own native login.
+# Nothing here reads OpenBao at runtime: the two secrets are injected at deploy
+# time. The UI is a non-critical consumer -- checks and notifications never
+# depend on MariaDB, Redis or this web stack.
+
+- name: Assert Icinga Web prerequisites
+  ansible.builtin.assert:
+    that:
+      - icinga_observer_smokeping_behind_traefik | bool
+      - icinga_observer_cf_dns_api_token | length > 0
+    fail_msg: >-
+      Icinga Web needs icinga_observer_smokeping_behind_traefik (it takes ports
+      80/443 on argon-01) and CF_DNS_API_TOKEN (Traefik's existing Cloudflare
+      token, injected by ./with-secrets-prod from shared/platform).
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Install the web stack
+  ansible.builtin.include_tasks: install.yml
+  vars:
+    install_packages: "{{ icinga_observer_web_packages }}"
+    install_probe: icingaweb2
+    install_recommends: false
+
+# --- Generated database passwords (kept on this Pi, root-only) -----------------
+- name: Create the state directory
+  ansible.builtin.file:
+    path: "{{ icinga_observer_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Generate database passwords once
+  ansible.builtin.shell: umask 077 && openssl rand -hex 24 > {{ icinga_observer_state_dir }}/{{ item }}.dbpass
+  args:
+    creates: "{{ icinga_observer_state_dir }}/{{ item }}.dbpass"
+  loop: [icingadb, icingaweb2, icingadbweb]
+  no_log: true
+
+- name: Generate the initial web admin password once (unless one is injected)
+  ansible.builtin.shell: umask 077 && openssl rand -base64 18 | tr -d '/+=' | cut -c1-20 > {{ icinga_observer_state_dir }}/web-admin.pass
+  args:
+    creates: "{{ icinga_observer_state_dir }}/web-admin.pass"
+  no_log: true
+
+- name: Read the database passwords and the web admin password file
+  ansible.builtin.slurp:
+    src: "{{ icinga_observer_state_dir }}/{{ item }}"
+  loop: [icingadb.dbpass, icingaweb2.dbpass, icingadbweb.dbpass, web-admin.pass]
+  register: icinga_observer_db_pw_files
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Expose the database passwords to templates
+  ansible.builtin.set_fact:
+    icinga_observer_db_pw_icingadb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadb.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_db_pw_icingaweb2: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingaweb2.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_db_pw_icingadbweb: "{{ (icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'icingadbweb.dbpass') | first).content | b64decode | trim }}"
+    icinga_observer_web_admin_password: "{{ icinga_observer_web_admin_password_env if icinga_observer_web_admin_password_env | length >= 12 else ((icinga_observer_db_pw_files.results | selectattr('item', 'equalto', 'web-admin.pass') | first).content | b64decode | trim) }}"
+  no_log: true
+  when: not ansible_check_mode
+
+# --- MariaDB and Redis ----------------------------------------------------------
+- name: Enable and start MariaDB and Redis (loopback/socket only, package defaults)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [mariadb, redis-server]
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Create the Icinga DB and Icinga Web databases and users (idempotent)
+  ansible.builtin.command: mariadb
+  args:
+    stdin: |
+      CREATE DATABASE IF NOT EXISTS icingadb CHARACTER SET 'utf8mb4' COLLATE 'utf8mb4_bin';
+      CREATE DATABASE IF NOT EXISTS icingaweb2 CHARACTER SET 'utf8mb4' COLLATE 'utf8mb4_general_ci';
+      CREATE USER IF NOT EXISTS 'icingadb'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingadb }}';
+      ALTER USER 'icingadb'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingadb }}';
+      GRANT ALL ON icingadb.* TO 'icingadb'@'localhost';
+      CREATE USER IF NOT EXISTS 'icingaweb2'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingaweb2 }}';
+      ALTER USER 'icingaweb2'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingaweb2 }}';
+      GRANT ALL ON icingaweb2.* TO 'icingaweb2'@'localhost';
+      CREATE USER IF NOT EXISTS 'icingadbweb'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingadbweb }}';
+      ALTER USER 'icingadbweb'@'localhost' IDENTIFIED BY '{{ icinga_observer_db_pw_icingadbweb }}';
+      GRANT SELECT ON icingadb.* TO 'icingadbweb'@'localhost';
+      FLUSH PRIVILEGES;
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Check whether the Icinga DB schema is imported
+  ansible.builtin.command: >-
+    mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='icingadb'"
+  register: icinga_observer_icingadb_tables
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Import the Icinga DB schema
+  ansible.builtin.shell: mariadb icingadb < /usr/share/icingadb/schema/mysql/schema.sql
+  when:
+    - not ansible_check_mode
+    - icinga_observer_icingadb_tables.stdout | trim == '0'
+
+- name: Check whether the Icinga Web schema is imported
+  ansible.builtin.command: >-
+    mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='icingaweb2'"
+  register: icinga_observer_icingaweb_tables
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Import the Icinga Web schema
+  ansible.builtin.shell: mariadb icingaweb2 < /usr/share/icingaweb2/schema/mysql.schema.sql
+  when:
+    - not ansible_check_mode
+    - icinga_observer_icingaweb_tables.stdout | trim == '0'
+
+# --- Icinga DB daemon and the icinga2 feature -----------------------------------
+- name: Render the Icinga DB configuration
+  ansible.builtin.template:
+    src: icingadb-config.yml.j2
+    dest: /etc/icingadb/config.yml
+    owner: root
+    group: icingadb
+    mode: "0640"
+  no_log: true
+  notify: Restart icingadb
+
+- name: Enable and start the Icinga DB daemon
+  ansible.builtin.systemd:
+    name: icingadb
+    enabled: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Point icinga2's icingadb feature at the local Redis (6379, not the stock 6380)
+  ansible.builtin.template:
+    src: icingadb-feature.conf.j2
+    dest: /etc/icinga2/features-available/icingadb.conf
+    owner: root
+    group: nagios
+    mode: "0640"
+  notify: reload icinga2
+
+- name: Enable the icinga2 icingadb feature (writes state into Redis)
+  ansible.builtin.command: icinga2 feature enable icingadb
+  register: icinga_observer_icingadb_feature
+  changed_when: "'already enabled' not in icinga_observer_icingadb_feature.stdout"
+  notify: reload icinga2
+
+- name: Restart icinga2 now so the icingadb feature is loaded before anything depends on it
+  ansible.builtin.meta: flush_handlers
+
+# --- Icinga Web 2 -----------------------------------------------------------------
+- name: Let the web server user read Icinga Web's configuration
+  ansible.builtin.user:
+    name: www-data
+    groups: icingaweb2
+    append: true
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Create the Icinga Web configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: icingaweb2
+    mode: "2770"
+  loop:
+    - /etc/icingaweb2
+    - /etc/icingaweb2/modules
+    - /etc/icingaweb2/modules/icingadb
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Render the Icinga Web configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: icingaweb2
+    mode: "0660"
+  loop:
+    - { src: icingaweb-config.ini.j2, dest: /etc/icingaweb2/config.ini }
+    - { src: icingaweb-resources.ini.j2, dest: /etc/icingaweb2/resources.ini }
+    - { src: icingaweb-authentication.ini.j2, dest: /etc/icingaweb2/authentication.ini }
+    - { src: icingaweb-roles.ini.j2, dest: /etc/icingaweb2/roles.ini }
+    - { src: icingaweb-module-icingadb-config.ini.j2, dest: /etc/icingaweb2/modules/icingadb/config.ini }
+    - { src: icingaweb-module-icingadb-redis.ini.j2, dest: /etc/icingaweb2/modules/icingadb/redis.ini }
+  loop_control:
+    label: "{{ item.dest }}"
+  no_log: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Debian ships no `icingacli` binary on PATH; enabling a module is just this
+# symlink (what `icingacli module enable` creates).
+- name: Create the enabledModules directory
+  ansible.builtin.file:
+    path: /etc/icingaweb2/enabledModules
+    state: directory
+    owner: root
+    group: icingaweb2
+    mode: "2770"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable the Icinga DB web module
+  ansible.builtin.file:
+    src: /usr/share/icingaweb2/modules/icingadb
+    dest: /etc/icingaweb2/enabledModules/icingadb
+    state: link
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Create the shared observer dashboard module directory
+  ansible.builtin.file:
+    path: /usr/share/icingaweb2/modules/observerdashboard
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: dashboard
+
+- name: Render the shared observer dashboard
+  ansible.builtin.template:
+    src: icingaweb-observer-dashboard.php.j2
+    dest: /usr/share/icingaweb2/modules/observerdashboard/configuration.php
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: [dashboard, monitoring]
+
+- name: Enable the shared observer dashboard module
+  ansible.builtin.file:
+    src: /usr/share/icingaweb2/modules/observerdashboard
+    dest: /etc/icingaweb2/enabledModules/observerdashboard
+    state: link
+    force: true  # allows --check before the new module directory exists
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+  tags: dashboard
+
+- name: Set PHP's timezone for Icinga Web
+  ansible.builtin.template:
+    src: php-icingaweb.ini.j2
+    dest: "/etc/php/{{ icinga_observer_php_version }}/fpm/conf.d/99-icingaweb.ini"
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — PHP ini snippet, no secrets
+  notify: Restart php-fpm
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable and start php-fpm
+  ansible.builtin.systemd:
+    name: "php{{ icinga_observer_php_version }}-fpm"
+    enabled: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# --- The web admin account (native login) ----------------------------------------
+- name: Read the existing web admin password hash
+  ansible.builtin.command: >-
+    mariadb -N -B icingaweb2 -e "SELECT password_hash FROM icingaweb_user WHERE name='{{ icinga_observer_web_admin_user }}'"
+  register: icinga_observer_web_admin_hash
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Check the existing hash against the deployed password
+  ansible.builtin.command:
+    argv:
+      - php
+      - -r
+      - 'exit(password_verify(getenv("ICW_PW"), getenv("ICW_HASH")) ? 0 : 1);'
+  environment:
+    ICW_PW: "{{ icinga_observer_web_admin_password }}"
+    ICW_HASH: "{{ icinga_observer_web_admin_hash.stdout | trim }}"
+  register: icinga_observer_web_admin_verify
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - icinga_observer_web_admin_hash.stdout | trim | length > 0
+
+- name: Compute a bcrypt hash for the web admin password
+  ansible.builtin.command:
+    argv:
+      - php
+      - -r
+      - 'echo password_hash(getenv("ICW_PW"), PASSWORD_DEFAULT);'
+  environment:
+    ICW_PW: "{{ icinga_observer_web_admin_password }}"
+  register: icinga_observer_web_admin_newhash
+  changed_when: false
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - (icinga_observer_web_admin_hash.stdout | trim | length == 0) or (icinga_observer_web_admin_verify.rc | default(1) != 0)
+
+- name: Create or update the web admin user
+  ansible.builtin.command: mariadb icingaweb2
+  args:
+    stdin: >-
+      INSERT INTO icingaweb_user (name, active, password_hash)
+      VALUES ('{{ icinga_observer_web_admin_user }}', 1, '{{ icinga_observer_web_admin_newhash.stdout }}')
+      ON DUPLICATE KEY UPDATE active = 1, password_hash = VALUES(password_hash);
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - icinga_observer_web_admin_newhash is not skipped
+
+# --- Let's Encrypt certificate (certbot + Cloudflare DNS-01) ----------------------
+- name: Install the Cloudflare credentials for certbot (root-only)
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/cloudflare.ini
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      dns_cloudflare_api_token = {{ icinga_observer_cf_dns_api_token }}
+  no_log: true
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Obtain the Let's Encrypt certificate
+  ansible.builtin.command: >-
+    certbot certonly --non-interactive --agree-tos
+    --email {{ icinga_observer_acme_email }}
+    --server {{ icinga_observer_acme_server }}
+    --dns-cloudflare
+    --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+    --dns-cloudflare-propagation-seconds 30
+    --deploy-hook "systemctl reload nginx"
+    -d {{ icinga_observer_web_fqdn }}
+  args:
+    creates: "/etc/letsencrypt/live/{{ icinga_observer_web_fqdn }}/fullchain.pem"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable certbot's renewal timer
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: true
+    state: started
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# --- nginx vhost -----------------------------------------------------------------
+- name: Render the Icinga Web nginx vhost
+  ansible.builtin.template:
+    src: icinga-web-nginx.conf.j2
+    dest: /etc/nginx/sites-available/icinga-web.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart nginx
+
+- name: Enable the Icinga Web nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/icinga-web.conf
+    dest: /etc/nginx/sites-enabled/icinga-web.conf
+    state: link
+  notify: Restart nginx
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# A bad vhost must fail the play here, before the restart handler can take
+# SmokePing down with it.
+- name: Validate the nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Apply nginx now so the check below sees the vhost
+  ansible.builtin.meta: flush_handlers
+
+- name: Check Icinga Web answers over HTTPS with a publicly trusted certificate
+  ansible.builtin.command: >-
+    curl --silent --location --cookie '' --output /dev/null --write-out '%{http_code}' --max-time 15
+    --resolve {{ icinga_observer_web_fqdn }}:443:{{ icinga_observer_self_address }}
+    https://{{ icinga_observer_web_fqdn }}/icingaweb2/authentication/login
+  register: icinga_observer_web_probe
+  changed_when: false
+  failed_when: icinga_observer_web_probe.stdout != '200'
+  when: not ansible_check_mode

@@ -1,0 +1,45 @@
+*** Targets ***
+
+probe = FPing
+menu = Top
+title = Network Latency Grapher
+remark = Home-to-OCI latency/loss history. Diagnostic only -- Icinga, not \
+         SmokePing, is the primary alerting system (runbook Stage 4).
+
++ Home
+menu = Home
+title = Home network
+
+++ MikroTik
+menu = MikroTik gateway
+title = MikroTik LAN gateway
+host = {{ icinga_observer_mikrotik_host }}
+
+++ TechnitiumPrimary
+menu = Technitium primary
+title = Technitium DNS primary
+host = {{ icinga_observer_technitium_primary }}
+
+++ TechnitiumSecondary
+menu = Technitium secondary
+title = Technitium DNS secondary (pve-tiny)
+host = {{ icinga_observer_technitium_secondary }}
+
++ Internet
+menu = Internet
+title = Internet / OCI
+
+++ OciPangolin
+menu = OCI Pangolin
+title = OCI Pangolin public edge
+host = {{ icinga_observer_oci_fqdn }}
+
+++ ResolverCloudflare
+menu = Cloudflare resolver
+title = Cloudflare public resolver
+host = {{ icinga_observer_resolver_a }}
+
+++ ResolverQuad9
+menu = Quad9 resolver
+title = Quad9 public resolver
+host = {{ icinga_observer_resolver_b }}
