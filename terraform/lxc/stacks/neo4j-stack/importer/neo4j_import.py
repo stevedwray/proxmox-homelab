@@ -27,6 +27,7 @@ import base64
 import ipaddress
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -123,6 +124,56 @@ def _zone_key(name):
     return f"zone:{name}"
 
 
+def _auth_kind(auth):
+    """Normalise flows.py's free-text `auth` into a small enum.
+
+    A missing value is "unknown", not "none": the zone-policy flows carry no
+    protocol detail, and conflating that with an asserted "none" hides the
+    gaps a threat model most needs to show.
+    """
+    if auth is None or str(auth).strip() == "":
+        return "unknown"
+    text = str(auth).strip().lower()
+    if text == "none":
+        return "none"
+    for kind in ("forward-auth", "oidc", "mtls"):
+        if text.startswith(kind):
+            return kind
+    if "token" in text or "key" in text:
+        return "token"
+    return "other"
+
+
+def _encrypted(transport_security):
+    """True/False when the flow states its transport; None (omitted) when unknown."""
+    if transport_security is None or str(transport_security).strip() == "":
+        return None
+    return str(transport_security).strip().lower() != "none"
+
+
+def _endpoint_zone(graph, key):
+    """The SDN zone an endpoint sits in, "external" for outside entities, else None."""
+    label, props = graph.nodes.get(key, (None, {}))
+    if label == "Process":
+        return props.get("zone")
+    if label == "Zone":
+        return props.get("name")
+    if label == "ExternalEntity":
+        return "external"
+    return None
+
+
+_LAST_SEEN_RE = re.compile(r"last-seen=(\S+)")
+_VM_STATE_RE = re.compile(r"\[Status: ([^\]]+)\]")
+
+
+def _ip_scope(address):
+    ip = ipaddress.ip_interface(address).ip
+    if ip.is_loopback:
+        return "loopback"
+    return "private" if ip.is_private else "public"
+
+
 def add_threat_model(graph, model):
     """Add the flows.py threat model (NetBox config context data) to the graph."""
     for tb in model.get("trust_boundaries", []):
@@ -150,6 +201,18 @@ def add_threat_model(graph, model):
         if not src or not dst:
             continue
         props = {k: v for k, v in flow.items() if k not in ("from", "to")}
+        # Derived, queryable forms of what the flow already says. Never
+        # override a value the model supplies itself.
+        from_zone, to_zone = _endpoint_zone(graph, src), _endpoint_zone(graph, dst)
+        derived = {
+            "auth_kind": _auth_kind(flow.get("auth")),
+            "encrypted": _encrypted(flow.get("transport_security")),
+            "from_zone": from_zone,
+            "to_zone": to_zone,
+            "crosses_zone": (from_zone != to_zone) if from_zone and to_zone else None,
+        }
+        for k, v in derived.items():
+            props.setdefault(k, v)
         # flows.py reuses one id for every Traefik route to a multi-route
         # stack; suffix repeats so each route stays its own relationship.
         flow_id = flow.get("id")
@@ -212,6 +275,12 @@ def add_inventory(graph, vms, services, prefixes, vlans, home_cluster=DEFAULT_HO
             "status": (vm.get("status") or {}).get("value"),
             "vcpus": vm.get("vcpus"),
             "memory": vm.get("memory"),
+            "disk": vm.get("disk"),
+            "platform": (vm.get("platform") or {}).get("name"),
+            # NetBox VM names are "<stack>@<node>"; populate also keeps the
+            # observed state in free text ("[Status: running]").
+            "node": (vm.get("name") or "").partition("@")[2] or None,
+            "observed_state": (_VM_STATE_RE.search(vm.get("description") or "") or [None, None])[1],
             "tags": [t.get("name") for t in vm.get("tags", []) if t.get("name")],
         })
         vm_keys[vm["id"]] = key
@@ -224,7 +293,7 @@ def add_inventory(graph, vms, services, prefixes, vlans, home_cluster=DEFAULT_HO
         address = (vm.get("primary_ip4") or {}).get("address")
         if address:
             ip_key = f"ip:{address}"
-            graph.node("IPAddress", ip_key, {"address": address})
+            graph.node("IPAddress", ip_key, {"address": address, "scope": _ip_scope(address)})
             graph.rel("HAS_IP", key, ip_key)
             iface = ipaddress.ip_interface(address)
             # Longest matching prefix only, so a /24 isn't also linked to a
@@ -240,7 +309,8 @@ def add_inventory(graph, vms, services, prefixes, vlans, home_cluster=DEFAULT_HO
         # no edge rather than a guess.
         chosen = at_home[0] if at_home else (candidates[0][1] if len(candidates) == 1 else None)
         if chosen:
-            graph.rel("RUNS_ON", process_by_name[stack_name], chosen)
+            graph.rel("RUNS_ON", process_by_name[stack_name], chosen,
+                      {"matched_by": "home-cluster" if at_home else "only-vm"})
 
     for svc in services:
         if svc.get("parent_object_type") != "virtualization.virtualmachine":
@@ -254,6 +324,7 @@ def add_inventory(graph, vms, services, prefixes, vlans, home_cluster=DEFAULT_HO
             "protocol": (svc.get("protocol") or {}).get("value"),
             "ports": svc.get("ports"),
             "description": svc.get("description"),
+            "last_seen": (_LAST_SEEN_RE.search(svc.get("description") or "") or [None, None])[1],
         })
         graph.rel("EXPOSES", vm_key, key)
 

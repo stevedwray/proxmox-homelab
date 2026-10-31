@@ -140,6 +140,87 @@ class RunsOnJoinTest(unittest.TestCase):
         self.assertEqual(self._runs_on(vms), set())
 
 
+class DerivedMetadataTest(unittest.TestCase):
+    """Queryable forms derived from fields the model and NetBox already carry."""
+
+    @staticmethod
+    def _flow_props(graph, src, dst):
+        return next(p for (t, s_, d, _), p in graph.rels.items() if t == "FLOWS_TO" and (s_, d) == (src, dst))
+
+    def test_auth_kind_distinguishes_unknown_from_none(self):
+        cases = {
+            None: "unknown", "": "unknown", "none": "none",
+            "forward-auth (Authentik per-request check)": "forward-auth",
+            "oidc (Authentik)": "oidc", "acme-account-key": "token",
+            "runner-registration-token": "token", "basic": "other",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(neo4j_import._auth_kind(raw), expected, raw)
+
+    def test_encrypted_is_tri_state(self):
+        self.assertIs(neo4j_import._encrypted("tls"), True)
+        self.assertIs(neo4j_import._encrypted("none"), False)
+        self.assertIsNone(neo4j_import._encrypted(None))
+
+    def test_flow_zone_and_crossing_props(self):
+        graph = neo4j_import.build_graph(MODEL, VMS, SERVICES, PREFIXES, VLANS)
+        cross = self._flow_props(graph, "p-authentik", "p-netbox")
+        self.assertEqual((cross["from_zone"], cross["to_zone"], cross["crosses_zone"]), ("mgmt_seg", "infra_seg", True))
+        self.assertEqual(cross["auth_kind"], "unknown")
+        self.assertNotIn("encrypted", cross)  # transport not stated -> omitted, not False
+        policy = self._flow_props(graph, "zone:build_seg", "zone:mgmt_seg")
+        self.assertEqual((policy["from_zone"], policy["to_zone"], policy["crosses_zone"]), ("build_seg", "mgmt_seg", True))
+        ghost = self._flow_props(graph, "ee-lan-user", "p-missing")
+        self.assertEqual(ghost["from_zone"], "external")
+        self.assertNotIn("to_zone", ghost)  # unresolved endpoint: zone unknown
+        self.assertNotIn("crosses_zone", ghost)
+
+    def test_same_zone_flow_does_not_cross(self):
+        model = {"processes": [{"id": "p-a", "zone": "infra_seg"}, {"id": "p-b", "zone": "infra_seg"}],
+                 "data_flows": [{"id": "df-x", "from": "p-a", "to": "p-b", "transport_security": "tls", "auth": "oidc (Authentik)"}]}
+        graph = neo4j_import.build_graph(model, [], [], [], [])
+        props = self._flow_props(graph, "p-a", "p-b")
+        self.assertIs(props["crosses_zone"], False)
+        self.assertIs(props["encrypted"], True)
+        self.assertEqual(props["auth_kind"], "oidc")
+
+    def test_model_supplied_value_is_not_overridden(self):
+        model = {"processes": [{"id": "p-a", "zone": "x"}, {"id": "p-b", "zone": "y"}],
+                 "data_flows": [{"id": "df-x", "from": "p-a", "to": "p-b", "auth_kind": "custom"}]}
+        graph = neo4j_import.build_graph(model, [], [], [], [])
+        self.assertEqual(self._flow_props(graph, "p-a", "p-b")["auth_kind"], "custom")
+
+    def test_vm_service_and_ip_props(self):
+        vms = [{"id": 1, "name": "netbox-stack@pve", "cluster": {"name": "pve-cluster"}, "disk": 8,
+                "platform": {"name": "Debian 13"},
+                "description": "Managed by Terraform\n [Status: running] [Source name: netbox-stack]",
+                "primary_ip4": {"address": "192.168.40.12/24"}, "tags": []},
+               {"id": 2, "name": "ext@pve", "cluster": {"name": "pve-cluster"},
+                "primary_ip4": {"address": "8.8.8.8/32"}, "tags": []}]
+        services = [{"id": 5, "name": "x-25565", "protocol": {"value": "tcp"}, "ports": [25565],
+                     "description": "gaming-stack-lab | last-seen=2026-10-24T11:31:53Z",
+                     "parent_object_type": "virtualization.virtualmachine", "parent_object_id": 1},
+                    {"id": 6, "name": "y", "protocol": {"value": "tcp"}, "ports": [22], "description": "no timestamp",
+                     "parent_object_type": "virtualization.virtualmachine", "parent_object_id": 1}]
+        graph = neo4j_import.build_graph({}, vms, services, [], [])
+        vm = graph.nodes["vm:1"][1]
+        self.assertEqual((vm["node"], vm["observed_state"], vm["disk"], vm["platform"]),
+                         ("pve", "running", 8, "Debian 13"))
+        self.assertNotIn("observed_state", graph.nodes["vm:2"][1])
+        self.assertEqual(graph.nodes["svc:5"][1]["last_seen"], "2026-10-24T11:31:53Z")
+        self.assertNotIn("last_seen", graph.nodes["svc:6"][1])
+        self.assertEqual(graph.nodes["ip:192.168.40.12/24"][1]["scope"], "private")
+        self.assertEqual(graph.nodes["ip:8.8.8.8/32"][1]["scope"], "public")
+
+    def test_runs_on_records_how_it_matched(self):
+        def vm(i, name, cluster):
+            return {"id": i, "name": name, "cluster": {"name": cluster}, "primary_ip4": None, "tags": []}
+        graph = neo4j_import.build_graph(MODEL, [vm(1, "netbox-stack@pve", "pve-cluster")], [], [], [])
+        self.assertEqual(next(p for (t, *_), p in graph.rels.items() if t == "RUNS_ON")["matched_by"], "home-cluster")
+        graph = neo4j_import.build_graph(MODEL, [vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster")], [], [], [])
+        self.assertEqual(next(p for (t, *_), p in graph.rels.items() if t == "RUNS_ON")["matched_by"], "only-vm")
+
+
 class BuildStatementsTest(unittest.TestCase):
     def test_statements_use_only_whitelisted_labels_and_prune_last(self):
         graph = neo4j_import.build_graph(MODEL, VMS, SERVICES, PREFIXES, VLANS)
