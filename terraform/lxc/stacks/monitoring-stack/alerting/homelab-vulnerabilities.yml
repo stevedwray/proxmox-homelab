@@ -46,9 +46,39 @@ groups:
         for: 5m
         noDataState: OK
         execErrState: Error
-        labels: {severity: warning, category: security}
+        labels: {severity: warning, category: security, findings: new}
         annotations:
           summary: '{{ $labels.project }}/{{ $labels.repository }}: {{ humanize $values.A.Value }} new critical finding(s) in Harbor''s latest scan'
+
+      # The other half: a Harbor image that still has critical findings. Fires while the count is above
+      # zero and clears only when it reaches zero (patched and rescanned, replaced, or removed), so
+      # "Resolved" means the findings are gone. Grouped per project and repeated weekly (see the policy).
+      - uid: vuln-harbor-open-critical
+        title: Open critical vulnerabilities in a Harbor image
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: vm-alerting
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                harbor_findings_vulnerabilities_total{severity="Critical",project!="pentagi",repository!~"vxcontrol/.*"} > 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: {severity: warning, category: security, findings: open}
+        annotations:
+          summary: '{{ $labels.project }}/{{ $labels.repository }}: {{ humanize $values.A.Value }} critical finding(s) still open in Harbor'
 
       - uid: vuln-gvm-new-high
         title: New high-severity finding in a Greenbone scan
