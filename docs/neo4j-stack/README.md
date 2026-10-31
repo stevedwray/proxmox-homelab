@@ -3,7 +3,7 @@
 Status: **deployed to `pve` 2026-10-31** (LXC 40016, `192.168.40.16`, edge
 routes live, importer timer armed for 04:30 daily). Browser connects through
 Traefik. One known data gap in the imported graph (`ON_VLAN`, see "Known gaps"
-below). Start with `plan.md`.
+below). Start with `plan.md`; the property design is in `metadata.md`.
 
 ## What this is
 
@@ -57,6 +57,24 @@ preamble).
   `dns-stack` (destroyed on pve 2026-09-08) and `dhcp-test-client-01` (no
   NetBox VM). `mcp-utility-stack` links to its `@pve-tiny` VM because NetBox
   still says so (stale since the Oct 23 populate; it moved back to pve).
+- **Full `populate.py` fails on the evacuation-soak duplicates (not neo4j's,
+  found 2026-10-31).** Five guests exist twice, live on `pve-tiny` and stopped
+  on `pve` (`cse-controller`, `cse-code-eval`, `pentest-runner`,
+  `technitium-tiny-stack`, `cse-panel-stack`). Populate keys IPs by address
+  only, so it tries to move each shared IP (`192.168.100.70/.71/.72`,
+  `192.168.20.17/.30`) from the live pve-tiny VM to the stopped pve copy.
+  NetBox refuses the first one (it is the live VM's primary IP); the dry run
+  cannot see that. It needs a guard in `populate.py`: don't take over an
+  address assigned to a VM on another node. Until then use the one-section
+  refresh below. The daily CI workflow would hit the same wall.
+- **The daily NetBox Populate workflow never ran successfully.** It crashed on
+  `NETBOX_URL or LAB_IP_NETBOX` because `populate.py` runs on the runner with
+  none of the `.env` config the old container wrapper passed through. Fix
+  committed on `fix/netbox-populate-ci-env` (`3863bde9`, sources the tracked
+  `.env` and `.env.pve`); not pushed, and the OpenBao JWT role only accepts
+  the `main` ref, so CI sees it only after it reaches `main`. The runner also
+  cannot reach MikroTik (443), so CI runs skip router data (soft warning, no
+  deletes).
 - **`ON_VLAN` is never created (NetBox data gap).** The importer is correct,
   but NetBox's prefixes have no VLAN assigned (13 VLANs and 10 prefixes exist,
   unlinked).
@@ -229,3 +247,28 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   RUNS_ON. Unlinked: `dns-stack`, `dhcp-test-client-01`.
 - Process note: the first verification call failed because `TASK_APPROVAL`
   was not set in that shell; it ran no remote command and was re-run.
+
+### After the PR opened (2026-10-31)
+
+- **Runner repair (step 1 side quest, no repo change).** Covered in the
+  step 1 entry above; `ci-runner-01` is on 2.338.0 and takes jobs.
+- **Full populate apply, failed partway.** Dry run (`--plan`): 5 creates, 112
+  updates, 0 deletes, 0 stale. The apply made the 5 creates (the
+  `neo4j-stack@pve` VM, `eth0`, `192.168.40.16/24`, tags `neo4j` and
+  `threat-model`) and 20 benign updates, then NetBox refused
+  `PATCH /ipam/ip-addresses/80/` (see Known gaps). No IP was reassigned. The
+  step is idempotent, so nothing needed undoing.
+- **Threat-model refresh, one section only.** A throwaway script ran
+  `populate_threat_model()` alone (dry run first), writing only the `data`
+  field of config context `threat-model` (id 1): 21 processes, 138 flows,
+  `last_updated` 2026-10-31 03:45 UTC, verified in NetBox's DB. The model has
+  no `neo4j-stack` process until this branch merges, because it derives from
+  `stable`'s manifests.
+- **Importer run on demand** (`systemctl start neo4j-import.service`):
+  success. FLOWS_TO 131 to 138, VirtualMachine 49 to 50, IPAddress 44 to 45,
+  Unresolved 12 to 14, Zone 25 to 26, RUNS_ON unchanged at 19.
+- **Metadata design and phase 1** (`metadata.md`): the importer now derives
+  `auth_kind`, `encrypted`, `from_zone`, `to_zone`, `crosses_zone` on flows,
+  `node`/`disk`/`platform`/`observed_state` on VMs, `scope` on IPs,
+  `last_seen` on services and `matched_by` on `RUNS_ON`. 22 unit tests. Not
+  yet deployed when this entry was written; the deploy entry follows below.

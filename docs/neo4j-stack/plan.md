@@ -57,6 +57,9 @@ run rolls back and leaves the previous graph in place.
 | `(VirtualMachine)-[:HAS_IP]->(IPAddress)-[:IN_PREFIX]->(Prefix)-[:ON_VLAN]->(VLAN)` | Addressing (longest matching prefix only) |
 | `(VirtualMachine)-[:EXPOSES]->(Service)` | NetBox-documented listening services |
 
+**Properties:** the shape of each node's and edge's metadata, what is built
+and what is next, is in [metadata.md](metadata.md).
+
 **Rule for threat-modeling work layered on top:** give your own nodes
 labels like `:Threat`, `:Mitigation` or `:Asset`, never `:Homelab`. Point
 them at imported nodes by `key`, which stays stable across imports. A
@@ -214,6 +217,10 @@ gates:
 ```
 
 ## Deferred (not in this pass)
+
+- **Metadata phases 1b, 2 and 3:** `stack.yaml`/`edge.yaml` properties and
+  `DEPENDS_ON`, the vulnerability and Authentik overlays, and observed flows
+  (see [metadata.md](metadata.md)).
 
 - **CVE overlay:** attach `unified-cve-exposure` findings from OpenSearch to
   `:VirtualMachine` nodes for vulnerability-aware attack paths. It needs
