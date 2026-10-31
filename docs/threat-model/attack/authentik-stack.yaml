@@ -1,0 +1,254 @@
+# MITRE ATT&CK mapping for authentik-stack: the pilot for threat-informed defence (docs/neo4j-stack/attack.md).
+#
+# Hand-written and reviewed, never generated. The loader (terraform/lxc/stacks/neo4j-stack/attack/attack_load.py)
+# refuses a mapping that names an ATT&CK id that does not exist in the pinned dataset.
+#
+# Three kinds of claim, each with its evidence:
+#   assessments  a technique applies to this process, or was considered and does not, and WHY (the basis).
+#   controls     something in place that implements an ATT&CK mitigation; strength is full or partial.
+#   sensors      telemetry collected from this process, and which ATT&CK data components it supplies.
+#                level: observed = the configuration was seen on the host; assumed = it follows from that
+#                configuration but events of that kind were not seen. Coverage is TELEMETRY coverage, not proof
+#                that a detection rule exists or fires.
+#
+# Facts verified 2026-10-31 against the repo and, read-only, the host (192.168.20.10).
+attack_version: "20.0"
+process: p-authentik            # key of the :Homelab Process node
+platforms: [Linux, Containers, Identity Provider]   # selects which ATT&CK analytics apply
+
+sensors:
+  - key: sensor:authentik:wazuh-agent
+    name: Wazuh agent on authentik-stack
+    kind: host-agent
+    observed: "2026-10-31"
+    evidence: >-
+      wazuh-agent active; ossec.conf manager 192.168.40.15:1514; syscheck realtime with check_all and report_changes
+      on /etc, /usr/bin, /usr/sbin, /bin, /sbin and /opt/authentik-stack; localfile /var/log/syslog and
+      /var/log/auth.log; rootcheck and SCA enabled; syscollector and active-response OFF.
+    provides:
+      - {data_component: DC0039, platforms: [Linux], log_source: "wazuh:syscheck", level: observed, note: "File Creation"}
+      - {data_component: DC0061, platforms: [Linux], log_source: "wazuh:syscheck", level: observed, note: "File Modification"}
+      - {data_component: DC0040, platforms: [Linux], log_source: "wazuh:syscheck", level: observed, note: "File Deletion"}
+      - {data_component: DC0059, platforms: [Linux], log_source: "wazuh:syscheck", level: observed, note: "File Metadata"}
+      - {data_component: DC0002, platforms: [Linux], log_source: "linux:auth.log", level: assumed, note: "User Account Authentication: /var/log/auth.log is read; SSH and sudo events are expected but not seen"}
+      - {data_component: DC0067, platforms: [Linux], log_source: "linux:auth.log", level: assumed, note: "Logon Session Creation: same file, same caveat"}
+
+  - key: sensor:authentik:docker-syslog-graylog
+    name: Container and host syslog forwarded to Graylog
+    kind: log-forwarding
+    observed: "2026-10-31"
+    evidence: >-
+      /etc/docker/daemon.json log-driver syslog to tcp://127.0.0.1:10514 (rfc5424, tag docker-<name>); rsyslog
+      90-log-forwarding.conf forwards *.* to Graylog 192.168.20.14. The path is configured; that Authentik logs
+      login and admin events at its default level was not checked.
+    provides:
+      - {data_component: DC0038, platforms: [Linux, Containers], log_source: "docker:syslog", level: assumed, note: "Application Log Content: container stdout reaches Graylog"}
+
+controls:
+  - key: control:authentik:zone-segmentation
+    name: Network zone mgmt_seg with inter-zone policy
+    implements: [M1030]
+    strength: partial
+    evidence: >-
+      stack.yaml network.zone = mgmt_seg; zone policy in terraform/lxc/network/pve.yaml and MikroTik. Partial: the
+      proxy-stack -> authentik tcp/9000 hop crosses edge_seg -> mgmt_seg unencrypted (threat model).
+
+  - key: control:authentik:no-external-route
+    name: No external route of any kind (operator decision 2026-09-25)
+    implements: [M1035]
+    strength: full
+    evidence: >-
+      authentik-stack/edge.yaml: no Pangolin or public route, direct or via Pangolin. Full for reaching it from outside
+      the LAN; says nothing about reach from inside it.
+
+  - key: control:authentik:docker-proxy-readonly
+    name: Docker socket proxy is read-only and bound to the host IP
+    implements: [M1035]
+    strength: partial
+    evidence: >-
+      roles/docker_socket_proxy: POST=0 and IMAGES=0, CONTAINERS=1 (GET only), bind address validated never 0.0.0.0,
+      docker.sock mounted :ro. Partial: still plaintext and unauthenticated on tcp/2375 to whatever the zone policy allows.
+
+  - key: control:authentik:remote-log-forwarding
+    name: Container and host logs are copied to Graylog
+    implements: [M1029]
+    strength: partial
+    evidence: >-
+      rsyslog forwards *.* to Graylog 192.168.20.14, so clearing the host's logs does not erase the copy. Partial:
+      only what reaches rsyslog, and forwarding itself can be disabled by a root attacker on the host.
+
+  - key: control:authentik:harbor-scanning
+    name: Images pulled through Harbor, which scans them
+    implements: [M1016]
+    strength: partial
+    evidence: >-
+      docker-compose.yml pulls every image from ${REGISTRY_HOST}/dockerhub|ghcr/... (Harbor proxy-cache). Partial: tags are
+      not digests (authentik 2026.2.4, postgres:16-alpine, redis:alpine, nginx:1.27-alpine), and Harbor has a known
+      gap with images it never scanned.
+
+  - key: control:authentik:tls
+    name: TLS at the edge and on the direct and LDAPS listeners
+    implements: [M1041]
+    strength: partial
+    evidence: >-
+      Traefik terminates TLS for authentik.<domain>; nginx direct_tls serves 443 and 9443; the LDAP outpost offers 6636
+      (LDAPS). Partial: traefik -> authentik :9000 and LDAP :3389 are plaintext (threat model: encrypted=false).
+
+  - key: control:authentik:wazuh-sca
+    name: Wazuh configuration assessment (SCA)
+    implements: [M1047]
+    strength: partial
+    evidence: >-
+      ossec.conf has 4 sca sections on the agent. Partial: which policies, and their results, were not reviewed.
+
+assessments:
+  # ---- reaching and abusing the identity provider ------------------------------------------------------------
+  - technique: T1078
+    applies: true
+    platforms: [Identity Provider]
+    basis: >-
+      Authentik holds the accounts behind OIDC login for 9 applications (ai-services, harbor, media-stack-lab,
+      monitoring, openbao, opensearch, portainer, technitium, wazuh), forward-auth for 22 Traefik routes, and the
+      LDAP outpost Graylog uses. One valid admin or user credential reaches all of them.
+  - technique: T1110.001
+    applies: true
+    platforms: [Identity Provider]
+    basis: >-
+      The login endpoint is reachable from the LAN through Traefik (authentik.<domain>, auth mode none because it is
+      the IdP) and directly on 9000, 443 and 9443. Whether lockout or reputation policies and MFA are enforced was
+      not verified.
+  - technique: T1110.003
+    applies: true
+    platforms: [Identity Provider]
+    basis: Same login endpoint; spraying one password across the accounts stored here. MFA enforcement unverified.
+  - technique: T1110.004
+    applies: true
+    platforms: [Identity Provider]
+    basis: Same login endpoint; reused credentials from other breaches. MFA enforcement unverified.
+  - technique: T1087
+    applies: true
+    platforms: [Identity Provider]
+    basis: >-
+      The LDAP outpost (3389 plaintext, 6636 LDAPS) exposes the directory to a bind with the search role that
+      Graylog uses (deploy-authentik-stack.yml creates it), so account listing is one authenticated query away.
+  - technique: T1556
+    applies: true
+    platforms: [Identity Provider]
+    basis: >-
+      An Authentik admin can change flows, stages and policies through the admin UI and API on :9000, which is
+      exactly how an attacker would weaken authentication for everything behind it.
+  - technique: T1098
+    applies: true
+    platforms: [Identity Provider]
+    basis: An admin can create accounts, API tokens and OIDC clients; the API listens on :9000.
+  - technique: T1528
+    applies: true
+    platforms: [Identity Provider]
+    basis: >-
+      Authentik issues the OIDC access tokens used by Harbor, Portainer, OpenBao and other apps, and keeps OIDC client
+      secrets and tokens in its database (ds-authentik-db: secret, no encryption at rest).
+  - technique: T1539
+    applies: true
+    basis: >-
+      Forward-auth for 22 Traefik routes relies on an Authentik session cookie. Theft from a browser on the LAN gives
+      access to all of them.
+  - technique: T1550.001
+    applies: true
+    platforms: [Identity Provider]
+    basis: A stolen or forged OIDC token is accepted by every application configured against this IdP.
+  - technique: T1606.001
+    applies: true
+    basis: Forging a session cookie needs the Authentik secret key, which sits in the host's compose environment (T1552.001).
+
+  # ---- the network around it ----------------------------------------------------------------------------------
+  - technique: T1210
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      The host listens on 9000, 9300, 443, 9443, 3389, 6636, 8080 (cAdvisor) and 2375 (Docker socket proxy) inside
+      mgmt_seg, reachable from other zones as far as the zone policy allows.
+  - technique: T1557
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      proxy-stack -> authentik tcp/9000 is plaintext across edge_seg -> mgmt_seg and carries session cookies and
+      tokens; LDAP on 3389 carries bind passwords in plaintext (both encrypted=false in the threat model).
+  - technique: T1040
+    applies: true
+    platforms: [Linux]
+    basis: Same plaintext hops; a host on the path can read them.
+  - technique: T1190
+    applies: false
+    basis: >-
+      Not applicable: there is no externally reachable path to Authentik, deliberately (operator decision
+      2026-09-25, edge.yaml). Internal reachability is covered by T1210.
+  - technique: T1133
+    applies: false
+    basis: >-
+      Not applicable for the same reason; there is no external remote-access path to this host.
+
+  # ---- the host, containers and what they hold ------------------------------------------------------------------
+  - technique: T1552.001
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      The playbook writes the compose .env and .ldap-outpost.env under /opt/authentik-stack with the secret key,
+      database password and outpost token in plain files on the host. Wazuh FIM watches that directory.
+  - technique: T1005
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      The Postgres and media volumes sit on the host's docker volume (docker_mount path /var/lib/docker); the data
+      store has no encryption at rest (threat model).
+  - technique: T1613
+    applies: true
+    platforms: [Containers]
+    basis: >-
+      The Docker socket proxy answers GET /containers on tcp/2375 without authentication or TLS; NetBox's populate uses
+      it, and any host the zone policy lets reach 2375 can list the containers and their images.
+  - technique: T1609
+    applies: true
+    platforms: [Containers]
+    basis: >-
+      Container administration commands need the Docker API or host access. The proxy blocks POST, so this needs the
+      host itself; cAdvisor mounts the host root read-only and the containers run with default privileges (no user,
+      cap_drop or read_only in docker-compose.yml).
+  - technique: T1611
+    applies: true
+    platforms: [Containers]
+    basis: >-
+      The containers run with default privileges and no cap_drop or read_only hardening, and cAdvisor mounts /, /var/run
+      and /var/lib/docker read-only, so a container compromise has a wider reach than it needs.
+  - technique: T1610
+    applies: false
+    basis: >-
+      Not applicable over the network: deploying a container needs a POST to the Docker API and the only reachable
+      endpoint has POST disabled. Local root on the host would make it possible, and then every other control is moot.
+  - technique: T1525
+    applies: true
+    platforms: [Containers]
+    basis: >-
+      Images are pulled by mutable tag through Harbor's proxy-cache, so a changed upstream or cached image is accepted
+      without a digest check.
+  - technique: T1204.003
+    applies: true
+    platforms: [Containers]
+    basis: Same supply path; a malicious image under a trusted tag would run with the privileges described under T1611.
+
+  # ---- availability and the defences themselves -------------------------------------------------------------------
+  - technique: T1499
+    applies: true
+    basis: >-
+      Every login for 9 OIDC applications, 22 forward-auth routes and Graylog's LDAP depends on this one host; a flood
+      or a crash of the server container takes them all down. No availability control was verified.
+  - technique: T1685
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      The Wazuh agent and rsyslog are root services on the host; an attacker with root can stop or reconfigure them.
+  - technique: T1685.006
+    applies: true
+    platforms: [Linux]
+    basis: >-
+      Host logs are local files an attacker with root can clear; the copy already forwarded to Graylog is the only record
+      of what happened before.

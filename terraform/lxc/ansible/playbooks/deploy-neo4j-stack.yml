@@ -284,3 +284,47 @@
         (neo4j_import_check.json.errors | length > 0) or
         (neo4j_import_check.json.results[0].data[0].row[0] | int) == 0
       when: not ansible_check_mode
+
+    # ---- MITRE ATT&CK layer (docs/neo4j-stack/attack.md) -----------------------------------------------------
+    # The pinned ATT&CK dataset plus the hand-written mapping for each mapped process, loaded after the importer
+    # because the overlay attaches to the :Process nodes it creates. Idempotent (MERGE); the :Attack* / :Sensor /
+    # :Control nodes never carry :Homelab, so the daily importer never prunes them.
+    - name: Create the ATT&CK loader directory
+      ansible.builtin.file:
+        path: /opt/neo4j-import/attack
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Deploy the ATT&CK loader and pinned dataset
+      ansible.builtin.copy:
+        src: "../../stacks/neo4j-stack/attack/{{ item }}"
+        dest: "/opt/neo4j-import/attack/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - attack_load.py
+        - attack-enterprise-20.0.json.gz
+
+    - name: Render the authentik-stack ATT&CK mapping (YAML in git, JSON on the host)
+      ansible.builtin.copy:
+        dest: /opt/neo4j-import/attack/authentik-stack.json
+        content: "{{ lookup('file', playbook_dir ~ '/../../../../docs/threat-model/attack/authentik-stack.yaml') | from_yaml | to_json }}"
+        owner: root
+        group: root
+        mode: "0640"
+
+    - name: Load ATT&CK and the authentik-stack overlay
+      ansible.builtin.shell: |
+        set -a
+        . {{ importer_env_file }}
+        python3 /opt/neo4j-import/attack/attack_load.py \
+          --dataset /opt/neo4j-import/attack/attack-enterprise-20.0.json.gz \
+          --mapping /opt/neo4j-import/attack/authentik-stack.json
+      args:
+        executable: /bin/bash
+      register: neo4j_attack_load
+      changed_when: "'loaded ATT&CK' in neo4j_attack_load.stdout"
+      when: not ansible_check_mode
