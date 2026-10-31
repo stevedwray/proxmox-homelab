@@ -149,3 +149,15 @@ preamble).
   `smokeping`/`icinga` should survive; baselines of live DNS and the proxy's
   `dynamic/` hashes were taken to prove it after steps 6b/6c. The Argon work
   was merged with `stable` on `task/argon-merge-stable` and opened as PR #547.
+
+### Step 6b - proxy-stack republish (2026-10-31)
+
+- `provision.sh --stack proxy-stack`: exit 0, ok=111 changed=4 failed=0, its
+  own smoke test passed. `ansible_host` checked as 192.168.30.10.
+- Baseline vs after on `/opt/proxy-stack/dynamic/*.yml` (sha256): the only
+  difference is the new `neo4j-stack.yml`. All 27 other files, including the
+  Argon-applied `smokeping.yml`, are byte-identical.
+- Unauthenticated probes straight to Traefik: `netbox.` and `smokeping.`
+  302 to Authentik, `dashboards.` 302 to its OIDC login, `neo4j.` 302 to
+  Authentik (new client), `neo4j-bolt.` 200. These show routing, not a
+  completed login; the interactive login check is the operator's.
