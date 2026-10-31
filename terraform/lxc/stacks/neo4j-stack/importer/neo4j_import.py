@@ -34,6 +34,11 @@ import uuid
 
 THREAT_MODEL_CONTEXT_NAME = "threat-model"
 
+# The threat model is derived for one environment, whose NetBox cluster is
+# "<node>-cluster". NetBox VM names are "<stack>@<node>", so a stack can have
+# one VM per node; the home cluster decides which one a Process runs on.
+DEFAULT_HOME_CLUSTER = "pve-cluster"
+
 # Labels/relationship types are interpolated into Cypher, so they come only
 # from these fixed sets -- never from NetBox data.
 NODE_LABELS = (
@@ -166,7 +171,7 @@ def _ensure_endpoint(graph, ref):
     return graph.node("Unresolved", ref, {"name": ref})
 
 
-def add_inventory(graph, vms, services, prefixes, vlans):
+def add_inventory(graph, vms, services, prefixes, vlans, home_cluster=DEFAULT_HOME_CLUSTER):
     """Add NetBox VMs, primary IPs, services, prefixes and VLANs to the graph."""
     vlan_keys = {}
     for vlan in vlans:
@@ -196,6 +201,7 @@ def add_inventory(graph, vms, services, prefixes, vlans):
     }
 
     vm_keys = {}
+    run_candidates = {}
     for vm in vms:
         key = f"vm:{vm['id']}"
         cluster = (vm.get("cluster") or {}).get("name")
@@ -209,10 +215,12 @@ def add_inventory(graph, vms, services, prefixes, vlans):
             "tags": [t.get("name") for t in vm.get("tags", []) if t.get("name")],
         })
         vm_keys[vm["id"]] = key
-        # Process.name is the stack name, which is also the LXC hostname
-        # NetBox records -- the join between the DFD and the inventory.
-        if vm.get("name") in process_by_name:
-            graph.rel("RUNS_ON", process_by_name[vm["name"]], key)
+        # Process.name is the stack name. NetBox VM names are "<stack>@<node>",
+        # so strip the node suffix: that is the join between the DFD and the
+        # inventory. Resolved after the loop, once every candidate is known.
+        stack_name = (vm.get("name") or "").split("@", 1)[0]
+        if stack_name in process_by_name:
+            run_candidates.setdefault(stack_name, []).append((cluster, key))
         address = (vm.get("primary_ip4") or {}).get("address")
         if address:
             ip_key = f"ip:{address}"
@@ -224,6 +232,15 @@ def add_inventory(graph, vms, services, prefixes, vlans):
             matches = [(net, pkey) for net, pkey in prefix_nets if iface.ip in net]
             if matches:
                 graph.rel("IN_PREFIX", ip_key, max(matches, key=lambda m: m[0].prefixlen)[1])
+
+    for stack_name, candidates in run_candidates.items():
+        at_home = [vm_key for cluster, vm_key in candidates if cluster == home_cluster]
+        # Prefer the home-cluster VM; otherwise accept a stack's only VM (it
+        # may have moved nodes). Several VMs and none at home is ambiguous, so
+        # no edge rather than a guess.
+        chosen = at_home[0] if at_home else (candidates[0][1] if len(candidates) == 1 else None)
+        if chosen:
+            graph.rel("RUNS_ON", process_by_name[stack_name], chosen)
 
     for svc in services:
         if svc.get("parent_object_type") != "virtualization.virtualmachine":
@@ -241,10 +258,10 @@ def add_inventory(graph, vms, services, prefixes, vlans):
         graph.rel("EXPOSES", vm_key, key)
 
 
-def build_graph(model, vms, services, prefixes, vlans):
+def build_graph(model, vms, services, prefixes, vlans, home_cluster=DEFAULT_HOME_CLUSTER):
     graph = Graph()
     add_threat_model(graph, model)
-    add_inventory(graph, vms, services, prefixes, vlans)
+    add_inventory(graph, vms, services, prefixes, vlans, home_cluster)
     return graph
 
 
@@ -379,7 +396,7 @@ def main():
     netbox_url = os.environ["NETBOX_URL"]
     netbox_token = os.environ["NETBOX_TOKEN"]
     sources = fetch_sources(netbox_url, netbox_token)
-    graph = build_graph(**sources)
+    graph = build_graph(**sources, home_cluster=os.environ.get("NEO4J_HOME_CLUSTER", DEFAULT_HOME_CLUSTER))
     summary = graph.summary()
 
     if args.dry_run:

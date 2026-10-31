@@ -100,6 +100,46 @@ class BuildGraphTest(unittest.TestCase):
                 self.assertIsInstance(value, (str, int, float, bool, list))
 
 
+class RunsOnJoinTest(unittest.TestCase):
+    """NetBox VM names are '<stack>@<node>'; the join must strip the node."""
+
+    @staticmethod
+    def _vm(vm_id, name, cluster):
+        return {"id": vm_id, "name": name, "cluster": {"name": cluster}, "primary_ip4": None, "tags": []}
+
+    def _runs_on(self, vms, **kwargs):
+        graph = neo4j_import.build_graph(MODEL, vms, [], [], [], **kwargs)
+        return _rels(graph, "RUNS_ON")
+
+    def test_node_suffix_is_stripped(self):
+        vms = [self._vm(1, "netbox-stack@pve", "pve-cluster")]
+        self.assertEqual(self._runs_on(vms), {("p-netbox", "vm:1")})
+
+    def test_home_cluster_vm_wins_over_other_node(self):
+        vms = [self._vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster"),
+               self._vm(2, "netbox-stack@pve", "pve-cluster")]
+        self.assertEqual(self._runs_on(vms), {("p-netbox", "vm:2")})
+
+    def test_only_vm_on_another_node_is_accepted(self):
+        # a stack that moved nodes still has exactly one VM
+        vms = [self._vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster")]
+        self.assertEqual(self._runs_on(vms), {("p-netbox", "vm:1")})
+
+    def test_ambiguous_vms_none_at_home_gets_no_edge(self):
+        vms = [self._vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster"),
+               self._vm(2, "netbox-stack@pve-test", "pve-test-cluster")]
+        self.assertEqual(self._runs_on(vms), set())
+
+    def test_home_cluster_is_configurable(self):
+        vms = [self._vm(1, "netbox-stack@pve-tiny", "pve-tiny-cluster"),
+               self._vm(2, "netbox-stack@pve", "pve-cluster")]
+        self.assertEqual(self._runs_on(vms, home_cluster="pve-tiny-cluster"), {("p-netbox", "vm:1")})
+
+    def test_vm_without_a_process_is_not_linked(self):
+        vms = [self._vm(1, "orphan-lxc@pve", "pve-cluster")]
+        self.assertEqual(self._runs_on(vms), set())
+
+
 class BuildStatementsTest(unittest.TestCase):
     def test_statements_use_only_whitelisted_labels_and_prune_last(self):
         graph = neo4j_import.build_graph(MODEL, VMS, SERVICES, PREFIXES, VLANS)
