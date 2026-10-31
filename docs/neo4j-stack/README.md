@@ -1,9 +1,9 @@
 # neo4j-stack
 
-Status: **deployed to `pve` 2026-10-31** (LXC 40016, `192.168.40.16`, edge
-routes live, importer timer armed for 04:30 daily). Browser connects through
-Traefik. One known data gap in the imported graph (`ON_VLAN`, see "Known gaps"
-below). Start with `plan.md`; the property design is in `metadata.md`.
+Status (checkpoint 2026-10-31): **deployed to `pve`** and in the **setup phase for threat-informed defence against MITRE
+ATT&CK** (not alerting). What is live, what is only in git, the pull-request merge order and the known gaps are in
+[current-state.md](current-state.md); the ordered plan is in [plan.md](plan.md#roadmap); the ATT&CK layer is in
+[attack.md](attack.md); the property design is in [metadata.md](metadata.md). The hand-back log below is the history.
 
 ## What this is
 
@@ -322,3 +322,40 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   an "what uses Authentik" panel, and a table view. `build_graph_view.py` plus
   `graph_view.template.html` rebuild it; `export_from_model.py` previews a
   checkout's model without touching NetBox or Neo4j.
+
+### MITRE ATT&CK layer and the authentik-stack pilot (2026-10-31)
+
+- **Direction (operator):** Neo4j and the threat model are for threat-informed defence per MITRE ATT&CK, not alerting
+  (the alerting I had added was reverted). Scope for the pilot: Enterprise plus Containers, detection coverage in,
+  Authentik first. Full write-up: [attack.md](attack.md).
+- **Loaded:** ATT&CK Enterprise v20.0 from a pinned, byte-reproducible 56 KB dataset: 706 techniques, 44 mitigations,
+  106 data components, 703 detection strategies, 1,770 analytics. Overlay for `p-authentik`: 27 assessments (24 apply,
+  3 not applicable with reasons), 7 controls, 2 sensors, each with its evidence.
+- **Deploy:** `provision.sh --stack neo4j-stack` from the branch worktree: exit 0, ok=75 changed=5 failed=0.
+- **Verified in Neo4j:** every layer's counts match the dataset; no `:Attack*`, `:Sensor` or `:Control` node carries
+  `:Homelab`; the Homelab graph is unchanged (40 processes, 162 flows); and the layer survives an importer run
+  (3,353 nodes and 50 overlay relationships before and after).
+- **Cross-check:** telemetry coverage recomputed from the live graph (18 none, 5 partial, 1 no-analytic, 0 full) equals
+  the offline report exactly.
+- **A correction made on the way:** the first coverage figure matched data components regardless of platform, so
+  Linux SSH logs counted as telemetry for brute force against Authentik's web login. Fixed (platform-aware, with a
+  test).
+- **Corrected before loading:** I had written that Authentik serves "11 services"; 11 is the count of flow sources into
+  it. The real dependency is 9 OIDC applications, 22 forward-auth routes and Graylog's LDAP.
+- **Status: setup phase.** The pilot mapping is a first pass for proving the tooling, not a reviewed assessment; working
+  through ATT&CK has not started. See [attack.md](attack.md).
+
+### Asset facts for ATT&CK (2026-10-31, built, not deployed)
+
+- `flows.py` now derives per-process `platforms`, base-image `technologies`, container privilege counts, `routed` and
+  `route_auth_modes`, socket-proxy and host-access facts, and `depends_on`; the importer turns `depends_on` into
+  `DEPENDS_ON` edges (33 on the current model) and drops the list property. 12 + 3 new tests.
+- Needs two production steps to take effect, each with its own preflight: the one-section threat-model refresh, then
+  an importer run.
+
+### ATT&CK matrix view (2026-10-31)
+
+- `attack/build_matrix_view.py` builds a self-contained page of the full Enterprise matrix with a mapping's
+  assessments marked, offline from the pinned dataset and the mapping. Neutral encoding (applies, not applicable, not
+  assessed); telemetry detail only on demand. 5 tests, including that a hostile mapping text cannot break out of the page.
+  See [attack.md](attack.md#seeing-it).

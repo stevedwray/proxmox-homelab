@@ -53,6 +53,7 @@ on top. See `docs/neo4j-stack/` for the graph model and example queries.
 | `neo4j-data` volume (`/data`) | docker_storage (20 GiB) | Graph store. The `:Homelab` part is regenerable from NetBox; hand-authored nodes are not |
 | `neo4j-logs` volume (`/logs`) | docker_storage | Neo4j logs |
 | `/etc/neo4j-import/env` | rootfs | Importer credentials (0600) |
+| `:Attack*`, `:Sensor`, `:Control` nodes | `neo4j-data` volume | MITRE ATT&CK v20 and the per-process threat-informed-defence overlay. Regenerable: the dataset is pinned in git and the overlay comes from `docs/threat-model/attack/*.yaml` |
 
 ## What May Depend On This Stack
 
@@ -60,6 +61,8 @@ Nothing depends on this stack. It's a leaf read model.
 
 ## What Must Not Be Edited Casually
 
+- `:Sensor` and `:Control` nodes and the `ASSESSED_AGAINST`, `MONITORS`, `PROTECTS`, `IMPLEMENTS` and `PROVIDES` relationships belong to the
+  ATT&CK mapping. A re-load prunes any that the mapping file no longer says, so change `docs/threat-model/attack/<process>.yaml`, not the graph.
 - `NEO4J_AUTH` is only honored when `/data` is empty. Changing
   `NEO4J_PASSWORD` in OpenBao after first deploy breaks the importer and the
   playbook's Cypher check until the operator also runs

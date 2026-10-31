@@ -221,6 +221,34 @@ class DerivedMetadataTest(unittest.TestCase):
         self.assertEqual(next(p for (t, *_), p in graph.rels.items() if t == "RUNS_ON")["matched_by"], "only-vm")
 
 
+class AssetFactsTest(unittest.TestCase):
+    """Process facts from flows.py (platforms, images, exposure) and dependencies as edges."""
+
+    MODEL = {"processes": [
+        {"id": "p-a", "name": "a", "zone": "z", "platforms": ["Containers", "Linux"], "technologies": ["nginx", "postgres"],
+         "containers": 2, "containers_privileged": 0, "routed": True, "route_auth_modes": ["forwardAuth"],
+         "depends_on": ["p-b", "p-missing"]},
+        {"id": "p-b", "name": "b", "zone": "z", "platforms": ["Linux"]},
+    ]}
+
+    def setUp(self):
+        self.graph = neo4j_import.build_graph(self.MODEL, [], [], [], [])
+
+    def test_facts_are_kept_as_properties(self):
+        props = self.graph.nodes["p-a"][1]
+        self.assertEqual(props["platforms"], ["Containers", "Linux"])
+        self.assertEqual(props["technologies"], ["nginx", "postgres"])
+        self.assertEqual((props["containers"], props["routed"]), (2, True))
+        self.assertEqual(props["containers_privileged"], 0)  # zero is a fact, not a missing value
+
+    def test_dependencies_are_edges_not_a_property(self):
+        self.assertEqual(_rels(self.graph, "DEPENDS_ON"), {("p-a", "p-b")})
+        self.assertNotIn("depends_on", self.graph.nodes["p-a"][1])
+
+    def test_a_dependency_on_something_the_model_lacks_is_dropped_not_invented(self):
+        self.assertNotIn("p-missing", self.graph.nodes)
+
+
 class BuildStatementsTest(unittest.TestCase):
     def test_statements_use_only_whitelisted_labels_and_prune_last(self):
         graph = neo4j_import.build_graph(MODEL, VMS, SERVICES, PREFIXES, VLANS)
