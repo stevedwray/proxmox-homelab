@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homelab data-flow graph</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --proc: #2a78d6; --ext: #eb6834; --store: #1baf7a;
+    --critical: #d03b3b; --edge: #898781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --proc: #3987e5; --ext: #d95926; --store: #199e70;
+      --critical: #d03b3b; --edge: #898781;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+    --proc: #3987e5; --ext: #d95926; --store: #199e70;
+    --critical: #d03b3b; --edge: #898781;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 2px; font-weight: 650; }
+  .sub { margin: 0 0 16px; color: var(--ink2); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .kpi b { display: block; font-size: 26px; font-weight: 650; line-height: 1.15; }
+  .kpi span { color: var(--ink2); font-size: 12.5px; }
+  .kpi .mk { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--critical); margin-right: 6px; vertical-align: -1px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 4px 0 10px; }
+  .tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .tabs button { background: var(--surface); color: var(--ink2); border: 0; padding: 7px 14px; font: inherit; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--ink); color: var(--surface); }
+  label.chip { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; color: var(--ink2);
+               padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  label.chip input { accent-color: var(--proc); margin: 0; }
+  button.theme { margin-left: auto; background: var(--surface); color: var(--ink2); border: 1px solid var(--border);
+                 border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  .tracebar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 0 0 10px; padding: 8px 12px;
+              background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--ink2); }
+  .tracebar b { color: var(--ink); }
+  .tracebar select, .tracebar button { font: inherit; color: var(--ink); background: var(--page); border: 1px solid var(--border);
+              border-radius: 6px; padding: 5px 8px; max-width: 230px; }
+  .tracebar button { cursor: pointer; } .tracebar button.go { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 10px; color: var(--ink2); font-size: 12.5px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend svg { width: 24px; height: 16px; overflow: visible; }
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: start; }
+  @media (max-width: 960px) { .stage { grid-template-columns: 1fr; } }
+  .canvas { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  svg#g { display: block; width: 100%; height: auto; touch-action: none; }
+  aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-height: 120px;
+          max-height: 760px; overflow: auto; }
+  aside h2 { font-size: 15px; margin: 0 0 2px; }
+  aside .kind { color: var(--ink2); font-size: 12.5px; margin-bottom: 8px; }
+  aside dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 8px 0; font-size: 13px; }
+  aside dt { color: var(--ink2); } aside dd { margin: 0; overflow-wrap: anywhere; }
+  aside ul { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12.5px; }
+  aside li { padding: 4px 0; border-top: 1px solid var(--grid); }
+  aside ol { margin: 6px 0 0; padding-left: 20px; font-size: 12.5px; } aside ol li { border-top: 0; padding: 3px 0; }
+  aside .hint { color: var(--ink2); font-size: 13px; }
+  .risk { color: var(--ink); font-weight: 600; }
+  .risk::before { content: "\26A0\FE0E "; color: var(--critical); }
+
+  /* graph marks */
+  .edge { fill: none; stroke: var(--edge); stroke-width: 1.2; opacity: .55; }
+  .edge.zp { stroke-dasharray: 2 4; opacity: .45; }
+  .edge.zone { stroke: var(--axis); stroke-width: 1; opacity: .9; }
+  .edge.host { stroke: var(--ink2); stroke-width: 1.4; opacity: .55; }
+  .edge.risky { stroke: var(--critical); stroke-width: 2.4; opacity: 1; }
+  .edge.trace { stroke: var(--ink); stroke-width: 2.6; opacity: 1; }
+  .edge.trace.risky { stroke: var(--critical); }
+  .edge.auth { stroke-dasharray: 6 3; }
+  .hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; }
+  .ar-n { fill: var(--edge); } .ar-r { fill: var(--critical); }
+  .node { cursor: grab; }
+  .node .hitc { fill: transparent; }
+  .shape { stroke: var(--surface); stroke-width: 2; }       /* 2px surface ring on overlapping marks */
+  .s-proc { fill: var(--proc); } .s-store { fill: var(--store); } .s-ext { fill: var(--ext); }
+  .s-zone { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; }
+  .s-unres { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+  .lbl { font-size: 11px; fill: var(--ink); text-anchor: middle; paint-order: stroke; stroke: var(--surface); stroke-width: 3.5px; stroke-linejoin: round; pointer-events: none; }
+  .lbl.zone { fill: var(--ink2); font-size: 10.5px; letter-spacing: .02em; }
+  .lbl.unres { fill: var(--ink2); font-size: 10px; display: none; }
+  .node:hover .lbl.unres, .node.on .lbl.unres, .node.pin .lbl.unres { display: block; }
+  svg.focus .node:not(.on), svg.focus .edge:not(.on) { opacity: .12; }
+  svg.focus .edge.on { opacity: 1; }
+  .node.quiet { opacity: .15; }
+  .node.pin .shape { stroke: var(--ink); stroke-width: 2.5; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--ink2); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+  .tablewrap { max-height: 780px; overflow: auto; border-radius: 10px; }
+  [hidden] { display: none !important; }
+  footer { margin-top: 12px; color: var(--ink2); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Homelab data-flow graph</h1>
+  <p class="sub" id="sub"></p>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="toolbar">
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" id="tab-graph">Graph</button>
+      <button role="tab" aria-selected="false" id="tab-table">Table</button>
+    </div>
+    <label class="chip"><input type="checkbox" id="f-risky"> Risky flows only</label>
+    <label class="chip"><input type="checkbox" id="f-zones" checked> Zones</label>
+    <label class="chip"><input type="checkbox" id="f-zp"> Zone-policy flows</label>
+    <label class="chip"><input type="checkbox" id="f-pub"> Hide public-data flows (apt, registry pulls)</label>
+    <button class="theme" id="theme" type="button">Toggle theme</button>
+  </div>
+
+  <div class="tracebar">
+    <b>Trace a request</b>
+    <label>from <select id="t-src"></select></label>
+    <label>to <select id="t-dst"></select></label>
+    <button class="go" id="t-go" type="button">Trace</button>
+    <button id="t-clear" type="button">Clear</button>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="stage" id="view-graph">
+    <div class="canvas"><svg id="g" viewBox="0 0 1200 780" role="img" aria-label="Data-flow graph of the homelab: processes, data stores, external entities and zones joined by data flows; risky flows in red. A table view has the same flows."></svg></div>
+    <aside id="detail" aria-live="polite"></aside>
+  </div>
+
+  <div id="view-table" hidden><div class="tablewrap"><table id="tbl"></table></div></div>
+
+  <footer>Source: Neo4j <code>:Homelab</code> graph (neo4j-stack). VMs, IPs and services appear as detail on a process, not as nodes.
+  Trust-boundary nodes carry no edges and are not drawn. A flow is <b>risky</b> when it crosses a zone, is unencrypted, and its auth is none or unknown.</footer>
+</main>
+
+<script>
+const D = __DATA__;
+const NS = "http://www.w3.org/2000/svg";
+const W = 1200, H = 780;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const el = (tag, attrs = {}, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+/* ---------- header, KPIs, legend ---------- */
+const S = D.stats;
+$("sub").textContent = `Read from Neo4j on ${D.generated}: ${S.processes} processes and ${S.flows} data flows${S.vms ? `, backed by ${S.vms} VMs and ${S.services} services in NetBox.` : ". Preview from the derived model, with no NetBox inventory."}`;
+$("kpis").innerHTML = [
+  [S.processes, "Processes"], [S.flows, "Data flows"],
+  [`<i class="mk"></i>${S.risky}`, "Risky flows (zone-crossing, unencrypted, auth none/unknown)"],
+  [S.unknown, "Flows with unknown auth"], [S.unresolved, "Unresolved endpoints"],
+].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+
+const legendSvg = (inner) => `<svg viewBox="0 0 24 16">${inner}</svg>`;
+$("legend").innerHTML = [
+  [legendSvg(`<circle cx="12" cy="8" r="6" class="shape s-proc"/>`), "Process"],
+  [legendSvg(`<rect x="5" y="2" width="14" height="12" rx="2.5" class="shape s-store"/>`), "Data store"],
+  [legendSvg(`<polygon points="12,0 21,8 12,16 3,8" class="shape s-ext"/>`), "External entity"],
+  [legendSvg(`<polygon points="12,1 20,5 20,11 12,15 4,11 4,5" class="shape s-zone"/>`), "Zone"],
+  [legendSvg(`<circle cx="12" cy="8" r="5.5" class="shape s-unres"/>`), "Unresolved endpoint"],
+  [legendSvg(`<line x1="1" y1="8" x2="23" y2="8" style="stroke:var(--critical);stroke-width:2.4"/>`), "⚠ Risky flow"],
+  [legendSvg(`<line x1="1" y1="8" x2="23" y2="8" style="stroke:var(--edge);stroke-width:1.2;opacity:.8"/>`), "Other flow"],
+  [legendSvg(`<line x1="1" y1="8" x2="23" y2="8" style="stroke:var(--edge);stroke-width:1.2;stroke-dasharray:2 4"/>`), "Zone-policy flow"],
+].map(([i, t]) => `<span>${i}${t}</span>`).join("");
+
+/* ---------- model ---------- */
+const byId = new Map(D.nodes.map((n) => [n.id, n]));
+const deg = new Map(D.nodes.map((n) => [n.id, 0]));
+D.links.forEach((l) => { if (l.type === "FLOW") { deg.set(l.s, deg.get(l.s) + 1); deg.set(l.t, deg.get(l.t) + 1); } });
+D.nodes.forEach((n) => {
+  n.r = n.kind === "Zone" ? 14 : n.kind === "Unresolved" ? 7 : n.kind === "DataStore" ? 9 : 8 + Math.min(6, Math.sqrt(deg.get(n.id)));
+});
+const zoneKey = (z) => "zone:" + z;
+const L = D.links.map((l) => ({
+  ...l, src: byId.get(l.s), dst: byId.get(l.t),
+  len: l.type === "IN_ZONE" ? 105 : l.type === "HOSTED_ON" ? 52 : l.zp ? 300 : 230,
+  k: l.type === "IN_ZONE" ? 0.09 : l.type === "HOSTED_ON" ? 0.14 : l.zp ? 0.004 : 0.03,
+}));
+
+/* ---------- layout (seeded, deterministic) ---------- */
+function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const rand = rng(7);
+const zones = D.nodes.filter((n) => n.kind === "Zone");
+zones.forEach((z, i) => { const a = (i / zones.length) * Math.PI * 2; z.x = W / 2 + Math.cos(a) * 330; z.y = H / 2 + Math.sin(a) * 270; });
+D.nodes.forEach((n) => {
+  if (n.kind !== "Zone") {
+    const z = n.zone && byId.get(zoneKey(n.zone));
+    n.x = (z ? z.x : W / 2) + (rand() - 0.5) * 140; n.y = (z ? z.y : H / 2) + (rand() - 0.5) * 140;
+  }
+  n.vx = 0; n.vy = 0;
+});
+let VN = D.nodes, VL = L;
+function tick(a) {
+  const n = VN;
+  for (let i = 0; i < n.length; i++) for (let j = i + 1; j < n.length; j++) {
+    let dx = n[j].x - n[i].x, dy = n[j].y - n[i].y, d2 = dx * dx + dy * dy;
+    if (d2 < 1) { dx = rand() - 0.5; dy = rand() - 0.5; d2 = 1; }
+    const d = Math.sqrt(d2); if (d > 560) continue;
+    const f = (7200 * a) / d2, fx = (dx / d) * f, fy = (dy / d) * f;
+    n[i].vx -= fx; n[i].vy -= fy; n[j].vx += fx; n[j].vy += fy;
+    const min = n[i].r + n[j].r + 30;
+    if (d < min) { const p = ((min - d) / d) * 0.5 * a; n[i].vx -= dx * p; n[i].vy -= dy * p; n[j].vx += dx * p; n[j].vy += dy * p; }
+  }
+  for (const l of VL) {
+    const dx = l.dst.x - l.src.x, dy = l.dst.y - l.src.y, d = Math.hypot(dx, dy) || 1, f = (d - l.len) * l.k * a * 2.2;
+    const fx = (dx / d) * f, fy = (dy / d) * f;
+    l.src.vx += fx; l.src.vy += fy; l.dst.vx -= fx; l.dst.vy -= fy;
+  }
+  for (const m of n) {
+    if (m.fixed) { m.vx = m.vy = 0; continue; }
+    m.vx += (W / 2 - m.x) * 0.0012 * a; m.vy += (H / 2 - m.y) * 0.0012 * a;
+    m.x = Math.min(W - 95, Math.max(95, m.x + m.vx)); m.y = Math.min(H - 42, Math.max(30, m.y + m.vy));
+    m.vx *= 0.78; m.vy *= 0.78;
+  }
+}
+function layout(iters, a0) { for (let k = 0; k < iters; k++) tick(Math.max(0.03, a0 * (1 - k / iters))); }
+
+/* ---------- draw ---------- */
+const svg = $("g");
+const defs = el("defs", {}, svg);
+[["ar-n", "ar-n"], ["ar-r", "ar-r"]].forEach(([id, cls]) => {
+  const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" }, defs);
+  el("path", { d: "M0,0L10,5L0,10z", class: cls }, m);
+});
+const gEdges = el("g", {}, svg), gNodes = el("g", {}, svg);
+
+L.forEach((l) => {
+  const cls = l.type === "FLOW" ? (l.risky ? "risky" : l.zp ? "zp" : "") : l.type === "IN_ZONE" ? "zone" : "host";
+  l.path = el("path", { class: "edge " + cls }, gEdges);
+  if (l.type === "FLOW") l.path.setAttribute("marker-end", `url(#${l.risky ? "ar-r" : "ar-n"})`);
+  l.hit = el("path", { class: "hit" }, gEdges);
+  l.hit.addEventListener("mouseenter", () => { if (!pinned) showEdge(l); });
+  l.hit.addEventListener("mouseleave", () => { if (!pinned) showDefault(); });
+});
+
+D.nodes.forEach((n) => {
+  const g = el("g", { class: "node" }, gNodes); n.g = g;
+  el("circle", { class: "hitc", r: n.r + 8 }, g);
+  const r = n.r;
+  if (n.kind === "Process") el("circle", { class: "shape s-proc", r }, g);
+  else if (n.kind === "DataStore") el("rect", { class: "shape s-store", x: -r, y: -r * 0.85, width: 2 * r, height: 1.7 * r, rx: 3 }, g);
+  else if (n.kind === "ExternalEntity") el("polygon", { class: "shape s-ext", points: `0,${-r * 1.25} ${r * 1.25},0 0,${r * 1.25} ${-r * 1.25},0` }, g);
+  else if (n.kind === "Zone") el("polygon", { class: "shape s-zone", points: [0, 1, 2, 3, 4, 5].map((i) => `${(r * Math.cos(Math.PI / 3 * i + Math.PI / 6)).toFixed(1)},${(r * Math.sin(Math.PI / 3 * i + Math.PI / 6)).toFixed(1)}`).join(" ") }, g);
+  else el("circle", { class: "shape s-unres", r }, g);
+  const t = el("text", { class: "lbl " + (n.kind === "Zone" ? "zone" : n.kind === "Unresolved" ? "unres" : ""), y: n.kind === "Zone" ? r + 13 : r + 14 }, g);
+  t.textContent = n.label;
+  g.addEventListener("mouseenter", () => { if (!pinned) focus(n); });
+  g.addEventListener("mouseleave", () => { if (pinned) return; if (traced) trace(traced.srcId, traced.dstId); else unfocus(); });
+  g.addEventListener("pointerdown", (ev) => startDrag(ev, n));
+});
+
+function curve(l) {
+  const s = l.src, t = l.dst, dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+  if (l.type !== "FLOW") return `M${s.x},${s.y}L${t.x},${t.y}`;
+  const x1 = s.x + ux * (s.r + 2), y1 = s.y + uy * (s.r + 2), x2 = t.x - ux * (t.r + 5), y2 = t.y - uy * (t.r + 5);
+  const cx = (x1 + x2) / 2 - uy * d * 0.08, cy = (y1 + y2) / 2 + ux * d * 0.08;
+  return `M${x1.toFixed(1)},${y1.toFixed(1)}Q${cx.toFixed(1)},${cy.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`;
+}
+function render() {
+  L.forEach((l) => { const p = curve(l); l.path.setAttribute("d", p); l.hit.setAttribute("d", p); });
+  D.nodes.forEach((n) => n.g.setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`));
+}
+
+/* ---------- filters ---------- */
+const state = { risky: false, zones: true, zp: false, pub: false };
+function visible(l) {
+  if (l.type === "FLOW") return (!l.zp || state.zp) && (!state.risky || l.risky) && !(state.pub && l.flows.every((f) => f.cls === "public")) && (state.zones || !(l.src.kind === "Zone" || l.dst.kind === "Zone"));
+  if (l.type === "IN_ZONE") return state.zones && !state.risky;
+  return !state.risky;
+}
+function applyFilters(first) {
+  const touched = new Set();
+  L.forEach((l) => {
+    const v = visible(l) && (l.src.kind !== "Zone" && l.dst.kind !== "Zone" || state.zones); l.on = v;
+    l.path.style.display = v ? "" : "none"; l.hit.style.display = v ? "" : "none";
+    if (v) { touched.add(l.s); touched.add(l.t); }
+  });
+  D.nodes.forEach((n) => { n.vis = touched.has(n.id); n.g.style.display = n.vis ? "" : "none"; });
+  VN = D.nodes.filter((n) => n.vis); VL = L.filter((l) => l.on);
+  layout(first ? 520 : 240, first ? 1 : 0.5);
+}
+[["f-risky", "risky"], ["f-zones", "zones"], ["f-zp", "zp"], ["f-pub", "pub"]].forEach(([id, key]) => $(id).addEventListener("change", (e) => { state[key] = e.target.checked; applyFilters(); render(); unfocus(); showDefault(); }));
+
+/* ---------- focus + detail ---------- */
+let pinned = null;
+function focus(n) {
+  const near = new Set([n.id]);
+  L.forEach((l) => { const hit = l.on && (l.s === n.id || l.t === n.id); l.path.classList.toggle("on", hit); if (hit) { near.add(l.s); near.add(l.t); } });
+  D.nodes.forEach((m) => m.g.classList.toggle("on", near.has(m.id)));
+  svg.classList.add("focus"); showNode(n);
+}
+function unfocus() { svg.classList.remove("focus"); L.forEach((l) => l.path.classList.remove("on")); D.nodes.forEach((m) => m.g.classList.remove("on")); }
+const KIND = { Process: "Process", DataStore: "Data store", ExternalEntity: "External entity", Zone: "Zone", Unresolved: "Unresolved endpoint (a flow points at something the model does not define)" };
+const flowRow = (f, from, to) => `<li>${f.risky ? '<span class="risk">Risky</span> ' : ""}${esc(from)} → ${esc(to)}<br><span style="color:var(--ink2)">${esc(f.proto || "")}${f.port ? "/" + esc(f.port) : ""} · auth ${esc(f.auth)} · ${f.enc === true ? "encrypted" : f.enc === false ? "unencrypted" : "transport unknown"}${f.cross ? " · " + esc(f.fz) + " → " + esc(f.tz) : ""}${f.cls ? " · " + esc(f.cls) : ""}</span></li>`;
+function showNode(n) {
+  const out = L.filter((l) => l.type === "FLOW" && l.s === n.id && (l.on !== false)), inn = L.filter((l) => l.type === "FLOW" && l.t === n.id && (l.on !== false));
+  const flows = (arr, dir) => arr.flatMap((l) => l.flows.map((f) => flowRow(f, dir === "out" ? n.name : l.src.name, dir === "out" ? l.dst.name : n.name)));
+  let rows = "";
+  if (n.zone) rows += `<dt>Zone</dt><dd>${esc(n.zone)}</dd>`;
+  if (n.tier) rows += `<dt>Tier</dt><dd>${esc(n.tier)}</dd>`;
+  if (n.cls) rows += `<dt>Data class</dt><dd>${esc(n.cls)}</dd>`;
+  if (n.trust) rows += `<dt>Trust</dt><dd>${esc(n.trust)}</dd>`;
+  if (n.vm) rows += `<dt>VM</dt><dd>${esc(n.vm.name)}</dd><dt>Node</dt><dd>${esc(n.vm.node)} (${esc(n.vm.state)})</dd>` + (n.vm.ip ? `<dt>IP</dt><dd>${esc(n.vm.ip)}</dd>` : "") + (n.vm.ports.length ? `<dt>Ports</dt><dd>${esc(n.vm.ports.join(", "))}</dd>` : "");
+  const all = flows(out, "out").concat(flows(inn, "in"));
+  $("detail").innerHTML = `<h2>${esc(n.name)}</h2><div class="kind">${KIND[n.kind]}${pinned === n ? " · pinned" : ""}</div><dl>${rows}</dl>` +
+    authentikPanel(n) + (all.length ? `<div class="kind" style="margin-top:10px">${out.reduce((a, l) => a + l.flows.length, 0)} outgoing · ${inn.reduce((a, l) => a + l.flows.length, 0)} incoming flows</div><ul>${all.slice(0, 40).join("")}${all.length > 40 ? `<li>… and ${all.length - 40} more (see Table)</li>` : ""}</ul>` : "");
+}
+function showEdge(l) {
+  l.path.classList.add("on"); svg.classList.add("focus");
+  $("detail").innerHTML = `<h2>${esc(l.src.name)} → ${esc(l.dst.name)}</h2><div class="kind">${l.flows.length} flow${l.flows.length > 1 ? "s" : ""}</div><ul>${l.flows.map((f) => flowRow(f, l.src.name, l.dst.name)).join("")}</ul>`;
+  const keep = new Set([l.s, l.t]); D.nodes.forEach((m) => m.g.classList.toggle("on", keep.has(m.id)));
+}
+function showDefault() {
+  if (pinned) { focus(pinned); return; }
+  if (traced) { trace(traced.srcId, traced.dstId); return; }
+  unfocus();
+  $("detail").innerHTML = `<h2>How to read this</h2><p class="hint">Hover a node or a line for its details. Click a node to pin it, click empty space to release. Drag a node to move it.</p><p class="hint"><span class="risk">Risky</span> flows are the emphasis: they cross a zone, are unencrypted, and have auth <i>none</i> or <i>unknown</i>. Everything else is gray.</p><p class="hint">Zone-policy flows (zone to zone firewall rules) are hidden by default; tick the box to show them. VMs, IPs and services are shown as detail on a process.</p>`;
+}
+
+/* ---------- drag / pin ---------- */
+let drag = null, moved = false;
+function pt(ev) { const r = svg.getBoundingClientRect(); return [((ev.clientX - r.left) / r.width) * W, ((ev.clientY - r.top) / r.height) * H]; }
+function startDrag(ev, n) { drag = n; moved = false; n.fixed = true; svg.setPointerCapture?.(ev.pointerId); ev.preventDefault(); }
+svg.addEventListener("pointermove", (ev) => { if (!drag) return; const [x, y] = pt(ev); drag.x = x; drag.y = y; moved = true; for (let i = 0; i < 6; i++) tick(0.12); render(); });
+svg.addEventListener("pointerup", () => {
+  if (!drag) return; const n = drag; n.fixed = false; drag = null;
+  if (!moved) { pinned = pinned === n ? null : n; D.nodes.forEach((m) => m.g.classList.toggle("pin", m === pinned)); if (pinned) focus(n); else { unfocus(); showDefault(); } }
+});
+svg.addEventListener("click", (ev) => { if (ev.target === svg && pinned) { pinned = null; D.nodes.forEach((m) => m.g.classList.remove("pin")); showDefault(); } });
+
+
+/* ---------- trace a request ---------- */
+const adj = new Map();
+L.filter((l) => l.type === "FLOW" && !l.zp).forEach((l) => { if (!adj.has(l.s)) adj.set(l.s, []); adj.get(l.s).push(l); });
+function findPaths(src, dst, maxHops = 6, cap = 80) {
+  const out = [], seen = new Set([src]), walk = [];
+  (function dfs(at) {
+    if (out.length >= cap) return;
+    if (at === dst) { out.push(walk.slice()); return; }
+    if (walk.length >= maxHops) return;
+    for (const l of adj.get(at) || []) {
+      if (seen.has(l.t)) continue;
+      seen.add(l.t); walk.push(l); dfs(l.t); walk.pop(); seen.delete(l.t);
+    }
+  })(src);
+  return out.sort((a, b) => a.length - b.length || a.filter((l) => l.risky).length - b.filter((l) => l.risky).length);
+}
+const opt = (n) => `<option value="${esc(n.id)}">${esc(n.name)}</option>`;
+const byName = (a, b) => a.name.localeCompare(b.name);
+$("t-src").innerHTML = D.nodes.filter((n) => n.kind === "ExternalEntity").sort(byName).map(opt).join("") +
+  `<optgroup label="Processes">${D.nodes.filter((n) => n.kind === "Process").sort(byName).map(opt).join("")}</optgroup>`;
+$("t-dst").innerHTML = `<option value="">choose a service…</option>` +
+  D.nodes.filter((n) => n.kind === "Process" || n.kind === "DataStore").sort(byName).map(opt).join("");
+if (byId.has("ee-lan-user")) $("t-src").value = "ee-lan-user";
+const AUTH = "p-authentik";
+let traced = null;
+function clearTrace() {
+  traced = null; L.forEach((l) => l.path.classList.remove("trace", "auth")); unfocus(); showDefault();
+}
+function trace(srcId, dstId) {
+  if (!srcId || !dstId || srcId === dstId) return;
+  if (state.risky) { state.risky = false; $("f-risky").checked = false; applyFilters(); render(); }
+  pinned = null; D.nodes.forEach((m) => m.g.classList.remove("pin"));
+  const paths = findPaths(srcId, dstId), name = (id) => byId.get(id).name;
+  const head = `<h2>${esc(name(srcId))} → ${esc(name(dstId))}</h2>`;
+  if (!paths.length) {
+    clearTrace(); $("detail").innerHTML = head + `<p class="hint">No flow path in the model between these two (up to 6 hops). Either the data does not exist yet, or a flow is missing: see the <b>Unresolved</b> and <b>needs annotation</b> gaps.</p>`;
+    return;
+  }
+  const onNodes = new Set(), onLinks = new Set();
+  paths.forEach((p) => p.forEach((l) => { onLinks.add(l); onNodes.add(l.s); onNodes.add(l.t); }));
+  // the authentication branch: any flow from a node on the path to Authentik
+  const authLinks = [];
+  onNodes.forEach((id) => (adj.get(id) || []).forEach((l) => { if (l.t === AUTH && !onLinks.has(l)) authLinks.push(l); }));
+  authLinks.forEach((l) => { onNodes.add(l.s); onNodes.add(l.t); });
+  traced = { srcId, dstId };
+  svg.classList.add("focus");
+  L.forEach((l) => { l.path.classList.toggle("on", onLinks.has(l) || authLinks.includes(l)); l.path.classList.toggle("trace", onLinks.has(l) || authLinks.includes(l)); l.path.classList.toggle("auth", authLinks.includes(l)); });
+  D.nodes.forEach((m) => m.g.classList.toggle("on", onNodes.has(m.id)));
+  const hop = (l) => l.flows.map((f) => flowRow(f, l.src.name, l.dst.name)).join("");
+  const chain = (p) => [name(p[0].s)].concat(p.map((l) => name(l.t))).map(esc).join(" → ");
+  const best = paths[0];
+  $("detail").innerHTML = head + `<div class="kind">${paths.length} path${paths.length > 1 ? "s" : ""} found (shortest first)${paths.length >= 80 ? ", capped" : ""}</div>` +
+    `<div class="kind" style="margin-top:8px"><b>Shortest path</b></div><ol>${best.map(hop).join("")}</ol>` +
+    (authLinks.length ? `<div class="kind" style="margin-top:10px"><b>Authentication on this path</b> (dashed)</div><ul>${authLinks.map(hop).join("")}</ul>` : "") +
+    (paths.length > 1 ? `<div class="kind" style="margin-top:10px"><b>Other paths</b></div><ul>${paths.slice(1, 9).map((p) => `<li>${chain(p)}</li>`).join("")}${paths.length > 9 ? `<li>… and ${paths.length - 9} more</li>` : ""}</ul>` : "");
+}
+$("t-go").onclick = () => trace($("t-src").value, $("t-dst").value);
+$("t-clear").onclick = () => { $("t-dst").value = ""; clearTrace(); };
+
+/* what Authentik protects: derived from the edges that name it */
+function authentikPanel(n) {
+  if (n.id !== AUTH) return "";
+  const who = { "forward-auth": new Set(), oidc: new Set() };
+  L.filter((l) => l.type === "FLOW").forEach((l) => l.flows.forEach((f) => { if (who[f.auth]) who[f.auth].add(l.dst.name); }));
+  const direct = L.filter((l) => l.type === "FLOW" && l.t === AUTH).map((l) => l.src.name).sort();
+  const list = (set) => [...set].sort().map(esc).join(", ");
+  return `<div class="kind" style="margin-top:10px"><b>What uses Authentik</b></div><dl>` +
+    `<dt>Forward-auth (${who["forward-auth"].size})</dt><dd>${list(who["forward-auth"]) || "none"}</dd>` +
+    `<dt>OIDC (${who.oidc.size})</dt><dd>${list(who.oidc) || "none"}</dd>` +
+    `<dt>Flows into it</dt><dd>${direct.map(esc).join(", ")}</dd></dl>`;
+}
+
+/* ---------- table view ---------- */
+const rows = [];
+L.filter((l) => l.type === "FLOW").forEach((l) => l.flows.forEach((f) => rows.push({ from: l.src.name, to: l.dst.name, ...f })));
+rows.sort((a, b) => (b.risky - a.risky) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+$("tbl").innerHTML = `<thead><tr><th>From</th><th>To</th><th>Zones</th><th>Port</th><th>Auth</th><th>Encrypted</th><th>Class</th><th>Risk</th></tr></thead><tbody>` +
+  rows.map((r) => `<tr><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td>${r.fz || r.tz ? esc(r.fz) + " → " + esc(r.tz) : ""}</td><td>${esc(r.proto || "")}${r.port ? "/" + esc(r.port) : ""}</td><td>${esc(r.auth)}</td><td>${r.enc === true ? "yes" : r.enc === false ? "no" : "unknown"}</td><td>${esc(r.cls || "")}</td><td>${r.risky ? '<span class="risk">Risky</span>' : ""}</td></tr>`).join("") + "</tbody>";
+function tab(which) {
+  const g = which === "graph";
+  $("view-graph").hidden = !g; $("view-table").hidden = g;
+  $("tab-graph").setAttribute("aria-selected", g); $("tab-table").setAttribute("aria-selected", !g);
+}
+$("tab-graph").onclick = () => tab("graph"); $("tab-table").onclick = () => tab("table");
+$("theme").onclick = () => {
+  const root = document.documentElement, dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+};
+
+/* URL hash presets: #risky #zp #nozones #table #dark #light (combine with &) */
+const flags = new Set(location.hash.slice(1).split("&").filter(Boolean));
+if (flags.has("risky")) { state.risky = true; $("f-risky").checked = true; }
+if (flags.has("nopub")) { state.pub = true; $("f-pub").checked = true; }
+if (flags.has("zp")) { state.zp = true; $("f-zp").checked = true; }
+if (flags.has("nozones")) { state.zones = false; $("f-zones").checked = false; }
+if (flags.has("dark") || flags.has("light")) document.documentElement.dataset.theme = flags.has("dark") ? "dark" : "light";
+applyFilters(true); render(); showDefault();
+if (flags.has("table")) tab("table");
+const tr = [...flags].find((f) => f.startsWith("trace="));
+if (tr) { const [a, b] = tr.slice(6).split(","); $("t-src").value = a; $("t-dst").value = b; trace(a, b); }
+</script>
+</body>
+</html>

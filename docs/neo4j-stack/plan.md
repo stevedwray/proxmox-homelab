@@ -17,6 +17,8 @@ the stack's repo files itself, because each could be checked offline:
 | `terraform/lxc/ansible/playbooks/deploy-neo4j-stack.yml` | `ansible-playbook --syntax-check` |
 | `.env` (`LAB_IP_NEO4J`), `secrets/manifest.json` (`services/neo4j` entry) | `test_secrets_env.py` |
 
+**Current status:** [current-state.md](current-state.md). **Plan:** [Roadmap](#roadmap) below.
+
 Rebased 2026-10-31 onto `stable` as `work/neo4j-stack`. The first draft
 sat on a branch cut from `main` that was 564 commits behind `stable`.
 `stable` already had the same `flows.py` zone-policy fix, so that commit
@@ -216,19 +218,44 @@ gates:
     critical: true
 ```
 
-## Deferred (not in this pass)
+## Roadmap
 
-- **Metadata phases 1b, 2 and 3:** `stack.yaml`/`edge.yaml` properties and
-  `DEPENDS_ON`, the vulnerability and Authentik overlays, and observed flows
-  (see [metadata.md](metadata.md)).
+Updated at the 2026-10-31 checkpoint; the live state is in [current-state.md](current-state.md). Direction: threat-informed
+defence against MITRE ATT&CK. **Not** alerting. We are in the setup phase, and the phases below are ordered.
 
-- **CVE overlay:** attach `unified-cve-exposure` findings from OpenSearch to
-  `:VirtualMachine` nodes for vulnerability-aware attack paths. It needs
-  an OpenSearch read credential plus a `infra_seg` → `infra_seg` read
-  (same zone, no rule).
-- **Fixing the `flows.py` gaps** listed in README.md: duplicate route ids,
-  and processes referenced but not defined.
-- **Backups:** the `:Homelab` graph can be regenerated, but hand-authored
-  threat nodes can't. `docker_mount` has `backup_policy: include`, which
-  covers the volume via the LXC backup. A periodic `neo4j-admin database
-  dump` would be a cleaner restore point once real threat work exists.
+**0. Land the work (needs the operator).** Merge in this order: #547, #549, #553, #550, #551, #548, #552, merging
+`stable` into each next branch and re-running its validators, and retargeting the stacked PRs (#553, #552) to `stable`.
+Until then production is ahead of git in the ways listed in current-state.md.
+
+**1. Make the pipeline reliable** (after the merges).
+- Run the full populate from a `stable` checkout, so NetBox is refreshed on the new model without the one-section workaround.
+- Prove the daily workflow on `main`: it has never succeeded, and can only be proven there.
+- Re-provision `ci-runner-01` from `stable` (it needs the operator's `gh` login) so the pin matches and the self-update
+  metrics start.
+- Decide whether the runner should reach MikroTik, or accept that CI runs skip router data.
+
+**2. Deploy the asset facts.** The threat-model refresh, then an importer run, each with a preflight. Verify that
+Processes carry `platforms` and `technologies` and that `DEPENDS_ON` appears.
+
+**3. Finish the ATT&CK setup** (no analysis yet).
+- A lab-wide inventory of sensors and controls, so a second mapping does not restate Wazuh, Graylog, Harbor and the zone
+  policy. Verify the telemetry per host, read-only (the Wazuh manager's agent list is one query).
+- Derive a mapping's platforms and technologies from the model, so the YAML holds judgement only, and check the rest
+  against it.
+- Map a second process to prove the recipe scales (`proxy-stack`, which every request crosses, is the obvious one).
+- Design the detection-rule layer (which Wazuh and Graylog rules cover which techniques) so telemetry coverage can be
+  separated from detection coverage.
+
+**4. Then work through ATT&CK** (explicitly later). Review the assessments, read the coverage, decide what to do about the
+gaps. The open questions the repo cannot answer (is MFA and lockout enforced in Authentik; can its event stream be parsed
+in Graylog) belong here.
+
+**Model quality, alongside.** Annotate the flows with unknown auth and the Authentik `auth-dependency` flows; assign
+VLANs to NetBox prefixes (`ON_VLAN`); model downstream dependencies; resolve `RUNS_ON` for the six unlinked processes.
+
+**Later.** The CVE overlay (attach `unified-cve-exposure` findings from OpenSearch to `:VirtualMachine` nodes; needs an
+OpenSearch read credential and an `infra_seg` to `infra_seg` read, which is the same zone and needs no rule); observed
+flows (declared versus observed, source unverified); a periodic `neo4j-admin database dump` once hand-authored
+`:Threat` nodes exist, because `docker_mount` already has `backup_policy: include` for the volume.
+
+**Not planned.** Alerting from Neo4j or the threat model.

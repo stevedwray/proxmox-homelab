@@ -1,9 +1,9 @@
 # neo4j-stack
 
-Status: **deployed to `pve` 2026-10-31** (LXC 40016, `192.168.40.16`, edge
-routes live, importer timer armed for 04:30 daily). Browser connects through
-Traefik. One known data gap in the imported graph (`ON_VLAN`, see "Known gaps"
-below). Start with `plan.md`; the property design is in `metadata.md`.
+Status (checkpoint 2026-10-31): **deployed to `pve`** and in the **setup phase for threat-informed defence against MITRE
+ATT&CK** (not alerting). What is live, what is only in git, the pull-request merge order and the known gaps are in
+[current-state.md](current-state.md); the ordered plan is in [plan.md](plan.md#roadmap); the ATT&CK layer is in
+[attack.md](attack.md); the property design is in [metadata.md](metadata.md). The hand-back log below is the history.
 
 ## What this is
 
