@@ -322,3 +322,30 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   an "what uses Authentik" panel, and a table view. `build_graph_view.py` plus
   `graph_view.template.html` rebuild it; `export_from_model.py` previews a
   checkout's model without touching NetBox or Neo4j.
+
+### MITRE ATT&CK layer and the authentik-stack pilot (2026-10-31)
+
+- **Direction (operator):** Neo4j and the threat model are for threat-informed defence per MITRE ATT&CK, not alerting
+  (the alerting I had added was reverted). Scope for the pilot: Enterprise plus Containers, detection coverage in,
+  Authentik first. Full write-up: [attack.md](attack.md).
+- **Loaded:** ATT&CK Enterprise v20.0 from a pinned, byte-reproducible 56 KB dataset: 706 techniques, 44 mitigations,
+  106 data components, 703 detection strategies, 1,770 analytics. Overlay for `p-authentik`: 27 assessments (24 apply,
+  3 not applicable with reasons), 7 controls, 2 sensors, each with its evidence.
+- **Deploy:** `provision.sh --stack neo4j-stack` from the branch worktree: exit 0, ok=75 changed=5 failed=0.
+- **Verified in Neo4j:** every layer's counts match the dataset; no `:Attack*`, `:Sensor` or `:Control` node carries
+  `:Homelab`; the Homelab graph is unchanged (40 processes, 162 flows); and the layer survives an importer run
+  (3,353 nodes and 50 overlay relationships before and after).
+- **Cross-check:** telemetry coverage recomputed from the live graph (18 none, 5 partial, 1 no-analytic, 0 full) equals
+  the offline report exactly.
+- **A correction made on the way:** the first coverage figure said 5 techniques fully covered. It matched data
+  components regardless of platform, so Linux SSH logs counted as telemetry for brute force against Authentik's web
+  login. Fixed (platform-aware, with a test); the true figure is 0 full.
+- **Facts verified on the host (read-only, 192.168.20.10):** Wazuh agent with realtime FIM on `/etc`, binaries and
+  `/opt/authentik-stack`, `auth.log` and `syslog` read, SCA on; Docker logs to syslog to Graylog; **`auditd` inactive,
+  syscollector off**. The Docker socket proxy is read-only for writes (POST and IMAGES off) but plaintext and
+  unauthenticated for `GET /containers`.
+- **Corrected before loading:** I had written that Authentik serves "11 services"; 11 is the count of flow sources into
+  it. The real dependency is 9 OIDC applications, 22 forward-auth routes and Graylog's LDAP.
+- **Open:** whether MFA and lockout policies are enforced in Authentik (decides T1078 and T1110); whether Authentik's
+  event stream can be parsed in Graylog; enabling auditd. No detection-rule layer yet (Wazuh and Graylog rules per
+  technique).

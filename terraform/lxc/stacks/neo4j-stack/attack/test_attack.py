@@ -1,15 +1,19 @@
 """Tests for the ATT&CK extractor and loader. Run: python3 -m unittest test_attack.py (from this directory)."""
+import contextlib
 import copy
-import gzip
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-import attack_load as load
-import extract_attack as extract
-
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))  # so this runs from the repo root as well as from this directory
+
+import attack_load as load  # noqa: E402
+import extract_attack as extract  # noqa: E402
+
 REAL_DATASET = HERE / "attack-enterprise-20.0.json.gz"
 REAL_MAPPING = HERE.parents[3] / ".." / "docs" / "threat-model" / "attack" / "authentik-stack.yaml"
 
@@ -190,8 +194,9 @@ class Extract(unittest.TestCase):
             src.write_text(json.dumps(self._bundle()))
             a, b = Path(d) / "a" / "out.gz", Path(d) / "b" / "out.gz"
             a.parent.mkdir(); b.parent.mkdir()
-            extract.main([str(src), str(a)])
-            extract.main([str(src), str(b)])
+            with contextlib.redirect_stdout(io.StringIO()):
+                extract.main([str(src), str(a)])
+                extract.main([str(src), str(b)])
             self.assertEqual(a.read_bytes(), b.read_bytes())
 
 

@@ -185,7 +185,7 @@ assessments:
   - technique: T1133
     applies: false
     basis: >-
-      Not applicable for the same reason; there is no external remote-access path to this host.
+      Not applicable: there is no external remote-access path to this host (see T1190; operator decision 2026-09-25).
 
   # ---- the host, containers and what they hold ------------------------------------------------------------------
   - technique: T1552.001
