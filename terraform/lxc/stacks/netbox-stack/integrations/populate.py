@@ -609,6 +609,31 @@ def _primary_ip_id(obj: dict, field: str = "primary_ip4") -> int | None:
     return value
 
 
+def _ip_held_by_other_vm(nb, address: str, iface_id: int) -> str | None:
+    """Name of the other VM that holds `address` as its primary IP, if any.
+
+    NetBox refuses to reassign an address while it is a VM's primary IP, so the
+    PATCH is a 400 that aborts the whole run. This happens when one guest
+    exists twice (a live copy on one node and a stopped copy on another, as
+    during an evacuation soak) and both carry the same address. Leaving the
+    live VM's address alone is the right outcome; the caller skips and warns.
+    """
+    found = nb.get(NB_IPAM_IP_ADDRESSES, address=address)["results"]
+    if not found:
+        return None
+    existing = found[0]
+    holder_iface = existing.get("assigned_object_id")
+    if existing.get("assigned_object_type") != "virtualization.vminterface" or holder_iface in (None, iface_id):
+        return None
+    vm_ref = (existing.get("assigned_object") or {}).get("virtual_machine") or {}
+    if vm_ref.get("id") is None:
+        return None
+    holder = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_ref["id"])["results"]
+    if holder and _primary_ip_id(holder[0]) == existing["id"]:
+        return holder[0].get("name") or vm_ref.get("name") or str(vm_ref["id"])
+    return None
+
+
 def _tag_slugs(obj: dict) -> set[str]:
     """Return a set of tag slugs from one NetBox object dict."""
     tags = obj.get("tags", [])
@@ -1305,6 +1330,12 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
         )["results"][0]
         iface = nb.get(NB_VIRT_INTERFACES,
                        virtual_machine_id=vm["id"], name="eth0")["results"][0]
+
+        holder = _ip_held_by_other_vm(nb, vm_def["ip"], iface["id"])
+        if holder:
+            print(f"  skip: {vm_def['ip']} is the primary IP of {holder}; leaving it ({vm['name']} shares the address)")
+            _reconcile_vm_services(nb, vm, vm_def, vm_env, vm_env_managed_tags, service_observed_at)
+            continue
 
         ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": vm_def["ip"]}, {
             "assigned_object_type": "virtualization.vminterface",

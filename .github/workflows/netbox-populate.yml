@@ -40,6 +40,11 @@ jobs:
       # public repo's self-hosted runner deliberately doesn't get it. The
       # container only wrapped python3 + pyyaml, which deploy-ci-runner.yml
       # installs (python3-yaml).
+      #
+      # The non-secret config (LAB_IP_NETBOX, PROXMOX_HOST, LAB_DOMAIN, ...)
+      # comes from the tracked .env and .env.pve, sourced in the same order
+      # as scripts/with-secrets-prod-lib.sh. Without them populate.py dies
+      # with "NetBox client requires NETBOX_URL or LAB_IP_NETBOX".
       - name: Run populate
         env:
           DOCKER_SOCKET_PROXY_URL_TEMPLATE: ${{ secrets.DOCKER_SOCKET_PROXY_URL_TEMPLATE }}
@@ -48,5 +53,9 @@ jobs:
           NETBOX_NETWORK_ENV: pve
           NETBOX_GUEST_SSH_USER: automation
         run: |
+          set -a
+          . ./.env
+          . ./.env.pve
+          set +a
           python3 scripts/secrets_env.py --profile ci-netbox-populate -- \
             python3 terraform/lxc/stacks/netbox-stack/integrations/populate.py
