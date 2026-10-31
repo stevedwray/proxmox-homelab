@@ -1,8 +1,8 @@
 # Alert investigator: ask the local model to triage an alert
 
 Status 2026-10-31: **live on the monitoring-stack (`pve`, 192.168.20.12)**, proven against the real Framework model
-(`glm-5.3-flash-upstream`) with a test alert and a real outage (drill A). Two proof steps wait for a real alert (see
-"Not verified yet"). Deployed with the silence bot's playbook under approval `alert-investigator`.
+(`glm-5.3-flash-upstream`) with a test alert, a real outage (drill A) and real vulnerability alerts. One proof step waits for a
+real page (see "Not verified yet"). Deployed with the silence bot's playbook under approval `alert-investigator`.
 
 **What the proof showed (2026-10-30/31)**
 
@@ -13,7 +13,7 @@ Status 2026-10-31: **live on the monitoring-stack (`pve`, 192.168.20.12)**, prov
 | First test run | Failed `Name does not resolve` for `framework.gibbsgreatly.xyz`: see Findings. |
 | 2. Drill A (`docker stop cadvisor`) | Alert after about 6 min; Telegram silent. Report: `up=0` for the cadvisor target only, host and other services healthy, `container_last_seen` flatlined at the stop time, scrape errors in Graylog; `needs-attention`. 21 tool calls, 407 s, 32 KB report. `[RESOLVED]` arrived about 7 min after the restart. |
 | 3. `page=true` in the silence link | Partly: Grafana does put custom rule labels in the link (`severity`, `stack` seen on the cadvisor alert). `page=true` itself needs a real page. |
-| 4. Harbor vulnerability alert | Not yet seen. |
+| 4. Harbor vulnerability alert | Passed (2026-10-31, four "Open critical vulnerabilities" messages): 8 to 10 tool calls, 186 to 198 s, reports name the CVEs with CVSS, EPSS and public-exploit status, say whether a fixed version exists, and separate images in use or in production from unused ones. KEV was not called out in the summaries seen. |
 
 **Findings that differ from the earlier text**
 
@@ -170,6 +170,10 @@ The play ends with the bot's startup line, which should now read
 - Logs: `docker logs discord-silence-bot` (one line per queued job and per finished one, with its duration).
 - A ⚠️ "Investigation failed: … Connection refused / 503" means Framework is down, or busy loading a model or with a
   benchmark. The ⚠️ is final for that message; react 🔍 on the alert's next message to try again.
+- **What 🔍 does nothing for:** a **Resolved** message (it has no alert labels, so the bot replies "nothing to investigate"),
+  a message older than 24 hours (skipped silently), a channel the bot does not watch, and a post that did not come from a
+  Grafana webhook. Only react on a message that is still firing. The bot adds 🔍 and 🌙 itself to fresh alerts that have a
+  silence link, so their absence is the sign that a message is not investigable. The queue holds 5 jobs; a sixth gets a final ⚠.
 - Each investigation is a handful of model calls. Framework serves one request per slot, so an investigation running
   during a benchmark slows both. Automatic runs are limited to pages for that reason.
 - Tests: `cd terraform/lxc/ansible/files && python3 -m unittest test_discord_silence_bot test_alert_investigator`
@@ -186,11 +190,10 @@ The play ends with the bot's startup line, which should now read
 1. **`page=true` in a real page's silence link** (proof step 3). Custom labels are confirmed to appear (`severity`, `stack`).
    After the next real page, `docker logs discord-silence-bot | grep "(auto)"` shows whether the automatic run started. If
    it does not, read labels from Grafana's alert API instead.
-2. **A Harbor vulnerability alert** (proof step 4): the report should name the CVEs, the fixed version and KEV status.
-3. **Whether Graylog honours `token_ttl: P3650D`.**
+2. **Whether Graylog honours `token_ttl: P3650D`.**
 
 Resolved: Graylog's search API works on 7.1; the loaded model calls tools (4 calls on a test alert, 21 on a real one);
-time per investigation is 1 to 7 minutes.
+time per investigation is 1 to 7 minutes; a vulnerability alert is about 3 minutes.
 
 ## Not built (possible next steps)
 
