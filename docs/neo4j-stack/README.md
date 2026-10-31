@@ -97,3 +97,12 @@ preamble).
   once populate runs again.
 - Unexpected: auto-mode classifier blocked the mutating ssh calls, so the
   operator ran the runner fixes by hand.
+
+### Steps 2-3 and 4 - token, OpenBao write, pve profile (2026-10-31)
+
+- Operator created the read-only NetBox token and wrote `services/neo4j`
+  (`NEO4J_PASSWORD`, `NEO4J_NETBOX_READONLY_TOKEN`) to OpenBao by hand.
+- Step `neo4j-01-pve-profile` applied as written: `services/neo4j` added to the
+  `pve` profile only. All four gates passed (json-valid, pve-profile-has-neo4j,
+  one-line-diff 1/1, loader-tests 12 OK).
+- Pending: operator confirms `./with-secrets-prod` still loads cleanly.
