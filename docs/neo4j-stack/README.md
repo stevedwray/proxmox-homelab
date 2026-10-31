@@ -106,3 +106,13 @@ preamble).
   `pve` profile only. All four gates passed (json-valid, pve-profile-has-neo4j,
   one-line-diff 1/1, loader-tests 12 OK).
 - Pending: operator confirms `./with-secrets-prod` still loads cleanly.
+
+### Step 5a - LXC created (2026-10-31)
+
+- `terragrunt plan`: 5 to add, 0 change, 0 destroy. Exactly one is the LXC;
+  the other four are the standard per-stack helpers (inventory file, SDN vars
+  file, SDN-attachment `null_resource`, epoch marker).
+- `terragrunt apply` in `terraform/lxc/environments/pve/neo4j-stack`: 5 added,
+  0 changed, 0 destroyed. vmid 40016, 192.168.40.16/24, `infra_seg`.
+- Verified: pings, ssh works, hostname `neo4j-stack`, Docker 26.1.5 present.
+- Next: `provision.sh --stack neo4j-stack` (first real run of the importer).
