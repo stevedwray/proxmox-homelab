@@ -342,3 +342,14 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   deploy (Grafana rules, scrape target), each with its own preflight. The runner-side alerts are PR #551.
 - **Expect the third rule to fire** about 36 hours after the last refresh unless the daily populate is running
   again (PR #550 and the runner fix); that is the intended signal.
+
+### Pipeline-alert metrics deployed (2026-10-31)
+
+- `provision.sh --stack neo4j-stack`: exit 0, ok=73 changed=6 failed=0 (`ansible_host` 192.168.40.16). The exporter
+  restarted with `--collector.textfile.directory=/var/lib/node_exporter/textfile`; the importer env carries
+  `NEO4J_METRICS_FILE`.
+- Verified on the host after an on-demand import: `neo4j_import_last_run_ok 1`, last success = now, threat-model
+  context timestamp = the 04:09 UTC refresh, 284 nodes and 395 relationships (equal to the live graph's totals).
+- **Not deployed on purpose:** the monitoring-stack deploy (Grafana rules, scrape target) and the ci-runner-01
+  provision. Both are shared production services whose changes sit on unmerged branches (#548 and #551); they
+  deploy from `stable` after the merges, each with its own preflight. Until the monitoring deploy, nothing alerts.
