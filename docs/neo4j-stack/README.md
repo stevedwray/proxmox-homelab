@@ -2,8 +2,8 @@
 
 Status: **deployed to `pve` 2026-10-31** (LXC 40016, `192.168.40.16`, edge
 routes live, importer timer armed for 04:30 daily). Browser connects through
-Traefik. Two known gaps in the imported graph (see "Known gaps" below); the
-`RUNS_ON` one is an importer bug. Start with `plan.md`.
+Traefik. One known data gap in the imported graph (`ON_VLAN`, see "Known gaps"
+below). Start with `plan.md`.
 
 ## What this is
 
@@ -48,14 +48,15 @@ preamble).
 
 ## Known gaps the graph will show (not fixed here)
 
-- **`RUNS_ON` is never created (importer bug).** The importer joins
-  `Process.name` to the NetBox VM `name`, but NetBox VM names carry an `@node`
-  suffix (`netbox-stack@pve`, `cse-code-eval@pve-tiny`) while Process names
-  are bare (`netbox-stack`). Nothing matches, so the DFD-to-inventory join is
-  empty and every VM shows as drift in the "inventory drift" query. The unit
-  tests pass because their fixtures use bare names. A fix has to strip the
-  `@node` suffix and pick the VM in the cluster that belongs to the modelled
-  environment, since a stack can have VMs on several nodes.
+- **`RUNS_ON` initially matched nothing (importer bug, fixed 2026-10-31).**
+  NetBox VM names are `<stack>@<node>` but Process names are bare, so the
+  join was empty. The importer now strips the node suffix, prefers the VM in
+  `pve-cluster` (override with `NEO4J_HOME_CLUSTER`), accepts a stack's only
+  VM if it lives on another node, and adds no edge when several non-home VMs
+  match. Live result: 19 of 21 Processes linked. The other two are real drift:
+  `dns-stack` (destroyed on pve 2026-09-08) and `dhcp-test-client-01` (no
+  NetBox VM). `mcp-utility-stack` links to its `@pve-tiny` VM because NetBox
+  still says so (stale since the Oct 23 populate; it moved back to pve).
 - **`ON_VLAN` is never created (NetBox data gap).** The importer is correct,
   but NetBox's prefixes have no VLAN assigned (13 VLANs and 10 prefixes exist,
   unlinked).
@@ -217,3 +218,14 @@ preamble).
 Relationships: EXPOSES 76, FLOWS_TO 131, HAS_IP 44, HOSTED_ON 8, IN_PREFIX 29,
 IN_ZONE 21. No `RUNS_ON` or `ON_VLAN` (see Known gaps). Cypher errors: none.
 Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
+
+### Step 8b - RUNS_ON fix redeployed (2026-10-31)
+
+- Importer fix `b26a313e` (15 unit tests; 4 of the 6 new ones fail on the old
+  code). `provision.sh --stack neo4j-stack`: exit 0, ok=71 changed=4 failed=0.
+  `ansible_host` 192.168.40.16.
+- After: RUNS_ON 19, every other node and relationship count unchanged
+  (FLOWS_TO 131, VirtualMachine 49, Process 21). No Process has more than one
+  RUNS_ON. Unlinked: `dns-stack`, `dhcp-test-client-01`.
+- Process note: the first verification call failed because `TASK_APPROVAL`
+  was not set in that shell; it ran no remote command and was re-run.
