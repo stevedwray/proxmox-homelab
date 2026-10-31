@@ -59,4 +59,18 @@ preamble).
 
 ## Hand-back log
 
-_No steps executed yet._
+### Step 0 - setup and offline checks (2026-10-31)
+
+- Checkout `work/neo4j-stack`, 0 commits behind `origin/stable`.
+- Offline validators all pass: importer unit tests (9), `validate-compose.sh`,
+  `validate-stack-metadata.sh --check-contract-sections`,
+  `validate-edge-manifests.py` (25 manifests), and `ansible-playbook
+  --syntax-check` on `deploy-neo4j-stack.yml`.
+- Unexpected: the syntax check fails with "role 'lxc_base' not found" unless
+  run with `ANSIBLE_CONFIG` and `ANSIBLE_ROLES_PATH` pointing at
+  `terraform/lxc/ansible`. With them set it passes.
+- Unexpected: `pct`/`qm` don't exist on the workstation, so the wrapper
+  can't run them directly. The check ran as `./with-secrets-prod ssh pve`
+  with a stdin script (read-only).
+- pve confirmed as the target node. vmid 40016 absent from `pct list` and
+  `qm list`; no CT/VM config references 192.168.40.16; the IP does not ping.
