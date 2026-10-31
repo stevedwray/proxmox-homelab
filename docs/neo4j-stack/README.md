@@ -272,3 +272,19 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   `node`/`disk`/`platform`/`observed_state` on VMs, `scope` on IPs,
   `last_seen` on services and `matched_by` on `RUNS_ON`. 22 unit tests. Not
   yet deployed when this entry was written; the deploy entry follows below.
+
+### Metadata phase 1 deployed (2026-10-31)
+
+- `provision.sh --stack neo4j-stack`: exit 0, ok=71 changed=2 failed=0
+  (`ansible_host` 192.168.40.16). Totals unchanged (FLOWS_TO 138,
+  VirtualMachine 50).
+- Live check: `auth_kind` none 54, unknown 51, forward-auth 20, oidc 10,
+  token 2, other 1; `encrypted` true 19, false 69, omitted 50; 23 flows cross
+  a zone unencrypted with no or unknown auth (matches the offline count on the
+  derived model). VM `observed_state` on 49 of 50 (the new `neo4j-stack@pve`
+  has no status text yet), `node`/`platform` on 50, service `last_seen` on
+  76 of 76, IP `scope` private on all 45, `RUNS_ON` `matched_by`
+  home-cluster 16, only-vm 3.
+- The model differs by 2 flows between this checkout (140, includes the
+  neo4j routes) and what the graph holds (138, from `stable`'s manifests); it
+  closes when this branch merges and populate runs.
