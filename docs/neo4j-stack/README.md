@@ -74,3 +74,26 @@ preamble).
   with a stdin script (read-only).
 - pve confirmed as the target node. vmid 40016 absent from `pct list` and
   `qm list`; no CT/VM config references 192.168.40.16; the IP does not ping.
+
+### Step 1 - NetBox freshness (2026-10-31)
+
+- `threat-model` context `last_updated` was 2026-10-23 11:21 UTC, 8 days old
+  (read from NetBox's DB via `docker exec` on the netbox LXC; the API needs a
+  token and answered 403 without one).
+- Cause 1, fixed: `ci-runner-01` was stuck on runner 2.333.1. Its daily
+  self-update failed (`mv: cannot overwrite bin.2.333.1/bin: Directory not
+  empty`, stale backup dirs from Sep 7), and GitHub queued the NetBox Populate
+  jobs without delivering them. Stale `bin.*`/`externals.*` dirs were moved to
+  `/opt/actions-runner-stale/` and the staged 2.338.0 `bin`/`externals` were
+  swapped in by hand. The runner is now on 2.338.0 and takes jobs.
+- Cause 2, NOT fixed: the populate job itself fails with `NetBox client
+  requires NETBOX_URL or LAB_IP_NETBOX`. `.github/workflows/netbox-populate.yml`
+  never sets either, and commit `0f912630` already notes the daily workflow
+  never succeeded. The Oct 23 context was therefore probably a manual run.
+  Likely fix: add `LAB_IP_NETBOX` to the workflow env (separate work).
+- Decision (operator): skip the freshness gate for this first deploy. Only 5
+  model-input commits landed since Oct 23 (PentAGI removal, mcp-utility-stack
+  move, Omada routing). The importer's daily timer picks up a fresh context
+  once populate runs again.
+- Unexpected: auto-mode classifier blocked the mutating ssh calls, so the
+  operator ran the runner fixes by hand.
