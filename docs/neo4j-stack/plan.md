@@ -17,6 +17,11 @@ the stack's repo files itself, because each could be checked offline:
 | `terraform/lxc/ansible/playbooks/deploy-neo4j-stack.yml` | `ansible-playbook --syntax-check` |
 | `.env` (`LAB_IP_NEO4J`), `secrets/manifest.json` (`services/neo4j` entry) | `test_secrets_env.py` |
 
+Rebased 2026-10-31 onto `stable` as `work/neo4j-stack`. The first draft
+sat on a branch cut from `main` that was 564 commits behind `stable`.
+`stable` already had the same `flows.py` zone-policy fix, so that commit
+was dropped.
+
 **Not validated offline:** the importer's Cypher against a live Neo4j.
 Docker couldn't stay up in the planning container. The playbook's last task
 runs a real import and fails if no `:Process` nodes land, so the first
@@ -92,20 +97,26 @@ MERGE (t)-[:TARGETS]->(p);
 Every mutating step below targets `pve`, a production node. Each one goes
 through the Production Credential Controls flow: Preflight Summary →
 operator "Proceed" → `export TASK_APPROVAL=<task>` →
-`./with-secrets-prod <cmd>`. That includes the step-1 netbox-stack redeploy
-and the edge publishing in step 6. The validation tier is "Ansible task or
+`./with-secrets-prod <cmd>`. That includes the edge publishing in step 6.
+**Deploy only from a checkout of `work/neo4j-stack` that is current with
+`stable`.** `provision.sh` and the wrappers ship whatever is checked out,
+including `secrets/manifest.json`. A stale base rolls production back (see
+the 2026-10-12 wrong-branch deploy). Before any mutating step, run
+`git fetch origin && git rev-list --count HEAD..origin/stable`. It must
+print `0`. If it doesn't, merge `stable` in and re-run the offline
+validators first. The validation tier is "Ansible task or
 role changes" plus a new additive stack, so it runs directly on `pve`, with
 no teardown and no pve-test-vm cycle. No MikroTik rule is needed:
 `edge_seg → infra_seg` has no default-deny (verified live 2026-08-29 for
 wazuh-stack), and the importer only talks to NetBox in its own zone.
 
-1. **Ship the `flows.py` fix to NetBox.** It's on this branch; netbox-stack
-   copies `flows.py` onto the LXC at deploy time.
-   `./with-secrets-prod scripts/provision.sh --stack netbox-stack`. Then
-   check that the next populate run (or a manual
-   `systemctl start netbox-populate.service` on the LXC) prints
-   `threat model config context 'threat-model' upserted` instead of
-   `warn: threat model derivation failed`.
+1. **Confirm the threat-model context is current** (read-only). `stable`
+   already carries the list-valued `from`/`to` fix in `flows.py`. Check that
+   NetBox's `threat-model` config context has a `last_updated` within the
+   last day, e.g. with `curl` against `/api/extras/config-contexts/?name=threat-model`
+   using a read-only token. If it's stale, find out why netbox-populate isn't
+   updating it before going further. The importer would faithfully copy a
+   stale model.
 
 2. **Create a read-only NetBox API token** for the importer: in the NetBox
    UI, Admin → API Tokens → Add, with **Write enabled unchecked**,
@@ -148,13 +159,17 @@ wazuh-stack), and the importer only talks to NetBox in its own zone.
    ./with-secrets-prod scripts/provision.sh --stack proxy-stack        # republishes Traefik output
    ./with-secrets-prod scripts/provision.sh --stack technitium-stack   # renders and publishes DNS
    ```
-   Per CLAUDE.md's Authentik/Traefik tier, then check 1–2 existing
-   forwardAuth routes (e.g. `netbox.`) still log in and route.
+   `render-edge-traefik.py` writes generated output. Check `git status`
+   afterwards and stage explicit paths only. Per CLAUDE.md's
+   Authentik/Traefik tier, then check that two existing consumers still log
+   in and route: `netbox.` (forwardAuth) and `dashboards.` (OIDC).
 
 7. **Verify by hand in a browser.** Open `https://neo4j.lab.gibbsgreatly.xyz`,
    complete Authentik, then connect Browser to
    `neo4j+s://neo4j-bolt.lab.gibbsgreatly.xyz:443` as user `neo4j`. Run
-   `MATCH (n:Homelab) RETURN labels(n)[0] AS kind, count(*) ORDER BY kind`.
+   `MATCH (n:Homelab) RETURN [l IN labels(n) WHERE l <> 'Homelab'][0] AS kind, count(*) ORDER BY kind`.
+   The browser must trust the homelab root CA (`certs/homelab-root.crt`)
+   for `neo4j+s://` to work.
    **If Browser can't reach Bolt through Traefik**, it's the one design
    assumption not proven offline (Bolt over websocket via a plain Traefik
    HTTP router). The fallback is `bolt://192.168.40.16:7687` directly from
@@ -168,8 +183,8 @@ title: Add services/neo4j to the pve OpenBao profile
 depends_on: []   # operator runbook step 3 (OpenBao write) must be done first -- confirm with the operator before running
 change: >
   In secrets/manifest.json, on the line that starts with `    "pve": {"auth": "approle", "role": "deploy-pve",`,
-  replace the exact substring `"services/netbox", "services/nextcloud"` with
-  `"services/netbox", "services/neo4j", "services/nextcloud"`. Change no other
+  replace the exact substring `"services/netbox", "services/nas"` with
+  `"services/netbox", "services/neo4j", "services/nas"`. Change no other
   line. In particular, leave the pve-tiny, pve-framework, pve-test-vm, pve-test and
   ci-netbox-populate profiles alone.
 scope:

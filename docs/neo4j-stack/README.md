@@ -40,14 +40,11 @@ Neo4j (:Homelab graph)  ◀── hand-authored :Threat / :Mitigation nodes (nev
 - **Importer:** a systemd timer on neo4j-stack itself, reading NetBox with a
   dedicated read-only token. It does not extend netbox-populate.
 
-## Fixed along the way
+## Branch
 
-- `flows.py` had been crashing on `pve`'s network intent since the greenbone
-  scan-reach policy (`to:` is a list) landed around 2026-08-16.
-  `populate_threat_model` swallows the exception, so **NetBox's
-  `threat-model` context has silently stopped updating since then.** Fixed
-  in this branch, with a unit test. netbox-stack has to be redeployed for the
-  fix to reach the populate timer (runbook step 1).
+Work lives on `work/neo4j-stack`, cut from `stable`. Deploy only from a
+checkout that is 0 commits behind `origin/stable` (see plan.md's runbook
+preamble).
 
 ## Known gaps the graph will show (not fixed here)
 
