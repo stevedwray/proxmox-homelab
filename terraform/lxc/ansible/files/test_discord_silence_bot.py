@@ -6,7 +6,8 @@ import discord_silence_bot as bot
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=timezone.utc)
 OWNER = "111"
 URL = "https://grafana.example/alerting/silence/new?alertmanager=grafana&matcher=alertname%3DScrape%20target%20down&matcher=instance%3D192.168.20.12%3A9100"
-CFG = {"owner": OWNER, "durations": bot.parse_durations(bot.DEFAULT_DURATIONS), "max_age_hours": 24, "channels": ["c1"]}
+CFG = {"owner": OWNER, "durations": bot.parse_durations(bot.DEFAULT_DURATIONS), "max_age_hours": 24, "channels": ["c1"],
+       "seed": ["\U0001F50D", "\U0001F319"], "seed_max_age_hours": 2}
 
 
 class FakeDiscord:
@@ -147,7 +148,139 @@ class Config(unittest.TestCase):
     def test_channels_and_defaults(self):
         cfg = bot.load_config({"DISCORD_BOT_TOKEN": "t", "DISCORD_BOT_OWNER_ID": "1", "DISCORD_BOT_CHANNEL_IDS": "1, 2,", "GRAFANA_SILENCE_TOKEN": "g"})
         self.assertEqual((cfg["channels"], cfg["poll_seconds"], cfg["max_age_hours"]), (["1", "2"], 30.0, 24.0))
+        self.assertFalse(cfg["investigate"])  # off until the model endpoint is configured
+        self.assertEqual(cfg["auto_labels"], [("page", "true"), ("tripwire", "honeypot")])
+
+    def test_investigations_on_with_a_model_endpoint(self):
+        cfg = bot.load_config({"DISCORD_BOT_TOKEN": "t", "DISCORD_BOT_OWNER_ID": "1", "DISCORD_BOT_CHANNEL_IDS": "1",
+                               "GRAFANA_SILENCE_TOKEN": "g", "INVESTIGATOR_LLM_URL": "http://f:8080/v1", "INVESTIGATOR_LLM_API_KEY": "k",
+                               "INVESTIGATE_AUTO_LABELS": ""})
+        self.assertTrue(cfg["investigate"])
+        self.assertEqual((cfg["auto_labels"], cfg["investigator"]["grafana_token"]), ([], "g"))
+
+
+PAGE_URL = URL + "&matcher=page%3Dtrue"
+MAG = "\U0001F50D"
+
+
+class InvDiscord(FakeDiscord):
+    def __init__(self, reactors=None, fail_file=False):
+        super().__init__(reactors)
+        self.files, self.fail_file = [], fail_file
+
+    def reply_with_file(self, channel, message, text, filename, content):
+        if self.fail_file:
+            raise RuntimeError("403 missing permission")
+        self.files.append((text, filename, content))
+
+
+def inv(discord=None, runner=None, **cfg):
+    config = {**CFG, "auto_labels": bot.parse_label_pairs(bot.DEFAULT_AUTO_LABELS), "auto_max_age_minutes": 60,
+              "auto_repeat_hours": 12, **cfg}
+    return bot.Investigations(config, discord or InvDiscord(), runner or (lambda job: ("ok", "r.md", "# report")), max_queue=2)
+
+
+class Investigating(unittest.TestCase):
+    def test_owner_magnifier_queues_once_and_marks_hourglass(self):
+        d = InvDiscord({MAG: [OWNER]})
+        i = inv(d)
+        msg = message(reactions=(MAG,))
+        self.assertEqual(i.consider(msg, "c1", NOW), "investigation queued (asked)")
+        self.assertEqual(d.reactions, [bot.QUEUED])
+        self.assertIsNone(i.consider(msg, "c1", NOW))  # already pending
+        job = i.jobs.get_nowait()
+        self.assertEqual(job["alerts"], [{"alertname": "Scrape target down", "instance": "192.168.20.12:9100"}])
+
+    def test_someone_elses_magnifier_is_ignored(self):
+        self.assertIsNone(inv(InvDiscord({MAG: ["999"]})).consider(message(reactions=(MAG,)), "c1", NOW))
+
+    def test_a_fresh_page_is_investigated_without_asking_but_only_once(self):
+        i = inv()
+        page = message(reactions=(), embed_text=f"x [silence]({PAGE_URL})", age_hours=0.1)
+        self.assertEqual(i.consider(page, "c1", NOW), "investigation queued (auto)")
+        repeat = {**page, "id": "m2"}  # Grafana re-sends a page every 30 minutes
+        self.assertIsNone(i.consider(repeat, "c1", NOW))
+
+    def test_non_page_or_old_page_is_not_auto_investigated(self):
+        i = inv()
+        self.assertIsNone(i.consider(message(reactions=(), age_hours=0.1), "c1", NOW))
+        self.assertIsNone(i.consider(message(reactions=(), embed_text=f"x [silence]({PAGE_URL})", age_hours=2), "c1", NOW))
+
+    def test_finished_message_is_skipped(self):
+        for mark in (bot.REPORTED, "⚠️"):
+            msg = message(reactions=(MAG, mark), me=(mark,))
+            self.assertIsNone(inv(InvDiscord({MAG: [OWNER]})).consider(msg, "c1", NOW))
+
+    def test_hourglass_without_result_after_a_restart_is_resumed(self):
+        d = InvDiscord()
+        msg = message(reactions=(bot.QUEUED,), me=(bot.QUEUED,))
+        self.assertEqual(inv(d).consider(msg, "c1", NOW), "investigation queued (resumed)")
+        self.assertEqual(d.reactions, [])  # the hourglass is already there
+
+    def test_resolved_message_explains_there_is_nothing_to_investigate(self):
+        d = InvDiscord({MAG: [OWNER]})
+        self.assertEqual(inv(d).consider(message(reactions=(MAG,), embed_text="resolved, no link"), "c1", NOW), "no-labels")
+        self.assertEqual(d.reactions, [bot.INV_FAILED])
+
+    def test_full_queue_says_busy(self):
+        d = InvDiscord({MAG: [OWNER]})
+        i = inv(d)
+        for n in range(3):
+            result = i.consider({**message(reactions=(MAG,)), "id": f"m{n}"}, "c1", NOW)
+        self.assertEqual(result, "busy")
+        self.assertIn("Too many", d.replies[-1])
+
+    def test_result_is_posted_with_the_report_and_marked(self):
+        d = InvDiscord()
+        self.assertEqual(inv(d).run_one({"channel": "c1", "message": "m1"}), "investigated")
+        self.assertEqual((d.files, d.reactions), ([("ok", "r.md", "# report")], [bot.REPORTED]))
+
+    def test_attachment_refused_still_posts_the_summary(self):
+        d = InvDiscord(fail_file=True)
+        inv(d).run_one({"channel": "c1", "message": "m1"})
+        self.assertIn("Could not attach", d.replies[0])
+        self.assertEqual(d.reactions, [bot.REPORTED])
+
+    def test_model_failure_is_reported_once(self):
+        def boom(job):
+            raise RuntimeError("framework unreachable")
+        d = InvDiscord()
+        self.assertEqual(inv(d, boom).run_one({"channel": "c1", "message": "m1"}), "investigation failed")
+        self.assertEqual(d.reactions, [bot.INV_FAILED])
+        self.assertIn("framework unreachable", d.replies[0])
+
+    def test_investigation_markers_never_block_silencing(self):
+        msg = message(reactions=("\U0001F44D", bot.REPORTED), me=(bot.REPORTED,))
+        self.assertEqual(run(msg)[0], "silenced")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Seeding(unittest.TestCase):
+    def test_fresh_alert_gets_the_buttons_once(self):
+        d, msg = FakeDiscord(), message(reactions=(), age_hours=0.1)
+        self.assertEqual(bot.seed_reactions(msg, "c1", CFG, d, NOW), ["\U0001F50D", "\U0001F319"])
+        self.assertEqual(bot.seed_reactions(message(reactions=("\U0001F50D", "\U0001F319"), me=("\U0001F50D", "\U0001F319"), age_hours=0.1), "c1", CFG, d, NOW), [])
+
+    def test_old_alert_resolved_message_and_non_webhook_are_left_alone(self):
+        d = FakeDiscord()
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=5), "c1", CFG, d, NOW), [])
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=0.1, embed_text="resolved, no link"), "c1", CFG, d, NOW), [])
+        self.assertEqual(bot.seed_reactions(message(reactions=(), age_hours=0.1, webhook=False), "c1", CFG, d, NOW), [])
+        self.assertEqual(d.reactions, [])
+
+    def test_the_bots_own_button_is_not_a_request(self):
+        msg = message(reactions=("\U0001F319",), me=("\U0001F319",), age_hours=0.1)
+        d = FakeDiscord({"\U0001F319": [OWNER]})  # would silence if it counted
+        self.assertIsNone(run(msg, d)[0])
+        self.assertEqual(d.reactions, [])
+
+    def test_owner_clicking_the_seeded_button_still_works(self):
+        msg = message(reactions=("\U0001F319",), me=("\U0001F319",), age_hours=0.1)
+        msg["reactions"][0]["count"] = 2  # the bot plus the owner
+        self.assertEqual(run(msg, FakeDiscord({"\U0001F319": [OWNER]}))[0], "silenced")
+
+    def test_magnifier_seed_is_dropped_when_investigations_are_off(self):
+        self.assertEqual(bot.cfg_for_seed(CFG, None)["seed"], ["\U0001F319"])

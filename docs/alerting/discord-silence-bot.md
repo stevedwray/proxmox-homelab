@@ -19,6 +19,10 @@ You react to a Grafana alert message in Discord. The bot silences that alert in 
 - On any failure it adds ❌ and says why. A ✅ or ❌ from the bot means "handled": it never acts on that message again.
 - Removing the silence early: Grafana, Alerting, Silences, as before.
 
+**Investigations:** the same bot also runs alert investigations with the local model: react 🔍 (pages are investigated
+automatically). See [alert-investigator.md](alert-investigator.md). That needs the **Attach Files** permission as well
+(invite permissions `101440` instead of `68672`). It also pre-adds 🔍 and 🌙 to fresh alerts as one-click buttons.
+
 ## How it works
 
 1. Every 30 seconds the bot lists the latest 50 messages in each alert channel (Discord REST API; no websocket, no libraries).
@@ -99,5 +103,5 @@ The play prints the bot's startup line, for example `bot 'homelab-alerts' watchi
 - Logs: `docker logs discord-silence-bot` on the monitoring host (one line per silenced or failed message, and per poll failure).
 - Restart: `docker restart discord-silence-bot`.
 - Roll back: `docker compose -f /opt/discord-silence-bot/docker-compose.yml down`, and delete the service account in Grafana.
-- Tests: `cd terraform/lxc/ansible/files && python3 -m unittest test_discord_silence_bot` (19 tests, no network).
+- Tests: `cd terraform/lxc/ansible/files && python3 -m unittest test_discord_silence_bot` (32 tests, no network; 13 cover investigations).
 - Not monitored by itself on purpose: a dead bot only means reactions do nothing.
