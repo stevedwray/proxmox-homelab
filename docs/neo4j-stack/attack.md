@@ -81,6 +81,22 @@ Process, derived from `stack.yaml`, `docker-compose.yml` and `edge.yaml`:
 
 Built and tested; **not yet deployed** (it needs the threat-model refresh and an importer run).
 
+## Seeing it
+
+`build_matrix_view.py` makes a self-contained page of the whole ATT&CK matrix with one process's assessments marked.
+It builds offline from the pinned dataset and the mapping (no Neo4j, no network), so it is reproducible:
+
+```bash
+cd terraform/lxc/stacks/neo4j-stack/attack
+python3 build_matrix_view.py --dataset attack-enterprise-20.0.json.gz \
+  --mapping ../../../../docs/threat-model/attack/authentik-stack.yaml \
+  --out ../../../../docs/neo4j-stack/artifacts/attack-matrix-authentik.html
+```
+
+The encoding is neutral: a technique is **applies**, **not applicable** (a recorded decision) or **not assessed**.
+Telemetry detail is in the side panel on demand rather than drawn as colour. URL presets: `#dark`, `#subs`,
+`#assessed`, `#t=T1110.001` (pin a technique).
+
 ## Querying it
 
 ```cypher

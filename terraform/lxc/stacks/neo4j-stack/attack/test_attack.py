@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # so this runs from the repo root as well as from this directory
 
 import attack_load as load  # noqa: E402
+import build_matrix_view as matrix  # noqa: E402
 import extract_attack as extract  # noqa: E402
 
 REAL_DATASET = HERE / "attack-enterprise-20.0.json.gz"
@@ -198,6 +199,64 @@ class Extract(unittest.TestCase):
                 extract.main([str(src), str(a)])
                 extract.main([str(src), str(b)])
             self.assertEqual(a.read_bytes(), b.read_bytes())
+
+
+class MatrixView(unittest.TestCase):
+    def test_data_carries_status_basis_controls_and_telemetry_detail(self):
+        m = copy.deepcopy(MAPPING)
+        m["assessments"][1] = {"technique": "T1499", "applies": True, "basis": "available   service", "platforms": ["Linux"]}
+        d = matrix.build_data(DATASET, m)
+        login = d["assessed"]["T1110.001"]
+        self.assertTrue(login["applies"])
+        self.assertEqual(login["controls"][0]["mitigation"], "M1032 Multi-factor Authentication")
+        self.assertEqual(login["analytics"][0]["needs"], ["User Account Authentication"])
+        self.assertEqual(login["analytics"][0]["have"], [])           # collected on Linux, assessed on the IdP surface
+        self.assertEqual(d["assessed"]["T1499"]["basis"], "available service")  # whitespace collapsed
+        self.assertEqual(d["techniques"]["T1110.001"]["parent"], "T1110")
+
+    def test_not_applicable_carries_its_reason_and_no_coverage(self):
+        d = matrix.build_data(DATASET, MAPPING)
+        na = d["assessed"]["T1499"]
+        self.assertFalse(na["applies"])
+        self.assertEqual(na["basis"], "not reachable")
+        self.assertNotIn("analytics", na)
+
+    def test_columns_follow_the_enterprise_order(self):
+        ds = copy.deepcopy(DATASET)
+        ds["tactics"] = [["TA0040", "Impact", "impact"], ["TA0006", "Credential Access", "credential-access"],
+                         ["TA9999", "Brand New", "brand-new"]]
+        order = [s for s, _n in matrix.build_data(ds, MAPPING)["tactics"]]
+        self.assertEqual(order, ["credential-access", "impact", "brand-new"])  # known order first, unknown last
+
+    def test_an_invalid_mapping_builds_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = copy.deepcopy(MAPPING)
+            bad["assessments"][0]["technique"] = "T9999"
+            (Path(d) / "m.json").write_text(json.dumps(bad))
+            gz = Path(d) / "ds.json.gz"
+            import gzip as _gz
+            with _gz.open(gz, "wt") as fh:
+                json.dump(DATASET, fh)
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = matrix.main(["--dataset", str(gz), "--mapping", str(Path(d) / "m.json"), "--out", str(Path(d) / "o.html")])
+            self.assertEqual(rc, 2)
+            self.assertFalse((Path(d) / "o.html").exists())
+
+    def test_the_page_embeds_the_data_and_cannot_be_broken_out_of(self):
+        with tempfile.TemporaryDirectory() as d:
+            m = copy.deepcopy(MAPPING)
+            m["assessments"][0]["basis"] = "</script><script>alert(1)</script>"
+            (Path(d) / "m.json").write_text(json.dumps(m))
+            import gzip as _gz
+            gz = Path(d) / "ds.json.gz"
+            with _gz.open(gz, "wt") as fh:
+                json.dump(DATASET, fh)
+            out = Path(d) / "o.html"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(matrix.main(["--dataset", str(gz), "--mapping", str(Path(d) / "m.json"), "--out", str(out)]), 0)
+            html = out.read_text()
+            self.assertNotIn("__DATA__", html)
+            self.assertEqual(html.count("</script>"), 1)  # only the page's own closing tag
 
 
 @unittest.skipUnless(REAL_DATASET.exists(), "pinned dataset not present")

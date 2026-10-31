@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATT&amp;CK matrix view</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.12);
+    --accent: #2a78d6; --accent-bg: rgba(42,120,214,.13);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+      --accent: #3987e5; --accent-bg: rgba(57,135,229,.20);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+    --accent: #3987e5; --accent-bg: rgba(57,135,229,.20);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1500px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 22px; margin: 0 0 2px; font-weight: 650; }
+  .sub { margin: 0 0 14px; color: var(--ink2); }
+  .kpis { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; min-width: 130px; }
+  .kpi b { display: block; font-size: 24px; font-weight: 650; line-height: 1.15; } .kpi span { color: var(--ink2); font-size: 12.5px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 0 0 10px; }
+  label.chip { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; color: var(--ink2); padding: 6px 10px;
+               border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  label.chip input { accent-color: var(--accent); margin: 0; }
+  .grp { color: var(--ink2); font-size: 12.5px; margin-right: -4px; }
+  button.theme { margin-left: auto; background: var(--surface); color: var(--ink2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 10px; color: var(--ink2); font-size: 12.5px; }
+  .legend .sw { display: inline-block; width: 26px; height: 16px; border-radius: 3px; vertical-align: -3px; margin-right: 6px; }
+  .stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+  @media (max-width: 1000px) { .stage { grid-template-columns: 1fr; } }
+  .scroll { overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); max-height: 78vh; }
+  .matrix { display: grid; grid-auto-flow: column; grid-auto-columns: 168px; gap: 0; min-width: max-content; }
+  .col { border-right: 1px solid var(--grid); }
+  .col:last-child { border-right: 0; }
+  .col h2 { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 8px 6px; font-size: 12.5px; font-weight: 650; background: var(--surface);
+            border-bottom: 1px solid var(--axis); }
+  .col h2 small { display: block; color: var(--muted); font-weight: 400; font-size: 11.5px; }
+  .cell { display: block; width: calc(100% - 8px); margin: 4px; padding: 5px 7px; text-align: left; font: inherit; font-size: 12px; line-height: 1.3;
+          color: var(--ink); background: var(--page); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
+  .cell:hover, .cell.sel { border-color: var(--ink); }
+  .cell .id { display: block; color: var(--muted); font-size: 11px; }
+  .cell.sub { width: calc(100% - 20px); margin-left: 16px; padding: 3px 6px; }
+  .cell.s-applies { background: var(--accent-bg); border: 1px solid var(--accent); border-left: 4px solid var(--accent); font-weight: 600; }
+  .cell.s-na { background: transparent; border: 1px dashed var(--muted); color: var(--ink2); font-style: italic; }
+  .cell .tag { display: inline-block; margin-top: 2px; font-size: 10.5px; font-style: normal; font-weight: 600; letter-spacing: .02em; color: var(--ink2); }
+  .cell.s-applies .tag { color: var(--accent); }
+  .cell .more { color: var(--accent); font-size: 11px; font-weight: 600; }
+  aside { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; position: sticky; top: 12px; max-height: 84vh; overflow: auto; }
+  aside h2 { font-size: 15px; margin: 0 0 2px; } aside .meta { color: var(--ink2); font-size: 12.5px; margin-bottom: 8px; }
+  aside dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 8px 0; font-size: 13px; } aside dt { color: var(--ink2); } aside dd { margin: 0; overflow-wrap: anywhere; }
+  aside p { margin: 8px 0; font-size: 13px; } aside ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+  aside details { margin-top: 10px; font-size: 13px; } aside summary { cursor: pointer; color: var(--ink2); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--border); }
+  .badge.applies { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+  .badge.na { border-style: dashed; color: var(--ink2); }
+  a { color: var(--accent); }
+  footer { margin-top: 12px; color: var(--ink2); font-size: 12.5px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="sub"></p>
+  <div class="kpis" id="kpis"></div>
+  <div class="bar">
+    <span class="grp">Platforms:</span><span id="plats"></span>
+    <label class="chip"><input type="checkbox" id="f-subs"> Show all sub-techniques</label>
+    <label class="chip"><input type="checkbox" id="f-assessed"> Assessed only</label>
+    <button class="theme" id="theme" type="button">Toggle theme</button>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div class="stage">
+    <div class="scroll"><div class="matrix" id="matrix" role="grid" aria-label="ATT&amp;CK matrix"></div></div>
+    <aside id="detail" aria-live="polite"></aside>
+  </div>
+  <footer id="foot"></footer>
+</main>
+<script>
+const D = __DATA__;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const T = D.techniques, A = D.assessed;
+const subsOf = {};
+Object.values(T).forEach((t) => { if (t.parent) (subsOf[t.parent] = subsOf[t.parent] || []).push(t); });
+const status = (id) => (A[id] ? (A[id].applies ? "applies" : "na") : "none");
+const url = (id) => "https://attack.mitre.org/techniques/" + id.replace(".", "/") + "/";
+const sel = new Set(D.platforms);
+const state = { subs: false, assessed: false, picked: null };
+
+$("title").textContent = `ATT&CK ${D.attack_version} matrix: ${D.process}`;
+const counts = { applies: 0, na: 0 }; Object.values(A).forEach((a) => counts[a.applies ? "applies" : "na"]++);
+$("sub").textContent = `Layer for ${D.process}${D.roles.length ? " (roles: " + D.roles.join(", ") + ")" : ""}, built ${D.generated} from the pinned dataset and the hand-written mapping. Assessments are a first pass and not yet reviewed.`;
+$("legend").innerHTML = `<span><i class="sw" style="background:var(--accent-bg);border:1px solid var(--accent);border-left:4px solid var(--accent)"></i><b>Applies</b>: assessed as applicable, with a stated basis</span>
+  <span><i class="sw" style="border:1px dashed var(--muted)"></i><b>Not applicable</b>: assessed and ruled out, with the reason</span>
+  <span><i class="sw" style="background:var(--page);border:1px solid var(--border)"></i><b>Not assessed</b>: not looked at yet</span>`;
+$("plats").innerHTML = [...new Set(Object.values(T).flatMap((t) => t.platforms))].sort().filter((p) => D.platforms.includes(p) || ["Linux","Containers","Identity Provider","SaaS","IaaS","Network Devices"].includes(p))
+  .map((p) => `<label class="chip"><input type="checkbox" data-p="${esc(p)}" ${sel.has(p) ? "checked" : ""}> ${esc(p)}</label>`).join("");
+$("plats").querySelectorAll("input").forEach((i) => i.addEventListener("change", () => { i.checked ? sel.add(i.dataset.p) : sel.delete(i.dataset.p); draw(); }));
+$("f-subs").onchange = (e) => { state.subs = e.target.checked; draw(); };
+$("f-assessed").onchange = (e) => { state.assessed = e.target.checked; draw(); };
+$("theme").onclick = () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; r.dataset.theme = dark ? "light" : "dark"; };
+
+const onPlatform = (t) => t.platforms.some((p) => sel.has(p));
+const anyAssessedSub = (id) => (subsOf[id] || []).filter((s) => A[s.id]);
+function parentVisible(t) {
+  if (A[t.id] || anyAssessedSub(t.id).length) return true;
+  return !state.assessed && onPlatform(t);
+}
+function cell(t, sub) {
+  const s = status(t.id), extra = !sub ? anyAssessedSub(t.id).filter(() => !A[t.id] || true).length : 0;
+  const b = document.createElement("button");
+  b.className = `cell s-${s}${sub ? " sub" : ""}${state.picked === t.id ? " sel" : ""}`;
+  b.dataset.id = t.id;
+  b.setAttribute("aria-label", `${t.id} ${t.name}, ${s === "applies" ? "applies" : s === "na" ? "not applicable" : "not assessed"}`);
+  b.innerHTML = `<span class="id">${esc(t.id)}</span>${esc(t.name)}` + (s !== "none" ? `<br><span class="tag">${s === "applies" ? "APPLIES" : "NOT APPLICABLE"}</span>` : "") +
+    (extra ? `<br><span class="more">+${extra} sub-technique${extra > 1 ? "s" : ""} assessed</span>` : "");
+  b.addEventListener("mouseenter", () => { if (!state.picked) show(t.id); });
+  b.addEventListener("click", () => { state.picked = state.picked === t.id ? null : t.id; draw(); show(t.id); });
+  return b;
+}
+function draw() {
+  const m = $("matrix"); m.innerHTML = ""; let shown = 0;
+  D.tactics.forEach(([short, name]) => {
+    const parents = Object.values(T).filter((t) => !t.parent && t.tactics.includes(short) && parentVisible(t)).sort((a, b) => a.name.localeCompare(b.name));
+    if (!parents.length) return;  // a tactic with nothing on the selected platforms takes no room
+    const col = document.createElement("div"); col.className = "col";
+    col.innerHTML = `<h2>${esc(name)}<small>${parents.length} technique${parents.length === 1 ? "" : "s"}</small></h2>`;
+    parents.forEach((p) => {
+      shown++; col.appendChild(cell(p, false));
+      (subsOf[p.id] || []).filter((s) => A[s.id] || (state.subs && onPlatform(s) && !state.assessed)).sort((a, b) => a.id.localeCompare(b.id)).forEach((s) => col.appendChild(cell(s, true)));
+    });
+    m.appendChild(col);
+  });
+  $("kpis").innerHTML = [[Object.values(T).filter((t) => !t.parent).length, "techniques in ATT&CK " + D.attack_version],
+    [counts.applies, "assessed: applies"], [counts.na, "assessed: not applicable"], [D.sensors.length, "telemetry sources described"]]
+    .map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+  $("foot").textContent = `Techniques are shown on the selected platforms; anything assessed is always shown. ATT&CK is (c) The MITRE Corporation, used under its terms of use.`;
+}
+function show(id) {
+  const t = T[id], a = A[id], s = status(id);
+  const badge = s === "applies" ? '<span class="badge applies">Applies</span>' : s === "na" ? '<span class="badge na">Not applicable</span>' : '<span class="badge">Not assessed</span>';
+  let h = `<h2>${esc(t.id)} ${esc(t.name)}</h2><div class="meta">${badge} &middot; <a href="${url(t.id)}" target="_blank" rel="noopener">attack.mitre.org</a></div>
+    <dl><dt>Tactics</dt><dd>${esc(t.tactics.join(", "))}</dd><dt>Platforms</dt><dd>${esc(t.platforms.join(", "))}</dd>
+    <dt>In ATT&amp;CK</dt><dd>${t.mitigations} mitigation${t.mitigations === 1 ? "" : "s"}, ${t.detections} detection strateg${t.detections === 1 ? "y" : "ies"}</dd></dl>`;
+  if (a) {
+    h += `<p><b>${a.applies ? "Why it applies" : "Why it does not apply"}</b><br>${esc(a.basis)}</p><dl><dt>Surface</dt><dd>${esc(a.platforms.join(", "))}</dd></dl>`;
+    if (a.applies) {
+      h += `<p><b>Controls in place</b></p>` + (a.controls.length ? `<ul>${a.controls.map((c) => `<li>${esc(c.name)} <i>(${esc(c.strength)}; ${esc(c.mitigation)})</i></li>`).join("")}</ul>` : `<p>None recorded against an ATT&amp;CK mitigation.</p>`);
+      h += `<details><summary>Telemetry detail (on demand): ${esc(a.telemetry)}</summary>` + (a.analytics.length
+        ? a.analytics.map((x) => `<p><b>${esc(x.id)}</b> <i>(${esc(x.platforms.join(", "))})</i><br>needs: ${esc(x.needs.join(", ")) || "none"}<br>collected: ${esc(x.have.join(", ")) || "none"}</p>`).join("")
+        : "<p>ATT&amp;CK has no analytic for this platform.</p>") + `<p><i>Telemetry coverage only: whether a detection rule exists is not modelled.</i></p></details>`;
+    }
+  } else h += `<p>Not assessed. Nothing is claimed either way.</p>`;
+  $("detail").innerHTML = h;
+}
+$("detail").innerHTML = `<h2>How to read this</h2><p>Hover a technique for its detail, click to pin it. Techniques assessed for <b>${esc(D.process)}</b> are marked; everything else is simply not assessed yet.</p><p>The assessments are a first pass and have not been reviewed.</p>`;
+const flags = new Set(location.hash.slice(1).split("&").filter(Boolean));
+if (flags.has("dark") || flags.has("light")) document.documentElement.dataset.theme = flags.has("dark") ? "dark" : "light";
+if (flags.has("subs")) { state.subs = true; $("f-subs").checked = true; }
+if (flags.has("assessed")) { state.assessed = true; $("f-assessed").checked = true; }
+draw();
+const pick = [...flags].find((f) => f.startsWith("t=")); if (pick && T[pick.slice(2)]) { state.picked = pick.slice(2); draw(); show(pick.slice(2)); }
+</script>
+</body>
+</html>

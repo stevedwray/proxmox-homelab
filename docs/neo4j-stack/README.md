@@ -352,3 +352,10 @@ Importer timer `neo4j-import.timer` next fires 2026-11-01 04:31 NZDT.
   `DEPENDS_ON` edges (33 on the current model) and drops the list property. 12 + 3 new tests.
 - Needs two production steps to take effect, each with its own preflight: the one-section threat-model refresh, then
   an importer run.
+
+### ATT&CK matrix view (2026-10-31)
+
+- `attack/build_matrix_view.py` builds a self-contained page of the full Enterprise matrix with a mapping's
+  assessments marked, offline from the pinned dataset and the mapping. Neutral encoding (applies, not applicable, not
+  assessed); telemetry detail only on demand. 5 tests, including that a hostile mapping text cannot break out of the page.
+  See [attack.md](attack.md#seeing-it).
