@@ -128,3 +128,24 @@ preamble).
   context (freshness gate skipped by the operator).
 - Edge reconcile was skipped by provision.sh in single-stack mode, as expected.
   Edge publishing is step 6.
+
+### Step 6a - edge render, Authentik reconcile (2026-10-31)
+
+- `render-edge-traefik.py --json` needs `.env` sourced (without it,
+  `${LAB_DOMAIN}` stays unresolved and it reports `failed`). With it: 25
+  stacks, 0 warnings, output goes to the ignored `.generated/` dir, nothing to
+  commit.
+- `reconcile-edge.py` dry-run: planned exactly 2 creates (app + provider);
+  top-level `failed` was only `EGR211` drift for those two missing objects.
+- `--apply`: passed, 3 writes (create app, create provider, update the shared
+  Embedded Outpost to link the new provider; the dry-run had shown the outpost
+  as a no-op). Post-apply discovery: both routes `matching`, 0 issues. No DNS
+  or Traefik writes.
+- Unexpected, not neo4j's: the dry-run's Technitium diff dropped `smokeping`
+  from a local generated file. Cause: `smokeping`/`icinga` DNS and Traefik
+  were applied from the unmerged, never-pushed
+  `feat/argon-icinga-observability`. The Technitium and proxy playbooks do not
+  prune records/files they don't generate (zone is Primary), so live
+  `smokeping`/`icinga` should survive; baselines of live DNS and the proxy's
+  `dynamic/` hashes were taken to prove it after steps 6b/6c. The Argon work
+  was merged with `stable` on `task/argon-merge-stable` and opened as PR #547.
