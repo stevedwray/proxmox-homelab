@@ -134,6 +134,12 @@ def check(playbook_path: str, rules_dir: str = RULES_DIR) -> list[str]:
                         for rec in points[name]:
                             if rec.get("disableResolveMessage") is not True:
                                 problems.append(f"{rule['uid']}: event=true must not send a resolve message, but {name}/{rec['uid']} does")
+                if labels.get("findings") == "new":
+                    # "New findings" ages out after its look-back; a "Resolved" message would read as "fixed".
+                    for name in receivers_for(policy, labels):
+                        for rec in points[name]:
+                            if rec.get("disableResolveMessage") is not True:
+                                problems.append(f"{rule['uid']}: findings=new must not send a resolve message, but {name}/{rec['uid']} does")
                 if labels.get("category") == "hardware" and labels.get("severity") == "critical" and not paged:
                     problems.append(f"{rule['uid']}: a critical hardware fault must page Telegram")
                 if labels.get("tripwire") == "honeypot" and receivers_for(policy, labels) != ["homelab-tripwire"]:
