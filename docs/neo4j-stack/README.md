@@ -161,3 +161,20 @@ preamble).
   302 to Authentik, `dashboards.` 302 to its OIDC login, `neo4j.` 302 to
   Authentik (new client), `neo4j-bolt.` 200. These show routing, not a
   completed login; the interactive login check is the operator's.
+
+### Step 6c - technitium-stack republish (2026-10-31)
+
+- `provision.sh --stack technitium-stack`: exit 0, ok=289 changed=3 failed=0,
+  smoke test passed. `ansible_host` checked as 192.168.20.15.
+- DNS baseline (56 names resolved against 192.168.20.15) vs after: the only
+  differences are `neo4j` and `neo4j-bolt`, both now 192.168.30.10.
+  `smokeping`, `icinga` and every other name unchanged. The secondary
+  (192.168.20.17) already answers the new names.
+- Re-check through real DNS, system trust store: `netbox.` and `smokeping.`
+  302 to Authentik, `dashboards.` 302 to its OIDC login, `neo4j.` 302 to
+  Authentik, `neo4j-bolt.` 200, all with valid TLS. The edge certs are Let's
+  Encrypt, so the browser does not need the homelab root CA (an earlier probe
+  with `--cacert certs/homelab-root.crt` failed only because it replaced the
+  system trust store).
+- Operator reply "proceed" after the step 6b message was taken as acceptance
+  of the netbox/dashboards check and approval of this step.
